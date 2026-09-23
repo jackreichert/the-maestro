@@ -353,6 +353,7 @@ follow up with "…and status?"
 
 ```bash
 node $J status
+node $J standup --date <previous working day>
 ```
 
 **Greet first.** A real greeting, not just "Hey" bolted onto a status dump. One or two
@@ -360,8 +361,21 @@ sentences: match the time of day if they used it, and make it briefly uplifting 
 a nod that the day is still ours to move, something human before the inventory. Warm, not a pep
 talk; never skip it, never let it become a paragraph.
 
-Then the board. If the greeting also carried a real request, the order is greeting → status →
-work. Status is orientation, not an interruption, and not a substitute for saying hello.
+**Then the standup update**, ready to paste into the team's standup. In the morning nothing has
+shipped yet today, so build it from the **previous working day's** ledger (on a Monday, Friday's).
+Three short sections:
+
+- **Yesterday** — what shipped, condensed and grouped by theme, not the raw ledger list. One bullet
+  per workstream, roughly 3–6 in all.
+- **Today** — what is in flight, plus the obvious next picks from the board.
+- **Blockers** — blocked items, and any decision awaiting the user that is holding up work.
+
+The team reads this, so write it for them: Tracker keys and PR numbers are fine; vault ticket ids and
+ledger ids are not, because nobody else can resolve them. No PHI, no secrets. If the previous
+working day has no ledger entries, say so rather than inventing a Yesterday.
+
+Then the board. If the greeting also carried a real request, the order is greeting → standup →
+status → work. Status is orientation, not an interruption, and not a substitute for saying hello.
 
 What to include after the greeting, in this order:
 
@@ -378,6 +392,41 @@ What to include after the greeting, in this order:
 Summarise; do not paste the raw command output. Group the trivial unblocks together and give the
 sharp ones their own line with the stakes attached. An empty board is still an answer — say it is
 clear and name the obvious next thing to pick up.
+
+### How the "awaiting you" list is formatted
+
+When the user asks for current status, what's waiting on them, or the board, give the awaiting
+items as **grouped tables**, not bullets. Every row must be clickable through to its source.
+
+**Groups, in this order.** Leave out any group that has no rows.
+
+1. **Urgent**: real consequences if left. Bold the action in the top row.
+2. **Branches ready to push**: push, PR, retarget, or close.
+3. **Workstream groups** as needed.
+4. **Plans awaiting approval**
+5. **Questions only you can answer**: facts only the user holds, with no code to read.
+6. **Housekeeping**
+7. **Probably already answered. Say the word and I'll close them.** These are rows that are really
+   recorded decisions, or have been overtaken by later work. The second column says why.
+
+**Columns:** `Id | What you need to decide | Ticket | Tracker / PR`
+
+- **Id**: the ledger id in backticks.
+- **What you need to decide**: one line, phrased as the decision, with the stakes where they exist.
+  Not the raw ledger text.
+- **Ticket**: each vault ticket as `id` followed by its bare
+  `obsidian://open?vault=<vault-name>&file=Projects%2F<repo>%2FTickets%2F<id>` URI. Use a bare URI, not a
+  markdown link: bare URIs are what open reliably in most terminals. Separate several tickets with
+  ` · `. Write `—` when none exists.
+- **Tracker / PR**: the issue-tracker browse URL and the PR URL, as markdown links. `—` when none.
+
+**Filling the Ticket column.** The ledger `ticket` field is often empty, so don't stop there. Match
+each row against the open vault tickets (`Projects/*/Tickets/*.md` titles), and against tracker keys
+and PR numbers named in the conversation or the ledger text. Link the ticket that owns the work.
+Never invent a link. If there's no match, write `—`.
+
+**After the tables:** one line offering to file tickets for technical rows that have none. Then the
+status footer, with the count of waiting items and how many are probably closeable.
 
 ### Issue tracker, only if the MCP is installed
 
@@ -744,4 +793,6 @@ Rules:
 - Making the user ask what got done today.
 - Answering a "good morning" with just a greeting, so they have to follow up with "…and status?"
 - Burying the board under the answer to whatever else the greeting carried.
+- Leaving the standup update out of the morning board, or building it from today's still-empty
+  ledger instead of the previous working day's.
 - Pasting raw `journal.mjs status` output instead of summarising it and naming what actually matters.
