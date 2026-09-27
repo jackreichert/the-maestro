@@ -15,25 +15,32 @@
  * The JSONL is the source of truth precisely so the markdown can be read and
  * edited freely without breaking anything. Regenerate with `render`.
  *
- *   journal.mjs log "<text>" [--kind done] [--repo x] [--ticket id] [--date YYYY-MM-DD]
- *   journal.mjs start "<text>" [--repo x]     open a work item (kind: wip)
- *   journal.mjs done <id|text>                close a wip as finished
- *   journal.mjs drop <id> [--why "..."]       close a wip as abandoned
- *   journal.mjs ask "<question>"              something awaiting the user
- *   journal.mjs resolve <id> [--answer "..."] close a question/decision
- *   journal.mjs status [--full]               what is open + done today
- *   journal.mjs standup [--date YYYY-MM-DD]   formatted end-of-day summary
+ *   journal.mjs log "<text>" --model "<name>" --used "skill:x,tool:y" [--kind note]
+ *   journal.mjs start "<text>" --model "<name>" --used "skill:x,tool:y" [--repo x]
+ *   journal.mjs done <id|text> --model "<name>" --used "skill:x,tool:y"
+ *   journal.mjs drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
+ *   journal.mjs ask "<question>" --model "<name>" --used "skill:x,tool:y"
+ *   journal.mjs resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
+ *   journal.mjs stamp <id> --model "<name>" --used "skill:x,tool:y"
+ *   journal.mjs stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
+ *   journal.mjs usage [--open]                counts of model and used marks across items
+ *   journal.mjs status [--full]               what is open + done today, with usage marks
+ *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note
  *   journal.mjs render                        rebuild CURRENT.md from the ledger
  *
- * Kinds: wip | done | blocked | question | decision | note
+ * Every new entry requires --model and --used. --tokens and --harness are optional.
+ * Do not invent either. Unknown history is `unrecorded`, unmeasured tokens are
+ * `unmeasured`. --allow-unmarked is only for tests and migrations.
+ *
+ * Kinds: wip | done | blocked | question | decision | note | resolved | dropped | rolled | stamp
  * Common flags: --vault <path> --project <name> --json --dry-run
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const DEFAULT_VAULT = process.env.VAULT_ROOT || '';
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp'];
 // Kinds that keep an item on the board until something closes it.
 const OPEN_KINDS = ['wip', 'blocked', 'question', 'decision'];
 const isOpen = (i) => !i.closedBy && OPEN_KINDS.includes(i.kind);
@@ -41,9 +48,10 @@ const isOpen = (i) => !i.closedBy && OPEN_KINDS.includes(i.kind);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
-    return i > 0 && argv[i - 1].startsWith('--');
+    return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
 }
 const positional = argv.slice(1).filter((a) => !a.startsWith('--') && !isFlagValue(a));
 function arg(name, fallback = null) {
@@ -115,18 +123,43 @@ function newId(existing) {
  * Fold the append-only log into current state. Later entries referencing an
  * earlier id (via `closes`) supersede it.
  */
+function withStamp(entry, stamped) {
+    const mark = entry?.id ? stamped.get(entry.id) : null;
+    if (!mark) return entry;
+    return {
+        ...entry,
+        model: mark.model ?? entry.model,
+        used: mark.used ?? entry.used,
+        tokens: mark.tokens ?? entry.tokens,
+        harness: mark.harness ?? entry.harness,
+    };
+}
+
+const MARK_FIELDS = ['model', 'used', 'tokens', 'harness'];
+/** Later stamps win field by field, so a partial stamp never erases an earlier one. */
+function mergeMark(prev, next) {
+    const out = { ...(prev || {}) };
+    for (const f of MARK_FIELDS) if (next[f] !== undefined) out[f] = next[f];
+    return out;
+}
+
 function fold(entries) {
     const byId = new Map();
+    const stamped = new Map();
+    for (const e of entries) {
+        if (e.annotates) stamped.set(e.annotates, mergeMark(stamped.get(e.annotates), e));
+        if (e.id && !e.annotates) byId.set(e.id, e);
+    }
     const closed = new Map();
     for (const e of entries) {
-        if (e.closes) closed.set(e.closes, e);
-        if (e.id) byId.set(e.id, e);
+        if (e.closes) closed.set(e.closes, withStamp(e, stamped));
     }
     const items = [];
     for (const e of entries) {
-        if (!e.id || e.closes || e.kind === 'rolled') continue;
-        const close = closed.get(e.id);
-        items.push({ ...e, closedBy: close || null, state: close ? close.kind : e.kind });
+        if (!e.id || e.closes || e.annotates || e.kind === 'rolled' || e.kind === 'stamp') continue;
+        const base = withStamp(e, stamped);
+        const close = closed.get(e.id) || null;
+        items.push({ ...base, closedBy: close, state: close ? close.kind : base.kind });
     }
     return { items, byId };
 }
@@ -146,13 +179,55 @@ function resolveTarget(items, needle) {
     return null;
 }
 
-function fmt(i, { showId = true } = {}) {
+function parseList(name) {
+    const raw = arg(name);
+    if (!raw) return undefined;
+    const list = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    return list.length ? list : undefined;
+}
+
+function usageFromArgs() {
+    const model = arg('model');
+    const used = parseList('used');
+    if (!has('allow-unmarked') && (!model || !used)) {
+        console.error('Every ledger entry needs --model "<name>" and --used "skill:x,tool:y".');
+        console.error('Do not guess. Unknown is --model unrecorded --used unrecorded. Tests may pass --allow-unmarked.');
+        process.exit(1);
+    }
+    const usage = {};
+    if (model) usage.model = model;
+    if (used) usage.used = used;
+    if (arg('tokens')) usage.tokens = arg('tokens');
+    if (arg('harness')) usage.harness = arg('harness');
+    if (arg('agent')) usage.agent = arg('agent');
+    return usage;
+}
+
+function formatUsed(used) {
+    if (!used) return null;
+    return Array.isArray(used) ? used.join(', ') : String(used);
+}
+
+function usageSuffix(i) {
+    const model = i.model || 'unrecorded';
+    const used = formatUsed(i.used) || 'unrecorded';
+    const bits = [`model: ${model}`, `used: ${used}`];
+    if (i.closedBy?.model && i.closedBy.model !== i.model) {
+        bits[0] = `model: ${model} → ${i.closedBy.model}`;
+    }
+    if (i.harness) bits.push(`harness: ${i.harness}`);
+    if (i.tokens) bits.push(`tokens: ${i.tokens}`);
+    return bits.join(' · ');
+}
+
+function fmt(i, { showId = true, showUsage = true } = {}) {
     const bits = [];
     if (showId) bits.push(`\`${i.id}\``);
     bits.push(i.text);
     const tail = [];
     if (i.repo) tail.push(i.repo);
     if (i.ticket) tail.push(`[[${i.ticket}]]`);
+    if (showUsage) tail.push(usageSuffix(i));
     if (tail.length) bits.push(`— ${tail.join(' · ')}`);
     return bits.join(' ');
 }
@@ -174,8 +249,8 @@ function cmdLog(kindDefault = 'note') {
         text,
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
-        agent: arg('agent') || undefined,
         refs: (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean),
+        ...usageFromArgs(),
     };
     append(entry);
     if (!dryRun) render(true);
@@ -200,6 +275,7 @@ function cmdClose(newKind) {
         text: note || target.text,
         repo: target.repo,
         ticket: arg('ticket') || target.ticket,
+        ...usageFromArgs(),
     });
     if (!dryRun) render(true);
     console.log(`${newKind}  ${target.id}  ${target.text}${note ? `\n      ${note}` : ''}`);
@@ -270,7 +346,7 @@ function standupText(d) {
         if (!arr.length) { out.push(empty, ''); return; }
         arr.forEach((i) => {
             const note = i.closedBy && i.closedBy.text !== i.text ? ` — ${i.closedBy.text}` : '';
-            out.push(`- ${fmt(i, { showId: false })}${note}`);
+            out.push(`- ${fmt(i, { showId: false, showUsage: false })}${note}`);
         });
         out.push('');
     };
@@ -375,10 +451,80 @@ function cmdRoll() {
     if (dryRun) { console.log(body); return; }
     ensureDir();
     writeFileSync(dest, body);
-    append({ id: newId(readLedger()), ts: now(), date: d, kind: 'rolled', text: `archived ${done.length} item(s)` });
+    append({
+        id: newId(readLedger()), ts: now(), date: d, kind: 'rolled', text: `archived ${done.length} item(s)`,
+        model: 'n/a', used: ['tool:journal.mjs'], tokens: 'n/a',
+    });
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
     console.log(`kept open: ${g.inflight.length} in flight, ${g.awaiting.length} awaiting you`);
+}
+
+/** Annotate one existing entry (an item or a closing row) without rewriting the JSONL. */
+function cmdStamp() {
+    const needle = positional[0];
+    const entries = readLedger();
+    const target = entries.find((e) => e.id === needle && !e.annotates)
+        || resolveTarget(fold(entries).items, needle);
+    if (!target) { console.error(`No entry matching "${needle}".`); process.exit(1); }
+    append({
+        id: newId(entries), ts: now(), date: today(), kind: 'stamp', annotates: target.id,
+        text: `stamp ${target.id}`, ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`stamp  ${target.id}  ${target.text}`);
+}
+
+/**
+ * Mark every entry that has no model or no used. Only missing fields are
+ * written, and an entry already marked is skipped, so re-running is a no-op.
+ */
+function cmdStampMissing() {
+    const entries = readLedger();
+    const marks = new Map();
+    for (const e of entries) if (e.annotates) marks.set(e.annotates, mergeMark(marks.get(e.annotates), e));
+    const fill = {
+        model: arg('model', 'unrecorded'),
+        used: parseList('used') || ['unrecorded'],
+        tokens: arg('tokens', 'unmeasured'),
+    };
+    const taken = [...entries];
+    let count = 0;
+    for (const e of entries) {
+        if (!e.id || e.annotates || e.kind === 'stamp') continue;
+        const cur = { ...e, ...(marks.get(e.id) || {}) };
+        if (cur.model && cur.used) continue;
+        const add = {};
+        for (const f of ['model', 'used', 'tokens']) if (cur[f] === undefined) add[f] = fill[f];
+        const row = { id: newId(taken), ts: now(), date: today(), kind: 'stamp', annotates: e.id, text: `stamp ${e.id}`, ...add };
+        taken.push(row);
+        append(row);
+        count++;
+    }
+    if (!dryRun && count) render(true);
+    console.log(`stamped ${count} entr${count === 1 ? 'y' : 'ies'}${dryRun ? ' (dry-run)' : ''}`);
+}
+
+function cmdUsage() {
+    const { items } = fold(readLedger());
+    const pool = has('open') ? items.filter(isOpen) : items;
+    const models = new Map();
+    const used = new Map();
+    const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+    for (const i of pool) {
+        bump(models, i.model || 'unrecorded');
+        (Array.isArray(i.used) ? i.used : [i.used || 'unrecorded']).forEach((x) => bump(used, x));
+    }
+    const sorted = (m) => [...m].sort((a, b) => b[1] - a[1]);
+    if (asJson) {
+        console.log(JSON.stringify({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) }, null, 2));
+        return;
+    }
+    console.log(`Usage marks — ${pool.length} item(s)${has('open') ? ' open' : ''}`);
+    console.log('\nModel');
+    sorted(models).forEach(([k, n]) => console.log(`  ${String(n).padStart(4)}  ${k}`));
+    console.log('\nUsed');
+    sorted(used).forEach(([k, n]) => console.log(`  ${String(n).padStart(4)}  ${k}`));
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────────
@@ -391,6 +537,9 @@ switch (cmd) {
     case 'done': cmdClose('done'); break;
     case 'drop': cmdClose('dropped'); break;
     case 'resolve': cmdClose('resolved'); break;
+    case 'stamp': cmdStamp(); break;
+    case 'stamp-missing': cmdStampMissing(); break;
+    case 'usage': cmdUsage(); break;
     case 'status': cmdStatus(); break;
     case 'standup': cmdStandup(); break;
     case 'roll': cmdRoll(); break;

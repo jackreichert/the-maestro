@@ -7,11 +7,59 @@ It does not implement features itself. Implementation happens in the target repo
 ## What you get
 
 - A session protocol: resolve the repo, scout, ticket, dispatch, relay, then close with a status footer.
-- A greeting that always comes back with today's board, not just "hey".
+- A greeting that always comes back with a paste-ready standup update and today's board, not just "hey".
 - An append-only ledger so "what did we get done today?" is already written down.
+- PR tracking: one bucketed report of every open PR you author — unresolved threads, drafts, awaiting the team, unreviewed, approved, stale — every PR linked, on request or as one line on the morning board.
+- An end-of-day wrap-up: a PR pass first, then, if a tracker MCP is connected, it drafts comments and status changes for every issue touched that day, for your approval. Then it runs the standup and the roll.
 - Rules for one writer per repo, worktrees only when a checkout is actually busy, and draft-only pull requests.
 
 The protocol is in [SKILL.md](SKILL.md). The ledger tool is [scripts/journal.mjs](scripts/journal.mjs).
+
+## How a request flows
+
+```mermaid
+flowchart TD
+    U([User message]) --> G{Greeting?}
+    G -- yes --> B[Greet, then the board:<br/>standup, in flight, blocked,<br/>awaiting you, shipped today]
+    B --> R
+    G -- no --> R[Resolve: which repo?<br/>Question or task?]
+
+    R --> O{Repo has CONTEXT.md<br/>in the vault?}
+    O -- no --> D[New-repo discovery:<br/>write CONTEXT.md]
+    D --> C
+    O -- yes --> C{Classify}
+
+    C -- "already known /<br/>ledger or agent ops" --> I[Answer inline]
+    C -- "needs a look at code" --> S[Stage 1: dispatch a<br/>read-only scout]
+    C -- "file and change<br/>already named" --> W
+
+    S --> ACK1[One-line ack.<br/>End the turn, never block]
+    ACK1 -. completion notification .-> SR[Scout reports anchors<br/>and a recommended shape]
+    SR --> Q{Is the scout's answer<br/>the deliverable?}
+    Q -- yes --> REL
+    Q -- no --> T
+
+    T[File a vault ticket<br/>xenophon] --> W[Stage 2: brief and dispatch<br/>a worker, one writer per repo,<br/>guardrails in the brief]
+    W --> L1[journal.mjs start]
+    L1 --> ACK2[One-line ack.<br/>End the turn]
+    ACK2 -. completion notification .-> WR[Worker reports:<br/>commits, tests, findings]
+
+    WR --> INC{Incidental findings?}
+    INC -- yes --> TK[One ticket per problem,<br/>in the repo it lives in]
+    TK --> L2
+    INC -- no --> L2[journal.mjs done / ask / log]
+    L2 --> REL[Relay the substance:<br/>links, not bare ids]
+    I --> F
+    REL --> F[Close with the status footer:<br/>agents running, awaiting you]
+
+    U2([New message mid-turn]) -. "additive, not an interrupt" .-> R
+    WR -. "needs a user decision" .-> ASK[journal.mjs ask<br/>goes on the awaiting-you board]
+    ASK --> B
+```
+
+The dotted edges are asynchronous: the dispatcher never waits on them. Completion arrives as a
+notification, and a new message while agents are running is handled alongside the work already in
+flight.
 
 ## Requirements
 
@@ -127,7 +175,7 @@ Do this after the smoke test, in your canonical copy of `SKILL.md`. The publishe
 
 4. **Issue tracker, optional.** Skip this if you have no tracker MCP. If you do (Jira via the Atlassian MCP is the one the skill knows how to call), tell the agent the site and project key once, in `SKILL.md` or in the vault's project `CONTEXT.md`. Example shape, not a real site: `project = TOOL`, browse links `https://example.atlassian.net/browse/TOOL-123`. The morning board includes a sprint section only when that MCP is installed and connected. If it is not installed, the section is omitted and not mentioned.
 
-5. **Greeting.** The skill greets, then gives the board. Leave that. Change only the tone if you want a shorter hello. Do not remove the board step.
+5. **Greeting.** The skill greets, then gives a standup update (yesterday / today / blockers, built from the previous working day's ledger), then the board. Leave that. Change only the tone if you want a shorter hello. Do not remove the board step.
 
 Re-read `SKILL.md` before you share your fork. If a name, email, host, or ticket key in it is yours, take it out of the copy other people will clone.
 
@@ -172,7 +220,7 @@ Also: `log`, `drop`, `render`. Common flags: `--vault`, `--project`, `--json`, `
 
 Kinds: `wip`, `done`, `blocked`, `question`, `decision`, `note`.
 
-`roll` writes the day's finished work to a dated note and leaves in-flight, blocked, and awaiting-you items on the board. Roll at end of day, or when `CURRENT.md` is longer than a screen.
+`roll` writes the day's finished work to a dated note and leaves in-flight, blocked, and awaiting-you items on the board. Roll at end of day, or when `CURRENT.md` is longer than a screen. At end of day, run the tracker review first (see [reference/ledger.md](reference/ledger.md#end-of-day)).
 
 Ledger ids are four lowercase characters (`k3mp`). They are not tickets and they are not issue-tracker keys. When you mention one, include the one-liner, not the bare id.
 
