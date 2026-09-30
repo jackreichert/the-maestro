@@ -14,6 +14,7 @@
  *   ledger.jsonl     append-only source of truth, one JSON object per line
  *   CURRENT.md       GENERATED view of what is open + done today
  *   YYYY-MM-DD.md    GENERATED daily archive, written by `roll`
+ *   Streams/<S>.md   GENERATED one page per active stream (and a retro pointer for archived ones)
  *
  * The JSONL is the source of truth precisely so the markdown can be read and
  * edited freely without breaking anything. Regenerate with `render`.
@@ -32,7 +33,7 @@
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note (and, if configured, commit the ledger root)
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
- *   journal.mjs render                        rebuild CURRENT.md from the ledger
+ *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
  *   journal.mjs streams [list|add <name> [--alias a,b]|check]   the stream registry
  *   journal.mjs models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
@@ -580,7 +581,7 @@ function render(quiet = false, includeArchived = false) {
 
     const doneToday = g.doneOn(d, { sinceRoll: true });
     for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, doneToday)) {
-        out.push(`# ${streamTitle(s)}`, '');
+        out.push(`# ${streamTitle(s)}`, '', `Stream page: [[${streamPageLink(s)}]]`, '');
         section('In flight', inStream(g.inflight, s));
         section('Blocked', inStream(g.blocked, s));
         section('Awaiting you', inStream(g.awaiting, s));
@@ -593,6 +594,13 @@ function render(quiet = false, includeArchived = false) {
     section(`Done today (${d})`, noStream(doneToday));
     if (g.rollPointOn(d)) out.push(`Earlier today archived -> [[${d}]]`, '');
 
+    const retros = archivedRetros();
+    if (retros.size) {
+        out.push('## Archived streams', '');
+        for (const s of retros.keys()) out.push(`- [[${streamPageLink(s)}]]`);
+        out.push('');
+    }
+
     if (rolledDates.length) {
         out.push('## Archive', '');
         rolledDates.slice().reverse().forEach((x) => out.push(`- [[${x}]]`));
@@ -603,7 +611,55 @@ function render(quiet = false, includeArchived = false) {
     if (dryRun) { if (!quiet) console.log(out.join('\n')); return; }
     ensureDir();
     writeFileSync(join(dir, 'CURRENT.md'), out.join('\n'));
-    if (!quiet) console.log(`wrote ${join(dir, 'CURRENT.md')}`);
+    const pages = writeStreamPages(g, doneToday, retros, d);
+    if (!quiet) console.log(`wrote ${join(dir, 'CURRENT.md')}${pages ? ` and ${pages} stream page(s) in ${join(dir, 'Streams')}` : ''}`);
+}
+
+const streamPageLink = (s) => `Streams/${slug(s)}`;
+
+/** stream -> retro path (or '') for each stream whose latest event is an archive. */
+function archivedRetros() {
+    const out = new Map();
+    for (const e of readLedger()) {
+        if (e.kind === 'archive' && e.stream) out.set(mapStream(e.stream), e.retro || '');
+        if (e.kind === 'unarchive' && e.stream) out.delete(mapStream(e.stream));
+    }
+    return out;
+}
+
+/**
+ * One generated page per stream: every active stream (open or done today) and every stream the registry
+ * lists as active, so a quiet stream reads "none" instead of going stale; archived streams get a page that
+ * only points at the retro. Returns how many pages were written.
+ */
+function writeStreamPages(g, doneToday, retros, d) {
+    const reg = loadRegistry();
+    const registered = Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k);
+    const names = [...new Set([...activeStreams(g.inflight, g.blocked, g.awaiting, doneToday), ...registered])].filter((s) => !retros.has(s));
+    if (!names.length && !retros.size) return 0;
+    const streamsDir = join(dir, 'Streams');
+    mkdirSync(streamsDir, { recursive: true });
+    const head = (s, extra = []) => ['---', 'generated: true', `stream: ${s}`, `updated: ${d}`, '---', '', `# ${s}`, '',
+        '> Generated from `ledger.jsonl` by `journal.mjs render`. Edits here are overwritten. The combined board is [[CURRENT]].', '', ...extra];
+    for (const s of names) {
+        const out = head(s);
+        const section = (title, arr) => {
+            out.push(`## ${title}`, '');
+            if (!arr.length) { out.push('_none_', ''); return; }
+            arr.forEach((i) => out.push(`- ${fmt(i)}`));
+            out.push('');
+        };
+        section('In flight', inStream(g.inflight, s));
+        section('Blocked', inStream(g.blocked, s));
+        section('Awaiting you', inStream(g.awaiting, s));
+        section(`Done today (${d})`, inStream(doneToday, s));
+        writeFileSync(join(streamsDir, `${slug(s)}.md`), out.join('\n'));
+    }
+    for (const [s, retro] of retros) {
+        const link = retro ? `Retro: [[${retro.split('/').pop().replace(/\.md$/, '')}]] (${retro})` : 'Retro: (path not recorded)';
+        writeFileSync(join(streamsDir, `${slug(s)}.md`), head(s, ['This stream is **archived**. Its items are hidden from the board; `journal.mjs unarchive` brings them back.', '', link, '']).join('\n'));
+    }
+    return names.length + retros.size;
 }
 
 /**

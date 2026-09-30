@@ -280,6 +280,7 @@ Storage, under `$LEDGER_ROOT/Projects/<project>/Journal/` (falls back to `$VAULT
 | `ledger.jsonl` | Append-only source of truth. One JSON object per line. |
 | `CURRENT.md` | Generated board: open items plus what finished today. Safe to read; regenerated from the log. |
 | `YYYY-MM-DD.md` | Generated daily archive, written by `roll`. |
+| `Streams/<Stream>.md` | Generated per-stream page, written by every `render`: that stream's in flight, blocked, awaiting and done today. An archived stream's page links its retro. |
 
 Every new entry needs `--model "<name>"` and `--used "skill:x,tool:y"`, so the record says which model did the work with what. Do not invent either: unknown history is `unrecorded`, unmeasured tokens are `unmeasured` (`--allow-unmarked` is only for tests and migrations).
 
@@ -324,6 +325,12 @@ node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
 ```
 
 If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
+
+### Per-stream views
+
+`render` (which every write also runs) rebuilds `CURRENT.md` and one `Journal/Streams/<Stream>.md` per active stream. `CURRENT.md` stays the combined board, grouped by stream, and each stream's heading carries a `[[Streams/<Stream>]]` link. A stream page shows only that stream: in flight, blocked, awaiting you and done today, with `_none_` for an empty section. Registered streams with nothing open still get a page, so a quiet one reads `_none_` instead of going stale. An archived stream's page says so and links its retro; `CURRENT.md` lists archived streams under "Archived streams". All of these are generated and overwritten.
+
+The streams live in **one** ledger. The JSONL is deliberately not split per stream: a single file keeps ordering, ids and `carry` (which moves an item between streams) simple, and it is safe with one writer at a time. Views are cheap to generate; a split ledger would make every cross-stream move a multi-file write. Rationale in [reference/ledger.md#per-stream-views](reference/ledger.md#per-stream-views).
 
 ### Integrity and backup
 
