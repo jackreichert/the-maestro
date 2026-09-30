@@ -61,7 +61,7 @@ Notes:
 
 ## The standing brief's cost habits
 
-The [standing brief block](../reference/dispatch.md#standing-brief-block--paste-once-into-every-brief)
+The [standing brief block](../reference/brief.md#standing-brief-block--paste-once-into-every-brief)
 carries several rules whose purpose is specifically cost, not correctness or safety. Why each one
 is in the block (measured 2026-09-25, `scripts/token-metrics.mjs`):
 

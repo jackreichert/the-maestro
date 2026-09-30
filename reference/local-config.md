@@ -87,7 +87,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 
 ## Standing brief block, filled
 
-[dispatch.md](dispatch.md#standing-brief-block--paste-once-into-every-brief) keeps the block generic with two `<…>` slots, `<user git emails>` and `<tracker key example>`. Their values come from the overlay's `config.md` (or your own values file), under a heading "Standing brief block, filled". Without an overlay, ask the user once and reuse the answer.
+[brief.md](brief.md#standing-brief-block--paste-once-into-every-brief) keeps the block generic with two `<…>` slots, `<user git emails>` and `<tracker key example>`. Their values come from the overlay's `config.md` (or your own values file), under a heading "Standing brief block, filled". Without an overlay, ask the user once and reuse the answer.
 
 ## Changing this file
 
