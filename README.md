@@ -378,7 +378,7 @@ Signals, all weighed against how the already-tagged items are filed, and the reg
 
 ### Handoff and resume
 
-A fresh session should not have to hunt for facts nobody wrote down. `handoff` scaffolds the five-part note from the ledger; `resume` is what the fresh session runs first.
+A fresh session should not have to hunt for facts nobody wrote down. `handoff` scaffolds the five-part note from the ledger; `resume` is what the fresh session runs first. The fresh session reconciles the note against `git`, `gh` and `ListAgents` before acting, then treats it as authoritative ([cost/budget.md](cost/budget.md#session-hygiene)).
 
 ```bash
 node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--force]
