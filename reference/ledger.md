@@ -137,6 +137,8 @@ node $J claims --json
 
 **Concurrent appends.** The ledger takes no lock, and needs none: `appendFileSync` issues one `write()` on an `O_APPEND` descriptor, so concurrent rows land whole and in some order. `journal.test.mjs` has a test that runs several processes appending at once and asserts every line parses, ids are unique and the count is exact, and it passed without adding a lock (also stress-checked once at 8 processes x 40 rows). The one residual risk is `newId` picking the same four characters in two processes inside the same instant; `verify` reports duplicates. `append` and the backfill batch (`appendMany`) each use a single write.
 
+Desks and the hub/desk split that uses claims: [desks.md](desks.md) (draft).
+
 ## Backfill
 
 `backfill` (default `--dry-run`) infers a stream for items that have none, from four signals: a shared ticket id, a registry name or alias in the text, the repo, and neighbouring tagged rows in the same session (a session is a run of rows with no gap over 30 minutes; the ledger has no session field). Each signal votes with points (ticket 4 or 1, keyword 2, repo 2 or 1, session 1), votes for the same stream add up, and the total maps to `high` (4+), `medium` (2-3) or `low` (1). Disagreement caps a proposal at `low`; a tie proposes nothing. Items with no signal stay unstreamed, which is legitimate.
