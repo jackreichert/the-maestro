@@ -11,10 +11,13 @@ A fresh agent sees only what you write. Every brief includes:
 3. **Anchors** — `file:line` for what you already found. This is the single biggest speed lever;
    spend one grep yourself to save the agent ten.
 4. **Deliverable shape** — the exact sections you want back.
-5. **Mode** — read-only analysis, or authorized to edit.
+5. **Scope** — paths it may write, paths it may not; read-only if none.
 6. **Constraints** — the standing brief block below, pasted once, plus anything task-specific.
-7. **Honesty clause** — "cite `file:line` for claims about what the code does; if you cannot verify
+7. **Verify** — the exact command, and what passing looks like.
+8. **Honesty clause** — "cite `file:line` for claims about what the code does; if you cannot verify
    something, say so rather than assuming."
+
+A field you cannot fill means scout again, not dispatch.
 
 ### Standing brief block — paste once into every brief
 
