@@ -325,6 +325,16 @@ node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
 
 If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
 
+### Integrity and backup
+
+```bash
+node $J verify [--json]      # exit 1 and a list if anything is wrong
+```
+
+`verify` reads the raw ledger file and checks that every line parses as a JSON object, that ids are unique, and that every `closes`, `carries`, `tags`, `annotates` and archive `ids` reference points at a row that exists. It prints `verify: N row(s), K problem(s)` with a line number and id per problem, and exits non-zero on any. A missing ledger is not a problem.
+
+The ledger is one file, so a bad edit or a lost disk loses everything. An optional backup uses git: make `$LEDGER_ROOT` a git repository (local only; no remote is needed), add a `.gitignore` for `**/Index/*.sqlite` and temp files, and set `ledger_git_autocommit: on` in the config file (or `MAESTRO_LEDGER_GIT_AUTOCOMMIT=on`). Then `roll` runs `verify` first and, if it passes, commits the changed files under the ledger root as `chore(ledger): roll <date>`, staging each path explicitly with `git add -- <path>` (never `-A`) and committing only those paths. If verify fails, nothing is committed and `roll` exits 1. If the root is not itself a git repository the setting is ignored with a note. Off by default. It never pushes.
+
 ### Repo claims
 
 One writer per repo is easy inside one session (`ListAgents` shows who is running) and impossible to see across sessions. A claim is a lock file every session can see.

@@ -125,6 +125,12 @@ node $J unarchive Launch "${M[@]}"
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
+## Integrity and backup
+
+`verify` checks the raw file: every line parses, ids are unique, and every `closes`, `carries`, `tags`, `annotates` and archive `ids` reference exists. It exits 1 with the offending lines, so run it after any hand edit of `ledger.jsonl`.
+
+With `ledger_git_autocommit` on (config file or `MAESTRO_LEDGER_GIT_AUTOCOMMIT`) and `$LEDGER_ROOT` a git repository, `roll` runs `verify` and then commits what changed under the root as `chore(ledger): roll <date>`. Paths are listed from `git status` (ignored files never appear) and staged one by one with `git add -- <path>`; the commit is limited to those paths. A failing `verify` blocks the commit and `roll` exits 1. The repo is local: nothing here pushes, and no remote is needed. A suitable `.gitignore`: `**/Index/*.sqlite` (the derived index) and temp files.
+
 ## Claims
 
 Across sessions, one-writer-per-repo needs a shared fact. `claim <repo> --desk <stream>` takes `Claims/<repo>.lock` under the ledger root with an exclusive create (`O_CREAT|O_EXCL`), which is the runtime guarantee: two processes racing, exactly one wins. The `claim` ledger row is only the record; `release` deletes the lock and appends `released`. `claims` lists them with a stale check (pid not running on this host, or older than `--stale-hours`, default 12). A claim recorded without `--pid` is judged on age alone. Stale claims are never removed automatically.
