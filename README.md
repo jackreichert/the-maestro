@@ -265,7 +265,7 @@ It should:
 1. Resolve which repo the request is about.
 2. Dispatch a read-only scout before grepping itself, then return to you with a one-line ack.
 3. File durable work as a ticket (xenophon) rather than a chat TODO.
-4. Launch a worker with a self-contained brief. The worker does not see the parent conversation. The brief's fields and the standing rules block every brief carries are in [reference/brief.md](reference/brief.md).
+4. Launch a worker with a self-contained brief. The worker does not see the parent conversation. The brief's fields and the standing rules block every brief carries are in [reference/brief.md](reference/brief.md). Each brief names a write scope and a verify command; a field the dispatcher cannot fill means scouting again.
 5. End the turn. It must not poll a running agent.
 6. Log the work, relay the result when it lands, and end every reply with the live agent roster and ledger counts.
 
