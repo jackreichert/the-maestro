@@ -30,7 +30,8 @@
  *   journal.mjs status [--full]               what is open + done today, with usage marks
  *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
- *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note
+ *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note (and, if configured, commit the ledger root)
+ *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.mjs render                        rebuild CURRENT.md from the ledger
  *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
  *   journal.mjs streams [list|add <name> [--alias a,b]|check]   the stream registry
@@ -58,6 +59,9 @@
  * Model names: a `models` section in the same registry ({ "claude-opus-5-5": { "aliases": ["Claude Opus 5.5", "opus"] } })
  * folds --model to the canonical id on write and on read. An unknown name warns and is written as-is.
  *
+ * Integrity: `verify` checks the ledger file. With ledger_git_autocommit on and $LEDGER_ROOT a git repo, `roll` runs
+ * verify and then commits the changed files under that root (explicit paths, never -A) as `chore(ledger): roll <date>`.
+ *
  * Handoff and resume: `handoff` writes Journal/HANDOFF-<date>-<stream>.md (status: draft) from the ledger and never
  * overwrites without --force. `resume` runs ledger status, `gh pr list` and pgrep; the loop patterns and whether
  * gh is used come from the config file (loop_patterns, resume_gh), never from this script.
@@ -74,11 +78,11 @@
  * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT, each also settable in the
  * config file (see local-config.mjs).
  */
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT } from './local-config.mjs';
 import { isOpen, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -643,6 +647,81 @@ function cmdRoll() {
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
     console.log(`kept open: ${g.inflight.length} in flight, ${g.awaiting.length} awaiting you`);
+    if (!autoCommitLedger(d)) process.exitCode = 1;
+}
+
+// ── verify and the ledger backup commit ─────────────────────────────────────
+
+/** Integrity problems in the raw ledger file: unparseable lines, duplicate ids, references to ids that do not exist. */
+function verifyLedger() {
+    const problems = [];
+    const text = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8') : '';
+    const rows = [];
+    text.split('\n').forEach((l, n) => {
+        if (!l.trim()) return;
+        try {
+            const row = JSON.parse(l);
+            if (row === null || typeof row !== 'object' || Array.isArray(row)) throw new Error('not an object');
+            rows.push({ row, line: n + 1 });
+        } catch {
+            problems.push({ line: n + 1, problem: 'line does not parse as a JSON object' });
+        }
+    });
+    const seen = new Map();
+    for (const { row, line } of rows) {
+        if (row.id === undefined) continue;
+        if (seen.has(row.id)) problems.push({ line, id: row.id, problem: `duplicate id (first on line ${seen.get(row.id)})` });
+        else seen.set(row.id, line);
+    }
+    const missing = (line, row, field, id) => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
+    for (const { row, line } of rows) {
+        for (const field of ['closes', 'carries', 'tags', 'annotates']) missing(line, row, field, row[field]);
+        if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
+    }
+    problems.sort((a, b) => a.line - b.line);
+    return { rows: rows.length, problems };
+}
+
+function cmdVerify() {
+    const { rows, problems } = verifyLedger();
+    if (asJson) console.log(JSON.stringify({ ledger: ledgerPath, rows, problems }, null, 2));
+    else {
+        console.log(`verify: ${rows} row(s), ${problems.length} problem(s)  (${ledgerPath})`);
+        problems.slice(0, 50).forEach((p) => console.log(`  line ${p.line}${p.id ? ` [${p.id}]` : ''}: ${p.problem}`));
+        if (problems.length > 50) console.log(`  ... and ${problems.length - 50} more`);
+    }
+    if (problems.length) process.exit(1);
+}
+
+/**
+ * The optional backup after a roll: only when ledger_git_autocommit is on and the ledger root is itself a
+ * git repo. Runs verify first and refuses to commit a ledger that fails it. Stages explicit paths
+ * (`git add -- <path>...`), never -A, and commits just those paths. Returns false when it should have
+ * committed and could not.
+ */
+function autoCommitLedger(d) {
+    if (!LEDGER_GIT_AUTOCOMMIT || dryRun) return true;
+    const git = (...a) => spawnSync('git', ['-C', vault, ...a], { encoding: 'utf8' });
+    const top = git('rev-parse', '--show-toplevel');
+    if (top.status !== 0 || realpathSync(top.stdout.trim()) !== realpathSync(vault)) {
+        console.error(`ledger_git_autocommit is on but ${vault} is not a git repository root; not committing.`);
+        return true;
+    }
+    const { problems } = verifyLedger();
+    if (problems.length) {
+        console.error(`Not committing: verify found ${problems.length} problem(s). Run \`journal.mjs verify\`.`);
+        return false;
+    }
+    const st = git('status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all');
+    if (st.status !== 0) { console.error(`git status failed: ${st.stderr.trim()}`); return false; }
+    const paths = st.stdout.split('\0').filter(Boolean).map((e) => e.slice(3));
+    if (!paths.length) { console.log('ledger git: nothing to commit.'); return true; }
+    const add = git('add', '--', ...paths);
+    if (add.status !== 0) { console.error(`git add failed: ${add.stderr.trim()}`); return false; }
+    const commit = git('commit', '-m', `chore(ledger): roll ${d}`, '--', ...paths);
+    if (commit.status !== 0) { console.error(`git commit failed: ${(commit.stderr || commit.stdout).trim()}`); return false; }
+    console.log(`ledger git: committed ${paths.length} path(s) as "chore(ledger): roll ${d}".`);
+    return true;
 }
 
 /** Annotate one existing entry (an item or a closing row) without rewriting the JSONL. */
@@ -1456,6 +1535,7 @@ switch (cmd) {
     case 'status': cmdStatus(); break;
     case 'standup': cmdStandup(); break;
     case 'roll': cmdRoll(); break;
+    case 'verify': cmdVerify(); break;
     case 'render': render(false, has('include-archived')); break;
     case 'tag': cmdTag(); break;
     case 'streams': cmdStreams(); break;

@@ -652,3 +652,78 @@ test('concurrent appends: N processes x M rows all parse, with unique ids and th
     assert.equal(new Set(rows.map((r) => r.id)).size, N * M);
     assert.equal(new Set(rows.map((r) => r.text)).size, N * M);
 });
+
+// ── verify and the roll auto-commit ─────────────────────────────────────────
+
+test('verify passes a clean ledger and reports every kind of problem with a non-zero exit', () => {
+    const a = idOf(run('start', 'one', ...MARK).out);
+    run('done', a, ...MARK);
+    const clean = run('verify');
+    assert.equal(clean.code, 0);
+    assert.match(clean.out, /verify: 2 row\(s\), 0 problem\(s\)/);
+    const rows = [
+        { id: 'zzz1', ts: 't', date: 'd', kind: 'done', closes: 'nope', text: 'closes a ghost' },
+        { id: a, ts: 't', date: 'd', kind: 'note', text: 'duplicate id' },
+        { id: 'zzz2', ts: 't', date: 'd', kind: 'carry', carries: 'ghost2', stream: 'S', text: 'x' },
+        { id: 'zzz3', ts: 't', date: 'd', kind: 'archive', stream: 'S', ids: [a, 'ghost3'], text: 'x' },
+    ];
+    writeFileSync(ledgerFile(), readFileSync(ledgerFile(), 'utf8') + rows.map((r) => JSON.stringify(r)).join('\n') + '\nnot json at all\n');
+    const bad = run('verify');
+    assert.equal(bad.code, 1);
+    assert.match(bad.out, /5 problem\(s\)/);
+    assert.match(bad.out, /closes refers to nope, which does not exist/);
+    assert.match(bad.out, new RegExp(`duplicate id \\(first on line 1\\)`));
+    assert.match(bad.out, /carries refers to ghost2/);
+    assert.match(bad.out, /archive ids refers to ghost3/);
+    assert.match(bad.out, /line 7: line does not parse/);
+    const j = JSON.parse(run('verify', '--json').out);
+    assert.equal(j.problems.length, 5);
+    assert.equal(run('verify', '--vault', mkdtempSync(join(tmpdir(), 'empty-'))).code, 0);   // no ledger yet is not a problem
+});
+
+const gitEnv = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
+const git = (cwd, ...a) => spawnSync('git', ['-C', cwd, ...a], { encoding: 'utf8', env: { ...process.env, ...gitEnv } });
+
+test('roll commits the changed ledger files when ledger_git_autocommit is on, by explicit path, and honours .gitignore', () => {
+    git(vault, 'init', '-q');
+    writeFileSync(join(vault, '.gitignore'), '**/Index/*.sqlite\n');
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Index'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Index', 'maestro.sqlite'), 'binary');
+    const id = idOf(run('start', 'ship it', ...MARK).out);
+    run('done', id, ...MARK);
+    const r = runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /ledger git: committed \d+ path\(s\)/);
+    const day = new Date().toISOString().slice(0, 10);
+    assert.equal(git(vault, 'log', '-1', '--format=%s').stdout.trim(), `chore(ledger): roll ${day}`);
+    const files = git(vault, 'show', '--name-only', '--format=', 'HEAD').stdout.trim().split('\n').sort();
+    assert.deepEqual(files, [
+        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/ledger.jsonl',
+    ].sort());
+    assert.equal(git(vault, 'status', '--porcelain').stdout.trim(), '');
+    assert.match(runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll').out, /committed \d+ path\(s\)/);   // a re-roll appends a row, so it commits again
+    assert.equal(git(vault, 'rev-list', '--count', 'HEAD').stdout.trim(), '2');
+});
+
+test('roll does not commit when the config is off, the root is not a repo, or verify fails', () => {
+    const id = idOf(run('start', 'a', ...MARK).out);
+    run('done', id, ...MARK);
+    // off (the default): a repo exists but nothing is committed
+    git(vault, 'init', '-q');
+    assert.equal(runEnv(gitEnv, 'roll').code, 0);
+    assert.notEqual(git(vault, 'rev-parse', '--verify', '-q', 'HEAD').status, 0);
+    // on, but verify fails: no commit, non-zero exit
+    writeFileSync(ledgerFile(), readFileSync(ledgerFile(), 'utf8') + 'garbage\n');
+    const bad = runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll', '--date', new Date().toISOString().slice(0, 10));
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /Not committing: verify found 1 problem/);
+    assert.notEqual(git(vault, 'rev-parse', '--verify', '-q', 'HEAD').status, 0);
+    // on, but the ledger root is not a git repo (a plain dir inside another repo does not count either)
+    const plain = mkdtempSync(join(tmpdir(), 'plain-'));
+    const p = spawnSync(process.execPath, [SCRIPT, 'start', 'x', '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '' } });
+    const pid = p.stdout.trim().split(/\s+/)[1];
+    spawnSync(process.execPath, [SCRIPT, 'done', pid, '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '' } });
+    const nr = spawnSync(process.execPath, [SCRIPT, 'roll', '--vault', plain, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' } });
+    assert.equal(nr.status, 0, nr.stderr);
+    assert.match(nr.stderr, /not a git repository root; not committing/);
+});
