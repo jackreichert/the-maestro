@@ -25,10 +25,8 @@ Paste this block verbatim, once, at the end of the brief. Do not restate any of 
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
 paraphrases it drifts. Approved by the user 2026-09-25.
 
-The block has two `<…>` slots, filled from
-local-config (the overlay's "Standing brief block, filled", see [local-config.md](local-config.md#standing-brief-block-filled)) before pasting: `<user git emails>`
-and `<tracker key example>`. Fill both; a brief that ships with a literal `<…>` slot has lost its
-authorship rule.
+Print it with its slots filled by `node scripts/brief-block.mjs`. It exits non-zero, printing
+nothing, if a slot has no value, so never paste a block you wrote by hand.
 
 ```text
 Standing rules (hard limits):
