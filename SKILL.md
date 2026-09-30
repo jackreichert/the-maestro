@@ -73,6 +73,9 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 **Ledger:** 4 done today · 2 in flight · 1 awaiting you
 ```
 
+`journal.mjs status --footer` prints the Ledger lines, one per active stream when streams are in use
+([reference/ledger.md#the-footer-lines](reference/ledger.md#the-footer-lines)).
+
 Say "none running" when nothing is live; that's still information. When relaying an agent's result,
 also check the session's turn count and nudge the user to roll up at ~180 turns
 ([cost/budget.md#session-hygiene](cost/budget.md#session-hygiene)). Full formatting rules (more

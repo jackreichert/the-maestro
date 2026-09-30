@@ -294,6 +294,7 @@ node $J resolve "follow-up" --answer "Yes, no consumer yet" "${M[@]}"
 node $J status                               # open items + done today
 node $J standup                              # end-of-day summary, ready to paste
 node $J roll                                 # archive the day, keep open items
+node $J status --footer                      # the reply-footer Ledger lines, one per active stream
 ```
 
 Also: `log`, `drop`, `stamp`, `stamp-missing`, `usage`, `render`. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. `--project` is required; there is no default project name.

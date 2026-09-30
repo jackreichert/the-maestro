@@ -14,6 +14,7 @@ node $J done  "Port the calendar fix" "${M[@]}"  # id or a unique substring
 node $J ask   "Split the calendar change into a follow-up PR?" "${M[@]}"
 node $J resolve "calendar change" --answer "Yes — no consumer yet" "${M[@]}"
 node $J status                            # what is open + done today, with usage marks
+node $J status --footer                   # the reply-footer Ledger lines (below)
 node $J standup                           # end-of-day summary, ready to paste (no usage marks)
 node $J roll                              # compress: archive the day, keep open items
 node $J usage                             # counts by model and by skill/tool
@@ -101,6 +102,18 @@ node $J unarchive Launch "${M[@]}"
 `archive <stream>` refuses, and lists every blocker, unless all of these hold: the stream has no open items (finish each one, or `carry` it); a retro doc for it exists with `status:` not `draft`; every "Promoted to" line has a target or `one-off`. Then it appends one `archive` row with the stream, the item ids and the retro path, and marks the stream `archived` in the registry. `--retro <path>` names the doc explicitly; otherwise the newest `<stream>-retro-*.md` in the Archive folder is used.
 
 `status`, `standup`, the `render` that writes CURRENT.md, and the `ledger-index` search and queries hide the archived items by default. Pass `--include-archived` to show them. `unarchive <stream>` appends the reverse row and marks the stream active, and the folded items, stats and search counts come back exactly as they were.
+
+## The footer lines
+
+`status --footer` prints the Ledger lines of the reply footer and nothing else, so the footer is never typed from memory:
+
+```
+**Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you
+**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked
+**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you
+```
+
+One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
 ## Ledger or ticket?
 

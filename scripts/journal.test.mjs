@@ -334,3 +334,29 @@ test('archived items are hidden by default and shown with --include-archived; un
     assert.deepEqual(snap(), before);   // fold, standup and per-stream counts identical
     assert.equal(run('unarchive', 'Launch', ...MARK).code, 1);
 });
+
+// ── status --footer ─────────────────────────────────────────────────────────
+
+test('status --footer prints one Ledger line per active stream, registry names, and an other line', () => {
+    seedRegistry();
+    const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
+    run('start', 'launch two', '--stream', 'launch-v2', ...MARK);
+    run('done', a, ...MARK);
+    run('ask', 'which way?', '--stream', 'Maestro', ...MARK);
+    run('log', 'stuck on x', '--kind', 'blocked', '--stream', 'Maestro', ...MARK);
+    run('start', 'loose end', ...MARK);
+    const r = run('status', '--footer');
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.out.trim().split('\n'), [
+        '**Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you',
+        '**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked',
+        '**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you',
+    ]);
+});
+
+test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
+    run('start', 'plain', ...MARK);
+    const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    assert.equal(run('status', '--footer').out.trim(), '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');
+    assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
