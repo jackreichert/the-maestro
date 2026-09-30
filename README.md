@@ -325,6 +325,19 @@ node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
 
 If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
 
+### Backfill: filing old untagged items
+
+Items logged before streams existed have none. `backfill` proposes one for each and, after you have reviewed the proposals, files them with appended `tag` rows. The ledger is never rewritten.
+
+```bash
+node $J backfill [--dry-run] [--samples 3] [--out report.md] [--json]   # the default: counts and samples, appends nothing
+node $J backfill --apply --min-confidence high "${M[@]}"                  # append the tag rows (one batch, one render)
+```
+
+Signals, all weighed against how the already-tagged items are filed, and the registry: a shared **ticket** id (4 points when every tagged item with it is in one stream, 1 otherwise), a **keyword** (the registry name or an alias, whole word, 2 points, only when exactly one stream matches), the **repo** (2 points when 90%+ of 5+ tagged items in it share a stream, else 1; a catch-all repo stays weak), and the **session** (a run of rows with no gap over 30 minutes; if the tagged items in it agree, 1 point). Proposals agreeing on a stream add up: 4+ is `high`, 2 or 3 `medium`, 1 `low`. Signals that disagree cap the proposal at `low`, and a tie proposes nothing. Archived streams are never proposed. The dry run prints counts per stream and confidence, samples, and how many items got no proposal (a legitimate state); `--out` writes the whole `id | date | kind | repo | ticket | proposed | confidence | rules` table for review.
+
+`--apply --min-confidence <level>` (default `high`) appends one `tag` row per proposal at or above that level, each carrying `backfill` (a run id), `rule`, `confidence` and `prev` (the stream before, `null` for none), plus the usual `--model` and `--used`. Re-running is a no-op because tagged items are no longer proposals. Review the dry run first; applying is the human's call.
+
 ### Handoff and resume
 
 A fresh session should not have to hunt for facts nobody wrote down. `handoff` scaffolds the five-part note from the ledger; `resume` is what the fresh session runs first.

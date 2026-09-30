@@ -40,6 +40,8 @@
  *   journal.mjs retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
  *   journal.mjs archive <stream>              hide a finished stream; refuses until retro + promotions are done
  *   journal.mjs unarchive <stream>            bring an archived stream back, exactly
+ *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
+ *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
  *   journal.mjs handoff --stream <name> [--out <path>] [--since YYYY-MM-DD] [--force]   scaffold the five-part handoff
  *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
@@ -81,7 +83,7 @@ const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolv
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -140,6 +142,14 @@ function append(entry) {
     if (dryRun) { console.log('[dry-run]', JSON.stringify(entry)); return entry; }
     appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
     return entry;
+}
+
+/** Append several rows in one write, so a batch is either all there or (on a crash) a prefix of whole lines. */
+function appendMany(entries) {
+    ensureDir();
+    if (dryRun) { entries.forEach((e) => console.log('[dry-run]', JSON.stringify(e))); return entries; }
+    if (entries.length) appendFileSync(ledgerPath, entries.map((e) => JSON.stringify(e) + '\n').join(''));
+    return entries;
 }
 
 // ── stream registry ─────────────────────────────────────────────────────────
@@ -1065,6 +1075,174 @@ function setRegistryStatus(stream, status) {
     saveRegistry(reg);
 }
 
+// ── backfill ────────────────────────────────────────────────────────────────
+
+const CONF = ['low', 'medium', 'high'];
+const SESSION_GAP_MS = 30 * 60 * 1000;
+
+/**
+ * Evidence about how already-tagged items are filed: stream counts per repo, per ticket id, and per
+ * work session (a run of rows with no gap over 30 minutes; the ledger has no session field).
+ */
+function backfillEvidence(items) {
+    const tagged = items.filter((i) => i.stream);
+    const tally = (map, key, stream) => { if (!key) return; const m = map.get(key) || new Map(); m.set(stream, (m.get(stream) || 0) + 1); map.set(key, m); };
+    const byRepo = new Map();
+    const byTicket = new Map();
+    for (const i of tagged) {
+        tally(byRepo, i.repo, i.stream);
+        for (const t of new Set([i.ticket, ...(itemText(i).match(TICKET_ID) || [])].filter(Boolean))) tally(byTicket, t, i.stream);
+    }
+    const sorted = [...items].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    const sessionOf = new Map();
+    let n = 0;
+    let last = null;
+    for (const i of sorted) {
+        const t = Date.parse(i.ts);
+        if (last !== null && t - last > SESSION_GAP_MS) n++;
+        sessionOf.set(i.id, n);
+        last = t;
+    }
+    const bySession = new Map();
+    for (const i of tagged) tally(bySession, sessionOf.get(i.id), i.stream);
+    return { byRepo, byTicket, bySession, sessionOf };
+}
+
+/** The top stream of a tally with its share and total, or null when empty or tied. */
+function dominant(m) {
+    if (!m) return null;
+    const rows = [...m].sort((a, b) => b[1] - a[1]);
+    const total = rows.reduce((a, [, c]) => a + c, 0);
+    if (rows.length > 1 && rows[0][1] === rows[1][1]) return null;
+    return { stream: rows[0][0], n: rows[0][1], total, share: rows[0][1] / total };
+}
+
+/** Streams a backfill may propose: registered and not archived, plus every stream the ledger already uses. */
+function candidateStreams(items, archived) {
+    const reg = loadRegistry();
+    const names = new Set([...Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k), ...items.map((i) => i.stream).filter(Boolean)]);
+    for (const a of archived) names.delete(a);
+    return names;
+}
+
+/** Votes for one untagged item: [{ rule, stream, points }]. Points: ticket 4 (unanimous, 2+ items) or 1, keyword 2, repo 2 (90%+ of 5+ items) or 1, session neighbours 1. 4+ is high, 2-3 medium, 1 low. */
+function votesFor(item, ev, keywords) {
+    const votes = [];
+    const tickets = new Set([item.ticket, ...(itemText(item).match(TICKET_ID) || [])].filter(Boolean));
+    let best = null;
+    for (const t of tickets) {
+        const d = dominant(ev.byTicket.get(t));
+        if (!d) continue;
+        const points = d.share === 1 && d.n >= 2 ? 4 : 1;
+        if (!best || points > best.points) best = { rule: 'ticket', stream: d.stream, points };
+    }
+    if (best) votes.push(best);
+
+    const text = itemText(item).toLowerCase();
+    const hits = new Set(keywords.filter((k) => k.re.test(text)).map((k) => k.stream));
+    if (hits.size === 1) votes.push({ rule: 'keyword', stream: [...hits][0], points: 2 });
+
+    const r = dominant(ev.byRepo.get(item.repo));
+    if (r) votes.push({ rule: 'repo', stream: r.stream, points: r.share >= 0.9 && r.total >= 5 ? 2 : 1 });
+
+    const s = dominant(ev.bySession.get(ev.sessionOf.get(item.id)));
+    if (s && s.total >= 2 && s.share >= 0.6) votes.push({ rule: 'session', stream: s.stream, points: 1 });
+    return votes;
+}
+
+/** { stream, confidence, rules } for an untagged item, or null when nothing votes. Disagreement caps it at low. */
+function proposalFor(item, ev, keywords, allowed) {
+    const votes = votesFor(item, ev, keywords).filter((v) => allowed.has(v.stream));
+    if (!votes.length) return null;
+    const score = new Map();
+    for (const v of votes) score.set(v.stream, (score.get(v.stream) || 0) + v.points);
+    const ranked = [...score].sort((a, b) => b[1] - a[1]);
+    if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return { stream: null, confidence: 'low', rules: votes.map((v) => v.rule), tie: true };
+    const [stream, points] = ranked[0];
+    const conflict = ranked.length > 1;
+    const confidence = conflict ? 'low' : points >= 4 ? 'high' : points >= 2 ? 'medium' : 'low';
+    return { stream, confidence, rules: votes.filter((v) => v.stream === stream).map((v) => v.rule), conflict };
+}
+
+function backfillProposals() {
+    const folded = fold(readLedger());
+    const untagged = folded.items.filter((i) => !i.stream && !folded.hidden.has(i.id));
+    const ev = backfillEvidence(folded.items);
+    const allowed = candidateStreams(folded.items, folded.archivedStreams);
+    const reg = loadRegistry();
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const keywords = Object.entries(reg?.streams || {}).filter(([canon]) => allowed.has(canon)).flatMap(([canon, meta]) =>
+        [canon, ...(meta?.aliases || [])].map(String).filter((w) => w.length >= 3)
+            .map((w) => ({ stream: canon, re: new RegExp(`(?<![\\w-])${esc(w.toLowerCase())}(?![\\w-])`) })));
+    const proposals = untagged.map((item) => ({ item, ...(proposalFor(item, ev, keywords, allowed) || { stream: null, confidence: null, rules: [] }) }));
+    return { proposals, untagged: untagged.length };
+}
+
+function cmdBackfill() {
+    const minConf = arg('min-confidence', 'high');
+    if (!CONF.includes(minConf)) die(`--min-confidence must be one of: ${CONF.join(', ')}`);
+    const { proposals, untagged } = backfillProposals();
+    const proposed = proposals.filter((p) => p.stream);
+    const apply = has('apply');
+    const selected = proposed.filter((p) => CONF.indexOf(p.confidence) >= CONF.indexOf(minConf));
+
+    if (apply) {
+        const entries = readLedger();
+        const runId = `bf-${newId(entries)}`;
+        const taken = [...entries];
+        const rows = selected.map((p) => {
+            const row = {
+                id: newId(taken), ts: now(), date: today(), kind: 'tag', tags: p.item.id, stream: p.stream,
+                text: `stream ${p.stream} (backfill)`, backfill: runId, rule: p.rules.join('+'), confidence: p.confidence, prev: p.item.stream ?? null,
+                ...usageFromArgs(),
+            };
+            taken.push(row);
+            return row;
+        });
+        appendMany(rows);
+        if (!dryRun && rows.length) render(true);
+        console.log(`backfill ${runId}: ${rows.length} tag row(s) at min-confidence ${minConf}${dryRun ? ' (dry-run)' : ''}`);
+        return;
+    }
+
+    const groups = new Map();
+    for (const p of proposed) {
+        const g = groups.get(p.stream) || { high: [], medium: [], low: [] };
+        g[p.confidence].push(p);
+        groups.set(p.stream, g);
+    }
+    const perStream = [...groups].map(([stream, g]) => ({ stream, high: g.high.length, medium: g.medium.length, low: g.low.length, total: g.high.length + g.medium.length + g.low.length }))
+        .sort((a, b) => b.total - a.total);
+    const perConf = Object.fromEntries(CONF.slice().reverse().map((c) => [c, proposed.filter((p) => p.confidence === c).length]));
+    const noProposal = proposals.length - proposed.length;
+    const nSamples = Number(arg('samples', '3'));
+    const sample = (p) => `${p.item.id}  ${clip(p.item.text, 90)}  [${p.rules.join('+')}${p.item.repo ? `; repo ${p.item.repo}` : ''}]`;
+
+    if (arg('out')) {
+        const table = ['| id | date | kind | repo | ticket | proposed | confidence | rules |', '|---|---|---|---|---|---|---|---|',
+            ...proposals.map((p) => `| ${p.item.id} | ${p.item.date} | ${p.item.kind} | ${cell(p.item.repo)} | ${cell(p.item.ticket)} | ${p.stream || ''} | ${p.confidence || ''} | ${p.rules.join('+')} |`)];
+        writeFileSync(arg('out'), ['---', 'type: backfill-report', `generated: ${today()}`, '---', '', '# Backfill dry run', '', ...table, ''].join('\n'));
+    }
+    if (asJson) {
+        console.log(JSON.stringify({ untagged, proposed: proposed.length, noProposal, byConfidence: perConf, byStream: perStream }, null, 2));
+        return;
+    }
+    console.log(`Backfill dry run: ${untagged} untagged item(s); ${proposed.length} with a proposal, ${noProposal} with none. Nothing appended.`);
+    console.log(`By confidence: high ${perConf.high} · medium ${perConf.medium} · low ${perConf.low}`);
+    console.log('\nBy proposed stream:');
+    for (const s of perStream) console.log(`  ${s.stream}  high ${s.high} · medium ${s.medium} · low ${s.low}  (${s.total})`);
+    if (nSamples > 0) {
+        console.log(`\nSamples (up to ${nSamples} per group):`);
+        for (const s of perStream) for (const c of CONF.slice().reverse()) {
+            const list = groups.get(s.stream)[c];
+            if (!list.length) continue;
+            console.log(`  ${s.stream} / ${c}`);
+            list.slice(0, nSamples).forEach((p) => console.log(`    ${sample(p)}`));
+        }
+    }
+    console.log(`\nApply with: backfill --apply --min-confidence high (${selected.length} row(s) at high) after review.`);
+}
+
 // ── handoff and resume ──────────────────────────────────────────────────────
 
 const PATH_LIKE = /(?:^|[\s(`'"])((?:~\/|\.{1,2}\/|\/)[\w.@~+-]+(?:\/[\w.@~+-]+)*(?::\d+)?|[\w.@-]+(?:\/[\w.@-]+)+\.\w{1,6}(?::\d+)?)(?=[\s),.;:`'"]|$)/g;
@@ -1200,6 +1378,7 @@ switch (cmd) {
     case 'retro': cmdRetro(); break;
     case 'archive': cmdArchive(); break;
     case 'unarchive': cmdUnarchive(); break;
+    case 'backfill': cmdBackfill(); break;
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
     default:

@@ -125,6 +125,17 @@ node $J unarchive Launch "${M[@]}"
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
+## Backfill
+
+`backfill` (default `--dry-run`) infers a stream for items that have none, from four signals: a shared ticket id, a registry name or alias in the text, the repo, and neighbouring tagged rows in the same session (a session is a run of rows with no gap over 30 minutes; the ledger has no session field). Each signal votes with points (ticket 4 or 1, keyword 2, repo 2 or 1, session 1), votes for the same stream add up, and the total maps to `high` (4+), `medium` (2-3) or `low` (1). Disagreement caps a proposal at `low`; a tie proposes nothing. Items with no signal stay unstreamed, which is legitimate.
+
+```bash
+node $J backfill --samples 3 --out backfill-report.md             # counts per proposed stream and confidence, samples, a review table
+node $J backfill --apply --min-confidence high "${M[@]}"          # append tag rows for high proposals only
+```
+
+`--apply` appends `tag` rows (`backfill: <run-id>`, `rule`, `confidence`, `prev`) in one write and renders once. It is idempotent, and it is a review step: read the dry run and a sample of the medium proposals before applying anything below `high`.
+
 ## Handoff and resume
 
 At the end of a piece of work, before `roll`, scaffold the handoff for the stream; at the start of a fresh session, run `resume`.
