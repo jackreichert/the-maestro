@@ -156,6 +156,58 @@ test('an unknown stream is rejected with a suggestion, and --new-stream register
     assert.equal(run('start', 'none stays reserved', '--stream', 'none', ...MARK).code, 0);
 });
 
+test('--stream none means no stream on start, ask and log, with or without a registry', () => {
+    for (const seed of [false, true]) {
+        if (seed) seedRegistry();
+        const before = existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl')) ? ledger().length : 0;
+        assert.equal(run('start', 'plain work', '--stream', 'none', ...MARK).code, 0);
+        assert.equal(run('ask', 'plain q?', '--stream', 'None', ...MARK).code, 0);
+        assert.equal(run('log', 'plain note', '--stream', 'none', ...MARK).code, 0);
+        const added = ledger().slice(before);
+        assert.equal(added.length, 3);
+        assert.ok(added.every((e) => e.stream === undefined));
+    }
+    const footer = run('status', '--footer').out;
+    assert.doesNotMatch(footer, /none/i);
+    assert.match(footer, /\*\*Ledger:\*\*/);
+    assert.equal(registry().streams.none, undefined);
+});
+
+test('tag --stream none clears a stream, and the footer drops it', () => {
+    run('start', 'to clear', '--stream', 'Launch', ...MARK);
+    const id = idOf(run('start', 'keeps stream', '--stream', 'Launch', ...MARK).out);
+    assert.match(run('status', '--footer').out, /Ledger \(Launch\)/);
+    assert.equal(run('tag', 'to clear', '--stream', 'none', ...MARK).code, 0);
+    assert.equal(ledger().find((e) => e.kind === 'tag').stream, undefined);
+    const streams = statusJson().inflight.map((i) => i.stream);
+    assert.deepEqual(streams.sort(), [undefined, 'Launch'].sort());
+    assert.doesNotMatch(run('status', '--footer').out, /Ledger \(none\)/);
+    assert.ok(id);
+});
+
+test('streams add none is rejected; fact and carry refuse none', () => {
+    const r = run('streams', 'add', 'none');
+    assert.equal(r.code, 1);
+    assert.match(r.err, /reserved/);
+    assert.equal(run('streams', 'add', 'None').code, 1);
+    assert.equal(existsSync(registryFile()), false);
+    assert.equal(run('fact', 'k=v', '--stream', 'none', ...MARK).code, 1);
+});
+
+test('existing rows that carry stream "none" read as unstreamed; the ledger is not rewritten', () => {
+    const dir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'ledger.jsonl');
+    const d = new Date().toISOString().slice(0, 10);
+    writeFileSync(file, JSON.stringify({ id: 'old1', ts: `${d}T10:00:00.000Z`, date: d, kind: 'wip', text: 'legacy row', stream: 'none', refs: [] }) + '\n');
+    const before = readFileSync(file, 'utf8');
+    assert.deepEqual(statusJson().inflight.map((i) => i.stream), [undefined]);
+    const footer = run('status', '--footer').out;
+    assert.doesNotMatch(footer, /none/i);
+    assert.doesNotMatch(run('streams', 'list').out, /none/);
+    assert.equal(readFileSync(file, 'utf8'), before);
+});
+
 test('with no registry nothing is enforced', () => {
     assert.equal(run('start', 'free text', '--stream', 'Anything', ...MARK).code, 0);
     assert.equal(ledger()[0].stream, 'Anything');

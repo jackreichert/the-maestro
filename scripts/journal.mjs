@@ -84,7 +84,7 @@ import { join, dirname } from 'node:path';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT } from './local-config.mjs';
-import { isOpen, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
+import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag'];
@@ -216,7 +216,8 @@ function didYouMean(reg, name) {
  * registry nothing is enforced. An unknown name is rejected with a suggestion unless --new-stream.
  */
 function normaliseStream(raw) {
-    if (!raw || raw === 'none') return raw;
+    if (!raw) return raw;
+    if (isNoStream(raw)) return 'none';
     const reg = loadRegistry();
     if (!reg || !reg.hasStreams) return raw;
     const canon = canonicalOf(reg, raw);
@@ -241,6 +242,12 @@ function normaliseStream(raw) {
     console.error(`Unknown stream "${raw}".${near ? ` Did you mean "${near}"?` : ''}`);
     console.error(`Known: ${Object.keys(reg.streams).join(', ') || '(none)'}. Pass --new-stream to register it, or \`journal.mjs streams add <name>\`.`);
     process.exit(1);
+}
+
+/** Stream for a new row: `none` (reserved) and absent both mean no stream. */
+function streamOrNone(raw) {
+    const s = normaliseStream(raw);
+    return s === 'none' ? undefined : s || undefined;
 }
 
 /** Short, collision-checked, human-typeable id. */
@@ -359,7 +366,7 @@ function cmdLog(kindDefault = 'note') {
         text,
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
-        stream: normaliseStream(arg('stream')) || undefined,
+        stream: streamOrNone(arg('stream')),
         refs: (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean),
         ...usageFromArgs(),
     };
@@ -889,7 +896,8 @@ function cmdStreams() {
     }
     if (sub === 'add') {
         const name = positional[1];
-        if (!name || name === 'none') die('Usage: journal.mjs streams add <name> [--alias a,b]');
+        if (isNoStream(name)) die('"none" is reserved: it means no stream, so it cannot be registered.');
+        if (!name) die('Usage: journal.mjs streams add <name> [--alias a,b]');
         const aliases = parseList('alias') || [];
         const next = { ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
         const owner = canonicalOf(next, name);
@@ -935,7 +943,7 @@ function cmdFact() {
     const pair = arg('text') || positional.join(' ');
     const eq = pair.indexOf('=');
     if (eq < 1) die('Usage: journal.mjs fact <key>=<value> --stream <name>');
-    if (!arg('stream')) die('fact needs --stream <name>.');
+    if (!arg('stream') || isNoStream(arg('stream'))) die('fact needs --stream <name>.');
     const key = pair.slice(0, eq).trim();
     const value = pair.slice(eq + 1).trim();
     const entries = readLedger();
