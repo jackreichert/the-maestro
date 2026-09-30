@@ -34,6 +34,7 @@
  *   journal.mjs render                        rebuild CURRENT.md from the ledger
  *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
  *   journal.mjs streams [list|add <name> [--alias a,b]|check]   the stream registry
+ *   journal.mjs models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
  *   journal.mjs fact <key>=<value> --stream <name>   a structured metric; not an item, never open
  *   journal.mjs carry <id> --to <stream>      re-home an item (e.g. an open follow-up) to another stream
  *   journal.mjs retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
@@ -46,6 +47,9 @@
  * case fold to the canonical name on write and on read, and an unknown name is rejected
  * with a suggestion unless --new-stream is passed. No registry, no enforcement.
  * status, standup and render hide archived streams; --include-archived shows them.
+ *
+ * Model names: a `models` section in the same registry ({ "claude-opus-5-5": { "aliases": ["Claude Opus 5.5", "opus"] } })
+ * folds --model to the canonical id on write and on read. An unknown name warns and is written as-is.
  *
  * Every new entry requires --model and --used. --tokens and --harness are optional.
  * Do not invent either. Unknown history is `unrecorded`, unmeasured tokens are
@@ -63,7 +67,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT } from './local-config.mjs';
-import { isOpen, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
+import { isOpen, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag'];
@@ -146,7 +150,10 @@ function loadRegistry() {
 function saveRegistry(reg) {
     mkdirSync(dirname(registryPath), { recursive: true });
     const tmp = `${registryPath}.tmp-${process.pid}`;
-    writeFileSync(tmp, JSON.stringify({ streams: reg.streams }, null, 2) + '\n');
+    const out = {};
+    if (reg.hasStreams || Object.keys(reg.streams).length) out.streams = reg.streams;
+    if (reg.models) out.models = reg.models;
+    writeFileSync(tmp, JSON.stringify(out, null, 2) + '\n');
     renameSync(tmp, registryPath);
     registryCache = reg;
 }
@@ -186,7 +193,7 @@ function didYouMean(reg, name) {
 function normaliseStream(raw) {
     if (!raw || raw === 'none') return raw;
     const reg = loadRegistry();
-    if (!reg) return raw;
+    if (!reg || !reg.hasStreams) return raw;
     const canon = canonicalOf(reg, raw);
     if (canon) {
         if (reg.streams[canon]?.status === 'archived') {
@@ -199,6 +206,7 @@ function normaliseStream(raw) {
     if (has('new-stream')) {
         if (!dryRun) {
             reg.streams[raw] = { aliases: [], status: 'active' };
+            reg.hasStreams = true;
             saveRegistry(reg);
         }
         console.error(`registered new stream ${raw}`);
@@ -244,8 +252,27 @@ function parseList(name) {
     return list.length ? list : undefined;
 }
 
+const MODEL_SENTINELS = new Set(['unrecorded', 'n/a', 'unmeasured']);
+
+/**
+ * Write-time normalisation for --model. Needs a `models` section in the registry; without one nothing
+ * changes. A registered alias is written as its canonical id. An unknown name is warned about and
+ * written as-is: the ledger has odd historic values, so this never rejects.
+ */
+function normaliseModel(raw) {
+    const reg = loadRegistry();
+    if (!raw || MODEL_SENTINELS.has(raw) || !reg?.models || !Object.keys(reg.models).length) return raw;
+    const canon = canonicalModel(reg, raw);
+    if (!canon) {
+        console.error(`unknown model "${raw}": not in the registry, written as-is. Register it with \`journal.mjs models add <id> --alias "${raw}"\`.`);
+        return raw;
+    }
+    if (canon !== raw) console.error(`normalised model ${raw} -> ${canon}`);
+    return canon;
+}
+
 function usageFromArgs() {
-    const model = arg('model');
+    const model = normaliseModel(arg('model'));
     const used = parseList('used');
     if (!has('allow-unmarked') && (!model || !used)) {
         console.error('Every ledger entry needs --model "<name>" and --used "skill:x,tool:y".');
@@ -622,7 +649,7 @@ function cmdStampMissing() {
     const marks = new Map();
     for (const e of entries) if (e.annotates) marks.set(e.annotates, mergeMark(marks.get(e.annotates), e));
     const fill = {
-        model: arg('model', 'unrecorded'),
+        model: normaliseModel(arg('model', 'unrecorded')),
         used: parseList('used') || ['unrecorded'],
         tokens: arg('tokens', 'unmeasured'),
     };
@@ -709,7 +736,7 @@ function cmdStreams() {
         const name = positional[1];
         if (!name || name === 'none') die('Usage: journal.mjs streams add <name> [--alias a,b]');
         const aliases = parseList('alias') || [];
-        const next = { streams: { ...(reg?.streams || {}) } };
+        const next = { ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
         const owner = canonicalOf(next, name);
         if (owner && owner !== name) die(`"${name}" is already registered as "${owner}" (name or alias, case-insensitive).`);
         const entry = next.streams[name] || { aliases: [], status: 'active' };
@@ -785,6 +812,62 @@ function cmdCarry() {
     });
     if (!dryRun) render(true);
     console.log(`carry  ${target.id}  ${target.stream || '(none)'} -> ${stream}  ${target.text}`);
+}
+
+// models -------------------------------------------------------------------
+
+/** The `models` section of the registry: canonical id plus aliases. Dry run by design for `check`. */
+function cmdModels() {
+    const sub = positional[0] || 'list';
+    const reg = loadRegistry();
+    const entries = readLedger();
+    const rowCounts = new Map();
+    for (const e of entries) if (e.model) rowCounts.set(e.model, (rowCounts.get(e.model) || 0) + 1);
+
+    if (sub === 'list') {
+        const models = reg?.models || {};
+        const rows = Object.entries(models).map(([id, meta]) => ({
+            model: id,
+            aliases: meta?.aliases || [],
+            rows: [...rowCounts].filter(([raw]) => canonicalModel(reg, raw) === id).reduce((a, [, n]) => a + n, 0),
+        }));
+        if (asJson) { console.log(JSON.stringify({ registry: reg?.models ? registryPath : null, models: rows }, null, 2)); return; }
+        console.log(reg?.models ? `Model registry: ${registryPath}` : `No models section in ${registryPath} (model names are free text).`);
+        for (const r of rows) console.log(`  ${r.model}  rows ${r.rows}${r.aliases.length ? `  aliases: ${r.aliases.join(', ')}` : ''}`);
+        return;
+    }
+    if (sub === 'add') {
+        const id = positional[1];
+        if (!id) die('Usage: journal.mjs models add <canonical-id> [--alias a,b]');
+        const next = { streams: {}, hasStreams: false, ...(reg || {}), models: { ...(reg?.models || {}) } };
+        const owner = canonicalModel(next, id);
+        if (owner && owner !== id) die(`"${id}" is already registered as "${owner}" (id or alias, case-insensitive).`);
+        const entry = { aliases: [...(next.models[id]?.aliases || [])] };
+        for (const a of parseList('alias') || []) {
+            const other = canonicalModel(next, a);
+            if (other && other !== id) die(`Alias "${a}" already belongs to "${other}".`);
+            if (a.toLowerCase() !== id.toLowerCase() && !entry.aliases.some((x) => x.toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
+        }
+        next.models[id] = entry;
+        const changed = JSON.stringify(reg?.models?.[id]) !== JSON.stringify(entry);
+        if (changed && !dryRun) saveRegistry(next);
+        console.log(`${changed ? (reg?.models?.[id] ? 'updated' : 'added') : 'unchanged'}  ${id}  aliases: ${entry.aliases.join(', ') || '(none)'}${dryRun && changed ? ' (dry-run)' : ''}`);
+        return;
+    }
+    if (sub === 'check') {
+        // Dry run: every model spelling in the ledger, what it maps to, and which are unknown. Appends nothing.
+        const rows = [...rowCounts].sort((a, b) => b[1] - a[1]).map(([raw, n]) => {
+            const canon = canonicalModel(reg, raw);
+            const status = MODEL_SENTINELS.has(raw) ? 'sentinel' : !reg?.models ? 'no registry' : !canon ? 'unknown' : canon === raw ? 'canonical' : 'alias';
+            return { model: raw, rows: n, canonical: canon, status };
+        });
+        const would = rows.filter((r) => r.status === 'alias');
+        if (asJson) { console.log(JSON.stringify({ rows: would.reduce((a, r) => a + r.rows, 0), models: rows }, null, 2)); return; }
+        console.log(`${would.reduce((a, r) => a + r.rows, 0)} row(s) would show under a different model name; nothing appended.`);
+        for (const r of rows) console.log(`  ${String(r.rows).padStart(5)}  ${r.model}  [${r.status}]${r.status === 'alias' ? ` -> ${r.canonical}` : ''}`);
+        return;
+    }
+    die('Usage: journal.mjs models [list|add <canonical-id> [--alias a,b]|check]');
 }
 
 // retro --------------------------------------------------------------------
@@ -995,6 +1078,7 @@ switch (cmd) {
     case 'render': render(false, has('include-archived')); break;
     case 'tag': cmdTag(); break;
     case 'streams': cmdStreams(); break;
+    case 'models': cmdModels(); break;
     case 'fact': cmdFact(); break;
     case 'carry': cmdCarry(); break;
     case 'retro': cmdRetro(); break;

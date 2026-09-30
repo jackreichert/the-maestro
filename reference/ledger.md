@@ -81,6 +81,16 @@ node $J streams add Security --alias sec          # idempotent; refuses an alias
 node $J streams check                             # dry run: how many items would change display stream; appends nothing
 ```
 
+### Model names
+
+The same `streams.json` may carry a `models` section: `{ "models": { "claude-opus-5-5": { "aliases": ["Claude Opus 5.5", "opus"] } } }`. On write (`--model` on any command, and `stamp-missing`) an alias or case variant is recorded as the canonical id; on read `fold` maps every item's and closing row's `model`, so `usage` and `status` show one name for old rows too. An unknown model warns on stderr and is written as it came: the ledger has odd historic values, and a wrong-but-recorded model beats a rejected entry. The sentinels `unrecorded`, `n/a` and `unmeasured` pass through silently. No `models` section, no normalisation. A file with `models` but no `streams` does not enforce stream names.
+
+```bash
+node $J models add claude-opus-5-5 --alias "Claude Opus 5.5,opus"   # idempotent; refuses an alias owned by another id
+node $J models list                                                 # ids, aliases, rows per id
+node $J models check                                                # dry run: each spelling in the ledger, its status (canonical, alias, unknown) and target
+```
+
 ## Epics: facts, retro, carry, archive
 
 A finished epic gets a retro doc in the vault and then leaves the default views. Nothing is deleted at any point; every step is an appended row.

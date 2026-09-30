@@ -323,6 +323,18 @@ node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
 
 If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
 
+### Model names
+
+`--model` values drift ("Claude Opus 5.5" and "claude-opus-5-5" are the same model, and per-model rollups split in two). A `models` section in the same `streams.json` fixes it the way streams are fixed: canonical id plus aliases, applied on write and on read.
+
+```bash
+node $J models add claude-opus-5-5 --alias "Claude Opus 5.5,opus"   # idempotent; refuses an alias owned by another id
+node $J models list                                                 # ids, aliases, row counts
+node $J models check                                                # dry run: which old spellings would show under which id; appends nothing
+```
+
+An alias is written as the canonical id (`normalised model opus -> claude-opus-5-5` on stderr). An unknown name **warns and is written as-is** (the ledger has odd historic values; nothing is rejected), and `unrecorded`, `n/a` and `unmeasured` never warn. Old rows are healed on read, so `usage` and `status` show one name and the ledger is not rewritten. With no `models` section nothing changes. A registry file with only `models` does not turn on stream enforcement.
+
 ### The derived index
 
 `scripts/ledger-index.mjs` builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets, and each `##` section of `HANDOFF-*.md` notes. The JSONL stays the source of truth: deleting `Index/maestro.sqlite` loses nothing.

@@ -360,3 +360,54 @@ test('status --footer with no streams is the single plain Ledger line, and appen
     assert.equal(run('status', '--footer').out.trim(), '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
 });
+
+// ── model-name registry ─────────────────────────────────────────────────────
+
+const ledgerFile = () => join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+const seedModels = () => {
+    mkdirSync(join(vault, 'Projects', 'test-proj'), { recursive: true });
+    writeFileSync(registryFile(), JSON.stringify({ models: { 'claude-opus-5-5': { aliases: ['Claude Opus 5.5', 'opus'] } } }));
+};
+const usedFlags = ['--used', 'skill:the-maestro'];
+
+test('both spellings of a model are written as the canonical id; an unknown model warns and is kept', () => {
+    seedModels();
+    const a = run('start', 'one', '--model', 'Claude Opus 5.5', ...usedFlags);
+    const b = run('start', 'two', '--model', 'opus', ...usedFlags);
+    const c = run('start', 'three', '--model', 'claude-opus-5-5', ...usedFlags);
+    assert.match(a.err, /normalised model Claude Opus 5\.5 -> claude-opus-5-5/);
+    assert.match(b.err, /normalised model opus -> claude-opus-5-5/);
+    assert.equal(c.err, '');
+    const odd = run('start', 'four', '--model', 'Some Old Model', ...usedFlags);
+    assert.equal(odd.code, 0);
+    assert.match(odd.err, /unknown model "Some Old Model"/);
+    assert.deepEqual(ledger().map((e) => e.model), ['claude-opus-5-5', 'claude-opus-5-5', 'claude-opus-5-5', 'Some Old Model']);
+    assert.equal(run('start', 'five', '--model', 'unrecorded', ...usedFlags).err, '');   // sentinels never warn
+});
+
+test('read-time mapping heals old rows without touching the ledger; models check is a dry run', () => {
+    run('start', 'legacy', '--model', 'Claude Opus 5.5', ...usedFlags);
+    run('start', 'modern', '--model', 'claude-opus-5-5', ...usedFlags);
+    const before = readFileSync(ledgerFile(), 'utf8');
+    assert.deepEqual(JSON.parse(run('usage', '--json').out).model, { 'Claude Opus 5.5': 1, 'claude-opus-5-5': 1 });   // no models section: nothing enforced
+    seedModels();
+    assert.deepEqual(JSON.parse(run('usage', '--json').out).model, { 'claude-opus-5-5': 2 });
+    const c = JSON.parse(run('models', 'check', '--json').out);
+    assert.equal(c.rows, 1);
+    assert.deepEqual(c.models.map((m) => [m.model, m.status]).sort(), [['Claude Opus 5.5', 'alias'], ['claude-opus-5-5', 'canonical']]);
+    assert.match(run('models', 'check').out, /1 row\(s\) would show under a different model name; nothing appended/);
+    assert.equal(readFileSync(ledgerFile(), 'utf8'), before);
+});
+
+test('models add is idempotent, refuses alias collisions, and coexists with streams in the one file', () => {
+    assert.match(run('models', 'add', 'claude-opus-5-5', '--alias', 'Claude Opus 5.5,opus').out, /added\s+claude-opus-5-5/);
+    assert.match(run('models', 'add', 'claude-opus-5-5', '--alias', 'Claude Opus 5.5,opus').out, /unchanged/);
+    assert.equal(run('models', 'add', 'other', '--alias', 'opus').code, 1);
+    assert.equal(existsSync(registryFile()), true);
+    assert.equal(run('start', 'free stream still fine', '--stream', 'Anything', '--model', 'opus', ...usedFlags).code, 0);   // models-only registry does not enforce streams
+    assert.equal(run('streams', 'add', 'Launch').code, 0);
+    assert.deepEqual(Object.keys(registry()).sort(), ['models', 'streams']);
+    assert.deepEqual(registry().models['claude-opus-5-5'].aliases, ['Claude Opus 5.5', 'opus']);
+    assert.equal(run('start', 'x', '--stream', 'Nope', '--model', 'opus', ...usedFlags).code, 1);   // now streams are enforced
+    assert.match(run('models', 'list').out, /claude-opus-5-5\s+rows 1/);
+});
