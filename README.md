@@ -295,6 +295,8 @@ node $J status                               # open items + done today
 node $J standup                              # end-of-day summary, ready to paste
 node $J roll                                 # archive the day, keep open items
 node $J status --footer                      # the reply-footer Ledger lines, one per active stream
+node $J handoff --stream Launch              # scaffold the five-part handoff (see below)
+node $J resume                               # the verify-on-resume checklist
 ```
 
 Also: `log`, `drop`, `stamp`, `stamp-missing`, `usage`, `render`. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. `--project` is required; there is no default project name.
@@ -322,6 +324,19 @@ node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
 ```
 
 If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
+
+### Handoff and resume
+
+A fresh session should not have to hunt for facts nobody wrote down. `handoff` scaffolds the five-part note from the ledger; `resume` is what the fresh session runs first.
+
+```bash
+node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--force]
+node $J resume
+```
+
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` (`status: draft`; the derived index already picks these up) and appends nothing to the ledger. It **never overwrites** an existing file without `--force`. The five parts: (1) tasks with status, the stream's open in-flight and blocked items plus what was done since `--since` (default yesterday); (2) learnings, from items matching learned, lesson, ruled out or cause; (3) artifacts, the PR numbers, refs, tickets and file paths mentioned by those items; (4) decisions awaiting, the open questions and decisions; (5) next concrete action, left blank for the author. Sections 2 and 5 still need a human.
+
+`resume` prints the checklist and runs the parts a script can: the ledger status, `gh pr list --author @me --state open --json number,title,url` (`gh: unavailable` when it is missing or fails; the command still exits 0), and `pgrep -f` for each configured loop pattern (`ok` or `MISSING`). It ends with a reminder that **`ListAgents` is a harness tool, not a shell command**, so the session calls it itself. The loop patterns and whether `gh` is used come from local config (`loop_patterns`, `resume_gh`, or `MAESTRO_LOOP_PATTERNS`, `MAESTRO_RESUME_GH`; see [reference/local-config.md](reference/local-config.md)). Nothing is hardcoded.
 
 ### Model names
 

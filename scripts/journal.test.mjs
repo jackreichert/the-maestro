@@ -411,3 +411,86 @@ test('models add is idempotent, refuses alias collisions, and coexists with stre
     assert.equal(run('start', 'x', '--stream', 'Nope', '--model', 'opus', ...usedFlags).code, 1);   // now streams are enforced
     assert.match(run('models', 'list').out, /claude-opus-5-5\s+rows 1/);
 });
+
+// ── handoff and resume ──────────────────────────────────────────────────────
+
+const runEnv = (env, ...args) => {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', ...env },
+    });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+};
+const handoffFile = (stream) => join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${new Date().toISOString().slice(0, 10)}-${stream}.md`);
+const section = (text, n) => text.split(new RegExp(`^## ${n}\\. .*$`, 'm'))[1].split(/^## /m)[0];
+
+function seedHandoff() {
+    seedRegistry();
+    const wip = idOf(run('start', 'port the fix, see scripts/foo.mjs:12 and PR #123', '--stream', 'Launch', '--repo', 'api', '--ticket', 'api-014', ...MARK).out);
+    run('log', 'blocked on the vendor key', '--kind', 'blocked', '--stream', 'Launch', ...MARK);
+    const done = idOf(run('start', 'wire the flag', '--stream', 'Launch', ...MARK).out);
+    run('done', done, ...MARK);
+    run('log', 'lesson: the cause was a stale cache, ruled out the queue', '--stream', 'Launch', ...MARK);
+    run('ask', 'ship on Friday?', '--stream', 'Launch', ...MARK);
+    run('start', 'other stream work', '--stream', 'Maestro', ...MARK);
+    return { wip, done };
+}
+
+test('handoff scaffolds the five parts from the ledger for one stream only', () => {
+    const { wip } = seedHandoff();
+    const r = run('handoff', '--stream', 'launch');
+    assert.equal(r.code, 0, r.err);
+    const text = readFileSync(handoffFile('Launch'), 'utf8');
+    assert.match(text, /^status: draft$/m);
+    const s1 = section(text, 1);
+    assert.match(s1, new RegExp(`\`${wip}\` \\[in flight\\] port the fix`));
+    assert.match(s1, /\[blocked\] blocked on the vendor key/);
+    assert.match(s1, /\[done \d{4}-\d\d-\d\d\] wire the flag/);
+    assert.doesNotMatch(text, /other stream work/);
+    assert.match(section(text, 2), /stale cache, ruled out the queue/);
+    const s3 = section(text, 3);
+    assert.match(s3, /PRs: #123/);
+    assert.match(s3, /Tickets: api-014/);
+    assert.match(s3, /Paths: scripts\/foo\.mjs:12/);
+    assert.match(section(text, 4), /\[question\] ship on Friday\?/);
+    assert.match(section(text, 5), /Author: one concrete first step/);
+});
+
+test('handoff never overwrites without --force, honours --out, and appends nothing to the ledger', () => {
+    seedHandoff();
+    const before = readFileSync(ledgerFile(), 'utf8');
+    assert.equal(run('handoff', '--stream', 'Launch').code, 0);
+    writeFileSync(handoffFile('Launch'), 'hand edited');
+    const again = run('handoff', '--stream', 'Launch');
+    assert.equal(again.code, 1);
+    assert.match(again.err, /already exists/);
+    assert.equal(readFileSync(handoffFile('Launch'), 'utf8'), 'hand edited');
+    assert.equal(run('handoff', '--stream', 'Launch', '--force').code, 0);
+    assert.match(readFileSync(handoffFile('Launch'), 'utf8'), /^type: handoff$/m);
+    const out = join(vault, 'custom', 'h.md');
+    assert.equal(run('handoff', '--stream', 'Launch', '--out', out).code, 0);
+    assert.ok(existsSync(out));
+    assert.equal(run('handoff', '--stream', 'Nope').code, 1);
+    assert.equal(readFileSync(ledgerFile(), 'utf8'), before);
+});
+
+test('resume reports missing loops, found loops, gh off or unavailable, and the ListAgents reminder', () => {
+    run('start', 'something open', ...MARK);
+    const marker = `maestro-resume-marker-${process.pid}`;
+    const proc = spawnSync(process.execPath, ['-e', `const {spawn}=require('child_process');const c=spawn(process.execPath,['-e','setTimeout(()=>{},30000)','${marker}'],{detached:true,stdio:'ignore'});c.unref();console.log(c.pid)`], { encoding: 'utf8' });
+    const loopPid = Number(proc.stdout.trim());
+    try {
+        const r = runEnv({ MAESTRO_LOOP_PATTERNS: `${marker}, definitely-not-running-${process.pid}` }, 'resume');
+        assert.equal(r.code, 0, r.err);
+        assert.match(r.out, /1 in flight/);
+        assert.match(r.out, new RegExp(`ok\\s+${marker} \\(pid ${loopPid}`));
+        assert.match(r.out, /MISSING\s+definitely-not-running/);
+        assert.match(r.out, /skipped: resume_gh is off/);
+        assert.match(r.out, /ListAgents is a harness tool, not a shell command/);
+    } finally {
+        try { process.kill(loopPid); } catch { /* already gone */ }
+    }
+    const noGh = runEnv({ MAESTRO_RESUME_GH: 'on', PATH: '/nonexistent' }, 'resume');
+    assert.equal(noGh.code, 0, noGh.err);
+    assert.match(noGh.out, /gh: unavailable/);
+    assert.match(noGh.out, /none configured/);
+});

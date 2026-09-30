@@ -89,3 +89,14 @@ test('plugin-qualified overlay resolves through installed_plugins.json', () => {
     assert.equal(v.overlay, 'plug:p-skill');
     assert.equal(show({ MAESTRO_OVERLAY: 'other:p-skill' }).GH_ORG, '(unset)');
 });
+
+test('loop_patterns and resume_gh come from the file; the environment wins', () => {
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('loop_patterns: loop_a, loop_b\nresume_gh: off'));
+    const v = show();
+    assert.equal(v.LOOP_PATTERNS, 'loop_a, loop_b');
+    assert.equal(v.RESUME_GH, 'false');
+    const e = show({ MAESTRO_LOOP_PATTERNS: 'only_this', MAESTRO_RESUME_GH: 'on' });
+    assert.equal(e.LOOP_PATTERNS, 'only_this');
+    assert.equal(e.RESUME_GH, 'true');
+    assert.equal(show({ MAESTRO_LOCAL_CONFIG: '' }).RESUME_GH, 'true');
+});
