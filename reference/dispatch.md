@@ -2,8 +2,8 @@
 
 Read this before touching any tool for a new question or task — before grepping, before deciding
 inline vs. dispatch, before writing a brief. It covers research and ticketing, two-stage dispatch,
-repo routing, agent choice, the brief itself, concurrency, following up, relaying results, and the
-full status-footer formatting rules.
+repo routing, agent choice, the brief itself, external writes, verification loops, concurrency,
+following up, relaying results, and the full status-footer formatting rules.
 
 ## Research, Then Ticket
 
@@ -61,6 +61,12 @@ person doesn't repeat the work.
 Report it the way [Citing work](../reference/citations.md#citing-work) requires: an
 Obsidian-openable link, the title, the priority, and the file path. Never a bare id. Do not commit
 or push the vault unless asked.
+
+**The vault ticket comes first; the external tracker is downstream.** File the vault ticket
+automatically, without asking. An external-tracker issue (Jira, for example) is filed only on the
+user's word: offer it in the report ("want a Jira for this?"), never file it on your own
+initiative. Detail: the `xenophon` skill, *External trackers*. Tracker-specific rules: from the org overlay, if one is
+configured (see [local-config.md](local-config.md#org-overlay)).
 
 Note that vault ticket ids (`{repo}-002`) are **not** issue-tracker keys. If the repo's git-conventions guard wants
 a tracker key in branch names, ask for that separately; don't substitute a
@@ -126,6 +132,12 @@ The scout's job is to *locate and size*, never to solve:
 Use `Explore` or a `general-purpose` agent on a cheap tier. Scouts should be fast and disposable.
 A scout that takes ten minutes has failed at being a scout.
 
+**Scout cap: about 10 tool calls or 5 minutes.** Put it in the brief: "Stop at ~10 tool calls
+and report what you found plus what's left." A scout that hits the cap reports; it doesn't push on.
+If the leftover really matters, dispatch a second, narrower scout, or move to stage 2. Every tool
+call re-reads the agent's whole context, so an uncapped scout is the expensive failure mode (one
+ran to 99 calls on 2026-09-25).
+
 **Ask the scout to recommend the stage-2 shape explicitly.** It has just read the code; it knows
 better than you do whether this is a haiku rename or an opus architecture call.
 
@@ -134,8 +146,8 @@ better than you do whether this is a haiku rename or an opus architecture call.
 When the scout reports, **you** write the real brief and dispatch the worker. Not the scout — you.
 The scout recommends; you decide. Three reasons that boundary matters:
 
-- The [standing guardrails](#standing-guardrails--include-in-every-brief) and the git rules have
-  to be in the brief, and they are yours to put there.
+- The [standing brief block](#standing-brief-block--paste-once-into-every-brief) and the git rules
+  have to be in the brief, and they are yours to put there.
 - You can see the whole board — other agents, other repos, one-writer-per-repo — and the scout
   cannot.
 - Sometimes the scout's answer *is* the answer, and no stage 2 is needed. Recognising that is the
@@ -211,8 +223,24 @@ Do both, in that order:
    would waste a session rediscovering.
 
 Then write `$VAULT_ROOT/Projects/{repo-name}/CONTEXT.md` so the next session does not start from
-zero. Goals, current state, constraints, open questions, last-updated date, and links to
-`DECISIONS.md` / tickets — one canonical home per fact; do not duplicate the README.
+zero. Goals, a `## What done looks like` section (the project's observable finished state), current
+state, constraints, open questions, last-updated date, and links to supporting documents — one
+canonical home per fact; do not duplicate the README.
+
+The project folder has a fixed shape; create the parts as they are needed, not up front:
+
+| Path | Holds |
+|---|---|
+| `CONTEXT.md` | The entry point: goals, done state, current state, constraints, open questions, links |
+| `DECISIONS.md` | Dated decisions with rationale, rejected alternatives, and consequences |
+| `Plans/` | Active plans and runbooks, each with a descriptive name and an explicit status |
+| `Research/` | Evidence and exploration that inform decisions but don't replace them |
+| `Tickets/` | One note per ticket, via `xenophon` |
+| `Archive/` | Completed or superseded material, linked to its replacement |
+
+Test for what belongs in the vault rather than the repo: if the document would still matter after
+the repo disappeared, it goes here. Version-specific docs (`README.md`, the repo's `CLAUDE.md`)
+stay in the repo.
 
 If `CONTEXT.md` already exists, **read it** before researching or dispatching, and update it
 when discovery turns up something that should outlive this conversation.
@@ -223,28 +251,11 @@ behind a questionnaire.
 
 ## Choosing the Agent
 
-Match the agent to the job; match the model to the difficulty.
-
-| Job | Agent | Model |
-|---|---|---|
-| Locate code across many files | `Explore` | default |
-| Implementation in one repo | `general-purpose` or `repo-worker` | sonnet |
-| Mechanical edits, renames, boilerplate | `general-purpose` | haiku |
-| System design, tradeoffs | `architect` (or the local equivalent) | sonnet |
-| Hard architectural calls | `architect` | opus |
-| Post-change review | `reviewer` | haiku |
-| Duplication / dead code sweep | `refactor-check` | haiku |
-| Stress-test a plan before committing | `skeptic` | sonnet |
-| Deep single-axis review | a matching specialist reviewer | default |
-| Continue work you already have context on | `subagent_type: "fork"` | inherits |
-
-Notes:
-
-- `fork` inherits your full conversation context and always runs on your model. Use it when the
-  brief would otherwise have to restate a lot of what you already know.
-- Any other type starts **fresh** — it sees only the brief.
-- Launch independent agents in a **single message with multiple tool calls** so they run
-  concurrently.
+Matching the agent to the job and the model to the difficulty is cost material now — the tier
+table, the division of labour, and how `fork` differs from a fresh agent are in
+[cost/budget.md#choosing-the-agent](../cost/budget.md#choosing-the-agent). Read it before writing a
+brief. The one rule that stays here because it's about dispatch shape, not cost: launch independent
+agents in a **single message with multiple tool calls** so they run concurrently.
 
 ## The Dispatch Brief
 
@@ -256,20 +267,76 @@ A fresh agent sees only what you write. Every brief includes:
    spend one grep yourself to save the agent ten.
 4. **Deliverable shape** — the exact sections you want back.
 5. **Mode** — read-only analysis, or authorized to edit.
-6. **Constraints** — the standing guardrails below.
+6. **Constraints** — the standing brief block below, pasted once, plus anything task-specific.
 7. **Honesty clause** — "cite `file:line` for claims about what the code does; if you cannot verify
    something, say so rather than assuming."
 
-### Standing guardrails — include in every brief
+### Standing brief block — paste once into every brief
 
-- Never read, display, or reference `.env*` or `ssm-*.json`. If a secret is encountered, name the
-  key only, never the value.
-- Never put secrets, credentials, or personally identifiable information in output. If a secret is
-  encountered, name the key only, never the value. Use placeholders (`fake_id_123`, `<test@example.com>`).
-- **Never write a protected branch** — typically `main`, `staging`, `develop`, or any branch the user did not
-  author. On their own feature branches, committing and pushing are allowed. No `rebase`/`merge`/`reset`
-  and no force-push, on any branch, unless they ask. See [reference/git.md](../reference/git.md).
-- Report what actually happened: if tests fail, include the output; if a step was skipped, say so.
+Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
+in the brief; write only what is specific to the task. The block is the contract, so a brief that
+paraphrases it drifts. Approved by the user 2026-09-25.
+
+The block has two `<…>` slots, filled from
+local-config (the overlay's "Standing brief block, filled", see [local-config.md](local-config.md#standing-brief-block-filled)) before pasting: `<user git emails>`
+and `<tracker key example>`. Fill both; a brief that ships with a literal `<…>` slot has lost its
+authorship rule.
+
+```text
+Standing rules (hard limits):
+- Git: before any write run `git log --format='%ae' $(git merge-base <base> HEAD)..HEAD | sort -u`, where <base> is the branch this one was cut from; write only if every author is <user git emails>. Commits a back-merge brought in from main/staging/develop don't count (check with `git log --no-merges --format='%ae' HEAD --not origin/main origin/staging origin/develop`); if unsure, treat the branch as protected and ask. Never write main/staging/develop or anyone else's branch. Fast-forward pushes only: no rebase, merge, reset, cherry-pick or force-push.
+- Stage by explicit path. Never `git add -A` or `git add .`.
+- Commits: Conventional Commits, lowercase code scope, tracker key at the end, e.g. `fix(scheduler): cap retry count <tracker key example>`. No AI attribution (no Co-Authored-By, no "Generated with"). Never bypass hooks (no --no-verify).
+- PRs: drafts only, `--assignee @me`. On review threads, resolve only bot threads; never resolve a human's. Don't push a branch until its name carries the tracker key; rename first.
+- External writes (Jira issues/comments/transitions, GitHub comments/reviews/replies, Slack): do them yourself, only when this brief authorizes them, or not at all. Never hand one to a sub-agent or fork.
+- Never read .env* or ssm-*.json. Secrets: name the key, never the value.
+- PHI: counts and ids only. No names, DOBs, addresses, MRNs, or contact details, anywhere.
+- Waits: foreground only. Use a blocking loop, e.g. `until <check>; do sleep 20; done`, sized to fit the tool timeout; repeat it if needed. Never run_in_background, background watchers, or Monitor.
+- Tool output: request only the fields you need (Jira `fields=`, `gh ... --json a,b --jq ...`). Never paste raw logs or whole files; grep for counts and markers. Wrap long jobs in a script that prints a summary.
+- Report: at most ~20 lines — outcome, numbers, links, decisions needed, what is left open. Put longer detail in a file (vault note, ticket, or report path) and link it. If tests failed or a step was skipped, say so.
+```
+
+Why each cost habit is in this block — the measured cost of skipping it, and the rule that the
+orchestrator follows the same habits for its own tool calls — is cost material now:
+[cost/budget.md#the-standing-briefs-cost-habits](../cost/budget.md#the-standing-briefs-cost-habits).
+
+## External writes have one owner
+
+A write to a system other people read — a Jira issue, comment, or transition; a GitHub PR comment,
+review reply, or thread resolution; a Slack message — cannot really be taken back. **One named
+agent owns each external write, end to end**, and it is the agent the brief authorized.
+
+- The orchestrator either makes the write itself, after the user approved it, or dispatches exactly
+  one agent whose brief names that write.
+- **A helper agent never delegates an external write to a sub-agent or fork.** Delegation loses
+  the approval context, and two agents holding the same write produce duplicates (two comments, a
+  transition applied twice) that someone has to clean up by hand. The standing brief block carries
+  this rule so the agent sees it too.
+- If a helper finds it needs a write its brief didn't authorize, it reports back and asks; it does
+  not improvise one.
+
+## Verification loops
+
+A verification — a rehearsal, a dry run, a shadow run, a parity comparison, a test suite against
+real data — exists to find problems before they ship. **When a verification finds a real problem,
+the default next step is a draft fix PR and a re-run of the same verification**, not a report and a
+wait.
+
+- Once the user has approved this loop for a given verification, run it without asking each time:
+  find → ticket → draft fix PR (per [git.md](git.md)) → re-run → report. Without that approval,
+  propose the loop in one line and wait.
+- A "real problem" is a regression or a defect with a concrete failure. An expected diff, a known
+  accepted gap, or a flaky environment is not; say which it was.
+- Re-run the verification that found it, on the same inputs where possible, so the result is
+  comparable. Report the before and after side by side.
+- **A change to a tested set voids "tested".** When a verification passed on an exact set of
+  PRs (a merge set), any later change to one of them — a review fix, a rebase, a nit — means the set
+  is untested until it is re-verified. Diff each changed PR's new head against the commit that was
+  tested; only a diff you can show doesn't touch the verified behaviour counts as tested-equivalent,
+  and anything else needs a re-run. Say which it was, with the commits.
+
+Go-live work built on these loops (gated readiness plans, merge sets, rollback runbooks) has its
+own skill: `release-rehearsal`. Org-specific go-live steps come from the org overlay, if one is configured (see [local-config.md](local-config.md#org-overlay)).
 
 ## Concurrency Safety
 
@@ -299,6 +366,12 @@ collision, and only then.
   Blocking new work because a repo is occupied defeats the whole point of this mode. Parallel
   workstreams in one repo are normal; isolate them rather than serialising them.
 
+- **git-crypt repos need the key linked into the worktree.** A new worktree of a git-crypt repo
+  can't decrypt until the key directory is linked into `.git/worktrees/<name>/git-crypt/keys`
+  (from the main checkout's `.git/git-crypt/keys`). **That step is the user's**: it touches key
+  material, so ask them to do it and wait, rather than doing it yourself or working on the
+  encrypted files as-is. Which repos are git-crypt: from the org overlay's
+  repo notes, if one is configured (see [local-config.md](local-config.md#org-overlay)).
 - **Always tell the user a worktree is in play**, and give its path — the changes will not appear in
   the main checkout, and `git status` there will look untouched.
 - **Worktrees isolate files, not everything else.** They share one `.git` (so branches, stashes and
@@ -326,8 +399,21 @@ rules:
 
 **The agent's final report is not shown to the user.** If you don't relay it, they never see it.
 
+**Batch the relays.** Each reply re-reads the whole orchestrator context, so a turn per
+notification is the costliest habit in this mode. Measured: batching cut cache reads by about 66%
+and cost by about 28%, with output unchanged.
+- When several agents are live, hold small completions (a correction applied, a runbook tweak, a
+  duplicate "finished" notification) until the next substantive report, or the next user message.
+  Relay them together.
+- Relay at once only what changes what the user does next: a blocker, a finding they have to act
+  on, a failure, a decision request, or the last live agent finishing.
+- A duplicate completion notification for an already-relayed agent gets a one-line reply at most.
+  Never repeat the report.
+
 When a notification arrives:
 
+- If the report ran past ~20 lines, relay the essentials and say the brief's cap was missed, so the
+  next brief can be tighter. Do not paste it on.
 - Lead with the answer or the outcome, not the process.
 - Keep `file:line` citations — they're clickable.
 - Surface disagreements and gaps rather than smoothing them over. An agent reporting "this can't be
@@ -386,8 +472,19 @@ Rules:
   have not yet relayed belongs in the body, not compressed into the footer.
 - Keep it to one line per agent. This is a status bar, not a report.
 
+## Session hygiene
+
+When to roll to a fresh session, the measured cost curve behind the ~200-turn threshold, and what
+the handoff needs to contain, are cost material now:
+[cost/budget.md#session-hygiene](../cost/budget.md#session-hygiene). Read it before a session runs
+long, and at EOD.
+
 ## Anti-patterns
 
+- An agent using `run_in_background`, a watcher, or Monitor to wait. Each completion wakes the
+  orchestrator for a full-context turn. Foreground loops only.
+- A report longer than ~20 lines, or raw JSON/logs pasted into one. It stays in context for good.
+- Restating the standing rules in prose instead of pasting the block once.
 - Grepping at the prompt instead of dispatching a scout. Every tool call you make is a turn the user
   waits through.
 - Letting a scout spawn the worker. The scout recommends; you decide, because the guardrails and
@@ -402,3 +499,10 @@ Rules:
 - Reporting an agent's conclusions as your own verified findings.
 - Ending a reply with no status footer, so in-flight work goes unmentioned.
 - Writing the footer from memory instead of `ListAgents` and `journal.mjs status`.
+- A helper agent handing a Jira or GitHub write to a sub-agent or fork, or two agents holding the
+  same external write.
+- Filing an external-tracker issue nobody asked for, instead of offering it.
+- Reporting a problem a verification found and stopping there, when the user has approved the
+  fix-and-re-run loop.
+- Calling a merge set "tested" after one of its PRs changed, without re-verifying against the
+  tested commit.
