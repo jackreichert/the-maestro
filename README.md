@@ -202,6 +202,8 @@ Org-specific rules (repo topology, tracker rules, data rules, release steps) go 
 
    Put those addresses in your overlay's values file, never in this repo.
 
+   Write them under a "Standing brief block, filled" heading in that file, as described in [reference/local-config.md](reference/local-config.md#standing-brief-block-filled). `node scripts/brief-block.mjs` fails until both slots have a value.
+
 3. **Protected branches and bases.** The default list is `main`, `staging`, and `develop`, plus any branch you did not author. Set yours in your values file, and any per-repo branch bases in your org overlay. The agent must not be told it may write those branches.
 
 4. **Container name.** Set `project` in the config file (or `MAESTRO_PROJECT`). `journal.mjs` still requires `--project`, so a shared copy cannot write into the wrong folder.
@@ -265,7 +267,7 @@ It should:
 1. Resolve which repo the request is about.
 2. Dispatch a read-only scout before grepping itself, then return to you with a one-line ack.
 3. File durable work as a ticket (xenophon) rather than a chat TODO.
-4. Launch a worker with a self-contained brief. The worker does not see the parent conversation. The brief's fields and the standing rules block every brief carries are in [reference/brief.md](reference/brief.md). Each brief names a write scope and a verify command; a field the dispatcher cannot fill means scouting again.
+4. Launch a worker with a self-contained brief. The worker does not see the parent conversation. The brief's fields and the standing rules block every brief carries are in [reference/brief.md](reference/brief.md). `node scripts/brief-block.mjs` prints that block with its two install-specific slots filled from your config, and exits non-zero if any is left empty. Each brief names a write scope and a verify command; a field the dispatcher cannot fill means scouting again.
 5. End the turn. It must not poll a running agent.
 6. Log the work, relay the result when it lands, and end every reply with the live agent roster and ledger counts.
 

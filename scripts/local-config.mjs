@@ -70,6 +70,9 @@ const overlay = readConfig(overlayPath) || {};
 /** One setting: the environment variable if set (even empty), else the user file, else the overlay file. */
 const pick = (envName, key, fallback = '') => process.env[envName] ?? user[key] ?? overlay[key] ?? fallback;
 
+/** The config files that were read: the user file and the overlay's config.md (either may be empty). */
+export { userPath, overlayPath };
+
 /** Name of the org overlay skill (`<skill>` or `<plugin>:<skill>`); empty means none. */
 export { OVERLAY };
 
