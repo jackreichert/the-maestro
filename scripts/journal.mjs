@@ -55,13 +55,15 @@
  * Common flags: --vault <path> --project <name> --json --dry-run --include-archived
  * retro/archive read tickets through ledger-index.mjs: --tickets-vault <path> (else $VAULT_ROOT),
  * --repo <name> picks Projects/<name>/Archive/ for the retro doc (default dev-env).
- * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT.
+ * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT, each also settable in the
+ * config file (see local-config.mjs).
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { LEDGER_ROOT, VAULT_ROOT } from './local-config.mjs';
 
-const DEFAULT_LEDGER_ROOT = process.env.LEDGER_ROOT || process.env.VAULT_ROOT || '';
+const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag'];
 // Kinds that keep an item on the board until something closes it.
 const OPEN_KINDS = ['wip', 'blocked', 'question', 'decision'];
@@ -841,7 +843,7 @@ function cmdCarry() {
 // retro --------------------------------------------------------------------
 
 const ticketsBase = () => {
-    const base = arg('tickets-vault') || process.env.VAULT_ROOT;
+    const base = arg('tickets-vault') || VAULT_ROOT;
     if (!base) {
         console.error('Tickets vault is not set. Set VAULT_ROOT or pass --tickets-vault <path>.');
         process.exit(1);

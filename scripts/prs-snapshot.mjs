@@ -35,7 +35,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { CONTAINER_PROJECT, PR_SEARCH } from './local-config.mjs';
+import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, VAULT_ROOT } from './local-config.mjs';
 
 // Keep the bot list in one place: a literal suffix every GitHub App login
 // carries, plus the two reviewer accounts we see that don't.
@@ -182,7 +182,7 @@ function printDiff({ changes, botEvents }) {
 }
 
 function cmdSnapshot() {
-    const vault = arg('vault', process.env.LEDGER_ROOT || process.env.VAULT_ROOT || '');
+    const vault = arg('vault', LEDGER_ROOT || VAULT_ROOT);
     if (!vault) {
         console.error('Pass --vault <path> (the ledger root), or set LEDGER_ROOT (or VAULT_ROOT).');
         process.exit(1);
