@@ -40,6 +40,9 @@
  *   journal.mjs retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
  *   journal.mjs archive <stream>              hide a finished stream; refuses until retro + promotions are done
  *   journal.mjs unarchive <stream>            bring an archived stream back, exactly
+ *   journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]   take an exclusive repo lock (Claims/<repo>.lock)
+ *   journal.mjs release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
+ *   journal.mjs claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
  *   journal.mjs handoff --stream <name> [--out <path>] [--since YYYY-MM-DD] [--force]   scaffold the five-part handoff
@@ -71,8 +74,9 @@
  * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT, each also settable in the
  * config file (see local-config.mjs).
  */
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH } from './local-config.mjs';
 import { isOpen, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
@@ -1075,6 +1079,89 @@ function setRegistryStatus(stream, status) {
     saveRegistry(reg);
 }
 
+// ── repo claims ─────────────────────────────────────────────────────────────
+
+const claimsDir = join(vault, 'Projects', project, 'Claims');
+const claimPath = (repo) => join(claimsDir, `${repo}.lock`);
+const validRepo = (r) => (r && /^[\w.-]+$/.test(r) && r !== '.' && r !== '..' ? r : die('Give a plain repo name (letters, digits, . _ -).'));
+
+function readClaim(repo) {
+    try { return JSON.parse(readFileSync(claimPath(repo), 'utf8')); } catch { return null; }
+}
+
+function pidAlive(pid) {
+    try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+/** { stale, reason } for a claim: its pid is dead on this host, or it is older than `hours`. A claim with no pid is judged on age alone. */
+function claimStaleness(c, hours) {
+    const age = c?.time ? (Date.now() - Date.parse(c.time)) / 36e5 : Infinity;
+    if (c?.pid && c.host === hostname() && !pidAlive(c.pid)) return { stale: true, reason: `pid ${c.pid} is not running`, ageHours: age };
+    if (age > hours) return { stale: true, reason: `older than ${hours}h`, ageHours: age };
+    return { stale: false, reason: null, ageHours: age };
+}
+
+const describeClaim = (c) => (c ? `desk ${c.desk}, pid ${c.pid ?? 'unknown'}, host ${c.host}, since ${c.time}` : 'an unreadable claim');
+
+/**
+ * Exclusive create is the guarantee: openSync(path, 'wx') is O_CREAT|O_EXCL, so of any number of
+ * racing processes exactly one succeeds. The `claim` ledger row is only the record.
+ */
+function cmdClaim() {
+    const repo = validRepo(positional[0]);
+    if (!arg('desk')) die('Usage: journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]');
+    const desk = normaliseStream(arg('desk'));
+    const usage = usageFromArgs();
+    const pid = arg('pid') ? Number(arg('pid')) : null;
+    if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
+    const claim = { repo, desk, pid, host: hostname(), time: now(), branch: arg('branch') || undefined, why: arg('why') || undefined };
+    if (dryRun) { console.log('[dry-run]', JSON.stringify(claim)); return; }
+    mkdirSync(claimsDir, { recursive: true });
+    let fd;
+    try {
+        fd = openSync(claimPath(repo), 'wx');
+    } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        const held = readClaim(repo);
+        console.error(`${repo} is already claimed by ${describeClaim(held)}.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
+        process.exit(1);
+    }
+    try { writeSync(fd, JSON.stringify(claim, null, 2) + '\n'); } finally { closeSync(fd); }
+    append({ id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, stream: desk, desk, branch: claim.branch, text: `claim ${repo} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage });
+    if (!dryRun) render(true);
+    console.log(`claim  ${repo}  ${desk}`);
+}
+
+function cmdRelease() {
+    const repo = validRepo(positional[0]);
+    const held = readClaim(repo);
+    if (!existsSync(claimPath(repo))) die(`${repo} is not claimed.`);
+    const desk = arg('desk') ? normaliseStream(arg('desk')) : null;
+    if (!has('force') && (!desk || !held || held.desk !== desk)) {
+        die(`${repo} is held by ${describeClaim(held)}. Only that desk can release it (pass --desk), or use --force.`);
+    }
+    const usage = usageFromArgs();
+    if (dryRun) { console.log(`[dry-run] release ${repo}`); return; }
+    unlinkSync(claimPath(repo));
+    append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'released', repo, stream: held?.desk, desk: held?.desk, text: `released ${repo} (${held?.desk ?? 'unknown desk'})${has('force') ? ' with --force' : ''}`, ...usage });
+    if (!dryRun) render(true);
+    console.log(`released  ${repo}  ${held?.desk ?? ''}`);
+}
+
+function cmdClaims() {
+    const hours = Number(arg('stale-hours', '12'));
+    const files = existsSync(claimsDir) ? readdirSync(claimsDir).filter((n) => n.endsWith('.lock')).sort() : [];
+    const rows = files.map((n) => {
+        const repo = n.slice(0, -5);
+        const c = readClaim(repo);
+        const st = claimStaleness(c, hours);
+        return { repo, desk: c?.desk ?? null, pid: c?.pid ?? null, host: c?.host ?? null, time: c?.time ?? null, branch: c?.branch ?? null, ageHours: Number.isFinite(st.ageHours) ? Math.round(st.ageHours * 10) / 10 : null, stale: st.stale, reason: st.reason };
+    });
+    if (asJson) { console.log(JSON.stringify({ staleHours: hours, claims: rows }, null, 2)); return; }
+    if (!rows.length) { console.log('No claims.'); return; }
+    for (const r of rows) console.log(`  ${r.repo}  desk ${r.desk ?? '?'}  pid ${r.pid ?? 'unknown'}  ${r.host ?? '?'}  ${r.ageHours ?? '?'}h${r.branch ? `  ${r.branch}` : ''}${r.stale ? `  STALE (${r.reason})` : ''}`);
+}
+
 // ── backfill ────────────────────────────────────────────────────────────────
 
 const CONF = ['low', 'medium', 'high'];
@@ -1378,6 +1465,9 @@ switch (cmd) {
     case 'retro': cmdRetro(); break;
     case 'archive': cmdArchive(); break;
     case 'unarchive': cmdUnarchive(); break;
+    case 'claim': cmdClaim(); break;
+    case 'release': cmdRelease(); break;
+    case 'claims': cmdClaims(); break;
     case 'backfill': cmdBackfill(); break;
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;

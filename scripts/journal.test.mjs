@@ -1,7 +1,7 @@
 // Run: node --test scripts/journal.test.mjs
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -566,4 +566,89 @@ test('backfill --out writes a review table; --apply --min-confidence high append
     assert.equal(ledger().length, 16);
     assert.equal(run('backfill', '--apply', '--min-confidence', 'bogus', ...MARK).code, 1);
     assert.equal(run('backfill', '--apply', ...['--min-confidence', 'medium']).code, 1);   // apply needs usage marks
+});
+
+// ── claims and concurrent writers ───────────────────────────────────────────
+
+const claimsDirPath = () => join(vault, 'Projects', 'test-proj', 'Claims');
+const lockFile = (repo) => join(claimsDirPath(), `${repo}.lock`);
+
+/** Runs journal.mjs asynchronously so several can genuinely overlap. */
+const runAsync = (args, extraEnv = {}) => new Promise((resolve) => {
+    const p = spawn(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
+        env: { ...process.env, VAULT_ROOT: '', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => resolve({ code, out, err }));
+});
+
+test('concurrent claims on one repo: exactly one wins, the rest name the holder', async () => {
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => runAsync(['claim', 'repo-x', '--desk', `desk${i}`, ...MARK])));
+    const winners = results.map((r, i) => ({ r, i })).filter(({ r }) => r.code === 0);
+    assert.equal(winners.length, 1, results.map((r) => r.err).join('\n'));
+    const lock = JSON.parse(readFileSync(lockFile('repo-x'), 'utf8'));
+    assert.equal(lock.desk, `desk${winners[0].i}`);
+    for (const r of results.filter((x) => x.code !== 0)) assert.match(r.err, new RegExp(`already claimed by desk ${lock.desk},`));
+    assert.equal(ledger().filter((e) => e.kind === 'claim').length, 1);
+    assert.equal(ledger().find((e) => e.kind === 'claim').desk, lock.desk);
+});
+
+test('release is for the holding desk only; --force overrides; both leave a ledger row', () => {
+    assert.equal(run('claim', 'repo-y', '--desk', 'alpha', '--branch', 'feat/x', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-y', '--desk', 'beta', ...MARK).code, 1);
+    const other = run('release', 'repo-y', '--desk', 'beta', ...MARK);
+    assert.equal(other.code, 1);
+    assert.match(other.err, /held by desk alpha/);
+    assert.equal(run('release', 'repo-y', ...MARK).code, 1);   // no desk, no force
+    assert.ok(existsSync(lockFile('repo-y')));
+    assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 0);
+    assert.equal(existsSync(lockFile('repo-y')), false);
+    assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 1);   // not claimed any more
+    assert.equal(run('claim', 'repo-y', '--desk', 'beta', ...MARK).code, 0);
+    assert.equal(run('release', 'repo-y', '--force', ...MARK).code, 0);
+    assert.deepEqual(ledger().filter((e) => e.kind === 'claim' || e.kind === 'released').map((e) => [e.kind, e.desk]),
+        [['claim', 'alpha'], ['released', 'alpha'], ['claim', 'beta'], ['released', 'beta']]);
+    assert.equal(run('claim', '../evil', '--desk', 'alpha', ...MARK).code, 1);
+    assert.equal(run('claim', 'repo-z', ...MARK).code, 1);   // needs --desk
+});
+
+test('claims lists claims and flags a dead pid and an old claim as stale; claim rows are not items', () => {
+    const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' });
+    assert.equal(run('claim', 'live', '--desk', 'alpha', '--pid', String(process.pid), ...MARK).code, 0);
+    assert.equal(run('claim', 'gone', '--desk', 'alpha', '--pid', dead.stdout, ...MARK).code, 0);
+    assert.equal(run('claim', 'nopid', '--desk', 'beta', ...MARK).code, 0);
+    const old = JSON.parse(readFileSync(lockFile('nopid'), 'utf8'));
+    writeFileSync(lockFile('nopid'), JSON.stringify({ ...old, time: new Date(Date.now() - 30 * 36e5).toISOString() }));
+    const byRepo = Object.fromEntries(JSON.parse(run('claims', '--json').out).claims.map((c) => [c.repo, c]));
+    assert.equal(byRepo.live.stale, false);
+    assert.equal(byRepo.gone.stale, true);
+    assert.match(byRepo.gone.reason, /is not running/);
+    assert.equal(byRepo.nopid.stale, true);
+    assert.match(byRepo.nopid.reason, /older than 12h/);
+    assert.equal(JSON.parse(run('claims', '--json', '--stale-hours', '48').out).claims.find((c) => c.repo === 'nopid').stale, false);
+    assert.match(run('claims').out, /gone {2}desk alpha.*STALE \(pid \d+ is not running\)/);
+    assert.deepEqual([statusJson().inflight, statusJson().awaiting], [[], []]);
+    assert.equal(run('claims', '--vault', mkdtempSync(join(tmpdir(), 'empty-'))).out.trim(), 'No claims.');
+});
+
+test('concurrent appends: N processes x M rows all parse, with unique ids and the full count', async () => {
+    const N = 4;
+    const M = 25;
+    const workers = Array.from({ length: N }, (_, w) => new Promise((resolve) => {
+        const script = `const {spawnSync}=require('child_process');for(let i=0;i<${M};i++){const r=spawnSync(process.execPath,[${JSON.stringify(SCRIPT)},'log','w${w}-'+i,'--vault',${JSON.stringify(vault)},'--project','test-proj','--model','m','--used','tool:t'],{encoding:'utf8',env:{...process.env,VAULT_ROOT:''}});if(r.status!==0){console.error(r.stderr);process.exit(1)}}`;
+        const p = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
+        let err = '';
+        p.stderr.on('data', (d) => { err += d; });
+        p.on('close', (code) => resolve({ code, err }));
+    }));
+    const results = await Promise.all(workers);
+    results.forEach((r) => assert.equal(r.code, 0, r.err));
+    const lines = readFileSync(ledgerFile(), 'utf8').split('\n').filter(Boolean);
+    assert.equal(lines.length, N * M);
+    const rows = lines.map((l) => JSON.parse(l));   // throws on any torn or interleaved line
+    assert.equal(new Set(rows.map((r) => r.id)).size, N * M);
+    assert.equal(new Set(rows.map((r) => r.text)).size, N * M);
 });
