@@ -21,6 +21,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { LEDGER_ROOT, VAULT_ROOT } from './local-config.mjs';
 
 const SCHEMA_VERSION = '2';
 const argv = process.argv.slice(2);
@@ -34,8 +35,8 @@ const has = (name) => argv.includes(`--${name}`);
 const positional = argv.slice(1).filter((a, i, all) => !a.startsWith('--') && !VALUE_FLAGS.has(all[i - 1]));
 const fail = (msg) => { console.error(msg); process.exit(1); };
 
-const ledgerRoot = arg('vault', process.env.LEDGER_ROOT || process.env.VAULT_ROOT || '');
-const ticketsRoot = arg('tickets-vault', process.env.VAULT_ROOT || '');
+const ledgerRoot = arg('vault', LEDGER_ROOT || VAULT_ROOT);
+const ticketsRoot = arg('tickets-vault', VAULT_ROOT);
 if (!ledgerRoot) fail('Ledger root is not set. Set LEDGER_ROOT (or VAULT_ROOT), or pass --vault <path>.');
 const project = arg('project', 'dev-env');
 const journalDir = join(ledgerRoot, 'Projects', project, 'Journal');

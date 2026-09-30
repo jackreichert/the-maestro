@@ -38,7 +38,7 @@
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT } from './local-config.mjs';
+import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT } from './local-config.mjs';
 
 const TABLE_HEADER = [
     'Date', 'Sessions', 'Turns', 'Prompts', 'Wakes (notif/handback)', 'Output', 'Cache write',
@@ -74,7 +74,7 @@ function main(argv) {
     const flag = (n) => argv.includes(`--${n}`);
     const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
     const projectsDir = arg('projects-dir', CLAUDE_PROJECTS_DIR);
-    const vault = arg('vault', process.env.VAULT_ROOT || '');
+    const vault = arg('vault', VAULT_ROOT);
     const project = arg('project', CONTAINER_PROJECT);
     const date = arg('date', localDate(new Date().toISOString()));
     const baselineUntil = arg('baseline-until', '2026-09-24');

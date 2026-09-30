@@ -7,6 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pick, compare, uncompact, compact } from './token-metrics.mjs';
 
+// Hermetic: never read the user's config file (see local-config.mjs).
+process.env.MAESTRO_LOCAL_CONFIG = '';
+
 const SCRIPT = new URL('./token-metrics.mjs', import.meta.url).pathname;
 const SENTINEL = 'SENTINEL_CONTENT_fake_id_123';
 let projects;

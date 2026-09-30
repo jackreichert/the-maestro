@@ -7,6 +7,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Hermetic: never read the user's config file (see local-config.mjs).
+process.env.MAESTRO_LOCAL_CONFIG = '';
+
 const SCRIPT = new URL('./ledger-index.mjs', import.meta.url).pathname;
 const JOURNAL = new URL('./journal.mjs', import.meta.url).pathname;
 const TODAY = new Date().toISOString().slice(0, 10);
