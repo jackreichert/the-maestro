@@ -45,8 +45,14 @@ export function canonicalOf(reg, name) {
     return null;
 }
 
-/** Read-time mapping: registered spellings become the canonical name, anything else is left alone. */
-export const mapStreamWith = (reg, s) => (s ? canonicalOf(reg, s) ?? s : s);
+/** `none` is reserved: it means "no stream", and is never a stream name. */
+export const isNoStream = (s) => typeof s === 'string' && s.trim().toLowerCase() === 'none';
+
+/**
+ * Read-time mapping: registered spellings become the canonical name, anything else is left alone.
+ * A stored `none` (older rows) reads as no stream; the ledger itself is never rewritten.
+ */
+export const mapStreamWith = (reg, s) => (s && !isNoStream(s) ? canonicalOf(reg, s) ?? s : (isNoStream(s) ? undefined : s));
 
 // ── model names ─────────────────────────────────────────────────────────────
 
