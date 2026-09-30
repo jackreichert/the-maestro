@@ -30,9 +30,14 @@ node $J usage                             # counts by model and by skill/tool
 
 Why, and the token-saving tests this feeds: `Projects/<container-name>/Research/token-usage-strategies.md` in the vault.
 
-Storage is `$VAULT_ROOT/Projects/{container-name}/Journal/`. Pass `--project` as the
-container folder's name; there is no default. `ledger.jsonl` is append-only and is the source of
-truth; `CURRENT.md` and the dated archives are **generated** from it. That split is deliberate —
+Storage is `$LEDGER_ROOT/Projects/{container-name}/Journal/` — a root of its own, separate from the
+Obsidian vault, so the day-to-day ledger doesn't clutter vault search. `journal.mjs` and
+`prs-snapshot.mjs` resolve the root as `--vault`, then `$LEDGER_ROOT`, then `$VAULT_ROOT` (so an
+unset `LEDGER_ROOT` still works against the old single-root layout). Everything else — tickets,
+`CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/` — stays under `$VAULT_ROOT`. Pass
+`--project` as the container folder's name; there is no default. `ledger.jsonl` is append-only and
+is the source of truth; `CURRENT.md` and the dated archives are **generated** from it. That split
+is deliberate —
 The user can read and edit the markdown without any risk of breaking the log, and a compaction or a
 crashed session cannot lose entries.
 
@@ -54,6 +59,48 @@ somewhere durable.
 **Do not log:** lookups, status checks, anything a ticket already owns in full. A ledger entry is a
 pointer to work; the ticket holds the detail. When both exist, pass `--ticket <id>` and let the link
 carry the weight.
+
+## Workstreams (tags)
+
+To pull a slice of work out into its own section, e.g. "Launch" on a go-live day or "Today" for today's priority, pass `--stream <name>` to `start`/`ask`/`log`/`fact`, or file an existing item with `journal.mjs tag <id> --stream <name>`. `status`, `standup` and CURRENT.md show each stream first, under its own heading, then everything else. Clear it with `--stream none` once the push is over. Use a stream only when the user asks to track something separately; the default is no stream.
+
+**An epic is a stream.** An epic is a ledger stream, e.g. `Launch`; retro and archive key on the stream.
+
+### The stream registry
+
+`$LEDGER_ROOT/Projects/<container-name>/streams.json` is the registry: `{ "streams": { "Launch": { "aliases": ["launch", "launch-v2"], "status": "active" } } }`. Without the file nothing is enforced and streams are free text, as before.
+
+On write (`start`, `log`, `ask`, `tag`, `fact`, `carry --to`) the name is folded to the canonical one, so `launch`, `LAUNCH` and `launch-v2` all record `Launch` (a `normalised launch -> Launch` note goes to stderr). An unknown name is rejected with a did-you-mean suggestion and nothing is written, unless you pass `--new-stream`, which adds it to the registry. A stream marked `archived` rejects writes until `unarchive`.
+
+On read, `fold` maps every row's stream through the registry, so old `launch` rows show under `Launch` with no backfill. The ledger is never rewritten, and deleting `streams.json` restores the raw spellings.
+
+```bash
+node $J streams                                   # list: status, aliases, open/done/dropped/total per stream
+node $J streams add Security --alias sec          # idempotent; refuses an alias that belongs to another stream
+node $J streams check                             # dry run: how many items would change display stream; appends nothing
+```
+
+## Epics: facts, retro, carry, archive
+
+A finished epic gets a retro doc in the vault and then leaves the default views. Nothing is deleted at any point; every step is an appended row.
+
+```bash
+node $J fact v1_visits_full_min=79 --stream Launch "${M[@]}"   # a structured metric; not an item, never open
+node $J retro Launch [--out <path>] [--force] --tickets-vault "$VAULT_ROOT"
+node $J carry <id> --to Maestro "${M[@]}"                        # re-home an open follow-up
+node $J archive Launch "${M[@]}"
+node $J unarchive Launch "${M[@]}"
+```
+
+`fact <key>=<value>` appends a `fact` row for a stream. Facts feed the retro's facts table and are ignored by `status` and the open counts.
+
+`retro <stream>` drafts `Projects/<repo-or-dev-env>/Archive/<stream>-retro-<date>.md` under the vault (`--tickets-vault`, else `$VAULT_ROOT`; `--repo` picks the folder, default `dev-env`; `--out` overrides the whole path). It has front-matter `status: draft` and these sections: Summary (done, dropped and open counts, date span), Timeline (first and last row, rows per day), Facts, Shipped (done items that mention a PR or release, with their `#NNNN` refs), Tickets referenced (with current status from the ledger index), Learnings (notes matching learned, lesson, ruled out or cause), Open follow-ups (including items carried elsewhere) and a "Promoted to" checklist with one line per learning and a blank target. It never overwrites an existing file without `--force`, and it appends nothing to the ledger. Opus polishes the draft and Jack reviews it, then `status:` is changed from `draft`.
+
+`carry <id> --to <stream>` appends a `carry` row that re-homes the item and remembers where it came from.
+
+`archive <stream>` refuses, and lists every blocker, unless all of these hold: the stream has no open items (finish each one, or `carry` it); a retro doc for it exists with `status:` not `draft`; every "Promoted to" line has a target or `one-off`. Then it appends one `archive` row with the stream, the item ids and the retro path, and marks the stream `archived` in the registry. `--retro <path>` names the doc explicitly; otherwise the newest `<stream>-retro-*.md` in the Archive folder is used.
+
+`status`, `standup`, the `render` that writes CURRENT.md, and the `ledger-index` search and queries hide the archived items by default. Pass `--include-archived` to show them. `unarchive <stream>` appends the reverse row and marks the stream active, and the folded items, stats and search counts come back exactly as they were.
 
 ## Ledger or ticket?
 
@@ -80,13 +127,19 @@ keeps only the one-line pointer. **One canonical home per fact; everything else 
 ## End of day
 
 When the user wraps up ("end of day", "EOD", "wrap up", "let's call it"), do this in order: PR
-pass, then tracker review, then `standup`, then `roll`. The PR pass runs first because the tracker
+pass, then tracker review, then the cost line and cost loop, then `standup`, then `roll`. The PR pass runs first because the tracker
 review needs its findings — Jira and the PRs should agree before either gets written down. Run
 both before `roll`, because a roll moves today's lines into the archive.
 
+**Cost line and cost loop.** Right after the tracker review and before `standup`: run the cost
+line, then the self-correcting cost loop over the experiment registry. What to run, how to read it,
+the regression threshold, and the weekly review — all cost material now lives in
+[cost/SKILL.md](../cost/SKILL.md). Put its output (the cost line, plus any proposed adjustments) at
+the end of the standup.
+
 ### PR pass
 
-Run `node scripts/prs-snapshot.mjs --diff --vault "$VAULT_ROOT"`
+Run `node scripts/prs-snapshot.mjs --diff --vault "$LEDGER_ROOT"`
 ([reference/prs.md#mid-day-updates](prs.md#mid-day-updates)) for the mechanical first pass — it
 diffs against whatever the mid-day check last saved and prints only actionable changes — then run
 the full query in [reference/prs.md](prs.md) and diff it against the morning board for anything the
@@ -117,7 +170,8 @@ reads. This step brings the tracker up to date before the day's context is gone.
    secrets.
 3. **Propose status transitions** that the work justifies. For example, *Ready To Implement* →
    *In Progress* once work has really started, or → *Code Review* once a draft PR is up. Use the
-   site's own workflow names (`jira_get_transitions`). Also flag drift in the other direction,
+   site's own workflow names (`jira_get_transitions`; an org's status map comes from its overlay, if one is configured; see
+   [local-config.md](local-config.md#org-overlay)). Also flag drift in the other direction,
    such as an issue marked *In Progress* that nothing touched today, or one in review while its
    PR is still a draft.
 4. **Show the whole batch** as one table (`Key | Comment | Transition`). Post nothing until the
@@ -137,8 +191,27 @@ node $J standup         # formatted, for standup
 node $J status --json   # if you need to reason over it
 ```
 
-Read `CURRENT.md` at the start of a session before asking the user anything. It, plus
+Read `CURRENT.md` (under `$LEDGER_ROOT/Projects/{container-name}/Journal/`) at the start of a
+session before asking the user anything. It, plus
 `$VAULT_ROOT/Projects/{container-name}/CONTEXT.md`, is the handoff.
+
+## Search (derived index)
+
+`scripts/ledger-index.mjs` builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets (including `Tickets/Archive/`) and one row per `##` section of each `HANDOFF-*.md`. The JSONL stays the source of truth; the index lives at `$LEDGER_ROOT/Projects/{container-name}/Index/maestro.sqlite`, and deleting it loses nothing.
+
+`node scripts/ledger-index.mjs index` does a full rebuild into a temp file and renames it into place, then prints the table counts and the elapsed ms. Pass `--vault <path>` for the ledger root and `--tickets-vault <path>` for the vault root, the same way `journal.mjs` takes `--vault`.
+
+`node scripts/ledger-index.mjs search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]` prints the ref, source, title and a snippet per hit, ranked by bm25. It rebuilds first if the ledger, a handoff or the ticket files changed since the last build. Bare ids like `KEY-1234` and `my_db` work without quoting; a query it still cannot parse gives a short error, not a stack trace.
+
+`node scripts/ledger-index.mjs stats [--json]` prints the count per table and the open items per stream, which should agree with `journal.mjs status --json`.
+
+`node scripts/ledger-index.mjs query <name> [args] [--json]` answers common questions from the index without a throwaway script; it rebuilds first if a source changed, prints aligned tables (long text clipped) by default and JSON with `--json`. `query` with no name, or `query --help`, lists the queries; an unknown name gives a friendly error.
+
+The named queries are `open [--stream X]` (open items, newest first; the total agrees with `journal.mjs status --json`), `by-ticket <ticket-id>` (ledger rows whose ticket field, refs or text mention the id, plus the ticket's own row), `untagged [--since YYYY-MM-DD]` (items with no effective stream, counted by date and then listed, as a backfill review aid), `stream-counts` (open, done, dropped and total per stream, with case variants such as `Launch` and `options` kept as separate rows and flagged `CASE SPLIT`), `handoffs [--limit N]` (handoff files newest first with their section titles) and `tickets [--project P] [--status S] [--type T]` (counts by project, type and status, plus the list when any filter is given).
+
+The index maps streams through the registry the same way `journal.mjs` does, and hides archived streams from `search`, `stats` and the named queries unless `--include-archived`. Each archived stream leaves one `archive` doc (ref = the stream, body = the retro's Summary section and its path), so a default search still finds the epic through its retro. `--sql` is raw: it sees everything, and the `archived` columns on `items`, `rows` and `docs` mark what the defaults hide.
+
+`query --sql "<select>"` runs arbitrary SQL against the tables `rows`, `items`, `tickets`, `handoffs`, `docs` and `meta` on a connection opened read-only, so write statements fail with a read-only error and the index cannot be modified.
 
 ## Anti-patterns
 

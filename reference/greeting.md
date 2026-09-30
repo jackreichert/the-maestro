@@ -50,16 +50,38 @@ What to include after the greeting, in this order:
    [reference/prs.md](../reference/prs.md); this is the one-line digest of it, e.g.:
    `PRs: 3 with new comments · 2 drafts ready for you · [repo#438](https://github.com/org/repo/pull/438) has no reviewer · 1 approved, ready to merge`
    As part of this step, take the morning baseline with
-   `node scripts/prs-snapshot.mjs --vault "$VAULT_ROOT"` — see
+   `node scripts/prs-snapshot.mjs --vault "$LEDGER_ROOT"` — see
    [reference/prs.md#mid-day-updates](../reference/prs.md#mid-day-updates). It writes the snapshot
    silently; nothing from it belongs in the greeting itself.
+   Then start the PR watcher in the background, so new reviews and comments surface within
+   minutes instead of waiting for the next board (the user's standing request, 2026-09-27):
+   `node scripts/pr-watch.mjs --baseline --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"`,
+   then the same command with `--interval 600` instead of `--baseline`, run with `run_in_background`.
+   It costs no tokens between changes and exits when something needs attention. Report the change,
+   handle it, then relaunch the watcher (without `--baseline`). Keep exactly one watcher running.
+   The full cadence policy — 600–900s by default, 300s only while a big list is under active
+   review, nothing faster than 300s, and a 30-minute poll with a cutoff at night — is
+   [cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); adjust the interval to
+   match as the day goes on. What it wakes on, and which of those reach the user mid-day, is in
+   [reference/prs.md#the-pr-watcher](../reference/prs.md#the-pr-watcher).
 5. **Shipped today** — only once there is something in it.
 6. **Issue-tracker sprint board** — only when an issue-tracker MCP is installed and connected.
    See [Issue tracker, only if the MCP is installed](#issue-tracker-only-if-the-mcp-is-installed).
+7. **Proposed priorities for the day** — always last. See [Priorities for the day](#priorities-for-the-day).
 
 Summarise; do not paste the raw command output. Group the trivial unblocks together and give the
 sharp ones their own line with the stakes attached. An empty board is still an answer — say it is
 clear and name the obvious next thing to pick up.
+
+## Priorities for the day
+
+End every morning greeting (after the board, before the poem and status footer) by **proposing the day's priorities and asking the user for theirs.** Added at the user's request, 2026-09-26.
+
+- Propose **two to four** priorities, most important first. Draw them from the board: go-live or other deadlines, blocked items you could unblock, decisions awaiting the user that hold up work, open PRs close to merging, and anything the previous day's handoff flagged. One line each, with the reason and the first concrete step.
+- Then ask directly: *"Any priorities of your own for today, or changes to these?"* Ask only this; don't start work on the proposals until the user answers or tells you to go.
+- **Once the user confirms, each priority becomes a ledger stream.** Tag existing items with `journal.mjs tag <id> --stream <Name>`, and pass `--stream <Name>` to every new `start`/`ask`/`log` for it (see [ledger.md#workstreams-tags](ledger.md#workstreams-tags)). Use short, capitalised stream names, e.g. `Options`, `Security`, and stay consistent: a lowercase variant splits the count.
+- **The status footer then shows one `Ledger (<Name>)` line per active stream**, plus `Ledger (other)` for the rest, each counted from `journal.mjs status --json` (field `stream`), never from memory.
+- A priority that carries over from yesterday keeps its stream; don't create a second one. Clear a stream with `--stream none` when its push is over, and drop its footer line.
 
 ## How the "awaiting you" list is formatted
 
@@ -112,7 +134,8 @@ tool was unavailable.
 The ledger tracks what this session is doing. The tracker tracks what the team thinks the user is
 doing. Where they disagree is the useful part.
 
-On first use, if the project key or site is not already known, ask. Do not hardcode either.
+On first use, if the project key or site is not already known, ask. Do not hardcode either. This
+install's values come from local-config (see [local-config.md](local-config.md)).
 
 ```
 jira_search with:
