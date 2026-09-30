@@ -125,6 +125,12 @@ node $J unarchive Launch "${M[@]}"
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
+## Per-stream views
+
+`render` writes `Journal/Streams/<Stream>.md` for each active stream, beside the combined `CURRENT.md`. A page has four sections, In flight, Blocked, Awaiting you and Done today, drawn from the same fold as the board, so the counts agree with `status --footer`. Streams the registry lists as active but that have nothing open get a page of `_none_` rather than a stale one. An archived stream's page carries a link to its retro instead of a board. `CURRENT.md` links every stream page from the stream's heading, and lists archived streams. All of it is generated; edit nothing there.
+
+**Why the ledger is not split per stream.** The streams live in the one `ledger.jsonl`, and the views above are generated from it. Splitting the JSONL would buy nothing a view does not already give, and would cost the properties that make it trustworthy: one file means one total order of rows, ids that are unique by a single check (and `verify` can check them), and `carry` as one appended row instead of a write to two files that could disagree after a crash. A single append-only file is also safe with one writer at a time, and concurrent appenders are covered by the single-`write()` append tested under [Claims](#claims). If the file ever gets slow, compact archived streams (see the archive section) rather than partitioning live ones.
+
 ## Integrity and backup
 
 `verify` checks the raw file: every line parses, ids are unique, and every `closes`, `carries`, `tags`, `annotates` and archive `ids` reference exists. It exits 1 with the offending lines, so run it after any hand edit of `ledger.jsonl`.

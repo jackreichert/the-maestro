@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -726,4 +726,61 @@ test('roll does not commit when the config is off, the root is not a repo, or ve
     const nr = spawnSync(process.execPath, [SCRIPT, 'roll', '--vault', plain, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' } });
     assert.equal(nr.status, 0, nr.stderr);
     assert.match(nr.stderr, /not a git repository root; not committing/);
+});
+
+// ── per-stream views ────────────────────────────────────────────────────────
+
+const streamPage = (name) => join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', `${name}.md`);
+const currentMd = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
+
+test('render writes one page per active stream and CURRENT.md stays the combined board, linking each page', () => {
+    seedRegistry({ Launch: { aliases: [], status: 'active' }, Maestro: { aliases: [], status: 'active' }, Quiet: { aliases: [], status: 'active' } });
+    const a = idOf(run('start', 'launch work', '--stream', 'Launch', ...MARK).out);
+    run('start', 'launch two', '--stream', 'Launch', ...MARK);
+    run('log', 'launch blocker', '--kind', 'blocked', '--stream', 'Launch', ...MARK);
+    const d = idOf(run('start', 'finished thing', '--stream', 'Launch', ...MARK).out);
+    run('done', d, ...MARK);
+    run('ask', 'maestro question?', '--stream', 'Maestro', ...MARK);
+    run('start', 'loose', ...MARK);
+    const r = run('render');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /3 stream page\(s\)/);
+
+    const launch = readFileSync(streamPage('Launch'), 'utf8');
+    assert.match(launch, /^stream: Launch$/m);
+    assert.match(section2(launch, 'In flight'), new RegExp(`\`${a}\` launch work`));
+    assert.match(section2(launch, 'In flight'), /launch two/);
+    assert.match(section2(launch, 'Blocked'), /launch blocker/);
+    assert.match(section2(launch, 'Done today'), /finished thing/);
+    assert.match(section2(launch, 'Awaiting you'), /_none_/);
+    assert.doesNotMatch(launch, /maestro question|loose/);
+    assert.match(section2(readFileSync(streamPage('Maestro'), 'utf8'), 'Awaiting you'), /maestro question\?/);
+    assert.match(readFileSync(streamPage('Quiet'), 'utf8'), /## In flight\n\n_none_/);
+
+    const cur = currentMd();   // still the whole board, grouped by stream, with links
+    assert.match(cur, /# Launch\n\nStream page: \[\[Streams\/Launch\]\]/);
+    assert.match(cur, /# Maestro\n\nStream page: \[\[Streams\/Maestro\]\]/);
+    assert.match(cur, /launch work/);
+    assert.match(cur, /maestro question\?/);
+    assert.match(cur, /loose/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Other.md')), false);
+});
+const section2 = (text, title) => text.split(new RegExp(`^## ${title}.*$`, 'm'))[1].split(/^## /m)[0];
+
+test('an archived stream gets a page that links its retro; the ledger stays one file', () => {
+    seedRegistry();
+    const id = idOf(run('start', 'the work', '--stream', 'Launch', ...MARK).out);
+    run('done', id, ...MARK);
+    runT('retro', 'Launch');
+    const path = retroPath('Launch');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('status: draft', 'status: reviewed').replace(/Promoted to: $/gm, 'Promoted to: one-off'));
+    assert.equal(runT('archive', 'Launch', ...MARK).code, 0);
+    const page = readFileSync(streamPage('Launch'), 'utf8');
+    assert.match(page, /\*\*archived\*\*/);
+    assert.match(page, new RegExp(`Retro: \\[\\[Launch-retro-\\d{4}-\\d\\d-\\d\\d\\]\\] \\(${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
+    assert.doesNotMatch(page, /the work/);
+    assert.match(currentMd(), /## Archived streams\n\n- \[\[Streams\/Launch\]\]/);
+    assert.equal(runT('unarchive', 'Launch', ...MARK).code, 0);
+    assert.doesNotMatch(readFileSync(streamPage('Launch'), 'utf8'), /archived\*\*/);
+    assert.deepEqual(readdirSync(join(vault, 'Projects', 'test-proj', 'Journal')).filter((n) => n.endsWith('.jsonl')), ['ledger.jsonl']);
 });
