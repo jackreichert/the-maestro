@@ -5,7 +5,10 @@
  * Answers "what did we do today, and what is still open" without anyone having
  * to ask. Append-only, so it survives context compaction and session restarts.
  *
- * Storage lives in $VAULT_ROOT/Projects/{project}/Journal/.
+ * Storage lives in $LEDGER_ROOT/Projects/{project}/Journal/ (moved out of the
+ * vault on 2026-09-26 so the day-to-day ledger stays out of Obsidian search;
+ * falls back to $VAULT_ROOT if LEDGER_ROOT is unset, for anyone still on the
+ * old single-root layout).
  * --project is required. There is no default project name.
  *
  *   ledger.jsonl     append-only source of truth, one JSON object per line
@@ -28,27 +31,48 @@
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note
  *   journal.mjs render                        rebuild CURRENT.md from the ledger
+ *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
+ *   journal.mjs streams [list|add <name> [--alias a,b]|check]   the stream registry
+ *   journal.mjs fact <key>=<value> --stream <name>   a structured metric; not an item, never open
+ *   journal.mjs carry <id> --to <stream>      re-home an item (e.g. an open follow-up) to another stream
+ *   journal.mjs retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
+ *   journal.mjs archive <stream>              hide a finished stream; refuses until retro + promotions are done
+ *   journal.mjs unarchive <stream>            bring an archived stream back, exactly
+ *
+ * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
+ * and the item is shown in its own section, e.g. "Launch", ahead of the rest.
+ * If $LEDGER_ROOT/Projects/<project>/streams.json exists it is the registry: aliases and
+ * case fold to the canonical name on write and on read, and an unknown name is rejected
+ * with a suggestion unless --new-stream is passed. No registry, no enforcement.
+ * status, standup and render hide archived streams; --include-archived shows them.
  *
  * Every new entry requires --model and --used. --tokens and --harness are optional.
  * Do not invent either. Unknown history is `unrecorded`, unmeasured tokens are
  * `unmeasured`. --allow-unmarked is only for tests and migrations.
  *
  * Kinds: wip | done | blocked | question | decision | note | resolved | dropped | rolled | stamp
- * Common flags: --vault <path> --project <name> --json --dry-run
+ *        (rows only written by their own commands: tag | fact | carry | archive | unarchive)
+ * Common flags: --vault <path> --project <name> --json --dry-run --include-archived
+ * retro/archive read tickets through ledger-index.mjs: --tickets-vault <path> (else $VAULT_ROOT),
+ * --repo <name> picks Projects/<name>/Archive/ for the retro doc (default dev-env).
+ * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT.
  */
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
-const DEFAULT_VAULT = process.env.VAULT_ROOT || '';
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp'];
+const DEFAULT_LEDGER_ROOT = process.env.LEDGER_ROOT || process.env.VAULT_ROOT || '';
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag'];
 // Kinds that keep an item on the board until something closes it.
 const OPEN_KINDS = ['wip', 'blocked', 'question', 'decision'];
 const isOpen = (i) => !i.closedBy && OPEN_KINDS.includes(i.kind);
+// Rows that are events about items, not items themselves.
+const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'fact', 'carry', 'archive', 'unarchive'];
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -62,9 +86,9 @@ const has = (name) => argv.includes(`--${name}`);
 
 const dryRun = has('dry-run');
 const asJson = has('json');
-const vault = arg('vault', DEFAULT_VAULT);
+const vault = arg('vault', DEFAULT_LEDGER_ROOT);
 if (!vault) {
-    console.error('Vault path is not set. Ask where the Obsidian vault lives, then set VAULT_ROOT or pass --vault <path>.');
+    console.error('Ledger root is not set. Ask where the ledger lives, then set LEDGER_ROOT (or VAULT_ROOT), or pass --vault <path>.');
     process.exit(1);
 }
 const project = arg('project');
@@ -109,6 +133,102 @@ function append(entry) {
     return entry;
 }
 
+// ── stream registry ─────────────────────────────────────────────────────────
+
+const registryPath = join(vault, 'Projects', project, 'streams.json');
+let registryCache;
+
+/** { streams: { Canonical: { aliases: [], status } } }, or null when there is no (readable) registry. */
+function loadRegistry() {
+    if (registryCache !== undefined) return registryCache;
+    registryCache = null;
+    if (!existsSync(registryPath)) return registryCache;
+    try {
+        const j = JSON.parse(readFileSync(registryPath, 'utf8'));
+        registryCache = { streams: j && typeof j.streams === 'object' && j.streams ? j.streams : {} };
+    } catch {
+        console.error('  streams.json is malformed; ignoring the registry');
+    }
+    return registryCache;
+}
+
+function saveRegistry(reg) {
+    mkdirSync(dirname(registryPath), { recursive: true });
+    const tmp = `${registryPath}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify({ streams: reg.streams }, null, 2) + '\n');
+    renameSync(tmp, registryPath);
+    registryCache = reg;
+}
+
+/** Canonical name for a canonical name, alias or case variant; null when the registry does not know it. */
+function canonicalOf(reg, name) {
+    if (!reg || typeof name !== 'string') return null;
+    const k = name.trim().toLowerCase();
+    for (const [canon, meta] of Object.entries(reg.streams)) {
+        if (canon.toLowerCase() === k || (meta?.aliases || []).some((a) => String(a).toLowerCase() === k)) return canon;
+    }
+    return null;
+}
+
+/** Read-time mapping: registered spellings show as the canonical name, anything else is left alone. */
+const mapStream = (s) => (s ? canonicalOf(loadRegistry(), s) ?? s : s);
+
+function editDistance(a, b) {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+            d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+    }
+    return d[a.length][b.length];
+}
+
+/** Nearest registered name or alias, as its canonical stream; null when nothing is close. */
+function didYouMean(reg, name) {
+    const k = name.trim().toLowerCase();
+    let best = null;
+    for (const [canon, meta] of Object.entries(reg.streams)) {
+        for (const cand of [canon, ...(meta?.aliases || [])]) {
+            const c = String(cand).toLowerCase();
+            const dist = c.includes(k) || k.includes(c) ? 1 : editDistance(k, c);
+            if (dist <= Math.max(2, Math.floor(k.length / 3)) && (!best || dist < best.dist)) best = { canon, dist };
+        }
+    }
+    return best?.canon ?? null;
+}
+
+/**
+ * Write-time normalisation for --stream. `none` stays reserved and passes through. With no
+ * registry nothing is enforced. An unknown name is rejected with a suggestion unless --new-stream.
+ */
+function normaliseStream(raw) {
+    if (!raw || raw === 'none') return raw;
+    const reg = loadRegistry();
+    if (!reg) return raw;
+    const canon = canonicalOf(reg, raw);
+    if (canon) {
+        if (reg.streams[canon]?.status === 'archived') {
+            console.error(`Stream "${canon}" is archived. Run \`journal.mjs unarchive ${canon}\` first.`);
+            process.exit(1);
+        }
+        if (canon !== raw) console.error(`normalised ${raw} -> ${canon}`);
+        return canon;
+    }
+    if (has('new-stream')) {
+        if (!dryRun) {
+            reg.streams[raw] = { aliases: [], status: 'active' };
+            saveRegistry(reg);
+        }
+        console.error(`registered new stream ${raw}`);
+        return raw;
+    }
+    const near = didYouMean(reg, raw);
+    console.error(`Unknown stream "${raw}".${near ? ` Did you mean "${near}"?` : ''}`);
+    console.error(`Known: ${Object.keys(reg.streams).join(', ') || '(none)'}. Pass --new-stream to register it, or \`journal.mjs streams add <name>\`.`);
+    process.exit(1);
+}
+
 /** Short, collision-checked, human-typeable id. */
 function newId(existing) {
     const taken = new Set(existing.map((e) => e.id));
@@ -151,17 +271,26 @@ function fold(entries) {
         if (e.id && !e.annotates) byId.set(e.id, e);
     }
     const closed = new Map();
+    const streams = new Map();
+    const archivedBy = new Map();
     for (const e of entries) {
         if (e.closes) closed.set(e.closes, withStamp(e, stamped));
+        if (e.kind === 'tag' && e.tags) streams.set(e.tags, e.stream || undefined);
+        if (e.kind === 'carry' && e.carries) streams.set(e.carries, e.stream || undefined);
+        if (e.kind === 'archive' && e.stream) archivedBy.set(mapStream(e.stream), e.ids || []);
+        if (e.kind === 'unarchive' && e.stream) archivedBy.delete(mapStream(e.stream));
     }
     const items = [];
     for (const e of entries) {
-        if (!e.id || e.closes || e.annotates || e.kind === 'rolled' || e.kind === 'stamp') continue;
+        if (!e.id || e.closes || e.annotates || NON_ITEM_KINDS.includes(e.kind)) continue;
         const base = withStamp(e, stamped);
         const close = closed.get(e.id) || null;
-        items.push({ ...base, closedBy: close, state: close ? close.kind : base.kind });
+        const stream = mapStream(streams.has(e.id) ? streams.get(e.id) : base.stream);
+        items.push({ ...base, stream, closedBy: close, state: close ? close.kind : base.kind });
     }
-    return { items, byId };
+    // Ids hidden by the latest archive event of each still-archived stream.
+    const hidden = new Set([...archivedBy.values()].flat());
+    return { items, byId, hidden, archivedStreams: new Set(archivedBy.keys()) };
 }
 
 function resolveTarget(items, needle) {
@@ -249,6 +378,7 @@ function cmdLog(kindDefault = 'note') {
         text,
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
+        stream: normaliseStream(arg('stream')) || undefined,
         refs: (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean),
         ...usageFromArgs(),
     };
@@ -281,9 +411,44 @@ function cmdClose(newKind) {
     console.log(`${newKind}  ${target.id}  ${target.text}${note ? `\n      ${note}` : ''}`);
 }
 
-function groups() {
+/** File an existing item under a workstream (or clear it with --stream none). */
+function cmdTag() {
+    const needle = positional[0];
+    const stream = normaliseStream(arg('stream'));
+    if (!needle || !stream) { console.error('Usage: journal.mjs tag <id|text> --stream <name>'); process.exit(1); }
+    const { items } = fold(readLedger());
+    const target = items.find((i) => i.id === needle) || resolveTarget(items, needle);
+    if (!target) { console.error(`No item matching "${needle}".`); process.exit(1); }
     const entries = readLedger();
-    const { items } = fold(entries);
+    append({
+        id: newId(entries),
+        ts: now(),
+        date: today(),
+        kind: 'tag',
+        tags: target.id,
+        stream: stream === 'none' ? undefined : stream,
+        text: `stream ${stream}`,
+        ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`tag  ${target.id}  -> ${stream}  ${target.text}`);
+}
+
+const streamTitle = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Every stream that has at least one open or done-today item, in first-seen order. */
+function activeStreams(...lists) {
+    const seen = [];
+    for (const list of lists) for (const i of list) if (i.stream && !seen.includes(i.stream)) seen.push(i.stream);
+    return seen;
+}
+const inStream = (arr, s) => arr.filter((i) => i.stream === s);
+const noStream = (arr) => arr.filter((i) => !i.stream);
+
+function groups(includeArchived = false) {
+    const entries = readLedger();
+    const folded = fold(entries);
+    const items = includeArchived ? folded.items : folded.items.filter((i) => !folded.hidden.has(i.id));
     const open = items.filter(isOpen);
     return {
         items,
@@ -305,7 +470,7 @@ function groups() {
 }
 
 function cmdStatus() {
-    const g = groups();
+    const g = groups(has('include-archived'));
     const d = arg('date', today());
     const rolledAt = g.rollPointOn(d);
     const done = g.doneOn(d, { sinceRoll: true });
@@ -324,10 +489,17 @@ function cmdStatus() {
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
     console.log(`Ledger — ${d}`);
-    line('In flight', g.inflight);
-    line('Blocked', g.blocked);
-    line('Awaiting you', g.awaiting);
-    line(`Done ${d}`, done);
+    for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, done)) {
+        console.log(`\n== ${streamTitle(s)} ==`);
+        line('In flight', inStream(g.inflight, s));
+        line('Blocked', inStream(g.blocked, s));
+        line('Awaiting you', inStream(g.awaiting, s));
+        line(`Done ${d}`, inStream(done, s));
+    }
+    line('In flight', noStream(g.inflight));
+    line('Blocked', noStream(g.blocked));
+    line('Awaiting you', noStream(g.awaiting));
+    line(`Done ${d}`, noStream(done));
     if (rolledAt) console.log(`\n  (${g.doneOn(d).length - done.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
     if (!g.inflight.length && !g.blocked.length && !g.awaiting.length && !done.length) {
@@ -337,7 +509,7 @@ function cmdStatus() {
 }
 
 function standupText(d) {
-    const g = groups();
+    const g = groups(has('include-archived'));
     const done = g.doneOn(d);
     const out = [`# Standup — ${d}`, ''];
 
@@ -351,10 +523,18 @@ function standupText(d) {
         out.push('');
     };
 
-    section('Shipped', done, '_Nothing closed._');
-    section('In flight', g.inflight, '_Nothing running._');
-    section('Blocked', g.blocked, '_Nothing blocked._');
-    section('Awaiting you', g.awaiting, '_No open questions._');
+    for (const s of activeStreams(done, g.inflight, g.blocked, g.awaiting)) {
+        out.push(`# ${streamTitle(s)}`, '');
+        section('Shipped', inStream(done, s), '_Nothing closed._');
+        section('In flight', inStream(g.inflight, s), '_Nothing running._');
+        section('Blocked', inStream(g.blocked, s), '_Nothing blocked._');
+        section('Awaiting you', inStream(g.awaiting, s), '_No open questions._');
+        out.push('# Everything else', '');
+    }
+    section('Shipped', noStream(done), '_Nothing closed._');
+    section('In flight', noStream(g.inflight), '_Nothing running._');
+    section('Blocked', noStream(g.blocked), '_Nothing blocked._');
+    section('Awaiting you', noStream(g.awaiting), '_No open questions._');
 
     const decided = g.decidedOn(d);
     if (decided.length) {
@@ -372,8 +552,8 @@ function cmdStandup() {
     console.log(standupText(arg('date', today())));
 }
 
-function render(quiet = false) {
-    const g = groups();
+function render(quiet = false, includeArchived = false) {
+    const g = groups(includeArchived);
     const d = today();
     const rolledDates = g.dates.filter((x) => g.rollPointOn(x));
 
@@ -398,10 +578,19 @@ function render(quiet = false) {
         out.push('');
     };
 
-    section('In flight', g.inflight);
-    section('Blocked', g.blocked);
-    section('Awaiting you', g.awaiting);
-    section(`Done today (${d})`, g.doneOn(d, { sinceRoll: true }));
+    const doneToday = g.doneOn(d, { sinceRoll: true });
+    for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, doneToday)) {
+        out.push(`# ${streamTitle(s)}`, '');
+        section('In flight', inStream(g.inflight, s));
+        section('Blocked', inStream(g.blocked, s));
+        section('Awaiting you', inStream(g.awaiting, s));
+        section(`Done today (${d})`, inStream(doneToday, s));
+        out.push('# Everything else', '');
+    }
+    section('In flight', noStream(g.inflight));
+    section('Blocked', noStream(g.blocked));
+    section('Awaiting you', noStream(g.awaiting));
+    section(`Done today (${d})`, noStream(doneToday));
     if (g.rollPointOn(d)) out.push(`Earlier today archived -> [[${d}]]`, '');
 
     if (rolledDates.length) {
@@ -527,6 +716,317 @@ function cmdUsage() {
     sorted(used).forEach(([k, n]) => console.log(`  ${String(n).padStart(4)}  ${k}`));
 }
 
+// ── streams, facts, carry, retro, archive ───────────────────────────────────
+
+const die = (msg) => { console.error(msg); process.exit(1); };
+const tally = (items) => ({
+    open: items.filter(isOpen).length,
+    done: items.filter((i) => i.state === 'done').length,
+    dropped: items.filter((i) => i.state === 'dropped').length,
+    total: items.length,
+});
+
+/** Canonical stream for a command argument; unknown to both registry and ledger is an error. */
+function existingStream(name, items) {
+    if (!name) die('Needs a stream name.');
+    const stream = mapStream(name);
+    if (!items.some((i) => i.stream === stream) && !loadRegistry()?.streams[stream]) {
+        die(`No stream "${name}" in the registry or the ledger.`);
+    }
+    return stream;
+}
+
+function cmdStreams() {
+    const sub = positional[0] || 'list';
+    const reg = loadRegistry();
+    const { items } = fold(readLedger());
+    if (sub === 'list') {
+        const seen = [...new Set(items.map((i) => i.stream).filter(Boolean))];
+        const names = [...new Set([...Object.keys(reg?.streams || {}), ...seen])];
+        const rows = names.map((name) => ({
+            stream: name,
+            status: reg?.streams[name]?.status || (reg ? 'unregistered' : '(no registry)'),
+            aliases: reg?.streams[name]?.aliases || [],
+            ...tally(items.filter((i) => i.stream === name)),
+        }));
+        if (asJson) { console.log(JSON.stringify({ registry: reg ? registryPath : null, streams: rows }, null, 2)); return; }
+        console.log(reg ? `Registry: ${registryPath}` : `No registry at ${registryPath} (streams are free text).`);
+        for (const r of rows) {
+            console.log(`  ${r.stream}  [${r.status}]  open ${r.open} · done ${r.done} · dropped ${r.dropped} · total ${r.total}${r.aliases.length ? `  aliases: ${r.aliases.join(', ')}` : ''}`);
+        }
+        return;
+    }
+    if (sub === 'add') {
+        const name = positional[1];
+        if (!name || name === 'none') die('Usage: journal.mjs streams add <name> [--alias a,b]');
+        const aliases = parseList('alias') || [];
+        const next = { streams: { ...(reg?.streams || {}) } };
+        const owner = canonicalOf(next, name);
+        if (owner && owner !== name) die(`"${name}" is already registered as "${owner}" (name or alias, case-insensitive).`);
+        const entry = next.streams[name] || { aliases: [], status: 'active' };
+        for (const a of aliases) {
+            const other = canonicalOf(next, a);
+            if (other && other !== name) die(`Alias "${a}" already belongs to "${other}".`);
+            if (a.toLowerCase() !== name.toLowerCase() && !entry.aliases.some((x) => x.toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
+        }
+        next.streams[name] = entry;
+        const changed = JSON.stringify(reg?.streams?.[name]) !== JSON.stringify(entry);
+        if (changed && !dryRun) saveRegistry(next);
+        console.log(`${changed ? (reg?.streams[name] ? 'updated' : 'added') : 'unchanged'}  ${name}  aliases: ${entry.aliases.join(', ') || '(none)'}${dryRun && changed ? ' (dry-run)' : ''}`);
+        return;
+    }
+    if (sub === 'check') {
+        // Phase 2a dry run: how many rows would change display stream under the mapping. Appends nothing.
+        const entries = readLedger();
+        const raw = fold(entries).items;
+        const rawStreams = new Map();
+        for (const e of entries) {
+            if (e.id && !e.closes && !e.annotates && !NON_ITEM_KINDS.includes(e.kind)) rawStreams.set(e.id, e.stream);
+            if ((e.kind === 'tag' && e.tags) || (e.kind === 'carry' && e.carries)) rawStreams.set(e.tags || e.carries, e.stream || undefined);
+        }
+        const changes = new Map();
+        for (const i of raw) {
+            const before = rawStreams.get(i.id);
+            if (before && before !== i.stream) changes.set(`${before} -> ${i.stream}`, (changes.get(`${before} -> ${i.stream}`) || 0) + 1);
+        }
+        const rowsWithOldSpelling = entries.filter((e) => e.stream && mapStream(e.stream) !== e.stream).length;
+        const total = [...changes.values()].reduce((a, b) => a + b, 0);
+        if (asJson) { console.log(JSON.stringify({ items: total, rows: rowsWithOldSpelling, changes: Object.fromEntries(changes) }, null, 2)); return; }
+        console.log(`${total} item(s) would change display stream (${rowsWithOldSpelling} ledger row(s) carry a non-canonical spelling); nothing appended.`);
+        for (const [k, n] of changes) console.log(`  ${String(n).padStart(4)}  ${k}`);
+        return;
+    }
+    die('Usage: journal.mjs streams [list|add <name> [--alias a,b]|check]');
+}
+
+/** A structured metric for a stream. Not an item: it never shows as open and never reaches the board. */
+function cmdFact() {
+    const pair = arg('text') || positional.join(' ');
+    const eq = pair.indexOf('=');
+    if (eq < 1) die('Usage: journal.mjs fact <key>=<value> --stream <name>');
+    if (!arg('stream')) die('fact needs --stream <name>.');
+    const key = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    const entries = readLedger();
+    const entry = {
+        id: newId(entries), ts: now(), date: arg('date', today()), kind: 'fact', key, value, text: `${key}=${value}`,
+        stream: normaliseStream(arg('stream')), ticket: arg('ticket') || undefined, repo: arg('repo') || undefined,
+        ...usageFromArgs(),
+    };
+    append(entry);
+    if (!dryRun) render(true);
+    console.log(`fact  ${entry.id}  ${entry.text}  (${entry.stream})`);
+}
+
+/** Re-home an item to another stream, keeping the old one in `from` so a retro can say where it went. */
+function cmdCarry() {
+    const needle = positional[0];
+    const to = arg('to');
+    if (!needle || !to) die('Usage: journal.mjs carry <id|text> --to <stream>');
+    const { items } = fold(readLedger());
+    const target = items.find((i) => i.id === needle) || resolveTarget(items, needle);
+    if (!target) die(`No item matching "${needle}".`);
+    const stream = normaliseStream(to);
+    if (stream === 'none') die('carry needs a real stream; use `tag --stream none` to clear one.');
+    const entries = readLedger();
+    append({
+        id: newId(entries), ts: now(), date: today(), kind: 'carry', carries: target.id,
+        from: target.stream, stream, text: `carry ${target.stream || '(none)'} -> ${stream}`,
+        ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`carry  ${target.id}  ${target.stream || '(none)'} -> ${stream}  ${target.text}`);
+}
+
+// retro --------------------------------------------------------------------
+
+const ticketsBase = () => {
+    const base = arg('tickets-vault') || process.env.VAULT_ROOT;
+    if (!base) {
+        console.error('Tickets vault is not set. Set VAULT_ROOT or pass --tickets-vault <path>.');
+        process.exit(1);
+    }
+    return base;
+};
+const retroDir = () => join(ticketsBase(), 'Projects', arg('repo') || 'dev-env', 'Archive');
+const slug = (s) => s.trim().replace(/[\s/\\]+/g, '-');
+const cell = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+const clip = (v, n = 140) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+const PR_WORDS = /\bPRs?\b|pull request|release|#\d{2,}/i;
+const LEARNING = /learned|lesson|ruled out|cause/i;
+const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/g;
+const itemText = (i) => [i.text, i.closedBy && i.closedBy.text !== i.text ? i.closedBy.text : ''].filter(Boolean).join(' — ');
+
+/** Ticket status through ledger-index.mjs (the derived index); null when the index cannot be read. */
+function ticketStatuses(ids) {
+    const safe = ids.filter((id) => /^[\w.-]+$/.test(id));
+    if (!safe.length) return new Map();
+    const sql = `select id, status, title from tickets where id in (${safe.map((id) => `'${id}'`).join(',')})`;
+    const r = spawnSync(process.execPath, [
+        new URL('./ledger-index.mjs', import.meta.url).pathname, 'query', '--sql', sql, '--json',
+        '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
+    ], { encoding: 'utf8' });
+    if (r.status !== 0) return null;
+    try { return new Map(JSON.parse(r.stdout).map((t) => [t.id, t])); } catch { return null; }
+}
+
+function retroText(stream) {
+    const entries = readLedger();
+    const items = fold(entries).items.filter((i) => i.stream === stream);
+    const facts = entries.filter((e) => e.kind === 'fact' && mapStream(e.stream) === stream);
+    const carriedOut = entries.filter((e) => e.kind === 'carry' && e.from && mapStream(e.from) === stream && mapStream(e.stream) !== stream);
+    const open = items.filter(isOpen);
+    const done = items.filter((i) => i.state === 'done');
+    const dropped = items.filter((i) => i.state === 'dropped');
+
+    const touched = [
+        ...items.flatMap((i) => [{ id: i.id, ts: i.ts, date: i.date, text: i.text, kind: i.kind }, ...(i.closedBy ? [{ id: i.closedBy.id, ts: i.closedBy.ts, date: i.closedBy.date, text: i.closedBy.text, kind: i.closedBy.kind }] : [])]),
+        ...facts.map((f) => ({ id: f.id, ts: f.ts, date: f.date, text: f.text, kind: 'fact' })),
+    ].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    const first = touched[0];
+    const last = touched[touched.length - 1];
+    const perDay = new Map();
+    for (const t of touched) perDay.set(t.date, (perDay.get(t.date) || 0) + 1);
+
+    const shipped = done.filter((i) => PR_WORDS.test(itemText(i)) || (i.refs || []).length);
+    const refsOf = (i) => [...new Set([...(itemText(i).match(/#\d{2,}/g) || []), ...(i.refs || []).filter((r) => /^#\d+$/.test(r))])];
+    const learnings = items.filter((i) => LEARNING.test(itemText(i)));
+
+    const cited = new Map();
+    for (const i of items) {
+        if (i.ticket) cited.set(i.ticket, true);
+        for (const id of itemText(i).match(TICKET_ID) || []) if (!cited.has(id)) cited.set(id, false);
+    }
+    const statuses = ticketStatuses([...cited.keys()]);
+
+    const out = [
+        '---', 'status: draft', `stream: ${stream}`, `generated: ${today()}`, 'type: retro', '---', '',
+        `# ${stream} retro`, '',
+        '> Draft generated by `journal.mjs retro`. Polish it, then change `status:` above to `reviewed` and fill every "Promoted to" line before `archive`.', '',
+        '## Summary', '',
+        `- Items done: ${done.length}`, `- Items dropped: ${dropped.length}`, `- Items open: ${open.length}`,
+        `- Other rows (notes, resolved, decisions closed): ${items.length - done.length - dropped.length - open.length}`,
+        `- Facts recorded: ${facts.length}`,
+        `- Date span: ${first ? `${first.date} to ${last.date}` : '(no rows)'}`, '',
+        '## Timeline', '',
+        first ? `- First row: ${first.date} \`${first.id}\` ${clip(first.text, 100)}` : '- (no rows)',
+        last ? `- Last row: ${last.date} \`${last.id}\` ${clip(last.text, 100)}` : '',
+        '', '| Date | Rows |', '|---|---|',
+        ...[...perDay].sort((a, b) => a[0].localeCompare(b[0])).map(([d, n]) => `| ${d} | ${n} |`), '',
+        '## Facts', '',
+        ...(facts.length ? ['| Key | Value | Date |', '|---|---|---|', ...facts.map((f) => `| ${cell(f.key)} | ${cell(f.value)} | ${f.date} |`)] : ['_none_']), '',
+        '## Shipped', '',
+        ...(shipped.length ? shipped.map((i) => `- \`${i.id}\` ${clip(itemText(i), 200)}${refsOf(i).length ? ` (${refsOf(i).join(', ')})` : ''}`) : ['_none_']), '',
+        '## Tickets referenced', '',
+        ...(cited.size ? [
+            '| Ticket | Status | Title |', '|---|---|---|',
+            ...[...cited].flatMap(([id, explicit]) => {
+                const t = statuses?.get(id);
+                if (t) return [`| ${cell(id)} | ${cell(t.status)} | ${cell(t.title)} |`];
+                return explicit || !statuses ? [`| ${cell(id)} | ${statuses ? 'not in index' : 'index unavailable'} | |`] : [];
+            }),
+        ] : ['_none_']), '',
+        '## Learnings', '',
+        ...(learnings.length ? learnings.map((i) => `- \`${i.id}\` ${clip(itemText(i), 300)}`) : ['_none_']), '',
+        '## Open follow-ups', '',
+        ...(open.length ? open.map((i) => `- \`${i.id}\` [${i.kind}] ${clip(i.text, 200)}`) : ['_none_']),
+        ...carriedOut.map((c) => `- carried to ${mapStream(c.stream)}: \`${c.carries}\``), '',
+        '## Promoted to', '',
+        'One line per learning. Give each a target (a DECISIONS.md entry, a skill, a ticket id) or `one-off`.', '',
+        ...(learnings.length ? learnings.map((i) => `- [ ] ${clip(itemText(i), 120)} (\`${i.id}\`) — Promoted to: `) : ['_no learnings to promote_']), '',
+    ];
+    return out.join('\n');
+}
+
+function cmdRetro() {
+    const { items } = fold(readLedger());
+    const stream = existingStream(positional[0], items);
+    const path = arg('out') || join(retroDir(), `${slug(stream)}-retro-${today()}.md`);
+    if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it.`);
+    const body = retroText(stream);
+    if (dryRun) { console.log(body); return; }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, body);
+    console.log(`wrote ${path}`);
+}
+
+// archive ------------------------------------------------------------------
+
+function findRetro(stream) {
+    const explicit = arg('retro');
+    if (explicit) return existsSync(explicit) ? explicit : null;
+    const dirPath = retroDir();
+    if (!existsSync(dirPath)) return null;
+    const hits = readdirSync(dirPath).filter((n) => n.startsWith(`${slug(stream)}-retro-`) && n.endsWith('.md')).sort();
+    return hits.length ? join(dirPath, hits[hits.length - 1]) : null;
+}
+
+const retroStatus = (text) => (text.match(/^---\n([\s\S]*?)\n---/)?.[1].match(/^status:\s*["']?([^"'\s]+)/m) || [])[1] || 'draft';
+
+/** Lines of the "Promoted to" checklist that still have no target. */
+function unfilledPromotions(text) {
+    const sec = text.split(/^## Promoted to\s*$/m)[1];
+    if (!sec) return [];
+    return sec.split(/^## /m)[0].split('\n').filter((l) => /^- \[[ xX]\] /.test(l))
+        .filter((l) => !((l.match(/Promoted to:\s*(.*)$/) || [])[1] || '').trim());
+}
+
+function archiveBlockers(stream, items) {
+    const blockers = [];
+    const open = items.filter((i) => i.stream === stream && isOpen(i));
+    for (const i of open) blockers.push(`open item ${i.id} [${i.kind}]: ${clip(i.text, 80)} (finish it, or \`carry ${i.id} --to <stream>\`)`);
+    const retro = findRetro(stream);
+    if (!retro) blockers.push(`no retro doc found in ${retroDir()} (run \`retro ${stream}\`)`);
+    else {
+        const text = readFileSync(retro, 'utf8');
+        if (retroStatus(text) === 'draft') blockers.push(`retro ${retro} still has status: draft`);
+        const blank = unfilledPromotions(text);
+        if (blank.length) blockers.push(`${blank.length} "Promoted to" line(s) in ${retro} have no target or one-off`);
+    }
+    return { blockers, retro };
+}
+
+function cmdArchive() {
+    const { items, archivedStreams } = fold(readLedger());
+    const stream = existingStream(positional[0], items);
+    if (archivedStreams.has(stream)) die(`${stream} is already archived.`);
+    const { blockers, retro } = archiveBlockers(stream, items);
+    if (blockers.length) {
+        console.error(`Cannot archive ${stream}:`);
+        blockers.forEach((b) => console.error(`  - ${b}`));
+        process.exit(1);
+    }
+    const ids = items.filter((i) => i.stream === stream).map((i) => i.id);
+    const entries = readLedger();
+    append({
+        id: newId(entries), ts: now(), date: today(), kind: 'archive', stream, ids, retro,
+        text: `archived stream ${stream} (${ids.length} items)`, ...usageFromArgs(),
+    });
+    if (!dryRun) { setRegistryStatus(stream, 'archived'); render(true); }
+    console.log(`archive  ${stream}  ${ids.length} item(s) hidden; retro ${retro}`);
+}
+
+function cmdUnarchive() {
+    const { items, archivedStreams } = fold(readLedger());
+    const stream = existingStream(positional[0], items);
+    if (!archivedStreams.has(stream)) die(`${stream} is not archived.`);
+    const entries = readLedger();
+    const last = entries.filter((e) => e.kind === 'archive' && mapStream(e.stream) === stream).pop();
+    append({
+        id: newId(entries), ts: now(), date: today(), kind: 'unarchive', stream, ids: last?.ids || [],
+        text: `unarchived stream ${stream}`, ...usageFromArgs(),
+    });
+    if (!dryRun) { setRegistryStatus(stream, 'active'); render(true); }
+    console.log(`unarchive  ${stream}  ${(last?.ids || []).length} item(s) restored`);
+}
+
+function setRegistryStatus(stream, status) {
+    const reg = loadRegistry();
+    if (!reg) { console.error(`  (no registry; ${stream} not marked ${status} there)`); return; }
+    reg.streams[stream] = { aliases: [], ...(reg.streams[stream] || {}), status };
+    saveRegistry(reg);
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
 switch (cmd) {
@@ -543,7 +1043,14 @@ switch (cmd) {
     case 'status': cmdStatus(); break;
     case 'standup': cmdStandup(); break;
     case 'roll': cmdRoll(); break;
-    case 'render': render(); break;
+    case 'render': render(false, has('include-archived')); break;
+    case 'tag': cmdTag(); break;
+    case 'streams': cmdStreams(); break;
+    case 'fact': cmdFact(); break;
+    case 'carry': cmdCarry(); break;
+    case 'retro': cmdRetro(); break;
+    case 'archive': cmdArchive(); break;
+    case 'unarchive': cmdUnarchive(); break;
     default:
         console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('/**')[1]
             .split('\n').map((l) => l.replace(/^ \* ?/, '')).join('\n').trim());
