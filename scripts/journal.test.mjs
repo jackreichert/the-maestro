@@ -494,3 +494,76 @@ test('resume reports missing loops, found loops, gh off or unavailable, and the 
     assert.match(noGh.out, /gh: unavailable/);
     assert.match(noGh.out, /none configured/);
 });
+
+// ── backfill ────────────────────────────────────────────────────────────────
+
+function seedBackfill() {
+    seedRegistry({ Launch: { aliases: ['launch-v2'], status: 'active' }, Maestro: { aliases: ['orchestrator'], status: 'active' } });
+    const day = new Date().toISOString().slice(0, 10);
+    const at = (h, m = 0) => `${day}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`;
+    const row = (id, h, m, o) => JSON.stringify({ id, ts: at(h, m), date: day, kind: 'wip', refs: [], model: 'm', used: ['x'], ...o });
+    const rows = [
+        // evidence: five tagged Launch items in billing (two on ticket api-1), two tagged Maestro items in one session
+        row('t001', 1, 0, { text: 'tagged one', stream: 'Launch', repo: 'billing', ticket: 'api-1' }),
+        row('t002', 1, 1, { text: 'tagged two', stream: 'Launch', repo: 'billing', ticket: 'api-1' }),
+        row('t003', 1, 2, { text: 'tagged three', stream: 'Launch', repo: 'billing' }),
+        row('t004', 1, 3, { text: 'tagged four', stream: 'Launch', repo: 'billing' }),
+        row('t005', 1, 4, { text: 'tagged five', stream: 'Launch', repo: 'billing' }),
+        row('m001', 5, 0, { text: 'maestro one', stream: 'Maestro', repo: 'tools' }),
+        row('m002', 5, 1, { text: 'maestro two', stream: 'Maestro', repo: 'tools' }),
+        // untagged items
+        row('u001', 3, 0, { text: 'ticket only', ticket: 'api-1' }),                                   // ticket, unanimous: high
+        row('u002', 3, 30 + 1, { text: 'launch-v2 rollout note', repo: 'billing' }),                   // keyword + repo: high
+        row('u003', 8, 0, { text: 'billing tweak', repo: 'billing' }),                                 // repo alone: medium
+        row('u004', 10, 0, { text: 'orchestrator follow-up' }),                                        // keyword alone: medium
+        row('u005', 12, 0, { text: 'nothing to go on' }),                                              // no proposal
+        row('u006', 5, 10, { text: 'same run as the earlier two' }),                                       // neighbours alone: low
+        row('u007', 14, 0, { text: 'launch-v2 but in tools', repo: 'tools' }),                         // keyword Launch vs repo Maestro: conflict, low
+    ];
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(ledgerFile(), rows.join('\n') + '\n');
+}
+const bfJson = (...a) => JSON.parse(run('backfill', '--json', ...a).out);
+
+test('backfill dry run proposes streams with confidence levels and appends nothing', () => {
+    seedBackfill();
+    const before = readFileSync(ledgerFile(), 'utf8');
+    const j = bfJson();
+    assert.equal(j.untagged, 7);
+    assert.equal(j.noProposal, 1);
+    assert.deepEqual(j.byConfidence, { high: 2, medium: 2, low: 2 });
+    assert.deepEqual(j.byStream.map((s) => [s.stream, s.high, s.medium, s.low]).sort(), [['Launch', 2, 1, 1], ['Maestro', 0, 1, 1]]);
+    const text = run('backfill').out;
+    assert.match(text, /7 untagged item\(s\); 6 with a proposal, 1 with none\. Nothing appended/);
+    assert.match(text, /Launch {2}high 2 · medium 1 · low 1/);
+    assert.match(text, /u001 {2}ticket only/);
+    assert.equal(run('backfill', '--dry-run').code, 0);
+    assert.equal(readFileSync(ledgerFile(), 'utf8'), before);
+});
+
+test('backfill --out writes a review table; --apply --min-confidence high appends only high tag events, once', () => {
+    seedBackfill();
+    const report = join(vault, 'report.md');
+    run('backfill', '--out', report);
+    const table = readFileSync(report, 'utf8');
+    assert.match(table, /\| u001 \|.*\| Launch \| high \| ticket \|/);
+    assert.match(table, /\| u002 \|.*\| Launch \| high \| keyword\+repo \|/);
+    assert.match(table, /\| u005 \|.*\| {2}\| {2}\| {2}\|/);
+
+    const dry = run('backfill', '--apply', '--min-confidence', 'high', '--dry-run', ...MARK);
+    assert.match(dry.out, /2 tag row\(s\).*\(dry-run\)/);
+    assert.equal(ledger().length, 14);
+
+    const r = run('backfill', '--apply', '--min-confidence', 'high', ...MARK);
+    assert.equal(r.code, 0, r.err);
+    const added = ledger().slice(14);
+    assert.deepEqual(added.map((e) => [e.kind, e.tags, e.stream, e.confidence, e.prev]), [['tag', 'u001', 'Launch', 'high', null], ['tag', 'u002', 'Launch', 'high', null]]);
+    assert.equal(new Set(added.map((e) => e.backfill)).size, 1);
+    assert.match(added[0].backfill, /^bf-/);
+    assert.equal(new Set(ledger().map((e) => e.id)).size, ledger().length);
+    assert.equal(bfJson().untagged, 5);
+    assert.match(run('backfill', '--apply', '--min-confidence', 'high', ...MARK).out, /0 tag row\(s\)/);   // idempotent
+    assert.equal(ledger().length, 16);
+    assert.equal(run('backfill', '--apply', '--min-confidence', 'bogus', ...MARK).code, 1);
+    assert.equal(run('backfill', '--apply', ...['--min-confidence', 'medium']).code, 1);   // apply needs usage marks
+});
