@@ -22,6 +22,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { LEDGER_ROOT, VAULT_ROOT } from './local-config.mjs';
+import { isOpen, readRegistry, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const SCHEMA_VERSION = '2';
 const argv = process.argv.slice(2);
@@ -62,57 +63,11 @@ function readLedgerRows() {
     }).filter(Boolean);
 }
 
-/** { streams: { Canonical: { aliases, status } } } from streams.json, or null (missing or unreadable). */
-function loadRegistry() {
-    try { return { streams: JSON.parse(readFileSync(registryPath, 'utf8')).streams || {} }; } catch { return null; }
-}
-const registry = loadRegistry();
-function canonicalOf(name) {
-    if (!registry || typeof name !== 'string') return null;
-    const k = name.trim().toLowerCase();
-    for (const [canon, meta] of Object.entries(registry.streams)) {
-        if (canon.toLowerCase() === k || (meta?.aliases || []).some((a) => String(a).toLowerCase() === k)) return canon;
-    }
-    return null;
-}
-const mapStream = (s) => (s ? canonicalOf(s) ?? s : s);
+const registry = readRegistry(registryPath);
+const mapStream = (s) => mapStreamWith(registry, s);
+const fold = (entries) => foldWith(entries, registry).items;
 
-const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'fact', 'carry', 'archive', 'unarchive'];
-
-/**
- * Replicates fold() from journal.mjs (the fold and stream-registry mapping). journal.mjs runs its CLI at
- * import time and exports nothing, so it cannot be imported. Keep in step by hand; the test suite
- * compares open items against `journal.mjs status --json`.
- */
-function fold(entries) {
-    const stamped = new Map();
-    for (const e of entries) {
-        if (e.annotates) {
-            const out = { ...(stamped.get(e.annotates) || {}) };
-            for (const f of ['model', 'used', 'tokens', 'harness']) if (e[f] !== undefined) out[f] = e[f];
-            stamped.set(e.annotates, out);
-        }
-    }
-    const closed = new Map();
-    const streams = new Map();
-    for (const e of entries) {
-        if (e.closes) closed.set(e.closes, e);
-        if (e.kind === 'tag' && e.tags) streams.set(e.tags, e.stream || undefined);
-        if (e.kind === 'carry' && e.carries) streams.set(e.carries, e.stream || undefined);
-    }
-    const items = [];
-    for (const e of entries) {
-        if (!e.id || e.closes || e.annotates || NON_ITEM_KINDS.includes(e.kind)) continue;
-        const close = closed.get(e.id) || null;
-        const stream = mapStream(streams.has(e.id) ? streams.get(e.id) : e.stream);
-        items.push({ ...e, stream, closedBy: close, state: close ? close.kind : e.kind });
-    }
-    return items;
-}
-const OPEN_KINDS = ['wip', 'blocked', 'question', 'decision'];
-const isOpen = (i) => !i.closedBy && OPEN_KINDS.includes(i.kind);
-
-/** Latest archive event per stream, unless a later unarchive cancelled it. Mirrors journal.mjs fold(). */
+/** Latest archive event per stream, unless a later unarchive cancelled it. Same archive rule as fold() in lib/ledger-core.mjs. */
 function archiveState(entries) {
     const byStream = new Map();
     for (const e of entries) {

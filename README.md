@@ -345,6 +345,8 @@ The named queries are `open`, `by-ticket`, `untagged`, `stream-counts`, `handoff
 node --test scripts/*.test.mjs
 ```
 
+`scripts/lib/ledger-core.mjs` holds what both `journal.mjs` and `ledger-index.mjs` need to agree on: the fold, `isOpen`, and the stream-registry lookup. Change it there, once.
+
 The tests run each script as a subprocess against a temporary ledger and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`).
 
 ## What this is not
