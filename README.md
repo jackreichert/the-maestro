@@ -325,6 +325,20 @@ node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
 
 If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
 
+### Repo claims
+
+One writer per repo is easy inside one session (`ListAgents` shows who is running) and impossible to see across sessions. A claim is a lock file every session can see.
+
+```bash
+node $J claim billing-api --desk Launch [--branch feat/x] [--why "porting the fix"] [--pid <session pid>] "${M[@]}"
+node $J release billing-api --desk Launch "${M[@]}"          # only the holding desk; --force overrides
+node $J claims [--stale-hours 12] [--json]                   # who holds what, with a stale check
+```
+
+`claim` creates `$LEDGER_ROOT/Projects/<project>/Claims/<repo>.lock` (desk, pid, host, time, branch, why) with an exclusive create (`O_CREAT|O_EXCL`), so of any number of racing processes exactly one wins; the losers exit 1 and name the holder. A `claim` row goes to the ledger as the record and `release` appends `released`. Neither is an item, so they never show as open. `claims` flags a claim as stale when its pid is not running on this host, or when it is older than `--stale-hours` (default 12). A claim with no `--pid` is judged on age alone: the short-lived shell that runs the command is not a useful pid, so pass the long-lived desk session's pid if you want the liveness check. Nothing deletes a stale claim for you; `release --force` is a decision. See [reference/desks.md](reference/desks.md) (draft) for how this fits a hub-and-desks setup.
+
+Appends are safe across concurrent writers: each row is one `write()` on an `O_APPEND` file, and the tests run several processes appending at once and check that every line parses, ids are unique and none are lost. Ids are chosen by reading the ledger first, so two writers picking the same four characters in the same instant is possible in principle (about one in 1.7 million per pair); `verify` reports duplicate ids if it ever happens.
+
 ### Backfill: filing old untagged items
 
 Items logged before streams existed have none. `backfill` proposes one for each and, after you have reviewed the proposals, files them with appended `tag` rows. The ledger is never rewritten.

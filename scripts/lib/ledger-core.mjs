@@ -12,7 +12,7 @@ import { readFileSync, existsSync } from 'node:fs';
 export const OPEN_KINDS = ['wip', 'blocked', 'question', 'decision'];
 export const isOpen = (i) => !i.closedBy && OPEN_KINDS.includes(i.kind);
 // Rows that are events about items, not items themselves.
-export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'fact', 'carry', 'archive', 'unarchive'];
+export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released'];
 
 // ── stream registry ─────────────────────────────────────────────────────────
 
