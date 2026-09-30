@@ -314,6 +314,7 @@ A stream is a named workstream, usually an epic. Pass `--stream <name>` to `star
 
 ```bash
 node $J tag <id> --stream Launch                    # file an existing item under a stream
+node $J tag <id> --stream none                      # clear it; `none` is reserved and never a stream name
 node $J streams add Launch --alias launch,launch-v2   # the registry: aliases and case fold to one name
 node $J streams list                                # counts per stream
 node $J streams check                               # dry run: how many rows would change display stream; appends nothing
@@ -412,7 +413,7 @@ node $I query                                   # lists the named queries
 node $I query open --stream Launch              # one of them; `query --sql "select ..."` is read-only raw SQL
 ```
 
-The named queries are `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs` and `tickets`. `search` rebuilds first if a source changed. Items of archived streams are hidden unless you pass `--include-archived`. Pass `--vault` and `--tickets-vault` the way `journal.mjs` does.
+The named queries are `open`, `by-ticket` (takes a ticket id or an external tracker key such as `PROJ-123`, matched against the ticket's `external` field with or without its `<tracker>-` prefix), `untagged`, `stream-counts`, `handoffs` and `tickets`. `search` rebuilds first if a source changed. Items of archived streams are hidden unless you pass `--include-archived`. Pass `--vault` and `--tickets-vault` the way `journal.mjs` does.
 
 ### Tests
 
