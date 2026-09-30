@@ -10,16 +10,19 @@
  * Bot activity (Copilot, Aikido, anything `login[bot]`) is summarised as one
  * count line, never itemised — see reference/prs.md#mid-day-updates.
  *
- * Storage is fixed at $VAULT_ROOT/Projects/dev-env/Journal/prs-snapshot.json.
+ * Storage is fixed at $LEDGER_ROOT/Projects/<CONTAINER_PROJECT>/Journal/prs-snapshot.json
+ * (moved out of the vault on 2026-09-26 so the ledger stays out of Obsidian
+ * search; falls back to $VAULT_ROOT if LEDGER_ROOT is unset).
  * This tracks the org-wide PR board, not a single repo's ledger, so unlike
  * journal.mjs there is no --project flag — the container's own project name
- * ("dev-env") is the only one that makes sense here.
+ * (CONTAINER_PROJECT in local-config.mjs) is the only one that makes sense here.
  *
  *   prs-snapshot.mjs [--diff] [--dry-run] --vault <path>
  *       Fetch the live board via `gh api graphql`. With --diff, compare it
  *       against the stored snapshot first and print the actionable changes.
  *       Either way (unless --dry-run), overwrite the snapshot with the fresh
  *       fetch, so the next run diffs against this one.
+ *       Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT.
  *
  *   prs-snapshot.mjs diff <old-snapshot.json> <new-snapshot.json>
  *       Pure diff of two snapshot files already on disk. No network call, no
@@ -32,6 +35,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, VAULT_ROOT } from './local-config.mjs';
 
 // Keep the bot list in one place: a literal suffix every GitHub App login
 // carries, plus the two reviewer accounts we see that don't.
@@ -56,7 +60,7 @@ const has = (name) => argv.includes(`--${name}`);
 // human-readable board's --jq ignores but a diff needs for stable identity:
 // reviewThreads.nodes[].id and latestReviews.nodes[].submittedAt.
 const QUERY = `query {
-  search(query: "is:pr is:open author:@me org:ORG", type: ISSUE, first: 50) {
+  search(query: "${PR_SEARCH}", type: ISSUE, first: 50) {
     nodes {
       ... on PullRequest {
         number
@@ -178,12 +182,12 @@ function printDiff({ changes, botEvents }) {
 }
 
 function cmdSnapshot() {
-    const vault = arg('vault', process.env.VAULT_ROOT || '');
+    const vault = arg('vault', LEDGER_ROOT || VAULT_ROOT);
     if (!vault) {
-        console.error('Pass --vault <path> (the Obsidian vault root), or set VAULT_ROOT.');
+        console.error('Pass --vault <path> (the ledger root), or set LEDGER_ROOT (or VAULT_ROOT).');
         process.exit(1);
     }
-    const dir = join(vault, 'Projects', 'dev-env', 'Journal');
+    const dir = join(vault, 'Projects', CONTAINER_PROJECT, 'Journal');
     const path = join(dir, 'prs-snapshot.json');
 
     const prev = loadSnapshot(path);
