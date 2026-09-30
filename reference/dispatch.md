@@ -329,11 +329,12 @@ wait.
   accepted gap, or a flaky environment is not; say which it was.
 - Re-run the verification that found it, on the same inputs where possible, so the result is
   comparable. Report the before and after side by side.
-- **A change to a tested set voids "tested".** When a verification passed on an exact set of
-  PRs (a merge set), any later change to one of them — a review fix, a rebase, a nit — means the set
-  is untested until it is re-verified. Diff each changed PR's new head against the commit that was
-  tested; only a diff you can show doesn't touch the verified behaviour counts as tested-equivalent,
-  and anything else needs a re-run. Say which it was, with the commits.
+- **A change to a tested set voids "tested".** When a verification passed on an exact set of PRs (a
+  merge set), record each PR's patch id at the tested commit:
+  `git diff <base>..<head> | git patch-id --stable`. At merge time, run it again on the current head.
+  Equal means tested-equivalent (a rebase onto a moved base, say). Different means re-run, unless
+  the change between the two heads touches only docs or tests; then say which it was, with both
+  commits. This is the one home of the rule; `release-rehearsal` applies it to go-live sets.
 
 Go-live work built on these loops (gated readiness plans, merge sets, rollback runbooks) has its
 own skill: `release-rehearsal`. Org-specific go-live steps come from the org overlay, if one is configured (see [local-config.md](local-config.md#org-overlay)).
