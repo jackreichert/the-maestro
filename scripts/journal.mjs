@@ -28,6 +28,7 @@
  *   journal.mjs stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
  *   journal.mjs usage [--open]                counts of model and used marks across items
  *   journal.mjs status [--full]               what is open + done today, with usage marks
+ *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note
  *   journal.mjs render                        rebuild CURRENT.md from the ledger
@@ -74,7 +75,7 @@ const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'fact', 'carry', 'archive', 'u
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -471,6 +472,24 @@ function groups(includeArchived = false) {
     };
 }
 
+/**
+ * The reply-footer Ledger lines: one per active stream (canonical registry names), then `other` for
+ * items with no stream. With no streams at all it is the single plain `Ledger` line.
+ */
+function footerLines(g, done) {
+    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, done);
+    const fmtLine = (name, pick) => {
+        const n = (arr) => arr.filter(pick).length;
+        const blocked = n(g.blocked);
+        return `**Ledger${name ? ` (${name})` : ''}:** ${n(done)} done today · ${n(g.inflight)} in flight · ${n(g.awaiting)} awaiting you${blocked ? ` · ${blocked} blocked` : ''}`;
+    };
+    if (!streams.length) return [fmtLine(null, () => true)];
+    const lines = streams.map((s) => fmtLine(s, (i) => i.stream === s));
+    const otherCount = [g.inflight, g.blocked, g.awaiting, done].reduce((a, arr) => a + noStream(arr).length, 0);
+    if (otherCount) lines.push(fmtLine('other', (i) => !i.stream));
+    return lines;
+}
+
 function cmdStatus() {
     const g = groups(has('include-archived'));
     const d = arg('date', today());
@@ -484,6 +503,8 @@ function cmdStatus() {
         }, null, 2));
         return;
     }
+
+    if (has('footer')) { footerLines(g, done).forEach((l) => console.log(l)); return; }
 
     const line = (label, arr) => {
         if (!arr.length) return;
