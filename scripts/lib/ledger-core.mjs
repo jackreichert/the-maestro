@@ -17,14 +17,18 @@ export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'fact', 'carry', 'archi
 // ── stream registry ─────────────────────────────────────────────────────────
 
 /**
- * { streams: { Canonical: { aliases: [], status } } } from a streams.json path, or null when there is
- * no (readable) registry. `onMalformed` is called when the file exists but is not valid JSON.
+ * { streams, hasStreams, models } from a streams.json path, or null when there is no (readable)
+ * registry. `streams` is { Canonical: { aliases: [], status } }; `hasStreams` says the file has a
+ * `streams` section at all (without one, stream names are not enforced); `models` is
+ * { canonical-id: { aliases: [] } }, or undefined when the file has none.
+ * `onMalformed` is called when the file exists but is not valid JSON.
  */
 export function readRegistry(path, onMalformed) {
     if (!existsSync(path)) return null;
     try {
         const j = JSON.parse(readFileSync(path, 'utf8'));
-        return { streams: j && typeof j.streams === 'object' && j.streams ? j.streams : {} };
+        const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+        return { streams: obj(j?.streams) || {}, hasStreams: Boolean(obj(j?.streams)), models: obj(j?.models) || undefined };
     } catch {
         if (onMalformed) onMalformed();
         return null;
@@ -43,6 +47,21 @@ export function canonicalOf(reg, name) {
 
 /** Read-time mapping: registered spellings become the canonical name, anything else is left alone. */
 export const mapStreamWith = (reg, s) => (s ? canonicalOf(reg, s) ?? s : s);
+
+// ── model names ─────────────────────────────────────────────────────────────
+
+/** Canonical model id for a canonical id or alias (case-insensitive); null when the registry has no models section or does not know it. */
+export function canonicalModel(reg, name) {
+    if (!reg?.models || typeof name !== 'string') return null;
+    const k = name.trim().toLowerCase();
+    for (const [canon, meta] of Object.entries(reg.models)) {
+        if (canon.toLowerCase() === k || (meta?.aliases || []).some((a) => String(a).toLowerCase() === k)) return canon;
+    }
+    return null;
+}
+
+/** Read-time mapping: a registered spelling becomes the canonical id; anything else is left alone. */
+export const mapModelWith = (reg, m) => (typeof m === 'string' && m ? canonicalModel(reg, m) ?? m : m);
 
 // ── fold ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +93,7 @@ export function withStamp(entry, stamped) {
  */
 export function fold(entries, reg) {
     const mapStream = (s) => mapStreamWith(reg, s);
+    const mapModel = (e) => (e && e.model ? { ...e, model: mapModelWith(reg, e.model) } : e);
     const byId = new Map();
     const stamped = new Map();
     for (const e of entries) {
@@ -84,7 +104,7 @@ export function fold(entries, reg) {
     const streams = new Map();
     const archivedBy = new Map();
     for (const e of entries) {
-        if (e.closes) closed.set(e.closes, withStamp(e, stamped));
+        if (e.closes) closed.set(e.closes, mapModel(withStamp(e, stamped)));
         if (e.kind === 'tag' && e.tags) streams.set(e.tags, e.stream || undefined);
         if (e.kind === 'carry' && e.carries) streams.set(e.carries, e.stream || undefined);
         if (e.kind === 'archive' && e.stream) archivedBy.set(mapStream(e.stream), e.ids || []);
@@ -93,7 +113,7 @@ export function fold(entries, reg) {
     const items = [];
     for (const e of entries) {
         if (!e.id || e.closes || e.annotates || NON_ITEM_KINDS.includes(e.kind)) continue;
-        const base = withStamp(e, stamped);
+        const base = mapModel(withStamp(e, stamped));
         const close = closed.get(e.id) || null;
         const stream = mapStream(streams.has(e.id) ? streams.get(e.id) : base.stream);
         items.push({ ...base, stream, closedBy: close, state: close ? close.kind : base.kind });
