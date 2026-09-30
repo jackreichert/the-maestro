@@ -40,6 +40,8 @@
  *   journal.mjs retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
  *   journal.mjs archive <stream>              hide a finished stream; refuses until retro + promotions are done
  *   journal.mjs unarchive <stream>            bring an archived stream back, exactly
+ *   journal.mjs handoff --stream <name> [--out <path>] [--since YYYY-MM-DD] [--force]   scaffold the five-part handoff
+ *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
  * and the item is shown in its own section, e.g. "Launch", ahead of the rest.
@@ -50,6 +52,10 @@
  *
  * Model names: a `models` section in the same registry ({ "claude-opus-5-5": { "aliases": ["Claude Opus 5.5", "opus"] } })
  * folds --model to the canonical id on write and on read. An unknown name warns and is written as-is.
+ *
+ * Handoff and resume: `handoff` writes Journal/HANDOFF-<date>-<stream>.md (status: draft) from the ledger and never
+ * overwrites without --force. `resume` runs ledger status, `gh pr list` and pgrep; the loop patterns and whether
+ * gh is used come from the config file (loop_patterns, resume_gh), never from this script.
  *
  * Every new entry requires --model and --used. --tokens and --harness are optional.
  * Do not invent either. Unknown history is `unrecorded`, unmeasured tokens are
@@ -66,7 +72,7 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH } from './local-config.mjs';
 import { isOpen, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -1059,6 +1065,116 @@ function setRegistryStatus(stream, status) {
     saveRegistry(reg);
 }
 
+// ── handoff and resume ──────────────────────────────────────────────────────
+
+const PATH_LIKE = /(?:^|[\s(`'"])((?:~\/|\.{1,2}\/|\/)[\w.@~+-]+(?:\/[\w.@~+-]+)*(?::\d+)?|[\w.@-]+(?:\/[\w.@-]+)+\.\w{1,6}(?::\d+)?)(?=[\s),.;:`'"]|$)/g;
+const yesterday = () => new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+
+/** PR numbers, refs, tickets and file paths mentioned by a set of items, each listed once. */
+function artifactsOf(items) {
+    const found = new Map();
+    const add = (kind, v) => found.set(`${kind} ${v}`, { kind, v });
+    for (const i of items) {
+        const text = itemText(i);
+        for (const r of i.refs || []) add(/^#\d+$/.test(r) ? 'pr' : 'ref', r);
+        for (const n of text.match(/#\d{2,}/g) || []) add('pr', n);
+        if (i.ticket) add('ticket', i.ticket);
+        for (const t of text.match(TICKET_ID) || []) add('ticket', t);
+        for (const m of text.matchAll(PATH_LIKE)) add('path', m[1]);
+    }
+    return [...found.values()];
+}
+
+function handoffText(stream, since) {
+    const items = fold(readLedger()).items.filter((i) => i.stream === stream);
+    const d = today();
+    const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
+    const open = items.filter((i) => isOpen(i) && (i.kind === 'wip' || i.kind === 'blocked'));
+    const doneRecently = items.filter((i) => i.state === 'done' && (i.closedBy?.date || i.date) >= since);
+    const awaiting = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
+    const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
+    const touched = items.filter((i) => isOpen(i) || recent(i));
+    const arts = artifactsOf(touched);
+    const meta = (i) => [i.repo, i.ticket && `[[${i.ticket}]]`].filter(Boolean).join(' · ');
+    const line = (i, tag) => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
+    const one = (kind) => arts.filter((a) => a.kind === kind).map((a) => a.v);
+
+    return [
+        '---', 'status: draft', `stream: ${stream}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
+        `# ${stream} handoff, ${d}`, '',
+        '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived; 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
+        '## 1. Tasks with status', '',
+        ...(open.length || doneRecently.length ? [
+            ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
+            ...doneRecently.map((i) => line(i, `done ${i.closedBy?.date || i.date}`)),
+        ] : ['_none_']), '',
+        '## 2. Learnings, including what was ruled out', '',
+        ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
+        '## 3. Artifacts', '',
+        ...(arts.length ? [
+            ...(one('pr').length ? [`- PRs: ${one('pr').join(', ')}`] : []),
+            ...(one('ticket').length ? [`- Tickets: ${one('ticket').join(', ')}`] : []),
+            ...(one('ref').length ? [`- Refs: ${one('ref').join(', ')}`] : []),
+            ...(one('path').length ? [`- Paths: ${one('path').join(', ')}`] : []),
+        ] : ['_none_']), '',
+        '## 4. Decisions awaiting', '',
+        ...(awaiting.length ? awaiting.map((i) => line(i, i.kind)) : ['_none_']), '',
+        '## 5. Next concrete action', '',
+        '_Author: one concrete first step for the fresh session._', '',
+        'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
+    ].join('\n');
+}
+
+function cmdHandoff() {
+    const { items } = fold(readLedger());
+    const stream = existingStream(arg('stream'), items);
+    const since = arg('since', yesterday());
+    const path = arg('out') || join(dir, `HANDOFF-${today()}-${slug(stream)}.md`);
+    if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
+    const body = handoffText(stream, since);
+    if (dryRun) { console.log(body); return; }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, body);
+    console.log(`wrote ${path}`);
+}
+
+/** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
+function tryRun(cmdName, args) {
+    const r = spawnSync(cmdName, args, { encoding: 'utf8' });
+    return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+}
+
+function cmdResume() {
+    console.log('== Verify on resume ==');
+    console.log('\n1. Ledger');
+    cmdStatus();
+
+    console.log('\n2. Open PRs (gh)');
+    if (!RESUME_GH) console.log('  skipped: resume_gh is off in the config');
+    else {
+        const r = tryRun('gh', ['pr', 'list', '--author', '@me', '--state', 'open', '--json', 'number,title,url']);
+        if (r.missing) console.log('  gh: unavailable (not installed)');
+        else if (!r.ok) console.log(`  gh: unavailable (${clip(r.err, 120) || 'gh exited non-zero'})`);
+        else {
+            let prs = [];
+            try { prs = JSON.parse(r.out || '[]'); } catch { /* fall through to the count */ }
+            console.log(`  ${prs.length} open`);
+            prs.forEach((p) => console.log(`  #${p.number} ${p.title} ${p.url}`));
+        }
+    }
+
+    console.log('\n3. Loops (pgrep)');
+    if (!LOOP_PATTERNS.length) console.log('  none configured (set loop_patterns in the config)');
+    for (const pattern of LOOP_PATTERNS) {
+        const r = tryRun('pgrep', ['-f', pattern]);
+        if (r.missing) console.log(`  ${pattern}: pgrep unavailable`);
+        else console.log(r.ok ? `  ok       ${pattern} (pid ${r.out.split('\n').join(', ')})` : `  MISSING  ${pattern}`);
+    }
+
+    console.log('\n4. ListAgents');
+    console.log('  NOT RUN: ListAgents is a harness tool, not a shell command. Call it yourself before acting.');
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
 switch (cmd) {
@@ -1084,6 +1200,8 @@ switch (cmd) {
     case 'retro': cmdRetro(); break;
     case 'archive': cmdArchive(); break;
     case 'unarchive': cmdUnarchive(); break;
+    case 'handoff': cmdHandoff(); break;
+    case 'resume': cmdResume(); break;
     default:
         console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('/**')[1]
             .split('\n').map((l) => l.replace(/^ \* ?/, '')).join('\n').trim());

@@ -95,6 +95,12 @@ export const LEDGER_ROOT = pick('LEDGER_ROOT', 'ledger_root');
 /** The vault holding tickets, CONTEXT.md and the rest. Empty means "not set". */
 export const VAULT_ROOT = pick('VAULT_ROOT', 'vault_root');
 
+/** Process patterns `journal.mjs resume` checks with pgrep, comma-separated in the config. Empty means none. */
+export const LOOP_PATTERNS = pick('MAESTRO_LOOP_PATTERNS', 'loop_patterns').split(',').map((s) => s.trim()).filter(Boolean);
+
+/** Whether `journal.mjs resume` lists open PRs through `gh`. Anything but off/false/no/0 means on. */
+export const RESUME_GH = !/^(off|false|no|0)$/i.test(pick('MAESTRO_RESUME_GH', 'resume_gh').trim());
+
 /** The PR search string every PR script shares. */
 export const PR_SEARCH = `is:pr is:open author:@me${GH_ORG ? ` org:${GH_ORG}` : ''}`;
 
@@ -104,7 +110,7 @@ if (process.argv[1] && isMain()) {
   console.log(`user_file:    ${userPath || '(disabled)'}${userPath && existsSync(userPath) ? '' : ' (not found)'}`);
   console.log(`overlay:      ${OVERLAY || '(none)'}`);
   console.log(`overlay_file: ${overlayPath || '(none found)'}`);
-  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, LEDGER_ROOT, VAULT_ROOT })) {
+  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH })) {
     console.log(`${k.padEnd(20)} ${v || '(unset)'}`);
   }
 }
