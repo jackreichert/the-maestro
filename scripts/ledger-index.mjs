@@ -330,7 +330,7 @@ const QUERY_HELP = `Usage: ledger-index.mjs query <name> [args] [--json]
 
 Named queries (each rebuilds the index first if a source changed):
   open [--stream X]                         open items, newest first
-  by-ticket <ticket-id>                     ledger rows mentioning the id, plus the ticket's own row
+  by-ticket <ticket-id|external-key>        ledger rows mentioning the id, plus the ticket's own row (matched by id or external tracker key)
   untagged [--since YYYY-MM-DD]             items with no effective stream, by date, then the list
   stream-counts                             open/done/dropped/total per stream; case variants flagged
   handoffs [--limit N]                      handoff files, newest first, with section titles
@@ -358,6 +358,13 @@ const projectOf = (path) => path.match(/Projects\/([^/]+)\/Tickets\//)?.[1] ?? '
 const tally = (rows, key) => Object.entries(rows.reduce((m, r) => ((m[r[key] ?? '(none)'] = (m[r[key] ?? '(none)'] || 0) + 1), m), {}))
     .map(([k, count]) => ({ [key]: k, count })).sort((a, b) => b.count - a.count || a[key].localeCompare(b[key]));
 
+/** True when a ticket's `external` is `key` or `<tracker>-key`; the tracker prefix is one word, so `123` never matches `jira-PROJ-123`. */
+function externalMatches(external, key) {
+    if (!external) return false;
+    const ext = external.trim();
+    return ext === key || new RegExp(`^[A-Za-z][A-Za-z0-9_]*-${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).test(ext);
+}
+
 const QUERIES = {
     open(db) {
         const stream = arg('stream') && mapStream(arg('stream'));
@@ -368,12 +375,15 @@ const QUERIES = {
     },
     'by-ticket'(db) {
         const id = positional[1];
-        if (!id) fail('Usage: query by-ticket <ticket-id>');
+        if (!id) fail('Usage: query by-ticket <ticket-id|external-key>');
         const rows = db.prepare(`SELECT r.id, r.date, r.kind, coalesce(i.stream, r.stream) AS stream, r.ticket, r.text FROM rows r
             LEFT JOIN items i ON i.id = coalesce(r.closes, r.tags, r.carries, r.id)
             WHERE (r.ticket = ?1 OR instr(r.raw, ?1) > 0) ${withArchived ? '' : 'AND r.archived = 0'} ORDER BY r.seq DESC`).all(id)
             .map((r) => ({ ...r, text: clip(r.text, 100) }));
-        const tk = db.prepare('SELECT id, title, status, type, path FROM tickets WHERE id = ?').all(id);
+        // A ticket matches by id, or by its `external` tracker key: `<tracker>-KEY` (e.g. jira-PROJ-123) or the bare KEY.
+        const tk = db.prepare('SELECT id, title, status, type, external, path FROM tickets').all()
+            .filter((t) => t.id === id || externalMatches(t.external, id))
+            .map(({ external, ...rest }) => rest);
         return {
             data: { ticket: tk, rows },
             text: `ticket:\n${table(tk, ['id', 'title', 'status', 'type', 'path'])}\n\nledger rows mentioning ${id}: ${rows.length}\n${table(rows, ['id', 'date', 'kind', 'stream', 'ticket', 'text'])}`,

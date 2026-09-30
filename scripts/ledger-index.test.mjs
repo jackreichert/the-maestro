@@ -171,6 +171,20 @@ test('query by-ticket finds mentions and the ticket row', () => {
     assert.equal(run('query', 'by-ticket').code, 1);
 });
 
+test('query by-ticket finds the ticket by id, by external key with or without tracker prefix, and not when unknown', () => {
+    for (const key of ['p1-001', 'KEY-1', 'jira-KEY-1']) {
+        const r = qj('by-ticket', key);
+        assert.equal(r.ticket.length, 1, key);
+        assert.equal(r.ticket[0].id, 'p1-001', key);
+    }
+    for (const key of ['KEY-2', 'EY-1', '1', 'p1-999']) assert.equal(qj('by-ticket', key).ticket.length, 0, key);
+    // ledger rows that carry the external key still show up beside the ticket row
+    appendFileSync(join(jdir, 'ledger.jsonl'), row({ id: 'nnnn', kind: 'note', text: 'worked KEY-1', ticket: 'KEY-1' }));
+    const r = qj('by-ticket', 'KEY-1');
+    assert.deepEqual(r.rows.map((x) => x.id), ['nnnn']);
+    assert.equal(r.ticket.length, 1);
+});
+
 test('query untagged counts by date and honours --since', () => {
     appendFileSync(join(jdir, 'ledger.jsonl'), JSON.stringify({ ts: '2020-01-01T00:00:00Z', date: '2020-01-01', kind: 'wip', id: 'old1', text: 'ancient', refs: [] }) + '\n');
     const r = qj('untagged');
