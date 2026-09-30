@@ -19,10 +19,11 @@ any command below, read the file its row names, and no others, before acting.
    Read its `CONTEXT.md`.
 3. **Scout** — dispatch a read-only scout immediately; never grep yourself first
    (`reference/dispatch.md#two-stage-dispatch`).
-4. **Ticket** — file durable work with `xenophon` (`reference/dispatch.md#research-then-ticket`).
+4. **Ticket** — file durable work with `xenophon`; the external tracker only on the user's word
+   (`reference/dispatch.md#research-then-ticket`).
 5. **Classify** — answer inline, or dispatch (`reference/dispatch.md#dispatch-thresholds`).
-6. **Brief** — self-contained; the agent does not see this conversation
-   (`reference/dispatch.md#the-dispatch-brief`).
+6. **Brief** — self-contained; the agent does not see this conversation. Paste the standing brief
+   block once (`reference/dispatch.md#the-dispatch-brief`).
 7. **Dispatch** — launch, then immediately return with a one-line ack.
 8. **Log** — `journal.mjs start` / `done` (`reference/ledger.md`).
 9. **Relay** — report the substance when the completion notification arrives.
@@ -56,6 +57,9 @@ citation work — read the linked file first.
   mistake.
 - **One writer per repo.** Check `ListAgents` before dispatching a writer; use a worktree only
   when the repo is genuinely busy. Detail: `reference/dispatch.md#concurrency-safety`.
+- **External writes have one owner.** A Jira or GitHub write is made by the one agent authorized
+  for it, never handed to a sub-agent or fork. Detail:
+  `reference/dispatch.md#external-writes-have-one-owner`.
 - **Never a bare id.** A vault ticket or ledger id always needs its title and a link. **Read
   [reference/citations.md](reference/citations.md) before writing one into a reply.**
 
@@ -69,7 +73,9 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 **Ledger:** 4 done today · 2 in flight · 1 awaiting you
 ```
 
-Say "none running" when nothing is live; that's still information. Full formatting rules (more
+Say "none running" when nothing is live; that's still information. When relaying an agent's result,
+also check the session's turn count and nudge the user to roll up at ~180 turns
+([cost/budget.md#session-hygiene](cost/budget.md#session-hygiene)). Full formatting rules (more
 than two agents, killed/failed states, elapsed time): `reference/dispatch.md#status-footer`.
 
 ## Managing running agents
@@ -93,7 +99,11 @@ Each row names the one file to read, or says not to read further. Read only what
 | A greeting — "good morning", "hey", "what's on our plate", etc. | Read [reference/greeting.md](reference/greeting.md) before replying: greet, then standup, then board. |
 | A new question or task; "dispatch/scout/fan out this" | Read [reference/dispatch.md](reference/dispatch.md) before touching any tool. Covers ticketing, two-stage dispatch, repo routing, agent choice, briefs, concurrency, following up, and relaying. |
 | `log`, `start`, `done`, `ask`, `resolve`, `roll` | Read [reference/ledger.md](reference/ledger.md) for the exact command and when to use it. |
-| End of day — "EOD", "wrap up", "let's call it" | Read [reference/ledger.md#end-of-day](reference/ledger.md#end-of-day): tracker review (batch approved by the user), then `standup`, then `roll`. |
+| End of day — "EOD", "wrap up", "let's call it" | Read [reference/ledger.md#end-of-day](reference/ledger.md#end-of-day): tracker review (batch approved by the user), then `standup` with the cost line and cost loop (see [cost/SKILL.md](cost/SKILL.md)), then `roll`. |
+| Cost, token usage, what did today cost, model/agent choice, long session | Read [cost/SKILL.md](cost/SKILL.md). |
 | `git`, `pr`, "commit this", "push", "open a PR" | Read [reference/git.md](reference/git.md) in full before any git write. This is the safety gate. |
 | "PRs", "my PRs", "PR status", "open PRs" | Read [reference/prs.md](reference/prs.md): run the query, report the full bucketed board, links mandatory. |
 | Citing a vault ticket/ledger id, or noting an incidental finding | Read [reference/citations.md](reference/citations.md) before writing the id into a reply. |
+| A rehearsal, go-live, readiness plan, merge set, or rollback runbook | Invoke the `release-rehearsal` skill. The fix-and-re-run loop itself is [reference/dispatch.md#verification-loops](reference/dispatch.md#verification-loops). |
+| An org overlay is configured (`MAESTRO_OVERLAY`, or `overlay:` in the config file) | Load that skill by its configured name (`<skill>` or `<plugin>:<skill>`) and follow it, reading only the overlay file the task needs. Unset means no overlay. See [reference/local-config.md#org-overlay](reference/local-config.md#org-overlay). |
+| A rule says "from local-config"; installing or sharing this skill | Read [reference/local-config.md](reference/local-config.md) — it names the install-specific settings and says where their values are looked up. |

@@ -8,9 +8,11 @@ It does not implement features itself. Implementation happens in the target repo
 
 - A session protocol: resolve the repo, scout, ticket, dispatch, relay, then close with a status footer.
 - A greeting that always comes back with a paste-ready standup update and today's board, not just "hey".
-- An append-only ledger so "what did we get done today?" is already written down.
+- An append-only ledger so "what did we get done today?" is already written down, with workstreams (streams) for epics.
+- A derived, disposable search index over the ledger, tickets and handoff notes.
 - PR tracking: one bucketed report of every open PR you author — unresolved threads, drafts, awaiting the team, unreviewed, approved, stale — every PR linked, on request or as one line on the morning board.
 - An end-of-day wrap-up: a PR pass first, then, if a tracker MCP is connected, it drafts comments and status changes for every issue touched that day, for your approval. Then it runs the standup and the roll.
+- An optional org overlay: a separate skill that carries one org's repo topology, tracker rules and settings, so this skill stays generic.
 - Rules for one writer per repo, worktrees only when a checkout is actually busy, and draft-only pull requests.
 
 The protocol is in [SKILL.md](SKILL.md). The ledger tool is [scripts/journal.mjs](scripts/journal.mjs).
@@ -63,7 +65,7 @@ flight.
 
 ## Requirements
 
-- Node.js 18 or newer (the script uses only `node:` built-ins; nothing to install).
+- Node.js 22 or newer. Nothing is installed: the scripts use only `node:` built-ins. `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5 (the tests ran on Node 24).
 - An [Obsidian](https://obsidian.md) vault, or any directory you are willing to treat as one. The ledger is plain markdown plus a JSONL log.
 - An agent harness that loads `SKILL.md` skills (Claude Code, Codex, Copilot, or anything else that reads a skill directory).
 - Optional tickets: [xenophon](https://github.com/jackreichert/xenophon). Install it if you want problems to outlive the session. The maestro runs without it. See [How it works with xenophon](#how-it-works-with-xenophon).
@@ -88,7 +90,7 @@ ln -s ~/.claude/skills/the-maestro ~/.copilot/skills/the-maestro
 
 Open a new agent session in the **container** directory (the parent of your repos, not inside one repo) and ask it to orchestrate something small. If it does not load the skill, the harness is not reading that directory. Check that product's skill path and add another symlink. Do not copy the files.
 
-Nothing else is installed. `scripts/journal.mjs` uses only Node built-ins.
+Nothing else is installed. The scripts use only Node built-ins. To install it as a symlink into a checkout you keep elsewhere, point the skill directory at that checkout: `ln -s /path/to/the-maestro ~/.claude/skills/the-maestro`. The scripts find their own directory through the link.
 
 ## Set the vault
 
@@ -120,14 +122,32 @@ The first `status` creates that directory if it is missing. If the command says 
 
 If you also install xenophon, use the same `VAULT_ROOT`. Tickets and the ledger then sit next to each other under `Projects/`.
 
+### Optional: move the ledger out of the vault
+
+`journal.mjs` and `prs-snapshot.mjs` are the only two scripts that write the day-to-day
+`Journal/` folder (ledger, `CURRENT.md`, dated archives, `prs-snapshot.json`) — everything else
+(tickets, `CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/`) stays under
+`VAULT_ROOT`, written by other skills. If that Journal folder is cluttering vault search (e.g. an
+Obsidian full-text search that keeps surfacing four-character ledger ids), give it a separate root:
+
+```bash
+export LEDGER_ROOT="/absolute/path/to/a/folder/outside/the/vault"
+```
+
+Both scripts resolve their root in this order: `--vault <path>` flag, then `LEDGER_ROOT`, then
+`VAULT_ROOT`. So setting `LEDGER_ROOT` alone is enough — you don't need to touch existing
+`--vault "$VAULT_ROOT"` calls, and a copy of this skill that never sets `LEDGER_ROOT` keeps working
+exactly as before, storing `Journal/` under `VAULT_ROOT` like it always has. Every other script
+(`token-metrics.mjs`, and any xenophon/ticket tooling) keeps using `VAULT_ROOT` unchanged.
+
 ## How it works with xenophon (Tickets)
 
-[xenophon](https://github.com/jackreichert/xenophon) is the ticket file. The maestro is the dispatcher and the day log. They are separate skills. Install both, point them at the same `VAULT_ROOT`, and they share one `Projects/` tree without calling each other.
+[xenophon](https://github.com/jackreichert/xenophon) is the ticket file. The maestro is the dispatcher and the day log. They are separate skills. Install xenophon against `VAULT_ROOT`; the maestro's `Journal/` can stay on `VAULT_ROOT` too, or move to its own `LEDGER_ROOT` (see [Optional: move the ledger out of the vault](#optional-move-the-ledger-out-of-the-vault)) — either way tickets and the ledger cross-link by id without the scripts calling each other.
 
 | | the-maestro | xenophon |
 |---|---|---|
 | Question it answers | What is in flight, blocked, or done today? | What problem needs fixing, and what do we already know? |
-| Writes | `$VAULT_ROOT/Projects/<container>/Journal/` | `$VAULT_ROOT/Projects/<repo>/Tickets/` |
+| Writes | `$LEDGER_ROOT/Projects/<container>/Journal/` (falls back to `$VAULT_ROOT`) | `$VAULT_ROOT/Projects/<repo>/Tickets/` |
 | Id | four characters, `k3mp` | `{repo}-014` |
 | Lifetime | the session and the day; `roll` archives finished lines | until you close it |
 
@@ -143,11 +163,13 @@ What the agent does when both are installed:
 Without xenophon, the maestro still dispatches and still keeps the journal. It just has nowhere durable to put a bug. Do not invent a second ticket system inside the journal to fill that gap.
 
 ```text
-$VAULT_ROOT/Projects/
+$LEDGER_ROOT/Projects/            # falls back to $VAULT_ROOT if LEDGER_ROOT is unset
     <container-name>/
         Journal/                 # maestro
             ledger.jsonl
             CURRENT.md
+
+$VAULT_ROOT/Projects/
     <repo-name>/
         CONTEXT.md
         Tickets/                 # xenophon
@@ -155,29 +177,84 @@ $VAULT_ROOT/Projects/
             _Index.md
 ```
 
-One vault, one `VAULT_ROOT`. A second vault splits the board from the tickets and the morning status can no longer point at them.
+One vault, one `VAULT_ROOT`. A second vault splits the board from the tickets and the morning status can no longer point at them. `LEDGER_ROOT`, if you set one, only moves where `Journal/` itself lives — tickets and `CONTEXT.md` still resolve against `VAULT_ROOT`.
 
 ## Personalize
 
-Do this after the smoke test, in your canonical copy of `SKILL.md`. The published file uses placeholders on purpose.
+Do this after the smoke test, in your canonical copy. **Install-specific values live in one config file and one script, and only there.** [reference/local-config.md](reference/local-config.md) names every setting without values. [scripts/local-config.mjs](scripts/local-config.mjs) is the script side: GitHub org, login, container project name, transcript dir, ledger and vault roots, each overridable by an environment variable or by a config file. Every other file states its rule generically and points there.
 
-1. **Git author emails.** The skill refuses to commit on a branch you did not author. Find the emails you commit as:
+Org-specific rules (repo topology, tracker rules, data rules, release steps) go in an **org overlay**: a separate skill you write for your org, kept outside this repo. Name it with `MAESTRO_OVERLAY` or `overlay:` in your config file, as a skill name (`my-org-maestro`) or a plugin-qualified one (`my-plugin:my-org-maestro`). When one is configured, the agent loads it by that name and follows it; when none is, the skill is fully generic. The overlay's `config.md` can carry the `maestro-config` block the scripts read, so its values sit next to its prose.
+
+1. **Config file.** Create `~/.config/the-maestro/config.md` (or point `MAESTRO_LOCAL_CONFIG` at a file) with a fenced `maestro-config` block; the keys and the lookup order, including plugin skills, are in [reference/local-config.md](reference/local-config.md#config-file). For example, a file whose fenced block reads:
+
+   ~~~text
+   overlay: my-org-maestro
+   gh_org: my-org
+   ledger_root: /path/to/ledger
+   vault_root: /path/to/vault
+   ~~~
+
+2. **Git author emails.** The skill refuses to commit on a branch you did not author. Find the emails you commit as:
 
    ```bash
    git log -20 --format='%ae' | sort -u
    ```
 
-   Put those addresses in the branch-authorship section of `SKILL.md`, replacing the instruction to discover them. Do not leave someone else's addresses in a copy you publish.
+   Put those addresses in your overlay's values file, never in this repo.
 
-2. **Protected branches.** The default list is `main`, `staging`, and `develop`, plus any branch you did not author. If your repos protect different names, change that list in `SKILL.md`. The agent must not be told it may write those branches.
+3. **Protected branches and bases.** The default list is `main`, `staging`, and `develop`, plus any branch you did not author. Set yours in your values file, and any per-repo branch bases in your org overlay. The agent must not be told it may write those branches.
 
-3. **Container name.** You already passed it as `--project`. If you always work from one container, you can note that name in `SKILL.md` so the agent stops asking. Do not hardcode it in `journal.mjs`. The script requires `--project` so a shared copy cannot write into the wrong folder.
+4. **Container name.** Set `project` in the config file (or `MAESTRO_PROJECT`). `journal.mjs` still requires `--project`, so a shared copy cannot write into the wrong folder.
 
-4. **Issue tracker, optional.** Skip this if you have no tracker MCP. If you do (Jira via the Atlassian MCP is the one the skill knows how to call), tell the agent the site and project key once, in `SKILL.md` or in the vault's project `CONTEXT.md`. Example shape, not a real site: `project = TOOL`, browse links `https://example.atlassian.net/browse/TOOL-123`. The morning board includes a sprint section only when that MCP is installed and connected. If it is not installed, the section is omitted and not mentioned.
+5. **GitHub org.** Set `gh_org` in the config file (or `MAESTRO_GH_ORG`; empty drops the org filter). Your login is read from `gh api user` unless you set `gh_login` or `MAESTRO_GH_LOGIN`.
 
-5. **Greeting.** The skill greets, then gives a standup update (yesterday / today / blockers, built from the previous working day's ledger), then the board. Leave that. Change only the tone if you want a shorter hello. Do not remove the board step.
+### Overlay lookup order
 
-Re-read `SKILL.md` before you share your fork. If a name, email, host, or ticket key in it is yours, take it out of the copy other people will clone.
+Each setting is resolved as: environment variable, then the user file, then the overlay's `config.md`.
+
+1. The user file is `MAESTRO_LOCAL_CONFIG` (an explicit path; empty means read no file), else `~/.config/the-maestro/config.md`.
+2. The overlay is named by `MAESTRO_OVERLAY` or `overlay:` in the user file: `<skill>` or, for a skill shipped in a Claude Code plugin, `<plugin>:<skill>`.
+3. For `<plugin>:<skill>` the overlay's `config.md` is `<installPath>/skills/<skill>/config.md`, with `installPath` read from `~/.claude/plugins/installed_plugins.json`.
+4. Otherwise, or if that misses, it is `../<skill>/config.md` next to this skill (found through a symlink too), then `~/.claude/skills/<skill>/config.md`.
+
+Run `node scripts/local-config.mjs` to see what resolved and from which file. The full key list is in [reference/local-config.md](reference/local-config.md#config-file).
+
+### Optional: keep a private overlay on a local-only branch
+
+If you keep this repo public but want your org overlay versioned next to it, put the overlay on a branch that never leaves your machine, in its own worktree:
+
+```bash
+git worktree add ../the-maestro-private -b local/private feat/my-branch
+# add overlays/<skill>/ (SKILL.md, config.md, ...) on that branch and commit it there
+# install: symlink the worktree as the skill, and the overlay dir as its own skill
+ln -s "$PWD/../the-maestro-private" ~/.claude/skills/the-maestro
+ln -s "$PWD/../the-maestro-private/overlays/<skill>" ~/.claude/skills/<skill>
+```
+
+Keep it in step by merging the public branch into it (`git -C ../the-maestro-private merge --no-edit <public-branch>`), one direction only. Guard the boundary with a `pre-push` hook in the shared hooks directory (`.git/hooks/pre-push`, which every worktree uses; hooks are not versioned). It refuses any push that names a `local/*` ref, and any push whose added lines match a list of private patterns kept in `.git/hooks/private-patterns.txt`, one extended regex per line:
+
+```sh
+#!/bin/sh
+# pre-push: keep local-only branches and private content off the remote.
+zero=0000000000000000000000000000000000000000
+patterns="$(git rev-parse --git-common-dir)/hooks/private-patterns.txt"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_ref $remote_ref" in
+    *refs/heads/local/*) echo "pre-push: refusing $local_ref, a local-only branch" >&2; exit 1 ;;
+  esac
+  [ "$local_sha" = "$zero" ] && continue
+  [ -s "$patterns" ] || continue
+  if [ "$remote_sha" = "$zero" ]; then range="$local_sha --not --remotes=$1"; else range="$remote_sha..$local_sha"; fi
+  for c in $(git rev-list $range); do
+    if git show --format= -p "$c" | grep '^+' | grep -qiE -f "$patterns"; then
+      echo "pre-push: commit $c adds content matching a private pattern; refusing" >&2; exit 1
+    fi
+  done
+done
+exit 0
+```
+
+Make it executable, and check it with `git push --dry-run origin local/private` (must be refused) and `git push --dry-run origin <public-branch>` (must pass). Never pass `-u` for the local branch.
 
 ## What the agent is expected to do
 
@@ -196,7 +273,7 @@ A new message while agents are running is normal. It handles the new request alo
 
 ## The ledger
 
-Storage, under `$VAULT_ROOT/Projects/<project>/Journal/`:
+Storage, under `$LEDGER_ROOT/Projects/<project>/Journal/` (falls back to `$VAULT_ROOT` if `LEDGER_ROOT` is unset; both can also be set in the [config file](#personalize)):
 
 | File | Role |
 |---|---|
@@ -204,25 +281,70 @@ Storage, under `$VAULT_ROOT/Projects/<project>/Journal/`:
 | `CURRENT.md` | Generated board: open items plus what finished today. Safe to read; regenerated from the log. |
 | `YYYY-MM-DD.md` | Generated daily archive, written by `roll`. |
 
+Every new entry needs `--model "<name>"` and `--used "skill:x,tool:y"`, so the record says which model did the work with what. Do not invent either: unknown history is `unrecorded`, unmeasured tokens are `unmeasured` (`--allow-unmarked` is only for tests and migrations).
+
 ```bash
 J=~/.claude/skills/the-maestro/scripts/journal.mjs
+M=(--model "Some Model" --used "skill:the-maestro,tool:journal.mjs")
 
-node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014
-node $J done  "Port the calendar fix"        # id or a unique substring
-node $J ask   "Split this into a follow-up PR?"
-node $J resolve "follow-up" --answer "Yes — no consumer yet"
+node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014 "${M[@]}"
+node $J done  "Port the calendar fix" "${M[@]}"      # id or a unique substring
+node $J ask   "Split this into a follow-up PR?" "${M[@]}"
+node $J resolve "follow-up" --answer "Yes, no consumer yet" "${M[@]}"
 node $J status                               # open items + done today
 node $J standup                              # end-of-day summary, ready to paste
 node $J roll                                 # archive the day, keep open items
 ```
 
-Also: `log`, `drop`, `render`. Common flags: `--vault`, `--project`, `--json`, `--dry-run`.
+Also: `log`, `drop`, `stamp`, `stamp-missing`, `usage`, `render`. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. `--project` is required; there is no default project name.
 
-Kinds: `wip`, `done`, `blocked`, `question`, `decision`, `note`.
+Kinds: `wip`, `done`, `blocked`, `question`, `decision`, `note`, plus `resolved`, `dropped`, `rolled` and `stamp` (written by their own commands).
 
-`roll` writes the day's finished work to a dated note and leaves in-flight, blocked, and awaiting-you items on the board. Roll at end of day, or when `CURRENT.md` is longer than a screen. At end of day, run the tracker review first (see [reference/ledger.md](reference/ledger.md#end-of-day)).
+`roll` writes the day's finished work to a dated note and leaves in-flight, blocked, and awaiting-you items on the board. Roll at end of day, or when `CURRENT.md` is longer than a screen.
 
 Ledger ids are four lowercase characters (`k3mp`). They are not tickets and they are not issue-tracker keys. When you mention one, include the one-liner, not the bare id.
+
+### Streams, facts, retro, carry, archive
+
+A stream is a named workstream, usually an epic. Pass `--stream <name>` to `start`, `log`, `ask` and `fact`, or file an existing item with `tag`; `status`, `standup` and `render` show each stream in its own section first.
+
+```bash
+node $J tag <id> --stream Launch                    # file an existing item under a stream
+node $J streams add Launch --alias launch,launch-v2   # the registry: aliases and case fold to one name
+node $J streams list                                # counts per stream
+node $J streams check                               # dry run: how many rows would change display stream; appends nothing
+node $J fact visits_full_min=79 --stream Launch "${M[@]}"   # a structured metric; not an item, never open
+node $J carry <id> --to Maintenance "${M[@]}"       # re-home an open follow-up to another stream
+node $J retro Launch [--out <path>] [--force] --tickets-vault "$VAULT_ROOT"   # draft the retro doc (status: draft)
+node $J archive Launch "${M[@]}"                    # hide a finished stream
+node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
+```
+
+If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
+
+### The derived index
+
+`scripts/ledger-index.mjs` builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets, and each `##` section of `HANDOFF-*.md` notes. The JSONL stays the source of truth: deleting `Index/maestro.sqlite` loses nothing.
+
+```bash
+I=~/.claude/skills/the-maestro/scripts/ledger-index.mjs
+
+node $I index                                   # full rebuild, atomic rename into place
+node $I search "calendar fix" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json]
+node $I stats [--json]                          # counts per table, open items per stream
+node $I query                                   # lists the named queries
+node $I query open --stream Launch              # one of them; `query --sql "select ..."` is read-only raw SQL
+```
+
+The named queries are `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs` and `tickets`. `search` rebuilds first if a source changed. Items of archived streams are hidden unless you pass `--include-archived`. Pass `--vault` and `--tickets-vault` the way `journal.mjs` does.
+
+### Tests
+
+```bash
+node --test scripts/*.test.mjs
+```
+
+The tests run each script as a subprocess against a temporary ledger and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`).
 
 ## What this is not
 
@@ -232,6 +354,6 @@ Ledger ids are four lowercase characters (`k3mp`). They are not tickets and they
 
 ## Sharing
 
-This folder is the shareable unit: `SKILL.md`, `scripts/journal.mjs`, and this README. It contains no vault data, no tickets, and no secrets.
+This folder is the shareable unit: `SKILL.md`, `reference/`, `cost/`, `scripts/` (with their tests), and this README. It ships no org overlay; write your own and name it as described in Personalize. State files the scripts write at run time (`prs-snapshot.json`, `pr-watch-state.json`) live under your ledger root, not here, and must not be shipped. It contains no vault data, no tickets, and no secrets.
 
-Do not commit your vault's `Journal/` or `Projects/` tree into this repo. Those are your notes. Point the script at them with `VAULT_ROOT`.
+Do not commit your vault's `Journal/` or `Projects/` tree into this repo. Those are your notes. Point the script at them with `VAULT_ROOT`, or `LEDGER_ROOT` if you keep the ledger outside the vault.
