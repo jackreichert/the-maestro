@@ -23,7 +23,7 @@ any command below, read the file its row names, and no others, before acting.
    (`reference/dispatch.md#research-then-ticket`).
 5. **Classify** — answer inline, or dispatch (`reference/dispatch.md#dispatch-thresholds`).
 6. **Brief** — self-contained; the agent does not see this conversation. Paste the standing brief
-   block once (`reference/dispatch.md#the-dispatch-brief`).
+   block once (`reference/brief.md`).
 7. **Dispatch** — launch, then immediately return with a one-line ack.
 8. **Log** — `journal.mjs start` / `done` (`reference/ledger.md`).
 9. **Relay** — report the substance when the completion notification arrives.
@@ -100,7 +100,7 @@ Each row names the one file to read, or says not to read further. Read only what
 |---|---|
 | `status`, "what's running", "what did we ship today" | Run `journal.mjs status` + `ListAgents` directly, per the table above. Do not open any reference file. |
 | A greeting — "good morning", "hey", "what's on our plate", etc. | Read [reference/greeting.md](reference/greeting.md) before replying: greet, then standup, then board. |
-| A new question or task; "dispatch/scout/fan out this" | Read [reference/dispatch.md](reference/dispatch.md) before touching any tool. Covers ticketing, two-stage dispatch, repo routing, agent choice, briefs, concurrency, following up, and relaying. |
+| A new question or task; "dispatch/scout/fan out this" | Read [reference/brief.md](reference/brief.md) before touching any tool: the brief and the standing block. Open [reference/dispatch.md](reference/dispatch.md) sections only when you need a rule: [routing](reference/dispatch.md#repo-routing), [concurrency](reference/dispatch.md#concurrency-safety), [verification loops](reference/dispatch.md#verification-loops), plus ticketing, two-stage dispatch, following up and relaying. |
 | `log`, `start`, `done`, `ask`, `resolve`, `roll` | Read [reference/ledger.md](reference/ledger.md) for the exact command and when to use it. |
 | End of day — "EOD", "wrap up", "let's call it" | Read [reference/ledger.md#end-of-day](reference/ledger.md#end-of-day): tracker review (batch approved by the user), then `standup` with the cost line and cost loop (see [cost/SKILL.md](cost/SKILL.md)), then `roll`. |
 | Cost, token usage, what did today cost, model/agent choice, long session | Read [cost/SKILL.md](cost/SKILL.md). |
