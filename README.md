@@ -339,6 +339,10 @@ node $J claims [--stale-hours 12] [--json]                   # who holds what, w
 
 Appends are safe across concurrent writers: each row is one `write()` on an `O_APPEND` file, and the tests run several processes appending at once and check that every line parses, ids are unique and none are lost. Ids are chosen by reading the ledger first, so two writers picking the same four characters in the same instant is possible in principle (about one in 1.7 million per pair); `verify` reports duplicate ids if it ever happens.
 
+### Desks (draft)
+
+[reference/desks.md](reference/desks.md) describes one hub session plus one desk session per stream: who owns what, how claims keep two sessions out of one repo, and when a desk rolls (a phase boundary past about 100 turns, with a 180-turn backstop). It is a draft: the pieces exist, the protocol has not been run for a full day.
+
 ### Backfill: filing old untagged items
 
 Items logged before streams existed have none. `backfill` proposes one for each and, after you have reviewed the proposals, files them with appended `tag` rows. The ledger is never rewritten.
