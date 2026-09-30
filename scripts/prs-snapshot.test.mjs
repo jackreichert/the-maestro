@@ -6,6 +6,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Hermetic: never read the user's config file (see local-config.mjs).
+process.env.MAESTRO_LOCAL_CONFIG = '';
+
 const SCRIPT = new URL('./prs-snapshot.mjs', import.meta.url).pathname;
 
 function run(...args) {

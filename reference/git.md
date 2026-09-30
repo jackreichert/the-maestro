@@ -7,7 +7,9 @@ gate; the one-liner in SKILL.md is a pointer, not a substitute for reading this.
 write those. On a feature branch of theirs, commit and push freely.
 
 Before writing any branch, confirm it is theirs — every commit since it diverged from its base authored
-by the user's git email(s). Discover those from the repo or ask; do not hardcode them:
+by the user's git email(s). The emails for this install are in
+local-config (see [local-config.md](local-config.md)); otherwise discover them from
+the repo or ask. Do not hardcode them here:
 
 ```bash
 git log --format='%ae' $(git merge-base <base> <branch>)..<branch> | sort -u
@@ -16,18 +18,41 @@ git log --format='%ae' $(git merge-base <base> <branch>)..<branch> | sort -u
 Another author in that list means the branch is shared, and shared means protected. **Inconclusive
 counts as protected** — ask rather than guess.
 
+Two ways the check gives a false "shared", and how to read past them:
+
+- **Use the branch's real base** — the branch it was actually cut from, not the one it happens to
+  target. A branch cut from `staging` checked against `develop` lists everyone's staging commits.
+  If you're not sure of the base, find it (`git log --oneline --decorate --first-parent`), or ask.
+- **Merges already on a protected branch don't make a branch shared.** A back-merge brings other
+  people's commits in, but they aren't the branch's own work. Exclude everything reachable from the
+  protected branches and check what is left:
+
+  ```bash
+  git log --no-merges --format='%ae' <branch> --not origin/main origin/staging origin/develop | sort -u
+  ```
+
+  If that list is only the user, the branch is theirs. If it still shows anyone else, it is shared.
+  If the two checks disagree and you can't explain why, that is inconclusive, and inconclusive is
+  protected.
+
 `git rebase`, `git merge`, and `git reset` are available **only when they explicitly ask**, on every
 branch including their own. Force-push is never yours.
 
 So a "make a PR" request ends like this:
 
-1. Branch cut from the right base (follow the repo's documented flow; if none, ask).
+1. Branch cut from the right base (follow the repo's documented flow; if it says nothing, ask).
+   Repo-specific branch bases: from the org overlay's repo notes, if one is configured (see [local-config.md](local-config.md#org-overlay)).
+   Where the repo requires a tracker key in branch names, local branches and commits can start
+   before the key exists, but **nothing is pushed until the branch name carries a real key**.
+   Rename it before the first push (`git branch -m <new-name>`); never push under a placeholder.
 2. Files written; validation run and its real result reported.
 3. **Reviewed locally before it goes up** — a reviewer pass on the diff, plus a security review when
    the change touches auth, permissions, logging, secrets or multi-tenant scoping. Report what it found
    and what you did with each item.
-4. Committed and pushed, then opened as a **draft** PR. The user promotes it to ready for review; you
-   never do, and a deploy PR (`staging` → `main` or equivalent) is not yours to open at all.
+4. Committed and pushed, then opened as a **draft** PR, assigned to the user (`--assignee @me`).
+   The user promotes it to ready for review; you never do, and a deploy PR (`staging` → `main` or
+   equivalent) is not yours to open at all. Copilot review on the draft is handled per
+   [prs.md#copilot-on-drafts](prs.md#copilot-on-drafts).
 
 The review question that keeps earning its keep: **is this guarantee enforced at runtime, or only
 described?** A schema nothing parses, a validator nobody calls, a comment asserting a value is safe
@@ -40,7 +65,7 @@ git commit -F - <<'EOF'
 <message>
 EOF
 git push -u origin <branch>
-gh pr create --draft --base develop --title "..." --body "..."
+gh pr create --draft --assignee @me --base <target> --title "..." --body "..."
 ```
 
 Stage files explicitly by path, never `git add -A` — working trees routinely carry unrelated
@@ -65,11 +90,21 @@ one; if a template inserts one, strip it and say so.
 Report after every commit or push: the branch, the files changed, and the validation you ran with
 its actual result.
 
+**No PRs for AI-config or agent-policy docs in a team repo.** Copilot instructions, `AGENTS.md`,
+`CLAUDE.md`, agent or skill definitions, and similar files that tell AI tools how to behave are the
+team's to change. Raise the proposed change with the user in conversation (or as a proposal note in
+the vault) instead of opening a PR for it. The user's own repos and local skill files are not
+covered by this rule.
+
 ## Anti-patterns
 
 - Letting an agent write a protected branch, or writing one yourself.
 - Committing to a branch without first checking that the user authored it.
-- Opening a PR ready-for-review instead of as a draft.
+- Opening a PR ready-for-review instead of as a draft, or without `--assignee @me`.
+- Pushing a branch whose name doesn't carry the tracker key the repo requires yet.
+- Reading an authorship check against the wrong base, or counting commits a back-merge brought in
+  from a protected branch as another author's work on the branch.
+- Opening a PR for AI-config or agent-policy docs in a team repo.
 - Letting a harness default stamp `Co-Authored-By` or "Generated with" onto a commit or PR body.
 - Opening a PR without reviewing the diff locally first, and letting the bots find it instead.
 - Accepting a safety guarantee because it is written down, without checking it is enforced on the
