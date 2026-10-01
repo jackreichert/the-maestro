@@ -128,7 +128,7 @@ often is a real cost even though each individual poll is free. The cadence is no
 - **Some activity: 600s.** One or two events in the window, or nothing yet for under an hour.
 - **Quiet: back off** to 900s after an hour with nothing, then 1800s after two.
 - **Nothing faster than 300, ever.** `watch_min_interval` is raised to 300 if set lower. The lesson
-  below is exactly why. Only an explicit `--interval N` goes below it, and that is a pin, not a policy.
+  below is exactly why. An explicit `--interval N` pins the poll but is raised to the same floor; it does not override quiet hours.
 - **Quiet hours: 20:00-07:00 local** by default (`watch_quiet_hours`, `watch_tz`; weekends with
   `watch_quiet_weekends: on`). Mode `stop` (default) exits the watcher with the reason "quiet
   hours" and the next morning greeting restarts it; mode `slow` polls every 1800s instead.

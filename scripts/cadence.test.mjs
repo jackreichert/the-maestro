@@ -1,7 +1,7 @@
 // Run: node --test scripts/cadence.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextInterval, parseQuietHours } from './lib/cadence.mjs';
+import { floorSeconds, nextInterval, parseQuietHours } from './lib/cadence.mjs';
 
 const MIN = 60000;
 const at = (iso) => Date.parse(iso);
@@ -39,7 +39,10 @@ const CASES = [
   { name: 'weekend with the option off: a normal day', now: at('2026-10-03T12:00:00Z'), config: { watchingSince: at('2026-10-03T12:00:00Z') }, want: { seconds: 600, reason: /steady/ } },
   { name: 'quiet hours are read in watch_tz (Tokyo is 05:00 next day)', now: at('2026-10-01T20:00:00Z'), config: { tz: 'Asia/Tokyo' }, want: { stop: true, reason: 'quiet hours' } },
   { name: 'the same instant is daytime in another zone', now: at('2026-10-01T20:00:00Z'), config: { tz: 'America/New_York', watchingSince: at('2026-10-01T20:00:00Z') }, want: { seconds: 600, reason: /steady/ } },
-  { name: '--interval pins the cadence, even overnight and under 300', now: at('2026-10-01T23:00:00Z'), events: ago(at('2026-10-01T23:00:00Z'), 1, 2, 3), config: { pinned: 120 }, want: { seconds: 120, reason: 'pinned by --interval' } },
+  { name: '--interval above the floor pins the cadence', now: NOON, events: ago(NOON, 1, 2, 3), config: { pinned: 900 }, want: { seconds: 900, reason: 'pinned by --interval' } },
+  { name: '--interval under 300 is raised to the floor', now: NOON, events: ago(NOON, 1, 2, 3), config: { pinned: 120 }, want: { seconds: 300, reason: 'pinned by --interval (raised to 300)' } },
+  { name: '--interval under watch_min_interval is raised to it', now: NOON, config: { pinned: 400, minInterval: 450 }, want: { seconds: 450, reason: 'pinned by --interval (raised to 450)' } },
+  { name: '--interval does not run overnight: quiet hours still stop', now: at('2026-10-01T23:00:00Z'), events: ago(at('2026-10-01T23:00:00Z'), 1, 2, 3), config: { pinned: 900 }, want: { stop: true, reason: 'quiet hours' } },
 ];
 
 for (const c of CASES) {
@@ -61,4 +64,10 @@ test('parseQuietHours accepts HH:MM-HH:MM and rejects everything else', () => {
   assert.deepEqual(parseQuietHours('20:00-07:00'), { start: 1200, end: 420 });
   assert.deepEqual(parseQuietHours(' 8:05 - 9:10 '), { start: 485, end: 550 });
   for (const bad of ['off', '', undefined, '25:00-07:00', '20:60-07:00', '20-7']) assert.equal(parseQuietHours(bad), null);
+});
+
+test('floorSeconds is 300 unless watch_min_interval is higher', () => {
+  assert.equal(floorSeconds({}), 300);
+  assert.equal(floorSeconds({ minInterval: 60 }), 300);
+  assert.equal(floorSeconds({ minInterval: 450 }), 450);
 });

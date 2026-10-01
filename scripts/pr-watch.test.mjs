@@ -93,11 +93,27 @@ test('--once prints the adaptive cadence line to stderr', () => {
   assert.match(r.err, /next check in 600s \(steady\)/);
 });
 
-test('--interval pins the cadence and says so', () => {
+test('--interval above the floor pins the cadence and says so', () => {
+  const env = installGhStub({ pages: [[prNode(1)]] });
+  const r = runOnce(env, tempState(boardOf([prNode(1)])), '--interval', '900');
+  assert.match(r.err, /next check in 900s \(pinned by --interval\)/);
+});
+
+test('--interval under the floor is raised, with a warning', () => {
   const env = installGhStub({ pages: [[prNode(1)]] });
   const r = runOnce(env, tempState(boardOf([prNode(1)])), '--interval', '120');
-  assert.match(r.err, /next check in 120s \(pinned by --interval\)/);
+  assert.match(r.err, /--interval 120 is below the 300s floor/);
+  assert.match(r.err, /next check in 300s \(pinned by --interval \(raised to 300\)\)/);
 });
+
+for (const bad of ['0', '-5', 'abc', '']) {
+  test(`--interval "${bad}" is a usage error`, () => {
+    const env = installGhStub({ pages: [[prNode(1)]] });
+    const r = runOnce(env, tempState(boardOf([prNode(1)])), '--interval', bad);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /--interval needs a positive number/);
+  });
+}
 
 test('a push is an event: a moved head tightens the cadence for the next tick', () => {
   const moved = [1, 2, 3].map((n) => prNode(n, { headRefOid: 'sha-new' }));
