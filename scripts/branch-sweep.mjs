@@ -103,14 +103,29 @@ function isAncestor(g, a, b) {
 const mainlineOf = (g, protectedRefs) => new Set(protectedRefs.flatMap((p) => must(g, 'rev-list', '--first-parent', p).split('\n').filter(Boolean)));
 
 /**
+ * For a protected ref that already contains `ref`: the mainline commit just before the merge that brought it in (the
+ * first parent of the oldest first-parent commit above `ref`), which is where the branch forked off as far as that ref
+ * is concerned. Null when there is no such merge (a fast-forward), so nothing is subtracted on its account.
+ */
+function mergedFrom(g, ref, p) {
+  const first = must(g, 'rev-list', '--first-parent', '--ancestry-path', '--reverse', `${ref}..${p}`).split('\n').find(Boolean);
+  if (!first) return null;
+  const parents = must(g, 'rev-list', '--parents', '-n', '1', first).split(' ').slice(1);
+  return parents.length > 1 && !isAncestor(g, ref, parents[0]) ? parents[0] : null;
+}
+
+/**
  * The branch's own non-merge commits as [{ sha, email }]. Reachable from `ref`, not from a protected tip that does
- * not already contain it (a merged branch is inside its target, so that target cannot be subtracted), and not on a
- * protected mainline. A squash or rebase merge leaves the branch's commits all here; a --no-ff merge keeps them
- * here too, which is what lets a merged branch be judged by who wrote it.
+ * not already contain it, not from the mainline just before the merge into a protected tip that does (so a branch cut
+ * from a busy develop does not inherit everyone else's commits), and not on a protected mainline. A squash or rebase
+ * merge leaves the branch's commits all here; a --no-ff merge keeps them here too, which is what lets a merged branch
+ * be judged by who wrote it.
  */
 function ownCommits(g, ref, protectedRefs, mainline) {
   const outside = protectedRefs.filter((p) => !isAncestor(g, ref, p));
-  const log = must(g, 'log', '--no-merges', '--format=%H %ae', ref, ...(outside.length ? ['--not', ...outside] : []));
+  const forks = protectedRefs.filter((p) => !outside.includes(p)).map((p) => mergedFrom(g, ref, p)).filter(Boolean);
+  const not = [...outside, ...forks];
+  const log = must(g, 'log', '--no-merges', '--format=%H %ae', ref, ...(not.length ? ['--not', ...not] : []));
   return log.split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([sha]) => !mainline.has(sha)).map(([sha, email]) => ({ sha, email }));
 }
 
