@@ -1529,6 +1529,8 @@ function handoffText(stream, since) {
         ...(awaiting.length ? awaiting.map((i) => line(i, i.kind)) : ['_none_']), '',
         '## 5. Next concrete action', '',
         '_Author: one concrete first step for the fresh session._', '',
+        '## Cleanup candidates', '',
+        '_Run `node scripts/branch-sweep.mjs` and paste its table here; nothing is deleted without approval._', '',
         'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
     ].join('\n');
 }
