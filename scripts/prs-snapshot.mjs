@@ -34,8 +34,8 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, VAULT_ROOT } from './local-config.mjs';
+import { searchAllPages } from './lib/gh-search.mjs';
 
 // Keep the bot list in one place: a literal suffix every GitHub App login
 // carries, plus the two reviewer accounts we see that don't.
@@ -59,8 +59,9 @@ const has = (name) => argv.includes(`--${name}`);
 // The same query reference/prs.md documents, extended with the two fields the
 // human-readable board's --jq ignores but a diff needs for stable identity:
 // reviewThreads.nodes[].id and latestReviews.nodes[].submittedAt.
-const QUERY = `query {
-  search(query: "${PR_SEARCH}", type: ISSUE, first: 50) {
+const QUERY = `query($after: String) {
+  search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) {
+    pageInfo { hasNextPage endCursor }
     nodes {
       ... on PullRequest {
         number
@@ -87,26 +88,27 @@ const QUERY = `query {
   }
 }`;
 
-const JQ = `
-  .data.search.nodes[] |
-  {
-    key: "\\(.repository.nameWithOwner)#\\(.number)",
-    repo: .repository.nameWithOwner,
-    number, title, url, isDraft, headRefName, baseRefName, updatedAt,
-    reviewDecision: (.reviewDecision // "NONE"),
-    reviewers: [.reviewRequests.nodes[].requestedReviewer | (.login // .name) | select(. != null)],
-    reviews: [.latestReviews.nodes[] | {author: .author.login, state, submittedAt}],
-    threads: [.reviewThreads.nodes[] | {id, isResolved, isOutdated, author: .comments.nodes[0].author.login}],
-    commentTotal: .comments.totalCount
-  }
-`;
+// Flatten one search node into the snapshot shape (key and the fields diffSnapshots reads).
+const toSnapshotPr = (n) => ({
+    key: `${n.repository.nameWithOwner}#${n.number}`,
+    repo: n.repository.nameWithOwner,
+    number: n.number,
+    title: n.title,
+    url: n.url,
+    isDraft: n.isDraft,
+    headRefName: n.headRefName,
+    baseRefName: n.baseRefName,
+    updatedAt: n.updatedAt,
+    reviewDecision: n.reviewDecision || 'NONE',
+    reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login ?? r.requestedReviewer?.name).filter((x) => x != null),
+    reviews: n.latestReviews.nodes.map((r) => ({ author: r.author?.login, state: r.state, submittedAt: r.submittedAt })),
+    threads: n.reviewThreads.nodes.map((t) => ({ id: t.id, isResolved: t.isResolved, isOutdated: t.isOutdated, author: t.comments.nodes[0]?.author?.login })),
+    commentTotal: n.comments.totalCount,
+});
 
 function fetchLive() {
-    const out = execFileSync('gh', ['api', 'graphql', '-f', `query=${QUERY}`, '--jq', JQ], {
-        encoding: 'utf8',
-    });
-    const prs = out.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
-    return { takenAt: new Date().toISOString(), prs };
+    // Every page: a single 50-result page made PRs past the 50th look "no longer open".
+    return { takenAt: new Date().toISOString(), prs: searchAllPages(QUERY).map(toSnapshotPr) };
 }
 
 function loadSnapshot(path) {
