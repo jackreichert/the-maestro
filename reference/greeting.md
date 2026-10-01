@@ -56,13 +56,13 @@ What to include after the greeting, in this order:
    Then start the PR watcher in the background, so new reviews and comments surface within
    minutes instead of waiting for the next board (the user's standing request, 2026-09-27):
    `node scripts/pr-watch.mjs --baseline --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"`,
-   then the same command with `--interval 600` instead of `--baseline`, run with `run_in_background`.
+   then the same command without `--baseline`, run with `run_in_background`.
    It costs no tokens between changes and exits when something needs attention. Report the change,
    handle it, then relaunch the watcher (without `--baseline`). Keep exactly one watcher running.
-   The full cadence policy — 600–900s by default, 300s only while a big list is under active
-   review, nothing faster than 300s, and a 30-minute poll with a cutoff at night — is
-   [cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); adjust the interval to
-   match as the day goes on. What it wakes on, and which of those reach the user mid-day, is in
+   The watcher sets its own pace (faster while reviews are flowing, slower when quiet, stopped
+   overnight; [cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence)), so there is
+   no interval to pick. A watcher that stopped for quiet hours is restarted by the next morning
+   greeting, this step. What it wakes on, and which of those reach the user mid-day, is in
    [reference/prs.md#the-pr-watcher](../reference/prs.md#the-pr-watcher).
 5. **Shipped today** — only once there is something in it.
 6. **Issue-tracker sprint board** — only when an issue-tracker MCP is installed and connected.

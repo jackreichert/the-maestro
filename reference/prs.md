@@ -186,15 +186,39 @@ The morning board starts one background watcher
 
 ```bash
 node scripts/pr-watch.mjs --baseline --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"
-node scripts/pr-watch.mjs --interval 600 --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"   # run_in_background
+node scripts/pr-watch.mjs --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"   # run_in_background
 ```
 
 It polls quietly and exits when something needs attention: a new unresolved thread or reply, a
 new PR comment or review body from anyone but the user (bots included), a `reviewDecision` move
 into or out of `APPROVED`/`CHANGES_REQUESTED`, or a PR that merged or closed. Each report also
 lists approved-but-unmerged PRs. Handle what it reported, then relaunch it without `--baseline`.
-Keep exactly one running. **Cadence policy** — the default interval, when to tighten it, and when
-to stop it at night — is cost material: [../cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence).
+Keep exactly one running.
+
+**Standing conditions wake once.** An approved PR the user is deliberately holding back stays
+approved tick after tick; the watcher records which standing conditions it has already reported
+in its state file and wakes again only when one is new or changes (a fresh approval, a moved head).
+A relaunch with nothing new keeps running.
+
+**It sets its own pace.** Each tick it counts the events it saw (threads, reviews, comments,
+pushes, state changes) in the last 30 minutes and picks the next sleep, printing
+`next check in Ns (reason)` to stderr:
+
+| Recent activity | Next check |
+|---|---|
+| 3 or more events in 30 minutes | `watch_min_interval` (300s by default, never below 300) |
+| 1 or 2 events | 600s |
+| nothing for under an hour | 600s |
+| quiet for an hour | 900s |
+| quiet for two hours | 1800s (capped by `watch_max_interval`) |
+
+Inside quiet hours (`watch_quiet_hours`, default 20:00-07:00 in `watch_tz`; weekends too with
+`watch_quiet_weekends: on`) it either exits with the reason "quiet hours" (`watch_quiet_hours_mode:
+stop`, the default; the next morning greeting restarts it) or polls every 1800s (`slow`).
+`--interval N` pins the cadence to N seconds and skips all of this. The rule and its rationale are
+cost material: [../cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); the
+settings are in [local-config.md](local-config.md). The logic is the pure function in
+[scripts/lib/cadence.mjs](../scripts/lib/cadence.mjs).
 
 The watcher wakes the **orchestrator** on bot threads, because Copilot threads on drafts are work
 to do (above). That is not the same as interrupting the **user**: bot threads get handled quietly
