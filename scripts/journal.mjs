@@ -511,27 +511,29 @@ function approvalsSince() {
 
 /**
  * Approvals in the window, grouped. A row is an approval when it carries `approval` itself or a later
- * `approval-tag` row points at it (the latest tag wins; its scope and refs fill gaps). A row is in the
- * window when its own date or its tag's date is. Untagged: `decision` rows with no approval either way.
+ * `approval-tag` row points at it. Tags merge field by field in order: the latest tag that sets a field
+ * wins it, `scope` and `refs` carry over from earlier tags (or the row) until replaced. A row is in the
+ * window when its own date or its tag's date is. Untagged: `decision` rows that neither a tag nor a
+ * closing row marks as an approval.
  */
 function collectApprovals(entries, since) {
     const tagsFor = new Map();
     for (const e of entries) if (e.kind === 'approval-tag' && e.approves) tagsFor.set(e.approves, [...(tagsFor.get(e.approves) || []), e]);
+    const closedWithApproval = new Set(entries.filter((e) => e.closes && e.approval).map((e) => e.closes));
     const inWindow = (d) => String(d || '') >= since;
     const out = { standing: [], oneOff: [], untagged: [] };
     const bucket = { standing: out.standing, 'one-off': out.oneOff };
+    const lastSet = (tags, field, fallback) => tags.map((t) => t[field]).filter((v) => (Array.isArray(v) ? v.length : v)).pop() ?? fallback;
     for (const e of entries) {
         if (!e.id || e.annotates || e.kind === 'approval-tag') continue;
         const tags = tagsFor.get(e.id) || [];
-        const latest = tags[tags.length - 1];
-        const approval = latest?.approval || e.approval;
+        const approval = lastSet(tags, 'approval', e.approval);
         if (!approval) {
-            if (e.kind === 'decision' && !e.closes && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
+            if (e.kind === 'decision' && !e.closes && !closedWithApproval.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
             continue;
         }
         if (!inWindow(e.date) && !tags.some((t) => inWindow(t.date))) continue;
-        const refs = [...new Set([...(e.refs || []), ...tags.flatMap((t) => t.refs || [])])];
-        bucket[approval]?.push({ id: e.id, date: e.date, text: e.text, scope: latest?.scope || e.scope, refs, taggedBy: latest?.id });
+        bucket[approval]?.push({ id: e.id, date: e.date, text: e.text, scope: lastSet(tags, 'scope', e.scope), refs: lastSet(tags, 'refs', e.refs || []), taggedBy: tags[tags.length - 1]?.id });
     }
     for (const list of Object.values(out)) list.sort((a, b) => String(a.date).localeCompare(String(b.date)));
     return out;
