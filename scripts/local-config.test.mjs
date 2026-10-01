@@ -100,3 +100,24 @@ test('loop_patterns and resume_gh come from the file; the environment wins', () 
     assert.equal(e.RESUME_GH, 'on');
     assert.equal(show({ MAESTRO_LOCAL_CONFIG: '' }).RESUME_GH, 'on');
 });
+
+test('watch_* keys: defaults, file values, environment wins, junk falls back', () => {
+    const d = show();
+    assert.deepEqual(
+        [d.WATCH_MIN_INTERVAL, d.WATCH_MAX_INTERVAL, d.WATCH_QUIET_HOURS, d.WATCH_QUIET_HOURS_MODE, d.WATCH_QUIET_WEEKENDS],
+        ['300', '1800', '20:00-07:00', 'stop', 'off'],
+    );
+    assert.equal(d.WATCH_TZ, Intl.DateTimeFormat().resolvedOptions().timeZone);
+    write(join(home, '.config', 'the-maestro', 'config.md'), block(
+        'watch_min_interval: 420\nwatch_max_interval: 900\nwatch_quiet_hours: 22:00-06:30\nwatch_quiet_hours_mode: slow\nwatch_quiet_weekends: on\nwatch_tz: America/New_York'));
+    const f = show();
+    assert.deepEqual(
+        [f.WATCH_MIN_INTERVAL, f.WATCH_MAX_INTERVAL, f.WATCH_QUIET_HOURS, f.WATCH_QUIET_HOURS_MODE, f.WATCH_QUIET_WEEKENDS, f.WATCH_TZ],
+        ['420', '900', '22:00-06:30', 'slow', 'on', 'America/New_York'],
+    );
+    assert.equal(show({ MAESTRO_WATCH_QUIET_HOURS_MODE: 'stop', MAESTRO_WATCH_TZ: 'UTC' }).WATCH_QUIET_HOURS_MODE, 'stop');
+    const junk = show({ MAESTRO_WATCH_MIN_INTERVAL: 'fast', MAESTRO_WATCH_TZ: 'Not/AZone', MAESTRO_WATCH_QUIET_HOURS_MODE: 'later' });
+    assert.equal(junk.WATCH_MIN_INTERVAL, '300');
+    assert.equal(junk.WATCH_TZ, Intl.DateTimeFormat().resolvedOptions().timeZone);
+    assert.equal(junk.WATCH_QUIET_HOURS_MODE, 'stop');
+});

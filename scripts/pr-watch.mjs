@@ -2,7 +2,7 @@
 /**
  * pr-watch.mjs: a cheap PR poller for the-maestro.
  *
- * Every --interval seconds (default 300), fetch the user's open PRs (scoped by local-config.mjs) with one
+ * Every tick, fetch the user's open PRs (scoped by local-config.mjs) with one
  * `gh api graphql` call and compare them against a stored state file. Stay silent
  * and keep looping while nothing changes. Exit 0 with a short report as soon as
  * something needs attention, so a background run wakes the orchestrator only
@@ -20,13 +20,19 @@
  * Each tick also requests a Copilot review on any draft PR that Copilot hasn't
  * reviewed and isn't already requested on. Its threads then arrive as THREAD lines.
  *
- *   pr-watch.mjs [--interval 300] [--once] [--baseline] --state <file>
+ *   pr-watch.mjs [--interval N] [--once] [--baseline] --state <file>
+ *     --interval  pin the poll to N seconds; by default the cadence adapts to activity and
+ *                 quiet hours (scripts/lib/cadence.mjs, settings watch_* in local-config)
  *     --baseline  record the current state and exit, without reporting
  *     --once      check a single time and exit (report or "no changes")
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { GH_LOGIN, PR_SEARCH } from './local-config.mjs';
+import {
+  GH_LOGIN, PR_SEARCH, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
+  WATCH_QUIET_WEEKENDS, WATCH_TZ,
+} from './local-config.mjs';
+import { nextInterval } from './lib/cadence.mjs';
 import { searchAllPages } from './lib/gh-search.mjs';
 
 const args = process.argv.slice(2);
@@ -38,7 +44,19 @@ const opt = (name, fallback) => {
 
 const SELF = GH_LOGIN || execFileSync('gh', ['api', 'user', '--jq', '.login'], { encoding: 'utf8' }).trim();
 const COPILOT = 'copilot-pull-request-reviewer';
-const INTERVAL_S = Number(opt('--interval', '300'));
+// The cadence adapts to activity and quiet hours (lib/cadence.mjs); --interval N pins it instead.
+const PINNED_S = Number(opt('--interval', '')) || undefined;
+const CADENCE = {
+  minInterval: WATCH_MIN_INTERVAL,
+  maxInterval: WATCH_MAX_INTERVAL,
+  quietHours: WATCH_QUIET_HOURS,
+  quietMode: WATCH_QUIET_HOURS_MODE,
+  quietWeekends: WATCH_QUIET_WEEKENDS,
+  tz: WATCH_TZ,
+  pinned: PINNED_S,
+  watchingSince: Date.now(),
+};
+const EVENT_HISTORY_MS = 6 * 3600 * 1000;
 const STATE = opt('--state');
 if (!STATE) {
   console.error('Pass --state <file>.');
@@ -113,6 +131,12 @@ function diff(prev, next) {
     if (!next[key] && confirmedClosed(prev[key])) lines.push(`LEFT-OPEN-SET ${key} (merged or closed) ${prev[key].url}`);
   }
   return lines;
+}
+
+// Things that happened since the last tick, for the cadence: each wake-worthy change, plus the
+// quiet ones (a push moving the head, a PR going draft <-> ready).
+function quietEvents(prev, next) {
+  return Object.entries(next).filter(([key, pr]) => prev[key] && (prev[key].head !== pr.head || prev[key].isDraft !== pr.isDraft)).length;
 }
 
 // A PR missing from one search result is only reported once GitHub confirms it
@@ -190,17 +214,31 @@ function requestCopilot(board) {
 const load = () => {
   if (!existsSync(STATE)) return null;
   const raw = JSON.parse(readFileSync(STATE, 'utf8'));
-  return 'board' in raw ? { board: raw.board, reported: raw.reported || {} } : { board: raw, reported: {} };
+  return 'board' in raw ? { board: raw.board, reported: raw.reported || {}, events: raw.events || [] } : { board: raw, reported: {}, events: [] };
 };
-const save = (board, reported) => writeFileSync(STATE, JSON.stringify({ board, reported }, null, 2));
+const save = (board, reported, events) => writeFileSync(STATE, JSON.stringify({ board, reported, events }, null, 2));
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
+
+// Decides the next sleep from recent activity, says so on stderr, and sleeps unless told to stop.
+// Returns false when the cadence says to exit (quiet hours).
+function schedule(events) {
+  const next = nextInterval({ now: Date.now(), recentEvents: events, config: CADENCE });
+  console.error(next.stop ? `stopping: ${next.reason}` : `next check in ${next.seconds}s (${next.reason})`);
+  return next;
+}
+async function wait(events) {
+  const next = schedule(events);
+  if (next.stop) return false;
+  await sleep(next.seconds);
+  return true;
+}
 
 async function main() {
   if (flag('--baseline') || !load()) {
     const board = fetchBoard();
     // A baseline prints the standing conditions, so they count as reported; a silent first
     // run has told the user nothing yet and reports them on its first tick.
-    save(board, flag('--baseline') ? reportedNow(board) : {});
+    save(board, flag('--baseline') ? reportedNow(board) : {}, []);
     if (flag('--baseline')) {
       console.log(`baseline: ${Object.keys(board).length} open PRs`);
       standingLines(board).forEach((l) => console.log(l));
@@ -209,37 +247,41 @@ async function main() {
   }
   for (;;) {
     let board;
+    const events = (load()?.events || []).filter((t) => Date.now() - t < EVENT_HISTORY_MS);
     try {
       board = fetchBoard();
     } catch (err) {
       // Network blips and gh rate limits are transient; wait and retry.
       console.error(`fetch failed, retrying next tick: ${err.message.split('\n')[0]}`);
-      await sleep(INTERVAL_S);
+      if (!(await wait(events))) return;
       continue;
     }
     const { board: prev, reported } = load();
     if (looksTruncated(prev, board)) {
       console.error(`${new Date().toISOString()} search returned ${Object.keys(board).length} of ${Object.keys(prev).length} PRs; skipping tick`);
-      await sleep(INTERVAL_S);
+      if (!(await wait(events))) return;
       continue;
     }
     requestCopilot(board);
     const changes = diff(prev, board);
     const fresh = unreported(board, reported);
+    const seen = changes.length + quietEvents(prev, board);
+    const history = [...events, ...Array(seen).fill(Date.now())];
+    save(board, reportedNow(board), history);
     if (changes.length || fresh.length) {
-      save(board, reportedNow(board));
       console.log(`${new Date().toISOString()} ${changes.length + fresh.length} change(s):`);
       changes.forEach((l) => console.log(l));
       standingLines(board).forEach((l) => console.log(l));
+      console.error('exiting: something needs attention');
       return;
     }
-    save(board, reportedNow(board));
     if (flag('--once')) {
       console.log('no changes');
       standingLines(board).forEach((l) => console.log(l));
+      schedule(history);
       return;
     }
-    await sleep(INTERVAL_S);
+    if (!(await wait(history))) return;
   }
 }
 
