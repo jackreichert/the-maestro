@@ -984,12 +984,31 @@ test('approvals --days and --since set the window; an old row that is retro-tagg
     assert.ok(!jsonDigest('--days', '7').standing.some((a) => a.id === ids.old));
     assert.ok(jsonDigest('--days', '60').standing.some((a) => a.id === ids.old));
     assert.ok(jsonDigest('--since', daysAgo(40)).standing.some((a) => a.id === ids.old));
-    assert.equal(jsonDigest('--days', '0').standing.length, 0);
+    assert.equal(digest('--days', '0').code, 1);
     const oldDecision = idOf(run('log', 'ancient decision', '--kind', 'decision', '--date', daysAgo(90), ...MARK).out);
     run('approve-tag', oldDecision, '--approval', 'one-off', ...MARK);
     assert.ok(jsonDigest('--days', '7').oneOff.some((a) => a.id === oldDecision));
     assert.equal(digest('--since', 'yesterday').code, 1);
     assert.equal(digest('--days', 'x').code, 1);
+});
+
+test('--days N covers exactly N days ending today, so weekly digests do not overlap', () => {
+    const mk = (n) => idOf(run('log', `grant ${n} days ago`, '--kind', 'decision', '--date', daysAgo(n), '--approval', 'one-off', ...MARK).out);
+    const [today0, six, seven] = [mk(0), mk(6), mk(7)];
+    const ids = jsonDigest('--days', '7').oneOff.map((a) => a.id);
+    assert.ok(ids.includes(today0) && ids.includes(six));
+    assert.ok(!ids.includes(seven));
+    assert.deepEqual(jsonDigest('--days', '1').oneOff.map((a) => a.id), [today0]);
+    assert.equal(jsonDigest('--days', '7').since, daysAgo(6));
+});
+
+test('approvals names the digest after the ISO week of the window end, not today', () => {
+    const r = digest('--since', '2026-01-05', '--until', '2026-01-11');
+    assert.equal(r.code, 0);
+    assert.deepEqual(readdirSync(join(tv, 'Projects', 'test-proj', 'Reviews')), ['approvals-2026-W02.md']);
+    assert.match(readFileSync(join(tv, 'Projects', 'test-proj', 'Reviews', 'approvals-2026-W02.md'), 'utf8'), /week: 2026-W02\n/);
+    assert.equal(jsonDigest('--since', '2025-12-22', '--until', '2025-12-28').week, '2025-W52');
+    assert.equal(digest('--until', 'soon').code, 1);
 });
 
 test('approvals writes the review doc with frontmatter and review lines, and never overwrites without --force', () => {

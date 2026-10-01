@@ -79,7 +79,7 @@ node $J log "yes, retarget #3934" --kind decision --approval one-off --model ...
 
 ### Weekly approvals review
 
-`journal.mjs approvals [--since YYYY-MM-DD | --days 7] [--out <path>] [--force] [--json]` collects approval rows and their tags and writes a review doc, by default `$VAULT_ROOT/Projects/<container-project>/Reviews/approvals-<ISO-week>.md` (`--tickets-vault` overrides the vault), with `type: review`, `status: draft` and `week: YYYY-Www`. It never overwrites without `--force`, and it appends nothing to the ledger. `--days N` covers rows dated N days back or later; the default is 7. `--json` prints the groups and writes no file.
+`journal.mjs approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]` collects approval rows and their tags and writes a review doc, by default `$VAULT_ROOT/Projects/<container-project>/Reviews/approvals-<ISO-week>.md` (`--tickets-vault` overrides the vault), with `type: review`, `status: draft` and `week: YYYY-Www`. It never overwrites without `--force`, and it appends nothing to the ledger. `--days N` covers exactly N calendar days ending on `--until` (default today, inclusive), so `--days 7` run weekly never overlaps; the default is 7 and N must be at least 1. `--since` sets the first day instead, and `--until` the last. The file is named after the ISO week of the window's end date. `--json` prints the groups and writes no file.
 
 - **Standing approvals**: date, text, scope, ref and source row id, each with the line `- [ ] keep  - [ ] narrow  - [ ] revoke`.
 - **One-off approvals**: date, text and ref, for awareness only.
