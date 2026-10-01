@@ -117,3 +117,11 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
     assert.equal(e.PR_MAX_CODE_LINES, '400', 'non-numeric env falls back to the default, not the file value');
     assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
 });
+
+test('twin_flow_repos: empty by default, list from the file, environment wins', () => {
+    assert.equal(show().TWIN_FLOW_REPOS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('twin_flow_repos: repo_a, repo_b'));
+    assert.equal(show().TWIN_FLOW_REPOS, 'repo_a, repo_b');
+    assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: 'only_one' }).TWIN_FLOW_REPOS, 'only_one');
+    assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: '' }).TWIN_FLOW_REPOS, '(unset)');
+});
