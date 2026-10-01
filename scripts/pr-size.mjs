@@ -9,6 +9,10 @@
  * hit first: pr_max_code_files (default 5) and pr_max_code_lines (default 400, additions plus
  * deletions). Limits and path globs come from local-config.mjs.
  *
+ * The base resolves to `origin/<base>` when that remote ref exists (after a quiet, non-fatal
+ * `git fetch origin <base>`), else the local ref, so a stale local branch cannot skew the count.
+ * The diff stays three-dot, matching the PR diff GitHub shows.
+ *
  * Mechanical changes (lockfiles, generated or vendored files, pure renames) are exempt only when the
  * PR holds no code: code plus mechanical files fails as "mixed". Migrations count as code.
  * Exit 0 within budget, 1 over budget or mixed, 2 on bad usage or a git error.
@@ -127,6 +131,14 @@ export function assess(files, { maxFiles, maxLines, classify }) {
   };
 }
 
+/** `origin/<base>` when it exists (after a quiet fetch that may fail harmlessly), else `base` as given. */
+export function resolveBase(repo, base) {
+  const git = (...a) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  try { git('fetch', '--quiet', 'origin', base); } catch { /* a failed fetch is not fatal */ }
+  const remote = `origin/${base}`;
+  return git('rev-parse', '--verify', '--quiet', `${remote}^{commit}`).status === 0 ? remote : base;
+}
+
 function usage(msg) {
   if (msg) console.error(`pr-size: ${msg}`);
   console.error('usage: node scripts/pr-size.mjs --repo <path> --base <ref> [--head <ref>] [--json]');
@@ -161,7 +173,7 @@ function render(r) {
 
 function main() {
   const { repo, base, head, json } = parseArgs(process.argv.slice(2));
-  const g = spawnSync('git', ['-C', repo, 'diff', '--numstat', '-M', '-z', `${base}...${head}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const g = spawnSync('git', ['-C', repo, 'diff', '--numstat', '-M', '-z', `${resolveBase(repo, base)}...${head}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (g.status !== 0) { console.error(`pr-size: git diff failed: ${(g.stderr || '').trim()}`); process.exit(2); }
   const classify = makeClassifier({ mechanical: PR_MECHANICAL_GLOBS, test: PR_TEST_GLOBS, config: PR_CONFIG_GLOBS, docs: PR_DOCS_GLOBS });
   const result = assess(parseNumstat(g.stdout), { maxFiles: PR_MAX_CODE_FILES, maxLines: PR_MAX_CODE_LINES, classify });
