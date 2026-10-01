@@ -107,6 +107,32 @@ export const RESUME_GH = !/^(off|false|no|0)$/i.test(pick('MAESTRO_RESUME_GH', '
 /** Whether `journal.mjs roll` commits the ledger root after a clean `verify`. Off unless set to on/true/yes/1. */
 export const LEDGER_GIT_AUTOCOMMIT = /^(on|true|yes|1)$/i.test(pick('MAESTRO_LEDGER_GIT_AUTOCOMMIT', 'ledger_git_autocommit').trim());
 
+/** Positive number from a config string, else the fallback. */
+const positive = (text, fallback) => (Number(text) > 0 ? Number(text) : fallback);
+
+/** Valid IANA time zone name, else undefined (the system zone). */
+const validZone = (name) => {
+  try { return name ? new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone : undefined; } catch { return undefined; }
+};
+
+/** PR watcher: fastest poll in seconds. pr-watch.mjs never goes under 300 whatever this says. */
+export const WATCH_MIN_INTERVAL = positive(pick('MAESTRO_WATCH_MIN_INTERVAL', 'watch_min_interval'), 300);
+
+/** PR watcher: slowest poll in seconds. */
+export const WATCH_MAX_INTERVAL = positive(pick('MAESTRO_WATCH_MAX_INTERVAL', 'watch_max_interval'), 1800);
+
+/** PR watcher quiet hours as `HH:MM-HH:MM` in WATCH_TZ; `off` disables them. */
+export const WATCH_QUIET_HOURS = pick('MAESTRO_WATCH_QUIET_HOURS', 'watch_quiet_hours').trim() || '20:00-07:00';
+
+/** What the watcher does in quiet hours: `stop` (exit) or `slow` (poll every 30 minutes). Default stop. */
+export const WATCH_QUIET_HOURS_MODE = /^slow$/i.test(pick('MAESTRO_WATCH_QUIET_HOURS_MODE', 'watch_quiet_hours_mode').trim()) ? 'slow' : 'stop';
+
+/** Whether Saturday and Sunday count as quiet hours too. Off unless set to on/true/yes/1. */
+export const WATCH_QUIET_WEEKENDS = /^(on|true|yes|1)$/i.test(pick('MAESTRO_WATCH_QUIET_WEEKENDS', 'watch_quiet_weekends').trim());
+
+/** IANA time zone the quiet hours are read in. Unset or invalid means the system time zone. */
+export const WATCH_TZ = validZone(pick('MAESTRO_WATCH_TZ', 'watch_tz').trim()) || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 /** A positive integer setting; anything else (unset, zero, negative, text) falls back to the default. */
 const positiveInt = (raw, fallback) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0 ? Number(raw) : fallback);
 
@@ -136,7 +162,7 @@ if (process.argv[1] && isMain()) {
   console.log(`user_file:    ${userPath || '(disabled)'}${userPath && existsSync(userPath) ? '' : ' (not found)'}`);
   console.log(`overlay:      ${OVERLAY || '(none)'}`);
   console.log(`overlay_file: ${overlayPath || '(none found)'}`);
-  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', ') })) {
+  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', '), WATCH_MIN_INTERVAL, WATCH_MAX_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE, WATCH_QUIET_WEEKENDS: WATCH_QUIET_WEEKENDS ? 'on' : 'off', WATCH_TZ })) {
     console.log(`${k.padEnd(22)} ${v || '(unset)'}`);
   }
 }
