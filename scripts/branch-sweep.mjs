@@ -14,7 +14,8 @@
  * protected, and is merged into every merge target. A worktree qualifies when its branch does, or its upstream (its own
  * name on origin) was deleted with nothing unpushed, and it is clean, holds no ignored file worth keeping, is not a live
  * skill, is unlocked, not under a live claim and idle. "Merged" is ancestry or a merged PR for this branch (head ref and
- * tip), the twin PR found by a link only if it is the branch's own. Patch-equivalence alone (`git cherry`, so a squash
+ * tip), the twin PR (the other target's PR, from the same branch name with a -staging/-develop suffix added or removed, or
+ * linked both ways) counts when the branch's own PR into the other target has exactly its tip. Patch-equivalence alone (`git cherry`, so a squash
  * merge, but also a squash merge that was since reverted) lists the branch under Review, and --apply refuses it.
  * Any git or gh error leaves the item out, with the reason noted.
  * The `gh` binary is `MAESTRO_GH` if set. Settings: local-config.mjs and reference/local-config.md.
@@ -164,21 +165,28 @@ function mergedPrs(repo, ctx) {
 /** Merged PRs whose head ref is `name` and whose head commit is exactly `tip`. */
 const exactPrs = (repo, name, tip, ctx) => mergedPrs(repo, ctx).filter((p) => p.headRefName === name && p.headRefOid === tip);
 
-/** A PR named in the body of the branch's own PR, merged into `target`: counts only if it is this branch's PR too (same head ref, head is the tip or contains it). */
-function twinByLink(c, target) {
-  const links = new Set(c.exact().flatMap((p) => [...(p.body || '').matchAll(/(?:#|\/pull\/)(\d+)/g)].map((m) => m[1])));
-  for (const n of links) {
-    const v = c.ctx.gh(c.g.repo, ['pr', 'view', n, '--json', 'number,state,baseRefName,headRefName,headRefOid,url']);
-    if (v?.state === 'MERGED' && v.baseRefName === target && v.headRefName === c.name && (v.headRefOid === c.tip || c.g('merge-base', '--is-ancestor', c.tip, v.headRefOid).ok)) return v;
-  }
-  return null;
+/** A twin branch name differs only by a `-staging` / `-develop` suffix: `x` and `x-staging`, `x` and `x-develop`, `x-develop` and `x-staging`. */
+const stem = (b) => b.replace(/-(staging|develop)$/, '');
+const prNumbers = (body) => new Set([...(body || '').matchAll(/(?:#|\/pull\/)(\d+)/g)].map((m) => Number(m[1])));
+
+/**
+ * The twin PR of this branch for `target`: a MERGED PR into `target` from the branch's twin (a different head ref,
+ * same name up to the suffix) or whose body and the branch's own PR's body link each other. It counts only when the
+ * branch itself has a merged PR into another target with exactly its tip (tip-bound), so a twin alone proves nothing.
+ * The twin's own branch is judged separately, on this same rule. Only merged PRs are ever listed, so state is merged.
+ */
+function twinPr(c, target) {
+  const own = c.exact().filter((p) => p.baseRefName !== target && c.targets.includes(p.baseRefName));
+  if (!own.length) return null;
+  const linked = (q) => own.some((p) => prNumbers(q.body).has(p.number) && prNumbers(p.body).has(q.number));
+  return mergedPrs(c.g.repo, c.ctx).find((q) => q.baseRefName === target && q.headRefName !== c.name && (stem(q.headRefName) === stem(c.name) || linked(q))) || null;
 }
 
 /** Evidence that the branch is merged into one target; the first rule that returns evidence wins. `check` gets (c, target). */
 const TARGET_RULES = [
   rule('ancestry', (c, t) => isAncestor(c.g, c.ref, `origin/${t}`) && { how: 'ancestry' }, (ev) => ev.how),
   rule('own merged PR', (c, t) => { const pr = c.exact().find((p) => p.baseRefName === t); return pr && { how: `PR #${pr.number}`, url: pr.url }; }, (ev) => ev.how),
-  rule('twin PR by link', (c, t) => { const pr = twinByLink(c, t); return pr && { how: `PR #${pr.number}`, url: pr.url }; }, (ev) => ev.how),
+  rule('twin PR', (c, t) => { const pr = twinPr(c, t); return pr && { how: `twin PR #${pr.number} (${pr.headRefName})`, url: pr.url }; }, (ev) => ev.how),
 ];
 
 /** Every commit has a patch-equivalent in the target. Alone this is weak: a revert of a squash merge still matches. */
@@ -192,7 +200,7 @@ function cherryEquivalent(g, target, ref) {
  * evidence), 'review' (the rest only patch-equivalent), or 'no'. Throws on a failed git or gh call.
  */
 function mergedEvidence(g, ref, name, tip, targets, ctx) {
-  const c = { g, ref, name, tip, ctx, exact: () => exactPrs(g.repo, name, tip, ctx) };
+  const c = { g, ref, name, tip, ctx, targets, exact: () => exactPrs(g.repo, name, tip, ctx) };
   const per = []; const weak = []; const missing = [];
   for (const t of targets) {
     let hit = null;
