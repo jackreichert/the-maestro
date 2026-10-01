@@ -30,7 +30,8 @@ const run = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
   return { ok: r.status === 0, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
-const gitIn = (repo) => Object.assign((...a) => run('git', ['-C', repo, ...a]), { repo });
+// --no-optional-locks: a scan must not refresh the index, or it would reset the idle clock it reads.
+const gitIn = (repo) => Object.assign((...a) => run('git', ['--no-optional-locks', '-C', repo, ...a]), { repo });
 
 /** `gh <args>` as parsed JSON, or null when gh is missing, unauthenticated or fails. The default for ctx.gh. */
 export function ghJson(repo, args) {
@@ -81,6 +82,13 @@ function isMine(g, ref, protectedRefs, ctx) {
   return authors.length > 0 && authors.every((a) => emails.includes(a));
 }
 
+/** Merged PRs of a repo, fetched once per scan (one gh call, newest 1000; an older PR just reads as not merged). */
+function mergedPrs(repo, ctx) {
+  ctx.prCache ??= new Map();
+  if (!ctx.prCache.has(repo)) ctx.prCache.set(repo, ctx.gh(repo, ['pr', 'list', '--state', 'merged', '--limit', '1000', '--json', 'number,baseRefName,headRefName,headRefOid,url,body']) || []);
+  return ctx.prCache.get(repo);
+}
+
 /** Is `ref` (branch `name`) merged into every target? { ok, per: [{ target, how, url? }], missing }. */
 function mergedEvidence(g, ref, name, targets, ctx) {
   const tip = g('rev-parse', ref).out;
@@ -92,8 +100,7 @@ function mergedEvidence(g, ref, name, targets, ctx) {
     else missing.push(t);
   }
   if (missing.length) {
-    const own = (ctx.gh(g.repo, ['pr', 'list', '--head', name, '--state', 'merged', '--limit', '30', '--json', 'number,baseRefName,mergedAt,headRefOid,url,body']) || [])
-      .filter((p) => p.headRefOid === tip);
+    const own = mergedPrs(g.repo, ctx).filter((p) => p.headRefName === name && p.headRefOid === tip);
     for (const t of [...missing]) {
       let pr = own.find((p) => p.baseRefName === t);
       if (!pr && own.length) { // twin by link: the other target's PR is named in a body, merged, into that target
