@@ -32,9 +32,10 @@ import {
   GH_LOGIN, PR_SEARCH, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_QUIET_WEEKENDS, WATCH_TZ,
 } from './local-config.mjs';
-import { nextInterval } from './lib/cadence.mjs';
+import { floorSeconds, nextInterval } from './lib/cadence.mjs';
 import { searchAllPages } from './lib/gh-search.mjs';
 
+const EXIT = { usage: 2 };
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
 const opt = (name, fallback) => {
@@ -42,10 +43,19 @@ const opt = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 
+// --interval must be a positive number of seconds; anything else is a usage error, not "unpinned".
+function parsePin(text) {
+  if (text === undefined) return undefined;
+  const seconds = Number(text);
+  if (text.trim() !== '' && Number.isFinite(seconds) && seconds > 0) return seconds;
+  console.error(`--interval needs a positive number of seconds, got "${text}".`);
+  process.exit(EXIT.usage);
+}
+
 const SELF = GH_LOGIN || execFileSync('gh', ['api', 'user', '--jq', '.login'], { encoding: 'utf8' }).trim();
 const COPILOT = 'copilot-pull-request-reviewer';
 // The cadence adapts to activity and quiet hours (lib/cadence.mjs); --interval N pins it instead.
-const PINNED_S = Number(opt('--interval', '')) || undefined;
+const PINNED_S = parsePin(opt('--interval'));
 const CADENCE = {
   minInterval: WATCH_MIN_INTERVAL,
   maxInterval: WATCH_MAX_INTERVAL,
@@ -56,11 +66,14 @@ const CADENCE = {
   pinned: PINNED_S,
   watchingSince: Date.now(),
 };
+if (PINNED_S !== undefined && PINNED_S < floorSeconds({ minInterval: WATCH_MIN_INTERVAL })) {
+  console.error(`--interval ${PINNED_S} is below the ${floorSeconds({ minInterval: WATCH_MIN_INTERVAL })}s floor; polling every ${floorSeconds({ minInterval: WATCH_MIN_INTERVAL })}s.`);
+}
 const EVENT_HISTORY_MS = 6 * 3600 * 1000;
 const STATE = opt('--state');
 if (!STATE) {
   console.error('Pass --state <file>.');
-  process.exit(2);
+  process.exit(EXIT.usage);
 }
 
 const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {

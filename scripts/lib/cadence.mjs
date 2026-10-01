@@ -9,10 +9,11 @@
  *   config        { minInterval, maxInterval, windowMinutes, quietHours, quietMode,
  *                   quietWeekends, tz, watchingSince, pinned }; every field is optional
  *
- * Order of precedence: a pinned interval, then quiet hours, then busy-ness. Busy-ness is read from
- * two tables (ACTIVITY_TIERS by events in the window, IDLE_TIERS by minutes since the last event)
- * and the result is clamped to [max(300, minInterval), maxInterval]. Nothing here ever returns
- * less than 300 seconds unless the caller pins it.
+ * Order of precedence: quiet hours, then a pinned interval, then busy-ness. A pin sets the interval,
+ * not whether to run overnight. Busy-ness is read from two tables (ACTIVITY_TIERS by events in the
+ * window, IDLE_TIERS by minutes since the last event) and the result is clamped to
+ * [max(300, minInterval), maxInterval]. Nothing here ever returns less than that floor, a pin
+ * included: a pin below it is raised to it.
  */
 
 export const FLOOR_SECONDS = 300;
@@ -48,6 +49,9 @@ const QUIET_MODES = {
 
 const WEEKEND = new Set(['Sat', 'Sun']);
 
+/** The slowest-allowed floor in seconds: 300, or watch_min_interval when that is higher. */
+export const floorSeconds = (config = {}) => Math.max(FLOOR_SECONDS, config.minInterval ?? 0);
+
 const clamp = (seconds, { floor, ceiling }) => Math.min(ceiling, Math.max(floor, seconds));
 
 /** '20:00-07:00' -> { start, end } in minutes after midnight; anything else (off, none, junk) -> null. */
@@ -77,6 +81,11 @@ function isQuiet(now, config) {
   return (window !== null && inWindow(minutes, window)) || (config.quietWeekends && WEEKEND.has(weekday));
 }
 
+function pinned(seconds, floor) {
+  if (seconds >= floor) return { seconds, reason: 'pinned by --interval' };
+  return { seconds: floor, reason: `pinned by --interval (raised to ${floor})` };
+}
+
 function busyness(now, recentEvents, config) {
   const windowMs = config.windowMinutes * 60000;
   const inside = recentEvents.filter((t) => t <= now && now - t <= windowMs).length;
@@ -93,10 +102,10 @@ function busyness(now, recentEvents, config) {
 export function nextInterval({ now, recentEvents = [], config = {} }) {
   const cfg = { ...DEFAULTS, ...Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined)) };
   const at = new Date(now).getTime();
-  if (cfg.pinned) return { seconds: cfg.pinned, reason: 'pinned by --interval' };
-  const floor = Math.max(FLOOR_SECONDS, cfg.minInterval);
+  const floor = floorSeconds(cfg);
   const limits = { floor, ceiling: Math.max(floor, cfg.maxInterval) };
   if (isQuiet(at, cfg)) return (QUIET_MODES[cfg.quietMode] ?? QUIET_MODES.stop)(limits);
+  if (cfg.pinned) return pinned(cfg.pinned, floor);
   const { seconds, reason } = busyness(at, recentEvents, { ...cfg, minInterval: floor });
   return { seconds: clamp(seconds, limits), reason };
 }

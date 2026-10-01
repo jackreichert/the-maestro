@@ -215,7 +215,7 @@ pushes, state changes) in the last 30 minutes and picks the next sleep, printing
 Inside quiet hours (`watch_quiet_hours`, default 20:00-07:00 in `watch_tz`; weekends too with
 `watch_quiet_weekends: on`) it either exits with the reason "quiet hours" (`watch_quiet_hours_mode:
 stop`, the default; the next morning greeting restarts it) or polls every 1800s (`slow`).
-`--interval N` pins the cadence to N seconds and skips all of this. The rule and its rationale are
+`--interval N` pins the poll to N seconds but never below the 300s floor (a lower value is raised to it, with a stderr warning, and a non-positive or non-numeric N exits 2); quiet hours still apply to a pinned cadence. The rule and its rationale are
 cost material: [../cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); the
 settings are in [local-config.md](local-config.md). The logic is the pure function in
 [scripts/lib/cadence.mjs](../scripts/lib/cadence.mjs).
