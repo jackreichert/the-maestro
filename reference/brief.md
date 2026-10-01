@@ -23,7 +23,7 @@ A field you cannot fill means scout again, not dispatch.
 
 Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
-paraphrases it drifts. Approved by the user 2026-09-25; the PRs line gained the pr-open gate 2026-10-01.
+paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user.
 
 Print it with its slots filled by `node scripts/brief-block.mjs`. It exits non-zero, printing
 nothing, if a slot has no value, so never paste a block you wrote by hand.
