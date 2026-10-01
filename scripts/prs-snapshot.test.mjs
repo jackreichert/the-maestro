@@ -2,9 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { installGhStub, paged, prNode } from './lib/gh-stub.mjs';
 
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -12,7 +13,11 @@ process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./prs-snapshot.mjs', import.meta.url).pathname;
 
 function run(...args) {
-    const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+    return runWith(process.env, ...args);
+}
+
+function runWith(env, ...args) {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -138,4 +143,17 @@ test('missing arguments print usage and exit non-zero', () => {
     const r = run('diff', '/tmp/does-not-matter.json');
     assert.notEqual(r.code, 0);
     assert.match(r.err, /Usage: prs-snapshot\.mjs diff/);
+});
+
+test('--diff reads every search page: PRs past the 50th are not "no longer open"', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prs-snap-test-'));
+    const nodes = Array.from({ length: 53 }, (_, i) => prNode(i + 1));
+    const prs = nodes.map((n) => pr({ key: `org/repo#${n.number}`, number: n.number, url: n.url }));
+    mkdirSync(join(dir, 'Projects', 'dev-env', 'Journal'), { recursive: true });
+    writeFileSync(join(dir, 'Projects', 'dev-env', 'Journal', 'prs-snapshot.json'), JSON.stringify({ takenAt: 't', prs }));
+    const env = installGhStub({ pages: paged(nodes) });
+    const r = runWith(env, '--diff', '--dry-run', '--vault', dir);
+    assert.equal(r.code, 0, r.err);
+    assert.doesNotMatch(r.out, /no longer open/);
+    assert.match(r.out, /No actionable changes/);
 });

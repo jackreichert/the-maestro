@@ -11,7 +11,7 @@ One GraphQL call, `gh api graphql` has no `-c` flag, so formatting happens in `-
 `gh` command line. This is the query that ran today:
 
 ```bash
-gh api graphql -f query='query { search(query: "is:pr is:open author:@me org:<org>", type: ISSUE, first: 50) { nodes { ... on PullRequest { number title isDraft url headRefName baseRefName updatedAt reviewDecision repository { nameWithOwner } reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } ... on Team { name } ... on Bot { login } } } } latestReviews(first: 10) { nodes { author { login } state submittedAt } } reviewThreads(first: 100) { nodes { id isResolved isOutdated comments(first: 1) { nodes { author { login } } } } } comments(last: 5) { totalCount nodes { author { login } createdAt } } } } } }' \
+gh api graphql -f query='query($after: String) { search(query: "is:pr is:open author:@me org:<org>", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number title isDraft url headRefName baseRefName updatedAt reviewDecision repository { nameWithOwner } reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } ... on Team { name } ... on Bot { login } } } } latestReviews(first: 10) { nodes { author { login } state submittedAt } } reviewThreads(first: 100) { nodes { id isResolved isOutdated comments(first: 1) { nodes { author { login } } } } } comments(last: 5) { totalCount nodes { author { login } createdAt } } } } } }' \
   --jq '
     .data.search.nodes[] |
     {
@@ -45,6 +45,12 @@ gh api graphql -f query='query { search(query: "is:pr is:open author:@me org:<or
     | @tsv
   '
 ```
+
+**The search returns 50 PRs a page.** A board with more open PRs silently loses the rest unless the
+query pages: read `pageInfo { hasNextPage endCursor }` and repeat with `-f after=<endCursor>` until
+`hasNextPage` is false (or add `--paginate`, which reads the same fields from a query that declares
+`$endCursor`). `scripts/pr-watch.mjs` and `scripts/prs-snapshot.mjs` already page through
+`scripts/lib/gh-search.mjs`; a page-one-only read made PRs past the 50th look "no longer open".
 
 Scoped to one GitHub org on purpose — personal and third-party repos are out of scope for the board. Substitute `<org>` from local-config (see [local-config.md](local-config.md)); the scripts read the same value from `scripts/local-config.mjs`.
 

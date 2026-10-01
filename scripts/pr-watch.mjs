@@ -26,6 +26,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { GH_LOGIN, PR_SEARCH } from './local-config.mjs';
+import { searchAllPages } from './lib/gh-search.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -43,7 +44,7 @@ if (!STATE) {
   process.exit(2);
 }
 
-const QUERY = `query { search(query: "${PR_SEARCH}", type: ISSUE, first: 50) { nodes { ... on PullRequest {
+const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
   number url isDraft reviewDecision repository { nameWithOwner }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on Bot { login } } } }
   latestReviews(first: 20) { nodes { author { login } } }
@@ -53,18 +54,9 @@ const QUERY = `query { search(query: "${PR_SEARCH}", type: ISSUE, first: 50) { n
 } } } }`;
 
 function fetchBoard() {
-  const out = execFileSync('gh', ['api', 'graphql', '-f', `query=${QUERY}`], {
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  const parsed = JSON.parse(out);
-  // Under load GitHub can answer 200 with `errors` and an empty or partial search;
-  // treat that as a failed fetch, never as "every PR closed" (dev-env-012).
-  if (parsed.errors?.length || !parsed.data?.search) {
-    throw new Error(`partial GraphQL response: ${parsed.errors?.[0]?.message || 'no search data'}`);
-  }
+  // Paginated: the search returns 50 PRs a page, and PRs past the first page must not look closed.
   const board = {};
-  for (const pr of parsed.data.search.nodes.filter(Boolean)) {
+  for (const pr of searchAllPages(QUERY)) {
     const key = `${pr.repository.nameWithOwner}#${pr.number}`;
     const notSelf = (login) => login && login !== SELF;
     const copilotSeen =
