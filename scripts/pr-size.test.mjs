@@ -200,3 +200,33 @@ test('900 lines in src/docs/render.ts fails the gate end to end', () => {
     assert.deepEqual(r.code.paths, ['src/docs/render.ts']);
     assert.match(r.failures.join('\n'), /900 code lines \(max 400\)/);
 });
+
+test('a stale local base with an updated origin base is measured against origin/<base>', () => {
+    const repo = repoWith({}, (r) => put(r, 'src/seed.py', lines(1)));
+    const remote = mkdtempSync(join(tmpdir(), 'pr-size-remote-'));
+    git(remote, 'init', '-q', '--bare', '-b', 'main');
+    git(repo, 'remote', 'add', 'origin', remote);
+    git(repo, 'push', '-q', 'origin', 'main');
+    // origin/main moves ahead by six code files; local main stays stale; feature is cut from the new tip.
+    git(repo, 'checkout', '-q', '-b', 'tip', 'main');
+    for (let i = 0; i < 6; i++) put(repo, `src/m${i}.py`, lines(1));
+    git(repo, 'add', '--all');
+    git(repo, 'commit', '-q', '-m', 'main moves');
+    git(repo, 'push', '-q', 'origin', 'tip:main');
+    git(repo, 'checkout', '-q', '-B', 'feature', 'tip');
+    put(repo, 'src/mine.py', lines(3));
+    git(repo, 'add', '--all');
+    git(repo, 'commit', '-q', '-m', 'mine');
+    const r = checkJson(repo);
+    assert.equal(r.status, 0, JSON.stringify(r.failures));
+    assert.equal(r.code.files, 1);
+    assert.equal(r.code.lines, 3);
+});
+
+test('resolveBase falls back to the local ref when there is no origin, and a failed fetch is not fatal', async () => {
+    const { resolveBase } = await import('./pr-size.mjs');
+    const repo = repoWith({}, (r) => put(r, 'src/seed.py', lines(1)));
+    assert.equal(resolveBase(repo, 'main'), 'main');
+    git(repo, 'remote', 'add', 'origin', join(repo, 'does-not-exist'));
+    assert.equal(resolveBase(repo, 'main'), 'main');
+});
