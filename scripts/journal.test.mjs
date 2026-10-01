@@ -1042,3 +1042,33 @@ test('approvals default path is Projects/<project>/Reviews/approvals-<ISO week>.
     assert.equal(files.length, 1);
     assert.match(files[0], /^approvals-\d{4}-W\d{2}\.md$/);
 });
+
+test('approvals rejects a window whose --since is after --until', () => {
+    const r = digest('--since', '2026-01-11', '--until', '2026-01-05');
+    assert.equal(r.code, 1);
+    assert.match(r.out + (r.err || ''), /after --until/);
+    assert.equal(digest('--since', '2026-01-05', '--until', '2026-01-05').code, 0);
+});
+
+const IMPOSSIBLE_DATES = [['--since', '2026-02-30'], ['--since', '2026-02-31'], ['--until', '2026-02-30'], ['--until', '2026-04-31']];
+for (const [flag, value] of IMPOSSIBLE_DATES) {
+    test(`approvals rejects the impossible date ${flag} ${value}`, () => {
+        assert.equal(digest(flag, value).code, 1);
+    });
+}
+
+test('approvals rejects a bare --until instead of meaning today', () => {
+    assert.equal(digest('--days', '7', '--until').code, 1);
+    assert.equal(digest('--until').code, 1);
+});
+
+test('a grant that is both resolved with --approval and approve-tagged is listed once, latest approval winning', () => {
+    const q = idOf(run('log', 'retarget #3934?', '--kind', 'question', '--date', daysAgo(1), ...MARK).out);
+    assert.equal(run('resolve', q, '--approval', 'one-off', '--scope', 'this PR', ...MARK).code, 0);
+    assert.equal(run('approve-tag', q, '--approval', 'standing', ...MARK).code, 0);
+    const g = jsonDigest('--days', '7');
+    const all = [...g.standing, ...g.oneOff];
+    assert.equal(all.length, 1);
+    assert.equal(g.standing.length, 1);
+    assert.equal(g.standing[0].scope, 'this PR');
+});
