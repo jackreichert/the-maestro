@@ -94,7 +94,7 @@ test('a merged PR counts only when its head is the branch tip; twin found by lin
     const w = world(); feature(w, 'feat/pr'); mergeInto(w, 'develop', 'feat/pr');
     const tip = sh(w.repo, 'rev-parse', 'origin/feat/pr');
     const gh = (head) => (_repo, args) => (args[1] === 'list'
-        ? [{ number: 7, baseRefName: 'develop', headRefOid: head, url: 'https://example.com/pull/7', body: 'twin: #8' }]
+        ? [{ number: 7, headRefName: 'feat/pr', baseRefName: 'develop', headRefOid: head, url: 'https://example.com/pull/7', body: 'twin: #8' }]
         : { number: 8, state: 'MERGED', baseRefName: 'staging', url: 'https://example.com/pull/8' });
     const ok = scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: gh(tip) }));
     assert.deepEqual(names(ok, 'remote-branch'), ['feat/pr']);
