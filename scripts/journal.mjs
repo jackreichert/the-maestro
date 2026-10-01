@@ -35,6 +35,9 @@
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
+ *   journal.mjs log "<text>" --kind decision --approval standing|one-off [--scope "<what it covers>"] [--ref <memory-file-or-url>] --model ... --used ...
+ *                                             an approval the user granted; `resolve` takes --approval too
+ *   journal.mjs approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]   mark an existing row as an approval (appends a row; nothing is rewritten)
  *   journal.mjs streams [list|add <name> [--alias a,b]|check]   the stream registry
  *   journal.mjs models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
  *   journal.mjs fact <key>=<value> --stream <name>   a structured metric; not an item, never open
@@ -87,7 +90,10 @@ import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMI
 import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag'];
+
+/** The values --approval accepts. Anything else is rejected at write time and flagged by `verify`. */
+const APPROVALS = new Set(['standing', 'one-off']);
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -351,6 +357,20 @@ function fmt(i, { showId = true, showUsage = true } = {}) {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
+const refsFromArgs = () => (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
+ * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
+ */
+function approvalFromArgs() {
+    const approval = arg('approval');
+    if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
+    if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
+    if (!APPROVALS.has(approval)) die(`--approval must be one of: ${[...APPROVALS].join(', ')} (got "${approval}")`);
+    return { approval, scope: arg('scope') || undefined };
+}
+
 function cmdLog(kindDefault = 'note') {
     const text = arg('text') || positional.join(' ');
     if (!text) { console.error('Needs text: journal.mjs log "what happened"'); process.exit(1); }
@@ -367,7 +387,8 @@ function cmdLog(kindDefault = 'note') {
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
         stream: streamOrNone(arg('stream')),
-        refs: (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean),
+        refs: refsFromArgs(),
+        ...approvalFromArgs(),
         ...usageFromArgs(),
     };
     append(entry);
@@ -375,6 +396,12 @@ function cmdLog(kindDefault = 'note') {
     console.log(`${entry.kind}  ${entry.id}  ${entry.text}`);
     return entry;
 }
+
+/** `resolve` may carry an approval (the user answered an `ask` with one); other closers ignore the flag. */
+const approvalClose = () => {
+    const fields = approvalFromArgs();
+    return fields.approval ? { ...fields, refs: refsFromArgs() } : {};
+};
 
 function cmdClose(newKind) {
     const needle = positional[0];
@@ -393,6 +420,7 @@ function cmdClose(newKind) {
         text: note || target.text,
         repo: target.repo,
         ticket: arg('ticket') || target.ticket,
+        ...approvalClose(),
         ...usageFromArgs(),
     });
     if (!dryRun) render(true);
@@ -420,6 +448,29 @@ function cmdTag() {
     });
     if (!dryRun) render(true);
     console.log(`tag  ${target.id}  -> ${stream}  ${target.text}`);
+}
+
+/** Mark an existing row as an approval without rewriting the ledger: appends an `approval-tag` row. */
+function cmdApproveTag() {
+    const id = positional[0];
+    const fields = approvalFromArgs();
+    if (!id || !fields.approval) die('Usage: journal.mjs approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]');
+    const entries = readLedger();
+    const target = entries.find((e) => e.id === id && !e.annotates);
+    if (!target) die(`No row with id "${id}".`);
+    append({
+        id: newId(entries),
+        ts: now(),
+        date: today(),
+        kind: 'approval-tag',
+        approves: target.id,
+        text: `approval ${fields.approval}`,
+        ...fields,
+        refs: refsFromArgs(),
+        ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`approval-tag  ${target.id}  -> ${fields.approval}  ${target.text}`);
 }
 
 const streamTitle = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -738,7 +789,9 @@ function verifyLedger() {
     }
     const missing = (line, row, field, id) => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
     for (const { row, line } of rows) {
-        for (const field of ['closes', 'carries', 'tags', 'annotates']) missing(line, row, field, row[field]);
+        if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
+        if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
+        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
     problems.sort((a, b) => a.line - b.line);
@@ -1602,6 +1655,7 @@ switch (cmd) {
     case 'verify': cmdVerify(); break;
     case 'render': render(false, has('include-archived')); break;
     case 'tag': cmdTag(); break;
+    case 'approve-tag': cmdApproveTag(); break;
     case 'streams': cmdStreams(); break;
     case 'models': cmdModels(); break;
     case 'fact': cmdFact(); break;
