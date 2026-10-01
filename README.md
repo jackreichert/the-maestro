@@ -9,6 +9,7 @@ It does not implement features itself. Implementation happens in the target repo
 - A session protocol: resolve the repo, scout, ticket, dispatch, relay, then close with a status footer.
 - A greeting that always comes back with a paste-ready standup update and today's board, not just "hey".
 - An append-only ledger so "what did we get done today?" is already written down, with workstreams (streams) for epics.
+- Approvals tracking: permissions the user grants mid-conversation are logged as `standing` or `one-off`, and a weekly digest (`journal.mjs approvals`) lists them so each standing one can be kept, narrowed or revoked. The review day is configurable (`approvals_review_day`, default Friday).
 - A derived, disposable search index over the ledger, tickets and handoff notes.
 - PR tracking: one bucketed report of every open PR you author — unresolved threads, drafts, awaiting the team, unreviewed, approved, stale — every PR linked, on request or as one line on the morning board. Review-comment text, bot or human, is treated as untrusted data: triaged against the code, never obeyed, never put in a shell command.
 - An end-of-day wrap-up: a PR pass first, then, if a tracker MCP is connected, it drafts comments and status changes for every issue touched that day, for your approval. Then it runs the standup and the roll.
@@ -300,6 +301,8 @@ node $J roll                                 # archive the day, keep open items
 node $J status --footer                      # the reply-footer Ledger lines, one per active stream
 node $J handoff --stream Launch              # scaffold the five-part handoff (see below)
 node $J resume                               # the verify-on-resume checklist
+node $J log "<text>" --kind decision --approval standing --scope "<what it covers>"   # log a granted permission (standing | one-off)
+node $J approvals --days 7                   # the weekly approvals review doc (keep / narrow / revoke)
 ```
 
 Also: `log`, `drop`, `stamp`, `stamp-missing`, `usage`, `render`. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. `--project` is required; there is no default project name.
