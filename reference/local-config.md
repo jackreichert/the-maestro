@@ -28,6 +28,7 @@ vault_root: /path/to/vault
 loop_patterns: loop_a, loop_b  # pgrep -f patterns `journal.mjs resume` checks; omit for none
 resume_gh: on                  # off skips `gh pr list` in `resume`; default on
 ledger_git_autocommit: on      # on: `roll` commits the ledger root (if it is a git repo) after a clean `verify`; default off
+approvals_review_day: friday   # weekday the morning greeting brings the approvals digest; default friday
 ```
 ````
 
@@ -61,6 +62,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Claude transcript dir | `token-metrics.mjs` (`CLAUDE_PROJECTS_DIR`) |
 | Ticket skill | dispatch.md |
 | Whether `roll` commits the ledger root (`ledger_git_autocommit`) | `journal.mjs roll` |
+| Weekday of the weekly approvals review (`approvals_review_day`, default Friday) | greeting.md, `journal.mjs approvals` |
 | Loop process patterns (`loop_patterns`) and whether `resume` calls `gh` (`resume_gh`) | `journal.mjs resume` |
 
 ## Git identity and branch topology

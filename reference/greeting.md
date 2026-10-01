@@ -69,6 +69,8 @@ What to include after the greeting, in this order:
    See [Issue tracker, only if the MCP is installed](#issue-tracker-only-if-the-mcp-is-installed).
 7. **Proposed priorities for the day** — always last. See [Priorities for the day](#priorities-for-the-day).
 
+**Weekly approvals review:** on the first session of the configured weekday (`approvals_review_day`, default Friday), also run the digest and link it, per [reference/ledger.md#weekly-approvals-review](ledger.md#weekly-approvals-review).
+
 Summarise; do not paste the raw command output. Group the trivial unblocks together and give the
 sharp ones their own line with the stakes attached. An empty board is still an answer — say it is
 clear and name the obvious next thing to pick up.

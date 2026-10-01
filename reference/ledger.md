@@ -52,6 +52,7 @@ crashed session cannot lose entries.
 | A question only the user can answer | `ask` |
 | They answer it | `resolve --answer "..."` |
 | A finding worth remembering that isn't a ticket | `log` |
+| The user grants permission, standing or one-off | `log --kind decision --approval standing\|one-off` (see [Approvals](#approvals)) |
 
 Log at the **same moment** you'd tell the user about it. If you're about to write "I've finished X" in a
 reply, `done` it first. The ledger is not a second job — it is the same sentence, written once
@@ -60,6 +61,31 @@ somewhere durable.
 **Do not log:** lookups, status checks, anything a ticket already owns in full. A ledger entry is a
 pointer to work; the ticket holds the detail. When both exist, pass `--ticket <id>` and let the link
 carry the weight.
+
+## Approvals
+
+Any time the user grants permission, log it with `--approval`, so it can be reviewed later instead of staying buried among other decisions:
+
+```bash
+node $J log "may resolve declined bot threads" --kind decision --approval standing --scope "bot threads only" --ref <memory-file-or-url> --model ... --used ...
+node $J log "yes, retarget #3934" --kind decision --approval one-off --model ... --used ...
+```
+
+- **`standing`** is a permission that keeps applying ("you may resolve declined bot threads", "merge the base into my branches"). Give it a `--scope` saying what it covers, and a `--ref` to wherever it is also recorded. If the install keeps memory files, save a standing approval there too and pass that file as `--ref`.
+- **`one-off`** covers a single action ("yes, retarget #3934"). It is logged for awareness and needs no follow-up.
+- `approval` is its own field, not a stream: streams are workstreams. Any other value is rejected.
+- When the user answers an `ask` with an approval, put the flag on the answer: `resolve <id> --answer "..." --approval one-off`.
+- To mark a decision that was already logged, use `approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]`. It appends an `approval-tag` row; nothing is rewritten, and the latest tag wins. `verify` checks the values and that every `approves` reference exists.
+
+### Weekly approvals review
+
+`journal.mjs approvals [--since YYYY-MM-DD | --days 7] [--out <path>] [--force] [--json]` collects approval rows and their tags and writes a review doc, by default `$VAULT_ROOT/Projects/<container-project>/Reviews/approvals-<ISO-week>.md` (`--tickets-vault` overrides the vault), with `type: review`, `status: draft` and `week: YYYY-Www`. It never overwrites without `--force`, and it appends nothing to the ledger. `--days N` covers rows dated N days back or later; the default is 7. `--json` prints the groups and writes no file.
+
+- **Standing approvals**: date, text, scope, ref and source row id, each with the line `- [ ] keep  - [ ] narrow  - [ ] revoke`.
+- **One-off approvals**: date, text and ref, for awareness only.
+- **Untagged decisions**: `decision` rows in the window with no approval. Classify any that were permissions with `approve-tag`.
+
+Once a week, on the first session of `approvals_review_day` (local config, default Friday), the morning greeting runs `journal.mjs approvals --days 7`, links the doc, and asks the user to tick keep, narrow or revoke for each standing approval. Then update every place a narrowed or revoked approval is recorded (memory files, config, instructions), and log the outcome.
 
 ## Workstreams (tags)
 
@@ -133,7 +159,7 @@ One line per active stream (a stream with an open or done-today item), named as 
 
 ## Integrity and backup
 
-`verify` checks the raw file: every line parses, ids are unique, and every `closes`, `carries`, `tags`, `annotates` and archive `ids` reference exists. It exits 1 with the offending lines, so run it after any hand edit of `ledger.jsonl`.
+`verify` checks the raw file: every line parses, ids are unique, and every `closes`, `carries`, `tags`, `annotates`, `approves` and archive `ids` reference exists, and every `approval` value is `standing` or `one-off`. It exits 1 with the offending lines, so run it after any hand edit of `ledger.jsonl`.
 
 With `ledger_git_autocommit` on (config file or `MAESTRO_LEDGER_GIT_AUTOCOMMIT`) and `$LEDGER_ROOT` a git repository, `roll` runs `verify` and then commits what changed under the root as `chore(ledger): roll <date>`. Paths are listed from `git status` (ignored files never appear) and staged one by one with `git add -- <path>`; the commit is limited to those paths. A failing `verify` blocks the commit and `roll` exits 1. The repo is local: nothing here pushes, and no remote is needed. A suitable `.gitignore`: `**/Index/*.sqlite` (the derived index) and temp files.
 
