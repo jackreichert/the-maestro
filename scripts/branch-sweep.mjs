@@ -2,7 +2,7 @@
 /**
  * BRANCH SWEEP: lists worktrees and remote branches that can be deleted, for the user to approve in a batch.
  *
- *   node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>]
+ *   node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]
  *   node scripts/branch-sweep.mjs --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]
  *
  * Read-only by default (it runs `git fetch --prune origin` and nothing else that writes). `--apply` deletes only the
@@ -374,6 +374,44 @@ function scanWorktree({ g, w, name, targets, scan, live, res }) {
   else if (state === 'review') res.review.push({ ...base, why: `branch ${w.branch}: ${why(a.ev)}`, prs: links(a.ev) });
 }
 
+/** Runs a rule list's checks one by one and prints each verdict; a thrown git or gh error prints as the verdict. */
+const verdict = (label, r, ...args) => {
+  try { const v = r.check(...args); return `  ${v ? 'PASS' : 'FAIL'} ${label}${v && v.how ? `: ${v.how}` : ''}${!v && r.reason && args.length === 1 ? ` (${r.reason(...args)})` : ''}`; } catch (e) { return `  ERROR ${label}: ${e.message}`; }
+};
+
+/** Per-rule verdicts for one remote branch, for --explain: ownership, then every target rule, then the overall result. Read-only. */
+export function explain(repoPath, ctx, branch) {
+  const g = (ctx.gitFor || gitIn)(repoPath);
+  const out = [`${basename(repoPath)} ${branch}`];
+  if (ctx.fetch && !g('fetch', '--prune', 'origin').ok) out.push('  note: git fetch failed; using the refs already here');
+  const ref = `refs/remotes/origin/${branch}`;
+  if (!g('rev-parse', '--verify', '-q', ref).ok) return [...out, '  not on origin'];
+  const { targets, error } = targetsFor(g, basename(repoPath), ctx);
+  if (error) return [...out, `  ${error}`];
+  const head = g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
+  const protectedNames = new Set([...ctx.protectedNames, ...targets, head].filter(Boolean));
+  const protectedRefs = [...protectedNames].filter((b) => g('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).ok).map((b) => `origin/${b}`);
+  if (protectedNames.has(branch) || protectedNames.has(bare(branch))) return [...out, '  FAIL protected branch'];
+  try {
+    const tip = must(g, 'rev-parse', ref);
+    const emails = (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
+    const mainline = mainlineOf(g, protectedRefs);
+    const own = ownCommits(g, ref, protectedRefs, mainline);
+    const c = { emails, own, exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
+    out.push(`  tip ${tip.slice(0, 9)}, ${own.length} own commits, targets ${targets.join('+')}, PR look-back ${ctx.prDays ?? 180} days, ${mergedPrs(g.repo, ctx).length} merged PRs read`);
+    out.push(`  exact PRs (head ${branch} at tip): ${c.exactPrs().map((p) => `#${p.number}->${p.baseRefName}`).join(', ') || 'none'}`);
+    out.push('ownership:', ...OWNERSHIP_RULES.map((r) => verdict(r.name, r, c)));
+    const tc = { g, ref, name: branch, tip, ctx, targets, exact: c.exactPrs };
+    for (const t of targets) {
+      out.push(`target ${t}:`, ...TARGET_RULES.map((r) => verdict(r.name, r, tc, t)));
+      try { out.push(`  ${cherryEquivalent(g, `origin/${t}`, ref) ? 'PASS' : 'FAIL'} patch-equivalent (review only)`); } catch (e) { out.push(`  ERROR cherry: ${e.message}`); }
+    }
+    const a = assess(g, ref, branch, targets, { ctx, protectedRefs, mainline });
+    out.push(`result: ${a.error ? `skipped (${a.error.message})` : !a.mine ? `not mine (${a.reason})` : a.ev.state === 'ok' ? `CANDIDATE, ${why(a.ev)}` : a.ev.state === 'review' ? 'REVIEW' : `not merged into ${a.ev.missing.join(', ')}`}`);
+  } catch (e) { out.push(`  ERROR ${e.message}`); }
+  return out;
+}
+
 /** Git repos directly under the container (linked worktrees, whose .git is a file, are reached through their main repo). */
 export function findRepos(container, only) {
   return readdirSync(container, { withFileTypes: true })
@@ -425,6 +463,8 @@ function main() {
     for (const r of results) console.log(`${r.done ? 'ok     ' : 'REFUSED'} ${r.id}  ${r.message}`);
     process.exit(results.every((r) => r.done) ? 0 : 1);
   }
+  const explain_ = val('explain');
+  if (explain_) { for (const p of findRepos(container, only)) console.log(explain(p, ctx, explain_).join('\n')); return; }
   const scans = findRepos(container, only).map((p) => scanRepo(p, ctx));
   const items = scans.flatMap((s) => s.items);
   const review = scans.flatMap((s) => s.review);
