@@ -35,6 +35,10 @@
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
+ *   journal.mjs log "<text>" --kind decision --approval standing|one-off [--scope "<what it covers>"] [--ref <memory-file-or-url>] --model ... --used ...
+ *                                             an approval the user granted; `resolve` takes --approval too
+ *   journal.mjs approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]   the approvals digest: standing (keep/narrow/revoke), one-off, untagged decisions
+ *   journal.mjs approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]   mark an existing row as an approval (appends a row; nothing is rewritten)
  *   journal.mjs streams [list|add <name> [--alias a,b]|check]   the stream registry
  *   journal.mjs models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
  *   journal.mjs fact <key>=<value> --stream <name>   a structured metric; not an item, never open
@@ -87,7 +91,16 @@ import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMI
 import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag'];
+
+/** The values --approval accepts. Anything else is rejected at write time and flagged by `verify`. */
+const APPROVALS = new Set(['standing', 'one-off']);
+
+/** Row kinds that may carry --approval when written (`approve-tag` writes its own approval-tag row). */
+const APPROVAL_WRITE_KINDS = new Set(['decision', 'resolved']);
+
+/** Row kinds an approval can point at: the user's decision, their answer to an ask, or the ask itself. */
+const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -351,6 +364,27 @@ function fmt(i, { showId = true, showUsage = true } = {}) {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
+const refsFromArgs = () => (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
+ * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
+ */
+function parseApproval() {
+    const approval = arg('approval');
+    if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
+    if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
+    if (!APPROVALS.has(approval)) die(`--approval must be one of: ${[...APPROVALS].join(', ')} (got "${approval}")`);
+    return { approval, scope: arg('scope') || undefined };
+}
+
+/** parseApproval for a row of `kind`: --approval is only allowed on the kinds in APPROVAL_WRITE_KINDS. */
+function approvalFor(kind) {
+    const fields = parseApproval();
+    if (fields.approval && !APPROVAL_WRITE_KINDS.has(kind)) die(`--approval only goes on: ${[...APPROVAL_WRITE_KINDS].join(', ')} (not ${kind}).`);
+    return fields;
+}
+
 function cmdLog(kindDefault = 'note') {
     const text = arg('text') || positional.join(' ');
     if (!text) { console.error('Needs text: journal.mjs log "what happened"'); process.exit(1); }
@@ -367,7 +401,8 @@ function cmdLog(kindDefault = 'note') {
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
         stream: streamOrNone(arg('stream')),
-        refs: (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean),
+        refs: refsFromArgs(),
+        ...approvalFor(kind),
         ...usageFromArgs(),
     };
     append(entry);
@@ -375,6 +410,12 @@ function cmdLog(kindDefault = 'note') {
     console.log(`${entry.kind}  ${entry.id}  ${entry.text}`);
     return entry;
 }
+
+/** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
+const approvalClose = (kind) => {
+    const fields = approvalFor(kind);
+    return fields.approval ? { ...fields, refs: refsFromArgs() } : {};
+};
 
 function cmdClose(newKind) {
     const needle = positional[0];
@@ -393,6 +434,7 @@ function cmdClose(newKind) {
         text: note || target.text,
         repo: target.repo,
         ticket: arg('ticket') || target.ticket,
+        ...approvalClose(newKind),
         ...usageFromArgs(),
     });
     if (!dryRun) render(true);
@@ -420,6 +462,137 @@ function cmdTag() {
     });
     if (!dryRun) render(true);
     console.log(`tag  ${target.id}  -> ${stream}  ${target.text}`);
+}
+
+/** Mark an existing row as an approval without rewriting the ledger: appends an `approval-tag` row. */
+function cmdApproveTag() {
+    const id = positional[0];
+    const fields = parseApproval();
+    if (!id || !fields.approval) die('Usage: journal.mjs approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]');
+    const entries = readLedger();
+    const target = entries.find((e) => e.id === id && !e.annotates);
+    if (!target) die(`No row with id "${id}".`);
+    if (!APPROVABLE_KINDS.has(target.kind)) die(`Row ${id} is a ${target.kind}; only ${[...APPROVABLE_KINDS].join(', ')} rows can be approved.`);
+    append({
+        id: newId(entries),
+        ts: now(),
+        date: today(),
+        kind: 'approval-tag',
+        approves: target.id,
+        text: `approval ${fields.approval}`,
+        ...fields,
+        refs: refsFromArgs(),
+        ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`approval-tag  ${target.id}  -> ${fields.approval}  ${target.text}`);
+}
+
+// approvals digest ----------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** ISO 8601 week label (YYYY-Www) for a YYYY-MM-DD date. */
+function isoWeek(d) {
+    const t = new Date(`${d}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));   // the Thursday of this week decides the year
+    const yearStart = Date.UTC(t.getUTCFullYear(), 0, 1);
+    return `${t.getUTCFullYear()}-W${String(Math.ceil(((t - yearStart) / DAY_MS + 1) / 7)).padStart(2, '0')}`;
+}
+
+/** A real calendar date: YYYY-MM-DD that reads back unchanged, so 2026-02-30 is rejected. */
+const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d)) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
+const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * The digest window as { since, until }, both inclusive. `until` is --until, else today. `since` is
+ * --since, else `--days N` (default 7) ending on `until`: exactly N calendar days, so weekly runs do not overlap.
+ */
+function approvalsWindow() {
+    if (has('until') && !arg('until')) die('--until needs a value: YYYY-MM-DD.');
+    const until = arg('until') ?? today();
+    if (!isDate(until)) die('--until must be YYYY-MM-DD.');
+    const since = arg('since');
+    if (since) {
+        if (!isDate(since)) die('--since must be YYYY-MM-DD.');
+        if (since > until) die(`--since (${since}) is after --until (${until}).`);
+        return { since, until };
+    }
+    const days = arg('days', '7');
+    if (!/^[1-9]\d*$/.test(days)) die('--days must be a whole number of at least 1.');
+    return { since: shiftDay(until, 1 - Number(days)), until };
+}
+
+/**
+ * Approvals in the window, grouped, one entry per grant. A grant is a row that carries `approval`
+ * itself, is pointed at by an `approval-tag` row, or closes a row with `--approval`; a closing row and
+ * the row it closes are the same grant. The events of a grant merge field by field in ledger order: the
+ * latest event that sets a field wins it, `scope` and `refs` carry over until replaced, and the entry
+ * is reported under the latest event's row. A grant is in the window when any of its rows or tags is.
+ * Untagged: `decision` rows that no approval touches.
+ */
+function collectApprovals(entries, { since, until }) {
+    const byId = new Map(entries.filter((e) => e.id).map((e) => [e.id, e]));
+    const grantOf = (row) => row.closes || row.id;
+    const events = new Map();
+    const add = (key, event) => events.set(key, [...(events.get(key) || []), event]);
+    for (const e of entries) {
+        if (!e.id || e.annotates) continue;
+        if (e.kind === 'approval-tag') {
+            const target = byId.get(e.approves);
+            if (target) add(grantOf(target), { subject: target, fields: e, tag: e });
+        } else if (e.approval) add(grantOf(e), { subject: e, fields: e });
+    }
+    const inWindow = (d) => String(d || '') >= since && String(d || '') <= until;
+    const lastSet = (list, field) => list.map((ev) => ev.fields[field]).filter((v) => (Array.isArray(v) ? v.length : v)).pop();
+    const out = { standing: [], oneOff: [], untagged: [] };
+    const bucket = { standing: out.standing, 'one-off': out.oneOff };
+    for (const list of events.values()) {
+        const latest = list[list.length - 1].subject;
+        if (!list.some((ev) => inWindow(ev.subject.date) || inWindow(ev.fields.date))) continue;
+        bucket[lastSet(list, 'approval')]?.push({ id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'), refs: lastSet(list, 'refs') || [], taggedBy: list.filter((ev) => ev.tag).pop()?.tag.id });
+    }
+    for (const e of entries) {
+        if (e.id && !e.annotates && e.kind === 'decision' && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
+    }
+    for (const list of Object.values(out)) list.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return out;
+}
+
+function approvalsText(g, { since, until }, week) {
+    const refLine = (a) => (a.refs.length ? a.refs.join(', ') : 'none');
+    return [
+        '---', 'type: review', 'status: draft', `week: ${week}`, `generated: ${today()}`, `since: ${since}`, `until: ${until}`, '---', '',
+        `# Approvals review ${week}`, '',
+        `Generated by \`journal.mjs approvals\` for approvals dated ${since} to ${until}. Tick keep, narrow or revoke for each standing approval, then update wherever a narrowed or revoked one is recorded (memory files, config, instructions).`, '',
+        '## Standing approvals', '',
+        ...(g.standing.length ? g.standing.flatMap((a) => [
+            `### ${a.date} \`${a.id}\``, '',
+            clip(a.text, 400), '',
+            `- Scope: ${a.scope || 'not recorded'}`, `- Ref: ${refLine(a)}`, `- Source row: \`${a.id}\`${a.taggedBy ? ` (tagged by \`${a.taggedBy}\`)` : ''}`,
+            '- [ ] keep  - [ ] narrow  - [ ] revoke', '',
+        ]) : ['_none_', '']),
+        '## One-off approvals', '',
+        'For awareness. No action needed.', '',
+        ...(g.oneOff.length ? g.oneOff.map((a) => `- ${a.date} \`${a.id}\` ${clip(a.text, 200)} (ref: ${refLine(a)})`) : ['_none_']), '',
+        '## Untagged decisions', '',
+        'Decision rows with no approval tag. If any was the user granting permission, classify it with `journal.mjs approve-tag <id> --approval standing|one-off`.', '',
+        ...(g.untagged.length ? g.untagged.map((a) => `- ${a.date} \`${a.id}\` ${clip(a.text, 200)}`) : ['_none_']), '',
+    ].join('\n');
+}
+
+function cmdApprovals() {
+    const window = approvalsWindow();
+    const g = collectApprovals(readLedger(), window);
+    const week = isoWeek(window.until);
+    if (asJson) { console.log(JSON.stringify({ ...window, week, ...g }, null, 2)); return; }
+    const body = approvalsText(g, window, week);
+    if (dryRun) { console.log(body); return; }
+    const path = arg('out') || join(ticketsBase(), 'Projects', project, 'Reviews', `approvals-${week}.md`);
+    if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it.`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, body);
+    console.log(`wrote ${path}  (${g.standing.length} standing, ${g.oneOff.length} one-off, ${g.untagged.length} untagged)`);
 }
 
 const streamTitle = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -738,7 +911,11 @@ function verifyLedger() {
     }
     const missing = (line, row, field, id) => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
     for (const { row, line } of rows) {
-        for (const field of ['closes', 'carries', 'tags', 'annotates']) missing(line, row, field, row[field]);
+        if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
+        if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
+        const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
+        if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
+        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
     problems.sort((a, b) => a.line - b.line);
@@ -1604,6 +1781,8 @@ switch (cmd) {
     case 'verify': cmdVerify(); break;
     case 'render': render(false, has('include-archived')); break;
     case 'tag': cmdTag(); break;
+    case 'approve-tag': cmdApproveTag(); break;
+    case 'approvals': cmdApprovals(); break;
     case 'streams': cmdStreams(); break;
     case 'models': cmdModels(); break;
     case 'fact': cmdFact(); break;

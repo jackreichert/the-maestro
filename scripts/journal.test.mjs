@@ -837,3 +837,239 @@ test('an archived stream gets a page that links its retro; the ledger stays one 
     assert.doesNotMatch(readFileSync(streamPage('Launch'), 'utf8'), /archived\*\*/);
     assert.deepEqual(readdirSync(join(vault, 'Projects', 'test-proj', 'Journal')).filter((n) => n.endsWith('.jsonl')), ['ledger.jsonl']);
 });
+
+// ── approvals ───────────────────────────────────────────────────────────────
+
+test('log --approval records the field, scope and ref on a decision row', () => {
+    const r = run('log', 'may resolve declined bot threads', '--kind', 'decision', '--approval', 'standing', '--scope', 'bot threads only', '--ref', 'memory/bot-threads.md', ...MARK);
+    assert.equal(r.code, 0);
+    const row = ledger().find((e) => e.id === idOf(r.out));
+    assert.equal(row.approval, 'standing');
+    assert.equal(row.scope, 'bot threads only');
+    assert.deepEqual(row.refs, ['memory/bot-threads.md']);
+});
+
+test('log rejects an invalid --approval value and writes nothing', () => {
+    const r = run('log', 'x', '--kind', 'decision', '--approval', 'forever', ...MARK);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /standing, one-off/);
+    assert.throws(() => ledger());
+    assert.equal(run('log', 'x', '--kind', 'decision', '--approval', ...MARK).code, 1);
+    assert.equal(run('log', 'x', '--kind', 'decision', '--scope', 'orphan', ...MARK).code, 1);
+});
+
+test('resolve accepts --approval when the user answers an ask with one', () => {
+    const q = idOf(run('ask', 'retarget #3934?', ...MARK).out);
+    assert.equal(run('resolve', q, '--answer', 'yes, retarget #3934', '--approval', 'one-off', ...MARK).code, 0);
+    assert.equal(ledger().find((e) => e.closes === q).approval, 'one-off');
+    const q2 = idOf(run('ask', 'another?', ...MARK).out);
+    assert.equal(run('resolve', q2, '--approval', 'bogus', ...MARK).code, 1);
+});
+
+test('approve-tag marks an existing decision without rewriting the ledger', () => {
+    const id = idOf(run('log', 'merge base into my branches', '--kind', 'decision', ...MARK).out);
+    const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    const r = run('approve-tag', id, '--approval', 'standing', '--scope', 'own branches', '--ref', 'memory/x.md', ...MARK);
+    assert.equal(r.code, 0);
+    const after = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    assert.ok(after.startsWith(before));   // append-only
+    const tag = ledger().find((e) => e.kind === 'approval-tag');
+    assert.deepEqual([tag.approves, tag.approval, tag.scope, tag.refs], [id, 'standing', 'own branches', ['memory/x.md']]);
+    assert.equal(run('approve-tag', 'nope00', '--approval', 'standing', ...MARK).code, 1);
+    assert.equal(run('approve-tag', id, '--approval', 'sometimes', ...MARK).code, 1);
+    assert.equal(run('approve-tag', id, ...MARK).code, 1);
+    assert.doesNotMatch(run('status').out, /approval standing/);   // a tag row is not a work item
+});
+
+test('approve-tag only accepts decision, resolved and question rows', () => {
+    const wip = idOf(run('log', 'building', '--kind', 'wip', ...MARK).out);
+    const done = idOf(run('log', 'shipped', '--kind', 'done', ...MARK).out);
+    const dropped = idOf(run('log', 'gave up', '--kind', 'dropped', ...MARK).out);
+    const q = idOf(run('ask', 'retarget?', ...MARK).out);
+    const decision = idOf(run('log', 'use sqlite', '--kind', 'decision', ...MARK).out);
+    const resolved = idOf(run('resolve', q, '--answer', 'yes', ...MARK).out);
+    for (const id of [decision, resolved]) assert.equal(run('approve-tag', id, '--approval', 'one-off', ...MARK).code, 0, id);
+    const tag = ledger().find((e) => e.kind === 'approval-tag').id;
+    for (const id of [wip, done, dropped, tag]) {
+        const r = run('approve-tag', id, '--approval', 'one-off', ...MARK);
+        assert.equal(r.code, 1, id);
+        assert.match(r.err, /can be approved/);
+    }
+    const q2 = idOf(run('ask', 'still open?', ...MARK).out);
+    assert.equal(run('approve-tag', q2, '--approval', 'one-off', ...MARK).code, 0);
+});
+
+test('verify flags an approval-tag that points at a kind that cannot be approved', () => {
+    const done = idOf(run('log', 'shipped', '--kind', 'done', ...MARK).out);
+    const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(path, `${readFileSync(path, 'utf8')}${JSON.stringify({ id: 'bad3', kind: 'approval-tag', approves: done, approval: 'standing' })}\n`);
+    const v = run('verify');
+    assert.equal(v.code, 1);
+    assert.match(v.out, /approves .*a done row/);
+});
+
+test('--approval is rejected on every kind except decision and resolved', () => {
+    for (const kind of ['note', 'wip', 'done', 'question', 'blocked', 'dropped']) {
+        assert.equal(run('log', 'x', '--kind', kind, '--approval', 'standing', ...MARK).code, 1, kind);
+    }
+    assert.throws(() => ledger());
+    const w = idOf(run('log', 'task', '--kind', 'wip', ...MARK).out);
+    assert.equal(run('done', w, '--approval', 'one-off', ...MARK).code, 1);
+    assert.equal(run('drop', w, '--approval', 'one-off', ...MARK).code, 1);
+    assert.equal(run('log', 'x', '--kind', 'decision', '--approval', 'standing', ...MARK).code, 0);
+});
+
+test('verify accepts approval rows and flags a bad value or a dangling approves', () => {
+    const id = idOf(run('log', 'ok', '--kind', 'decision', '--approval', 'one-off', ...MARK).out);
+    run('approve-tag', id, '--approval', 'standing', ...MARK);
+    assert.equal(run('verify').code, 0);
+    const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(path, `${readFileSync(path, 'utf8')}${JSON.stringify({ id: 'bad1', kind: 'decision', text: 't', approval: 'forever' })}\n${JSON.stringify({ id: 'bad2', kind: 'approval-tag', approves: 'ghost', approval: 'standing' })}\n`);
+    const v = run('verify');
+    assert.equal(v.code, 1);
+    assert.match(v.out, /approval "forever" is not one of/);
+    assert.match(v.out, /approves refers to ghost/);
+});
+
+// ── approvals digest ────────────────────────────────────────────────────────
+
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+const digestPath = join(tmpdir(), `approvals-${process.pid}.md`);
+const digest = (...a) => run('approvals', '--tickets-vault', tv, ...a);
+const jsonDigest = (...a) => JSON.parse(digest('--json', ...a).out);
+
+function seedApprovals() {
+    const mk = (text, date, ...extra) => idOf(run('log', text, '--kind', 'decision', '--date', date, ...extra, ...MARK).out);
+    const standing = mk('may resolve declined bot threads', daysAgo(1), '--approval', 'standing', '--scope', 'bot threads', '--ref', 'memory/bot.md');
+    const oneOff = mk('yes, retarget #3934', daysAgo(1), '--approval', 'one-off');
+    const untagged = mk('use sqlite for the index', daysAgo(1));
+    const old = mk('old standing grant', daysAgo(30), '--approval', 'standing');
+    return { standing, oneOff, untagged, old };
+}
+
+test('approvals groups standing, one-off and untagged decisions, including retro-tags', () => {
+    const ids = seedApprovals();
+    const retro = idOf(run('log', 'merge base into my branches', '--kind', 'decision', '--date', daysAgo(2), ...MARK).out);
+    run('approve-tag', retro, '--approval', 'standing', '--scope', 'own branches', ...MARK);
+    const g = jsonDigest('--days', '7');
+    assert.deepEqual(g.standing.map((a) => a.id).sort(), [ids.standing, retro].sort());
+    assert.deepEqual(g.oneOff.map((a) => a.id), [ids.oneOff]);
+    assert.deepEqual(g.untagged.map((a) => a.id), [ids.untagged]);
+    assert.equal(g.standing.find((a) => a.id === retro).scope, 'own branches');
+    assert.deepEqual(g.standing.find((a) => a.id === ids.standing).refs, ['memory/bot.md']);
+});
+
+test('a decision closed with an approval is not also listed as untagged', () => {
+    const d = idOf(run('log', 'retarget #3934?', '--kind', 'decision', '--date', daysAgo(1), ...MARK).out);
+    assert.equal(run('resolve', d, '--approval', 'one-off', ...MARK).code, 0);
+    const closer = ledger().find((e) => e.closes === d);
+    assert.equal(closer.approval, 'one-off');
+    const g = jsonDigest('--days', '7');
+    assert.deepEqual(g.oneOff.map((a) => a.id), [closer.id]);
+    assert.ok(!g.untagged.some((a) => a.id === d));
+});
+
+test('a later tag overrides only the fields it sets', () => {
+    const id = idOf(run('log', 'merge base into my branches', '--kind', 'decision', '--date', daysAgo(1), ...MARK).out);
+    run('approve-tag', id, '--approval', 'standing', '--scope', 'own branches', '--ref', 'memory/a.md', ...MARK);
+    run('approve-tag', id, '--approval', 'one-off', ...MARK);
+    let row = jsonDigest('--days', '7').oneOff.find((a) => a.id === id);
+    assert.deepEqual([row.scope, row.refs], ['own branches', ['memory/a.md']]);
+    run('approve-tag', id, '--approval', 'one-off', '--scope', 'only this PR', '--ref', 'memory/b.md', ...MARK);
+    row = jsonDigest('--days', '7').oneOff.find((a) => a.id === id);
+    assert.deepEqual([row.scope, row.refs], ['only this PR', ['memory/b.md']]);
+});
+
+test('approvals --days and --since set the window; an old row that is retro-tagged now comes in', () => {
+    const ids = seedApprovals();
+    assert.ok(!jsonDigest('--days', '7').standing.some((a) => a.id === ids.old));
+    assert.ok(jsonDigest('--days', '60').standing.some((a) => a.id === ids.old));
+    assert.ok(jsonDigest('--since', daysAgo(40)).standing.some((a) => a.id === ids.old));
+    assert.equal(digest('--days', '0').code, 1);
+    const oldDecision = idOf(run('log', 'ancient decision', '--kind', 'decision', '--date', daysAgo(90), ...MARK).out);
+    run('approve-tag', oldDecision, '--approval', 'one-off', ...MARK);
+    assert.ok(jsonDigest('--days', '7').oneOff.some((a) => a.id === oldDecision));
+    assert.equal(digest('--since', 'yesterday').code, 1);
+    assert.equal(digest('--days', 'x').code, 1);
+});
+
+test('--days N covers exactly N days ending today, so weekly digests do not overlap', () => {
+    const mk = (n) => idOf(run('log', `grant ${n} days ago`, '--kind', 'decision', '--date', daysAgo(n), '--approval', 'one-off', ...MARK).out);
+    const [today0, six, seven] = [mk(0), mk(6), mk(7)];
+    const ids = jsonDigest('--days', '7').oneOff.map((a) => a.id);
+    assert.ok(ids.includes(today0) && ids.includes(six));
+    assert.ok(!ids.includes(seven));
+    assert.deepEqual(jsonDigest('--days', '1').oneOff.map((a) => a.id), [today0]);
+    assert.equal(jsonDigest('--days', '7').since, daysAgo(6));
+});
+
+test('approvals names the digest after the ISO week of the window end, not today', () => {
+    const r = digest('--since', '2026-01-05', '--until', '2026-01-11');
+    assert.equal(r.code, 0);
+    assert.deepEqual(readdirSync(join(tv, 'Projects', 'test-proj', 'Reviews')), ['approvals-2026-W02.md']);
+    assert.match(readFileSync(join(tv, 'Projects', 'test-proj', 'Reviews', 'approvals-2026-W02.md'), 'utf8'), /week: 2026-W02\n/);
+    assert.equal(jsonDigest('--since', '2025-12-22', '--until', '2025-12-28').week, '2025-W52');
+    assert.equal(digest('--until', 'soon').code, 1);
+});
+
+test('approvals writes the review doc with frontmatter and review lines, and never overwrites without --force', () => {
+    const ids = seedApprovals();
+    const before = ledger().length;
+    const r = digest('--days', '7', '--out', digestPath);
+    assert.equal(r.code, 0);
+    const doc = readFileSync(digestPath, 'utf8');
+    assert.match(doc, /^---\ntype: review\nstatus: draft\nweek: \d{4}-W\d{2}\n/);
+    assert.match(doc, /## Standing approvals/);
+    assert.match(doc, /may resolve declined bot threads/);
+    assert.match(doc, /- Scope: bot threads/);
+    assert.match(doc, /- Ref: memory\/bot\.md/);
+    assert.ok(doc.includes(`- Source row: \`${ids.standing}\``));
+    assert.match(doc, /- \[ \] keep {2}- \[ \] narrow {2}- \[ \] revoke/);
+    assert.match(doc, /## One-off approvals[\s\S]*yes, retarget #3934/);
+    assert.match(doc, /## Untagged decisions[\s\S]*use sqlite for the index/);
+    assert.doesNotMatch(doc, /old standing grant/);
+    assert.equal(ledger().length, before);   // the digest appends nothing
+    const again = digest('--days', '7', '--out', digestPath);
+    assert.equal(again.code, 1);
+    assert.match(again.err, /already exists/);
+    assert.equal(digest('--days', '7', '--out', digestPath, '--force').code, 0);
+});
+
+test('approvals default path is Projects/<project>/Reviews/approvals-<ISO week>.md under the tickets vault', () => {
+    seedApprovals();
+    const r = digest('--days', '7');
+    assert.equal(r.code, 0);
+    const files = readdirSync(join(tv, 'Projects', 'test-proj', 'Reviews'));
+    assert.equal(files.length, 1);
+    assert.match(files[0], /^approvals-\d{4}-W\d{2}\.md$/);
+});
+
+test('approvals rejects a window whose --since is after --until', () => {
+    const r = digest('--since', '2026-01-11', '--until', '2026-01-05');
+    assert.equal(r.code, 1);
+    assert.match(r.out + (r.err || ''), /after --until/);
+    assert.equal(digest('--since', '2026-01-05', '--until', '2026-01-05').code, 0);
+});
+
+const IMPOSSIBLE_DATES = [['--since', '2026-02-30'], ['--since', '2026-02-31'], ['--until', '2026-02-30'], ['--until', '2026-04-31']];
+for (const [flag, value] of IMPOSSIBLE_DATES) {
+    test(`approvals rejects the impossible date ${flag} ${value}`, () => {
+        assert.equal(digest(flag, value).code, 1);
+    });
+}
+
+test('approvals rejects a bare --until instead of meaning today', () => {
+    assert.equal(digest('--days', '7', '--until').code, 1);
+    assert.equal(digest('--until').code, 1);
+});
+
+test('a grant that is both resolved with --approval and approve-tagged is listed once, latest approval winning', () => {
+    const q = idOf(run('log', 'retarget #3934?', '--kind', 'question', '--date', daysAgo(1), ...MARK).out);
+    assert.equal(run('resolve', q, '--approval', 'one-off', '--scope', 'this PR', ...MARK).code, 0);
+    assert.equal(run('approve-tag', q, '--approval', 'standing', ...MARK).code, 0);
+    const g = jsonDigest('--days', '7');
+    const all = [...g.standing, ...g.oneOff];
+    assert.equal(all.length, 1);
+    assert.equal(g.standing.length, 1);
+    assert.equal(g.standing[0].scope, 'this PR');
+});
