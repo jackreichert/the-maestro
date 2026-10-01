@@ -318,6 +318,24 @@ function worktreeBlocker(g, w, repoName, ctx, live) {
 /** Branch names compared as git resolves them: a `refs/heads/` or `origin/` prefix does not make `develop` a different branch. */
 const bare = (b) => b.replace(/^(refs\/heads\/|refs\/remotes\/|origin\/)+/, '');
 
+const escapeRe = (t) => t.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+/** A branch glob as a RegExp over the whole name: `*` stays inside one path segment, `**` crosses them, anything else is literal. */
+export const branchGlob = (glob) => new RegExp(`^${glob.split('**').map((part) => part.split('*').map(escapeRe).join('[^/]*')).join('.*')}$`);
+
+/**
+ * What counts as protected in one repo: the configured patterns (globs), the merge targets and the default branch.
+ * { isProtected(branch), protectedRefs: the origin refs that match (as `origin/<name>`), refs: every origin ref }.
+ * Throws if git cannot list the refs.
+ */
+function protection(g, ctx, targets) {
+  const head = g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
+  const matchers = [...ctx.protectedNames, ...targets, head].filter(Boolean).map(branchGlob);
+  const isProtected = (b) => matchers.some((re) => re.test(b) || re.test(bare(b)));
+  const refs = must(g, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean);
+  const names = refs.map((f) => f.slice('refs/remotes/origin/'.length)).filter((b) => b !== 'HEAD');
+  return { isProtected, refs, protectedRefs: names.filter(isProtected).map((b) => `origin/${b}`) };
+}
+
 /** One branch judged: { tip, mine, reason, ev, error }. Evidence is only sought for a branch that is the user's. */
 function assess(g, ref, branch, targets, scan) {
   const a = { tip: null, mine: false, reason: '', ev: null, error: null };
@@ -346,16 +364,12 @@ export function scanRepo(repoPath, ctx) {
   if (ctx.fetch && !g('fetch', '--prune', 'origin').ok) res.notes.push('git fetch failed; using the refs already here');
   const { targets, error } = targetsFor(g, name, ctx);
   if (error) { res.notes.push(error); return res; }
-  const head = g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
-  const protectedNames = new Set([...ctx.protectedNames, ...targets, head].filter(Boolean));
-  const isProtected = (b) => protectedNames.has(b) || protectedNames.has(bare(b));
-  const protectedRefs = [...protectedNames].filter((b) => g('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).ok).map((b) => `origin/${b}`);
-
   let live; try { live = { paths: liveSkillTargets(repoPath, ctx) }; } catch (e) { live = { paths: [], error: e.message }; }
-  let scan; let refs; let wts;
+  let scan; let refs; let wts; let isProtected;
   try {
-    scan = { ctx, protectedRefs, mainline: mainlineOf(g, protectedRefs) };
-    refs = must(g, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean);
+    const prot = protection(g, ctx, targets);
+    ({ isProtected, refs } = prot);
+    scan = { ctx, protectedRefs: prot.protectedRefs, mainline: mainlineOf(g, prot.protectedRefs) };
     wts = worktrees(g);
   } catch (e) { res.notes.push(`scan stopped: ${e.message}`); return res; }
 
@@ -414,10 +428,10 @@ export function explain(repoPath, ctx, branch) {
   if (!g('rev-parse', '--verify', '-q', ref).ok) return [...out, '  not on origin'];
   const { targets, error } = targetsFor(g, basename(repoPath), ctx);
   if (error) return [...out, `  ${error}`];
-  const head = g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
-  const protectedNames = new Set([...ctx.protectedNames, ...targets, head].filter(Boolean));
-  const protectedRefs = [...protectedNames].filter((b) => g('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).ok).map((b) => `origin/${b}`);
-  if (protectedNames.has(branch) || protectedNames.has(bare(branch))) return [...out, '  FAIL protected branch'];
+  let prot;
+  try { prot = protection(g, ctx, targets); } catch (e) { return [...out, `  ERROR ${e.message}`]; }
+  const { protectedRefs } = prot;
+  if (prot.isProtected(branch)) return [...out, '  FAIL protected branch'];
   try {
     const tip = must(g, 'rev-parse', ref);
     const emails = emailsFor(g, ctx);

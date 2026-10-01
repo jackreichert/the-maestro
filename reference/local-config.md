@@ -34,7 +34,7 @@ pr_test_globs: <globs>         # comma-separated path globs counted as tests; om
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off
 git_emails: me@example.com     # comma-separated; the authorship check in branch-sweep.mjs; omit to use each repo's user.email
-protected_branches: main, staging, develop  # branch-sweep.mjs never lists these; this is the default
+protected_branches: main, release/*  # names or globs (`*` within one path segment, `**` across segments) branch-sweep.mjs never lists; setting it replaces the default, which is main, master, staging, develop, release/*, staging/*, hotfix/*; add backmerge/* here to protect those too
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
 sweep_pr_days: 180             # days of merged PRs branch-sweep.mjs reads as evidence; default 180
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.mjs offers it; default 60

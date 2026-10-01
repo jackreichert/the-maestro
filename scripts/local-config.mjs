@@ -130,9 +130,10 @@ export const PR_MECHANICAL_GLOBS = globList('MAESTRO_PR_MECHANICAL_GLOBS', 'pr_m
 /** Your git author emails (comma-separated), the authorship check branch-sweep.mjs uses. Empty means the repo's own user.email. */
 export const GIT_EMAILS = globList('MAESTRO_GIT_EMAILS', 'git_emails');
 
-/** Branches branch-sweep.mjs never lists, besides each repo's merge targets and default branch. Default main, staging, develop. */
+/** Branch names or globs (`*` within a path segment, `**` across them) branch-sweep.mjs never lists, besides each repo's merge targets and default branch. */
+const DEFAULT_PROTECTED_BRANCHES = ['main', 'master', 'staging', 'develop', 'release/*', 'staging/*', 'hotfix/*'];
 export const PROTECTED_BRANCHES = globList('MAESTRO_PROTECTED_BRANCHES', 'protected_branches').length
-  ? globList('MAESTRO_PROTECTED_BRANCHES', 'protected_branches') : ['main', 'staging', 'develop'];
+  ? globList('MAESTRO_PROTECTED_BRANCHES', 'protected_branches') : DEFAULT_PROTECTED_BRANCHES;
 
 /** Per-repo merge targets for branch-sweep.mjs, `repo=develop|staging, other=develop`. A repo not listed gets the default (develop, plus staging in twin-flow repos). */
 export const SWEEP_MERGE_TARGETS = Object.fromEntries(globList('MAESTRO_SWEEP_MERGE_TARGETS', 'sweep_merge_targets')
