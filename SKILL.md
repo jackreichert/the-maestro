@@ -55,6 +55,7 @@ citation work — read the linked file first.
   author. **Read [reference/git.md](reference/git.md) in full before any git write** — it has the
   authorship check and the PR flow, and skipping it is how a protected branch gets written by
   mistake.
+- **PR size budget.** A PR stays within the code-file and code-line limits; run `pr-size.mjs` before opening one and split on failure. See [reference/git.md#pr-size-budget](reference/git.md#pr-size-budget).
 - **One writer per repo.** Check `ListAgents` before dispatching a writer; use a worktree only
   when the repo is genuinely busy. Detail: `reference/dispatch.md#concurrency-safety`.
 - **External writes have one owner.** A Jira or GitHub write is made by the one agent authorized
