@@ -371,3 +371,60 @@ test('--explain prints each rule\'s verdict and agrees with the scan, and writes
     assert.match(explain(w.repo, ctx, 'develop').join('\n'), /protected branch/);
     assert.equal(remoteHas(w, 'fix/x'), true);
 });
+
+const COLLEAGUE = 'colleague@example.com';
+/** Commits to an existing pushed branch as `email`, then returns to main. */
+const addTo = (w, branch, file, email = ME) => {
+    sh(w.repo, 'checkout', '-q', branch); commit(w.repo, file, `${file}\n`, email);
+    sh(w.repo, 'push', '-q', 'origin', branch); sh(w.repo, 'checkout', '-q', 'main');
+};
+const listed = (w, over = {}) => names(scanRepo(w.repo, ctxFor(over)), 'remote-branch');
+
+test('ownership counts every round a branch was merged: a colleague commit from an earlier merge stays foreign', () => {
+    const w = world();
+    feature(w, 'feat/x', { email: COLLEAGUE }); mergeInto(w, 'develop', 'feat/x');
+    addTo(w, 'feat/x', 'mine.txt'); mergeInto(w, 'develop', 'feat/x');
+    assert.deepEqual(listed(w), []);
+    const text = explain(w.repo, ctxFor({ fetch: false, gh: () => [] }), 'feat/x').join('\n');
+    assert.match(text, /result: not mine \(1 of 2 commits are by someone else\)/);
+});
+
+test('ownership: a branch cut from a colleague\'s branch before that branch merged is not mine (fails closed)', () => {
+    const w = world();
+    feature(w, 'feat/y', { email: COLLEAGUE });
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/x', 'feat/y'); commit(w.repo, 'mine.txt', 'mine\n');
+    sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/x'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/y'); mergeInto(w, 'develop', 'feat/x');
+    assert.deepEqual(listed(w), []);
+});
+
+test('ownership: a merged-twice branch that is all mine, a staging-only merge and an octopus merge still qualify', () => {
+    const w = world();
+    feature(w, 'feat/twice'); mergeInto(w, 'develop', 'feat/twice');
+    addTo(w, 'feat/twice', 'more.txt'); mergeInto(w, 'develop', 'feat/twice');
+    feature(w, 'feat/stg'); mergeInto(w, 'staging', 'feat/stg');
+    feature(w, 'feat/oct1'); feature(w, 'feat/oct2', { email: COLLEAGUE });
+    sh(w.repo, 'checkout', '-q', 'develop');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'merge', '-q', '-m', 'octopus', 'feat/oct1', 'feat/oct2');
+    sh(w.repo, 'push', '-q', 'origin', 'develop'); sh(w.repo, 'checkout', '-q', 'main');
+    assert.deepEqual(listed(w, { targets: { proj: ['develop'] } }), ['feat/oct1', 'feat/twice']);
+    assert.deepEqual(listed(w, { targets: { proj: ['staging'] } }), ['feat/stg']);
+});
+
+test('ownership: a cherry-picked colleague commit is foreign', () => {
+    const w = world();
+    feature(w, 'feat/theirs', { email: COLLEAGUE });
+    const picked = sh(w.repo, 'rev-parse', 'origin/feat/theirs');
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/cp', 'main'); sh(w.repo, 'cherry-pick', picked);
+    sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/cp'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/cp');
+    assert.deepEqual(listed(w), [], 'the cherry-pick carries the colleague\'s authorship');
+});
+
+test('ownership: a fast-forwarded branch has no commits of its own, so it needs an exact merged PR', () => {
+    const w = world();
+    feature(w, 'feat/ff'); sh(w.repo, 'push', '-q', 'origin', 'origin/feat/ff:refs/heads/develop');
+    sh(w.repo, 'fetch', '-q', 'origin');
+    assert.deepEqual(listed(w), []);
+    assert.deepEqual(listed(w, { gh: searchGh([pr(9, 'develop', 'feat/ff', tipOf(w, 'feat/ff'))]) }), ['feat/ff']);
+});
