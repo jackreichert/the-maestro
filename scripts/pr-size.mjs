@@ -20,24 +20,36 @@ import {
   PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_TEST_GLOBS, PR_CONFIG_GLOBS, PR_DOCS_GLOBS, PR_MECHANICAL_GLOBS,
 } from './local-config.mjs';
 
+/**
+ * Default path globs. Directory globs never decide a code file's bucket: CODE_EXT files can only be
+ * test, migration, mechanical or code (see makeClassifier). Mechanical directories are anchored at the
+ * repo root or a package root, so `src/vendor/x.ts` stays code.
+ */
 export const DEFAULT_GLOBS = {
   mechanical: [
     'uv.lock', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Pipfile.lock',
     'Cargo.lock', 'Gemfile.lock', 'composer.lock', 'go.sum', '*.lock', '*.tgz', '*.tar.gz', '*.min.js', '*.min.css',
-    '*.map', '*.generated.*', '*_pb2.py', '*_pb2_grpc.py', '*.pb.go', '**/generated/**', '**/__generated__/**',
-    'vendor/**', '**/vendor/**', '**/node_modules/**', 'third_party/**',
+    '*.map', '*.generated.*', '*_pb2.py', '*_pb2_grpc.py', '*.pb.go', '**/node_modules/**',
+    'vendor/**', 'generated/**', '__generated__/**', 'dist/**', 'third_party/**',
+    'packages/*/vendor/**', 'packages/*/generated/**', 'packages/*/__generated__/**', 'packages/*/dist/**',
+    'apps/*/vendor/**', 'apps/*/generated/**', 'apps/*/__generated__/**', 'apps/*/dist/**',
   ],
   test: [
-    '**/test/**', '**/tests/**', '**/__tests__/**', '**/__mocks__/**', '**/fixtures/**', '**/e2e/**',
-    '*.test.*', '*.spec.*', 'test_*', '*_test.*', 'conftest.py',
+    '**/test/**', '**/tests/**', '**/__tests__/**', '**/__mocks__/**', '**/e2e/**',
+    '*.test.*', '*.spec.*', '*_test.*', 'conftest.py',
   ],
   config: [
     '*.json', '*.yaml', '*.yml', '*.toml', '*.ini', '*.cfg', '*.conf', '.editorconfig', '.gitignore', '.gitattributes',
     'Dockerfile', 'Dockerfile.*', '*.dockerfile', '.dockerignore', '.github/**', '.gitlab-ci.yml', '.circleci/**',
     '.env.example',
   ],
-  docs: ['*.md', '*.mdx', '*.rst', '*.txt', 'docs/**', '**/docs/**', 'LICENSE*'],
+  docs: [
+    '*.md', '*.mdx', '*.rst', '*.txt', '*.png', '*.jpg', '*.jpeg', '*.gif', '*.svg', '*.webp', '*.ico', 'LICENSE*',
+  ],
 };
+
+/** Source-code extensions. Such a file is never docs or config, whatever directory it sits in. */
+export const CODE_EXT = /\.(?:[cm]?[jt]sx?|py|go|rb|java|kt|kts|rs|sql|sh|bash|zsh|c|cc|cpp|h|hpp|cs|php|swift|scala|ex|exs|lua|pl|dart|vue|svelte)$/i;
 
 /** Turns a path glob into a RegExp: `**` crosses directories, `*` and `?` stay inside one. A glob with no slash matches any basename. */
 export function globToRegExp(glob) {
@@ -70,6 +82,7 @@ export function makeClassifier(overrides = {}) {
     if (isMechanical(path)) return 'mechanical';
     if (isMigration(path)) return 'code';
     if (isTest(path)) return 'test';
+    if (CODE_EXT.test(path)) return 'code';
     if (isConfig(path)) return 'config';
     if (isDocs(path)) return 'docs';
     return 'code';
