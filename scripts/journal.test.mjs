@@ -836,3 +836,58 @@ test('an archived stream gets a page that links its retro; the ledger stays one 
     assert.doesNotMatch(readFileSync(streamPage('Launch'), 'utf8'), /archived\*\*/);
     assert.deepEqual(readdirSync(join(vault, 'Projects', 'test-proj', 'Journal')).filter((n) => n.endsWith('.jsonl')), ['ledger.jsonl']);
 });
+
+// ── approvals ───────────────────────────────────────────────────────────────
+
+test('log --approval records the field, scope and ref on a decision row', () => {
+    const r = run('log', 'may resolve declined bot threads', '--kind', 'decision', '--approval', 'standing', '--scope', 'bot threads only', '--ref', 'memory/bot-threads.md', ...MARK);
+    assert.equal(r.code, 0);
+    const row = ledger().find((e) => e.id === idOf(r.out));
+    assert.equal(row.approval, 'standing');
+    assert.equal(row.scope, 'bot threads only');
+    assert.deepEqual(row.refs, ['memory/bot-threads.md']);
+});
+
+test('log rejects an invalid --approval value and writes nothing', () => {
+    const r = run('log', 'x', '--kind', 'decision', '--approval', 'forever', ...MARK);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /standing, one-off/);
+    assert.throws(() => ledger());
+    assert.equal(run('log', 'x', '--kind', 'decision', '--approval', ...MARK).code, 1);
+    assert.equal(run('log', 'x', '--kind', 'decision', '--scope', 'orphan', ...MARK).code, 1);
+});
+
+test('resolve accepts --approval when the user answers an ask with one', () => {
+    const q = idOf(run('ask', 'retarget #3934?', ...MARK).out);
+    assert.equal(run('resolve', q, '--answer', 'yes, retarget #3934', '--approval', 'one-off', ...MARK).code, 0);
+    assert.equal(ledger().find((e) => e.closes === q).approval, 'one-off');
+    const q2 = idOf(run('ask', 'another?', ...MARK).out);
+    assert.equal(run('resolve', q2, '--approval', 'bogus', ...MARK).code, 1);
+});
+
+test('approve-tag marks an existing decision without rewriting the ledger', () => {
+    const id = idOf(run('log', 'merge base into my branches', '--kind', 'decision', ...MARK).out);
+    const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    const r = run('approve-tag', id, '--approval', 'standing', '--scope', 'own branches', '--ref', 'memory/x.md', ...MARK);
+    assert.equal(r.code, 0);
+    const after = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    assert.ok(after.startsWith(before));   // append-only
+    const tag = ledger().find((e) => e.kind === 'approval-tag');
+    assert.deepEqual([tag.approves, tag.approval, tag.scope, tag.refs], [id, 'standing', 'own branches', ['memory/x.md']]);
+    assert.equal(run('approve-tag', 'nope00', '--approval', 'standing', ...MARK).code, 1);
+    assert.equal(run('approve-tag', id, '--approval', 'sometimes', ...MARK).code, 1);
+    assert.equal(run('approve-tag', id, ...MARK).code, 1);
+    assert.doesNotMatch(run('status').out, /approval standing/);   // a tag row is not a work item
+});
+
+test('verify accepts approval rows and flags a bad value or a dangling approves', () => {
+    const id = idOf(run('log', 'ok', '--kind', 'decision', '--approval', 'one-off', ...MARK).out);
+    run('approve-tag', id, '--approval', 'standing', ...MARK);
+    assert.equal(run('verify').code, 0);
+    const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(path, `${readFileSync(path, 'utf8')}${JSON.stringify({ id: 'bad1', kind: 'decision', text: 't', approval: 'forever' })}\n${JSON.stringify({ id: 'bad2', kind: 'approval-tag', approves: 'ghost', approval: 'standing' })}\n`);
+    const v = run('verify');
+    assert.equal(v.code, 1);
+    assert.match(v.out, /approval "forever" is not one of/);
+    assert.match(v.out, /approves refers to ghost/);
+});
