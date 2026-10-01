@@ -108,3 +108,28 @@ test('approvals_review_day defaults to friday, reads the file, lowercases, and i
     assert.equal(show({ MAESTRO_APPROVALS_REVIEW_DAY: 'wednesday' }).APPROVALS_REVIEW_DAY, 'wednesday');
     assert.equal(show({ MAESTRO_APPROVALS_REVIEW_DAY: 'someday' }).APPROVALS_REVIEW_DAY, 'friday');
 });
+
+test('PR size budget: defaults, file values, env override, and bad values fall back', () => {
+    const d = show();
+    assert.equal(d.PR_MAX_CODE_FILES, '5');
+    assert.equal(d.PR_MAX_CODE_LINES, '400');
+    assert.equal(d.PR_TEST_GLOBS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_max_code_files: 8\npr_max_code_lines: 900\npr_test_globs: a/**, b/**\npr_mechanical_globs: *.lock'));
+    const f = show();
+    assert.equal(f.PR_MAX_CODE_FILES, '8');
+    assert.equal(f.PR_MAX_CODE_LINES, '900');
+    assert.equal(f.PR_TEST_GLOBS, 'a/**, b/**');
+    assert.equal(f.PR_MECHANICAL_GLOBS, '*.lock');
+    const e = show({ MAESTRO_PR_MAX_CODE_FILES: '3', MAESTRO_PR_MAX_CODE_LINES: 'lots', MAESTRO_PR_CONFIG_GLOBS: 'x.yml' });
+    assert.equal(e.PR_MAX_CODE_FILES, '3');
+    assert.equal(e.PR_MAX_CODE_LINES, '400', 'non-numeric env falls back to the default, not the file value');
+    assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
+});
+
+test('twin_flow_repos: empty by default, list from the file, environment wins', () => {
+    assert.equal(show().TWIN_FLOW_REPOS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('twin_flow_repos: repo_a, repo_b'));
+    assert.equal(show().TWIN_FLOW_REPOS, 'repo_a, repo_b');
+    assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: 'only_one' }).TWIN_FLOW_REPOS, 'only_one');
+    assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: '' }).TWIN_FLOW_REPOS, '(unset)');
+});
