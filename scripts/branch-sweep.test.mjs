@@ -9,7 +9,7 @@ import { join } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
-const { scanRepo, apply, defaultContext } = await import('./branch-sweep.mjs');
+const { scanRepo, apply, defaultContext, explain } = await import('./branch-sweep.mjs');
 
 const ME = 'me@example.com';
 const sh = (repo, ...args) => {
@@ -358,4 +358,16 @@ test('a branch cut from a develop that already held a colleague\'s merged work i
     commit(w.repo, 'c.txt', 'c\n', 'colleague@example.com'); sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/mixed'); sh(w.repo, 'checkout', '-q', 'main');
     mergeInto(w, 'develop', 'feat/mixed'); mergeInto(w, 'staging', 'feat/mixed');
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ twin: ['proj'] })), 'remote-branch'), ['feat/mine']);
+});
+
+test('--explain prints each rule\'s verdict and agrees with the scan, and writes nothing', () => {
+    const w = world(); twins(w, 'fix/x', 'fix/x-staging');
+    const prs = [pr(1, 'develop', 'fix/x', tipOf(w, 'fix/x')), pr(2, 'staging', 'fix/x-staging', tipOf(w, 'fix/x-staging'))];
+    const ctx = ctxFor({ twin: ['proj'], gh: searchGh(prs), fetch: false });
+    const text = explain(w.repo, ctx, 'fix/x').join('\n');
+    for (const m of [/PASS every own commit is the user's/, /target develop:\n  FAIL ancestry\n  PASS own merged PR: PR #1/, /target staging:[^]*PASS twin PR: twin PR #2/, /result: CANDIDATE/]) assert.match(text, m);
+    assert.match(explain(w.repo, ctxFor({ twin: ['proj'], gh: searchGh([prs[0]]), fetch: false }), 'fix/x').join('\n'), /target staging:[^]*FAIL twin PR[^]*result: not merged into staging/);
+    assert.match(explain(w.repo, ctx, 'nope').join('\n'), /not on origin/);
+    assert.match(explain(w.repo, ctx, 'develop').join('\n'), /protected branch/);
+    assert.equal(remoteHas(w, 'fix/x'), true);
 });
