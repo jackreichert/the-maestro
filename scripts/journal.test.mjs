@@ -891,3 +891,76 @@ test('verify accepts approval rows and flags a bad value or a dangling approves'
     assert.match(v.out, /approval "forever" is not one of/);
     assert.match(v.out, /approves refers to ghost/);
 });
+
+// ── approvals digest ────────────────────────────────────────────────────────
+
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+const digestPath = join(tmpdir(), `approvals-${process.pid}.md`);
+const digest = (...a) => run('approvals', '--tickets-vault', tv, ...a);
+const jsonDigest = (...a) => JSON.parse(digest('--json', ...a).out);
+
+function seedApprovals() {
+    const mk = (text, date, ...extra) => idOf(run('log', text, '--kind', 'decision', '--date', date, ...extra, ...MARK).out);
+    const standing = mk('may resolve declined bot threads', daysAgo(1), '--approval', 'standing', '--scope', 'bot threads', '--ref', 'memory/bot.md');
+    const oneOff = mk('yes, retarget #3934', daysAgo(1), '--approval', 'one-off');
+    const untagged = mk('use sqlite for the index', daysAgo(1));
+    const old = mk('old standing grant', daysAgo(30), '--approval', 'standing');
+    return { standing, oneOff, untagged, old };
+}
+
+test('approvals groups standing, one-off and untagged decisions, including retro-tags', () => {
+    const ids = seedApprovals();
+    const retro = idOf(run('log', 'merge base into my branches', '--kind', 'decision', '--date', daysAgo(2), ...MARK).out);
+    run('approve-tag', retro, '--approval', 'standing', '--scope', 'own branches', ...MARK);
+    const g = jsonDigest('--days', '7');
+    assert.deepEqual(g.standing.map((a) => a.id).sort(), [ids.standing, retro].sort());
+    assert.deepEqual(g.oneOff.map((a) => a.id), [ids.oneOff]);
+    assert.deepEqual(g.untagged.map((a) => a.id), [ids.untagged]);
+    assert.equal(g.standing.find((a) => a.id === retro).scope, 'own branches');
+    assert.deepEqual(g.standing.find((a) => a.id === ids.standing).refs, ['memory/bot.md']);
+});
+
+test('approvals --days and --since set the window; an old row that is retro-tagged now comes in', () => {
+    const ids = seedApprovals();
+    assert.ok(!jsonDigest('--days', '7').standing.some((a) => a.id === ids.old));
+    assert.ok(jsonDigest('--days', '60').standing.some((a) => a.id === ids.old));
+    assert.ok(jsonDigest('--since', daysAgo(40)).standing.some((a) => a.id === ids.old));
+    assert.equal(jsonDigest('--days', '0').standing.length, 0);
+    const oldDecision = idOf(run('log', 'ancient decision', '--kind', 'decision', '--date', daysAgo(90), ...MARK).out);
+    run('approve-tag', oldDecision, '--approval', 'one-off', ...MARK);
+    assert.ok(jsonDigest('--days', '7').oneOff.some((a) => a.id === oldDecision));
+    assert.equal(digest('--since', 'yesterday').code, 1);
+    assert.equal(digest('--days', 'x').code, 1);
+});
+
+test('approvals writes the review doc with frontmatter and review lines, and never overwrites without --force', () => {
+    const ids = seedApprovals();
+    const before = ledger().length;
+    const r = digest('--days', '7', '--out', digestPath);
+    assert.equal(r.code, 0);
+    const doc = readFileSync(digestPath, 'utf8');
+    assert.match(doc, /^---\ntype: review\nstatus: draft\nweek: \d{4}-W\d{2}\n/);
+    assert.match(doc, /## Standing approvals/);
+    assert.match(doc, /may resolve declined bot threads/);
+    assert.match(doc, /- Scope: bot threads/);
+    assert.match(doc, /- Ref: memory\/bot\.md/);
+    assert.ok(doc.includes(`- Source row: \`${ids.standing}\``));
+    assert.match(doc, /- \[ \] keep {2}- \[ \] narrow {2}- \[ \] revoke/);
+    assert.match(doc, /## One-off approvals[\s\S]*yes, retarget #3934/);
+    assert.match(doc, /## Untagged decisions[\s\S]*use sqlite for the index/);
+    assert.doesNotMatch(doc, /old standing grant/);
+    assert.equal(ledger().length, before);   // the digest appends nothing
+    const again = digest('--days', '7', '--out', digestPath);
+    assert.equal(again.code, 1);
+    assert.match(again.err, /already exists/);
+    assert.equal(digest('--days', '7', '--out', digestPath, '--force').code, 0);
+});
+
+test('approvals default path is Projects/<project>/Reviews/approvals-<ISO week>.md under the tickets vault', () => {
+    seedApprovals();
+    const r = digest('--days', '7');
+    assert.equal(r.code, 0);
+    const files = readdirSync(join(tv, 'Projects', 'test-proj', 'Reviews'));
+    assert.equal(files.length, 1);
+    assert.match(files[0], /^approvals-\d{4}-W\d{2}\.md$/);
+});
