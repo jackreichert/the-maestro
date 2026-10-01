@@ -100,3 +100,20 @@ test('loop_patterns and resume_gh come from the file; the environment wins', () 
     assert.equal(e.RESUME_GH, 'on');
     assert.equal(show({ MAESTRO_LOCAL_CONFIG: '' }).RESUME_GH, 'on');
 });
+
+test('PR size budget: defaults, file values, env override, and bad values fall back', () => {
+    const d = show();
+    assert.equal(d.PR_MAX_CODE_FILES, '5');
+    assert.equal(d.PR_MAX_CODE_LINES, '400');
+    assert.equal(d.PR_TEST_GLOBS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_max_code_files: 8\npr_max_code_lines: 900\npr_test_globs: a/**, b/**\npr_mechanical_globs: *.lock'));
+    const f = show();
+    assert.equal(f.PR_MAX_CODE_FILES, '8');
+    assert.equal(f.PR_MAX_CODE_LINES, '900');
+    assert.equal(f.PR_TEST_GLOBS, 'a/**, b/**');
+    assert.equal(f.PR_MECHANICAL_GLOBS, '*.lock');
+    const e = show({ MAESTRO_PR_MAX_CODE_FILES: '3', MAESTRO_PR_MAX_CODE_LINES: 'lots', MAESTRO_PR_CONFIG_GLOBS: 'x.yml' });
+    assert.equal(e.PR_MAX_CODE_FILES, '3');
+    assert.equal(e.PR_MAX_CODE_LINES, '400', 'non-numeric env falls back to the default, not the file value');
+    assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
+});
