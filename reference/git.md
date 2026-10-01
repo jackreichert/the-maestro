@@ -49,10 +49,32 @@ So a "make a PR" request ends like this:
 3. **Reviewed locally before it goes up** — a reviewer pass on the diff, plus a security review when
    the change touches auth, permissions, logging, secrets or multi-tenant scoping. Report what it found
    and what you did with each item.
-4. Committed and pushed, then opened as a **draft** PR, assigned to the user (`--assignee @me`).
+4. **Within the PR size budget** — `pr-size.mjs` passes ([below](#pr-size-budget)).
+5. Committed and pushed, then opened as a **draft** PR, assigned to the user (`--assignee @me`).
    The user promotes it to ready for review; you never do, and a deploy PR (`staging` → `main` or
    equivalent) is not yours to open at all. Copilot review on the draft is handled per
    [prs.md#copilot-on-drafts](prs.md#copilot-on-drafts).
+
+## PR size budget
+
+**Run `node <skill>/scripts/pr-size.mjs --repo <repo> --base <base>` before opening any draft PR.** It reads
+`git diff --numstat -M <base>...<head>` and exits 1 when the PR is over budget. If it fails, **split instead
+of opening**: stop, and report a split plan (which files and lines go in which PR, in merge order).
+
+- A PR may change at most `pr_max_code_files` code files (default 5) **and** at most `pr_max_code_lines`
+  changed lines of code (default 400, additions plus deletions). Whichever limit is hit first applies.
+  Both come from local-config ([local-config.md](local-config.md)).
+- **Tests, config and docs do not count.** Config means `*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.ini`,
+  Dockerfiles and CI workflow files; the test, config, docs and mechanical path patterns are
+  local-config settings with defaults in the script.
+- **Migrations count as code** (a path under a `migrations/` directory, `.sql` files included).
+- **Mechanical changes are exempt only when the PR holds nothing else:** lockfiles (`uv.lock`,
+  `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`), generated or vendored files, vendored tarballs, and
+  pure renames. A PR that mixes them with code counts the code and fails with "mechanical changes go in
+  their own PR". Tests, config and docs riding along with a lockfile do not trigger that failure, so a
+  dependency bump can carry its manifest.
+- Anything over budget becomes a **stack of PRs**, each passing tests on its own and each cut so the tree
+  works if the stack stops there. The slicing rules above apply inside each PR as well.
 
 The review question that keeps earning its keep: **is this guarantee enforced at runtime, or only
 described?** A schema nothing parses, a validator nobody calls, a comment asserting a value is safe
@@ -106,6 +128,8 @@ covered by this rule.
   from a protected branch as another author's work on the branch.
 - Opening a PR for AI-config or agent-policy docs in a team repo.
 - Letting a harness default stamp `Co-Authored-By` or "Generated with" onto a commit or PR body.
+- Opening a PR that `pr-size.mjs` fails, instead of reporting a split plan, or burying a lockfile or
+  generated-file change inside a code PR.
 - Opening a PR without reviewing the diff locally first, and letting the bots find it instead.
 - Accepting a safety guarantee because it is written down, without checking it is enforced on the
   path the value actually takes.

@@ -13,7 +13,7 @@ import { userPath, overlayPath } from './local-config.mjs';
 
 export const SLOTS = ['<user git emails>', '<tracker key example>'];
 /** Angle-bracket text that is part of the block's own wording, not a slot. */
-const LITERALS = new Set(['<base>', '<check>']);
+const LITERALS = new Set(['<base>', '<check>', '<skill>']);
 
 /** The standing block: the first ```text fence under its heading in brief.md. */
 export function extractBlock(markdown) {

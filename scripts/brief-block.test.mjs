@@ -41,7 +41,7 @@ test('parseSlotValues reads bullets, strips wrapping backticks, stops at the nex
     assert.deepEqual(v, { '<user git emails>': 'dev@example.com (or dev2@example.org)', '<tracker key example>': 'FAKE-1' });
 });
 
-test('fillBlock flags a slot with no value and keeps the block own <base> and <check> wording', () => {
+test('fillBlock flags a slot with no value and keeps the block own <base>, <check> and <skill> wording', () => {
     const block = extractBlock(readFileSync(BRIEF, 'utf8'));
     assert.deepEqual(fillBlock(block, {}).problems, SLOTS);
     assert.deepEqual(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems, []);
@@ -68,4 +68,10 @@ test('CLI exits 1 when no config holds any value', () => {
     const r = run('# nothing here\n');
     assert.equal(r.status, 1);
     assert.match(r.stderr, /<user git emails>, <tracker key example>/);
+});
+
+test('the shipped block tells workers to run the PR size gate before opening a PR', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    assert.match(block, /Before opening a PR run `node <skill>\/scripts\/pr-size\.mjs --repo \. --base <base>`; if it fails, stop and report a split plan instead of opening\./);
+    assert.ok(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems.length === 0, 'the new line adds no unfilled slot');
 });

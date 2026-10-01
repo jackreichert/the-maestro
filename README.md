@@ -14,6 +14,7 @@ It does not implement features itself. Implementation happens in the target repo
 - An end-of-day wrap-up: a PR pass first, then, if a tracker MCP is connected, it drafts comments and status changes for every issue touched that day, for your approval. Then it runs the standup and the roll.
 - An optional org overlay: a separate skill that carries one org's repo topology, tracker rules and settings, so this skill stays generic.
 - Rules for one writer per repo, worktrees only when a checkout is actually busy, and draft-only pull requests.
+- A PR size budget, enforced by a script: at most 5 code files and 400 changed code lines per PR by default (tests, config and docs don't count; lockfiles, generated files and pure renames are exempt only in a PR of their own). `node scripts/pr-size.mjs --repo <path> --base <ref> [--head <ref>] [--json]` exits 1 when a PR is over budget or mixes mechanical files with code, and the standing brief tells workers to stop and report a split plan instead of opening it. The limits and path patterns are local-config settings (`pr_max_code_files`, `pr_max_code_lines`, `pr_*_globs`).
 
 The protocol is in [SKILL.md](SKILL.md). The ledger tool is [scripts/journal.mjs](scripts/journal.mjs).
 
