@@ -9,7 +9,7 @@ import { join } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
-const { scanRepo, apply, defaultContext, explain } = await import('./branch-sweep.mjs');
+const { scanRepo, apply, defaultContext, explain, branchGlob } = await import('./branch-sweep.mjs');
 
 const ME = 'me@example.com';
 const sh = (repo, ...args) => {
@@ -259,7 +259,7 @@ test('git and gh errors fail closed: the item is left out and the reason is note
 
 test('a branch literally named refs/heads/develop is protected, and delete uses the full refspec', () => {
     const w = world(); feature(w, 'feat/x'); mergeInto(w, 'develop', 'feat/x');
-    sh(w.repo, 'push', '-q', 'origin', 'feat/x:refs/heads/refs/heads/develop');
+    sh(w.repo, 'push', '-q', 'origin', 'origin/develop:refs/heads/refs/heads/develop');
     sh(w.repo, 'fetch', '-q', '--prune', 'origin');
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), ['feat/x']);
     sh(w.repo, 'tag', 'feat/x'); sh(w.repo, 'push', '-q', 'origin', 'refs/tags/feat/x'); // a tag of the same name makes a bare `--delete feat/x` ambiguous
@@ -443,4 +443,28 @@ test('twin evidence belongs to the branch: a colleague\'s x-staging, an earlier-
     assert.deepEqual(kept(v, [pr(3, 'staging', 'fix/x-develop', '0'.repeat(40)), a, b]), ['fix/x', 'fix/x-staging'], 'a twin PR whose head is not in the repo is passed over, not an error');
     addTo(v, 'fix/x-staging', 'later.txt');
     assert.deepEqual(kept(v, [a, b]), [], 'x-staging moved on after its PR: it no longer vouches for x, and has no exact PR itself');
+});
+
+test('protected patterns are globs: release/* and staging/* are never listed, backmerge/* only when configured', () => {
+    const w = world();
+    sh(w.repo, 'push', '-q', 'origin', '--delete', 'staging'); sh(w.repo, 'branch', '-q', '-D', 'staging'); sh(w.repo, 'fetch', '-q', '--prune', 'origin'); // a staging branch would block staging/<date> refs
+    const protectedByDefault = ['release/2026-10-01', 'staging/20251217', 'hotfix/urgent'];
+    for (const b of [...protectedByDefault, 'backmerge/staging', 'release/2026/nested', 'feat/release']) { feature(w, b); mergeInto(w, 'develop', b); }
+    assert.deepEqual(listed(w), ['backmerge/staging', 'feat/release', 'release/2026/nested'], 'one segment only for *, and backmerge/* is opt-in');
+    assert.deepEqual(listed(w, { protectedNames: [...defaultContext().protectedNames, 'backmerge/*', 'release/**'] }), ['feat/release']);
+    assert.match(explain(w.repo, ctxFor({ fetch: false }), 'release/2026-10-01').join('\n'), /FAIL protected branch/);
+});
+
+test('a protected release branch counts as mainline, so a branch cut from it is judged on its own commits', () => {
+    const w = world();
+    sh(w.repo, 'checkout', '-q', '-b', 'release/1', 'main'); commit(w.repo, 'r.txt', 'r\n', COLLEAGUE); sh(w.repo, 'push', '-q', '-u', 'origin', 'release/1');
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/mine', 'release/1'); commit(w.repo, 'mine.txt', 'mine\n');
+    sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/mine'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/mine');
+    assert.deepEqual(listed(w), ['feat/mine']);
+});
+
+test('branchGlob: * stays inside a segment, ** crosses, everything else is literal', () => {
+    const m = (g, b) => branchGlob(g).test(b);
+    assert.deepEqual([m('release/*', 'release/1.0'), m('release/*', 'release/a/b'), m('release/**', 'release/a/b'), m('main', 'feat/main'), m('a.b', 'axb'), m('*', 'a/b')], [true, false, true, false, false, false]);
 });
