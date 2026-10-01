@@ -93,14 +93,26 @@ test('a branch with a foreign author is never listed', () => {
 test('a merged PR counts only when its head is the branch tip; twin found by link', () => {
     const w = world(); feature(w, 'feat/pr'); mergeInto(w, 'develop', 'feat/pr');
     const tip = sh(w.repo, 'rev-parse', 'origin/feat/pr');
-    const gh = (head) => (_repo, args) => (args[1] === 'list'
+    const gh = (head, view = {}) => (_repo, args) => (args[1] === 'list'
         ? [{ number: 7, headRefName: 'feat/pr', baseRefName: 'develop', headRefOid: head, url: 'https://example.com/pull/7', body: 'twin: #8' }]
-        : { number: 8, state: 'MERGED', baseRefName: 'staging', url: 'https://example.com/pull/8' });
+        : { number: 8, state: 'MERGED', baseRefName: 'staging', headRefName: view.headRefName ?? 'feat/pr', headRefOid: view.headRefOid ?? head, url: 'https://example.com/pull/8' });
     const ok = scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: gh(tip) }));
     assert.deepEqual(names(ok, 'remote-branch'), ['feat/pr']);
     assert.match(ok.items[0].why, /staging \(PR #8\)/);
     assert.deepEqual(ok.items[0].prs, ['https://example.com/pull/8']);
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: gh('0'.repeat(40)) })), 'remote-branch'), []);
+});
+
+test('a body that only mentions another PR ("follow-up to #40") is not twin evidence', () => {
+    const w = world(); feature(w, 'feat/pr'); mergeInto(w, 'develop', 'feat/pr');
+    const tip = sh(w.repo, 'rev-parse', 'origin/feat/pr');
+    const gh = (view) => (_repo, args) => (args[1] === 'list'
+        ? [{ number: 7, headRefName: 'feat/pr', baseRefName: 'develop', headRefOid: tip, url: 'u', body: 'follow-up to #40' }]
+        : { number: 40, state: 'MERGED', baseRefName: 'staging', url: 'u40', ...view });
+    const kept = (view) => names(scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: gh(view) })), 'remote-branch');
+    assert.deepEqual(kept({ headRefName: 'feat/other', headRefOid: 'a'.repeat(40) }), [], 'different head ref');
+    assert.deepEqual(kept({ headRefName: 'feat/pr', headRefOid: 'a'.repeat(40) }), [], 'same name, unrelated head');
+    assert.deepEqual(kept({ headRefName: 'feat/pr', headRefOid: tip }), ['feat/pr']);
 });
 
 test('a clean worktree on a merged branch qualifies; a dirty one is kept and reported', () => {
@@ -170,6 +182,19 @@ test('apply deletes a qualifying branch and worktree, and re-checks before delet
     assert.equal(remoteHas(w, 'feat/grew'), true);
     assert.equal(existsSync(wt), false);
     assert.equal(sh(w.repo, 'branch', '--list', 'feat/wt'), 'feat/wt', 'local branches are never deleted');
+});
+
+test('an id is bound to the tip: apply refuses it once the branch has moved, even if it still qualifies', () => {
+    const w = world(); feature(w, 'feat/moves'); mergeInto(w, 'develop', 'feat/moves');
+    const ctx = ctxFor();
+    const [item] = scanRepo(w.repo, ctx).items;
+    sh(w.repo, 'checkout', '-q', 'feat/moves'); commit(w.repo, 'late.txt', 'late\n'); sh(w.repo, 'push', '-q', 'origin', 'feat/moves'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/moves');
+    assert.equal(scanRepo(w.repo, ctx).items.length, 1, 'still qualifies');
+    const [res] = apply([item.id], w.container, ctx);
+    assert.equal(res.done, false);
+    assert.match(res.message, /tip moved/);
+    assert.equal(remoteHas(w, 'feat/moves'), true);
 });
 
 test('CLI: lists read-only as JSON through MAESTRO_GH, and --apply needs ids', () => {
