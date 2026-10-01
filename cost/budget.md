@@ -119,21 +119,25 @@ threshold above already covers this; the miss was not rolling on time, not a wro
 
 `pr-watch.mjs` costs no tokens between ticks — it is a background poll, not a subagent — but every
 tick that finds something still wakes the orchestrator for a full-context turn, so polling too
-often is a real cost even though each individual poll is free. Cadence, updated 2026-09-27
-(replaces the earlier 240s-default / 120s-while-active guidance — nothing below 300 is used
-anymore):
+often is a real cost even though each individual poll is free. The cadence is now automatic
+(replacing the manual 2026-09-27 policy of picking `--interval` by hand), implemented by
+`scripts/lib/cadence.mjs`:
 
-- **Default: `--interval 600`** (10 minutes). `900` (15 minutes) is fine too. This is the normal
-  daytime cadence, and what [greeting.md](../reference/greeting.md#a-greeting-is-a-request-for-the-board)
-  starts the watcher with.
-- **`--interval 300`** (5 minutes) only while a big list of threads is under active review — tighten
-  the poll while someone is actually working through a batch, then relax it back to the default
-  once that pass is done.
-- **Nothing faster than 300, ever.** The lesson below is exactly why.
-- **At night, poll every 30 minutes** (`--interval 1800`) until a set cutoff time, then stop the
-  watcher entirely rather than continuing to poll while nobody is reviewing anything.
+- **Busy: `watch_min_interval`** (300s default). Three or more events in the last 30 minutes
+  (new threads, reviews, comments, pushes, state changes) means someone is working through a batch.
+- **Some activity: 600s.** One or two events in the window, or nothing yet for under an hour.
+- **Quiet: back off** to 900s after an hour with nothing, then 1800s after two.
+- **Nothing faster than 300, ever.** `watch_min_interval` is raised to 300 if set lower. The lesson
+  below is exactly why. An explicit `--interval N` pins the poll but is raised to the same floor; it does not override quiet hours.
+- **Quiet hours: 20:00-07:00 local** by default (`watch_quiet_hours`, `watch_tz`; weekends with
+  `watch_quiet_weekends: on`). Mode `stop` (default) exits the watcher with the reason "quiet
+  hours" and the next morning greeting restarts it; mode `slow` polls every 1800s instead.
+- **Standing conditions wake once.** An approved-but-unmerged PR reports when it first appears or
+  changes, not every tick, so a deliberately held-back PR no longer forces a wake per poll.
+
+Every tick prints `next check in Ns (reason)` to stderr, so the cadence in force is always visible.
 
 Lesson, 2026-09-27: a watcher polling every 2 minutes raised the day's wake-ups 16% against trend,
 for no benefit the user acted on any faster than a 10-minute poll would have — see
 [loop.md#worked-example-2026-09-27](loop.md#worked-example-2026-09-27). That measurement is what
-moved the floor from 120s to 300s, and set the new daytime default at 600–900s.
+moved the floor from 120s to 300s, and set the quiet-day baseline at 600–900s.

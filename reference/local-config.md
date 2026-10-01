@@ -29,6 +29,12 @@ loop_patterns: loop_a, loop_b  # pgrep -f patterns `journal.mjs resume` checks; 
 resume_gh: on                  # off skips `gh pr list` in `resume`; default on
 ledger_git_autocommit: on      # on: `roll` commits the ledger root (if it is a git repo) after a clean `verify`; default off
 approvals_review_day: friday   # weekday the morning greeting brings the approvals digest; default friday
+watch_min_interval: 300        # PR watcher: fastest poll, seconds; never below 300; default 300
+watch_max_interval: 1800       # PR watcher: slowest poll, seconds; default 1800
+watch_quiet_hours: 20:00-07:00 # PR watcher: no polling in this local window; `off` disables; default 20:00-07:00
+watch_quiet_hours_mode: stop   # stop: exit until the next greeting restarts it; slow: poll every 1800s; default stop
+watch_quiet_weekends: off      # on: Saturday and Sunday count as quiet hours; default off
+watch_tz: America/New_York     # time zone for the quiet hours; default the system time zone
 pr_max_code_files: 5           # PR size budget: most code files per PR; default 5
 pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
@@ -53,7 +59,7 @@ The overlay's `config.md` is found from the overlay name (set in the user file o
 3. **Plugin skill** (`<plugin>:<skill>`): Claude Code records installed plugins in `~/.claude/plugins/installed_plugins.json`, an object `plugins` keyed `<plugin>@<marketplace>`, each entry a list whose items carry an `installPath`. The skill is at `<installPath>/skills/<skill>/config.md`.
 4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repo checkout) and by its real path, and then in `~/.claude/skills/<skill>/config.md`.
 
-The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, and `MAESTRO_TWIN_FLOW_REPOS`, and `MAESTRO_APPROVALS_REVIEW_DAY`. A variable that is set to the empty string counts as set.
+The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_APPROVALS_REVIEW_DAY`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`. A variable that is set to the empty string counts as set.
 
 ## Roots and names
 
@@ -69,6 +75,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Whether `roll` commits the ledger root (`ledger_git_autocommit`) | `journal.mjs roll` |
 | Weekday of the weekly approvals review (`approvals_review_day`, default Friday) | greeting.md, `journal.mjs approvals` |
 | Loop process patterns (`loop_patterns`) and whether `resume` calls `gh` (`resume_gh`) | `journal.mjs resume` |
+| PR watcher cadence: `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours`, `watch_quiet_hours_mode`, `watch_quiet_weekends`, `watch_tz` | `pr-watch.mjs` via `scripts/lib/cadence.mjs` |
 
 ## Git identity and branch topology
 
