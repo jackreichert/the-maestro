@@ -55,6 +55,24 @@ So a "make a PR" request ends like this:
    equivalent) is not yours to open at all. Copilot review on the draft is handled per
    [prs.md#copilot-on-drafts](prs.md#copilot-on-drafts).
 
+## Twin PRs (integration and release-candidate branches)
+
+Some repos promote work through two long-lived branches: an **integration branch** (usually `develop`) where
+work is verified first, and a **release-candidate branch** (usually `staging`) that only ships. Which repos
+work this way is the local-config list `twin_flow_repos`, and the branch names come from the same place and
+from the org overlay's repo notes. **An empty list means this rule is off.** In a listed repo:
+
+- **Open both PRs together.** When you open the PR into one branch, open its twin into the other as a draft
+  at the same time, from the same feature branch, and the other way round. Both are drafts, assigned to the
+  user, like any other PR.
+- **Link each to its twin.** Each PR body links the other PR, so a reader of either can find the pair.
+- **The release-candidate PR does not merge until its integration twin has merged.** Never describe it as
+  ready, never recommend merging it, and never merge it, while the twin is open.
+- **When the integration twin merges, say so.** The orchestrator reminds the user that the
+  release-candidate twin can now merge, with both links.
+
+The PR board shows the state per PR: [prs.md#twin-prs](prs.md#twin-prs).
+
 ## PR size budget
 
 **Run `node <skill>/scripts/pr-size.mjs --repo <repo> --base <base>` before opening any draft PR.** It reads
@@ -128,6 +146,8 @@ covered by this rule.
   from a protected branch as another author's work on the branch.
 - Opening a PR for AI-config or agent-policy docs in a team repo.
 - Letting a harness default stamp `Co-Authored-By` or "Generated with" onto a commit or PR body.
+- In a twin-flow repo, opening one half of the pair without the other, or letting the release-candidate PR
+  merge (or be called ready) while its integration twin is still open.
 - Opening a PR that `pr-size.mjs` fails, instead of reporting a split plan, or burying a lockfile or
   generated-file change inside a code PR.
 - Opening a PR without reviewing the diff locally first, and letting the bots find it instead.
