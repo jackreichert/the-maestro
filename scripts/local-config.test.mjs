@@ -101,6 +101,14 @@ test('loop_patterns and resume_gh come from the file; the environment wins', () 
     assert.equal(show({ MAESTRO_LOCAL_CONFIG: '' }).RESUME_GH, 'on');
 });
 
+test('approvals_review_day defaults to friday, reads the file, lowercases, and ignores a non-weekday', () => {
+    assert.equal(show().APPROVALS_REVIEW_DAY, 'friday');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('approvals_review_day: Monday'));
+    assert.equal(show().APPROVALS_REVIEW_DAY, 'monday');
+    assert.equal(show({ MAESTRO_APPROVALS_REVIEW_DAY: 'wednesday' }).APPROVALS_REVIEW_DAY, 'wednesday');
+    assert.equal(show({ MAESTRO_APPROVALS_REVIEW_DAY: 'someday' }).APPROVALS_REVIEW_DAY, 'friday');
+});
+
 test('watch_* keys: defaults, file values, environment wins, junk falls back', () => {
     const d = show();
     assert.deepEqual(
