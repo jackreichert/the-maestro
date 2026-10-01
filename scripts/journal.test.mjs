@@ -880,6 +880,44 @@ test('approve-tag marks an existing decision without rewriting the ledger', () =
     assert.doesNotMatch(run('status').out, /approval standing/);   // a tag row is not a work item
 });
 
+test('approve-tag only accepts decision, resolved and question rows', () => {
+    const wip = idOf(run('log', 'building', '--kind', 'wip', ...MARK).out);
+    const done = idOf(run('log', 'shipped', '--kind', 'done', ...MARK).out);
+    const dropped = idOf(run('log', 'gave up', '--kind', 'dropped', ...MARK).out);
+    const q = idOf(run('ask', 'retarget?', ...MARK).out);
+    const decision = idOf(run('log', 'use sqlite', '--kind', 'decision', ...MARK).out);
+    const resolved = idOf(run('resolve', q, '--answer', 'yes', ...MARK).out);
+    for (const id of [decision, resolved]) assert.equal(run('approve-tag', id, '--approval', 'one-off', ...MARK).code, 0, id);
+    const tag = ledger().find((e) => e.kind === 'approval-tag').id;
+    for (const id of [wip, done, dropped, tag]) {
+        const r = run('approve-tag', id, '--approval', 'one-off', ...MARK);
+        assert.equal(r.code, 1, id);
+        assert.match(r.err, /can be approved/);
+    }
+    const q2 = idOf(run('ask', 'still open?', ...MARK).out);
+    assert.equal(run('approve-tag', q2, '--approval', 'one-off', ...MARK).code, 0);
+});
+
+test('verify flags an approval-tag that points at a kind that cannot be approved', () => {
+    const done = idOf(run('log', 'shipped', '--kind', 'done', ...MARK).out);
+    const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(path, `${readFileSync(path, 'utf8')}${JSON.stringify({ id: 'bad3', kind: 'approval-tag', approves: done, approval: 'standing' })}\n`);
+    const v = run('verify');
+    assert.equal(v.code, 1);
+    assert.match(v.out, /approves .*a done row/);
+});
+
+test('--approval is rejected on every kind except decision and resolved', () => {
+    for (const kind of ['note', 'wip', 'done', 'question', 'blocked', 'dropped']) {
+        assert.equal(run('log', 'x', '--kind', kind, '--approval', 'standing', ...MARK).code, 1, kind);
+    }
+    assert.throws(() => ledger());
+    const w = idOf(run('log', 'task', '--kind', 'wip', ...MARK).out);
+    assert.equal(run('done', w, '--approval', 'one-off', ...MARK).code, 1);
+    assert.equal(run('drop', w, '--approval', 'one-off', ...MARK).code, 1);
+    assert.equal(run('log', 'x', '--kind', 'decision', '--approval', 'standing', ...MARK).code, 0);
+});
+
 test('verify accepts approval rows and flags a bad value or a dangling approves', () => {
     const id = idOf(run('log', 'ok', '--kind', 'decision', '--approval', 'one-off', ...MARK).out);
     run('approve-tag', id, '--approval', 'standing', ...MARK);

@@ -96,6 +96,12 @@ const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolv
 /** The values --approval accepts. Anything else is rejected at write time and flagged by `verify`. */
 const APPROVALS = new Set(['standing', 'one-off']);
 
+/** Row kinds that may carry --approval when written (`approve-tag` writes its own approval-tag row). */
+const APPROVAL_WRITE_KINDS = new Set(['decision', 'resolved']);
+
+/** Row kinds an approval can point at: the user's decision, their answer to an ask, or the ask itself. */
+const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
+
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
@@ -364,12 +370,19 @@ const refsFromArgs = () => (arg('ref') || '').split(',').map((s) => s.trim()).fi
  * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
  * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
  */
-function approvalFromArgs() {
+function parseApproval() {
     const approval = arg('approval');
     if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
     if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
     if (!APPROVALS.has(approval)) die(`--approval must be one of: ${[...APPROVALS].join(', ')} (got "${approval}")`);
     return { approval, scope: arg('scope') || undefined };
+}
+
+/** parseApproval for a row of `kind`: --approval is only allowed on the kinds in APPROVAL_WRITE_KINDS. */
+function approvalFor(kind) {
+    const fields = parseApproval();
+    if (fields.approval && !APPROVAL_WRITE_KINDS.has(kind)) die(`--approval only goes on: ${[...APPROVAL_WRITE_KINDS].join(', ')} (not ${kind}).`);
+    return fields;
 }
 
 function cmdLog(kindDefault = 'note') {
@@ -389,7 +402,7 @@ function cmdLog(kindDefault = 'note') {
         ticket: arg('ticket') || undefined,
         stream: streamOrNone(arg('stream')),
         refs: refsFromArgs(),
-        ...approvalFromArgs(),
+        ...approvalFor(kind),
         ...usageFromArgs(),
     };
     append(entry);
@@ -398,9 +411,9 @@ function cmdLog(kindDefault = 'note') {
     return entry;
 }
 
-/** `resolve` may carry an approval (the user answered an `ask` with one); other closers ignore the flag. */
-const approvalClose = () => {
-    const fields = approvalFromArgs();
+/** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
+const approvalClose = (kind) => {
+    const fields = approvalFor(kind);
     return fields.approval ? { ...fields, refs: refsFromArgs() } : {};
 };
 
@@ -421,7 +434,7 @@ function cmdClose(newKind) {
         text: note || target.text,
         repo: target.repo,
         ticket: arg('ticket') || target.ticket,
-        ...approvalClose(),
+        ...approvalClose(newKind),
         ...usageFromArgs(),
     });
     if (!dryRun) render(true);
@@ -454,11 +467,12 @@ function cmdTag() {
 /** Mark an existing row as an approval without rewriting the ledger: appends an `approval-tag` row. */
 function cmdApproveTag() {
     const id = positional[0];
-    const fields = approvalFromArgs();
+    const fields = parseApproval();
     if (!id || !fields.approval) die('Usage: journal.mjs approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]');
     const entries = readLedger();
     const target = entries.find((e) => e.id === id && !e.annotates);
     if (!target) die(`No row with id "${id}".`);
+    if (!APPROVABLE_KINDS.has(target.kind)) die(`Row ${id} is a ${target.kind}; only ${[...APPROVABLE_KINDS].join(', ')} rows can be approved.`);
     append({
         id: newId(entries),
         ts: now(),
@@ -877,6 +891,8 @@ function verifyLedger() {
     for (const { row, line } of rows) {
         if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
         if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
+        const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
+        if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
         for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
