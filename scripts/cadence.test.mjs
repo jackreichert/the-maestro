@@ -71,3 +71,18 @@ test('floorSeconds is 300 unless watch_min_interval is higher', () => {
   assert.equal(floorSeconds({ minInterval: 60 }), 300);
   assert.equal(floorSeconds({ minInterval: 450 }), 450);
 });
+
+test('a quiet stop says when quiet hours end, in the configured zone', () => {
+  const got = nextInterval({ now: at('2026-10-01T21:00:00Z'), config: { tz: 'UTC' } });
+  assert.deepEqual([got.until, got.tz], ['07:00', 'UTC']);
+});
+
+test('a weekend stop resumes at the end of the weekend', () => {
+  const got = nextInterval({ now: at('2026-10-03T12:00:00Z'), config: { tz: 'UTC', quietWeekends: true } });
+  assert.equal(got.until, '07:00');
+});
+
+test('quiet hours in another zone resume in that zone', () => {
+  const got = nextInterval({ now: at('2026-10-01T20:00:00Z'), config: { tz: 'Asia/Tokyo' } });
+  assert.deepEqual([got.until, got.tz], ['07:00', 'Asia/Tokyo']);
+});

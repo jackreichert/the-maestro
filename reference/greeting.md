@@ -61,8 +61,9 @@ What to include after the greeting, in this order:
    handle it, then relaunch the watcher (without `--baseline`). Keep exactly one watcher running.
    The watcher sets its own pace (faster while reviews are flowing, slower when quiet, stopped
    overnight; [cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence)), so there is
-   no interval to pick. A watcher that stopped for quiet hours is restarted by the next morning
-   greeting, this step. What it wakes on, and which of those reach the user mid-day, is in
+   no interval to pick. A watcher whose last exit was a quiet stop (exit 3, stdout `QUIET-HOURS stop until HH:MM <tz>`,
+   `stoppedForQuietAt` in the state file) is restarted by the next morning greeting, this step:
+   relaunch it without `--baseline`. What it wakes on, and which of those reach the user mid-day, is in
    [reference/prs.md#the-pr-watcher](../reference/prs.md#the-pr-watcher).
 5. **Shipped today** — only once there is something in it.
 6. **Issue-tracker sprint board** — only when an issue-tracker MCP is installed and connected.
