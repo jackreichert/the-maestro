@@ -121,7 +121,7 @@ test('twin flow: x merged into develop and x-staging into staging qualify each o
     const r = scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: searchGh(prs) }));
     assert.match(r.items.find((i) => i.name === 'fix/x').why, /develop \(PR #1\) and staging \(twin PR #2 \(fix\/x-staging\)\)/);
     assert.deepEqual(r.items.find((i) => i.name === 'fix/x').prs, ['https://example.com/pull/1', 'https://example.com/pull/2']);
-    assert.deepEqual(kept(w, [pr(1, 'develop', 'fix/x', '0'.repeat(40)), prs[1]]), ['fix/x-staging'], 'x moved on since PR 1, so x is out; the twin PR itself is not tip-bound, so x-staging still has its twin');
+    assert.deepEqual(kept(w, [pr(1, 'develop', 'fix/x', '0'.repeat(40)), prs[1]]), [], 'x moved on since PR 1, so x is out, and x-staging has no twin whose branch still sits at its PR head');
 });
 
 test('twin flow: the -develop naming works too (x into staging, x-develop into develop)', () => {
@@ -427,4 +427,20 @@ test('ownership: a fast-forwarded branch has no commits of its own, so it needs 
     sh(w.repo, 'fetch', '-q', 'origin');
     assert.deepEqual(listed(w), []);
     assert.deepEqual(listed(w, { gh: searchGh([pr(9, 'develop', 'feat/ff', tipOf(w, 'feat/ff'))]) }), ['feat/ff']);
+});
+
+test('twin evidence belongs to the branch: a colleague\'s x-staging, an earlier-round twin or a moved twin does not count', () => {
+    const w = world(); feature(w, 'fix/x'); feature(w, 'fix/x-staging', { email: COLLEAGUE });
+    mergeInto(w, 'develop', 'fix/x', true); mergeInto(w, 'staging', 'fix/x-staging', true);
+    const own = pr(1, 'develop', 'fix/x', tipOf(w, 'fix/x'));
+    const theirs = pr(2, 'staging', 'fix/x-staging', tipOf(w, 'fix/x-staging'));
+    assert.deepEqual(kept(w, [own, theirs]), [], 'the twin is a colleague\'s branch');
+
+    const v = world(); twins(v, 'fix/x', 'fix/x-staging');
+    const [a, b] = [pr(1, 'develop', 'fix/x', tipOf(v, 'fix/x')), pr(2, 'staging', 'fix/x-staging', tipOf(v, 'fix/x-staging'))];
+    assert.deepEqual(kept(v, [a, b]), ['fix/x', 'fix/x-staging'], 'the same shape with my own twin qualifies');
+    assert.deepEqual(kept(v, [a, { ...b, mergedAt: daysAgo(5) }]), ['fix/x-staging'], 'the twin merged before x\'s PR is an earlier round; x-staging still has x as its later twin');
+    assert.deepEqual(kept(v, [pr(3, 'staging', 'fix/x-develop', '0'.repeat(40)), a, b]), ['fix/x', 'fix/x-staging'], 'a twin PR whose head is not in the repo is passed over, not an error');
+    addTo(v, 'fix/x-staging', 'later.txt');
+    assert.deepEqual(kept(v, [a, b]), [], 'x-staging moved on after its PR: it no longer vouches for x, and has no exact PR itself');
 });

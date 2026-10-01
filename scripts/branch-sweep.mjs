@@ -15,7 +15,8 @@
  * name on origin) was deleted with nothing unpushed, and it is clean, holds no ignored file worth keeping, is not a live
  * skill, is unlocked, not under a live claim and idle. "Merged" is ancestry or a merged PR for this branch (head ref and
  * tip), the twin PR (the other target's PR, from the same branch name with a -staging/-develop suffix added or removed, or
- * linked both ways) counts when the branch's own PR into the other target has exactly its tip. Patch-equivalence alone (`git cherry`, so a squash
+ * linked both ways) counts when the branch's own PR into the other target has exactly its tip and the twin was merged on or after that PR, has only the
+ * user's commits, and (if its branch is still on origin) is still at its PR's head. Patch-equivalence alone (`git cherry`, so a squash
  * merge, but also a squash merge that was since reverted) lists the branch under Review, and --apply refuses it.
  * Any git or gh error leaves the item out, with the reason noted.
  * The `gh` binary is `MAESTRO_GH` if set. Settings: local-config.mjs and reference/local-config.md.
@@ -139,15 +140,18 @@ const OWNERSHIP_RULES = [
     (c) => `${c.own.filter((x) => !c.emails.includes(x.email)).length} of ${c.own.length} commits are by someone else`),
 ];
 
+/** The user's author emails: the configured list, else the repo's own user.email. */
+const emailsFor = (g, ctx) => (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
+
 function isMine(g, ref, branch, tip, scan) {
   const { ctx } = scan;
-  const emails = (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
+  const emails = emailsFor(g, ctx);
   const c = { emails, own: ownCommits(g, ref, scan.protectedRefs, scan.mainline), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
   const failed = firstFailure(OWNERSHIP_RULES, c);
   return failed ? { ok: false, reason: failed.reason(c) } : { ok: true };
 }
 
-const PR_FIELDS = 'number,baseRefName,headRefName,headRefOid,url,body';
+const PR_FIELDS = 'number,baseRefName,headRefName,headRefOid,url,body,mergedAt';
 const PR_PAGE = 1000; // gh search returns at most this many per query; a full page means the window may hold more
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
@@ -185,17 +189,37 @@ const exactPrs = (repo, name, tip, ctx) => mergedPrs(repo, ctx).filter((p) => p.
 const stem = (b) => b.replace(/-(staging|develop)$/, '');
 const prNumbers = (body) => new Set([...(body || '').matchAll(/(?:#|\/pull\/)(\d+)/g)].map((m) => Number(m[1])));
 
+/** Epoch ms of a PR's mergedAt, NaN when absent, so every comparison against it is false. */
+const mergedAtMs = (q) => Date.parse(q.mergedAt ?? '');
+
+/** Twin PR rules: `check` gets (c, q, own) for a candidate merged PR `q` into the twin target; all must pass. */
+const TWIN_RULES = [
+  rule('merged after the branch\'s own PR', (c, q, own) => own.some((p) => mergedAtMs(q) >= mergedAtMs(p)), () => 'merged before the branch\'s own PR'),
+  rule('twin head commit is readable', (c, q) => c.g('cat-file', '-e', `${q.headRefOid}^{commit}`).ok, () => 'twin head commit not in this repo'),
+  rule('twin branch tip matches the PR', (c, q) => {
+    const r = c.g('rev-parse', '--verify', '-q', `refs/remotes/origin/${q.headRefName}`);
+    return !r.ok || r.out === q.headRefOid;
+  }, () => 'twin branch moved since the PR'),
+  rule('every twin commit is the user\'s', (c, q) => {
+    const own = ownCommits(c.g, q.headRefOid, c.protectedRefs, c.mainline);
+    return own.length > 0 && own.every((x) => c.emails.includes(x.email));
+  }, () => 'twin has commits by someone else (or none of its own)'),
+];
+
 /**
  * The twin PR of this branch for `target`: a MERGED PR into `target` from the branch's twin (a different head ref,
  * same name up to the suffix) or whose body and the branch's own PR's body link each other. It counts only when the
- * branch itself has a merged PR into another target with exactly its tip (tip-bound), so a twin alone proves nothing.
+ * branch itself has a merged PR into another target with exactly its tip (tip-bound), and the twin passes TWIN_RULES:
+ * merged on or after that PR, head commit by the user alone, and its branch (if still on origin) still at the PR's head.
  * The twin's own branch is judged separately, on this same rule. Only merged PRs are ever listed, so state is merged.
  */
 function twinPr(c, target) {
   const own = c.exact().filter((p) => p.baseRefName !== target && c.targets.includes(p.baseRefName));
   if (!own.length) return null;
   const linked = (q) => own.some((p) => prNumbers(q.body).has(p.number) && prNumbers(p.body).has(q.number));
-  return mergedPrs(c.g.repo, c.ctx).find((q) => q.baseRefName === target && q.headRefName !== c.name && (stem(q.headRefName) === stem(c.name) || linked(q))) || null;
+  return mergedPrs(c.g.repo, c.ctx)
+    .filter((q) => q.baseRefName === target && q.headRefName !== c.name && (stem(q.headRefName) === stem(c.name) || linked(q)))
+    .find((q) => TWIN_RULES.every((r) => r.check(c, q, own))) || null;
 }
 
 /** Evidence that the branch is merged into one target; the first rule that returns evidence wins. `check` gets (c, target). */
@@ -215,8 +239,9 @@ function cherryEquivalent(g, target, ref) {
  * Is `ref` (branch `name`, at `tip`) merged into every target? state 'ok' (every target has ancestry or PR
  * evidence), 'review' (the rest only patch-equivalent), or 'no'. Throws on a failed git or gh call.
  */
-function mergedEvidence(g, ref, name, tip, targets, ctx) {
-  const c = { g, ref, name, tip, ctx, targets, exact: () => exactPrs(g.repo, name, tip, ctx) };
+function mergedEvidence(g, ref, name, tip, targets, scan) {
+  const { ctx } = scan;
+  const c = { g, ref, name, tip, ctx, targets, emails: emailsFor(g, ctx), protectedRefs: scan.protectedRefs, mainline: scan.mainline, exact: () => exactPrs(g.repo, name, tip, ctx) };
   const per = []; const weak = []; const missing = [];
   for (const t of targets) {
     let hit = null;
@@ -302,7 +327,7 @@ function assess(g, ref, branch, targets, scan) {
     a.mine = own.ok; a.reason = own.reason || '';
   } catch (e) { a.error = e; return a; }
   if (!a.mine) return a;
-  try { a.ev = mergedEvidence(g, ref, branch, a.tip, targets, scan.ctx); } catch (e) { a.error = e; }
+  try { a.ev = mergedEvidence(g, ref, branch, a.tip, targets, scan); } catch (e) { a.error = e; }
   return a;
 }
 
@@ -395,14 +420,14 @@ export function explain(repoPath, ctx, branch) {
   if (protectedNames.has(branch) || protectedNames.has(bare(branch))) return [...out, '  FAIL protected branch'];
   try {
     const tip = must(g, 'rev-parse', ref);
-    const emails = (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
+    const emails = emailsFor(g, ctx);
     const mainline = mainlineOf(g, protectedRefs);
     const own = ownCommits(g, ref, protectedRefs, mainline);
     const c = { emails, own, exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
     out.push(`  tip ${tip.slice(0, 9)}, ${own.length} own commits, targets ${targets.join('+')}, PR look-back ${ctx.prDays ?? 180} days, ${mergedPrs(g.repo, ctx).length} merged PRs read`);
     out.push(`  exact PRs (head ${branch} at tip): ${c.exactPrs().map((p) => `#${p.number}->${p.baseRefName}`).join(', ') || 'none'}`);
     out.push('ownership:', ...OWNERSHIP_RULES.map((r) => verdict(r.name, r, c)));
-    const tc = { g, ref, name: branch, tip, ctx, targets, exact: c.exactPrs };
+    const tc = { g, ref, name: branch, tip, ctx, targets, emails, protectedRefs, mainline, exact: c.exactPrs };
     for (const t of targets) {
       out.push(`target ${t}:`, ...TARGET_RULES.map((r) => verdict(r.name, r, tc, t)));
       try { out.push(`  ${cherryEquivalent(g, `origin/${t}`, ref) ? 'PASS' : 'FAIL'} patch-equivalent (review only)`); } catch (e) { out.push(`  ERROR cherry: ${e.message}`); }
