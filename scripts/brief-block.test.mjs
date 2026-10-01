@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute, dirname } from 'node:path';
 
 // Hermetic: never read the user's config file (see local-config.mjs). The import comes after this
 // line because local-config.mjs reads its files when it is first loaded.
@@ -30,7 +30,7 @@ function run(configText) {
     return spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', env });
 }
 
-test('the shipped block has exactly the two documented slots', () => {
+test('the shipped block has exactly the documented slots', () => {
     const block = extractBlock(readFileSync(BRIEF, 'utf8'));
     assert.match(block, /^Standing rules \(hard limits\):/);
     for (const slot of SLOTS) assert.ok(block.includes(slot), slot);
@@ -41,9 +41,9 @@ test('parseSlotValues reads bullets, strips wrapping backticks, stops at the nex
     assert.deepEqual(v, { '<user git emails>': 'dev@example.com (or dev2@example.org)', '<tracker key example>': 'FAKE-1' });
 });
 
-test('fillBlock flags a slot with no value and keeps the block own <base> and <check> wording', () => {
+test('fillBlock flags a slot with no value and keeps the block own <base>, <check> wording', () => {
     const block = extractBlock(readFileSync(BRIEF, 'utf8'));
-    assert.deepEqual(fillBlock(block, {}).problems, SLOTS);
+    assert.deepEqual(fillBlock(block, {}).problems, ['<user git emails>', '<tracker key example>']);
     assert.deepEqual(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems, []);
     assert.deepEqual(fillBlock(block, { '<user git emails>': '<your email>', '<tracker key example>': 'K-1' }).problems, ['<your email>']);
 });
@@ -68,4 +68,42 @@ test('CLI exits 1 when no config holds any value', () => {
     const r = run('# nothing here\n');
     assert.equal(r.status, 1);
     assert.match(r.stderr, /<user git emails>, <tracker key example>/);
+});
+
+test('the shipped block tells workers to run the PR size gate before opening a PR', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    assert.match(block, /Open every PR with `node <maestro scripts dir>\/pr-open\.mjs --repo \. --base <base> --title "\.\.\." --body-file BODY\.md`, never a bare `gh pr create`/);
+    assert.match(block, /If it refuses, stop and report a split plan instead of opening\./);
+    assert.ok(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems.length === 0, 'the new line adds no unfilled slot');
+});
+
+test('the filled block names an absolute, existing path to pr-open.mjs, and no <skill> placeholder', () => {
+    const r = run(VALUES);
+    assert.equal(r.status, 0, r.stderr);
+    const m = r.stdout.match(/`node (\/[^ `]+\/pr-open\.mjs) --repo/);
+    assert.ok(m, 'an absolute path precedes pr-open.mjs');
+    assert.ok(existsSync(m[1]), m[1]);
+    assert.ok(isAbsolute(m[1]));
+    assert.doesNotMatch(r.stdout, /<skill>|<maestro scripts dir>/);
+});
+
+test('invoked through a symlinked scripts dir, the filled block keeps the symlink path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bb-link-'));
+    const link = join(dir, 'scripts');
+    symlinkSync(dirname(SCRIPT), link);
+    const config = join(dir, 'config.md');
+    writeFileSync(config, VALUES);
+    const r = spawnSync(process.execPath, [join(link, 'brief-block.mjs')], {
+        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MAESTRO_LOCAL_CONFIG: config },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(`${link}/pr-open.mjs`), r.stdout);
+    assert.ok(!r.stdout.includes(`${dirname(SCRIPT)}/pr-open.mjs`));
+});
+
+test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.mjs', async () => {
+    const { scriptsDir } = await import('./brief-block.mjs');
+    const real = dirname(SCRIPT);
+    assert.equal(scriptsDir(join(tmpdir(), 'elsewhere', 'x.mjs'), real), real);
+    assert.equal(scriptsDir(undefined, real), real);
 });
