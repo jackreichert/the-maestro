@@ -70,12 +70,27 @@ test('merged into develop only does not qualify in a twin-flow repo, but does el
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), ['feat/a']);
 });
 
-test('a squash merge qualifies through cherry equivalence', () => {
+test('a squash merge is evidence only with its merged PR; cherry alone goes to review, and apply refuses it', () => {
     const w = world(); feature(w, 'feat/sq'); mergeInto(w, 'develop', 'feat/sq', true);
     assert.notEqual(spawnSync('git', ['-C', w.repo, 'merge-base', '--is-ancestor', 'origin/feat/sq', 'origin/develop']).status, 0, 'not an ancestor');
-    const r = scanRepo(w.repo, ctxFor());
-    assert.deepEqual(names(r, 'remote-branch'), ['feat/sq']);
-    assert.match(r.items[0].why, /develop \(cherry\)/);
+    const r = scanRepo(w.repo, ctxFor({ gh: () => [] }));
+    assert.deepEqual([names(r, 'remote-branch'), r.review.map((i) => i.name)], [[], ['feat/sq']]);
+    assert.match(r.review[0].why, /develop \(patch-equivalent only\)/);
+    const [res] = apply([r.review[0].id], w.container, ctxFor({ gh: () => [] }));
+    assert.match(res.message, /refused: patch-equivalent only/);
+    assert.equal(remoteHas(w, 'feat/sq'), true);
+    const tip = sh(w.repo, 'rev-parse', 'origin/feat/sq');
+    const pr = () => [{ number: 5, headRefName: 'feat/sq', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/5', body: '' }];
+    const merged = scanRepo(w.repo, ctxFor({ gh: pr }));
+    assert.deepEqual([names(merged, 'remote-branch'), merged.review], [['feat/sq'], []]);
+    assert.match(merged.items[0].why, /develop \(PR #5\)/);
+});
+
+test('a squash merge that was reverted on develop still only reads as review', () => {
+    const w = world(); feature(w, 'feat/rev'); mergeInto(w, 'develop', 'feat/rev', true);
+    sh(w.repo, 'checkout', '-q', 'develop'); sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'revert', '--no-edit', 'HEAD'); sh(w.repo, 'push', '-q', 'origin', 'develop'); sh(w.repo, 'checkout', '-q', 'main');
+    const r = scanRepo(w.repo, ctxFor({ gh: () => [] }));
+    assert.deepEqual([names(r, 'remote-branch'), r.review.map((i) => i.name)], [[], ['feat/rev']]);
 });
 
 test('protected branches are never listed, even when fully merged', () => {
@@ -193,8 +208,39 @@ test('a branch with no commits of its own never qualifies, unless a merged PR na
 test('a worktree cut with -b x origin/develop is not "gone" and never qualifies', () => {
     const w = world();
     sh(w.repo, 'worktree', 'add', '-q', '-b', 'x', join(w.root, 'x'), 'origin/develop');
-    const r = scanRepo(w.repo, ctxFor());
-    assert.deepEqual([r.items, r.excluded], [[], []]);
+    const r = scanRepo(w.repo, ctxFor({ gh: () => [] }));
+    assert.deepEqual([r.items, r.review, r.excluded], [[], [], []]);
+});
+
+test('git and gh errors fail closed: the item is left out and the reason is noted', () => {
+    const w = world(); feature(w, 'feat/sq'); mergeInto(w, 'develop', 'feat/sq', true); feature(w, 'feat/ok'); mergeInto(w, 'develop', 'feat/ok');
+    const failing = (verb) => (repo) => Object.assign((...a) => {
+        const r = spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+        const bad = a.includes(verb);
+        return { ok: !bad && r.status === 0, status: bad ? 128 : r.status, out: (r.stdout || '').trim(), err: bad ? 'boom' : (r.stderr || '').trim() };
+    }, { repo });
+    const cherry = scanRepo(w.repo, ctxFor({ gitFor: failing('cherry'), gh: () => [] }));
+    assert.deepEqual([names(cherry, 'remote-branch'), cherry.review], [['feat/ok'], []]);
+    assert.match(cherry.notes.join('\n'), /branch feat\/sq skipped: git cherry origin\/develop failed: boom/);
+    const log = scanRepo(w.repo, ctxFor({ gitFor: failing('log'), gh: () => [] }));
+    assert.deepEqual(log.items, []);
+    assert.match(log.notes.join('\n'), /git log --no-merges failed/);
+    const gh = scanRepo(w.repo, ctxFor({ gh: () => null }));
+    assert.deepEqual(names(gh, 'remote-branch'), ['feat/ok'], 'ancestry needs no gh');
+    assert.match(gh.notes.join('\n'), /gh pr list failed/);
+});
+
+test('a branch literally named refs/heads/develop is protected, and delete uses the full refspec', () => {
+    const w = world(); feature(w, 'feat/x'); mergeInto(w, 'develop', 'feat/x');
+    sh(w.repo, 'push', '-q', 'origin', 'feat/x:refs/heads/refs/heads/develop');
+    sh(w.repo, 'fetch', '-q', '--prune', 'origin');
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), ['feat/x']);
+    sh(w.repo, 'tag', 'feat/x'); sh(w.repo, 'push', '-q', 'origin', 'refs/tags/feat/x'); // a tag of the same name makes a bare `--delete feat/x` ambiguous
+    const ctx = ctxFor();
+    const [res] = apply([scanRepo(w.repo, ctx).items[0].id], w.container, ctx);
+    assert.equal(res.done, true, res.message);
+    assert.equal(remoteHas(w, 'feat/x'), false);
+    assert.notEqual(sh(w.repo, 'ls-remote', 'origin', 'refs/heads/refs/heads/develop'), '', 'the lookalike branch is untouched');
 });
 
 test('apply deletes a qualifying branch and worktree, and re-checks before deleting', () => {
