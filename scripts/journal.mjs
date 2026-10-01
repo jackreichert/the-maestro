@@ -500,7 +500,8 @@ function isoWeek(d) {
     return `${t.getUTCFullYear()}-W${String(Math.ceil(((t - yearStart) / DAY_MS + 1) / 7)).padStart(2, '0')}`;
 }
 
-const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d));
+/** A real calendar date: YYYY-MM-DD that reads back unchanged, so 2026-02-30 is rejected. */
+const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d)) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
 const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
 /**
@@ -508,40 +509,51 @@ const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY_MS).t
  * --since, else `--days N` (default 7) ending on `until`: exactly N calendar days, so weekly runs do not overlap.
  */
 function approvalsWindow() {
+    if (has('until') && !arg('until')) die('--until needs a value: YYYY-MM-DD.');
     const until = arg('until') ?? today();
     if (!isDate(until)) die('--until must be YYYY-MM-DD.');
     const since = arg('since');
-    if (since) return isDate(since) ? { since, until } : die('--since must be YYYY-MM-DD.');
+    if (since) {
+        if (!isDate(since)) die('--since must be YYYY-MM-DD.');
+        if (since > until) die(`--since (${since}) is after --until (${until}).`);
+        return { since, until };
+    }
     const days = arg('days', '7');
     if (!/^[1-9]\d*$/.test(days)) die('--days must be a whole number of at least 1.');
     return { since: shiftDay(until, 1 - Number(days)), until };
 }
 
 /**
- * Approvals in the window, grouped. A row is an approval when it carries `approval` itself or a later
- * `approval-tag` row points at it. Tags merge field by field in order: the latest tag that sets a field
- * wins it, `scope` and `refs` carry over from earlier tags (or the row) until replaced. A row is in the
- * window when its own date or its tag's date is. Untagged: `decision` rows that neither a tag nor a
- * closing row marks as an approval.
+ * Approvals in the window, grouped, one entry per grant. A grant is a row that carries `approval`
+ * itself, is pointed at by an `approval-tag` row, or closes a row with `--approval`; a closing row and
+ * the row it closes are the same grant. The events of a grant merge field by field in ledger order: the
+ * latest event that sets a field wins it, `scope` and `refs` carry over until replaced, and the entry
+ * is reported under the latest event's row. A grant is in the window when any of its rows or tags is.
+ * Untagged: `decision` rows that no approval touches.
  */
 function collectApprovals(entries, { since, until }) {
-    const tagsFor = new Map();
-    for (const e of entries) if (e.kind === 'approval-tag' && e.approves) tagsFor.set(e.approves, [...(tagsFor.get(e.approves) || []), e]);
-    const closedWithApproval = new Set(entries.filter((e) => e.closes && e.approval).map((e) => e.closes));
+    const byId = new Map(entries.filter((e) => e.id).map((e) => [e.id, e]));
+    const grantOf = (row) => row.closes || row.id;
+    const events = new Map();
+    const add = (key, event) => events.set(key, [...(events.get(key) || []), event]);
+    for (const e of entries) {
+        if (!e.id || e.annotates) continue;
+        if (e.kind === 'approval-tag') {
+            const target = byId.get(e.approves);
+            if (target) add(grantOf(target), { subject: target, fields: e, tag: e });
+        } else if (e.approval) add(grantOf(e), { subject: e, fields: e });
+    }
     const inWindow = (d) => String(d || '') >= since && String(d || '') <= until;
+    const lastSet = (list, field) => list.map((ev) => ev.fields[field]).filter((v) => (Array.isArray(v) ? v.length : v)).pop();
     const out = { standing: [], oneOff: [], untagged: [] };
     const bucket = { standing: out.standing, 'one-off': out.oneOff };
-    const lastSet = (tags, field, fallback) => tags.map((t) => t[field]).filter((v) => (Array.isArray(v) ? v.length : v)).pop() ?? fallback;
+    for (const list of events.values()) {
+        const latest = list[list.length - 1].subject;
+        if (!list.some((ev) => inWindow(ev.subject.date) || inWindow(ev.fields.date))) continue;
+        bucket[lastSet(list, 'approval')]?.push({ id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'), refs: lastSet(list, 'refs') || [], taggedBy: list.filter((ev) => ev.tag).pop()?.tag.id });
+    }
     for (const e of entries) {
-        if (!e.id || e.annotates || e.kind === 'approval-tag') continue;
-        const tags = tagsFor.get(e.id) || [];
-        const approval = lastSet(tags, 'approval', e.approval);
-        if (!approval) {
-            if (e.kind === 'decision' && !e.closes && !closedWithApproval.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
-            continue;
-        }
-        if (!inWindow(e.date) && !tags.some((t) => inWindow(t.date))) continue;
-        bucket[approval]?.push({ id: e.id, date: e.date, text: e.text, scope: lastSet(tags, 'scope', e.scope), refs: lastSet(tags, 'refs', e.refs || []), taggedBy: tags[tags.length - 1]?.id });
+        if (e.id && !e.annotates && e.kind === 'decision' && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
     }
     for (const list of Object.values(out)) list.sort((a, b) => String(a.date).localeCompare(String(b.date)));
     return out;
