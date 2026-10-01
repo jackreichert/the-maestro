@@ -103,21 +103,22 @@ function isAncestor(g, a, b) {
 const mainlineOf = (g, protectedRefs) => new Set(protectedRefs.flatMap((p) => must(g, 'rev-list', '--first-parent', p).split('\n').filter(Boolean)));
 
 /**
- * For a protected ref that already contains `ref`: the mainline commit just before the merge that brought it in (the
- * first parent of the oldest first-parent commit above `ref`), which is where the branch forked off as far as that ref
- * is concerned. Null when there is no such merge (a fast-forward), so nothing is subtracted on its account.
+ * For a protected ref that already contains `ref`: the mainline commit just before the OLDEST first-parent merge on that
+ * ref that brought in `ref` (a merge, not itself reachable from `ref`, with a second or later parent that is). That is
+ * where the branch forked off as far as that ref is concerned, counted from its first merge, so a commit it contributed in
+ * an earlier merge round, or one it picked up from another branch merged before it, is not hidden by a later merge.
+ * Null when there is no such merge (a fast-forward), so nothing is subtracted on its account.
  */
 function mergedFrom(g, ref, p) {
-  const first = must(g, 'rev-list', '--first-parent', '--ancestry-path', '--reverse', `${ref}..${p}`).split('\n').find(Boolean);
-  if (!first) return null;
-  const parents = must(g, 'rev-list', '--parents', '-n', '1', first).split(' ').slice(1);
-  return parents.length > 1 && !isAncestor(g, ref, parents[0]) ? parents[0] : null;
+  const chain = must(g, 'rev-list', '--first-parent', '--parents', '--reverse', `${ref}..${p}`).split('\n').filter(Boolean).map((l) => l.split(' '));
+  const merge = chain.find(([, , ...others]) => others.some((o) => isAncestor(g, o, ref)));
+  return merge ? merge[1] : null;
 }
 
 /**
  * The branch's own non-merge commits as [{ sha, email }]. Reachable from `ref`, not from a protected tip that does
- * not already contain it, not from the mainline just before the merge into a protected tip that does (so a branch cut
- * from a busy develop does not inherit everyone else's commits), and not on a protected mainline. A squash or rebase
+ * not already contain it, not from the mainline just before the first merge into a protected tip that does (so a branch
+ * cut from a busy develop does not inherit everyone else's commits), and not on a protected mainline. A squash or rebase
  * merge leaves the branch's commits all here; a --no-ff merge keeps them here too, which is what lets a merged branch
  * be judged by who wrote it.
  */
