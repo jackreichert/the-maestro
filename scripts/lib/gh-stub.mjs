@@ -33,7 +33,7 @@ export function installGhStub(config) {
   chmodSync(join(dir, 'gh'), 0o755);
   const configPath = join(dir, 'config.json');
   writeFileSync(configPath, JSON.stringify(config));
-  return { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '' };
+  return { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
 }
 
 /** A search node carrying every field pr-watch.mjs and prs-snapshot.mjs read. */

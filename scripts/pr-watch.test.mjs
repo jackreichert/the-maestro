@@ -86,3 +86,32 @@ test('a cleared condition is forgotten, so it wakes again when it returns', asyn
   assert.equal(r.exited, true);
   assert.match(r.out, /APPROVED-UNMERGED/);
 });
+
+test('--once prints the adaptive cadence line to stderr', () => {
+  const env = installGhStub({ pages: [[prNode(1)]] });
+  const r = runOnce(env, tempState(boardOf([prNode(1)])));
+  assert.match(r.err, /next check in 600s \(steady\)/);
+});
+
+test('--interval pins the cadence and says so', () => {
+  const env = installGhStub({ pages: [[prNode(1)]] });
+  const r = runOnce(env, tempState(boardOf([prNode(1)])), '--interval', '120');
+  assert.match(r.err, /next check in 120s \(pinned by --interval\)/);
+});
+
+test('a push is an event: a moved head tightens the cadence for the next tick', () => {
+  const moved = [1, 2, 3].map((n) => prNode(n, { headRefOid: 'sha-new' }));
+  const env = installGhStub({ pages: [moved] });
+  const r = runOnce(env, tempState(boardOf([1, 2, 3].map((n) => prNode(n)))));
+  assert.match(r.err, /next check in 300s \(high activity: 3 event/);
+});
+
+test('in quiet hours with mode stop the watcher exits and says why', () => {
+  const minute = Math.floor(Date.now() / 60000) % 1440;
+  const hhmm = (m) => `${String(Math.floor(((m + 1440) % 1440) / 60)).padStart(2, '0')}:${String((m + 1440) % 60).padStart(2, '0')}`;
+  const env = { ...installGhStub({ pages: [[prNode(1)]] }), MAESTRO_WATCH_TZ: 'UTC', MAESTRO_WATCH_QUIET_HOURS: `${hhmm(minute - 120)}-${hhmm(minute + 120)}` };
+  const r = spawnSync(process.execPath, [SCRIPT, '--state', tempState(boardOf([prNode(1)]))], { encoding: 'utf8', env, timeout: 20000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /stopping: quiet hours/);
+  assert.equal(r.stdout, '');
+});
