@@ -1,19 +1,27 @@
 #!/usr/bin/env node
 /**
- * BRIEF BLOCK: prints the standing brief block from reference/brief.md with its two `<…>` slots
- * filled from the configured values, ready to paste at the end of a dispatch brief.
+ * BRIEF BLOCK: prints the standing brief block from reference/brief.md with its `<…>` slots
+ * filled (two from the configured values, `<maestro scripts dir>` from the path this script was invoked through), ready to paste at the end of a dispatch brief.
  *
  * The values sit under "Standing brief block, filled" in the user config file or the org overlay's
  * config.md (see reference/local-config.md), one bullet per slot:  - `<slot>` → value
  * Exits 1, printing nothing to stdout, if a slot has no value or any other `<…>` is left in the text.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { userPath, overlayPath } from './local-config.mjs';
 
-export const SLOTS = ['<user git emails>', '<tracker key example>'];
+/** The scripts dir as invoked (absolute, symlinks kept), so a symlinked install stays valid when the
+ *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.mjs. */
+export function scriptsDir(argv1 = process.argv[1], realDir = dirname(fileURLToPath(import.meta.url))) {
+  const invoked = argv1 ? dirname(resolve(argv1)) : '';
+  return invoked && existsSync(resolve(invoked, 'pr-open.mjs')) ? invoked : resolve(realDir);
+}
+export const SCRIPTS_DIR = scriptsDir();
+export const SLOTS = ['<user git emails>', '<tracker key example>', '<maestro scripts dir>'];
 /** Angle-bracket text that is part of the block's own wording, not a slot. */
-const LITERALS = new Set(['<base>', '<check>', '<skill>']);
+const LITERALS = new Set(['<base>', '<check>']);
 
 /** The standing block: the first ```text fence under its heading in brief.md. */
 export function extractBlock(markdown) {
@@ -32,8 +40,10 @@ export function parseSlotValues(markdown) {
   return out;
 }
 
-/** Fills the slots; returns { text, problems }. A slot is problematic if unset or still `<…>` afterwards. */
+/** Fills the slots; returns { text, problems }. A slot is problematic if unset or still `<…>` afterwards.
+ *  `<maestro scripts dir>` is not configured: it is this script's own directory, so workers get a runnable path. */
 export function fillBlock(block, values) {
+  values = { '<maestro scripts dir>': SCRIPTS_DIR, ...values };
   let text = block;
   for (const slot of SLOTS) if (values[slot]) text = text.split(slot).join(values[slot]);
   const left = (text.match(/<[^<>\n]+>/g) || []).filter((t) => !LITERALS.has(t));
