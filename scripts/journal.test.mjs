@@ -958,6 +958,27 @@ test('approvals groups standing, one-off and untagged decisions, including retro
     assert.deepEqual(g.standing.find((a) => a.id === ids.standing).refs, ['memory/bot.md']);
 });
 
+test('a decision closed with an approval is not also listed as untagged', () => {
+    const d = idOf(run('log', 'retarget #3934?', '--kind', 'decision', '--date', daysAgo(1), ...MARK).out);
+    assert.equal(run('resolve', d, '--approval', 'one-off', ...MARK).code, 0);
+    const closer = ledger().find((e) => e.closes === d);
+    assert.equal(closer.approval, 'one-off');
+    const g = jsonDigest('--days', '7');
+    assert.deepEqual(g.oneOff.map((a) => a.id), [closer.id]);
+    assert.ok(!g.untagged.some((a) => a.id === d));
+});
+
+test('a later tag overrides only the fields it sets', () => {
+    const id = idOf(run('log', 'merge base into my branches', '--kind', 'decision', '--date', daysAgo(1), ...MARK).out);
+    run('approve-tag', id, '--approval', 'standing', '--scope', 'own branches', '--ref', 'memory/a.md', ...MARK);
+    run('approve-tag', id, '--approval', 'one-off', ...MARK);
+    let row = jsonDigest('--days', '7').oneOff.find((a) => a.id === id);
+    assert.deepEqual([row.scope, row.refs], ['own branches', ['memory/a.md']]);
+    run('approve-tag', id, '--approval', 'one-off', '--scope', 'only this PR', '--ref', 'memory/b.md', ...MARK);
+    row = jsonDigest('--days', '7').oneOff.find((a) => a.id === id);
+    assert.deepEqual([row.scope, row.refs], ['only this PR', ['memory/b.md']]);
+});
+
 test('approvals --days and --since set the window; an old row that is retro-tagged now comes in', () => {
     const ids = seedApprovals();
     assert.ok(!jsonDigest('--days', '7').standing.some((a) => a.id === ids.old));
