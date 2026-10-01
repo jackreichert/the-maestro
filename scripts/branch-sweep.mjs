@@ -2,7 +2,7 @@
 /**
  * BRANCH SWEEP: lists worktrees and remote branches that can be deleted, for the user to approve in a batch.
  *
- *   node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch]
+ *   node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>]
  *   node scripts/branch-sweep.mjs --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]
  *
  * Read-only by default (it runs `git fetch --prune origin` and nothing else that writes). `--apply` deletes only the
@@ -26,7 +26,7 @@ import { homedir, hostname } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
+  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
 } from './local-config.mjs';
 
 const run = (cmd, args, opts = {}) => {
@@ -63,7 +63,7 @@ export function defaultContext(over = {}) {
   const claimsDir = over.claimsDir ?? process.env.MAESTRO_CLAIMS_DIR ?? ((LEDGER_ROOT || VAULT_ROOT) && join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONTAINER_PROJECT, 'Claims'));
   return {
     emails: GIT_EMAILS, protectedNames: PROTECTED_BRANCHES, twin: TWIN_FLOW_REPOS, targets: SWEEP_MERGE_TARGETS,
-    idleMinutes: SWEEP_IDLE_MINUTES, protectDirs: SWEEP_PROTECT_SYMLINK_DIRS, disposableIgnored: SWEEP_DISPOSABLE_IGNORED, claims: liveClaims(claimsDir), gh: ghJson, fetch: true, ...over,
+    idleMinutes: SWEEP_IDLE_MINUTES, prDays: SWEEP_PR_DAYS, protectDirs: SWEEP_PROTECT_SYMLINK_DIRS, disposableIgnored: SWEEP_DISPOSABLE_IGNORED, claims: liveClaims(claimsDir), gh: ghJson, fetch: true, ...over,
   };
 }
 
@@ -130,13 +130,33 @@ function isMine(g, ref, branch, tip, scan) {
   return failed ? { ok: false, reason: failed.reason(c) } : { ok: true };
 }
 
-/** Merged PRs of a repo, fetched once per scan (one gh call, newest 1000; an older PR just reads as not merged). A failed call throws. */
+const PR_FIELDS = 'number,baseRefName,headRefName,headRefOid,url,body';
+const PR_PAGE = 1000; // gh search returns at most this many per query; a full page means the window may hold more
+const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+/** Merged PRs whose merge date falls in [from, to] (UTC days). A full page splits the window in two, so nothing is cut off. */
+function mergedWindow(repo, ctx, from, to) {
+  const prs = ctx.gh(repo, ['pr', 'list', '--state', 'merged', '--search', `merged:${day(from)}..${day(to)}`, '--limit', String(PR_PAGE), '--json', PR_FIELDS]);
+  if (!Array.isArray(prs)) throw new SweepError('gh pr list failed: PR evidence unavailable', 'gh');
+  if (prs.length < PR_PAGE || day(from) === day(to)) return prs;
+  const mid = from + Math.floor((to - from) / 864e5 / 2) * 864e5;
+  return [...mergedWindow(repo, ctx, from, mid), ...mergedWindow(repo, ctx, mid + 864e5, to)];
+}
+
+/**
+ * Merged PRs of a repo merged in the last `ctx.prDays` days (default 180), fetched once per scan in 14-day windows
+ * (a plain `gh pr list --limit` is capped and sorted by creation, so it silently drops merged PRs). An older PR just
+ * reads as not merged. A failed call throws.
+ */
 function mergedPrs(repo, ctx) {
   ctx.prCache ??= new Map();
   if (!ctx.prCache.has(repo)) {
-    const prs = ctx.gh(repo, ['pr', 'list', '--state', 'merged', '--limit', '1000', '--json', 'number,baseRefName,headRefName,headRefOid,url,body']);
-    if (!Array.isArray(prs)) throw new SweepError('gh pr list failed: PR evidence unavailable', 'gh');
-    ctx.prCache.set(repo, prs);
+    const end = Date.parse(day(Date.now())); const start = end - (ctx.prDays ?? 180) * 864e5;
+    const byNumber = new Map();
+    for (let from = start; from <= end; from += 14 * 864e5) {
+      for (const p of mergedWindow(repo, ctx, from, Math.min(from + 13 * 864e5, end))) byNumber.set(p.number, p);
+    }
+    ctx.prCache.set(repo, [...byNumber.values()]);
   }
   return ctx.prCache.get(repo);
 }
@@ -370,7 +390,8 @@ function main() {
   const val = (n) => { const i = argv.indexOf(`--${n}`); return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
   const container = resolve(val('container') || process.cwd());
   const only = val('repo');
-  const ctx = defaultContext({ fetch: !argv.includes('--no-fetch'), claimsDir: val('claims-dir') ?? undefined, idleMinutes: val('idle-minutes') ? Number(val('idle-minutes')) : undefined });
+  const ctx = defaultContext({ fetch: !argv.includes('--no-fetch'), claimsDir: val('claims-dir') ?? undefined, idleMinutes: val('idle-minutes') ? Number(val('idle-minutes')) : undefined, ...(val('pr-days') ? { prDays: Number(val('pr-days')) } : {}) });
+  if (!(ctx.prDays > 0)) ctx.prDays = SWEEP_PR_DAYS;
   if (ctx.idleMinutes === undefined || Number.isNaN(ctx.idleMinutes)) ctx.idleMinutes = SWEEP_IDLE_MINUTES;
   if (!existsSync(container)) { console.error(`branch-sweep: no such container ${container}`); process.exit(2); }
 

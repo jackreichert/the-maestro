@@ -141,6 +141,9 @@ export const SWEEP_MERGE_TARGETS = Object.fromEntries(globList('MAESTRO_SWEEP_ME
 /** Minutes a worktree must be untouched before branch-sweep.mjs offers it for removal. Default 60. */
 export const SWEEP_IDLE_MINUTES = positiveInt(pick('MAESTRO_SWEEP_IDLE_MINUTES', 'sweep_idle_minutes'), 60);
 
+/** How many days of merged PRs branch-sweep.mjs reads as evidence. An older merge reads as not merged. Default 180. */
+export const SWEEP_PR_DAYS = positiveInt(pick('MAESTRO_SWEEP_PR_DAYS', 'sweep_pr_days'), 180);
+
 /** Directories whose symlinks mark a worktree as a live skill, added to the defaults (~/.claude/skills and <container>/.claude/skills). */
 export const SWEEP_PROTECT_SYMLINK_DIRS = globList('MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS', 'sweep_protect_symlink_dirs');
 
