@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
 const SCRIPT = new URL('./pr-size.mjs', import.meta.url).pathname;
-const { globToRegExp, parseNumstat } = await import('./pr-size.mjs');
+const { globToRegExp, parseNumstat, makeClassifier } = await import('./pr-size.mjs');
 
 const git = (repo, ...args) => {
     const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
@@ -168,4 +168,35 @@ test('globToRegExp and parseNumstat basics', () => {
     assert.ok(globToRegExp('**/tests/**').test('tests/x.py'));
     const f = parseNumstat(['1\t2\tsrc/a.py', '-\t-\tlogo.png', '0\t0\t', 'old.py', 'new.py', ''].join('\0'));
     assert.deepEqual(f.map((x) => [x.path, x.added, x.deleted, x.renamed]), [['src/a.py', 1, 2, false], ['logo.png', 0, 0, false], ['new.py', 0, 0, true]]);
+});
+
+test('default classifier: directory names never move a code file out of the code bucket', () => {
+    const classify = makeClassifier();
+    const bucket = (path) => classify({ path, renamed: false, added: 5, deleted: 0 });
+    for (const p of [
+        'src/docs/render.ts', 'lib/docs/index.ts', 'src/vendor/billing.ts', 'src/test_helpers.py',
+        'src/fixtures/loader.ts', 'src/attestation.ts', 'vite.config.ts', 'src/generated/client.ts', 'lib/dist/x.js',
+        '.github/scripts/release.py', 'docs/build.py',
+    ]) assert.equal(bucket(p), 'code', p);
+    // Intended non-code buckets, asserted so they cannot drift.
+    assert.equal(bucket('src/prompts/agent.md'), 'docs');
+    assert.equal(bucket('docs/guide.md'), 'docs');
+    assert.equal(bucket('src/routes.json'), 'config');
+    // Anchored mechanical directories, and tests inside test directories.
+    assert.equal(bucket('vendor/lib/x.go'), 'mechanical');
+    assert.equal(bucket('packages/api/vendor/x.ts'), 'mechanical');
+    assert.equal(bucket('dist/app.js'), 'mechanical');
+    assert.equal(bucket('tests/test_helpers.py'), 'test');
+    assert.equal(bucket('tests/fixtures/loader.ts'), 'test');
+    assert.equal(bucket('pkg/foo_test.py'), 'test');
+    assert.equal(bucket('src/app.spec.ts'), 'test');
+});
+
+test('900 lines in src/docs/render.ts fails the gate end to end', () => {
+    const repo = repoWith({}, (r) => put(r, 'src/docs/render.ts', lines(900)));
+    const r = checkJson(repo);
+    assert.equal(r.status, 1);
+    assert.equal(r.verdict, 'FAIL');
+    assert.deepEqual(r.code.paths, ['src/docs/render.ts']);
+    assert.match(r.failures.join('\n'), /900 code lines \(max 400\)/);
 });
