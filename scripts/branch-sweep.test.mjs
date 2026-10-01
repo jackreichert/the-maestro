@@ -105,29 +105,56 @@ test('a branch with a foreign author is never listed', () => {
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), []);
 });
 
-test('a merged PR counts only when its head is the branch tip; twin found by link', () => {
-    const w = world(); feature(w, 'feat/pr'); mergeInto(w, 'develop', 'feat/pr');
-    const tip = sh(w.repo, 'rev-parse', 'origin/feat/pr');
-    const gh = (head, view = {}) => (_repo, args) => (args[1] === 'list'
-        ? [{ number: 7, headRefName: 'feat/pr', baseRefName: 'develop', headRefOid: head, url: 'https://example.com/pull/7', body: 'twin: #8' }]
-        : { number: 8, state: 'MERGED', baseRefName: 'staging', headRefName: view.headRefName ?? 'feat/pr', headRefOid: view.headRefOid ?? head, url: 'https://example.com/pull/8' });
-    const ok = scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: gh(tip) }));
-    assert.deepEqual(names(ok, 'remote-branch'), ['feat/pr']);
-    assert.match(ok.items[0].why, /staging \(PR #8\)/);
-    assert.deepEqual(ok.items[0].prs, ['https://example.com/pull/8']);
-    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: gh('0'.repeat(40)) })), 'remote-branch'), []);
+const pr = (number, base, head, oid, body = '') => ({ number, baseRefName: base, headRefName: head, headRefOid: oid, url: `https://example.com/pull/${number}`, body, mergedAt: daysAgo(1) });
+const tipOf = (w, b) => sh(w.repo, 'rev-parse', `origin/${b}`);
+/** Branches x and its twin merged into develop and staging respectively, as separate branches (squash, so ancestry is no evidence). */
+function twins(w, x, twin, { xTarget = 'develop', twinTarget = 'staging' } = {}) {
+    feature(w, x); feature(w, twin);
+    mergeInto(w, xTarget, x, true); mergeInto(w, twinTarget, twin, true);
+}
+const kept = (w, prs, over = {}) => names(scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: searchGh(prs), ...over })), 'remote-branch').sort();
+
+test('twin flow: x merged into develop and x-staging into staging qualify each other, with the tip bound', () => {
+    const w = world(); twins(w, 'fix/x', 'fix/x-staging');
+    const prs = [pr(1, 'develop', 'fix/x', tipOf(w, 'fix/x')), pr(2, 'staging', 'fix/x-staging', tipOf(w, 'fix/x-staging'))];
+    assert.deepEqual(kept(w, prs), ['fix/x', 'fix/x-staging']);
+    const r = scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: searchGh(prs) }));
+    assert.match(r.items.find((i) => i.name === 'fix/x').why, /develop \(PR #1\) and staging \(twin PR #2 \(fix\/x-staging\)\)/);
+    assert.deepEqual(r.items.find((i) => i.name === 'fix/x').prs, ['https://example.com/pull/1', 'https://example.com/pull/2']);
+    assert.deepEqual(kept(w, [pr(1, 'develop', 'fix/x', '0'.repeat(40)), prs[1]]), ['fix/x-staging'], 'x moved on since PR 1, so x is out; the twin PR itself is not tip-bound, so x-staging still has its twin');
 });
 
-test('a body that only mentions another PR ("follow-up to #40") is not twin evidence', () => {
-    const w = world(); feature(w, 'feat/pr'); mergeInto(w, 'develop', 'feat/pr');
-    const tip = sh(w.repo, 'rev-parse', 'origin/feat/pr');
-    const gh = (view) => (_repo, args) => (args[1] === 'list'
-        ? [{ number: 7, headRefName: 'feat/pr', baseRefName: 'develop', headRefOid: tip, url: 'u', body: 'follow-up to #40' }]
-        : { number: 40, state: 'MERGED', baseRefName: 'staging', url: 'u40', ...view });
-    const kept = (view) => names(scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: gh(view) })), 'remote-branch');
-    assert.deepEqual(kept({ headRefName: 'feat/other', headRefOid: 'a'.repeat(40) }), [], 'different head ref');
-    assert.deepEqual(kept({ headRefName: 'feat/pr', headRefOid: 'a'.repeat(40) }), [], 'same name, unrelated head');
-    assert.deepEqual(kept({ headRefName: 'feat/pr', headRefOid: tip }), ['feat/pr']);
+test('twin flow: the -develop naming works too (x into staging, x-develop into develop)', () => {
+    const w = world(); twins(w, 'fix/y', 'fix/y-develop', { xTarget: 'staging', twinTarget: 'develop' });
+    assert.deepEqual(kept(w, [pr(1, 'staging', 'fix/y', tipOf(w, 'fix/y')), pr(2, 'develop', 'fix/y-develop', tipOf(w, 'fix/y-develop'))]), ['fix/y', 'fix/y-develop']);
+});
+
+test('twin flow: without a merged twin, or with an unrelated PR into staging, nothing qualifies', () => {
+    const w = world(); twins(w, 'fix/x', 'fix/other');
+    const own = pr(1, 'develop', 'fix/x', tipOf(w, 'fix/x'));
+    assert.deepEqual(kept(w, [own]), [], 'no staging PR (the twin is open or unmerged, so never listed)');
+    assert.deepEqual(kept(w, [own, pr(2, 'staging', 'fix/other', tipOf(w, 'fix/other'))]), [], 'different name, no link');
+    assert.deepEqual(kept(w, [pr(2, 'staging', 'fix/x-staging', tipOf(w, 'fix/other'))]), [], 'a staging PR alone: x has no merged develop PR');
+});
+
+test('twin flow: the same branch name into staging with another head is not x\'s twin', () => {
+    const w = world(); feature(w, 'fix/x'); mergeInto(w, 'develop', 'fix/x', true);
+    const prs = [pr(1, 'develop', 'fix/x', tipOf(w, 'fix/x')), pr(2, 'staging', 'fix/x', 'a'.repeat(40))];
+    assert.deepEqual(kept(w, prs), []);
+});
+
+test('twin flow: differently named twins count only when both bodies link each other', () => {
+    const w = world(); twins(w, 'fix/a', 'fix/b');
+    const [ta, tb] = [tipOf(w, 'fix/a'), tipOf(w, 'fix/b')];
+    assert.deepEqual(kept(w, [pr(1, 'develop', 'fix/a', ta, 'staging twin: #2'), pr(2, 'staging', 'fix/b', tb, 'develop twin: /pull/1')]), ['fix/a', 'fix/b']);
+    assert.deepEqual(kept(w, [pr(1, 'develop', 'fix/a', ta, 'follow-up to #2'), pr(2, 'staging', 'fix/b', tb, 'no link')]), [], 'a one-way mention is not a twin');
+    assert.deepEqual(kept(w, [pr(1, 'develop', 'fix/a', ta, ''), pr(2, 'staging', 'fix/b', tb, 'twin of #1')]), [], 'a one-way mention is not a twin');
+});
+
+test('non-twin repos and develop-only merges are unchanged by the twin rule', () => {
+    const w = world(); feature(w, 'fix/x'); mergeInto(w, 'develop', 'fix/x', true);
+    const prs = [pr(1, 'develop', 'fix/x', tipOf(w, 'fix/x')), pr(2, 'staging', 'fix/x-staging', 'b'.repeat(40))];
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: searchGh(prs) })), 'remote-branch'), ['fix/x']);
 });
 
 test('a clean worktree on a merged branch qualifies; a dirty one is kept and reported', () => {
