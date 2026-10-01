@@ -28,7 +28,7 @@ import {
 
 const run = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
-  return { ok: r.status === 0, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+  return { ok: r.status === 0, status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 // --no-optional-locks: a scan must not refresh the index, or it would reset the idle clock it reads.
 const gitIn = (repo) => Object.assign((...a) => run('git', ['--no-optional-locks', '-C', repo, ...a]), { repo });
@@ -74,12 +74,42 @@ function targetsFor(g, name, ctx) {
   return { error: `merge target ${missing.join(', ')} not on origin` };
 }
 
-/** Who wrote the branch: authors of non-merge commits not on any protected ref; for a fully merged branch, its newest non-merge commit. */
-function isMine(g, ref, protectedRefs, ctx) {
-  const emails = ctx.emails.length ? ctx.emails : [g('config', 'user.email').out];
-  let authors = g('log', '--no-merges', '--format=%ae', ref, '--not', ...protectedRefs).out.split('\n').filter(Boolean);
-  if (!authors.length) authors = g('log', '-1', '--no-merges', '--format=%ae', ref).out.split('\n').filter(Boolean);
-  return authors.length > 0 && authors.every((a) => emails.includes(a));
+const rule = (name, check, reason) => ({ name, check, reason });
+const firstFailure = (rules, c) => rules.find((r) => !r.check(c));
+
+/** Commits on the first-parent line of every protected ref: the mainline, which no branch owns. */
+function mainlineOf(g, protectedRefs) {
+  return new Set(protectedRefs.flatMap((p) => g('rev-list', '--first-parent', p).out.split('\n').filter(Boolean)));
+}
+
+/**
+ * The branch's own non-merge commits as [{ sha, email }]. Reachable from `ref`, not from a protected tip that does
+ * not already contain it (a merged branch is inside its target, so that target cannot be subtracted), and not on a
+ * protected mainline. A squash or rebase merge leaves the branch's commits all here; a --no-ff merge keeps them
+ * here too, which is what lets a merged branch be judged by who wrote it.
+ */
+function ownCommits(g, ref, protectedRefs, mainline) {
+  const outside = protectedRefs.filter((p) => !g('merge-base', '--is-ancestor', ref, p).ok);
+  const log = g('log', '--no-merges', '--format=%H %ae', ref, ...(outside.length ? ['--not', ...outside] : []));
+  return log.out.split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([sha]) => !mainline.has(sha)).map(([sha, email]) => ({ sha, email }));
+}
+
+/** Ownership rules. A branch is the user's only when all pass; no commit of its own is never enough by itself. */
+const OWNERSHIP_RULES = [
+  rule('emails configured', (c) => c.emails.length > 0, () => 'no author emails (git_emails or user.email)'),
+  rule('has commits of its own, or an exact merged PR', (c) => c.own.length > 0 || c.exactPrs().length > 0,
+    () => 'no commits of its own and no merged PR with this head'),
+  rule('every own commit is the user\'s', (c) => c.own.every((x) => c.emails.includes(x.email)),
+    (c) => `${c.own.filter((x) => !c.emails.includes(x.email)).length} of ${c.own.length} commits are by someone else`),
+];
+
+function isMine(g, ref, branch, scan) {
+  const { ctx } = scan;
+  const emails = (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
+  const tip = g('rev-parse', ref).out;
+  const c = { emails, own: ownCommits(g, ref, scan.protectedRefs, scan.mainline), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
+  const failed = firstFailure(OWNERSHIP_RULES, c);
+  return failed ? { ok: false, reason: failed.reason(c) } : { ok: true };
 }
 
 /** Merged PRs of a repo, fetched once per scan (one gh call, newest 1000; an older PR just reads as not merged). */
@@ -88,6 +118,9 @@ function mergedPrs(repo, ctx) {
   if (!ctx.prCache.has(repo)) ctx.prCache.set(repo, ctx.gh(repo, ['pr', 'list', '--state', 'merged', '--limit', '1000', '--json', 'number,baseRefName,headRefName,headRefOid,url,body']) || []);
   return ctx.prCache.get(repo);
 }
+
+/** Merged PRs whose head ref is `name` and whose head commit is exactly `tip`. */
+const exactPrs = (repo, name, tip, ctx) => mergedPrs(repo, ctx).filter((p) => p.headRefName === name && p.headRefOid === tip);
 
 /** Is `ref` (branch `name`) merged into every target? { ok, per: [{ target, how, url? }], missing }. */
 function mergedEvidence(g, ref, name, targets, ctx) {
@@ -100,7 +133,7 @@ function mergedEvidence(g, ref, name, targets, ctx) {
     else missing.push(t);
   }
   if (missing.length) {
-    const own = mergedPrs(g.repo, ctx).filter((p) => p.headRefName === name && p.headRefOid === tip);
+    const own = exactPrs(g.repo, name, tip, ctx);
     for (const t of [...missing]) {
       let pr = own.find((p) => p.baseRefName === t);
       if (!pr && own.length) { // twin by link: the other target's PR is named in a body, merged, into that target
@@ -155,7 +188,8 @@ export function scanRepo(repoPath, ctx) {
   const protectedNames = new Set([...ctx.protectedNames, ...targets, head].filter(Boolean));
   const protectedRefs = [...protectedNames].filter((b) => g('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).ok).map((b) => `origin/${b}`);
 
-  const evaluate = (ref, branch) => (isMine(g, ref, protectedRefs, ctx) ? mergedEvidence(g, ref, branch, targets, ctx) : null);
+  const scan = { ctx, protectedRefs, mainline: mainlineOf(g, protectedRefs) };
+  const evaluate = (ref, branch) => (isMine(g, ref, branch, scan).ok ? mergedEvidence(g, ref, branch, targets, ctx) : null);
   for (const line of g('for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin').out.split('\n')) {
     const branch = line.replace(/^origin\/?/, '');
     if (!branch || branch === 'HEAD' || protectedNames.has(branch)) continue;
@@ -165,11 +199,13 @@ export function scanRepo(repoPath, ctx) {
   for (const w of worktrees(g)) {
     if (protectedNames.has(w.branch)) continue;
     const ref = `refs/heads/${w.branch}`;
-    const gone = g('config', `branch.${w.branch}.remote`).ok && !g('rev-parse', '--verify', '-q', `refs/remotes/origin/${w.branch}`).ok;
-    const ev = evaluate(ref, w.branch);
+    // Gone means the branch tracks its own name on origin and that ref was deleted; `-b x origin/develop` tracks develop.
+    const gone = g('config', `branch.${w.branch}.merge`).out === ref && !g('rev-parse', '--verify', '-q', `refs/remotes/origin/${w.branch}`).ok;
+    const mine = isMine(g, ref, w.branch, scan).ok;
+    const ev = mine ? mergedEvidence(g, ref, w.branch, targets, ctx) : null;
     const ahead = Number(g('rev-list', '--count', ref, '--not', '--remotes').out) || 0;
     const base = { id: idOf(name, 'worktree', w.path), repo: name, kind: 'worktree', name: w.path };
-    if (!ev?.ok && !(gone && ahead === 0)) {
+    if (!ev?.ok && !(mine && gone && ahead === 0)) {
       if (gone) res.excluded.push({ ...base, reason: `branch ${w.branch} is gone from origin but ${ahead} commit(s) are not pushed or merged` });
       continue;
     }

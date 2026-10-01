@@ -120,10 +120,39 @@ test('a worktree whose upstream is gone qualifies only with nothing unpushed; cl
     sh(w.repo, 'push', '-q', 'origin', '--delete', 'feat/gone');
     commit(wt, 'local.txt', 'unpushed\n');
     assert.match(scanRepo(w.repo, ctxFor()).excluded[0].reason, /2 commit\(s\) are not pushed or merged/);
-    sh(wt, 'reset', '-q', '--hard', 'main'); // nothing of its own left, all reachable from a remote ref
-    assert.equal(scanRepo(w.repo, ctxFor()).items.length, 1);
+    sh(wt, 'push', '-q', 'origin', 'HEAD:refs/heads/feat/kept'); // everything now reachable from a remote ref
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'worktree').map((p) => p.split('/').pop()), ['gone']);
     assert.match(scanRepo(w.repo, ctxFor({ claims: new Map([['proj', { desk: 'Launch' }]]) })).excluded[0].reason, /claimed by Launch/);
     assert.match(scanRepo(w.repo, ctxFor({ idleMinutes: 600 })).excluded[0].reason, /idle window 600/);
+});
+
+test('a colleague\'s commits plus my fix, merged --no-ff, are not mine; a bot branch is not mine', () => {
+    const w = world();
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/shared', 'main');
+    commit(w.repo, 'c1.txt', '1\n', 'colleague@example.com'); commit(w.repo, 'c2.txt', '2\n', 'colleague@example.com'); commit(w.repo, 'mine.txt', 'fix\n');
+    sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/shared'); sh(w.repo, 'checkout', '-q', 'main');
+    feature(w, 'feat/bot', { email: 'dependabot@example.com' });
+    for (const b of ['feat/shared', 'feat/bot']) mergeInto(w, 'develop', b);
+    feature(w, 'feat/mine'); mergeInto(w, 'develop', 'feat/mine');
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), ['feat/mine']);
+});
+
+test('a branch with no commits of its own never qualifies, unless a merged PR names it and its tip', () => {
+    const w = world();
+    sh(w.repo, 'push', '-q', 'origin', 'origin/develop:refs/heads/feat/empty');
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), []);
+    const tip = sh(w.repo, 'rev-parse', 'origin/develop');
+    const pr = (over) => () => [{ number: 3, headRefName: 'feat/empty', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/3', body: '', ...over }];
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({}) })), 'remote-branch'), ['feat/empty']);
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({ headRefName: 'feat/other' }) })), 'remote-branch'), []);
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({ headRefOid: '0'.repeat(40) }) })), 'remote-branch'), []);
+});
+
+test('a worktree cut with -b x origin/develop is not "gone" and never qualifies', () => {
+    const w = world();
+    sh(w.repo, 'worktree', 'add', '-q', '-b', 'x', join(w.root, 'x'), 'origin/develop');
+    const r = scanRepo(w.repo, ctxFor());
+    assert.deepEqual([r.items, r.excluded], [[], []]);
 });
 
 test('apply deletes a qualifying branch and worktree, and re-checks before deleting', () => {
