@@ -90,11 +90,30 @@ Run every open PR through these, in order. A PR can only land in the first bucke
 7. **Stale.** `updatedAt` more than 30 days ago. Nudge-or-close candidates — surface them, don't
    act without the user's word (see [Closing and branch deletion](#closing-and-branch-deletion)).
 
+**Twin PRs** override bucket 5, in repos listed in local-config `twin_flow_repos` (empty list: skip this
+paragraph). Find the twin by the link in the PR body, or by the shared head branch. Every PR into the
+release-candidate branch carries one of two lines on the board, whatever bucket it sits in:
+
+- **develop twin merged, OK to merge** — the integration twin is merged. If the PR is also in bucket 5, it
+  is ready to merge.
+- **blocked on develop twin #N** — the integration twin is still open (or missing). Link it. Never place the
+  PR in "approved and ready to merge", and never call it ready, while this holds, even with an approval and
+  no threads. Use the repo's real integration branch name in place of "develop".
+
+When the integration twin has merged since the last report, remind the user that the release-candidate twin
+can now merge, with both links. A twin-flow PR with no twin at all is flagged as drift: open the missing
+half as a draft ([git.md](git.md#twin-prs-integration-and-release-candidate-branches)).
+
 **Drift**, checked across all buckets, not its own bucket: a PR whose `baseRefName` doesn't match
 the repo's documented flow (e.g. targets `main` directly instead of `develop`/`staging` — see
 [reference/git.md](git.md)), or whose Jira status disagrees with what the PR is actually doing
 (approved and mergeable while Jira still says *In Progress*, or a draft while Jira says *Code
 Review*). Cross-reference the same way the [tracker review](ledger.md#end-of-day) does.
+
+### Twin PRs
+
+The rule and the reminder are described with the buckets above; the git side is in
+[git.md](git.md#twin-prs-integration-and-release-candidate-branches).
 
 ## Links are mandatory
 
