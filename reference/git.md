@@ -62,12 +62,13 @@ work is verified first, and a **release-candidate branch** (usually `staging`) t
 work this way is the local-config list `twin_flow_repos`, and the branch names come from the same place and
 from the org overlay's repo notes. **An empty list means this rule is off.** In a listed repo:
 
-- **Open both PRs together.** When you open the PR into one branch, open its twin into the other as a draft
-  at the same time, from the same feature branch, and the other way round. Both are drafts, assigned to the
-  user, like any other PR.
+- **Open both PRs together.** When you open a develop PR, open its staging twin as a draft at the same time,
+  from the same feature branch (and the other way round). Both are drafts, assigned to the user, like any
+  other PR. Opening the staging twin early does not skip validation: **the staging twin is not promoted to
+  ready or merged until the develop twin has merged and been validated.**
 - **Link each to its twin.** Each PR body links the other PR, so a reader of either can find the pair.
-- **The release-candidate PR does not merge until its integration twin has merged.** Never describe it as
-  ready, never recommend merging it, and never merge it, while the twin is open.
+- **The release-candidate PR is not promoted or merged until its integration twin has merged and been validated.**
+  Never describe it as ready, never recommend merging it, and never merge it, while the twin is open.
 - **When the integration twin merges, say so.** The orchestrator reminds the user that the
   release-candidate twin can now merge, with both links.
 
