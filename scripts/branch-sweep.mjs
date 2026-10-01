@@ -39,7 +39,8 @@ export function ghJson(repo, args) {
   try { return r.ok ? JSON.parse(r.out) : null; } catch { return null; }
 }
 
-const idOf = (repo, kind, name) => `${repo}:${createHash('sha1').update(`${repo}\0${kind}\0${name}`).digest('hex').slice(0, 8)}`;
+/** Item id: bound to the branch tip, so an id from one listing cannot delete a branch that has moved on since. */
+const idOf = (repo, kind, name, tip) => `${repo}:${createHash('sha1').update(`${repo}\0${kind}\0${name}\0${tip}`).digest('hex').slice(0, 8)}`;
 
 /** Live claims (Claims/<repo>.lock under the ledger root), as Map repo -> claim. Stale ones (dead pid here, or over 12h) do not count. */
 export function liveClaims(dir) {
@@ -136,10 +137,10 @@ function mergedEvidence(g, ref, name, targets, ctx) {
     const own = exactPrs(g.repo, name, tip, ctx);
     for (const t of [...missing]) {
       let pr = own.find((p) => p.baseRefName === t);
-      if (!pr && own.length) { // twin by link: the other target's PR is named in a body, merged, into that target
+      if (!pr && own.length) { // twin by link: a PR named in the body counts only if it is this branch's own PR (same head ref, head is the tip or contains it), merged into that target
         for (const n of new Set(own.flatMap((p) => [...(p.body || '').matchAll(/(?:#|\/pull\/)(\d+)/g)].map((m) => m[1])))) {
-          const v = ctx.gh(g.repo, ['pr', 'view', n, '--json', 'number,state,baseRefName,url']);
-          if (v?.state === 'MERGED' && v.baseRefName === t) { pr = v; break; }
+          const v = ctx.gh(g.repo, ['pr', 'view', n, '--json', 'number,state,baseRefName,headRefName,headRefOid,url']);
+          if (v?.state === 'MERGED' && v.baseRefName === t && v.headRefName === name && (v.headRefOid === tip || g('merge-base', '--is-ancestor', tip, v.headRefOid).ok)) { pr = v; break; }
         }
       }
       if (pr) { per.push({ target: t, how: `PR #${pr.number}`, url: pr.url }); missing.splice(missing.indexOf(t), 1); }
@@ -194,7 +195,7 @@ export function scanRepo(repoPath, ctx) {
     const branch = line.replace(/^origin\/?/, '');
     if (!branch || branch === 'HEAD' || protectedNames.has(branch)) continue;
     const ev = evaluate(line, branch);
-    if (ev?.ok) res.items.push({ id: idOf(name, 'remote-branch', branch), repo: name, kind: 'remote-branch', name: branch, why: why(ev), prs: links(ev) });
+    if (ev?.ok) res.items.push({ id: idOf(name, 'remote-branch', branch, g('rev-parse', line).out), repo: name, kind: 'remote-branch', name: branch, why: why(ev), prs: links(ev) });
   }
   for (const w of worktrees(g)) {
     if (protectedNames.has(w.branch)) continue;
@@ -204,7 +205,7 @@ export function scanRepo(repoPath, ctx) {
     const mine = isMine(g, ref, w.branch, scan).ok;
     const ev = mine ? mergedEvidence(g, ref, w.branch, targets, ctx) : null;
     const ahead = Number(g('rev-list', '--count', ref, '--not', '--remotes').out) || 0;
-    const base = { id: idOf(name, 'worktree', w.path), repo: name, kind: 'worktree', name: w.path };
+    const base = { id: idOf(name, 'worktree', w.path, g('rev-parse', ref).out), repo: name, kind: 'worktree', name: w.path };
     if (!ev?.ok && !(mine && gone && ahead === 0)) {
       if (gone) res.excluded.push({ ...base, reason: `branch ${w.branch} is gone from origin but ${ahead} commit(s) are not pushed or merged` });
       continue;
@@ -235,7 +236,7 @@ export function apply(ids, container, ctx, only) {
     const item = scans.get(repo).items.find((i) => i.id === id);
     if (!item) {
       const ex = scans.get(repo).excluded.find((i) => i.id === id);
-      return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ''}` };
+      return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ' (or its tip moved since it was listed)'}` };
     }
     const r = item.kind === 'worktree' ? run('git', ['-C', path, 'worktree', 'remove', item.name]) : run('git', ['-C', path, 'push', 'origin', '--delete', item.name]);
     return { id, done: r.ok, message: r.ok ? `deleted ${item.kind} ${item.name}` : `failed: ${r.err}` };
