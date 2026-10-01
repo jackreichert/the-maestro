@@ -2,9 +2,10 @@
  * Test support: a fake `gh` on PATH so the PR scripts run offline.
  *
  * `installGhStub(config)` writes an executable `gh` into a temp dir and returns the env to run a
- * script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED' }. Page i is served
+ * script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
  * for the cursor `p<i>` the stub itself hands out as endCursor, so a script that ignores
  * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
+ * `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,10 @@ const argv = process.argv.slice(2);
 const cursor = argv.find((a) => a.startsWith('after='));
 const page = cursor ? Number(cursor.slice('after=p'.length)) : 0;
 if (argv[0] === 'api' && argv[1] === 'user') console.log('me');
-else if (argv[0] === 'api') {
+else if (argv[0] === 'api' && cfg.failOnPage === page) {
+  console.error('HTTP 502: bad gateway');
+  process.exit(1);
+} else if (argv[0] === 'api') {
   const pages = cfg.pages;
   console.log(JSON.stringify({ data: { search: {
     pageInfo: { hasNextPage: page < pages.length - 1, endCursor: 'p' + (page + 1) },
