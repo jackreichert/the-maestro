@@ -107,6 +107,14 @@ export const RESUME_GH = !/^(off|false|no|0)$/i.test(pick('MAESTRO_RESUME_GH', '
 /** Whether `journal.mjs roll` commits the ledger root after a clean `verify`. Off unless set to on/true/yes/1. */
 export const LEDGER_GIT_AUTOCOMMIT = /^(on|true|yes|1)$/i.test(pick('MAESTRO_LEDGER_GIT_AUTOCOMMIT', 'ledger_git_autocommit').trim());
 
+const WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']);
+
+/**
+ * Weekday the morning greeting brings the approvals digest (`journal.mjs approvals --days 7`), lowercase.
+ * Default friday. A value that is not a weekday name falls back to the default.
+ */
+export const APPROVALS_REVIEW_DAY = ((day) => (WEEKDAYS.has(day) ? day : 'friday'))(pick('MAESTRO_APPROVALS_REVIEW_DAY', 'approvals_review_day').trim().toLowerCase());
+
 /** The PR search string every PR script shares. */
 export const PR_SEARCH = `is:pr is:open author:@me${GH_ORG ? ` org:${GH_ORG}` : ''}`;
 
@@ -116,7 +124,7 @@ if (process.argv[1] && isMain()) {
   console.log(`user_file:    ${userPath || '(disabled)'}${userPath && existsSync(userPath) ? '' : ' (not found)'}`);
   console.log(`overlay:      ${OVERLAY || '(none)'}`);
   console.log(`overlay_file: ${overlayPath || '(none found)'}`);
-  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off' })) {
+  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', APPROVALS_REVIEW_DAY })) {
     console.log(`${k.padEnd(20)} ${v || '(unset)'}`);
   }
 }
