@@ -153,7 +153,7 @@ test('a worktree with ignored files that are not disposable is kept, with the re
     const r = scanRepo(w.repo, ctxFor());
     assert.deepEqual(names(r, 'worktree'), []);
     assert.match(r.excluded[0].reason, /2 ignored files kept \(.*secret\.key.*\): not disposable/);
-    assert.equal(names(scanRepo(w.repo, ctxFor({ disposableIgnored: ['secret.key', 'local.db', 'node_modules'] })), 'worktree').length, 1);
+    assert.equal(names(scanRepo(w.repo, ctxFor({ disposableIgnored: ['secret.key', 'local.db', 'node_modules', '__pycache__'] })), 'worktree').length, 1);
 });
 
 test('a worktree whose upstream is gone qualifies only with nothing unpushed; claimed or recently touched ones are kept', () => {
