@@ -12,7 +12,8 @@
  *
  * Order of precedence: quiet hours, then a pinned interval, then busy-ness. A pin sets the interval,
  * not whether to run overnight. Busy-ness is read from two tables (ACTIVITY_TIERS by events in the
- * window, IDLE_TIERS by minutes since the last event) and the result is clamped to
+ * window, IDLE_TIERS by minutes since the newest event, else since `watchingSince`) and the result is
+ * clamped to
  * [max(300, minInterval), maxInterval]. Nothing here ever returns less than that floor, a pin
  * included: a pin below it is raised to it.
  */
@@ -35,7 +36,7 @@ export const ACTIVITY_TIERS = [
   { minEvents: 1, seconds: 600, label: 'some activity' },
 ];
 
-// Minutes since the last event (or since the watcher started), longest quiet first.
+// Minutes since the newest event (or since the watcher started, with none), longest quiet first.
 export const IDLE_TIERS = [
   { idleMinutes: 120, seconds: 1800, label: 'quiet for 2h+' },
   { idleMinutes: 60, seconds: 900, label: 'quiet for 1h+' },
@@ -103,8 +104,10 @@ function busyness(now, recentEvents, config) {
   const inside = recentEvents.filter((t) => t <= now && now - t <= windowMs).length;
   const active = ACTIVITY_TIERS.find((tier) => inside >= tier.minEvents);
   if (active) return { seconds: active.seconds ?? config.minInterval, reason: `${active.label}: ${inside} event(s) in ${config.windowMinutes}m` };
-  // With no event and no start time to measure from, there is nothing to call idle yet.
-  const marks = [...recentEvents.filter((t) => t <= now), config.watchingSince].filter((t) => t !== undefined);
+  // Idleness runs from the newest event, which the state file carries across restarts. Only with
+  // no event at all is there nothing to measure from but the watcher's own start.
+  const past = recentEvents.filter((t) => t <= now);
+  const marks = past.length ? past : [config.watchingSince].filter((t) => t !== undefined);
   const last = marks.length ? Math.max(...marks) : now;
   const idle = (now - last) / 60000;
   const tier = IDLE_TIERS.find((t) => idle >= t.idleMinutes);

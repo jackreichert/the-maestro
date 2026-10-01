@@ -115,6 +115,29 @@ for (const bad of ['0', '-5', 'abc', '']) {
   });
 }
 
+const withEvents = (events) => ({ board: boardOf([prNode(1)]), reported: {}, events });
+const MINUTE = 60000;
+
+test('idle backoff carries across a restart: 70 quiet minutes in the state picks 900s', () => {
+  const env = installGhStub({ pages: [[prNode(1)]] });
+  const r = runOnce(env, tempState(withEvents([Date.now() - 70 * MINUTE])));
+  assert.match(r.err, /next check in 900s \(quiet for 1h/);
+});
+
+test('idle backoff carries across a restart: 130 quiet minutes in the state picks 1800s', () => {
+  const env = installGhStub({ pages: [[prNode(1)]] });
+  const r = runOnce(env, tempState(withEvents([Date.now() - 130 * MINUTE])));
+  assert.match(r.err, /next check in 1800s \(quiet for 2h/);
+});
+
+test('the newest event is kept past the history window, so a long quiet stays backed off', () => {
+  const env = installGhStub({ pages: [[prNode(1)]] });
+  const state = tempState(withEvents([Date.now() - 9 * 60 * MINUTE]));
+  const r = runOnce(env, state);
+  assert.match(r.err, /next check in 1800s \(quiet for 2h/);
+  assert.equal(JSON.parse(readFileSync(state, 'utf8')).events.length, 1);
+});
+
 test('a push is an event: a moved head tightens the cadence for the next tick', () => {
   const moved = [1, 2, 3].map((n) => prNode(n, { headRefOid: 'sha-new' }));
   const env = installGhStub({ pages: [moved] });
