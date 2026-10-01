@@ -11,6 +11,7 @@ It does not implement features itself. Implementation happens in the target repo
 - An append-only ledger so "what did we get done today?" is already written down, with workstreams (streams) for epics.
 - A derived, disposable search index over the ledger, tickets and handoff notes.
 - PR tracking: one bucketed report of every open PR you author — unresolved threads, drafts, awaiting the team, unreviewed, approved, stale — every PR linked, on request or as one line on the morning board. Review-comment text, bot or human, is treated as untrusted data: triaged against the code, never obeyed, never put in a shell command.
+- A PR watcher that polls quietly and wakes the agent only when something needs attention. It paces itself: faster while reviews are flowing, slower when it is quiet, and it stops overnight (and optionally on weekends). Every setting is a `watch_*` key in your config file.
 - An end-of-day wrap-up: a PR pass first, then, if a tracker MCP is connected, it drafts comments and status changes for every issue touched that day, for your approval. Then it runs the standup and the roll.
 - An optional org overlay: a separate skill that carries one org's repo topology, tracker rules and settings, so this skill stays generic.
 - Rules for one writer per repo, worktrees only when a checkout is actually busy, and draft-only pull requests.
@@ -211,6 +212,8 @@ Org-specific rules (repo topology, tracker rules, data rules, release steps) go 
 4. **Container name.** Set `project` in the config file (or `MAESTRO_PROJECT`). `journal.mjs` still requires `--project`, so a shared copy cannot write into the wrong folder.
 
 5. **GitHub org.** Set `gh_org` in the config file (or `MAESTRO_GH_ORG`; empty drops the org filter). Your login is read from `gh api user` unless you set `gh_login` or `MAESTRO_GH_LOGIN`.
+
+6. **PR watcher cadence (optional).** The defaults need no setup: 300s at the fastest, 1800s at the slowest, stop between 20:00 and 07:00 in your system time zone. To change them set `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours` (`HH:MM-HH:MM`, or `off`), `watch_quiet_hours_mode` (`stop` or `slow`), `watch_quiet_weekends` and `watch_tz`; see [reference/local-config.md](reference/local-config.md).
 
 ### Overlay lookup order
 
