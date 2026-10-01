@@ -282,3 +282,39 @@ test('CLI: lists read-only as JSON through MAESTRO_GH, and --apply needs ids', (
     assert.equal(remoteHas(w, 'feat/cli'), true);
     assert.equal(spawnSync(process.execPath, [SCRIPT, '--container', w.container, '--apply'], { encoding: 'utf8', env }).status, 2);
 });
+
+/** A gh stub over `all` ({ number, mergedAt: 'YYYY-MM-DD', ...pr fields }) that honours `merged:A..B` and caps a page at `cap`, as GitHub search does. */
+const searchGh = (all, cap = 1000, calls = []) => (_repo, args) => {
+    calls.push(args);
+    const [a, b] = args[args.indexOf('--search') + 1].replace('merged:', '').split('..');
+    return all.filter((p) => p.mergedAt >= a && p.mergedAt <= b).slice(0, cap);
+};
+const daysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+
+test('merged PRs are read by date window, so a busy repo is not cut off at one page', () => {
+    const w = world(); feature(w, 'feat/old'); mergeInto(w, 'develop', 'feat/old', true);
+    const tip = sh(w.repo, 'rev-parse', 'origin/feat/old');
+    const filler = Array.from({ length: 1500 }, (_, i) => ({ number: 1000 + i, mergedAt: daysAgo(i % 2 ? 30 : 31), headRefName: `x/${i}`, baseRefName: 'develop', headRefOid: 'f'.repeat(40), url: 'u', body: '' }));
+    const mine = { number: 5, mergedAt: daysAgo(31), headRefName: 'feat/old', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/5', body: '' };
+    const calls = [];
+    // the stub lists filler first and caps each page, so a single capped query would never reach PR #5
+    const r = scanRepo(w.repo, ctxFor({ gh: searchGh([...filler, mine], 1000, calls) }));
+    assert.deepEqual(names(r, 'remote-branch'), ['feat/old']);
+    assert.ok(calls.every((a) => a.includes('--search') && a.includes('--state') && a.includes('merged')));
+});
+
+test('a PR merged before the look-back window reads as not merged; prDays widens it', () => {
+    const w = world(); feature(w, 'feat/old'); mergeInto(w, 'develop', 'feat/old', true);
+    const tip = sh(w.repo, 'rev-parse', 'origin/feat/old');
+    const pr = [{ number: 5, mergedAt: daysAgo(200), headRefName: 'feat/old', baseRefName: 'develop', headRefOid: tip, url: 'u', body: '' }];
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: searchGh(pr) })), 'remote-branch'), []);
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: searchGh(pr), prDays: 400 })), 'remote-branch'), ['feat/old']);
+});
+
+test('one failed window fails the whole PR lookup closed', () => {
+    const w = world(); feature(w, 'feat/sq'); mergeInto(w, 'develop', 'feat/sq', true);
+    let n = 0;
+    const r = scanRepo(w.repo, ctxFor({ gh: () => (++n === 3 ? null : []) }));
+    assert.deepEqual(r.items, []);
+    assert.match(r.notes.join('\n'), /gh pr list failed/);
+});

@@ -36,6 +36,7 @@ twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate t
 git_emails: me@example.com     # comma-separated; the authorship check in branch-sweep.mjs; omit to use each repo's user.email
 protected_branches: main, staging, develop  # branch-sweep.mjs never lists these; this is the default
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
+sweep_pr_days: 180             # days of merged PRs branch-sweep.mjs reads as evidence; default 180
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.mjs offers it; default 60
 sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a worktree as a live skill; ~/.claude/skills and <container>/.claude/skills always count
 sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
@@ -82,7 +83,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | GitHub login | PR scripts (read from `gh api user` unless `gh_login` / `MAESTRO_GH_LOGIN` is set) |
 | GitHub org for the PR board | prs.md, `GH_ORG` in local-config.mjs |
 | Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.mjs` |
-| Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.mjs`, ledger.md |
+| Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), PR look-back (`sweep_pr_days`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.mjs`, ledger.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
