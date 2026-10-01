@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installGhStub, paged, prNode } from './lib/gh-stub.mjs';
@@ -127,7 +127,30 @@ test('in quiet hours with mode stop the watcher exits and says why', () => {
   const hhmm = (m) => `${String(Math.floor(((m + 1440) % 1440) / 60)).padStart(2, '0')}:${String((m + 1440) % 60).padStart(2, '0')}`;
   const env = { ...installGhStub({ pages: [[prNode(1)]] }), MAESTRO_WATCH_TZ: 'UTC', MAESTRO_WATCH_QUIET_HOURS: `${hhmm(minute - 120)}-${hhmm(minute + 120)}` };
   const r = spawnSync(process.execPath, [SCRIPT, '--state', tempState(boardOf([prNode(1)]))], { encoding: 'utf8', env, timeout: 20000 });
-  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.status, 3, r.stderr);
   assert.match(r.stderr, /stopping: quiet hours/);
-  assert.equal(r.stdout, '');
+  assert.match(r.stdout, /^QUIET-HOURS stop until \d\d:\d\d UTC\n$/);
+});
+
+test('a quiet stop records stoppedForQuietAt in the state file', () => {
+  const minute = Math.floor(Date.now() / 60000) % 1440;
+  const hhmm = (m) => `${String(Math.floor(((m + 1440) % 1440) / 60)).padStart(2, '0')}:${String((m + 1440) % 60).padStart(2, '0')}`;
+  const env = { ...installGhStub({ pages: [[prNode(1)]] }), MAESTRO_WATCH_TZ: 'UTC', MAESTRO_WATCH_QUIET_HOURS: `${hhmm(minute - 120)}-${hhmm(minute + 120)}` };
+  const state = tempState(boardOf([prNode(1)]));
+  spawnSync(process.execPath, [SCRIPT, '--state', state], { encoding: 'utf8', env, timeout: 20000 });
+  const saved = JSON.parse(readFileSync(state, 'utf8'));
+  assert.ok(Date.now() - Date.parse(saved.stoppedForQuietAt) < 60000);
+  assert.deepEqual(Object.keys(saved.board), ['org/repo#1']);
+});
+
+test('attention needed exits 0 with the report on stdout', () => {
+  const env = installGhStub({ pages: [[approvedNode('sha-a')]] });
+  const r = spawnSync(process.execPath, [SCRIPT, '--state', tempState({ board: approvedBoard('sha-a'), reported: {} })], { encoding: 'utf8', env, timeout: 20000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /APPROVED-UNMERGED/);
+});
+
+test('a missing --state is a usage error, exit 2', () => {
+  const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', env: installGhStub({ pages: [[]] }), timeout: 20000 });
+  assert.equal(r.status, 2);
 });

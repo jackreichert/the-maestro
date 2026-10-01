@@ -35,7 +35,8 @@ import {
 import { floorSeconds, nextInterval } from './lib/cadence.mjs';
 import { searchAllPages } from './lib/gh-search.mjs';
 
-const EXIT = { usage: 2 };
+// Exit codes: 0 means "attention needed" (stdout has the report) or a finished --once check.
+const EXIT = { attention: 0, usage: 2, quietStop: 3 };
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
 const opt = (name, fallback) => {
@@ -229,7 +230,7 @@ const load = () => {
   const raw = JSON.parse(readFileSync(STATE, 'utf8'));
   return 'board' in raw ? { board: raw.board, reported: raw.reported || {}, events: raw.events || [] } : { board: raw, reported: {}, events: [] };
 };
-const save = (board, reported, events) => writeFileSync(STATE, JSON.stringify({ board, reported, events }, null, 2));
+const save = (board, reported, events, extra = {}) => writeFileSync(STATE, JSON.stringify({ board, reported, events, ...extra }, null, 2));
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
 // Decides the next sleep from recent activity, says so on stderr, and sleeps unless told to stop.
@@ -239,9 +240,20 @@ function schedule(events) {
   console.error(next.stop ? `stopping: ${next.reason}` : `next check in ${next.seconds}s (${next.reason})`);
   return next;
 }
+
+// A quiet-hours stop is not "attention needed": say so on stdout, record it, and exit 3.
+function quietStop(next) {
+  const { board, reported, events } = load() ?? { board: {}, reported: {}, events: [] };
+  save(board, reported, events, { stoppedForQuietAt: new Date().toISOString() });
+  console.log(`QUIET-HOURS stop until ${next.until} ${next.tz}`);
+  process.exitCode = EXIT.quietStop;
+}
 async function wait(events) {
   const next = schedule(events);
-  if (next.stop) return false;
+  if (next.stop) {
+    quietStop(next);
+    return false;
+  }
   await sleep(next.seconds);
   return true;
 }
@@ -286,6 +298,7 @@ async function main() {
       changes.forEach((l) => console.log(l));
       standingLines(board).forEach((l) => console.log(l));
       console.error('exiting: something needs attention');
+      process.exitCode = EXIT.attention;
       return;
     }
     if (flag('--once')) {

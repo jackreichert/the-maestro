@@ -1,7 +1,8 @@
 /**
  * Adaptive poll cadence for the PR watcher: a pure function, so the event loop can reuse it.
  *
- *   nextInterval({ now, recentEvents, config }) -> { seconds, reason } | { stop: true, reason }
+ *   nextInterval({ now, recentEvents, config }) -> { seconds, reason } | { stop: true, reason, until, tz }
+ *   (`until` is the local HH:MM quiet hours end, in `tz`)
  *
  *   now           a Date or epoch milliseconds
  *   recentEvents  epoch milliseconds of each thing the watcher saw (a new thread, review or
@@ -43,7 +44,7 @@ export const IDLE_TIERS = [
 
 // What each quiet_hours_mode does when the clock says nobody is reviewing.
 const QUIET_MODES = {
-  stop: () => ({ stop: true, reason: 'quiet hours' }),
+  stop: (limits, resume) => ({ stop: true, reason: 'quiet hours', ...resume }),
   slow: (limits) => ({ seconds: clamp(1800, limits), reason: 'quiet hours (slow)' }),
 };
 
@@ -86,6 +87,17 @@ function pinned(seconds, floor) {
   return { seconds: floor, reason: `pinned by --interval (raised to ${floor})` };
 }
 
+const HH_MM = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+const MAX_QUIET_MINUTES = 3 * 24 * 60;
+
+/** When quiet hours end: { until: 'HH:MM', tz } in the config zone, scanning minute by minute (a weekend can span days). */
+function resumeAt(now, config) {
+  let minute = 1;
+  while (minute < MAX_QUIET_MINUTES && isQuiet(now + minute * 60000, config)) minute++;
+  const tz = config.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return { until: HH_MM(localClock(now + minute * 60000, config.tz).minutes), tz };
+}
+
 function busyness(now, recentEvents, config) {
   const windowMs = config.windowMinutes * 60000;
   const inside = recentEvents.filter((t) => t <= now && now - t <= windowMs).length;
@@ -104,7 +116,7 @@ export function nextInterval({ now, recentEvents = [], config = {} }) {
   const at = new Date(now).getTime();
   const floor = floorSeconds(cfg);
   const limits = { floor, ceiling: Math.max(floor, cfg.maxInterval) };
-  if (isQuiet(at, cfg)) return (QUIET_MODES[cfg.quietMode] ?? QUIET_MODES.stop)(limits);
+  if (isQuiet(at, cfg)) return (QUIET_MODES[cfg.quietMode] ?? QUIET_MODES.stop)(limits, resumeAt(at, cfg));
   if (cfg.pinned) return pinned(cfg.pinned, floor);
   const { seconds, reason } = busyness(at, recentEvents, { ...cfg, minInterval: floor });
   return { seconds: clamp(seconds, limits), reason };

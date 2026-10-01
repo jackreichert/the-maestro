@@ -214,11 +214,19 @@ pushes, state changes) in the last 30 minutes and picks the next sleep, printing
 
 Inside quiet hours (`watch_quiet_hours`, default 20:00-07:00 in `watch_tz`; weekends too with
 `watch_quiet_weekends: on`) it either exits with the reason "quiet hours" (`watch_quiet_hours_mode:
-stop`, the default; the next morning greeting restarts it) or polls every 1800s (`slow`).
+stop`, the default; the next morning greeting restarts it, see exit codes below) or polls every 1800s (`slow`).
 `--interval N` pins the poll to N seconds but never below the 300s floor (a lower value is raised to it, with a stderr warning, and a non-positive or non-numeric N exits 2); quiet hours still apply to a pinned cadence. The rule and its rationale are
 cost material: [../cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); the
 settings are in [local-config.md](local-config.md). The logic is the pure function in
 [scripts/lib/cadence.mjs](../scripts/lib/cadence.mjs).
+
+**Exit codes.** A background run's exit tells the orchestrator why it stopped:
+
+| Exit | Stdout | Meaning | Next step |
+|---|---|---|---|
+| 0 | the change report | something needs attention (or a `--once` check finished) | handle it, relaunch without `--baseline` |
+| 2 | none (reason on stderr) | usage error: no `--state`, or a bad `--interval` | fix the command |
+| 3 | `QUIET-HOURS stop until HH:MM <tz>` | stopped for quiet hours; the state file records `stoppedForQuietAt` | nothing until the morning greeting restarts it |
 
 The watcher wakes the **orchestrator** on bot threads, because Copilot threads on drafts are work
 to do (above). That is not the same as interrupting the **user**: bot threads get handled quietly
