@@ -71,6 +71,12 @@ if (PINNED_S !== undefined && PINNED_S < floorSeconds({ minInterval: WATCH_MIN_I
   console.error(`--interval ${PINNED_S} is below the ${floorSeconds({ minInterval: WATCH_MIN_INTERVAL })}s floor; polling every ${floorSeconds({ minInterval: WATCH_MIN_INTERVAL })}s.`);
 }
 const EVENT_HISTORY_MS = 6 * 3600 * 1000;
+// Recent events, plus the newest one however old: it is what idleness is measured from, so the
+// backoff carries across restarts.
+const trimEvents = (events) => {
+  const newest = Math.max(...events);
+  return events.filter((t) => t === newest || Date.now() - t < EVENT_HISTORY_MS);
+};
 const STATE = opt('--state');
 if (!STATE) {
   console.error('Pass --state <file>.');
@@ -272,7 +278,7 @@ async function main() {
   }
   for (;;) {
     let board;
-    const events = (load()?.events || []).filter((t) => Date.now() - t < EVENT_HISTORY_MS);
+    const events = trimEvents(load()?.events || []);
     try {
       board = fetchBoard();
     } catch (err) {
@@ -291,7 +297,7 @@ async function main() {
     const changes = diff(prev, board);
     const fresh = unreported(board, reported);
     const seen = changes.length + quietEvents(prev, board);
-    const history = [...events, ...Array(seen).fill(Date.now())];
+    const history = trimEvents([...events, ...Array(seen).fill(Date.now())]);
     save(board, reportedNow(board), history);
     if (changes.length || fresh.length) {
       console.log(`${new Date().toISOString()} ${changes.length + fresh.length} change(s):`);

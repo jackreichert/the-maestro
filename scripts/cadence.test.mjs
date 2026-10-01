@@ -18,6 +18,7 @@ const CASES = [
   { name: 'quiet for an hour: back off to 900', now: NOON, events: ago(NOON, 70), want: { seconds: 900, reason: /quiet for 1h/ } },
   { name: 'quiet for two hours: back off to 1800', now: NOON, events: ago(NOON, 130), want: { seconds: 1800, reason: /quiet for 2h/ } },
   { name: 'no events since the watcher started an hour ago: 900', now: NOON, events: [], config: { watchingSince: NOON - 61 * MIN }, want: { seconds: 900, reason: /quiet for 1h/ } },
+  { name: 'a stored event older than a restart still measures idleness, not the restart time', now: NOON, events: ago(NOON, 70), config: { watchingSince: NOON }, want: { seconds: 900, reason: /quiet for 1h/ } },
   { name: 'events from the future are ignored', now: NOON, events: [NOON + 5 * MIN], config: { watchingSince: NOON }, want: { seconds: 600, reason: /steady/ } },
   { name: 'min_interval below the 300 floor is raised to 300', now: NOON, events: ago(NOON, 1, 2, 3), config: { minInterval: 60 }, want: { seconds: 300, reason: /high activity/ } },
   { name: 'min_interval above 300 is honoured for high activity', now: NOON, events: ago(NOON, 1, 2, 3), config: { minInterval: 450 }, want: { seconds: 450, reason: /high activity/ } },
