@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installGhStub, paged, prNode } from './lib/gh-stub.mjs';
@@ -176,4 +176,41 @@ test('attention needed exits 0 with the report on stdout', () => {
 test('a missing --state is a usage error, exit 2', () => {
   const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', env: installGhStub({ pages: [[]] }), timeout: 20000 });
   assert.equal(r.status, 2);
+});
+
+const corrupt = (text) => {
+  const path = tempState();
+  writeFileSync(path, text);
+  return path;
+};
+
+for (const [name, text] of [['a truncated file', '{"board": {"org/repo#1": {"url"'], ['a literal null', 'null'], ['an array', '[]']]) {
+  test(`${name} as state warns and starts from an empty board`, () => {
+    const env = installGhStub({ pages: [[prNode(1)]] });
+    const state = corrupt(text);
+    const r = runOnce(env, state);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.err, /starting from an empty board/);
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(state, 'utf8')).board), ['org/repo#1']);
+  });
+}
+
+test('saving writes through a temp file and leaves only the state file behind', () => {
+  const env = installGhStub({ pages: [[prNode(1)]] });
+  const state = tempState(boardOf([prNode(1)]));
+  runOnce(env, state);
+  const files = readdirSync(join(state, '..'));
+  assert.deepEqual(files, ['state.json']);
+  assert.ok(JSON.parse(readFileSync(state, 'utf8')).board);
+});
+
+test('an error mid-pagination fails the tick before save and leaves the previous board unchanged', async () => {
+  const nodes = Array.from({ length: 53 }, (_, i) => prNode(i + 1));
+  const env = installGhStub({ pages: paged(nodes), failOnPage: 1, prState: 'MERGED' });
+  const state = tempState(boardOf(nodes));
+  const before = readFileSync(state, 'utf8');
+  const r = await exitsWithin(env, state, 2500);
+  assert.equal(r.exited, false, r.out);
+  assert.equal(r.out, '');
+  assert.equal(readFileSync(state, 'utf8'), before);
 });

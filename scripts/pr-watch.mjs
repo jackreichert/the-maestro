@@ -27,7 +27,7 @@
  *     --once      check a single time and exit (report or "no changes")
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import {
   GH_LOGIN, PR_SEARCH, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_QUIET_WEEKENDS, WATCH_TZ,
@@ -230,13 +230,29 @@ function requestCopilot(board) {
   return requested;
 }
 
-// State file: { board, reported }. A legacy file is the bare board (keys look like owner/repo#n).
+// State file: { board, reported, events }. A legacy file is the bare board (keys look like owner/repo#n).
+// A truncated file or a literal null is a warning and a fresh start (null), never a crash.
 const load = () => {
   if (!existsSync(STATE)) return null;
-  const raw = JSON.parse(readFileSync(STATE, 'utf8'));
-  return 'board' in raw ? { board: raw.board, reported: raw.reported || {}, events: raw.events || [] } : { board: raw, reported: {}, events: [] };
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(STATE, 'utf8'));
+  } catch (err) {
+    console.error(`state file ${STATE} is unreadable (${err.message.split('\n')[0]}); starting from an empty board`);
+    return null;
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    console.error(`state file ${STATE} is not an object; starting from an empty board`);
+    return null;
+  }
+  return 'board' in raw ? { board: raw.board || {}, reported: raw.reported || {}, events: raw.events || [] } : { board: raw, reported: {}, events: [] };
 };
-const save = (board, reported, events, extra = {}) => writeFileSync(STATE, JSON.stringify({ board, reported, events, ...extra }, null, 2));
+// Written to a temp file and renamed over the state, so a crash mid-write cannot leave it truncated.
+const save = (board, reported, events, extra = {}) => {
+  const tmp = `${STATE}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ board, reported, events, ...extra }, null, 2));
+  renameSync(tmp, STATE);
+};
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
 // Decides the next sleep from recent activity, says so on stderr, and sleeps unless told to stop.
@@ -287,7 +303,7 @@ async function main() {
       if (!(await wait(events))) return;
       continue;
     }
-    const { board: prev, reported } = load();
+    const { board: prev, reported } = load() ?? { board: {}, reported: {} };
     if (looksTruncated(prev, board)) {
       console.error(`${new Date().toISOString()} search returned ${Object.keys(board).length} of ${Object.keys(prev).length} PRs; skipping tick`);
       if (!(await wait(events))) return;
