@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -124,6 +124,36 @@ test('a clean worktree on a merged branch qualifies; a dirty one is kept and rep
     assert.deepEqual(names(r, 'worktree').map((p) => p.split('/').pop()), ['feat-clean']);
     assert.match(r.excluded.find((e) => e.name.endsWith('feat-dirty')).reason, /uncommitted changes/);
     assert.match(r.excluded.find((e) => e.name.endsWith('feat-loose')).reason, /1 untracked files/);
+});
+
+test('a worktree a skill directory symlinks to (or into) is kept as a live skill', () => {
+    const w = world();
+    for (const b of ['feat/live', 'feat/inside', 'feat/extra', 'feat/plain']) { feature(w, b); mergeInto(w, 'develop', b); sh(w.repo, 'worktree', 'add', '-q', join(w.root, b.replace('/', '-')), b); }
+    const skills = join(w.container, '.claude', 'skills'); mkdirSync(skills, { recursive: true });
+    symlinkSync(join(w.root, 'feat-live'), join(skills, 'live'));
+    symlinkSync(join(w.root, 'feat-inside', 'feat_inside.txt'), join(skills, 'inside')); // points at a file inside the worktree
+    const extra = join(w.root, 'extra-skills'); mkdirSync(extra);
+    symlinkSync(join(w.root, 'feat-extra'), join(extra, 'x'));
+    const r = scanRepo(w.repo, ctxFor({ protectDirs: [extra] }));
+    assert.deepEqual(names(r, 'worktree').map((p) => p.split('/').pop()), ['feat-plain']);
+    assert.equal(r.excluded.filter((e) => /live skill/.test(e.reason)).length, 3);
+});
+
+test('a worktree with ignored files that are not disposable is kept, with the reason; disposable ones do not keep it', () => {
+    const w = world();
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/ign', 'main');
+    writeFileSync(join(w.repo, '.gitignore'), 'secret.key\nlocal.db\nnode_modules/\n__pycache__/\n'); sh(w.repo, 'add', '.gitignore');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'ignore'); sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/ign'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/ign');
+    const wt = join(w.root, 'ign'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/ign');
+    mkdirSync(join(wt, 'node_modules')); writeFileSync(join(wt, 'node_modules', 'a.js'), 'x');
+    mkdirSync(join(wt, 'pkg', '__pycache__'), { recursive: true }); writeFileSync(join(wt, 'pkg', '__pycache__', 'a.pyc'), 'x');
+    assert.equal(names(scanRepo(w.repo, ctxFor()), 'worktree').length, 1, 'only disposable ignored paths: it qualifies');
+    writeFileSync(join(wt, 'secret.key'), 'placeholder\n'); writeFileSync(join(wt, 'local.db'), 'x');
+    const r = scanRepo(w.repo, ctxFor());
+    assert.deepEqual(names(r, 'worktree'), []);
+    assert.match(r.excluded[0].reason, /2 ignored files kept \(.*secret\.key.*\): not disposable/);
+    assert.equal(names(scanRepo(w.repo, ctxFor({ disposableIgnored: ['secret.key', 'local.db', 'node_modules'] })), 'worktree').length, 1);
 });
 
 test('a worktree whose upstream is gone qualifies only with nothing unpushed; claimed or recently touched ones are kept', () => {

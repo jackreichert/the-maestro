@@ -19,11 +19,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { hostname } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { homedir, hostname } from 'node:os';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, TWIN_FLOW_REPOS, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
+  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
 } from './local-config.mjs';
 
 const run = (cmd, args, opts = {}) => {
@@ -60,7 +60,7 @@ export function defaultContext(over = {}) {
   const claimsDir = over.claimsDir ?? process.env.MAESTRO_CLAIMS_DIR ?? ((LEDGER_ROOT || VAULT_ROOT) && join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONTAINER_PROJECT, 'Claims'));
   return {
     emails: GIT_EMAILS, protectedNames: PROTECTED_BRANCHES, twin: TWIN_FLOW_REPOS, targets: SWEEP_MERGE_TARGETS,
-    idleMinutes: SWEEP_IDLE_MINUTES, claims: liveClaims(claimsDir), gh: ghJson, fetch: true, ...over,
+    idleMinutes: SWEEP_IDLE_MINUTES, protectDirs: SWEEP_PROTECT_SYMLINK_DIRS, disposableIgnored: SWEEP_DISPOSABLE_IGNORED, claims: liveClaims(claimsDir), gh: ghJson, fetch: true, ...over,
   };
 }
 
@@ -161,19 +161,52 @@ function worktrees(g) {
   }).filter((w) => w.path && w.branch);
 }
 
-function worktreeBlocker(g, w, repoName, ctx) {
-  if (w.locked) return 'locked';
-  if (w.prunable || !existsSync(w.path)) return 'directory missing: run git worktree prune';
-  const claim = ctx.claims.get(repoName);
-  if (claim) return `repo claimed by ${claim.desk || 'a desk'}`;
-  const st = gitIn(w.path)('status', '--porcelain').out.split('\n').filter(Boolean);
-  const untracked = st.filter((l) => l.startsWith('??')).length;
-  if (st.length - untracked) return `uncommitted changes (${st.length - untracked} files)`;
-  if (untracked) return `${untracked} untracked files`;
-  const gitDir = gitIn(w.path)('rev-parse', '--absolute-git-dir').out;
-  const newest = Math.max(...[w.path, `${gitDir}/HEAD`, `${gitDir}/index`, `${gitDir}/logs/HEAD`].filter(existsSync).map((p) => statSync(p).mtimeMs));
-  const idle = (Date.now() - newest) / 6e4;
-  return idle < ctx.idleMinutes ? `modified ${Math.round(idle)} min ago (idle window ${ctx.idleMinutes})` : null;
+const expandHome = (p) => (p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p);
+
+/** Real targets of the symlinks in the skill dirs: the checkouts live skills are loaded from. Throws if a dir cannot be read. */
+function liveSkillTargets(repoPath, ctx) {
+  const dirs = [join(homedir(), '.claude', 'skills'), join(dirname(repoPath), '.claude', 'skills'), ...(ctx.protectDirs || []).map(expandHome)];
+  return dirs.flatMap((d) => {
+    let entries;
+    try { entries = readdirSync(d, { withFileTypes: true }); } catch (e) {
+      if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return [];
+      throw new Error(`cannot read skill dir ${d} (${e.code})`);
+    }
+    return entries.filter((e) => e.isSymbolicLink()).flatMap((e) => {
+      try { return [realpathSync(join(d, e.name))]; } catch { return []; } // a dangling link points at nothing a worktree could be
+    });
+  });
+}
+
+/** Worktree rules, in order: the first that fails keeps the worktree. `check` gets { g, w, repoName, ctx, live, status }. */
+const WORKTREE_RULES = [
+  rule('not locked', (c) => !c.w.locked, () => 'locked'),
+  rule('directory present', (c) => !c.w.prunable && existsSync(c.w.path), () => 'directory missing: run git worktree prune'),
+  rule('no live claim', (c) => !c.ctx.claims.get(c.repoName), (c) => `repo claimed by ${c.ctx.claims.get(c.repoName).desk || 'a desk'}`),
+  rule('skill dirs readable', (c) => !c.live.error, (c) => c.live.error),
+  rule('not a live skill', (c) => !c.live.paths.some((t) => t === c.real || t.startsWith(c.real + sep)), () => 'a skill directory symlinks into it: live skill'),
+  rule('no uncommitted changes', (c) => c.tracked.length === 0, (c) => `uncommitted changes (${c.tracked.length} files)`),
+  rule('no untracked files', (c) => c.untracked.length === 0, (c) => `${c.untracked.length} untracked files`),
+  rule('no ignored files worth keeping', (c) => c.keptIgnored.length === 0,
+    (c) => `${c.keptIgnored.length} ignored files kept (${c.keptIgnored.slice(0, 3).join(', ')}${c.keptIgnored.length > 3 ? ', ...' : ''}): not disposable`),
+  rule('idle', (c) => c.idle >= c.ctx.idleMinutes, (c) => `modified ${Math.round(c.idle)} min ago (idle window ${c.ctx.idleMinutes})`),
+];
+
+function worktreeBlocker(g, w, repoName, ctx, live) {
+  const wg = existsSync(w.path) ? gitIn(w.path) : null;
+  const lines = wg ? wg('status', '--porcelain', '--ignored=matching').out.split('\n').filter(Boolean) : [];
+  const disposable = new Set(ctx.disposableIgnored || []);
+  const ignored = lines.filter((l) => l.startsWith('!!')).map((l) => l.slice(3));
+  const gitDir = wg ? wg('rev-parse', '--absolute-git-dir').out : '';
+  const stamps = wg ? [w.path, `${gitDir}/HEAD`, `${gitDir}/index`, `${gitDir}/logs/HEAD`].filter(existsSync).map((p) => statSync(p).mtimeMs) : [];
+  const c = {
+    g, w, repoName, ctx, live, real: wg ? realpathSync(w.path) : w.path,
+    tracked: lines.filter((l) => !l.startsWith('??') && !l.startsWith('!!')), untracked: lines.filter((l) => l.startsWith('??')),
+    keptIgnored: ignored.filter((p) => !p.split('/').some((seg) => disposable.has(seg))),
+    idle: stamps.length ? (Date.now() - Math.max(...stamps)) / 6e4 : Infinity,
+  };
+  const failed = WORKTREE_RULES.find((r) => !r.check(c));
+  return failed ? failed.reason(c) : null;
 }
 
 /** Scans one repo: { repo, items: qualifying, excluded: worktrees that fail a worktree check, notes }. */
@@ -189,6 +222,7 @@ export function scanRepo(repoPath, ctx) {
   const protectedNames = new Set([...ctx.protectedNames, ...targets, head].filter(Boolean));
   const protectedRefs = [...protectedNames].filter((b) => g('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).ok).map((b) => `origin/${b}`);
 
+  let live; try { live = { paths: liveSkillTargets(repoPath, ctx) }; } catch (e) { live = { paths: [], error: e.message }; }
   const scan = { ctx, protectedRefs, mainline: mainlineOf(g, protectedRefs) };
   const evaluate = (ref, branch) => (isMine(g, ref, branch, scan).ok ? mergedEvidence(g, ref, branch, targets, ctx) : null);
   for (const line of g('for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin').out.split('\n')) {
@@ -210,7 +244,7 @@ export function scanRepo(repoPath, ctx) {
       if (gone) res.excluded.push({ ...base, reason: `branch ${w.branch} is gone from origin but ${ahead} commit(s) are not pushed or merged` });
       continue;
     }
-    const blocker = worktreeBlocker(g, w, name, ctx);
+    const blocker = worktreeBlocker(g, w, name, ctx, live);
     if (blocker) res.excluded.push({ ...base, reason: blocker });
     else res.items.push({ ...base, why: ev?.ok ? `branch ${w.branch}: ${why(ev)}` : `branch ${w.branch} deleted on origin, nothing unpushed`, prs: ev?.ok ? links(ev) : [] });
   }
