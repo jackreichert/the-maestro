@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, dirname } from 'node:path';
 
 // Hermetic: never read the user's config file (see local-config.mjs). The import comes after this
 // line because local-config.mjs reads its files when it is first loaded.
@@ -85,4 +85,25 @@ test('the filled block names an absolute, existing path to pr-open.mjs, and no <
     assert.ok(existsSync(m[1]), m[1]);
     assert.ok(isAbsolute(m[1]));
     assert.doesNotMatch(r.stdout, /<skill>|<maestro scripts dir>/);
+});
+
+test('invoked through a symlinked scripts dir, the filled block keeps the symlink path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bb-link-'));
+    const link = join(dir, 'scripts');
+    symlinkSync(dirname(SCRIPT), link);
+    const config = join(dir, 'config.md');
+    writeFileSync(config, VALUES);
+    const r = spawnSync(process.execPath, [join(link, 'brief-block.mjs')], {
+        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MAESTRO_LOCAL_CONFIG: config },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(`${link}/pr-open.mjs`), r.stdout);
+    assert.ok(!r.stdout.includes(`${dirname(SCRIPT)}/pr-open.mjs`));
+});
+
+test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.mjs', async () => {
+    const { scriptsDir } = await import('./brief-block.mjs');
+    const real = dirname(SCRIPT);
+    assert.equal(scriptsDir(join(tmpdir(), 'elsewhere', 'x.mjs'), real), real);
+    assert.equal(scriptsDir(undefined, real), real);
 });

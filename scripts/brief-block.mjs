@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * BRIEF BLOCK: prints the standing brief block from reference/brief.md with its `<…>` slots
- * filled (two from the configured values, `<maestro scripts dir>` from this script's location), ready to paste at the end of a dispatch brief.
+ * filled (two from the configured values, `<maestro scripts dir>` from the path this script was invoked through), ready to paste at the end of a dispatch brief.
  *
  * The values sit under "Standing brief block, filled" in the user config file or the org overlay's
  * config.md (see reference/local-config.md), one bullet per slot:  - `<slot>` → value
@@ -12,7 +12,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { userPath, overlayPath } from './local-config.mjs';
 
-export const SCRIPTS_DIR = resolve(dirname(fileURLToPath(import.meta.url)));
+/** The scripts dir as invoked (absolute, symlinks kept), so a symlinked install stays valid when the
+ *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.mjs. */
+export function scriptsDir(argv1 = process.argv[1], realDir = dirname(fileURLToPath(import.meta.url))) {
+  const invoked = argv1 ? dirname(resolve(argv1)) : '';
+  return invoked && existsSync(resolve(invoked, 'pr-open.mjs')) ? invoked : resolve(realDir);
+}
+export const SCRIPTS_DIR = scriptsDir();
 export const SLOTS = ['<user git emails>', '<tracker key example>', '<maestro scripts dir>'];
 /** Angle-bracket text that is part of the block's own wording, not a slot. */
 const LITERALS = new Set(['<base>', '<check>']);
