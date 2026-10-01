@@ -34,6 +34,11 @@ watch_quiet_hours: 20:00-07:00 # PR watcher: no polling in this local window; `o
 watch_quiet_hours_mode: stop   # stop: exit until the next greeting restarts it; slow: poll every 1800s; default stop
 watch_quiet_weekends: off      # on: Saturday and Sunday count as quiet hours; default off
 watch_tz: America/New_York     # time zone for the quiet hours; default the system time zone
+pr_max_code_files: 5           # PR size budget: most code files per PR; default 5
+pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400
+pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
+pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
+twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off
 ```
 ````
 
@@ -53,7 +58,7 @@ The overlay's `config.md` is found from the overlay name (set in the user file o
 3. **Plugin skill** (`<plugin>:<skill>`): Claude Code records installed plugins in `~/.claude/plugins/installed_plugins.json`, an object `plugins` keyed `<plugin>@<marketplace>`, each entry a list whose items carry an `installPath`. The skill is at `<installPath>/skills/<skill>/config.md`.
 4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repo checkout) and by its real path, and then in `~/.claude/skills/<skill>/config.md`.
 
-The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, and `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, and `MAESTRO_WATCH_TZ`. A variable that is set to the empty string counts as set.
+The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`. A variable that is set to the empty string counts as set.
 
 ## Roots and names
 
@@ -79,8 +84,10 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | GitHub org for the PR board | prs.md, `GH_ORG` in local-config.mjs |
 | Protected branches | git.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
+| Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |
+| PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`) | git.md, `scripts/pr-size.mjs` |
 
 ## Issue tracker
 
