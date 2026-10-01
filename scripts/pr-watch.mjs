@@ -14,7 +14,8 @@
  *   - a new top-level PR comment or review body from anyone but the user;
  *   - a reviewDecision flip, e.g. to APPROVED or CHANGES_REQUESTED;
  *   - a PR that left the open set (merged or closed).
- * Every report also lists approved-but-unmerged PRs.
+ * Standing conditions (an approved PR left unmerged) wake once, when they first appear or change
+ * (a new approval, a moved head), then stay quiet; every report still lists them.
  *
  * Each tick also requests a Copilot review on any draft PR that Copilot hasn't
  * reviewed and isn't already requested on. Its threads then arrive as THREAD lines.
@@ -45,7 +46,7 @@ if (!STATE) {
 }
 
 const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number url isDraft reviewDecision repository { nameWithOwner }
+  number url isDraft reviewDecision headRefOid repository { nameWithOwner }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on Bot { login } } } }
   latestReviews(first: 20) { nodes { author { login } } }
   reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } url } } last: comments(last: 1) { nodes { id author { login } url } } } }
@@ -67,6 +68,7 @@ function fetchBoard() {
       repo: pr.repository.nameWithOwner,
       number: pr.number,
       isDraft: pr.isDraft,
+      head: pr.headRefOid,
       needsCopilot: pr.isDraft && !copilotSeen,
       decision: pr.reviewDecision || 'NONE',
       threads: pr.reviewThreads.nodes
@@ -133,11 +135,34 @@ function looksTruncated(prev, next) {
   return before >= 4 && Object.keys(next).length < before / 2;
 }
 
-function approvedUnmerged(board) {
-  return Object.entries(board)
-    .filter(([, pr]) => pr.decision === 'APPROVED')
-    .map(([key, pr]) => `APPROVED-UNMERGED ${key} ${pr.url}`);
+// Standing conditions are states that stay true tick after tick (an approved PR the user is
+// deliberately holding back). Each has a stable id and a signature; it wakes the orchestrator
+// only when its signature is new or changed, e.g. a fresh approval on a moved head. Add new
+// kinds of standing condition here and they inherit the report-once behaviour.
+const STANDING = [
+  {
+    kind: 'APPROVED-UNMERGED',
+    applies: (pr) => pr.decision === 'APPROVED',
+    signature: (pr) => pr.head || 'unknown-head',
+  },
+];
+
+function standingConditions(board) {
+  return STANDING.flatMap(({ kind, applies, signature }) =>
+    Object.entries(board)
+      .filter(([, pr]) => applies(pr))
+      .map(([key, pr]) => ({ id: `${kind} ${key}`, sig: signature(pr), line: `${kind} ${key} ${pr.url}` })),
+  );
 }
+
+const standingLines = (board) => standingConditions(board).map((c) => c.line);
+
+// Which standing conditions the user has not yet been told about in this exact form.
+const unreported = (board, reported) => standingConditions(board).filter((c) => reported[c.id] !== c.sig);
+
+// Everything reported so far, pruned to the conditions that still hold: a cleared condition
+// is forgotten so it wakes again if it comes back.
+const reportedNow = (board) => Object.fromEntries(standingConditions(board).map((c) => [c.id, c.sig]));
 
 // The user wants Copilot's pass resolved before they review a draft, so request Copilot
 // on any draft it has neither reviewed nor been asked to review. It runs once per
@@ -161,17 +186,24 @@ function requestCopilot(board) {
   return requested;
 }
 
-const load = () => (existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : null);
-const save = (board) => writeFileSync(STATE, JSON.stringify(board, null, 2));
+// State file: { board, reported }. A legacy file is the bare board (keys look like owner/repo#n).
+const load = () => {
+  if (!existsSync(STATE)) return null;
+  const raw = JSON.parse(readFileSync(STATE, 'utf8'));
+  return 'board' in raw ? { board: raw.board, reported: raw.reported || {} } : { board: raw, reported: {} };
+};
+const save = (board, reported) => writeFileSync(STATE, JSON.stringify({ board, reported }, null, 2));
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
 async function main() {
   if (flag('--baseline') || !load()) {
     const board = fetchBoard();
-    save(board);
+    // A baseline prints the standing conditions, so they count as reported; a silent first
+    // run has told the user nothing yet and reports them on its first tick.
+    save(board, flag('--baseline') ? reportedNow(board) : {});
     if (flag('--baseline')) {
       console.log(`baseline: ${Object.keys(board).length} open PRs`);
-      approvedUnmerged(board).forEach((l) => console.log(l));
+      standingLines(board).forEach((l) => console.log(l));
       return;
     }
   }
@@ -185,7 +217,7 @@ async function main() {
       await sleep(INTERVAL_S);
       continue;
     }
-    const prev = load();
+    const { board: prev, reported } = load();
     if (looksTruncated(prev, board)) {
       console.error(`${new Date().toISOString()} search returned ${Object.keys(board).length} of ${Object.keys(prev).length} PRs; skipping tick`);
       await sleep(INTERVAL_S);
@@ -193,16 +225,18 @@ async function main() {
     }
     requestCopilot(board);
     const changes = diff(prev, board);
-    save(board);
-    if (changes.length) {
-      console.log(`${new Date().toISOString()} ${changes.length} change(s):`);
+    const fresh = unreported(board, reported);
+    if (changes.length || fresh.length) {
+      save(board, reportedNow(board));
+      console.log(`${new Date().toISOString()} ${changes.length + fresh.length} change(s):`);
       changes.forEach((l) => console.log(l));
-      approvedUnmerged(board).forEach((l) => console.log(l));
+      standingLines(board).forEach((l) => console.log(l));
       return;
     }
+    save(board, reportedNow(board));
     if (flag('--once')) {
       console.log('no changes');
-      approvedUnmerged(board).forEach((l) => console.log(l));
+      standingLines(board).forEach((l) => console.log(l));
       return;
     }
     await sleep(INTERVAL_S);
