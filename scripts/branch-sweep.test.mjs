@@ -345,3 +345,17 @@ test('one failed window fails the whole PR lookup closed', () => {
     assert.deepEqual(r.items, []);
     assert.match(r.notes.join('\n'), /gh pr list failed/);
 });
+
+test('a branch cut from a develop that already held a colleague\'s merged work is judged on its own commits', () => {
+    const w = world();
+    feature(w, 'feat/colleague', { email: 'colleague@example.com' }); mergeInto(w, 'develop', 'feat/colleague');
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/mine', 'develop');
+    commit(w.repo, 'mine.txt', 'mine\n'); sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/mine'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/mine'); mergeInto(w, 'staging', 'feat/mine');
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ twin: ['proj'] })), 'remote-branch'), ['feat/mine']);
+    // the same shape with the colleague's commit inside the branch (merged into it, not already in develop) stays foreign
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/mixed', 'main'); commit(w.repo, 'm.txt', 'm\n');
+    commit(w.repo, 'c.txt', 'c\n', 'colleague@example.com'); sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/mixed'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/mixed'); mergeInto(w, 'staging', 'feat/mixed');
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ twin: ['proj'] })), 'remote-branch'), ['feat/mine']);
+});
