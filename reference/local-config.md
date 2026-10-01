@@ -37,6 +37,8 @@ git_emails: me@example.com     # comma-separated; the authorship check in branch
 protected_branches: main, staging, develop  # branch-sweep.mjs never lists these; this is the default
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.mjs offers it; default 60
+sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a worktree as a live skill; ~/.claude/skills and <container>/.claude/skills always count
+sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
 ```
 ````
 
@@ -56,7 +58,7 @@ The overlay's `config.md` is found from the overlay name (set in the user file o
 3. **Plugin skill** (`<plugin>:<skill>`): Claude Code records installed plugins in `~/.claude/plugins/installed_plugins.json`, an object `plugins` keyed `<plugin>@<marketplace>`, each entry a list whose items carry an `installPath`. The skill is at `<installPath>/skills/<skill>/config.md`.
 4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repo checkout) and by its real path, and then in `~/.claude/skills/<skill>/config.md`.
 
-The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, and `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_GIT_EMAILS`, `MAESTRO_PROTECTED_BRANCHES`, `MAESTRO_SWEEP_MERGE_TARGETS`, and `MAESTRO_SWEEP_IDLE_MINUTES`. A variable that is set to the empty string counts as set.
+The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, and `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_GIT_EMAILS`, `MAESTRO_PROTECTED_BRANCHES`, `MAESTRO_SWEEP_MERGE_TARGETS`, `MAESTRO_SWEEP_IDLE_MINUTES`, `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS`, and `MAESTRO_SWEEP_DISPOSABLE_IGNORED`. A variable that is set to the empty string counts as set.
 
 ## Roots and names
 
@@ -80,7 +82,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | GitHub login | PR scripts (read from `gh api user` unless `gh_login` / `MAESTRO_GH_LOGIN` is set) |
 | GitHub org for the PR board | prs.md, `GH_ORG` in local-config.mjs |
 | Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.mjs` |
-| Branch-sweep merge targets (`sweep_merge_targets`) and idle window (`sweep_idle_minutes`) | `scripts/branch-sweep.mjs`, ledger.md |
+| Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.mjs`, ledger.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
