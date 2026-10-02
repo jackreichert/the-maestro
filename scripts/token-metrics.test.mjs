@@ -144,3 +144,9 @@ test('sessionLine reports the newest session against the thresholds', () => {
     assert.equal(sessionLine(dir, 2, 350000), '**Session:** 2 turns (100% of 2 roll) · 200k read/turn · roll now');
     assert.equal(sessionLine(dir, 4, 200000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn · roll now');
 });
+
+test('sessionLine degrades to unavailable instead of throwing when the directory cannot be read', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tm-file-')), 'not-a-dir');
+    writeFileSync(file, '');
+    assert.match(sessionLine(file), /^\*\*Session:\*\* unavailable \(.* reading /);
+});
