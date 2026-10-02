@@ -64,7 +64,8 @@ function checkWatch(watch, prev, { types, ctx }) {
 export function tick(deps) {
   const { dir, types, ctx = {}, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun } = deps;
   const state = loadState(dir);
-  const quiet = Boolean(nextInterval({ now, recentEvents: state.events, config }).stop);
+  // Quiet means the clock says so, whatever quietMode does to the pace (`slow` never returns stop).
+  const quiet = nextInterval({ now, recentEvents: state.events, config: { ...config, quietMode: 'stop' } }).stop === true;
   const retirements = [];
   const out = { events: [], retired: [], skipped: [] };
   for (const watch of listWatches(dir)) {
@@ -106,7 +107,7 @@ export function tick(deps) {
 export function pace({ dir, config = cadenceConfig(), now = Date.now() }) {
   const events = loadState(dir).events;
   const next = nextInterval({ now, recentEvents: events, config });
-  if (next.stop && listWatches(dir).some((w) => w.notify_overnight)) return nextInterval({ now, recentEvents: events, config: { ...config, quietHours: 'off' } });
+  if (next.stop && listWatches(dir).some((w) => w.notify_overnight)) return nextInterval({ now, recentEvents: events, config: { ...config, quietHours: 'off', quietWeekends: false, quietMode: 'stop' } });
   return next;
 }
 
