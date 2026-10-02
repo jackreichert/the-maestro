@@ -29,7 +29,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import {
-  GH_LOGIN, PR_SEARCH, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
+  COPILOT_ORGS, GH_LOGIN, PR_SEARCH, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_QUIET_WEEKENDS, WATCH_TZ,
 } from './local-config.mjs';
 import { floorSeconds, nextInterval } from './lib/cadence.mjs';
@@ -55,6 +55,9 @@ function parsePin(text) {
 
 const SELF = GH_LOGIN || execFileSync('gh', ['api', 'user', '--jq', '.login'], { encoding: 'utf8' }).trim();
 const COPILOT = 'copilot-pull-request-reviewer';
+// Fail closed: Copilot is requested only where the repo owner is listed in copilot_orgs (GitHub logins are case-insensitive).
+const copilotOwners = new Set(COPILOT_ORGS.map((o) => o.toLowerCase()));
+const copilotAllowed = (nameWithOwner) => copilotOwners.has(nameWithOwner.split('/')[0].toLowerCase());
 // The cadence adapts to activity and quiet hours (lib/cadence.mjs); --interval N pins it instead.
 const PINNED_S = parsePin(opt('--interval'));
 const CADENCE = {
@@ -107,7 +110,7 @@ function fetchBoard() {
       number: pr.number,
       isDraft: pr.isDraft,
       head: pr.headRefOid,
-      needsCopilot: pr.isDraft && !copilotSeen,
+      needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
       threads: pr.reviewThreads.nodes
         .filter((t) => !t.isResolved && notSelf(t.comments.nodes[0]?.author?.login))
