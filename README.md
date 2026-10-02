@@ -67,6 +67,26 @@ The dotted edges are asynchronous: the dispatcher never waits on them. Completio
 notification, and a new message while agents are running is handled alongside the work already in
 flight.
 
+## The event loop
+
+One loop for every "wake me when X happens", instead of a one-off watcher per wait. The orchestrator appends a **watch** (`type`, `target`, an optional `done_when`, and a `report` note saying what it wants back) to an append-only registry; `scripts/event-loop.mjs run` polls them all, compares each with its last stored state, and records an event only when the type's rule says something changed. A cheap runner, not the orchestrator, reads the result: [playbooks/event-loop.md](playbooks/event-loop.md) tells a small model how to run the loop, read the digest, and report at most ten lines.
+
+```bash
+node scripts/event-loop.mjs add --id ci-12 --type pr-checks --target owner/repo#12 --report "tell me when CI settles"
+node scripts/event-loop.mjs run          # exits 10 with a digest on an actionable event, 0 when there is nothing to watch, 3 at quiet hours
+node scripts/event-loop.mjs run --once   # one pass, same exit codes
+node scripts/event-loop.mjs list | remove <id> | digest [--peek]
+```
+
+- **Pluggable types.** A type is a script (`scripts/event-types/<type>.mjs`: `check(target, ctx)` returns a state, `diff(prev, next)` returns events), a playbook (`playbooks/event-types/<type>.md`: what each line means and what to report), and one line in `scripts/event-types/index.mjs`. Shipped: `pr-checks` (CI status of a PR), `pr-review` (review activity, wrapping `pr-watch.mjs`; its per-watch state file is deleted when the watch retires), `gh-run` (a GitHub Actions run until it completes) and `inbox` (new messages from you). An org overlay adds its own types the same way.
+- **Cadence.** The same adaptive cadence and quiet hours as the PR watcher (`scripts/lib/cadence.mjs`, nothing faster than 300 seconds). A watch expires after 24 hours unless `--ttl-hours` says otherwise and retires itself when its type says it is done. During quiet hours (including quiet weekends, and whichever `watch_quiet_hours_mode` is set) only watches registered with `--notify-overnight` keep running and notify.
+- **Info events.** Informational events (for example CI going back to pending) are kept in the digest until an actionable event arrives, then printed after it; a run with only info events does not consume them.
+- **Notifications.** Optional and local: set `notify_command` (a JSON argv array; the one-line summary, under 150 characters, is appended as the last argument). There is no default recipient; with it unset nothing is sent.
+- **Privacy.** The `inbox` type reads the command in `inbox_command`, keeps only a hash per unread line, and reports only a count. Message text never reaches the digest, a notification or a log.
+- **One loop at a time.** `run` takes a lock in `event_dir`; a second `run` is refused while the first is alive, and a dead one's lock is replaced. The lock is released on exit, Ctrl-C and SIGTERM.
+- **Where it lives.** `event_dir` in local-config (default `<ledger_root>/Events`): `watches.jsonl`, `state.json`, `digest.jsonl`.
+- **Cost.** One loop and one runner replace N watchers, so the orchestrator wakes once per actionable event. It is tracked as a cost experiment; see [cost/budget.md](cost/budget.md#one-event-loop-instead-of-n-watchers).
+
 ## Requirements
 
 - Node.js 22 or newer. Nothing is installed: the scripts use only `node:` built-ins. `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5 (the tests ran on Node 24).
@@ -216,7 +236,7 @@ Org-specific rules (repo topology, tracker rules, data rules, release steps) go 
 
 6. **PR watcher cadence (optional).** The defaults need no setup: 300s at the fastest, 1800s at the slowest, stop between 20:00 and 07:00 in your system time zone. To change them set `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours` (`HH:MM-HH:MM`, or `off`), `watch_quiet_hours_mode` (`stop` or `slow`), `watch_quiet_weekends` and `watch_tz`; see [reference/local-config.md](reference/local-config.md).
 
-7. **Event loop (optional).** `scripts/event-loop.mjs` polls registered watches and wakes you only on a state change that matters (see the change that adds the event types). Its registry, state and digest live in `event_dir` (default `<ledger_root>/Events`). Set `notify_command` to a JSON argv array (the one-line summary is appended as the last argument) to be notified; with it unset nothing is ever sent. `inbox_command` feeds the `inbox` type. Both are local-config only; see [reference/local-config.md](reference/local-config.md).
+7. **Event loop (optional).** `scripts/event-loop.mjs` polls registered watches and wakes you only on a state change that matters (see [The event loop](#the-event-loop)). Its registry, state and digest live in `event_dir` (default `<ledger_root>/Events`). Set `notify_command` to a JSON argv array (the one-line summary is appended as the last argument) to be notified; with it unset nothing is ever sent. `inbox_command` feeds the `inbox` type. Both are local-config only; see [reference/local-config.md](reference/local-config.md).
 
 ### Overlay lookup order
 
