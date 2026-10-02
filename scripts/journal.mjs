@@ -23,7 +23,10 @@
  *   journal.mjs start "<text>" --model "<name>" --used "skill:x,tool:y" [--repo x]
  *   journal.mjs done <id|text> --model "<name>" --used "skill:x,tool:y"
  *   journal.mjs drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
- *   journal.mjs ask "<question>" --model "<name>" --used "skill:x,tool:y"
+ *   journal.mjs ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
+ *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
+ *   journal.mjs rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
+ *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.mjs resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
  *   journal.mjs stamp <id> --model "<name>" --used "skill:x,tool:y"
  *   journal.mjs stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
@@ -80,7 +83,7 @@
  * Do not invent either. Unknown history is `unrecorded`, unmeasured tokens are
  * `unmeasured`. --allow-unmarked is only for tests and migrations.
  *
- * Kinds: wip | done | blocked | question | decision | note | resolved | dropped | rolled | stamp
+ * Kinds: wip | done | blocked | question | decision (not open, unless `ask --kind decision`) | note | resolved | dropped | rolled | stamp
  *        (rows only written by their own commands: tag | fact | carry | archive | unarchive)
  * Common flags: --vault <path> --project <name> --json --dry-run --include-archived
  * retro/archive read tickets through ledger-index.mjs: --tickets-vault <path> (else $VAULT_ROOT),
@@ -88,9 +91,9 @@
  * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT, each also settable in the
  * config file (see local-config.mjs).
  */
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync, realpathSync, statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { hostname } from 'node:os';
+import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR } from './local-config.mjs';
 import { scratchReport } from './lib/scratch.mjs';
@@ -393,11 +396,34 @@ function approvalFor(kind) {
     return fields;
 }
 
-function cmdLog(kindDefault = 'note') {
+/** Absolute path of a ref that names an existing file (`~/` and relative paths allowed); null when it does not. */
+function resolveRefFile(ref) {
+    const p = resolve(ref.startsWith('~/') ? join(homedir(), ref.slice(2)) : ref);
+    try { return statSync(p).isFile() ? p : null; } catch { return null; }
+}
+
+/**
+ * The refs of a `rule` row, as absolute paths. A rule is a decision that has been promoted somewhere
+ * durable (a memory file, a DECISIONS.md), so it needs at least one --ref and every one must be an
+ * existing file; anything else exits 1 before the ledger is touched.
+ */
+function ruleRefs() {
+    const refs = refsFromArgs();
+    if (!refs.length) die('A rule needs --ref <file>: the memory file or DECISIONS.md entry it was promoted to. Use `ask --kind decision` for a decision that is still pending.');
+    return refs.map((r) => resolveRefFile(r) || die(`--ref ${r} is not an existing file. Promote the rule first, then record it.`));
+}
+
+/**
+ * log, start, ask, note and rule. `ask` takes --kind question (default) or decision; a decision written by `ask`
+ * is pending and stays on the board. `rule` always writes a decision, which is a record and not open.
+ */
+function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
     const text = arg('text') || positional.join(' ');
-    if (!text) { console.error('Needs text: journal.mjs log "what happened"'); process.exit(1); }
-    const kind = arg('kind', kindDefault);
+    if (!text) { console.error(`Needs text: journal.mjs ${rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
+    const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
+    if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
+    const refs = rule ? ruleRefs() : refsFromArgs();
 
     const entries = readLedger();
     const entry = {
@@ -409,7 +435,8 @@ function cmdLog(kindDefault = 'note') {
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
         stream: streamOrNone(arg('stream')),
-        refs: refsFromArgs(),
+        refs,
+        pending: ask && kind === 'decision' ? true : undefined,
         ...approvalFor(kind),
         ...usageFromArgs(),
     };
@@ -561,7 +588,7 @@ function collectApprovals(entries, { since, until }) {
         bucket[lastSet(list, 'approval')]?.push({ id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'), refs: lastSet(list, 'refs') || [], taggedBy: list.filter((ev) => ev.tag).pop()?.tag.id });
     }
     for (const e of entries) {
-        if (e.id && !e.annotates && e.kind === 'decision' && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
+        if (e.id && !e.annotates && e.kind === 'decision' && !e.pending && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
     }
     for (const list of Object.values(out)) list.sort((a, b) => String(a.date).localeCompare(String(b.date)));
     return out;
@@ -678,13 +705,16 @@ function cmdStatus() {
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
     console.log(`Ledger — ${d}`);
-    for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, done)) {
+    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, done);
+    for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
         line('In flight', inStream(g.inflight, s));
         line('Blocked', inStream(g.blocked, s));
         line('Awaiting you', inStream(g.awaiting, s));
         line(`Done ${d}`, inStream(done, s));
     }
+    // Without this heading the unstreamed sections read as part of the last stream.
+    if (streams.length && [g.inflight, g.blocked, g.awaiting, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
     line('In flight', noStream(g.inflight));
     line('Blocked', noStream(g.blocked));
     line('Awaiting you', noStream(g.awaiting));
@@ -694,7 +724,7 @@ function cmdStatus() {
     if (!g.inflight.length && !g.blocked.length && !g.awaiting.length && !done.length) {
         console.log('\n  (empty)');
     }
-    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you`);
+    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
 }
 
 function standupText(d) {
@@ -1317,7 +1347,7 @@ function retroText(stream) {
         '> Draft generated by `journal.mjs retro`. Polish it, then change `status:` above to `reviewed` and fill every "Promoted to" line before `archive`.', '',
         '## Summary', '',
         `- Items done: ${done.length}`, `- Items dropped: ${dropped.length}`, `- Items open: ${open.length}`,
-        `- Other rows (notes, resolved, decisions closed): ${items.length - done.length - dropped.length - open.length}`,
+        `- Other rows (notes, resolved, decisions): ${items.length - done.length - dropped.length - open.length}`,
         `- Facts recorded: ${facts.length}`,
         `- Date span: ${first ? `${first.date} to ${last.date}` : '(no rows)'}`, '',
         '## Timeline', '',
@@ -1809,7 +1839,8 @@ function cmdResume() {
 switch (cmd) {
     case 'log': cmdLog('note'); break;
     case 'start': cmdLog('wip'); break;
-    case 'ask': cmdLog('question'); break;
+    case 'ask': cmdLog('question', { ask: true }); break;
+    case 'rule': cmdLog('decision', { rule: true }); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
     case 'drop': cmdClose('dropped'); break;

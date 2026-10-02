@@ -1168,3 +1168,95 @@ test('handoff lists the worktrees a sweep would keep under Cleanup candidates, a
     assert.doesNotMatch(r.out, new RegExp(`- \`${w.clean}\``));
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
+
+// ── rules, pending decisions and the status header (MAESTRO-13) ─────────────
+
+test('a decision is a record: log --kind decision never shows as awaiting', () => {
+    assert.equal(run('log', 'Jack rule: always squash', '--kind', 'decision', ...MARK).code, 0);
+    assert.deepEqual(statusJson().awaiting, []);
+    assert.doesNotMatch(run('status').out, /Awaiting you/);
+    assert.deepEqual(run('status', '--footer').out.split('\n')[0], '**Ledger:** 0 done today · 0 in flight · 0 awaiting you');
+});
+
+test('ask --kind decision is pending: it shows as awaiting until resolved', () => {
+    const r = run('ask', 'ship on Friday or Monday?', '--kind', 'decision', ...MARK);
+    assert.equal(r.code, 0, r.err);
+    const id = idOf(r.out);
+    assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
+    assert.equal(ledger().find((e) => e.id === id).pending, true);
+    run('resolve', id, '--answer', 'Monday', ...MARK);
+    assert.deepEqual(statusJson().awaiting, []);
+});
+
+test('ask takes only question or decision', () => {
+    const r = run('ask', 'misfiled', '--kind', 'note', ...MARK);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /ask takes --kind question/);
+    assert.throws(() => ledger());
+});
+
+test('rule with an existing ref file writes a closed-off decision carrying the absolute ref', () => {
+    const memo = join(tv, 'memory.md');
+    writeFileSync(memo, '# rule\n');
+    const r = run('rule', 'always branch from staging', '--ref', memo, ...MARK);
+    assert.equal(r.code, 0, r.err);
+    const row = ledger()[0];
+    assert.deepEqual([row.kind, row.refs, row.pending], ['decision', [memo], undefined]);
+    assert.deepEqual(statusJson().awaiting, []);
+});
+
+test('rule refuses, writing nothing, when the ref is missing, absent, or not a file', () => {
+    const missing = run('rule', 'a rule', '--ref', join(tv, 'nope.md'), ...MARK);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /not an existing file/);
+    const absent = run('rule', 'a rule', ...MARK);
+    assert.equal(absent.code, 1);
+    assert.match(absent.err, /needs --ref/);
+    const dirRef = run('rule', 'a rule', '--ref', tv, ...MARK);
+    assert.equal(dirRef.code, 1);
+    const urlRef = run('rule', 'a rule', '--ref', 'https://example.com/x', ...MARK);
+    assert.equal(urlRef.code, 1);
+    assert.throws(() => ledger(), 'no ledger file was created');
+});
+
+test('rule needs every ref to exist, not just the first', () => {
+    const memo = join(tv, 'memory.md');
+    writeFileSync(memo, 'x');
+    assert.equal(run('rule', 'a rule', '--ref', `${memo},${join(tv, 'gone.md')}`, ...MARK).code, 1);
+    assert.throws(() => ledger());
+});
+
+test('rule can carry an approval, and the approvals digest sees it', () => {
+    const memo = join(tv, 'memory.md');
+    writeFileSync(memo, 'x');
+    assert.equal(run('rule', 'may delete merged branches', '--ref', memo, '--approval', 'standing', '--scope', 'merged only', ...MARK).code, 0);
+    const d = JSON.parse(run('approvals', '--json').out);
+    assert.equal(d.standing.length, 1);
+    assert.equal(d.untagged.length, 0);
+});
+
+test('status names the unstreamed section "other" once streams exist, and the total line counts blocked', () => {
+    run('start', 'streamed work', ...MARK, '--stream', 'Launch', '--new-stream');
+    run('start', 'loose work', ...MARK);
+    run('log', 'waiting on a deploy', '--kind', 'blocked', ...MARK);
+    const out = run('status').out;
+    assert.match(out, /== Launch ==[^]*== other ==[^]*loose work/);
+    assert.match(out, /0 done · 2 in flight · 0 awaiting you · 1 blocked/);
+    assert.ok(out.indexOf('streamed work') < out.indexOf('== other =='));
+});
+
+test('status prints no "other" heading when there are no streams, and no blocked count when none are blocked', () => {
+    run('start', 'plain work', ...MARK);
+    const out = run('status').out;
+    assert.doesNotMatch(out, /== other ==/);
+    assert.match(out, /0 done · 1 in flight · 0 awaiting you\n?$/);
+});
+
+test('rule resolves a relative ref against the cwd, and the digest leaves pending decisions out of "untagged"', () => {
+    writeFileSync(join(emptyCwd, 'rel-memory.md'), 'x');
+    assert.equal(run('rule', 'relative ref rule', '--ref', 'rel-memory.md', ...MARK).code, 0);
+    assert.equal(ledger()[0].refs[0], join(realpathSync(emptyCwd), 'rel-memory.md'));
+    run('ask', 'still open?', '--kind', 'decision', ...MARK);
+    const untagged = JSON.parse(run('approvals', '--json').out).untagged.map((u) => u.text);
+    assert.deepEqual(untagged, ['relative ref rule']);
+});

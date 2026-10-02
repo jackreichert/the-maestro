@@ -358,12 +358,14 @@ node $J status --footer                      # the reply-footer lines: Ledger (o
 node $J handoff --stream Launch              # scaffold the five-part handoff (see below)
 node $J resume                               # the verify-on-resume checklist
 node $J log "<text>" --kind decision --approval standing --scope "<what it covers>"   # log a granted permission (standing | one-off)
+node $J rule "<text>" --ref <file>           # record a decision already made; refuses unless the ref file exists, never shows as awaiting
+node $J ask "<text>" --kind decision         # a decision that is really pending: stays on the awaiting-you board
 node $J approvals --days 7                   # the weekly approvals review doc (keep / narrow / revoke)
 ```
 
 Also: `log`, `drop`, `stamp`, `stamp-missing`, `usage`, `render`. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. `--project` is required; there is no default project name.
 
-Kinds: `wip`, `done`, `blocked`, `question`, `decision`, `note`, plus `resolved`, `dropped`, `rolled` and `stamp` (written by their own commands).
+Kinds: `wip`, `done`, `blocked`, `question`, `decision` (a record, not open, unless written by `ask --kind decision`), `note`, plus `resolved`, `dropped`, `rolled` and `stamp` (written by their own commands).
 
 `roll` writes the day's finished work to a dated note and leaves in-flight, blocked, and awaiting-you items on the board. Roll at end of day, or when `CURRENT.md` is longer than a screen.
 
@@ -444,7 +446,7 @@ node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--force]
 node $J resume
 ```
 
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` (`status: draft`; the derived index already picks these up) and appends nothing to the ledger. It **never overwrites** an existing file without `--force`. The five parts: (1) tasks with status, the stream's open in-flight and blocked items plus what was done since `--since` (default yesterday); (2) learnings, from items matching learned, lesson, ruled out or cause; (3) artifacts, the PR numbers, refs, tickets and file paths mentioned by those items; (4) decisions awaiting, the open questions and decisions; (5) next concrete action, left blank for the author. Sections 2 and 5 still need a human.
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` (`status: draft`; the derived index already picks these up) and appends nothing to the ledger. It **never overwrites** an existing file without `--force`. The five parts: (1) tasks with status, the stream's open in-flight and blocked items plus what was done since `--since` (default yesterday); (2) learnings, from items matching learned, lesson, ruled out or cause; (3) artifacts, the PR numbers, refs, tickets and file paths mentioned by those items; (4) decisions awaiting, the open questions and pending decisions; (5) next concrete action, left blank for the author. Sections 2 and 5 still need a human.
 
 `resume` prints the checklist and runs the parts a script can: the ledger status, `gh pr list --author @me --state open --json number,title,url` (`gh: unavailable` when it is missing or fails; the command still exits 0), and `pgrep -f` for each configured loop pattern (`ok` or `MISSING`). It ends with a reminder that **`ListAgents` is a harness tool, not a shell command**, so the session calls it itself. The loop patterns and whether `gh` is used come from local config (`loop_patterns`, `resume_gh`, or `MAESTRO_LOOP_PATTERNS`, `MAESTRO_RESUME_GH`; see [reference/local-config.md](reference/local-config.md)). Nothing is hardcoded.
 
