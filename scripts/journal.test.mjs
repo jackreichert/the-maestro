@@ -587,6 +587,27 @@ test('handoff fills Session metrics from the newest session, and says so when th
     assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* 3 turns \(1% of 180 roll\) · 100k read\/turn/);
 });
 
+test('handoff --update-context points CONTEXT.md at the new handoff once, replacing an old link, and touches nothing else', () => {
+    seedHandoff();
+    const ctx = join(tv, 'CONTEXT.md');
+    writeFileSync(ctx, '# test-proj\n\nGoals stay as they are.\n');
+    const day = new Date().toISOString().slice(0, 10);
+    const r = run('handoff', '--all', '--update-context', '--context-file', ctx);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(readFileSync(ctx, 'utf8'), `# test-proj\n\nLatest handoff: [[HANDOFF-${day}-all]] (${day})\n\nGoals stay as they are.\n`);
+    assert.match(run('handoff', '--all', '--force', '--update-context', '--context-file', ctx).out, /already linked/);
+    run('handoff', '--stream', 'Maestro', '--update-context', '--context-file', ctx);
+    assert.equal(readFileSync(ctx, 'utf8').match(/^Latest handoff:.*$/gm).length, 1, 'replaced, not added');
+    assert.match(readFileSync(ctx, 'utf8'), /Latest handoff: \[\[HANDOFF-.*-Maestro\]\]/);
+    const dry = run('handoff', '--all', '--force', '--dry-run', '--update-context', '--context-file', ctx);
+    assert.match(dry.out, /would point/);
+    assert.match(readFileSync(ctx, 'utf8'), /-Maestro\]\]/, 'a dry run writes nothing');
+    const missing = run('handoff', '--all', '--force', '--update-context', '--context-file', join(tv, 'nope.md'));
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /does not exist; the handoff was written/);
+    assert.equal(run('handoff', '--all', '--force').code, 0, 'no flag, no link');
+});
+
 test('handoff never overwrites without --force, honours --out, and appends nothing to the ledger', () => {
     seedHandoff();
     const before = readFileSync(ledgerFile(), 'utf8');

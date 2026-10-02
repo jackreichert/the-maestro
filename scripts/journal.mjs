@@ -67,7 +67,7 @@
  *   journal.mjs claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
- *   journal.mjs handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
+ *   journal.mjs handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
@@ -100,7 +100,7 @@
  * config file (see local-config.mjs).
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, linkSync, unlinkSync, realpathSync, statSync } from 'node:fs';
-import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
+import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS } from './local-config.mjs';
@@ -125,7 +125,7 @@ const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all', '--update-context']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -2027,10 +2027,27 @@ function cmdHandoff() {
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
     const sweep = runWorktreeSweep(true);
     const body = handoffText(stream, since, sweep?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next'), sweep, verbose: has('verbose') });
-    if (dryRun) { console.log(body); return; }
+    const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
+    if (dryRun) { console.log(body); if (contextFile) console.log(`would point ${contextFile} at ${basename(path)}`); return; }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
     console.log(`wrote ${path}`);
+    if (contextFile) updateContextLink(contextFile, path);
+}
+
+/**
+ * Points a project CONTEXT.md at the handoff just written, with one `Latest handoff: [[<note>]] (<date>)` line: an existing
+ * line is replaced, otherwise it goes under the first heading (or at the top). Running it again for the same note on the same day changes nothing.
+ * A missing file is reported and fails the command; nothing else in the file is touched.
+ */
+function updateContextLink(file, handoffPath) {
+    if (!existsSync(file)) { console.error(`--update-context: ${file} does not exist; the handoff was written but nothing was linked.`); process.exitCode = 1; return; }
+    const link = `Latest handoff: [[${basename(handoffPath, '.md')}]] (${today()})`;
+    const text = readFileSync(file, 'utf8');
+    const next = /^Latest handoff:.*$/m.test(text) ? text.replace(/^Latest handoff:.*$/m, () => link)
+        : /^# .*$/m.test(text) ? text.replace(/^# .*$/m, (h) => `${h}\n\n${link}`) : `${link}\n\n${text}`;
+    if (next !== text) writeFileSync(file, next);
+    console.log(`${next === text ? 'already linked' : 'linked'} ${file} -> ${basename(handoffPath, '.md')}`);
 }
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
