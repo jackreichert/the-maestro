@@ -82,6 +82,26 @@ test('roll appends a marked row without needing --model', () => {
     assert.deepEqual([rolled.model, rolled.used, rolled.tokens], ['n/a', ['tool:journal.mjs'], 'n/a']);
 });
 
+test('roll and scratch list <scripts_dir>/scratch with proposals when scripts_dir is set, and say nothing when it is not', () => {
+    const shelfDir = mkdtempSync(join(tmpdir(), 'journal-shelf-'));
+    mkdirSync(join(shelfDir, 'scratch'));
+    const f = join(shelfDir, 'scratch', 'tally.sh');
+    writeFileSync(f, '# tally the rows\n');
+    const old = new Date(Date.now() - 20 * 86400000);
+    utimesSync(f, old, old);
+    const id = idOf(run('start', 'finished', ...MARK).out);
+    run('done', id, ...MARK);
+    const on = (...a) => runEnv({ MAESTRO_SCRIPTS_DIR: shelfDir }, ...a);
+    for (const cmd of ['roll', 'scratch']) {
+        const r = on(cmd);
+        assert.equal(r.code, 0, r.err);
+        assert.match(r.out, /tally\.sh \| 20 \| 0 \| tally the rows \| delete-candidate/, cmd);
+    }
+    assert.ok(existsSync(f), 'proposals never delete');
+    assert.doesNotMatch(runEnv({}, 'roll').out, /scratch:/);
+    assert.match(runEnv({}, 'scratch').out, /scripts_dir is not set/);
+});
+
 test('root precedence: --vault beats LEDGER_ROOT beats VAULT_ROOT', () => {
     const ledgerRoot = mkdtempSync(join(tmpdir(), 'journal-ledger-root-'));
     const vaultRoot = mkdtempSync(join(tmpdir(), 'journal-vault-root-'));
