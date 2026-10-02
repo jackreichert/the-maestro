@@ -154,3 +154,12 @@ test('twin_flow_repos: empty by default, list from the file, environment wins', 
     assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: 'only_one' }).TWIN_FLOW_REPOS, 'only_one');
     assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: '' }).TWIN_FLOW_REPOS, '(unset)');
 });
+
+test('event loop settings: argv lists parse from JSON, junk is ignored, the dir defaults under the ledger root', () => {
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('ledger_root: /led\nnotify_command: ["send", "--to-me"]\ninbox_command: not json'));
+    const v = show();
+    assert.equal(v.EVENT_DIR, '/led/Events');
+    assert.equal(v.NOTIFY_COMMAND, '(set)');
+    assert.equal(v.INBOX_COMMAND, '(unset)');
+    assert.equal(show({ MAESTRO_EVENT_DIR: '/elsewhere' }).EVENT_DIR, '/elsewhere');
+});
