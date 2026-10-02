@@ -281,6 +281,7 @@ A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` sec
 | Command | Purpose and key flags |
 |---|---|
 | `index` | Full rebuild, atomic rename into place |
+| `tickets --pending` | Done items carrying a tracker key (`tracker_key_pattern`) with no recorded transition, since `--since` (default 14 days); `--json`. Record a transition with `log "moved ABC-1 to <status>" --transitioned ABC-1`. `prime` and `triage` flag pending ones |
 | `search "<fts query>"` | `--source ledger\|tickets\|handoffs\|archive`, `--stream`, `--limit 20`, `--json` (rebuilds first if a source changed) |
 | `stats [--json]` | Counts per table and open items per stream |
 | `query [<name>]` | Named queries: `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs`, `tickets`; `--sql "select ..."` is read-only raw SQL |
