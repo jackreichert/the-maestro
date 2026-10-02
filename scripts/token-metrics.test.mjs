@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine } from './token-metrics.mjs';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow } from './token-metrics.mjs';
 
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -61,6 +61,70 @@ test('pick keeps usage and metadata and drops content', () => {
     assert.equal(rec.model, 'claude-opus-5-5');
     assert.doesNotMatch(JSON.stringify(rec), /SENTINEL/);
     assert.doesNotMatch(JSON.stringify(pick(user('x', { kind: 'peer', handback: true, body: SENTINEL }))), /SENTINEL/);
+});
+
+test('pick reads compaction as two metadata flags and never the summary text', () => {
+    const boundary = pick({ type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'auto', summary: SENTINEL }, content: SENTINEL });
+    const summary = pick({ type: 'user', isCompactSummary: true, message: { role: 'user', content: SENTINEL } });
+    assert.deepEqual([boundary.compact, summary.compact], [true, true]);
+    assert.equal(pick(user('x', { kind: 'human' })).compact, false);
+    assert.equal(pick({ type: 'system', subtype: 'other' }).compact, false);
+    assert.equal(pick({ type: 'user', isCompactSummary: SENTINEL }).compact, false, 'only a boolean true counts');
+    assert.doesNotMatch(JSON.stringify([boundary, summary]), /SENTINEL/);
+    // The allowlist is the whole output shape: a new field here is a new thing the script reads.
+    assert.deepEqual(Object.keys(boundary).sort(), ['compact', 'handback', 'id', 'model', 'originKind', 'role', 'subtype', 'ts', 'type', 'usage']);
+});
+
+test('model mix covers orchestrator and subagent turns by family; units price the token kinds', () => {
+    const { day } = JSON.parse(run('--date', '2026-09-25', '--json').out);
+    assert.deepEqual(Object.keys(day.mix).sort(), ['haiku', 'opus', 'sonnet']);
+    assert.equal(day.mix.opus.read, 5000 + 6100 + 6310);
+    assert.equal(day.mix.haiku.read, 900);
+    assert.equal(day.mix.sonnet.read, 900);
+    // m1: fresh 10 + 1.25*1000 + 0.1*5000 + 5*100
+    assert.equal(day.mix.haiku.units, 5 + 1.25 * 100 + 0.1 * 900 + 5 * 20);
+    assert.equal(mixCell(day.mix, 'read'), 'opus 17.4k · haiku 900 · sonnet 900');
+});
+
+test('mix cells round-trip through the table', () => {
+    const mix = { opus: { read: 1_200_000, units: 3e6 }, haiku: { read: 0, units: 500 }, sonnet: { read: 40_000, units: 9e4 } };
+    assert.equal(mixCell(mix, 'read'), 'opus 1.2M · sonnet 40.0k');
+    assert.deepEqual(parseMix(mixCell(mix, 'units')), { opus: 3e6, sonnet: 90000, haiku: 500 });
+    assert.deepEqual(parseMix('-'), {});
+    assert.deepEqual(parseMix(undefined), {});
+});
+
+test('compaction restarts the since-compact count; the day keeps the longest run', () => {
+    const day = '2026-09-26T10:00:0';
+    const turn = (n) => assistant(`c${n}`, `${day}${n % 10}Z`, [1, 1, 100, 1]);
+    writeFileSync(join(projects, 'sess0002.jsonl'), jsonl([
+        ...[1, 2, 3, 4].flatMap(turn),
+        { type: 'system', subtype: 'compact_boundary', timestamp: `${day}5Z` },
+        { type: 'user', isCompactSummary: true, timestamp: `${day}5Z`, message: { role: 'user', content: SENTINEL } },
+        ...[5, 6].flatMap(turn),
+    ]));
+    const r = JSON.parse(run('--date', '2026-09-26', '--json').out);
+    assert.equal(r.day.turns, 6);
+    assert.equal(r.day.sinceCompact, 4);
+    assert.equal(r.sessions[0].sinceCompact, 4);
+    // no marker at all: the count is the whole session
+    assert.equal(JSON.parse(run('--date', '2026-09-25', '--json').out).day.sinceCompact, 3);
+});
+
+test('small agents (<10 turns) and Opus subagents are counted per subagent', () => {
+    const day = '2026-09-27T10:00:0';
+    writeFileSync(join(projects, 'sess0003.jsonl'), jsonl([user(`${day}0Z`, { kind: 'human' }), ...assistant('o1', `${day}1Z`, [1, 1, 10, 1])]));
+    const sub = (name, n, model) => writeFileSync(join(projects, 'sess0003', 'subagents', `agent-${name}.jsonl`),
+        jsonl(Array.from({ length: n }, (_, i) => assistant(`${name}${i}`, `${day}${i % 10}Z`, [1, 1, 100, 10], model)[0])));
+    mkdirSync(join(projects, 'sess0003', 'subagents'), { recursive: true });
+    sub('small', 9, 'claude-sonnet-5');
+    sub('edge', 10, 'claude-haiku-4-5');
+    sub('opus', 3, 'claude-opus-5-5');
+    const { day: d } = JSON.parse(run('--date', '2026-09-27', '--json').out);
+    assert.deepEqual([d.subagents, d.subSmall, d.subOpus], [3, 2, 1]);
+    assert.deepEqual(d.subByModel.opus, 3 * (1 + 1 + 100 + 10));
+    const row = toRow(d);
+    assert.deepEqual(row.slice(17), ['1', '2', '1', '336'], 'since compact, small agents, Opus subagents, Opus sub tokens');
 });
 
 test('turns dedupe by message id; wake-ups and prompts come from origin metadata', () => {

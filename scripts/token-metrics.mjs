@@ -43,7 +43,7 @@ import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_RE
 const TABLE_HEADER = [
     'Date', 'Sessions', 'Turns', 'Prompts', 'Wakes (notif/handback)', 'Output', 'Cache write',
     'Cache read', 'Fresh', 'Read/turn', 'Subagents', 'Sub turns', 'Sub tokens by model', 'Avg report',
-    'Sub growth/turn',
+    'Sub growth/turn', 'Read by model', 'Units by model', 'Max turns since compact', 'Small agents', 'Opus subagents', 'Opus sub tokens',
 ];
 
 // --- the only function allowed to look at a parsed transcript line ----------
@@ -60,6 +60,9 @@ export function pick(o) {
         model: typeof msg.model === 'string' ? msg.model : '',
         originKind: o.origin && typeof o.origin.kind === 'string' ? o.origin.kind : '',
         handback: Boolean(o.origin && o.origin.handback !== undefined),
+        // Compaction markers are two metadata flags, never the summary text: the system line with subtype
+        // `compact_boundary`, and the `isCompactSummary` boolean on the user line that carries the summary.
+        compact: (o.type === 'system' && o.subtype === 'compact_boundary') || o.isCompactSummary === true,
         usage: u && {
             fresh: num(u.input_tokens),
             write: num(u.cache_creation_input_tokens),
@@ -155,9 +158,12 @@ export function collect(projectsDir) {
             if (!sub.turns.length) continue;
             const s = bucket(sub.turns[0].date);
             s.subagents += 1;
+            if (sub.turns.length < SMALL_AGENT_TURNS) s.subSmall += 1;
+            if (sub.turns.some((t) => family(t.model) === 'opus')) s.subOpus += 1;
             for (const t of sub.turns) {
                 const st = bucket(t.date);
                 st.subTurns += 1;
+                addMix(st, t);
                 const fam = family(t.model);
                 st.subByModel[fam] = (st.subByModel[fam] || 0) + t.fresh + t.write + t.read + t.out;
                 if (t.growth !== undefined) { st.subGrowth += t.growth; st.subGrowthN += 1; }
@@ -206,14 +212,16 @@ function scanFile(path) {
     const seen = new Map();
     let last = null;
     let pending = null;
+    let since = 0;
     for (const line of readFileSync(path, 'utf8').split('\n')) {
         if (!line) continue;
         let rec;
         try { rec = pick(JSON.parse(line)); } catch { continue; }
-        if (rec.type === 'system' && rec.subtype === 'compact_boundary') { pending = null; last = null; continue; }
+        if (rec.compact) { pending = null; last = null; since = 0; continue; }
         if (rec.type === 'assistant' && rec.usage && rec.id) {
             if (seen.has(rec.id)) { Object.assign(seen.get(rec.id), rec.usage); continue; }
-            const t = { date: localDate(rec.ts), model: rec.model, ...rec.usage };
+            since += 1;
+            const t = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage };
             seen.set(rec.id, t);
             if (last) {
                 const ctxBefore = last.fresh + last.write + last.read;
@@ -246,8 +254,19 @@ const emptyStats = () => ({
     turns: 0, prompts: 0, wakesNotif: 0, wakesHandback: 0, peerMsgs: 0,
     out: 0, write: 0, read: 0, fresh: 0,
     subagents: 0, subTurns: 0, subWakes: 0, subByModel: {}, subGrowth: 0, subGrowthN: 0, reportTokens: 0, reportCount: 0,
+    mix: {}, sinceCompact: 0, subSmall: 0, subOpus: 0,
 });
-function addTurn(s, t) { s.turns += 1; s.out += t.out; s.write += t.write; s.read += t.read; s.fresh += t.fresh; }
+function addTurn(s, t) {
+    s.turns += 1; s.out += t.out; s.write += t.write; s.read += t.read; s.fresh += t.fresh;
+    s.sinceCompact = Math.max(s.sinceCompact, t.since);
+    addMix(s, t);
+}
+/** Per model family, cache-read tokens and input-equivalent units (see UNIT_WEIGHTS), orchestrator and subagent turns alike. */
+function addMix(s, t) {
+    const m = s.mix[family(t.model)] || (s.mix[family(t.model)] = { read: 0, units: 0 });
+    m.read += t.read;
+    m.units += t.fresh * UNIT_WEIGHTS.fresh + t.write * UNIT_WEIGHTS.write + t.read * UNIT_WEIGHTS.read + t.out * UNIT_WEIGHTS.out;
+}
 function addEvent(s, e) {
     if (e.kind === 'human') s.prompts += 1;
     else if (e.kind === 'task-notification') s.wakesNotif += 1;
@@ -257,9 +276,15 @@ function addEvent(s, e) {
 function merge(a, b) {
     for (const [k, v] of Object.entries(b)) {
         if (k === 'subByModel') for (const [m, n] of Object.entries(v)) a.subByModel[m] = (a.subByModel[m] || 0) + n;
+        else if (k === 'mix') for (const [m, x] of Object.entries(v)) { const c = a.mix[m] || (a.mix[m] = { read: 0, units: 0 }); c.read += x.read; c.units += x.units; }
+        else if (k === 'sinceCompact') a[k] = Math.max(a[k] || 0, v);
         else if (typeof v === 'number') a[k] = (a[k] || 0) + v;
     }
 }
+/** Cost of each token kind relative to one fresh input token. */
+export const UNIT_WEIGHTS = { fresh: 1, write: 1.25, read: 0.1, out: 5 };
+/** A subagent that finished in fewer turns than this is "small": cheaper done inline than dispatched. */
+export const SMALL_AGENT_TURNS = 10;
 export function family(model) {
     const m = /(opus|sonnet|haiku|fable)/i.exec(model || '');
     return m ? m[1].toLowerCase() : 'other';
@@ -290,11 +315,23 @@ const readPerTurn = (s) => (s.turns ? s.read / s.turns : NaN);
 const subGrowth = (s) => (s.subGrowthN ? s.subGrowth / s.subGrowthN : NaN);
 const byModel = (s) => Object.entries(s.subByModel).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${compact(n)}`).join(' · ') || '-';
 
+/** A mix cell: `opus 1.2M · sonnet 300k`, families with nothing left out; `-` when empty. Read back by parseMix. */
+export function mixCell(mix, key) {
+    return Object.entries(mix || {}).filter(([, v]) => v[key] > 0).sort((a, b) => b[1][key] - a[1][key]).map(([m, v]) => `${m} ${compact(v[key])}`).join(' · ') || '-';
+}
+/** The family totals back out of a mix cell: { opus: 1.2e6, sonnet: 3e5 }. */
+export function parseMix(text) {
+    const out = {};
+    for (const m of String(text || '').matchAll(/([a-z]+) (\d[\d.]*[kMB]?)/g)) out[m[1]] = uncompact(m[2]);
+    return out;
+}
+
 export function toRow(s) {
     return [
         s.date, s.sessions, s.turns, s.prompts, `${s.wakesNotif + s.wakesHandback} (${s.wakesNotif}/${s.wakesHandback})`,
         compact(s.out), compact(s.write), compact(s.read), compact(s.fresh), compact(readPerTurn(s)),
         s.subagents, s.subTurns, byModel(s), compact(avgReport(s)), compact(subGrowth(s)),
+        mixCell(s.mix, 'read'), mixCell(s.mix, 'units'), s.sinceCompact, s.subSmall, s.subOpus, compact(s.subByModel.opus || 0),
     ].map(String);
 }
 
@@ -309,9 +346,9 @@ function printDay(date, s) {
 }
 function printSessions(list) {
     if (!list.length) return;
-    console.log('\nSession   Turns  Prompts  Wakes  Read/turn  Cache read  Subagents');
+    console.log('\nSession   Turns  Prompts  Wakes  Read/turn  Cache read  Subagents  Max since compact');
     for (const s of list.sort((a, b) => b.read - a.read)) {
-        console.log(`${s.session}  ${String(s.turns).padStart(5)}  ${String(s.prompts).padStart(7)}  ${String(s.wakesNotif + s.wakesHandback).padStart(5)}  ${compact(readPerTurn(s)).padStart(9)}  ${compact(s.read).padStart(10)}  ${String(s.subagents).padStart(9)}`);
+        console.log(`${s.session}  ${String(s.turns).padStart(5)}  ${String(s.prompts).padStart(7)}  ${String(s.wakesNotif + s.wakesHandback).padStart(5)}  ${compact(readPerTurn(s)).padStart(9)}  ${compact(s.read).padStart(10)}  ${String(s.subagents).padStart(9)}  ${String(s.sinceCompact).padStart(17)}`);
     }
 }
 function printCurve(curve) {
@@ -348,8 +385,9 @@ export function writeTable(path, rows) {
         const at = lines.findIndex((l) => l.startsWith('| Date |'));
         if (at > 0) head = lines.slice(0, at);
     }
-    const body = [...rows].sort((a, b) => a[0].localeCompare(b[0])).map(([, cells]) => `| ${cells.join(' | ')} |`);
-    const align = TABLE_HEADER.map((h, i) => (i === 0 || i === 12 ? '---' : '---:')).join('|');
+    // Rows written before a column existed are padded so every row is as wide as the header.
+    const body = [...rows].sort((a, b) => a[0].localeCompare(b[0])).map(([, cells]) => `| ${TABLE_HEADER.map((h, i) => cells[i] ?? '-').join(' | ')} |`);
+    const align = TABLE_HEADER.map((h, i) => ([0, 12, 15, 16].includes(i) ? '---' : '---:')).join('|');
     const table = [`| ${TABLE_HEADER.join(' | ')} |`, `|${align}|`, ...body];
     writeFileSync(path, `${[...head, ...table].join('\n')}\n`);
 }
