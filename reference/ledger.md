@@ -202,7 +202,9 @@ node $J resume
 ```
 
 Run the [branch sweep](#branch-sweep) first and put its table to the user, so the handoff leaves no
-stale worktrees or merged branches behind unreviewed.
+merged branches behind unreviewed. `handoff` itself fills **Cleanup candidates** with the worktrees the
+[roll cleanup](#roll-removes-stale-worktrees) would keep, each with its reason (read-only; `--container <dir>`
+picks the directory, default the current one; `--no-worktree-sweep` skips it).
 
 `handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (open `question` and `decision` items); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
 
@@ -219,7 +221,7 @@ Filing a ticket is itself worth a ledger line (`--ticket <id>`); the reverse is 
 
 ## Compression
 
-`roll` is the compressor. It writes the day's finished work to `Journal/YYYY-MM-DD.md`, leaves a
+`roll` is the compressor. (It also removes stale worktrees, see [Roll removes stale worktrees](#roll-removes-stale-worktrees).) It writes the day's finished work to `Journal/YYYY-MM-DD.md`, leaves a
 `[[link]]` in `CURRENT.md`, and **keeps open items on the board** — in flight, blocked, and awaiting
 the user all survive the roll, because they are still true tomorrow.
 
@@ -289,9 +291,10 @@ two ledger lines.
 
 ### Branch sweep
 
-Right before `roll` (and at every handoff), check every repo in the container for worktrees and
-remote branches that can be deleted, and put them to the user as one batch. **Never delete without
-approval.**
+Right before `roll` (and at every handoff), check every repo in the container for remote branches
+(and worktrees) that can be deleted, and put them to the user as one batch. **Never delete a remote
+branch without approval.** Worktrees are the exception: `roll` removes the qualifying ones itself,
+see [Roll removes stale worktrees](#roll-removes-stale-worktrees).
 
 1. Run `node scripts/branch-sweep.mjs --container <container>` (read-only; it only fetches).
    Add `--repo <name>` for one repo and `--json` for the machine form.
@@ -311,6 +314,28 @@ approval.**
 What qualifies, and the settings (`git_emails`, `protected_branches`, `sweep_merge_targets`,
 `sweep_idle_minutes`, `twin_flow_repos`): the header of the script and [local-config.md](local-config.md).
 Merge targets default to develop, plus staging in twin-flow repos, where both twin PRs must have merged.
+
+### Roll removes stale worktrees
+
+`node $J roll` also runs the worktree half of the sweep, with no approval step (a standing approval, ledger
+decision 7p7d). The same command is `node scripts/branch-sweep.mjs --apply-worktrees [--dry-run]`.
+
+1. `git worktree prune` for the entries whose directory is missing (locked ones stay).
+2. A fetch, then a worktree-only scan with the rules above (nothing is forked): clean, no ignored file worth
+   keeping, nothing unpushed, branch merged or upstream gone, unlocked, idle, not a live skill, not under a live
+   claim. A **detached** worktree qualifies when it passes the same worktree rules and its HEAD is reachable from
+   some origin ref.
+3. Right before each removal the worktree is re-read: HEAD must still be the scanned commit, nothing modified or
+   untracked, a detached HEAD still on origin. Then `git worktree remove` without `--force`. A local branch is
+   never deleted; remote branches are not touched and keep the flow above.
+4. It prints a line per `removed`, `pruned` and `kept` worktree with the reason (uncommitted changes, untracked
+   files, N unpushed commits, not merged, locked, live claim, idle), then a count. A fetch failure removes nothing.
+   Rerunning is a no-op once nothing qualifies.
+
+Flags on `roll`: `--container <dir>` (default the current directory), `--dry-run` (report only, no prune, no
+removal), `--no-worktree-sweep`. The sweep runs even when there is nothing to archive, and a failure in it is
+printed, never fatal to the roll. Anything kept that holds work stays on the board through the handoff's
+**Cleanup candidates**.
 
 ## Reading it back
 

@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,10 +14,11 @@ const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal
 let vault;
 let tv;
 let projects;
+const emptyCwd = mkdtempSync(join(tmpdir(), 'journal-cwd-'));
 
 function run(...args) {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8',
+        encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
         env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
@@ -506,7 +507,7 @@ test('models add is idempotent, refuses alias collisions, and coexists with stre
 
 const runEnv = (env, ...args) => {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', ...env },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 };
@@ -1110,4 +1111,60 @@ test('a grant that is both resolved with --approval and approve-tagged is listed
     assert.equal(all.length, 1);
     assert.equal(g.standing.length, 1);
     assert.equal(g.standing[0].scope, 'this PR');
+});
+
+// ── roll sweeps stale worktrees ─────────────────────────────────────────────
+
+/** A container holding one repo cloned from a bare origin, with a clean and a dirty detached worktree outside the container. */
+function sweepWorld() {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'roll-sweep-')));
+    const git = (cwd, ...a) => { const r = spawnSync('git', ['-C', cwd, '-c', 'user.email=me@example.com', '-c', 'user.name=T', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+    git(root, 'init', '-q', '--bare', '-b', 'main', 'origin.git');
+    mkdirSync(join(root, 'box'));
+    git(root, 'clone', '-q', join(root, 'origin.git'), join(root, 'box', 'proj'));
+    const repo = join(root, 'box', 'proj');
+    writeFileSync(join(repo, 'a.txt'), 'a\n'); git(repo, 'add', 'a.txt'); git(repo, 'commit', '-q', '-m', 'init');
+    git(repo, 'branch', 'develop'); git(repo, 'push', '-q', 'origin', 'main', 'develop'); git(repo, 'remote', 'set-head', 'origin', 'main');
+    const clean = join(root, 'clean'); const dirty = join(root, 'dirty');
+    git(repo, 'worktree', 'add', '-q', '--detach', clean, 'origin/develop');
+    git(repo, 'worktree', 'add', '-q', '--detach', dirty, 'origin/develop');
+    writeFileSync(join(dirty, 'wip.txt'), 'unsaved\n');
+    // Past the idle window (60 min by default), so only the rules under test decide.
+    const old = new Date(Date.now() - 3 * 36e5);
+    for (const wt of [clean, dirty]) {
+        const gd = git(wt, 'rev-parse', '--absolute-git-dir');
+        for (const p of [wt, join(gd, 'HEAD'), join(gd, 'index'), join(gd, 'logs', 'HEAD')]) if (existsSync(p)) utimesSync(p, old, old);
+    }
+    return { container: join(root, 'box'), clean, dirty };
+}
+
+test('roll removes a stale worktree without asking, keeps dirty ones with the reason, and a second roll is a no-op', () => {
+    const w = sweepWorld();
+    const idle = ['--container', w.container];
+    const env = {};
+    const first = runEnv(env, 'roll', ...idle);
+    assert.equal(first.code, 0, first.err);
+    assert.match(first.out, new RegExp(`removed +${w.clean}`));
+    assert.match(first.out, new RegExp(`kept +${w.dirty} .*untracked files`));
+    assert.match(first.out, /worktrees: 1 removed, 0 pruned, 1 kept\./);
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [false, true]);
+    assert.match(runEnv(env, 'roll', ...idle).out, /worktrees: 0 removed, 0 pruned, 1 kept\./);
+});
+
+test('roll --dry-run and --no-worktree-sweep leave every worktree in place', () => {
+    const w = sweepWorld();
+    const env = {};
+    assert.match(runEnv(env, 'roll', '--dry-run', '--container', w.container).out, /would remove +\S+clean/);
+    assert.doesNotMatch(runEnv(env, 'roll', '--no-worktree-sweep', '--container', w.container).out, /worktrees:/);
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
+});
+
+test('handoff lists the worktrees a sweep would keep under Cleanup candidates, and removes nothing', () => {
+    const w = sweepWorld();
+    run('start', 'port the fix', ...MARK, '--stream', 'Launch', '--new-stream');
+    const r = runEnv({}, 'handoff', '--stream', 'Launch', '--container', w.container, '--dry-run');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`## Cleanup candidates[^]*- \`${w.dirty}\` \\(proj\\): .*untracked files`));
+    assert.doesNotMatch(r.out, new RegExp(`- \`${w.clean}\``));
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
