@@ -14,10 +14,11 @@ const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal
 let vault;
 let tv;
 let projects;
+const emptyCwd = mkdtempSync(join(tmpdir(), 'journal-cwd-'));
 
 function run(...args) {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8',
+        encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
         env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
@@ -506,7 +507,7 @@ test('models add is idempotent, refuses alias collisions, and coexists with stre
 
 const runEnv = (env, ...args) => {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', ...env },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 };
