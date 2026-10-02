@@ -1,12 +1,12 @@
 // Run: node --test scripts/event-loop.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
-import { addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
+import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
 
 const SCRIPT = new URL('./event-loop.mjs', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
@@ -244,4 +244,29 @@ test('pace keeps an overnight watch running through quiet weekends too', () => {
   const config = { quietHours: 'off', quietWeekends: true, tz: 'UTC' };
   addWatch(dir, { id: 'n', type: 't', target: 'y', notify_overnight: true }, SATURDAY);
   assert.equal(pace({ dir, config, now: SATURDAY }).stop, undefined);
+});
+
+test('lock: a stale lock is replaced by ours, and a live or just-created empty one is refused', () => {
+  const dir = tempDir();
+  const file = join(dir, 'loop.lock');
+  writeFileSync(file, '99999999');
+  acquireLock(dir, process.pid);
+  assert.equal(readFileSync(file, 'utf8'), String(process.pid));
+  writeFileSync(file, '');
+  assert.throws(() => acquireLock(dir), /starting/);
+  const old = new Date(Date.now() - 60000);
+  utimesSync(file, old, old);
+  assert.equal(acquireLock(dir), file);
+});
+
+test('lock: SIGTERM releases it', async () => {
+  const dir = tempDir();
+  const lib = new URL('./lib/watch-registry.mjs', import.meta.url).href;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `import { acquireLock } from '${lib}'; acquireLock(${JSON.stringify(dir)}); console.log('ready'); setInterval(() => {}, 1000);`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise((resolve) => child.stdout.once('data', resolve));
+  assert.equal(existsSync(join(dir, 'loop.lock')), true);
+  const closed = new Promise((resolve) => child.once('close', resolve));
+  child.kill('SIGTERM');
+  await closed;
+  assert.equal(existsSync(join(dir, 'loop.lock')), false);
 });

@@ -6,7 +6,7 @@
  * file is never rewritten. state.json holds each watch's last checked state and the event timestamps the
  * cadence reads; digest.jsonl holds events nobody has read yet.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const DEFAULT_TTL_MS = 24 * 3600 * 1000;
@@ -92,20 +92,36 @@ const alive = (pid) => {
   try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
 };
 
+const LOCK_GRACE_MS = 2000;
+const LOCK_ATTEMPTS = 5;
+
 /**
  * One loop at a time: two loops over one registry would each report every event. The lock file holds the
- * owner's pid; a lock whose process is gone (or whose content is junk) is taken over. Released on exit.
+ * owner's pid; a lock whose process is gone (or whose content is junk) is removed and taken with an exclusive
+ * create, retried a few times. An empty file younger than a short grace is a lock being written, so it counts
+ * as live. Released on exit, SIGINT and SIGTERM.
  */
 export function acquireLock(dir, pid = process.pid) {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'loop.lock');
-  try {
-    writeFileSync(file, String(pid), { flag: 'wx' });
-  } catch {
-    const owner = Number(readFileSync(file, 'utf8'));
-    if (owner > 0 && alive(owner)) throw new Error(`another event loop is running (pid ${owner})`);
-    writeFileSync(file, String(pid));
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      writeFileSync(file, String(pid), { flag: 'wx' });
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      if (attempt >= LOCK_ATTEMPTS) throw new Error('could not take the loop lock; try again');
+      let text;
+      try { text = readFileSync(file, 'utf8'); } catch (readErr) { if (readErr.code === 'ENOENT') continue; throw readErr; }
+      const owner = Number(text);
+      if (text.trim() === '' && Date.now() - statSync(file, { throwIfNoEntry: false })?.mtimeMs < LOCK_GRACE_MS) throw new Error('another event loop is starting');
+      if (owner > 0 && alive(owner)) throw new Error(`another event loop is running (pid ${owner})`);
+      // Remove only the stale lock we read; a faster process may have replaced it since.
+      if (readFileSync(file, 'utf8') === text) rmSync(file, { force: true });
+    }
   }
-  process.on('exit', () => rmSync(file, { force: true }));
+  const release = () => { try { if (readFileSync(file, 'utf8') === String(pid)) rmSync(file, { force: true }); } catch { /* already gone */ } };
+  process.on('exit', release);
+  for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) process.on(sig, () => { release(); process.exit(code); });
   return file;
 }
