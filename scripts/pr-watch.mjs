@@ -17,8 +17,8 @@
  * Standing conditions (an approved PR left unmerged) wake once, when they first appear or change
  * (a new approval, a moved head), then stay quiet; every report still lists them.
  *
- * Each tick also requests a Copilot review on any draft PR that Copilot hasn't
- * reviewed and isn't already requested on. Its threads then arrive as THREAD lines.
+ * Each tick also requests a Copilot review on any draft PR, in a copilot_orgs owner,
+ * that Copilot hasn't reviewed and isn't already requested on. Its threads then arrive as THREAD lines.
  *
  *   pr-watch.mjs [--interval N] [--once] [--baseline] --state <file>
  *     --interval  pin the poll to N seconds; by default the cadence adapts to activity and
@@ -29,7 +29,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import {
-  GH_LOGIN, PR_SEARCH, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
+  COPILOT_ORGS, GH_LOGIN, PR_SEARCH, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_QUIET_WEEKENDS, WATCH_TZ,
 } from './local-config.mjs';
 import { floorSeconds, nextInterval } from './lib/cadence.mjs';
@@ -55,6 +55,9 @@ function parsePin(text) {
 
 const SELF = GH_LOGIN || execFileSync('gh', ['api', 'user', '--jq', '.login'], { encoding: 'utf8' }).trim();
 const COPILOT = 'copilot-pull-request-reviewer';
+// Fail closed: Copilot is requested only where the repo owner is listed in copilot_orgs (GitHub logins are case-insensitive).
+const copilotOwners = new Set(COPILOT_ORGS.map((o) => o.toLowerCase()));
+const copilotAllowed = (nameWithOwner) => copilotOwners.has(nameWithOwner.split('/')[0].toLowerCase());
 // The cadence adapts to activity and quiet hours (lib/cadence.mjs); --interval N pins it instead.
 const PINNED_S = parsePin(opt('--interval'));
 const CADENCE = {
@@ -107,7 +110,7 @@ function fetchBoard() {
       number: pr.number,
       isDraft: pr.isDraft,
       head: pr.headRefOid,
-      needsCopilot: pr.isDraft && !copilotSeen,
+      needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
       threads: pr.reviewThreads.nodes
         .filter((t) => !t.isResolved && notSelf(t.comments.nodes[0]?.author?.login))
@@ -209,7 +212,8 @@ const unreported = (board, reported) => standingConditions(board).filter((c) => 
 const reportedNow = (board) => Object.fromEntries(standingConditions(board).map((c) => [c.id, c.sig]));
 
 // The user wants Copilot's pass resolved before they review a draft, so request Copilot
-// on any draft it has neither reviewed nor been asked to review. It runs once per
+// on any draft, in a repo owned by a copilot_orgs entry, that it has neither reviewed
+// nor been asked to review. It runs once per
 // PR: after that the request (or its review) makes needsCopilot false.
 function requestCopilot(board) {
   const requested = [];
