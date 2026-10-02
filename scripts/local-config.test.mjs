@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig, numberMap, DEFAULT_COST_TARGETS } from './local-config.mjs';
+import { parseConfig, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.mjs';
 
 const SCRIPT = new URL('./local-config.mjs', import.meta.url).pathname;
 const block = (body) => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
@@ -237,4 +237,26 @@ test('cost_targets overrides defaults key by key; junk keeps the default; no wei
 test('model_price_weights needs opus, sonnet and haiku; a partial set counts as unset', () => {
     assert.equal(show({ MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2' }).MODEL_PRICE_WEIGHTS, '(unset)');
     assert.equal(show({ MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2, haiku=0.1, other=2' }).MODEL_PRICE_WEIGHTS, 'opus=1, sonnet=0.2, haiku=0.1, other=2');
+});
+
+const PRICES = 'opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: input=2, cache_write_5m=2.5, cache_write_1h=4, cache_read=0.2, output=10; haiku: input=1, cache_write_5m=1.25, cache_write_1h=2, cache_read=0.1, output=5';
+
+test('numberMap keys may carry digits, as in cache_write_5m', () => {
+    assert.deepEqual(numberMap('cache_write_5m=5, cache_write_1h=8'), { cache_write_5m: 5, cache_write_1h: 8 });
+});
+
+test('parseModelPrices reads per-family groups, defaults the 1h write to the 5m price, and drops an incomplete family', () => {
+    const p = parseModelPrices(`${PRICES}; fable: input=4, output=20`);
+    assert.deepEqual(Object.keys(p), ['opus', 'sonnet', 'haiku']);
+    assert.deepEqual(p.opus, { input: 4, cache_write_5m: 5, cache_write_1h: 8, cache_read: 0.2, output: 20 });
+    assert.equal(parseModelPrices('other: input=1, cache_write_5m=2, cache_read=0.1, output=5').other.cache_write_1h, 2);
+    assert.deepEqual(parseModelPrices(''), {});
+});
+
+test('model_prices needs opus, sonnet and haiku; no prices are built in', () => {
+    assert.equal(show().MODEL_PRICES, '(unset)');
+    assert.equal(show({ MAESTRO_MODEL_PRICES: PRICES.split('; haiku')[0] }).MODEL_PRICES, '(unset)');
+    assert.match(show({ MAESTRO_MODEL_PRICES: PRICES }).MODEL_PRICES, /^opus\(input=4 cache_write_5m=5 cache_write_1h=8 cache_read=0\.2 output=20\); sonnet\(/);
+    write(join(home, '.config', 'the-maestro', 'config.md'), block(`model_prices: ${PRICES}   # fetched 2026-10-02`));
+    assert.match(show().MODEL_PRICES, /haiku\(input=1 cache_write_5m=1\.25 cache_write_1h=2 cache_read=0\.1 output=5\)$/);
 });
