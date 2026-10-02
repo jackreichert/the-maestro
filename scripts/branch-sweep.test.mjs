@@ -613,10 +613,25 @@ test('removeWorktree refuses when the worktree changed after the scan, and never
     const ctx = ctxFor({ gh: () => [] });
     const [item] = scanRepo(w.repo, ctx).items;
     writeFileSync(join(wt, 'late.txt'), 'arrived after the scan\n');
-    assert.match(removeWorktree(w.repo, item).message, /uncommitted or untracked/);
+    assert.match(removeWorktree(w.repo, item).message, /uncommitted, untracked/);
     rmSync(join(wt, 'late.txt'));
     commit(wt, 'late.txt', 'committed after the scan\n');
     assert.match(removeWorktree(w.repo, item).message, /moved since it was scanned/);
+    assert.equal(existsSync(wt), true);
+});
+
+test('removeWorktree re-checks ignored and hidden-untracked files itself, whatever the repo config says', () => {
+    const w = world();
+    writeFileSync(join(w.repo, '.gitignore'), 'secret.env\n'); sh(w.repo, 'add', '.gitignore');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'ignore'); sh(w.repo, 'push', '-q', 'origin', 'main');
+    sh(w.repo, 'config', 'status.showUntrackedFiles', 'no');
+    const wt = join(w.root, 'cfg'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/main');
+    const [item] = scanRepo(w.repo, ctxFor({ gh: () => [] })).items.filter((i) => i.name === wt);
+    writeFileSync(join(wt, 'secret.env'), 'kept\n');
+    assert.match(removeWorktree(w.repo, item).message, /ignored files/);
+    rmSync(join(wt, 'secret.env'));
+    writeFileSync(join(wt, 'notes.txt'), 'hidden by config\n');
+    assert.match(removeWorktree(w.repo, item).message, /untracked/);
     assert.equal(existsSync(wt), true);
 });
 

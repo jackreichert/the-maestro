@@ -307,7 +307,7 @@ const WORKTREE_RULES = [
 
 function worktreeBlocker(g, w, repoName, ctx, live) {
   const wg = existsSync(w.path) ? gitIn(w.path) : null;
-  const status = wg ? wg('status', '--porcelain', '--ignored=matching') : { ok: true, out: '' };
+  const status = wg ? wg('status', '--porcelain', '--untracked-files=all', '--ignored=matching') : { ok: true, out: '' };
   const lines = status.out.split('\n').filter(Boolean);
   const disposable = new Set(ctx.disposableIgnored || []);
   const ignored = lines.filter((l) => l.startsWith('!!')).map((l) => l.slice(3));
@@ -535,23 +535,26 @@ export function apply(ids, container, ctx, only) {
       return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ' (or its tip moved since it was listed)'}` };
     }
     if (item.kind === 'remote-branch') return deleteRemoteBranch(path, item, id);
-    return removeWorktree(path, item, id);
+    return removeWorktree(path, item, id, ctx.disposableIgnored);
   });
 }
 
 /**
  * Removes one worktree the scan listed, never with --force. Right before the removal it re-reads the worktree itself, so
- * what the scan saw cannot have gone stale: HEAD must still be the scanned commit, nothing may be modified or untracked,
+ * what the scan saw cannot have gone stale: HEAD must still be the scanned commit, nothing may be modified, untracked or ignored-but-worth-keeping,
  * and a detached HEAD must still be on origin (once removed, its commits would survive only in the reflog).
  */
-export function removeWorktree(path, item, id = item.id) {
+export function removeWorktree(path, item, id = item.id, disposableIgnored = SWEEP_DISPOSABLE_IGNORED) {
   const wg = gitIn(item.name);
   const refuse = (m) => ({ id, done: false, message: `refused: ${item.name} ${m}` });
   const head = wg('rev-parse', 'HEAD');
   if (!head.ok || head.out !== item.head) return refuse('moved since it was scanned');
-  const status = wg('status', '--porcelain');
+  // --untracked-files=all overrides a repo's status.showUntrackedFiles=no, which `git worktree remove` would otherwise honour too.
+  const status = wg('status', '--porcelain', '--untracked-files=all', '--ignored=matching');
   if (!status.ok) return refuse(`status unreadable (${status.err})`);
-  if (status.out) return refuse('has uncommitted or untracked files');
+  const disposable = new Set(disposableIgnored);
+  const keeps = status.out.split('\n').filter(Boolean).filter((l) => !l.startsWith('!!') || !l.slice(3).split('/').some((seg) => disposable.has(seg)));
+  if (keeps.length) return refuse('has uncommitted, untracked or non-disposable ignored files');
   if (item.detached && unpushedCount(wg, 'HEAD') !== 0) return refuse('is detached and not on origin');
   const r = run('git', ['-C', path, 'worktree', 'remove', item.name]);
   return { id, done: r.ok, message: r.ok ? `deleted ${item.kind} ${item.name}` : `failed: ${r.err}` };
@@ -588,7 +591,7 @@ export function sweepWorktrees(container, ctx, { only, dryRun = false } = {}) {
     for (const item of scan.items) {
       if (scan.fetchFailed) { keep(item, 'git fetch failed, so the refs may be stale'); continue; }
       if (dryRun) { out.removed.push({ repo, path: item.name, why: item.why }); continue; }
-      const r = removeWorktree(path, item);
+      const r = removeWorktree(path, item, item.id, ctx.disposableIgnored);
       if (r.done) out.removed.push({ repo, path: item.name, why: item.why });
       else keep(item, r.message.replace(`refused: ${item.name} `, 'refused: '));
     }
