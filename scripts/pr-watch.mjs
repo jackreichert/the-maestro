@@ -299,8 +299,9 @@ async function main() {
       board = fetchBoard();
     } catch (err) {
       // Network blips and gh rate limits are transient; wait and retry.
-      console.error(`fetch failed, retrying next tick: ${err.message.split('\n')[0]}`);
-      if (flag('--once')) { process.exitCode = 1; return; }
+      const once = flag('--once');
+      console.error(`fetch failed${once ? '' : ', retrying next tick'}: ${err.message.split('\n')[0]}`);
+      if (once) { process.exitCode = 1; return; }
       if (!(await wait(events))) return;
       continue;
     }
