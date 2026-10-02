@@ -22,7 +22,7 @@ export function summarize(checks) {
   const failed = by('fail', 'cancel').map((c) => c.name).sort();
   const pending = by('pending').length;
   const overall = failed.length ? 'failing' : pending ? 'pending' : checks.length ? 'passing' : 'none';
-  return { overall, total: checks.length, failed: failed.slice(0, MAX_NAMED), settled: checks.length > 0 && pending === 0 };
+  return { overall, total: checks.length, failed, settled: checks.length > 0 && pending === 0 };
 }
 
 export function check(target, ctx) {
@@ -37,7 +37,7 @@ export function check(target, ctx) {
 }
 
 export function diff(prev, next) {
-  const names = next.failed.join(', ');
+  const names = next.failed.length > MAX_NAMED ? `${next.failed.slice(0, MAX_NAMED).join(', ')} and ${next.failed.length - MAX_NAMED} more` : next.failed.join(', ');
   const now = next.overall === 'failing' ? { summary: `CI failing: ${names}` }
     : next.overall === 'passing' ? { summary: `CI passing (${next.total} checks)` } : null;
   if (!prev) return next.overall === 'failing' || next.overall === 'passing' ? [now] : [];
