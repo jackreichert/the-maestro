@@ -123,6 +123,12 @@ const validZone = (name) => {
   try { return name ? new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone : undefined; } catch { return undefined; }
 };
 
+/** Turns after which the status footer says "roll now" (cost/budget.md, session hygiene). Default 180. */
+export const ROLL_TURNS = positive(pick('MAESTRO_ROLL_TURNS', 'roll_turns'), 180);
+
+/** Cache-read tokens per turn at which the status footer says "roll now". A plain number, 350000 not 350k. Default 350000. */
+export const ROLL_READ_PER_TURN = positive(pick('MAESTRO_ROLL_READ_PER_TURN', 'roll_read_per_turn'), 350000);
+
 /** PR watcher: fastest poll in seconds. pr-watch.mjs never goes under 300 whatever this says. */
 export const WATCH_MIN_INTERVAL = positive(pick('MAESTRO_WATCH_MIN_INTERVAL', 'watch_min_interval'), 300);
 

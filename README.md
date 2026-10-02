@@ -6,7 +6,7 @@ It does not implement features itself. Implementation happens in the target repo
 
 ## What you get
 
-- A session protocol: resolve the repo, scout, ticket, dispatch, relay, then close with a status footer.
+- A session protocol: resolve the repo, scout, ticket, dispatch, relay, then close with a status footer (agents, ledger, and how full the session is).
 - A greeting that always comes back with a paste-ready standup update and today's board, not just "hey".
 - An append-only ledger so "what did we get done today?" is already written down, with workstreams (streams) for epics.
 - Approvals tracking: permissions the user grants mid-conversation are logged as `standing` or `one-off`, and a weekly digest (`journal.mjs approvals`) lists them so each standing one can be kept, narrowed or revoked. The review day is configurable (`approvals_review_day`, default Friday).
@@ -326,7 +326,7 @@ node $J resolve "follow-up" --answer "Yes, no consumer yet" "${M[@]}"
 node $J status                               # open items + done today
 node $J standup                              # end-of-day summary, ready to paste
 node $J roll                                 # archive the day, keep open items
-node $J status --footer                      # the reply-footer Ledger lines, one per active stream
+node $J status --footer                      # the reply-footer lines: Ledger (one per active stream) and Session (turns and read/turn of the current session, `roll now` past `roll_turns` / `roll_read_per_turn`)
 node $J handoff --stream Launch              # scaffold the five-part handoff (see below)
 node $J resume                               # the verify-on-resume checklist
 node $J log "<text>" --kind decision --approval standing --scope "<what it covers>"   # log a granted permission (standing | one-off)
