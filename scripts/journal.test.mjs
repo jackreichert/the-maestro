@@ -1146,7 +1146,8 @@ test('roll removes a stale worktree without asking, keeps dirty ones with the re
     const first = runEnvIn(w.container, env, 'roll');
     assert.equal(first.code, 0, first.err);
     assert.match(first.out, new RegExp(`removed +${w.clean}`));
-    assert.match(first.out, new RegExp(`kept +${w.dirty} .*untracked files`));
+    assert.match(first.out, /kept +1  untracked files/);
+    assert.match(runEnvIn(w.container, env, 'roll', '--verbose').out, new RegExp(`kept +${w.dirty} .*untracked files`));
     assert.match(first.out, /worktrees: 1 removed, 0 pruned, 1 kept\./);
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [false, true]);
     assert.match(runEnvIn(w.container, env, 'roll').out, /worktrees: 0 removed, 0 pruned, 1 kept\./);

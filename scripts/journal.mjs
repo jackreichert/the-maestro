@@ -973,7 +973,7 @@ function sweepRootRefusal(root, from) {
  */
 function sweepWorktreesForRoll() {
     const result = runWorktreeSweep(dryRun);
-    if (result) console.log(worktreeSweepLines(result, dryRun).join('\n'));
+    if (result) console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
 }
 
 /**
