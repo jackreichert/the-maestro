@@ -1950,7 +1950,6 @@ function artifactsOf(items) {
     return [...found.values()];
 }
 
-/** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
 /**
  * The worktrees the roll sweep keeps. One line each by default; with `summary` (a sweep result, used by `handoff --all`,
  * where there can be hundreds) it is the sweep's totals and the kept ones as counts by reason.
@@ -1963,6 +1962,7 @@ function cleanupWorktreeLines(kept, summary) {
     return kept.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', ...kept.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : [];
 }
 
+/** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
 function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '', sweep = null, verbose = false } = {}) {
     const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const d = today();
@@ -2037,15 +2037,17 @@ function cmdHandoff() {
 
 /**
  * Points a project CONTEXT.md at the handoff just written, with one `Latest handoff: [[<note>]] (<date>)` line: an existing
- * line is replaced, otherwise it goes under the first heading (or at the top). Running it again for the same note on the same day changes nothing.
+ * line is replaced, otherwise it goes under the first heading (or at the top, after any YAML frontmatter). Running it again for the same note on the same day changes nothing.
  * A missing file is reported and fails the command; nothing else in the file is touched.
  */
 function updateContextLink(file, handoffPath) {
     if (!existsSync(file)) { console.error(`--update-context: ${file} does not exist; the handoff was written but nothing was linked.`); process.exitCode = 1; return; }
     const link = `Latest handoff: [[${basename(handoffPath, '.md')}]] (${today()})`;
     const text = readFileSync(file, 'utf8');
+    const front = text.match(/^---\n[\s\S]*?\n---\n/)?.[0] || ''; // YAML frontmatter stays first
+    const body = text.slice(front.length);
     const next = /^Latest handoff:.*$/m.test(text) ? text.replace(/^Latest handoff:.*$/m, () => link)
-        : /^# .*$/m.test(text) ? text.replace(/^# .*$/m, (h) => `${h}\n\n${link}`) : `${link}\n\n${text}`;
+        : /^# .*$/m.test(body) ? front + body.replace(/^# .*$/m, (h) => `${h}\n\n${link}`) : `${front}${link}\n\n${body}`;
     if (next !== text) writeFileSync(file, next);
     console.log(`${next === text ? 'already linked' : 'linked'} ${file} -> ${basename(handoffPath, '.md')}`);
 }
