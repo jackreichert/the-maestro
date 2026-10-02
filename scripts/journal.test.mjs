@@ -548,6 +548,22 @@ test('handoff scaffolds the five parts from the ledger for one stream only', () 
     assert.match(text, /^## Cleanup candidates\n\n_Run `node scripts\/branch-sweep\.mjs`/m);
 });
 
+test('handoff --all covers every stream, tags each item with its stream, and writes a draft named all', () => {
+    const { wip } = seedHandoff();
+    const r = run('handoff', '--all');
+    assert.equal(r.code, 0, r.err);
+    const text = readFileSync(handoffFile('all'), 'utf8');
+    assert.match(text, /^status: draft$/m);
+    assert.match(text, /^stream: all$/m);
+    assert.match(text, /^# All streams handoff, /m);
+    const s1 = section(text, 1);
+    assert.match(s1, new RegExp(`\`${wip}\` \\[in flight\\] port the fix.*stream: Launch`));
+    assert.match(s1, /other stream work.*stream: Maestro/);
+    assert.match(section(text, 4), /\[question\] ship on Friday\?/);
+    assert.equal(run('handoff', '--all').code, 1, 'still never overwrites without --force');
+    assert.equal(run('handoff', '--all', '--stream', 'Nope', '--force').code, 0, '--all wins over --stream');
+});
+
 test('handoff never overwrites without --force, honours --out, and appends nothing to the ledger', () => {
     seedHandoff();
     const before = readFileSync(ledgerFile(), 'utf8');

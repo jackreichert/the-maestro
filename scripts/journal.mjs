@@ -67,7 +67,7 @@
  *   journal.mjs claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
- *   journal.mjs handoff --stream <name> [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (Cleanup candidates lists the worktrees a sweep would keep, read-only)
+ *   journal.mjs handoff --stream <name> | --all [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
@@ -125,7 +125,7 @@ const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -1950,8 +1950,9 @@ function artifactsOf(items) {
     return [...found.values()];
 }
 
+/** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
 function handoffText(stream, since, keptWorktrees = []) {
-    const items = fold(readLedger()).items.filter((i) => i.stream === stream);
+    const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const d = today();
     const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
     const open = items.filter((i) => isOpen(i) && (i.kind === 'wip' || i.kind === 'blocked'));
@@ -1965,13 +1966,13 @@ function handoffText(stream, since, keptWorktrees = []) {
     const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
     const touched = items.filter((i) => isOpen(i) || recent(i));
     const arts = artifactsOf(touched);
-    const meta = (i) => [i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
+    const meta = (i) => [stream === null && i.stream && `stream: ${i.stream}`, i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
     const line = (i, tag) => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
     const one = (kind) => arts.filter((a) => a.kind === kind).map((a) => a.v);
 
     return [
-        '---', 'status: draft', `stream: ${stream}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
-        `# ${stream} handoff, ${d}`, '',
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
+        `# ${stream ?? 'All streams'} handoff, ${d}`, '',
         '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
         '## 1. Tasks with status', '',
         ...(open.length || doneRecently.length ? [
@@ -2004,9 +2005,9 @@ function handoffText(stream, since, keptWorktrees = []) {
 
 function cmdHandoff() {
     const { items } = fold(readLedger());
-    const stream = existingStream(arg('stream'), items);
+    const stream = has('all') ? null : existingStream(arg('stream'), items);
     const since = arg('since', yesterday());
-    const path = arg('out') || join(dir, `HANDOFF-${today()}-${slug(stream)}.md`);
+    const path = arg('out') || join(dir, `HANDOFF-${today()}-${stream === null ? 'all' : slug(stream)}.md`);
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
     const body = handoffText(stream, since, runWorktreeSweep(true)?.kept);
     if (dryRun) { console.log(body); return; }
