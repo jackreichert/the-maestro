@@ -214,3 +214,13 @@ test('an error mid-pagination fails the tick before save and leaves the previous
   assert.equal(r.out, '');
   assert.equal(readFileSync(state, 'utf8'), before);
 });
+
+test('--once fails fast on a truncated search instead of sleeping and retrying', () => {
+  const nodes = Array.from({ length: 53 }, (_, i) => prNode(i + 1));
+  const env = installGhStub({ pages: paged(nodes.slice(0, 5)), prState: 'OPEN' });
+  const t = Date.now();
+  const r = runOnce(env, tempState(boardOf(nodes)));
+  assert.equal(r.code, 1, r.err);
+  assert.match(r.err, /skipping tick/);
+  assert.ok(Date.now() - t < 10000, 'it did not wait out a cadence interval');
+});
