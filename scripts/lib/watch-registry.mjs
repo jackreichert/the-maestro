@@ -40,7 +40,7 @@ export function listWatches(dir) {
 export function addWatch(dir, { id, type, target, done_when = '', report = '', ttlMs = DEFAULT_TTL_MS, notify_overnight = false, interval = null, notify = false }, now = Date.now()) {
   if (!ID.test(id ?? '')) throw new Error(`watch id must match ${ID}, got "${id}"`);
   if (!type || !target) throw new Error('a watch needs --type and --target');
-  if (interval !== null && !(Number(interval) > 0)) throw new Error('a watch --interval needs a positive number of seconds');
+  if (interval !== null && !(Number.isFinite(Number(interval)) && Number(interval) > 0)) throw new Error('a watch --interval needs a positive number of seconds');
   if (listWatches(dir).some((w) => w.id === id)) throw new Error(`watch "${id}" already exists`);
   const watch = {
     op: 'add', id, type, target, done_when, report, notify_overnight: Boolean(notify_overnight), notify: Boolean(notify), interval: interval === null ? null : Number(interval),

@@ -148,9 +148,10 @@ export const watchFloor = (spec = {}, config = {}) => (spec.network === false
  */
 export function watchInterval({ type, spec = {}, override, now, recentEvents = [], config = {} }) {
   const floor = watchFloor(spec, config);
-  // A declared interval that is not a positive number (an overlay type's typo) is ignored, not trusted.
-  const declared = Number(spec.interval) > 0 ? Number(spec.interval) : DEFAULT_WATCH_INTERVAL;
-  const base = override ?? config.typeIntervals?.[type] ?? declared;
+  // An interval that is not a finite positive number (an overlay typo, Infinity, NaN) is skipped for the next source, not trusted.
+  const usable = (n) => Number.isFinite(Number(n)) && Number(n) > 0;
+  const pick = [override, config.typeIntervals?.[type], spec.interval].find(usable);
+  const base = pick === undefined ? DEFAULT_WATCH_INTERVAL : Number(pick);
   let seconds = base;
   let reason = 'steady';
   if (spec.backoff !== false) {
@@ -160,6 +161,6 @@ export function watchInterval({ type, spec = {}, override, now, recentEvents = [
     seconds = Math.min(base * factor, Math.max(base, cfg.maxInterval));
     reason = busy.reason;
   }
-  seconds = Math.max(floor, Math.ceil(seconds));
+  seconds = Number.isFinite(seconds) ? Math.max(floor, Math.ceil(seconds)) : floor;
   return { seconds, reason: base < floor ? `${reason} (raised to the ${floor}s floor)` : reason };
 }

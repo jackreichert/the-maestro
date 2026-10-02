@@ -207,7 +207,7 @@ async function main(argv) {
       console.log(formatDigest(readDigest(dir, { consume: !v.peek })) || 'digest is empty');
     } else if (cmd === 'run') {
       const pinned = v.interval === undefined ? undefined : Number(v.interval);
-      if (pinned !== undefined && !(pinned > 0)) return usage('--interval needs a positive number of seconds');
+      if (pinned !== undefined && !(Number.isFinite(pinned) && pinned > 0)) return usage('--interval needs a positive number of seconds');
       const { loadConfiguredTypes } = await import('./event-types/index.mjs');
       const types = await loadConfiguredTypes();
       acquireLock(dir);

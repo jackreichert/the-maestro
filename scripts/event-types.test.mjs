@@ -13,7 +13,7 @@ import * as prChecks from './event-types/pr-checks.mjs';
 import * as prReview from './event-types/pr-review.mjs';
 import * as reminder from './event-types/reminder.mjs';
 import { installGhStub, prNode } from './lib/gh-stub.mjs';
-import { addWatch, readDigest } from './lib/watch-registry.mjs';
+import { addWatch, listWatches, readDigest } from './lib/watch-registry.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const ok = (stdout, status = 0) => ({ status, stdout, stderr: '' });
@@ -321,4 +321,21 @@ test('reminder: a notifying reminder sends its text once; one added with --no-no
   tick({ dir, types, config, ctx, now: T0 + 12 * 60000, notifyCommand: ['send'], notifyRun });
   assert.deepEqual(sent, ['loud: reminder: call back']);
   assert.equal(readDigest(dir).length, 2);
+});
+
+test('reminder: one that falls in a quiet weekend is held, not expired, and fires when it ends', () => {
+  const friday = Date.parse('2026-10-02T21:00:00Z');
+  const config = { quietHours: 'off', quietWeekends: true, tz: 'UTC' };
+  const { dir, types, ctx } = REMIND();
+  const target = '2026-10-03T10:00:00Z';
+  addWatch(dir, { id: 'r', type: 'reminder', target, report: 'weekend', notify: true, ttlMs: reminder.defaultTtlMs(target, friday) }, friday);
+  const sent = [];
+  const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
+  const run = (cfg, now) => tick({ dir, types, config: cfg, ctx, now, notifyCommand: ['send'], notifyRun });
+  for (let t = friday; t < Date.parse('2026-10-05T00:00:00Z'); t += 3 * 3600 * 1000) run(config, t);
+  assert.deepEqual(sent, [], 'nothing fires or expires through the quiet weekend');
+  assert.equal(listWatches(dir).length, 1);
+  const monday = run({ quietHours: 'off', tz: 'UTC' }, Date.parse('2026-10-05T07:00:00Z'));
+  assert.deepEqual(monday.events.map((e) => e.summary), ['reminder: weekend']);
+  assert.deepEqual(sent, ['r: reminder: weekend']);
 });

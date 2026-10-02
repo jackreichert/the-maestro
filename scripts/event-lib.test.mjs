@@ -63,7 +63,7 @@ test('a watch interval is stored, and anything but a positive number is refused'
   const dir = mkdtempSync(join(tmpdir(), 'event-lib-'));
   assert.equal(addWatch(dir, { id: 'a', type: 't', target: 'x', interval: '90' }).interval, 90);
   assert.equal(addWatch(dir, { id: 'b', type: 't', target: 'x' }).interval, null);
-  for (const bad of ['0', '-5', 'soon', '']) assert.throws(() => addWatch(dir, { id: 'c', type: 't', target: 'x', interval: bad }), /interval/);
+  for (const bad of ['0', '-5', 'soon', '', 'Infinity', '1e400']) assert.throws(() => addWatch(dir, { id: 'c', type: 't', target: 'x', interval: bad }), /interval/);
 });
 
 test('ids are validated and defaults are filled in', () => {

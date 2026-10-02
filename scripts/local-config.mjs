@@ -155,7 +155,7 @@ export const WATCH_LOCAL_FLOOR = Math.max(30, positive(pick('MAESTRO_WATCH_LOCAL
 
 /** Event loop: default interval per type in seconds, `pr-checks=240, inbox=90`. An entry that is not a positive number is dropped. The floors still apply. */
 export const WATCH_TYPE_INTERVALS = Object.fromEntries(pick('MAESTRO_WATCH_TYPE_INTERVALS', 'watch_type_intervals').split(',')
-  .map((e) => e.split('=').map((x) => x.trim())).filter(([t, n]) => t && Number(n) > 0).map(([t, n]) => [t, Number(n)]));
+  .map((e) => e.split('=').map((x) => x.trim())).filter(([t, n]) => t && Number.isFinite(Number(n)) && Number(n) > 0).map(([t, n]) => [t, Number(n)]));
 
 /** A command as an argv array: a JSON array of strings in the config (`["tool", "--flag"]`). Anything else is none. */
 const argvList = (text) => {
