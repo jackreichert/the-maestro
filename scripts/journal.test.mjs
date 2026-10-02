@@ -564,6 +564,21 @@ test('handoff --all covers every stream, tags each item with its stream, and wri
     assert.equal(run('handoff', '--all', '--stream', 'Nope', '--force').code, 0, '--all wins over --stream');
 });
 
+test('handoff --learn and --next fill sections 2 and 5 on one line each, and leave the placeholders when absent', () => {
+    seedHandoff();
+    const r = run('handoff', '--all', '--learn', 'ruled out the queue,\nit was the cache', '--next', 'rerun the sweep from the container root');
+    assert.equal(r.code, 0, r.err);
+    const text = readFileSync(handoffFile('all'), 'utf8');
+    const s2 = section(text, 2);
+    assert.match(s2, /^- ruled out the queue, it was the cache$/m);
+    assert.match(s2, /stale cache, ruled out the queue/, 'ledger matches still follow it');
+    assert.equal(section(text, 5).trim(), 'rerun the sweep from the container root');
+    run('handoff', '--stream', 'Maestro', '--learn', 'only this');
+    const bare = readFileSync(handoffFile('Maestro'), 'utf8');
+    assert.equal(section(bare, 2).trim(), '- only this', 'no placeholder once the author wrote one');
+    assert.match(section(bare, 5), /Author: one concrete first step/);
+});
+
 test('handoff never overwrites without --force, honours --out, and appends nothing to the ledger', () => {
     seedHandoff();
     const before = readFileSync(ledgerFile(), 'utf8');
