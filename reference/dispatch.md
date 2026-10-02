@@ -441,8 +441,8 @@ new messages), do not write a one-off watcher and do not make an agent poll. Reg
 One loop polls every registered watch, and a cheap runner follows
 [playbooks/event-loop.md](../playbooks/event-loop.md) and wakes you only for an actionable event, so
 waiting costs one wake per event, not one per watcher. The event types and what each reports are in
-`playbooks/event-types/`; a new kind of wait is a new type (script, playbook, one index line), not a new
-watcher. Log the runner like any other agent (`journal.mjs start`).
+`playbooks/event-types/`; a new kind of wait is a new type (script, playbook, one index line, or just script and playbook in an org
+overlay's `event-types/`), not a new watcher. Log the runner like any other agent (`journal.mjs start`).
 
 ## Session hygiene
 
