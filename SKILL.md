@@ -56,6 +56,7 @@ citation work — read the linked file first.
   authorship check and the PR flow, and skipping it is how a protected branch gets written by
   mistake.
 - **PR size budget.** A PR stays within the code-file and code-line limits; open every PR with `scripts/pr-open.mjs`, never a bare `gh pr create`; it runs the `pr-size.mjs` gate, forces draft and `--assignee @me`, and refuses on failure, so split instead. See [reference/git.md#pr-size-budget](reference/git.md#pr-size-budget).
+- **On every merge.** A `pr-merged` ACTION is handled in the same turn: scoped sweep of that repo, ticket transitions per the overlay, overlay sync if the-maestro itself merged, a ledger note. See [reference/ledger.md#on-every-merge](reference/ledger.md#on-every-merge).
 - **Twin PRs.** In twin-flow repos, a release-candidate PR never merges before its integration twin has; open both as drafts together and link them. See [reference/git.md#twin-prs](reference/git.md#twin-prs-integration-and-release-candidate-branches).
 - **One writer per repo.** Check `ListAgents` before dispatching a writer; use a worktree only
   when the repo is genuinely busy. Detail: `reference/dispatch.md#concurrency-safety`.
