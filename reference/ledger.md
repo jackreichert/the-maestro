@@ -412,6 +412,15 @@ removal), `--no-worktree-sweep`, `--fast` (no sweep, no scratch review), `--verb
 printed, never fatal to the roll. Anything kept that holds work stays on the board through the handoff's
 **Cleanup candidates**.
 
+### On every merge
+
+When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way), the orchestrator does all four of these in the same turn, not at end of day. The `pr-merged` ACTION line already names the repo and PR and the tracker keys found in the title and branch ([playbooks/event-types/pr-merged.md](../playbooks/event-types/pr-merged.md)).
+
+1. **Scoped sweep.** `node scripts/branch-sweep.mjs --apply-worktrees --container <container_root> --repo <repo>`. It touches only that repo, and the same guards decide: a worktree that is not idle, is claimed or has uncommitted work stays and is listed.
+2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means). A merge with no key is worth a line saying so.
+3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch with the overlay's sync script.
+4. **Ledger.** Log the merge as a note carrying the repo and PR, so the board and the standup show that it landed.
+
 ## Reading it back
 
 When the user asks what happened — or when a session starts and you need to know where things stand:
