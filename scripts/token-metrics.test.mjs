@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pick, compare, uncompact, compact } from './token-metrics.mjs';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine } from './token-metrics.mjs';
 
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -118,4 +118,29 @@ test('compact and uncompact round-trip within rounding', () => {
         const back = uncompact(compact(n));
         assert.ok(Math.abs(back - n) / Math.max(n, 1) < 0.01, `${n} -> ${compact(n)} -> ${back}`);
     }
+});
+
+test('emptyDirWarning names a missing or empty projects dir and stays quiet for one with sessions', () => {
+    assert.match(emptyDirWarning(join(projects, 'nope')), /no sessions in .*nope \(directory does not exist\).*projects_dir/);
+    const empty = mkdtempSync(join(tmpdir(), 'tm-empty-'));
+    assert.match(emptyDirWarning(empty), /no sessions in /);
+    assert.equal(emptyDirWarning(projects), '');
+});
+
+test('CLI: warns on stderr when the projects dir has no sessions, instead of crashing', () => {
+    const empty = mkdtempSync(join(tmpdir(), 'tm-empty-'));
+    const r = spawnSync(process.execPath, [SCRIPT, '--json', '--projects-dir', empty], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', TZ: 'UTC' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /no sessions in/);
+});
+
+test('sessionLine reports the newest session against the thresholds', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
+    assert.match(sessionLine(dir), /^\*\*Session:\*\* unavailable/);
+    const u = (read) => ({ input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 });
+    const line = (id, read) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: u(read) } });
+    writeFileSync(join(dir, 's2.jsonl'), `${line('a', 100000)}\n${line('a', 100000)}\n${line('b', 300000)}\n`);
+    assert.equal(sessionLine(dir, 4, 350000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn');
+    assert.equal(sessionLine(dir, 2, 350000), '**Session:** 2 turns (100% of 2 roll) · 200k read/turn · roll now');
+    assert.equal(sessionLine(dir, 4, 200000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn · roll now');
 });
