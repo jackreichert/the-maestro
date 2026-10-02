@@ -397,7 +397,11 @@ decision 7p7d). The same command is `node scripts/branch-sweep.mjs --apply-workt
    files, N unpushed commits, not merged, locked, live claim, idle), then a count. A fetch failure removes nothing.
    Rerunning is a no-op once nothing qualifies.
 
-Flags on `roll`: `--container <dir>` (default the current directory), `--dry-run` (report only, no prune, no
+The sweep scans only the configured `container_root` (config key, or `MAESTRO_CONTAINER_ROOT`). If none is set, or
+the current directory (or `--container`, which stands in for it) is outside that root, it prints
+`worktree sweep refused: <reason>`, removes nothing, and the roll carries on.
+
+Flags on `roll`: `--container <dir>` (checked against the root in place of the current directory), `--dry-run` (report only, no prune, no
 removal), `--no-worktree-sweep`. The sweep runs even when there is nothing to archive, and a failure in it is
 printed, never fatal to the roll. Anything kept that holds work stays on the board through the handoff's
 **Cleanup candidates**.
