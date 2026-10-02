@@ -199,3 +199,11 @@ test('event loop settings: argv lists parse from JSON, junk is ignored, the dir 
     assert.equal(v.INBOX_COMMAND, '(unset)');
     assert.equal(show({ MAESTRO_EVENT_DIR: '/elsewhere' }).EVENT_DIR, '/elsewhere');
 });
+
+test('scripts_dir is unset by default, reads the file, expands ~/, and the environment wins', () => {
+    assert.equal(show().SCRIPTS_DIR, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('scripts_dir: /shelf'));
+    assert.equal(show().SCRIPTS_DIR, '/shelf');
+    assert.equal(show({ MAESTRO_SCRIPTS_DIR: '~/my-shelf' }).SCRIPTS_DIR, join(home, 'my-shelf'));
+    assert.equal(show({ MAESTRO_SCRIPTS_DIR: '' }).SCRIPTS_DIR, '(unset)');
+});

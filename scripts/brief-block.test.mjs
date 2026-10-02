@@ -9,7 +9,7 @@ import { join, isAbsolute, dirname } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.mjs). The import comes after this
 // line because local-config.mjs reads its files when it is first loaded.
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { extractBlock, parseSlotValues, fillBlock, SLOTS } = await import('./brief-block.mjs');
+const { extractBlock, parseSlotValues, fillBlock, shelfLine, SLOTS } = await import('./brief-block.mjs');
 
 const SCRIPT = new URL('./brief-block.mjs', import.meta.url).pathname;
 const BRIEF = new URL('../reference/brief.md', import.meta.url).pathname;
@@ -106,4 +106,18 @@ test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.
     const real = dirname(SCRIPT);
     assert.equal(scriptsDir(join(tmpdir(), 'elsewhere', 'x.mjs'), real), real);
     assert.equal(scriptsDir(undefined, real), real);
+});
+
+test('the scripts shelf line is appended only when scripts_dir is set, and is filled', () => {
+    const md = readFileSync(BRIEF, 'utf8');
+    assert.equal(shelfLine(md, ''), '');
+    const line = shelfLine(md, '/shelf');
+    assert.match(line, /check \/shelf\/README\.md/);
+    assert.match(line, /\/shelf\/scratch\/ \(never \/tmp\)/);
+    assert.doesNotMatch(line, /<scripts_dir>/);
+    assert.ok(!extractBlock(md).includes('scripts_dir'), 'the standing block itself stays unconditional');
+    assert.doesNotMatch(run(VALUES).stdout, /Scripts: before writing/);
+    const on = run(`${VALUES}\n\`\`\`maestro-config\nscripts_dir: /shelf\n\`\`\`\n`);
+    assert.equal(on.status, 0, on.stderr);
+    assert.match(on.stdout, /Report: at most ~20 lines[^\n]*\n- Scripts: before writing a script, check \/shelf\/README\.md/);
 });
