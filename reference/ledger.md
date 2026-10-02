@@ -386,7 +386,7 @@ Merge targets default to develop, plus staging in twin-flow repos, where both tw
 decision 7p7d). The same command is `node scripts/branch-sweep.mjs --apply-worktrees [--dry-run]`.
 
 1. `git worktree prune` for the entries whose directory is missing (locked ones stay).
-2. A fetch, then a worktree-only scan with the rules above (nothing is forked): clean, no ignored file worth
+2. For each repo that has a linked worktree (a repo with none is skipped: no fetch, no scan), a fetch, then a worktree-only scan with the rules above (nothing is forked): clean, no ignored file worth
    keeping, nothing unpushed, branch merged or upstream gone, unlocked, idle, not a live skill, not under a live
    claim. A **detached** worktree qualifies when it passes the same worktree rules and its HEAD is reachable from
    some origin ref.
