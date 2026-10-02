@@ -25,6 +25,9 @@
  *   journal.mjs drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.mjs ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
+ *   journal.mjs ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
+ *   journal.mjs triage [--date D] [--since D] [--apply] [--json]   box every open item and the day's decisions and notes, flag stale/unpromoted/unticketed, print the don't-miss
+ *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
  *   journal.mjs rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.mjs resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
@@ -34,7 +37,8 @@
  *   journal.mjs status [--full]               what is open + done today, with usage marks
  *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
- *   journal.mjs roll [--date YYYY-MM-DD] [--container <dir>] [--no-worktree-sweep]
+ *   journal.mjs roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
+ *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
  *                                             archive finished work to a dated note (and, if configured, commit the ledger root). It also removes
  *                                             the stale worktrees branch-sweep.mjs would offer, with no approval step (a standing approval; never
  *                                             --force, never a branch), prunes worktrees whose directory is gone, and prints what it removed and
@@ -99,6 +103,7 @@ import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMI
 import { scratchReport } from './lib/scratch.mjs';
 import { defaultContext, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
+import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween } from './lib/boxes.mjs';
 import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -116,7 +121,7 @@ const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -368,6 +373,7 @@ function fmt(i, { showId = true, showUsage = true } = {}) {
     const tail = [];
     if (i.repo) tail.push(i.repo);
     if (i.ticket) tail.push(`[[${i.ticket}]]`);
+    if (i.paste) tail.push(`block: ${i.paste}`);
     if (showUsage) tail.push(usageSuffix(i));
     if (tail.length) bits.push(`— ${tail.join(' · ')}`);
     return bits.join(' ');
@@ -414,6 +420,18 @@ function ruleRefs() {
 }
 
 /**
+ * `ask --paste <file>`: a run-this ask. The block file must exist (checked before anything is written), and the row
+ * is boxed as a paste block, shown apart from the questions. Only a question can be one. Returns the absolute path.
+ */
+function pasteFile(kind) {
+    if (!has('paste')) return undefined;
+    const given = arg('paste');
+    if (!given) die('--paste needs a block file: journal.mjs ask "<what to run>" --paste <file>');
+    if (kind !== 'question') die('--paste only goes on a question.');
+    return resolveRefFile(given) || die(`--paste ${given} is not an existing file. Write the block to a file first.`);
+}
+
+/**
  * log, start, ask, note and rule. `ask` takes --kind question (default) or decision; a decision written by `ask`
  * is pending and stays on the board. `rule` always writes a decision, which is a record and not open.
  */
@@ -424,6 +442,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const refs = rule ? ruleRefs() : refsFromArgs();
+    const paste = ask ? pasteFile(kind) : undefined;
 
     const entries = readLedger();
     const entry = {
@@ -437,6 +456,8 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
         stream: streamOrNone(arg('stream')),
         refs,
         pending: ask && kind === 'decision' ? true : undefined,
+        box: paste ? 'paste' : undefined,
+        paste,
         ...approvalFor(kind),
         ...usageFromArgs(),
     };
@@ -650,7 +671,8 @@ function groups(includeArchived = false) {
         items,
         inflight: open.filter((i) => i.kind === 'wip'),
         blocked: open.filter((i) => i.kind === 'blocked'),
-        awaiting: open.filter((i) => i.kind === 'question' || i.kind === 'decision'),
+        awaiting: open.filter((i) => (i.kind === 'question' || i.kind === 'decision') && !i.paste),
+        paste: open.filter((i) => i.kind === 'question' && i.paste),
         decidedOn: (d) => items.filter((i) => i.closedBy?.kind === 'resolved' && i.closedBy.date === d),
         rollPointOn: (d) => rollPoint(entries, d),
         doneOn: (d, { sinceRoll = false } = {}) => {
@@ -670,15 +692,16 @@ function groups(includeArchived = false) {
  * items with no stream. With no streams at all it is the single plain `Ledger` line.
  */
 function footerLines(g, done) {
-    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, done);
+    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, done);
     const fmtLine = (name, pick) => {
         const n = (arr) => arr.filter(pick).length;
         const blocked = n(g.blocked);
-        return `**Ledger${name ? ` (${name})` : ''}:** ${n(done)} done today · ${n(g.inflight)} in flight · ${n(g.awaiting)} awaiting you${blocked ? ` · ${blocked} blocked` : ''}`;
+        const paste = n(g.paste);
+        return `**Ledger${name ? ` (${name})` : ''}:** ${n(done)} done today · ${n(g.inflight)} in flight · ${n(g.awaiting)} awaiting you${paste ? ` · ${paste} to run` : ''}${blocked ? ` · ${blocked} blocked` : ''}`;
     };
     if (!streams.length) return [fmtLine(null, () => true)];
     const lines = streams.map((s) => fmtLine(s, (i) => i.stream === s));
-    const otherCount = [g.inflight, g.blocked, g.awaiting, done].reduce((a, arr) => a + noStream(arr).length, 0);
+    const otherCount = [g.inflight, g.blocked, g.awaiting, g.paste, done].reduce((a, arr) => a + noStream(arr).length, 0);
     if (otherCount) lines.push(fmtLine('other', (i) => !i.stream));
     return lines;
 }
@@ -692,7 +715,7 @@ function cmdStatus() {
     if (asJson) {
         console.log(JSON.stringify({
             date: d,
-            inflight: g.inflight, blocked: g.blocked, awaiting: g.awaiting, done,
+            inflight: g.inflight, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
         }, null, 2));
         return;
     }
@@ -705,26 +728,28 @@ function cmdStatus() {
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
     console.log(`Ledger — ${d}`);
-    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, done);
+    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
         line('In flight', inStream(g.inflight, s));
         line('Blocked', inStream(g.blocked, s));
         line('Awaiting you', inStream(g.awaiting, s));
+        line('Paste blocks for you', inStream(g.paste, s));
         line(`Done ${d}`, inStream(done, s));
     }
     // Without this heading the unstreamed sections read as part of the last stream.
-    if (streams.length && [g.inflight, g.blocked, g.awaiting, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
+    if (streams.length && [g.inflight, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
     line('In flight', noStream(g.inflight));
     line('Blocked', noStream(g.blocked));
     line('Awaiting you', noStream(g.awaiting));
+    line('Paste blocks for you', noStream(g.paste));
     line(`Done ${d}`, noStream(done));
     if (rolledAt) console.log(`\n  (${g.doneOn(d).length - done.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
-    if (!g.inflight.length && !g.blocked.length && !g.awaiting.length && !done.length) {
+    if (!g.inflight.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
     }
-    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
+    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
 }
 
 function standupText(d) {
@@ -742,18 +767,20 @@ function standupText(d) {
         out.push('');
     };
 
-    for (const s of activeStreams(done, g.inflight, g.blocked, g.awaiting)) {
+    for (const s of activeStreams(done, g.inflight, g.blocked, g.awaiting, g.paste)) {
         out.push(`# ${streamTitle(s)}`, '');
         section('Shipped', inStream(done, s), '_Nothing closed._');
         section('In flight', inStream(g.inflight, s), '_Nothing running._');
         section('Blocked', inStream(g.blocked, s), '_Nothing blocked._');
         section('Awaiting you', inStream(g.awaiting, s), '_No open questions._');
+        if (inStream(g.paste, s).length) section('Paste blocks for you', inStream(g.paste, s), '');
         out.push('# Everything else', '');
     }
     section('Shipped', noStream(done), '_Nothing closed._');
     section('In flight', noStream(g.inflight), '_Nothing running._');
     section('Blocked', noStream(g.blocked), '_Nothing blocked._');
     section('Awaiting you', noStream(g.awaiting), '_No open questions._');
+    if (noStream(g.paste).length) section('Paste blocks for you', noStream(g.paste), '');
 
     const decided = g.decidedOn(d);
     if (decided.length) {
@@ -798,17 +825,19 @@ function render(quiet = false, includeArchived = false) {
     };
 
     const doneToday = g.doneOn(d, { sinceRoll: true });
-    for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, doneToday)) {
+    for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, doneToday)) {
         out.push(`# ${streamTitle(s)}`, '', `Stream page: [[${streamPageLink(s)}]]`, '');
         section('In flight', inStream(g.inflight, s));
         section('Blocked', inStream(g.blocked, s));
         section('Awaiting you', inStream(g.awaiting, s));
+        if (inStream(g.paste, s).length) section('Paste blocks for you', inStream(g.paste, s));
         section(`Done today (${d})`, inStream(doneToday, s));
         out.push('# Everything else', '');
     }
     section('In flight', noStream(g.inflight));
     section('Blocked', noStream(g.blocked));
     section('Awaiting you', noStream(g.awaiting));
+    if (noStream(g.paste).length) section('Paste blocks for you', noStream(g.paste));
     section(`Done today (${d})`, noStream(doneToday));
     if (g.rollPointOn(d)) out.push(`Earlier today archived -> [[${d}]]`, '');
 
@@ -853,7 +882,7 @@ function archivedRetros() {
 function writeStreamPages(g, doneToday, retros, d) {
     const reg = loadRegistry();
     const registered = Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k);
-    const names = [...new Set([...activeStreams(g.inflight, g.blocked, g.awaiting, doneToday), ...registered])].filter((s) => !retros.has(s));
+    const names = [...new Set([...activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, doneToday), ...registered])].filter((s) => !retros.has(s));
     if (!names.length && !retros.size) return 0;
     const streamsDir = join(dir, 'Streams');
     mkdirSync(streamsDir, { recursive: true });
@@ -870,6 +899,7 @@ function writeStreamPages(g, doneToday, retros, d) {
         section('In flight', inStream(g.inflight, s));
         section('Blocked', inStream(g.blocked, s));
         section('Awaiting you', inStream(g.awaiting, s));
+        if (inStream(g.paste, s).length) section('Paste blocks for you', inStream(g.paste, s));
         section(`Done today (${d})`, inStream(doneToday, s));
         writeFileSync(join(streamsDir, `${slug(s)}.md`), out.join('\n'));
     }
@@ -918,6 +948,7 @@ function sweepWorktreesForRoll() {
  */
 function cmdRoll() {
     const d = arg('date', today());
+    triageBeforeRoll(d);
     sweepWorktreesForRoll();
     const g = groups();
     const done = g.doneOn(d);
@@ -952,8 +983,138 @@ function cmdRoll() {
     });
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
-    console.log(`kept open: ${g.inflight.length} in flight, ${g.awaiting.length} awaiting you`);
+    console.log(`kept open: ${g.inflight.length} in flight, ${g.awaiting.length} awaiting you${g.paste.length ? `, ${g.paste.length} paste block(s)` : ''}`);
     if (!autoCommitLedger(d)) process.exitCode = 1;
+}
+
+// ── boxes and triage ────────────────────────────────────────────────────────
+
+/** Effective approval per row id: a row's own, its closing row's, and `approval-tag` rows; the latest one set wins. */
+function approvalMap(entries) {
+    const out = new Map();
+    for (const e of entries) {
+        if (e.kind === 'approval-tag' && e.approves && e.approval) out.set(e.approves, e.approval);
+        else if (e.id && !e.annotates && e.approval) out.set(e.closes || e.id, e.approval);
+    }
+    return out;
+}
+
+/**
+ * Every item triage looks at, boxed: open items of any age, plus decisions and notes dated since..d that nothing
+ * has closed. Each carries `ref` (the first --ref that is an existing file, else null) and `stale`.
+ */
+function triageItems(d, since) {
+    const entries = readLedger();
+    const folded = fold(entries);
+    const approvals = approvalMap(entries);
+    const inScope = (i) => isOpen(i) || (!i.closedBy && ['decision', 'note'].includes(i.kind) && i.date >= since && i.date <= d);
+    return folded.items.filter((i) => !folded.hidden.has(i.id) && inScope(i)).map((i) => {
+        const box = classify(i, approvals.get(i.id));
+        const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
+        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, ref, ageDays: daysBetween(i.date, d), stale: isStale(box, i, d) };
+    });
+}
+
+/**
+ * The triage report as data. `blockers` are what `roll --strict` refuses on: a rule or approval with no ref file
+ * to point at (not yet promoted), and an incidental finding with no ticket. Stale items are warnings only.
+ */
+function triageReport(d, since = d) {
+    const items = triageItems(d, since);
+    const byBox = {};
+    for (const i of items) (byBox[i.box] ||= []).push(i);
+    const blockers = [
+        ...items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).map((i) => ({ id: i.id, box: i.box, why: 'not promoted: no --ref that is an existing file' })),
+        ...items.filter((i) => i.box === BOX.FINDING).map((i) => ({ id: i.id, box: i.box, why: 'finding with no ticket' })),
+    ];
+    const stale = items.filter((i) => i.stale).map((i) => ({ id: i.id, box: i.box, ageDays: i.ageDays }));
+    const applicable = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => i.id);
+    return { date: d, since, items, byBox, blockers, stale, applicable, checklist: triageChecklist(items, blockers) };
+}
+
+/** The don't-miss checklist: [x]/[ ] where the ledger can tell, "(by hand)" where only the session can. */
+function triageChecklist(items, blockers) {
+    const n = (box) => items.filter((i) => i.box === box);
+    const unpromoted = blockers.filter((b) => RECORD_BOXES.includes(b.box)).length;
+    const toClose = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).length;
+    const short = n(BOX.NEEDS_JACK).filter((i) => String(i.text).trim().length < 25).length;
+    const unfiled = n(BOX.PASTE).filter((i) => !i.paste).length;
+    const mark = (ok) => (ok ? '[x]' : '[ ]');
+    return [
+        `${mark(!unpromoted && !toClose)} Every rule or approval stated today has a memory file and a HOW-WE-WORK line (by hand), and its ledger row is closed${unpromoted ? ` (${unpromoted} with no ref file)` : ''}${toClose ? ` (${toClose} ready: run \`triage --apply\`)` : ''}`,
+        `${mark(!n(BOX.FINDING).length)} Every "could not be filed", "follow-up", "next session" note is a ticket or an open item${n(BOX.FINDING).length ? ` (${n(BOX.FINDING).length} without one)` : ''}. Check the handoff draft by hand too.`,
+        `${mark(!short)} Every Needs-Jack item reads as a standalone question with options, not a bare id${short ? ` (${short} too short to stand alone)` : ''}`,
+        `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
+        '[ ] Every gated item names its gate (by hand)',
+        '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
+        '[ ] Session turn count and read/turn are in the handoff header: token-metrics.mjs (by hand)',
+    ];
+}
+
+function triageLines(t) {
+    const out = [`Triage — ${t.date} (open items, plus decisions and notes since ${t.since})`];
+    for (const box of Object.keys(t.byBox).map(Number).sort((a, b) => a - b)) {
+        const list = t.byBox[box];
+        if (box === BOX.NOISE) { out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`); continue; }
+        out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`);
+        for (const i of list) {
+            const tail = [RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
+            out.push(`  ${i.id}  ${clip(i.text, 110)}${tail.length ? `  [${tail.join('; ')}]` : ''}`);
+        }
+    }
+    if (!t.items.length) out.push('\n  (nothing to box)');
+    out.push('', `Blockers (roll --strict refuses): ${t.blockers.length}`);
+    t.blockers.forEach((b) => out.push(`  ${b.id}  box ${b.box}: ${b.why}`));
+    out.push(`Stale: ${t.stale.length}${t.stale.length ? ` (${t.stale.map((s) => `${s.id} ${s.ageDays}d`).join(', ')})` : ''}`);
+    out.push('', "Don't-miss checklist", ...t.checklist.map((l) => `  ${l}`));
+    return out;
+}
+
+/**
+ * `triage [--date D] [--since D] [--json]` is read-only. `--apply` appends a `resolved` row ("recorded → <ref>") for
+ * each rule or approval (boxes 1 to 3) whose ref is an existing file, and nothing else; it never closes an item
+ * with no resolvable ref. Closed items fall out of scope, so a second run appends nothing.
+ */
+function cmdTriage() {
+    const d = arg('date', today());
+    const since = arg('since', d);
+    if (!isDate(d) || !isDate(since)) die('--date and --since must be YYYY-MM-DD.');
+    // --apply closes records, so it only ever looks at today's: --since widens the report, never the closing.
+    const t = triageReport(d, has('apply') ? d : since);
+    if (has('apply')) {
+        const entries = readLedger();
+        const taken = [...entries];
+        const rows = t.items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => {
+            const row = {
+                id: newId(taken), ts: now(), date: d, kind: 'resolved', closes: i.id, text: `recorded → ${i.ref}`, refs: [i.ref],
+                model: 'n/a', used: ['tool:journal.mjs'], tokens: 'n/a',
+            };
+            taken.push(row);
+            return row;
+        });
+        appendMany(rows);
+        if (!dryRun && rows.length) render(true);
+        if (asJson) console.log(JSON.stringify({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs[0] })), report: { ...t, items: undefined, byBox: undefined } }, null, 2));
+        else console.log(`triage --apply: closed ${rows.length} recorded item(s)${dryRun ? ' (dry-run)' : ''}; ${t.items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).length} still need a ref file.`);
+        return;
+    }
+    if (asJson) { console.log(JSON.stringify(t, null, 2)); return; }
+    triageLines(t).forEach((l) => console.log(l));
+}
+
+/** roll's gate: warns about triage blockers, or with --strict prints them and exits 1 before anything is changed. */
+function triageBeforeRoll(d) {
+    const { blockers } = triageReport(d);
+    if (!blockers.length) return;
+    const lines = blockers.map((b) => `  ${b.id}  box ${b.box}: ${b.why}`);
+    if (has('strict')) {
+        console.error(`roll --strict refused: triage has ${blockers.length} blocker(s). Nothing was archived or removed.`);
+        lines.forEach((l) => console.error(l));
+        console.error('Run `journal.mjs triage`, fix them (promote the rule, file the ticket), then roll again.');
+        process.exit(1);
+    }
+    console.log(`warning: triage has ${blockers.length} blocker(s) (roll --strict would refuse):`);
+    lines.forEach((l) => console.log(l));
 }
 
 // ── verify and the ledger backup commit ─────────────────────────────────────
@@ -1746,7 +1907,12 @@ function handoffText(stream, since, keptWorktrees = []) {
     const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
     const open = items.filter((i) => isOpen(i) && (i.kind === 'wip' || i.kind === 'blocked'));
     const doneRecently = items.filter((i) => i.state === 'done' && (i.closedBy?.date || i.date) >= since);
-    const awaiting = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
+    const approvals = approvalMap(readLedger());
+    const boxOf = (i) => classify(i, approvals.get(i.id));
+    // Every open question is listed: paste blocks apart, everything else (whatever box triage gives it) under Needs Jack.
+    const asks = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
+    const pasteBlocks = asks.filter((i) => boxOf(i) === BOX.PASTE);
+    const needsJack = asks.filter((i) => boxOf(i) !== BOX.PASTE);
     const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
     const touched = items.filter((i) => isOpen(i) || recent(i));
     const arts = artifactsOf(touched);
@@ -1757,7 +1923,7 @@ function handoffText(stream, since, keptWorktrees = []) {
     return [
         '---', 'status: draft', `stream: ${stream}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
         `# ${stream} handoff, ${d}`, '',
-        '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived; 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
+        '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
         '## 1. Tasks with status', '',
         ...(open.length || doneRecently.length ? [
             ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
@@ -1773,7 +1939,10 @@ function handoffText(stream, since, keptWorktrees = []) {
             ...(one('path').length ? [`- Paths: ${one('path').join(', ')}`] : []),
         ] : ['_none_']), '',
         '## 4. Decisions awaiting', '',
-        ...(awaiting.length ? awaiting.map((i) => line(i, i.kind)) : ['_none_']), '',
+        ...(needsJack.length || pasteBlocks.length ? [
+            ...(needsJack.length ? ['**Needs Jack**', '', ...needsJack.map((i) => `${line(i, i.kind)}${isStale(BOX.NEEDS_JACK, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`), ''] : []),
+            ...(pasteBlocks.length ? ['**Paste blocks for Jack**', '', ...pasteBlocks.map((i) => `${line(i, 'paste')} — ${i.paste ? `block: ${i.paste}` : 'no block file'}${isStale(BOX.PASTE, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`)] : []),
+        ] : ['_none_']), '',
         '## 5. Next concrete action', '',
         '_Author: one concrete first step for the fresh session._', '',
         '## Cleanup candidates', '',
@@ -1868,6 +2037,7 @@ switch (cmd) {
     case 'release': cmdRelease(); break;
     case 'claims': cmdClaims(); break;
     case 'backfill': cmdBackfill(); break;
+    case 'triage': cmdTriage(); break;
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
     default:

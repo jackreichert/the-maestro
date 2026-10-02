@@ -220,7 +220,7 @@ merged branches behind unreviewed. `handoff` itself fills **Cleanup candidates**
 [roll cleanup](#roll-removes-stale-worktrees) would keep, each with its reason (read-only; `--container <dir>`
 picks the directory, default the current one; `--no-worktree-sweep` skips it).
 
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (open `question` items and pending decisions); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (generated from boxes 4 and 5: **Needs Jack**, every open question and pending decision except paste asks, then **Paste blocks for Jack** with each block file; stale ones are marked); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
 
 `resume` runs the scriptable half of the verify-on-resume list: ledger `status`; `gh pr list --author @me --state open --json number,title,url` if `gh` is installed and `resume_gh` is not off (otherwise a `gh: unavailable` or `skipped` line, exit 0); `pgrep -f` for each `loop_patterns` entry (`ok` or `MISSING`). It then prints that **`ListAgents` must be called by the session itself**, since it is a harness tool. All settings come from local config ([local-config.md](local-config.md)), never from the script.
 
@@ -233,11 +233,48 @@ They are different tools and both are cheap:
 
 Filing a ticket is itself worth a ledger line (`--ticket <id>`); the reverse is not true.
 
+## Boxes and triage
+
+Everything open falls into one of eleven boxes. `triage` sorts them and says what to do about each; the first matching rule wins.
+
+| # | Box | Rule | Action |
+|---|---|---|---|
+| 1 | Decisions / rules | a `decision` (not pending) | promote to a memory file, then `rule --ref`; closed once a ref file exists |
+| 2 | Standing approvals | effective approval `standing` (the row, its closing row, or an `approval-tag`) | same as 1 |
+| 3 | One-off approvals | approval `one-off` | close once a ref file exists |
+| 4 | Needs Jack | a question (or `ask --kind decision`) that asks the user to choose or know something | carry; stale after 2 days |
+| 5 | Paste blocks | `ask --paste <file>`, or a question with run/paste/yourself/block wording and no `?` | carry in its own list with the file; stale after 2 days |
+| 6 | Blocked / gated | `blocked` | carry with the gate written out |
+| 7 | In flight | `wip` | carry; stale after 1 day: confirm alive (`ListAgents`, branch sweep) or drop |
+| 8 | Incidental findings | a note saying "could not be filed", "follow-up", "next session" or "TODO" with no ticket | file a ticket, then log a pointer |
+| 9 | Learnings | a note with learned, lesson, ruled out or cause | copy into the handoff and the repo's CONTEXT.md |
+| 10 | Done | `done`, `dropped` | `roll` archives |
+| 11 | Noise | any other note | archive silently |
+
+Classification is by kind plus regex, so it is a proposal you can read, not a verdict. Wording alone never makes a question a record (boxes 1 to 3 need a decision row or an explicit approval), because `--apply` closes records. An approval is tested before the generic "recorded rule" text rule so that boxes 2 and 3 can be reached.
+
+```bash
+node $J triage [--date D] [--since D] [--json]   # read-only
+node $J triage --apply [--dry-run]               # append resolved rows for boxes 1-3 whose ref is an existing file
+```
+
+`triage` looks at every open item (any age) plus decisions and notes dated `--since` (default `--date`, default today) that nothing has closed. It prints each box with its items, then **Blockers**, **Stale**, and the **don't-miss checklist**. The checklist marks `[x]`/`[ ]` where the ledger can tell (rules promoted, findings ticketed, Needs-Jack items long enough to stand alone, paste asks with a file) and says "(by hand)" for the rest (a HOW-WE-WORK line, the handoff draft, gates, running agents, session metrics): those need the session.
+
+Blockers are what `roll --strict` refuses on: a box 1-3 item with no `--ref` that is an existing file (not promoted yet), and a box 8 finding with no ticket.
+
+`--apply` is append-only and runtime-checked: it appends `resolved` rows reading "recorded → <ref>" for box 1-3 items whose ref resolves **at that moment** to an existing file. An item with no resolvable ref is left open and counted. `--apply` only looks at records dated `--date` (it ignores `--since`), and dates its rows with `--date`. Closed items leave the scope, so a second run appends nothing. It writes nothing outside the ledger.
+
+### Paste blocks
+
+`ask "<what to run>" --paste <block-file>` records a run-this ask. The file must exist (checked before the write); the row carries `box: paste` and the absolute path. `status`, `CURRENT.md`, the footer ("N to run") and the handoff show these apart from the questions, so "awaiting you" means decisions only.
+
 ## Compression
 
 `roll` is the compressor. (It also removes stale worktrees, see [Roll removes stale worktrees](#roll-removes-stale-worktrees).) It writes the day's finished work to `Journal/YYYY-MM-DD.md`, leaves a
 `[[link]]` in `CURRENT.md`, and **keeps open items on the board** — in flight, blocked, and awaiting
 the user all survive the roll, because they are still true tomorrow.
+
+`roll` first runs `triage`. Plain `roll` prints the blockers as a warning and carries on; `roll --strict` prints them to stderr and exits 1 **before** archiving, sweeping worktrees or writing anything.
 
 Rolls are timestamped rather than inferred, so work finished after a roll still shows; rolling again
 picks it up. Roll at end of day, or whenever `CURRENT.md` has grown past a screen.
@@ -249,7 +286,7 @@ keeps only the one-line pointer. **One canonical home per fact; everything else 
 ## End of day
 
 When the user wraps up ("end of day", "EOD", "wrap up", "let's call it"), do this in order: PR
-pass, then tracker review, then the cost line and cost loop, then `standup`, then the branch sweep, then `roll`. The PR pass runs first because the tracker
+pass, then tracker review, then the cost line and cost loop, then `standup`, then the branch sweep, then `triage` (fix what it flags, then `triage --apply`), then `roll` (use `--strict` to make the blockers stop it). The PR pass runs first because the tracker
 review needs its findings — Jira and the PRs should agree before either gets written down. Run
 both before `roll`, because a roll moves today's lines into the archive.
 

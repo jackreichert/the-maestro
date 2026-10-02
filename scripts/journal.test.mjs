@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1259,4 +1259,175 @@ test('rule resolves a relative ref against the cwd, and the digest leaves pendin
     run('ask', 'still open?', '--kind', 'decision', ...MARK);
     const untagged = JSON.parse(run('approvals', '--json').out).untagged.map((u) => u.text);
     assert.deepEqual(untagged, ['relative ref rule']);
+});
+
+// ── boxes, triage, roll --strict, ask --paste (MAESTRO-14) ──────────────────
+
+const blockFile = (name = 'block.sh') => { const f = join(tv, name); writeFileSync(f, 'echo hi\n'); return f; };
+const triageJson = (...a) => JSON.parse(run('triage', '--json', ...a).out);
+const boxIds = (t, box) => (t.byBox[box] || []).map((i) => i.text);
+
+function triageWorld() {
+    const memo = blockFile('memory.md');
+    run('rule', 'Jack rule: branch from staging', '--ref', memo, ...MARK);
+    run('log', 'Jack rule: no merge on red', '--kind', 'decision', ...MARK);
+    run('log', 'may delete merged branches', '--kind', 'decision', '--approval', 'standing', ...MARK);
+    run('log', 'close one PR', '--kind', 'decision', '--approval', 'one-off', '--ref', memo, ...MARK);
+    run('ask', 'Ship Friday or Monday, which one?', ...MARK);
+    run('ask', 'run the read-only count query', '--paste', blockFile(), ...MARK);
+    run('start', 'building the thing', ...MARK);
+    run('log', 'waiting on a deploy', '--kind', 'blocked', ...MARK);
+    run('log', 'follow-up: fix the cwd default next session', ...MARK);
+    run('log', 'follow-up: tracked in the-maestro-016', ...MARK);
+    run('log', 'learned that the cause was the cwd', ...MARK);
+    run('log', 'posted reply', ...MARK);
+    return { memo };
+}
+
+test('triage boxes every item by kind, text and approval, and says what it would do', () => {
+    triageWorld();
+    const t = triageJson();
+    assert.deepEqual(boxIds(t, 1), ['Jack rule: branch from staging', 'Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
+    assert.deepEqual(boxIds(t, 3), ['close one PR']);
+    assert.deepEqual(boxIds(t, 4), ['Ship Friday or Monday, which one?']);
+    assert.deepEqual(boxIds(t, 5), ['run the read-only count query']);
+    assert.deepEqual([boxIds(t, 6), boxIds(t, 7)], [['waiting on a deploy'], ['building the thing']]);
+    assert.deepEqual(boxIds(t, 8), ['follow-up: fix the cwd default next session']);
+    assert.deepEqual(boxIds(t, 9), ['learned that the cause was the cwd']);
+    assert.deepEqual(boxIds(t, 11), ['follow-up: tracked in the-maestro-016', 'posted reply']);
+    const text = run('triage').out;
+    assert.match(text, /Box 4 Needs Jack \(1\)/);
+    assert.match(text, /Box 1 Decisions \/ rules \(2\)[^]*NO REF/);
+    assert.match(text, /Don't-miss checklist[^]*\[ \] Every rule or approval/);
+});
+
+test('triage blockers are unpromoted rules and unticketed findings, and triage itself writes nothing', () => {
+    triageWorld();
+    const before = ledger().length;
+    const t = triageJson();
+    assert.deepEqual(t.blockers.map((b) => b.why).sort(), ['finding with no ticket', 'not promoted: no --ref that is an existing file', 'not promoted: no --ref that is an existing file']);
+    assert.equal(run('triage').code, 0);
+    assert.equal(ledger().length, before);
+});
+
+test('a pending decision is Needs Jack, not a rule', () => {
+    run('ask', 'adopt the new schema?', '--kind', 'decision', ...MARK);
+    assert.deepEqual(boxIds(triageJson(), 4), ['adopt the new schema?']);
+});
+
+test('triage --apply closes only the rules and approvals whose ref is an existing file, by appending resolved rows', () => {
+    const { memo } = triageWorld();
+    const before = ledger();
+    const r = run('triage', '--apply');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /closed 2 recorded item\(s\); 2 still need a ref file/);
+    const added = ledger().slice(before.length);
+    assert.equal(added.length, 2);
+    assert.ok(added.every((e) => e.kind === 'resolved' && e.text === `recorded → ${memo}` && e.refs[0] === memo));
+    assert.deepEqual(before, ledger().slice(0, before.length), 'append-only: existing rows untouched');
+    const t = triageJson();
+    assert.deepEqual(boxIds(t, 1), ['Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 3), []);
+    assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
+});
+
+test('triage --apply is idempotent and --dry-run writes nothing', () => {
+    triageWorld();
+    const before = ledger().length;
+    assert.equal(run('triage', '--apply', '--dry-run').code, 0);
+    assert.equal(ledger().length, before);
+    run('triage', '--apply');
+    const after = ledger().length;
+    assert.match(run('triage', '--apply').out, /closed 0 recorded/);
+    assert.equal(ledger().length, after);
+});
+
+test('a ref that stops existing is not a promotion: triage --apply leaves the item open', () => {
+    const memo = blockFile('gone-soon.md');
+    run('rule', 'a rule', '--ref', memo, ...MARK);
+    rmSync(memo);
+    assert.match(run('triage', '--apply').out, /closed 0 recorded item\(s\); 1 still need/);
+});
+
+test('roll --strict refuses before changing anything; plain roll warns and carries on', () => {
+    triageWorld();
+    const id = idOf(run('start', 'finished work', ...MARK).out);
+    run('done', id, ...MARK);
+    const rows = ledger().length;
+    const strict = run('roll', '--strict');
+    assert.equal(strict.code, 1);
+    assert.match(strict.err, /roll --strict refused: triage has 3 blocker/);
+    assert.equal(ledger().length, rows, 'no rolled row');
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', `${new Date().toISOString().slice(0, 10)}.md`)), false);
+    const plain = run('roll');
+    assert.equal(plain.code, 0, plain.err);
+    assert.match(plain.out, /warning: triage has 3 blocker\(s\)/);
+    assert.ok(ledger().some((e) => e.kind === 'rolled'));
+});
+
+test('roll --strict passes once the blockers are fixed', () => {
+    const memo = blockFile('memory.md');
+    run('rule', 'Jack rule: x', '--ref', memo, ...MARK);
+    const id = idOf(run('start', 'finished work', ...MARK).out);
+    run('done', id, ...MARK);
+    assert.equal(run('roll', '--strict').code, 0);
+});
+
+test('ask --paste needs an existing block file and writes nothing otherwise', () => {
+    const missing = run('ask', 'run this', '--paste', join(tv, 'nope.sh'), ...MARK);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /not an existing file/);
+    assert.equal(run('ask', 'run this', '--paste', ...MARK).code, 1);
+    assert.equal(run('ask', 'decide', '--kind', 'decision', '--paste', blockFile(), ...MARK).code, 1);
+    assert.throws(() => ledger());
+});
+
+test('paste asks show apart from the questions in status, the footer and CURRENT.md', () => {
+    const f = blockFile();
+    run('ask', 'which way?', ...MARK);
+    run('ask', 'run the count', '--paste', f, ...MARK);
+    const s = run('status').out;
+    assert.match(s, /Awaiting you\n  `\w+` which way\?[^]*Paste blocks for you\n  `\w+` run the count .*block: /);
+    assert.doesNotMatch(s.split('Paste blocks for you')[0], /run the count/);
+    assert.match(s, /0 done · 0 in flight · 1 awaiting you · 1 to run/);
+    assert.match(run('status', '--footer').out.split('\n')[0], /1 awaiting you · 1 to run/);
+    const j = statusJson();
+    assert.deepEqual([j.awaiting.length, j.paste.length, j.paste[0].paste], [1, 1, f]);
+    const cur = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
+    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);
+});
+
+test('handoff section 4 is generated from the Needs-Jack and paste boxes, text plus options and the block file', () => {
+    const f = blockFile();
+    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
+    run('ask', 'run the count query', '--paste', f, '--stream', 'Launch', ...MARK);
+    run('rule', 'a rule that is not awaiting', '--ref', f, '--stream', 'Launch', ...MARK);
+    const out = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out;
+    const sec = out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
+    assert.match(sec, /\*\*Needs Jack\*\*[^]*Ship Friday or Monday\?/);
+    assert.match(sec, new RegExp(`\\*\\*Paste blocks for Jack\\*\\*[^]*run the count query.*block: ${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.doesNotMatch(sec, /not awaiting/);
+});
+
+test('triage --apply never closes a question on its wording, even with a ref file', () => {
+    const memo = blockFile('plan.md');
+    const id = idOf(run('ask', 'Jack: which branch ships first, A or B', '--ref', memo, ...MARK).out);
+    assert.deepEqual(boxIds(triageJson(), 4), ['Jack: which branch ships first, A or B']);
+    assert.match(run('triage', '--apply').out, /closed 0 recorded/);
+    assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
+});
+
+test('triage --apply only closes decisions dated on --date, whatever --since says', () => {
+    const memo = blockFile('memory.md');
+    run('rule', 'an old rule', '--ref', memo, '--date', '2020-01-01', ...MARK);
+    assert.match(run('triage', '--apply', '--since', '2019-01-01').out, /closed 0 recorded/);
+    assert.deepEqual(boxIds(triageJson('--since', '2019-01-01'), 1), ['an old rule']);
+});
+
+test('handoff section 4 keeps every open question: one boxed as a rule by its approval still appears under Needs Jack', () => {
+    const id = idOf(run('ask', 'Jack: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
+    run('approve-tag', id, '--approval', 'one-off');
+    const sec = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
+    assert.match(sec, /\*\*Needs Jack\*\*[^]*pick a stream name/);
 });
