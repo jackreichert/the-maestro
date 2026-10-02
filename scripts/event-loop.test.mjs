@@ -130,23 +130,141 @@ test('quiet hours do not notify for an ordinary watch that expires overnight, bu
   assert.match(sent[0], /^night:/);
 });
 
-test('cadence: floor of 300s, quiet-hours stop, and an overnight watch keeps the loop going', () => {
+const LOCAL = (extra = {}) => ({ check: () => ({}), diff: () => [], interval: 60, network: false, ...extra });
+const NET = (extra = {}) => ({ check: () => ({}), diff: () => [], interval: 180, network: true, ...extra });
+const spy = (type, log, name) => ({ ...type, check: () => { log.push(name); return {}; } });
+
+test('only due watches are checked: each type runs on its own interval', () => {
   const dir = tempDir();
-  const cfg = (c) => ({ ...c, minInterval: 60 });
-  assert.equal(pace({ dir, config: cfg(ALWAYS), now: NOON }).seconds >= 300, true);
-  assert.equal(pace({ dir, config: cfg(OPEN), now: NIGHT }).stop, true);
-  addWatch(dir, { id: 'n', type: 't', target: 'y', notify_overnight: true }, NIGHT);
-  const next = pace({ dir, config: cfg(OPEN), now: NIGHT });
-  assert.equal(next.stop, undefined);
-  assert.equal(next.seconds >= 300, true);
+  const log = [];
+  const types = { fast: spy(LOCAL(), log, 'fast'), slow: spy(NET(), log, 'slow') };
+  addWatch(dir, { id: 'f', type: 'fast', target: 'x' }, NOON);
+  addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
+  const at = (sec) => tick(base(dir, types, { now: NOON + sec * 1000 }));
+  at(0);
+  assert.deepEqual(log.splice(0), ['fast', 'slow'], 'a new watch is due at once');
+  assert.deepEqual(at(30).waiting, ['f', 's']);
+  assert.deepEqual(log.splice(0), []);
+  assert.deepEqual(at(61).waiting, ['s']);
+  assert.deepEqual(log.splice(0), ['fast']);
+  at(181);
+  assert.deepEqual(log.splice(0), ['fast', 'slow']);
 });
 
-test('events feed the cadence: a burst of events holds the loop at the floor', () => {
+test('pace sleeps until the earliest watch is due', () => {
   const dir = tempDir();
-  const types = { t: { check: () => ({}), diff: () => [{ summary: 'a' }, { summary: 'b' }, { summary: 'c' }] } };
+  const types = { fast: LOCAL(), slow: NET() };
+  addWatch(dir, { id: 'f', type: 'fast', target: 'x' }, NOON);
+  addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
+  tick(base(dir, types));
+  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON }).seconds, 60);
+  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON + 45 * 1000 }).seconds, 15);
+  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON + 200 * 1000 }).seconds, 1, 'an overdue watch means no wait');
+});
+
+test('a watch added before the first tick is due immediately, so pace does not wait for it', () => {
+  const dir = tempDir();
+  addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
+  assert.equal(pace({ dir, types: { slow: NET() }, config: ALWAYS, now: NOON }).seconds, 1);
+});
+
+test('a per-watch interval overrides the type default', () => {
+  const dir = tempDir();
+  const log = [];
+  const types = { slow: spy(NET(), log, 'slow') };
+  addWatch(dir, { id: 's', type: 'slow', target: 'x', interval: 400 }, NOON);
+  tick(base(dir, types));
+  assert.deepEqual(tick(base(dir, types, { now: NOON + 300 * 1000 })).waiting, ['s']);
+  tick(base(dir, types, { now: NOON + 401 * 1000 }));
+  assert.equal(log.length, 2);
+});
+
+test('a loop-wide pin applies to watches without their own interval, and the floor still holds', () => {
+  const dir = tempDir();
+  const log = [];
+  const types = { slow: spy(NET(), log, 'slow') };
+  addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
+  const config = { ...ALWAYS, pinned: 10 };
+  tick(base(dir, types, { config }));
+  tick(base(dir, types, { config, now: NOON + 60 * 1000 }));
+  assert.equal(log.length, 1);
+  tick(base(dir, types, { config, now: NOON + 121 * 1000 }));
+  assert.equal(log.length, 2);
+});
+
+test('the network floor holds against --interval, config and a type that declares less', () => {
+  const dir = tempDir();
+  const log = [];
+  const types = { greedy: spy(NET({ interval: 5 }), log, 'greedy'), silent: spy({ check: () => ({}), diff: () => [] }, log, 'silent') };
+  addWatch(dir, { id: 'a', type: 'greedy', target: 'x' }, NOON);
+  addWatch(dir, { id: 'b', type: 'greedy', target: 'x', interval: 1 }, NOON);
+  addWatch(dir, { id: 'c', type: 'silent', target: 'x', interval: 1 }, NOON);
+  const config = { ...ALWAYS, networkFloor: 10, typeIntervals: { greedy: 2 } };
+  tick(base(dir, types, { config }));
+  assert.equal(log.splice(0).length, 3);
+  assert.equal(tick(base(dir, types, { config, now: NOON + 119 * 1000 })).waiting.length, 3, 'nothing is due under 120s; an undeclared type counts as network');
+  tick(base(dir, types, { config, now: NOON + 121 * 1000 }));
+  assert.equal(log.length, 3);
+});
+
+test('a local type may go down to 30s but no lower, and a raised floor setting is honoured', () => {
+  const dir = tempDir();
+  const log = [];
+  const types = { local: spy(LOCAL({ interval: 1 }), log, 'local') };
+  addWatch(dir, { id: 'l', type: 'local', target: 'x' }, NOON);
+  tick(base(dir, types));
+  assert.deepEqual(tick(base(dir, types, { now: NOON + 29 * 1000 })).waiting, ['l']);
+  tick(base(dir, types, { now: NOON + 31 * 1000 }));
+  assert.equal(log.length, 2);
+  const slower = { ...ALWAYS, localFloor: 90 };
+  tick(base(dir, types, { config: slower, now: NOON + 100 * 1000 }));
+  assert.equal(log.length, 3);
+  assert.deepEqual(tick(base(dir, types, { config: slower, now: NOON + 150 * 1000 })).waiting, ['l']);
+});
+
+test('a failing check waits for its interval before the retry', () => {
+  const dir = tempDir();
+  let calls = 0;
+  const types = { bad: NET({ check: () => { calls += 1; throw new Error('boom'); } }) };
+  addWatch(dir, { id: 'w', type: 'bad', target: 'x' }, NOON);
+  tick(base(dir, types));
+  tick(base(dir, types, { now: NOON + 10 * 1000 }));
+  assert.equal(calls, 1);
+  tick(base(dir, types, { now: NOON + 181 * 1000 }));
+  assert.equal(calls, 2);
+});
+
+test('quiet hours still hold: nothing is due-checked overnight except overnight watches', () => {
+  const dir = tempDir();
+  const log = [];
+  const types = { t: spy(LOCAL(), log, 't') };
+  addWatch(dir, { id: 'day', type: 't', target: 'a' }, NIGHT);
+  addWatch(dir, { id: 'night', type: 't', target: 'b', notify_overnight: true }, NIGHT);
+  tick(base(dir, types, { config: OPEN, now: NIGHT }));
+  assert.equal(log.length, 1);
+  assert.equal(pace({ dir, types, config: OPEN, now: NIGHT }).seconds, 60);
+});
+
+test('quiet hours with no overnight watch stop the loop; no watch at all falls back to the adaptive pace', () => {
+  const dir = tempDir();
+  assert.equal(pace({ dir, config: OPEN, now: NIGHT }).stop, true);
+  addWatch(dir, { id: 'day', type: 't', target: 'a' }, NIGHT);
+  assert.equal(pace({ dir, types: { t: LOCAL() }, config: OPEN, now: NIGHT }).stop, true);
+});
+
+test('events feed the back-off: a burst keeps the watch at its pace, a quiet loop stretches it', () => {
+  const dir = tempDir();
+  const types = { t: NET({ diff: () => [{ summary: 'a' }, { summary: 'b' }, { summary: 'c' }] }) };
   addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
   tick(base(dir, types));
-  assert.equal(pace({ dir, config: ALWAYS, now: NOON }).seconds, 300);
+  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON }).seconds, 180);
+  const quiet = tempDir();
+  const once = { t: NET({ diff: (prev) => (prev ? [] : [{ summary: 'first' }]) }) };
+  addWatch(quiet, { id: 'w1', type: 't', target: 'a' }, NOON);
+  tick(base(quiet, once, { now: NOON }));
+  const later = NOON + 3 * 3600 * 1000;
+  tick(base(quiet, once, { now: later }));
+  assert.equal(pace({ dir: quiet, types: once, config: ALWAYS, now: later }).seconds, 540, '3 hours since the last event stretches 180s by 3x');
 });
 
 test('formatDigest lists actionable events first and carries the report hint only on those', () => {
@@ -176,6 +294,13 @@ test('cli: add, list and remove round-trip, and a duplicate id is refused', () =
   assert.match(cli(dir, 'list').stdout, /no watches registered/);
   assert.equal(cli(dir, 'add', '--id', 'bad id', '--type', 't', '--target', 'x').status, EXIT.usage);
   assert.equal(cli(dir, 'add', '--id', 'w2', '--type', 't', '--target', 'x', '--ttl-hours', '0').status, EXIT.usage);
+});
+
+test('cli: add --interval is stored on the watch and a non-positive one is refused', () => {
+  const dir = tempDir();
+  assert.equal(cli(dir, 'add', '--id', 'w1', '--type', 't', '--target', 'x', '--interval', '5').status, 0);
+  assert.equal(JSON.parse(cli(dir, 'list', '--json').stdout)[0].interval, 5);
+  for (const bad of ['0', 'soon']) assert.equal(cli(dir, 'add', '--id', 'w2', '--type', 't', '--target', 'x', '--interval', bad).status, EXIT.usage);
 });
 
 test('cli: run --once with an unknown-type watch does not crash and reports nothing actionable', () => {

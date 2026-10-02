@@ -20,6 +20,14 @@
 
 export const FLOOR_SECONDS = 300;
 
+// Per-watch scheduling for the event loop. A type is "network" unless it declares `network = false`,
+// so a type that says nothing gets the GitHub-safe floor.
+export const NETWORK_FLOOR = 120;
+export const LOCAL_FLOOR = 30;
+export const DEFAULT_WATCH_INTERVAL = 180;
+// "Steady" back-off tier in seconds: the idle tiers stretch a watch's interval by tier / this, never shrink it.
+const BACKOFF_BASE = 600;
+
 export const DEFAULTS = {
   minInterval: FLOOR_SECONDS,
   maxInterval: 1800,
@@ -123,4 +131,33 @@ export function nextInterval({ now, recentEvents = [], config = {} }) {
   if (cfg.pinned) return pinned(cfg.pinned, floor);
   const { seconds, reason } = busyness(at, recentEvents, { ...cfg, minInterval: floor });
   return { seconds: clamp(seconds, limits), reason };
+}
+
+/** The lowest interval a watch may run at: 120s for network types (config may raise it, never lower it), 30s for local ones. */
+export const watchFloor = (spec = {}, config = {}) => (spec.network === false
+  ? Math.max(LOCAL_FLOOR, config.localFloor ?? 0)
+  : Math.max(NETWORK_FLOOR, config.networkFloor ?? 0));
+
+/**
+ * Seconds until one watch is due again, for the event loop.
+ *   spec      { interval, network, backoff } as the watch's type declares them
+ *   override  the watch's own --interval (or a loop-wide pin), else config.typeIntervals[type], else the type's default
+ * Idle periods stretch the interval by the same back-off tiers as nextInterval (unless the type sets backoff = false),
+ * capped at config.maxInterval but never below the declared interval. The floor is applied last, so no setting,
+ * override or back-off result can go under it.
+ */
+export function watchInterval({ type, spec = {}, override, now, recentEvents = [], config = {} }) {
+  const floor = watchFloor(spec, config);
+  const base = override ?? config.typeIntervals?.[type] ?? spec.interval ?? DEFAULT_WATCH_INTERVAL;
+  let seconds = base;
+  let reason = 'steady';
+  if (spec.backoff !== false) {
+    const cfg = { ...DEFAULTS, ...Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined)), minInterval: 0 };
+    const busy = busyness(new Date(now).getTime(), recentEvents, cfg);
+    const factor = Math.max(1, busy.seconds / BACKOFF_BASE);
+    seconds = Math.min(base * factor, Math.max(base, cfg.maxInterval));
+    reason = busy.reason;
+  }
+  seconds = Math.max(floor, Math.ceil(seconds));
+  return { seconds, reason: base < floor ? `${reason} (raised to the ${floor}s floor)` : reason };
 }

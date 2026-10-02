@@ -5,6 +5,10 @@
  */
 import { createHash } from 'node:crypto';
 
+// Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
+export const interval = 60;
+export const network = false;
+
 /** Hashes each line with its occurrence number, so two identical messages count twice. */
 export function fingerprints(stdout) {
   const seen = new Map();

@@ -2,6 +2,10 @@
  * gh-run: one GitHub Actions run, until it completes. Target `owner/repo:<run id>`.
  * State { status, conclusion, name }. Actionable only on completion (any conclusion); a start is informational.
  */
+
+// Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
+export const interval = 120;
+export const network = true;
 const TARGET = /^([\w.-]+\/[\w.-]+):(\d+)$/;
 
 export function check(target, ctx) {
