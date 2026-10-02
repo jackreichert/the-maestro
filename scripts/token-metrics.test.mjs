@@ -223,3 +223,78 @@ test('sessionLine truncates so the rendered numbers never claim a threshold the 
     writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: 399 }, (_, i) => line(`m${i}`, 1)).join('\n')}\n`);
     assert.match(sessionLine(dir, 400, 350000), /\(99% of 400 roll\)(?! · roll now)/);
 });
+
+// A table row as toRow writes it: 21 cells, with the cost columns filled from the arguments.
+const costRow = (d, { prompts = 10, wakes = 4, read = '1M', mixRead = 'opus 400k · sonnet 400k · haiku 200k', mixUnits = 'opus 1M · sonnet 1M · haiku 1M', since = 100, subs = 10, small = 2, opusSubs = 1 } = {}) =>
+    [d, '1', '100', String(prompts), `${wakes} (${wakes}/0)`, '1k', '1k', '1M', '0', read, String(subs), '1', '-', '1k', '1k', mixRead, mixUnits, String(since), String(small), String(opusSubs), '5.0M'];
+const byName = (list, name) => list.find((c) => c.name === name);
+
+test('compare scores each cost metric against its target: PASS, MISS, or - without one', () => {
+    const rows = new Map([['2026-09-22', costRow('2026-09-22')], ['2026-09-23', costRow('2026-09-23')],
+        ['2026-09-25', costRow('2026-09-25', { mixRead: 'opus 500k · sonnet 450k · haiku 50k', wakes: 4, since: 200, read: '300k' })]]);
+    const c = compare('2026-09-25', rows, '2026-09-23', { weights: null });
+    const s = (n) => byName(c, n).status;
+    assert.deepEqual([s('Opus share (read)'), s('Haiku share (read)'), s('Wakes/prompt'), s('Max turns/compact'), s('Read/turn')], ['MISS', 'MISS', 'PASS', 'MISS', 'MISS']);
+    assert.equal(byName(c, 'Opus share (read)').today, 0.5);
+    assert.ok(Math.abs(byName(c, 'Opus share (read)').median7 - 0.4) < 0.01);
+    assert.equal(byName(c, 'Haiku share (read)').regression, true, 'a falling haiku share is the regression');
+    assert.equal(s('Sonnet share (read)'), '-');
+    assert.equal(s('Small-agent rate'), '-');
+    assert.equal(byName(c, 'Small-agent rate').today, 0.2);
+    assert.equal(byName(c, 'Opus subagents').today, 1);
+    assert.equal(byName(c, 'Max turns/compact').median7, 100);
+});
+
+test('targets come from the targets option; a pass flips to a miss when the limit moves', () => {
+    const rows = new Map([['2026-09-25', costRow('2026-09-25')]]);
+    const at = (t) => byName(compare('2026-09-25', rows, '2026-09-24', { weights: null, targets: t }), 'Opus share (read)').status;
+    assert.equal(at({ opus_share_max: 40 }), 'PASS');
+    assert.equal(at({ opus_share_max: 30 }), 'MISS');
+    assert.equal(at({}), '-', 'no target configured, no verdict');
+});
+
+test('priced shares weight units by model price and exist only when weights are set', () => {
+    const rows = new Map([['2026-09-25', costRow('2026-09-25')]]);
+    assert.equal(byName(compare('2026-09-25', rows, '2026-09-24', { weights: null }), 'Opus share (priced)'), undefined);
+    const c = compare('2026-09-25', rows, '2026-09-24', { weights: { opus: 1, sonnet: 0.2, haiku: 0.1 } });
+    // equal units per family: weighted shares are 1 / 0.2 / 0.1 over 1.3
+    assert.ok(Math.abs(byName(c, 'Opus share (priced)').today - 1 / 1.3) < 1e-9);
+    assert.ok(Math.abs(byName(c, 'Haiku share (priced)').today - 0.1 / 1.3) < 1e-9);
+    assert.equal(byName(c, 'Opus share (priced)').status, '-', 'no priced target by default');
+    const t = compare('2026-09-25', rows, '2026-09-24', { weights: { opus: 1, sonnet: 0.2, haiku: 0.1 }, targets: { opus_priced_share_max: 90 } });
+    assert.equal(byName(t, 'Opus share (priced)').status, 'PASS');
+});
+
+test('rows from before the cost columns give no number instead of a wrong one', () => {
+    const old = ['2026-09-20', '1', '100', '10', '4 (4/0)', '1k', '1k', '1M', '0', '100k', '5', '1', '-', '1k', '1k'];
+    const c = compare('2026-09-25', new Map([['2026-09-20', old], ['2026-09-25', old]]), '2026-09-24', { weights: null });
+    assert.ok(Number.isNaN(byName(c, 'Opus share (read)').today));
+    assert.equal(byName(c, 'Opus share (read)').status, '-');
+    assert.ok(Number.isNaN(byName(c, 'Small-agent rate').today));
+});
+
+test('CLI: the day summary shows the mix, the cost block and PASS/MISS; weights unset says so', () => {
+    const r = run('--date', '2026-09-25');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /model mix \(cache read\) opus 9[0-9]% · sonnet [0-9]+% · haiku [0-9]+%/);
+    assert.match(r.out, /price weights unset \(model_price_weights\): token mix only/);
+    assert.match(r.out, /Cost targets 2026-09-25/);
+    assert.match(r.out, /Opus share \(read\) +9\d% +.*<=40% +MISS/);
+    assert.match(r.out, /Wakes\/prompt +2\.00 .*<=0\.50 +MISS/);
+    assert.match(r.out, /Opus subagents: each should be design, decision or review work\./);
+    assert.doesNotMatch(r.out, /share \(priced\)/);
+    assert.doesNotMatch(r.out + r.err, /SENTINEL/);
+});
+
+test('CLI: with model_price_weights set the priced mix and rows appear; --compare carries the same metrics', () => {
+    const r = spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-25', '--compare', '--projects-dir', projects, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', TZ: 'UTC', MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2, haiku=0.1', MAESTRO_COST_TARGETS: 'opus_share_max=95' },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /model mix \(priced\) +opus \d+% · sonnet \d+% · haiku \d+%/);
+    assert.match(r.stdout, /Haiku share \(priced\)/);
+    assert.match(r.stdout, /Opus share \(read\) +9\d% +.*<=95% +PASS/);
+    assert.match(r.stdout, /Max turns\/compact +3 .*<=150 +PASS/);
+    assert.doesNotMatch(r.stdout, /Price weights are unset/);
+    assert.doesNotMatch(r.stdout + r.stderr, /SENTINEL/);
+});
