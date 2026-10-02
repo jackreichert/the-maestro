@@ -57,10 +57,20 @@ beforeEach(() => {
 
 test('pick keeps usage and metadata and drops content', () => {
     const rec = pick(assistant('m1', '2026-09-25T10:00:00Z', [1, 2, 3, 4])[0]);
-    assert.deepEqual(rec.usage, { fresh: 1, write: 2, read: 3, out: 4 });
+    assert.deepEqual(rec.usage, { fresh: 1, write: 2, write5m: 0, write1h: 0, read: 3, out: 4 });
     assert.equal(rec.model, 'claude-opus-5-5');
     assert.doesNotMatch(JSON.stringify(rec), /SENTINEL/);
     assert.doesNotMatch(JSON.stringify(pick(user('x', { kind: 'peer', handback: true, body: SENTINEL }))), /SENTINEL/);
+});
+
+test('pick reads the 5m/1h cache-write split as two numbers and nothing else of cache_creation', () => {
+    const line = assistant('m1', '2026-09-25T10:00:00Z', [1, 100, 3, 4])[0];
+    line.message.usage.cache_creation = { ephemeral_5m_input_tokens: 60, ephemeral_1h_input_tokens: 40, note: SENTINEL, ephemeral_9h_input_tokens: 7 };
+    const rec = pick(line);
+    assert.deepEqual(rec.usage, { fresh: 1, write: 100, write5m: 60, write1h: 40, read: 3, out: 4 });
+    assert.doesNotMatch(JSON.stringify(rec), /SENTINEL/);
+    line.message.usage.cache_creation = SENTINEL;
+    assert.deepEqual(pick(line).usage, { fresh: 1, write: 100, write5m: 0, write1h: 0, read: 3, out: 4 });
 });
 
 test('pick reads compaction as two metadata flags and never the summary text', () => {

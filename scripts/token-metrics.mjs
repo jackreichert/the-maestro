@@ -57,6 +57,8 @@ export function pick(o) {
     const msg = o.message && typeof o.message === 'object' ? o.message : {};
     const u = msg.usage && typeof msg.usage === 'object' ? msg.usage : null;
     const num = (v) => (Number.isFinite(v) ? v : 0);
+    // The 5m/1h split of cache writes: two numeric fields of `cache_creation`, absent on older transcripts.
+    const cc = u && u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : {};
     return {
         type: typeof o.type === 'string' ? o.type : '',
         subtype: typeof o.subtype === 'string' ? o.subtype : '',
@@ -72,6 +74,8 @@ export function pick(o) {
         usage: u && {
             fresh: num(u.input_tokens),
             write: num(u.cache_creation_input_tokens),
+            write5m: num(cc.ephemeral_5m_input_tokens),
+            write1h: num(cc.ephemeral_1h_input_tokens),
             read: num(u.cache_read_input_tokens),
             out: num(u.output_tokens),
         },
