@@ -105,7 +105,7 @@ import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS } from './local-config.mjs';
 import { scratchReport } from './lib/scratch.mjs';
-import { defaultContext, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
+import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.mjs';
 import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
@@ -1092,7 +1092,7 @@ function triageChecklist(items, blockers) {
         `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
         `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
         '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
-        '[ ] Session turn count and read/turn are in the handoff header: token-metrics.mjs (by hand)',
+        '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.mjs; by hand if you wrote it yourself)',
     ];
 }
 
@@ -1951,7 +1951,19 @@ function artifactsOf(items) {
 }
 
 /** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
-function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '' } = {}) {
+/**
+ * The worktrees the roll sweep keeps. One line each by default; with `summary` (a sweep result, used by `handoff --all`,
+ * where there can be hundreds) it is the sweep's totals and the kept ones as counts by reason.
+ */
+function cleanupWorktreeLines(kept, summary) {
+    if (summary) {
+        return [`Worktree sweep (dry run): ${summary.removed.length} would be removed, ${summary.pruned.length} pruned, ${kept.length} kept. Kept, by reason (\`--verbose\` lists them):`, '',
+            ...keptCounts(kept).map((c) => `- ${c.label}: ${c.count}`), ...(summary.skipped?.length ? ['', `Sweep budget reached: skipped ${summary.skipped.join(', ')}.`] : []), ''];
+    }
+    return kept.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', ...kept.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : [];
+}
+
+function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '', sweep = null, verbose = false } = {}) {
     const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const d = today();
     const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
@@ -1974,6 +1986,7 @@ function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '' 
         '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
         `# ${stream ?? 'All streams'} handoff, ${d}`, '',
         '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
+        '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
         '## 1. Tasks with status', '',
         ...(open.length || doneRecently.length ? [
             ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
@@ -1998,8 +2011,7 @@ function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '' 
         next || '_Author: one concrete first step for the fresh session._', '',
         '## Cleanup candidates', '',
         '_Run `node scripts/branch-sweep.mjs` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
-        ...(keptWorktrees.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '',
-            ...keptWorktrees.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : []),
+        ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
         'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
     ].join('\n');
 }
@@ -2013,7 +2025,8 @@ function cmdHandoff() {
     const since = arg('since', yesterday());
     const path = arg('out') || join(dir, `HANDOFF-${today()}-${stream === null ? 'all' : slug(stream)}.md`);
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
-    const body = handoffText(stream, since, runWorktreeSweep(true)?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next') });
+    const sweep = runWorktreeSweep(true);
+    const body = handoffText(stream, since, sweep?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next'), sweep, verbose: has('verbose') });
     if (dryRun) { console.log(body); return; }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
