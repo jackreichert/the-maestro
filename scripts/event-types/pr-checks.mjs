@@ -6,7 +6,9 @@
 const TARGET = /^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)(?:#|\/pull\/)(\d+)\/?$/;
 const MAX_NAMED = 5;
 // gh pr checks exits 8 while checks are pending and 1 when any failed; both still print the JSON.
+// Exit 1 with an empty body is also how gh says "no checks reported"; any other empty exit 1 (auth, not found) is an error.
 const OK_STATUS = new Set([0, 1, 8]);
+const NO_CHECKS = /no checks reported/i;
 
 export const parseTarget = (target) => {
   const m = String(target).match(TARGET);
@@ -26,8 +28,11 @@ export function summarize(checks) {
 export function check(target, ctx) {
   const { repo, number } = parseTarget(target);
   const r = ctx.run('gh', ['pr', 'checks', number, '--repo', repo, '--json', 'name,bucket']);
-  if (!OK_STATUS.has(r.status)) throw new Error(`gh pr checks failed: ${(r.stderr || '').split('\n')[0]}`);
-  if (!r.stdout.trim()) return summarize([]);
+  const empty = !r.stdout.trim();
+  if (!OK_STATUS.has(r.status) || (empty && !(r.status === 1 && NO_CHECKS.test(r.stderr || '')))) {
+    throw new Error(`gh pr checks failed: ${(r.stderr || '').split('\n')[0]}`);
+  }
+  if (empty) return summarize([]);
   return summarize(JSON.parse(r.stdout));
 }
 

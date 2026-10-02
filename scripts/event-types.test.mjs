@@ -42,7 +42,10 @@ test('pr-checks: check() reads gh, tolerates the pending and failing exit codes,
   assert.equal(prChecks.check('org/repo#12', { run }).overall, 'pending');
   assert.deepEqual(seen[0], ['gh', 'pr', 'checks', '12', '--repo', 'org/repo', '--json', 'name,bucket']);
   assert.equal(prChecks.check('https://github.com/org/repo/pull/12', { run }).total, 1);
-  assert.equal(prChecks.check('org/repo#12', { run: () => ok('', 1) }).overall, 'none');
+  const noChecks = { status: 1, stdout: '', stderr: "no checks reported on the 'feat' branch" };
+  assert.equal(prChecks.check('org/repo#12', { run: () => noChecks }).overall, 'none');
+  assert.throws(() => prChecks.check('org/repo#12', { run: () => ({ status: 1, stdout: '', stderr: 'gh: Could not resolve to a PullRequest' }) }), /gh pr checks failed: gh: Could not/);
+  assert.throws(() => prChecks.check('org/repo#12', { run: () => ok('', 1) }), /gh pr checks failed/);
   assert.throws(() => prChecks.check('org/repo#12', { run: () => ({ status: 4, stdout: '', stderr: 'auth\nmore' }) }), /gh pr checks failed: auth/);
   assert.throws(() => prChecks.check('nonsense', { run }), /owner\/repo#123/);
 });
