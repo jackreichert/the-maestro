@@ -217,6 +217,8 @@ Org-specific rules (repo topology, tracker rules, data rules, release steps) go 
 
 6. **PR watcher cadence (optional).** The defaults need no setup: 300s at the fastest, 1800s at the slowest, stop between 20:00 and 07:00 in your system time zone. To change them set `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours` (`HH:MM-HH:MM`, or `off`), `watch_quiet_hours_mode` (`stop` or `slow`), `watch_quiet_weekends` and `watch_tz`; see [reference/local-config.md](reference/local-config.md).
 
+7. **Event loop (optional).** `scripts/event-loop.mjs` polls registered watches and wakes you only on a state change that matters (see the change that adds the event types). Its registry, state and digest live in `event_dir` (default `<ledger_root>/Events`). Set `notify_command` to a JSON argv array (the one-line summary is appended as the last argument) to be notified; with it unset nothing is ever sent. `inbox_command` feeds the `inbox` type. Both are local-config only; see [reference/local-config.md](reference/local-config.md).
+
 ### Overlay lookup order
 
 Each setting is resolved as: environment variable, then the user file, then the overlay's `config.md`.
