@@ -8,10 +8,10 @@ import { spawnSync } from 'node:child_process';
 export const MAX_SUMMARY = 150;
 export const MAX_PER_TICK = 3;
 
-/** One line, at most 150 characters. */
-export const oneLine = (text) => {
+/** One line, at most `max` characters (150 for a notification). */
+export const oneLine = (text, max = MAX_SUMMARY) => {
   const flat = String(text).replace(/\s+/g, ' ').trim();
-  return flat.length <= MAX_SUMMARY ? flat : `${flat.slice(0, MAX_SUMMARY - 3)}...`;
+  return flat.length <= max ? flat : `${flat.slice(0, max - 3)}...`;
 };
 
 /**

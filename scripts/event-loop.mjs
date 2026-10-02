@@ -24,11 +24,12 @@ import {
 } from './local-config.mjs';
 import { nextInterval } from './lib/cadence.mjs';
 import { notify, oneLine } from './lib/notify.mjs';
-import { addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.mjs';
+import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.mjs';
 
 export const EXIT = { ok: 0, usage: 2, quietStop: 3, actionable: 10 };
 const EVENT_HISTORY_MS = 6 * 3600 * 1000;
 const FAILURES_BEFORE_EVENT = 3;
+const DIGEST_SUMMARY = 300;
 
 const cadenceConfig = (pinned) => ({
   minInterval: WATCH_MIN_INTERVAL, maxInterval: WATCH_MAX_INTERVAL, quietHours: WATCH_QUIET_HOURS, quietMode: WATCH_QUIET_HOURS_MODE,
@@ -67,7 +68,7 @@ export function tick(deps) {
   const out = { events: [], retired: [], skipped: [] };
   for (const watch of listWatches(dir)) {
     const meta = state.watches[watch.id] ?? { errors: 0 };
-    const make = (e) => ({ watch: watch.id, type: watch.type, at: new Date(now).toISOString(), summary: oneLine(e.summary), actionable: e.actionable !== false, report: e.actionable === false ? '' : watch.report });
+    const make = (e) => ({ watch: watch.id, type: watch.type, at: new Date(now).toISOString(), summary: oneLine(e.summary, DIGEST_SUMMARY), actionable: e.actionable !== false, report: e.actionable === false ? '' : watch.report });
     const mayNotify = !quiet || watch.notify_overnight;
     const retire = (reason, events = []) => {
       removeWatch(dir, watch.id, reason, now);
@@ -90,8 +91,9 @@ export function tick(deps) {
     }
   }
   state.events = trimEvents([...state.events, ...out.events.map(() => now)], now);
-  saveState(dir, state);
+  // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
+  saveState(dir, state);
   notify(out.events.filter((e) => e.actionable && e.mayNotify), notifyCommand, notifyRun);
   out.events = out.events.map(({ mayNotify, ...e }) => e);
   return out;
@@ -159,6 +161,7 @@ async function main(argv) {
       const pinned = v.interval === undefined ? undefined : Number(v.interval);
       if (pinned !== undefined && !(pinned > 0)) return usage('--interval needs a positive number of seconds');
       const { TYPES } = await import('./event-types/index.mjs');
+      acquireLock(dir);
       return await run({ dir, types: TYPES, once: v.once, pinned });
     } else return usage('commands: add | list | remove <id> | digest | run [--once]');
   } catch (err) {

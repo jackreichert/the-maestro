@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
@@ -194,4 +194,13 @@ test('cli: digest consumes what it prints; --peek does not', () => {
   assert.match(cli(dir, 'digest', '--peek').stdout, /ACTION w1/);
   assert.match(cli(dir, 'digest').stdout, /ACTION w1/);
   assert.match(cli(dir, 'digest').stdout, /digest is empty/);
+});
+
+test('cli: a second loop is refused while one holds the lock', () => {
+  const dir = tempDir();
+  cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
+  writeFileSync(join(dir, 'loop.lock'), String(process.pid));
+  const r = cli(dir, 'run', '--once');
+  assert.equal(r.status, EXIT.usage);
+  assert.match(r.stderr, /another event loop is running/);
 });
