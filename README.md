@@ -82,6 +82,7 @@ node scripts/event-loop.mjs list | remove <id> | digest [--peek]
 - **Cadence.** The same adaptive cadence and quiet hours as the PR watcher (`scripts/lib/cadence.mjs`, nothing faster than 300 seconds). A watch expires after 24 hours unless `--ttl-hours` says otherwise and retires itself when its type says it is done. During quiet hours only watches registered with `--notify-overnight` keep running.
 - **Notifications.** Optional and local: set `notify_command` (a JSON argv array; the one-line summary, under 150 characters, is appended as the last argument). There is no default recipient; with it unset nothing is sent.
 - **Privacy.** The `inbox` type reads the command in `inbox_command`, keeps only a hash per unread line, and reports only a count. Message text never reaches the digest, a notification or a log.
+- **One loop at a time.** `run` takes a lock in `event_dir`; a second `run` is refused while the first is alive, and a dead one's lock is taken over.
 - **Where it lives.** `event_dir` in local-config (default `<ledger_root>/Events`): `watches.jsonl`, `state.json`, `digest.jsonl`.
 - **Cost.** One loop and one runner replace N watchers, so the orchestrator wakes once per actionable event. It is tracked as a cost experiment; see [cost/budget.md](cost/budget.md#one-event-loop-instead-of-n-watchers).
 
