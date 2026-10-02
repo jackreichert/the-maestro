@@ -196,7 +196,7 @@ export function sessionLine(dir, rollTurns = ROLL_TURNS, rollRead = ROLL_READ_PE
     try { s = currentSession(dir); } catch (e) { return `**Session:** unavailable (${e.code || e.message.split('\n')[0]} reading ${dir})`; }
     if (!s) return `**Session:** unavailable (no sessions in ${dir}; set projects_dir)`;
     const roll = s.turns >= rollTurns || s.readPerTurn >= rollRead;
-    return `**Session:** ${s.turns} turns (${Math.round((s.turns / rollTurns) * 100)}% of ${rollTurns} roll) · ${Math.round(s.readPerTurn / 1000)}k read/turn${roll ? ' · roll now' : ''}`;
+    return `**Session:** ${s.turns} turns (${Math.floor((s.turns / rollTurns) * 100)}% of ${rollTurns} roll) · ${Math.floor(s.readPerTurn / 1000)}k read/turn${roll ? ' · roll now' : ''}`;
 }
 
 function scanFile(path) {

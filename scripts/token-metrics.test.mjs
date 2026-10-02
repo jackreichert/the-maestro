@@ -150,3 +150,12 @@ test('sessionLine degrades to unavailable instead of throwing when the directory
     writeFileSync(file, '');
     assert.match(sessionLine(file), /^\*\*Session:\*\* unavailable \(.* reading /);
 });
+
+test('sessionLine truncates so the rendered numbers never claim a threshold the roll decision has not reached', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-trunc-'));
+    const line = (id, read) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    writeFileSync(join(dir, 's.jsonl'), `${line('a', 349500)}\n`);
+    assert.equal(sessionLine(dir, 1000, 350000), '**Session:** 1 turns (0% of 1000 roll) · 349k read/turn');
+    writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: 399 }, (_, i) => line(`m${i}`, 1)).join('\n')}\n`);
+    assert.match(sessionLine(dir, 400, 350000), /\(99% of 400 roll\)(?! · roll now)/);
+});
