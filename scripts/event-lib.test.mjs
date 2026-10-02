@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MAX_PER_TICK, MAX_SUMMARY, notify, oneLine } from './lib/notify.mjs';
-import { addWatch, listWatches, readDigest, removeWatch } from './lib/watch-registry.mjs';
-import { mkdtempSync, appendFileSync } from 'node:fs';
+import { acquireLock, addWatch, listWatches, readDigest, removeWatch } from './lib/watch-registry.mjs';
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -66,4 +66,20 @@ test('ids are validated and defaults are filled in', () => {
   const w = addWatch(d, { id: 'ok', type: 't', target: 'x' }, Date.parse('2026-10-01T00:00:00Z'));
   assert.equal(w.expires, '2026-10-02T00:00:00.000Z');
   assert.equal(w.notify_overnight, false);
+});
+
+test('the lock refuses a live owner, and is taken over from a dead one or junk', () => {
+  const d = dir();
+  const file = acquireLock(d, 4000000);
+  assert.equal(readFileSync(file, 'utf8'), '4000000');
+  writeFileSync(file, String(process.pid));
+  assert.throws(() => acquireLock(d), /another event loop is running/);
+  writeFileSync(file, '99999999');
+  assert.doesNotThrow(() => acquireLock(d, 4000001));
+  writeFileSync(file, 'junk');
+  assert.doesNotThrow(() => acquireLock(d, 4000002));
+});
+
+test('a digest summary can run longer than a notification', () => {
+  assert.equal(oneLine('x'.repeat(400), 300).length, 300);
 });

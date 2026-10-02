@@ -87,3 +87,25 @@ export function readDigest(dir, { consume = false } = {}) {
   if (consume && existsSync(file)) rmSync(file);
   return events;
 }
+
+const alive = (pid) => {
+  try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
+};
+
+/**
+ * One loop at a time: two loops over one registry would each report every event. The lock file holds the
+ * owner's pid; a lock whose process is gone (or whose content is junk) is taken over. Released on exit.
+ */
+export function acquireLock(dir, pid = process.pid) {
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'loop.lock');
+  try {
+    writeFileSync(file, String(pid), { flag: 'wx' });
+  } catch {
+    const owner = Number(readFileSync(file, 'utf8'));
+    if (owner > 0 && alive(owner)) throw new Error(`another event loop is running (pid ${owner})`);
+    writeFileSync(file, String(pid));
+  }
+  process.on('exit', () => rmSync(file, { force: true }));
+  return file;
+}
