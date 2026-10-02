@@ -350,7 +350,7 @@ test('cli: add --interval is stored on the watch and a non-positive one is refus
   const dir = tempDir();
   assert.equal(cli(dir, 'add', '--id', 'w1', '--type', 't', '--target', 'x', '--interval', '5').status, 0);
   assert.equal(JSON.parse(cli(dir, 'list', '--json').stdout)[0].interval, 5);
-  for (const bad of ['0', 'soon']) assert.equal(cli(dir, 'add', '--id', 'w2', '--type', 't', '--target', 'x', '--interval', bad).status, EXIT.usage);
+  for (const bad of ['0', 'soon', 'Infinity']) assert.equal(cli(dir, 'add', '--id', 'w2', '--type', 't', '--target', 'x', '--interval', bad).status, EXIT.usage);
 });
 
 test('cli: run --once with an unknown-type watch does not crash and reports nothing actionable', () => {
@@ -458,4 +458,19 @@ test('a type\'s retired hook runs after a watch retires, and a throwing hook doe
   assert.equal(tick(base(dir, types)).retired.length, 2);
   assert.deepEqual(seen, [['w1', dir]]);
   assert.equal(listWatches(dir).length, 0);
+});
+
+test('cli: run --interval refuses Infinity, zero and text, so a pin cannot defeat the floor', () => {
+  for (const bad of ['Infinity', '1e400', '0', 'soon']) assert.equal(cli(tempDir(), 'run', '--once', '--interval', bad).status, EXIT.usage, bad);
+});
+
+test('a pin of Infinity that reaches tick anyway still honours the floor', () => {
+  const dir = tempDir();
+  const log = [];
+  const types = { slow: spy(NET(), log, 'slow') };
+  addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
+  const config = { ...ALWAYS, pinned: Infinity };
+  tick(base(dir, types, { config }));
+  assert.equal(Number.isFinite(loadState(dir).watches.s.nextDue), true);
+  assert.equal(pace({ dir, types, config, now: NOON }).seconds, 180);
 });

@@ -13,8 +13,8 @@ export const notifies = 'default';
 export const backoff = false;
 
 const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?Z$/;
-// A reminder that fires during quiet hours waits for the morning; keep it alive for that long past the target.
-const GRACE_MS = 24 * 3600 * 1000;
+// A reminder that falls in quiet hours waits for them to end; a quiet weekend is about 60 hours, so keep it alive 3 days.
+const GRACE_MS = 3 * 24 * 3600 * 1000;
 
 /** Epoch milliseconds of an ISO 8601 UTC target; throws on anything else, including dates that do not exist (Feb 30). */
 export function parseTarget(target) {

@@ -125,5 +125,9 @@ test('watchInterval: idle stretches the interval, the cap never undercuts it, an
 });
 
 test('watchInterval: a declared interval that is not a positive number falls back to the default', () => {
-  for (const interval of ['fast', -5, 0, NaN, null]) assert.equal(W({ spec: { interval, network: true } }).seconds, 180);
+  for (const interval of ['fast', -5, 0, NaN, null, Infinity]) assert.equal(W({ spec: { interval, network: true } }).seconds, 180);
+  for (const bad of [Infinity, NaN, 'abc', -1]) {
+    assert.equal(W({ spec: { interval: 200, network: true }, override: bad }).seconds, 200, `override ${bad} falls through to the type`);
+    assert.equal(W({ spec: { interval: 200, network: true }, config: { typeIntervals: { t: bad } }, type: 't' }).seconds, 200);
+  }
 });
