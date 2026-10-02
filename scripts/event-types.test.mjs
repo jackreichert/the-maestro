@@ -184,3 +184,10 @@ test('pr-review: retiring or removing the watch deletes its pr-watch state file'
   assert.match(r.stdout, /removed w2/);
   assert.equal(existsSync(join(dir, 'pr-review-w2.json')), false);
 });
+
+test('pr-checks: the whole failed set is kept, so a change past the fifth name still speaks', () => {
+  const six = (last) => prChecks.summarize(['a', 'b', 'c', 'd', 'e', last].map((name) => ({ name, bucket: 'fail' })));
+  assert.equal(six('f').failed.length, 6);
+  assert.equal(prChecks.diff(six('f'), six('g')).length, 1);
+  assert.match(prChecks.diff(null, six('f'))[0].summary, /a, b, c, d, e and 1 more/);
+});

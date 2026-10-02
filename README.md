@@ -76,7 +76,9 @@ One loop for every "wake me when X happens", instead of a one-off watcher per wa
 node scripts/event-loop.mjs add --id ci-12 --type pr-checks --target owner/repo#12 --report "tell me when CI settles"
 node scripts/event-loop.mjs run          # exits 10 with a digest on an actionable event, 0 when there is nothing to watch, 3 at quiet hours
 node scripts/event-loop.mjs run --once   # one pass, same exit codes
-node scripts/event-loop.mjs list | remove <id> | digest [--peek]
+node scripts/event-loop.mjs list
+node scripts/event-loop.mjs remove <id>
+node scripts/event-loop.mjs digest [--peek]
 ```
 
 - **Pluggable types.** A type is a script (`scripts/event-types/<type>.mjs`: `check(target, ctx)` returns a state, `diff(prev, next)` returns events), a playbook (`playbooks/event-types/<type>.md`: what each line means and what to report), and one line in `scripts/event-types/index.mjs`. Shipped: `pr-checks` (CI status of a PR), `pr-review` (review activity, wrapping `pr-watch.mjs`; its per-watch state file is deleted when the watch retires), `gh-run` (a GitHub Actions run until it completes) and `inbox` (new messages from you). An org overlay adds its own types the same way.
