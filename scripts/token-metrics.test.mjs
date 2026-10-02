@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow } from './token-metrics.mjs';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares } from './token-metrics.mjs';
 
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -83,12 +83,12 @@ test('model mix covers orchestrator and subagent turns by family; units price th
     assert.equal(day.mix.sonnet.read, 900);
     // m1: fresh 10 + 1.25*1000 + 0.1*5000 + 5*100
     assert.equal(day.mix.haiku.units, 5 + 1.25 * 100 + 0.1 * 900 + 5 * 20);
-    assert.equal(mixCell(day.mix, 'read'), 'opus 17.4k · haiku 900 · sonnet 900');
+    assert.equal(mixCell(day.mix, 'read'), 'opus 17410 · haiku 900 · sonnet 900');
 });
 
 test('mix cells round-trip through the table', () => {
     const mix = { opus: { read: 1_200_000, units: 3e6 }, haiku: { read: 0, units: 500 }, sonnet: { read: 40_000, units: 9e4 } };
-    assert.equal(mixCell(mix, 'read'), 'opus 1.2M · sonnet 40.0k');
+    assert.equal(mixCell(mix, 'read'), 'opus 1200000 · sonnet 40000');
     assert.deepEqual(parseMix(mixCell(mix, 'units')), { opus: 3e6, sonnet: 90000, haiku: 500 });
     assert.deepEqual(parseMix('-'), {});
     assert.deepEqual(parseMix(undefined), {});
@@ -297,4 +297,18 @@ test('CLI: with model_price_weights set the priced mix and rows appear; --compar
     assert.match(r.stdout, /Max turns\/compact +3 .*<=150 +PASS/);
     assert.doesNotMatch(r.stdout, /Price weights are unset/);
     assert.doesNotMatch(r.stdout + r.stderr, /SENTINEL/);
+});
+
+test('a mix cell keeps whole-number precision, so a share just over the target is a MISS', () => {
+    const mix = { opus: { read: 1_249_000, units: 0 }, haiku: { read: 1_851_000, units: 0 } };
+    const rows = new Map([['2026-09-25', costRow('2026-09-25', { mixRead: mixCell(mix, 'read') })]]);
+    const c = byName(compare('2026-09-25', rows, '2026-09-24', { weights: null }), 'Opus share (read)');
+    assert.ok(c.today > 0.4 && c.today < 0.404);
+    assert.equal(c.status, 'MISS');
+});
+
+test('the other price weight covers any family besides opus, sonnet and haiku', () => {
+    const sh = shares({ opus: 100, fable: 100 }, { opus: 1, sonnet: 1, haiku: 1, other: 3 });
+    assert.equal(sh.opus, 0.25);
+    assert.equal(shares({ opus: 100, fable: 100 }, { opus: 1, sonnet: 1, haiku: 1 }).opus, 1, 'no other weight: left out of the priced mix');
 });
