@@ -468,8 +468,13 @@ export function deleteRemoteBranch(path, item, id) {
   const ref = `refs/heads/${item.name}`;
   const r = run('git', ['-C', path, 'push', `--force-with-lease=${ref}:${item.tip}`, 'origin', `:${ref}`]);
   if (r.ok) return { id, done: true, message: `deleted ${item.kind} ${item.name}` };
-  const moved = /stale info/i.test(r.err);
-  return { id, done: false, message: moved ? `refused: ${item.name} moved on origin since it was listed (lease on ${item.tip.slice(0, 9)} failed)` : `failed: ${r.err}` };
+  // Classify by asking origin, not by parsing git's (localized) message: a deleted and a moved branch both read "stale info".
+  const now = run('git', ['-C', path, 'ls-remote', 'origin', ref]);
+  if (!now.ok) return { id, done: false, message: `failed: ${r.err}` };
+  const sha = now.out.split(/\s+/)[0];
+  if (!sha) return { id, done: true, message: `${item.kind} ${item.name} was already gone from origin` };
+  if (sha !== item.tip) return { id, done: false, message: `refused: ${item.name} moved on origin since it was listed (now ${sha.slice(0, 9)}, listed ${item.tip.slice(0, 9)})` };
+  return { id, done: false, message: `failed: ${r.err}` };
 }
 
 /** Deletes the listed ids after re-scanning; returns [{ id, done, message }]. Anything no longer qualifying is refused. */
