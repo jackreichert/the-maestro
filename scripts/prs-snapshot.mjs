@@ -25,7 +25,7 @@
  *       Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT.
  *
  *   prs-snapshot.mjs [--diff] [--ready] ...   --ready adds the readiness report: PRs that are ready to merge, and approved ones that are not, with why
- *   prs-snapshot.mjs ready <snapshot.json>   the readiness report for a snapshot on disk (no network)
+ *   prs-snapshot.mjs ready <snapshot.json>   the readiness report for a snapshot on disk (no network; it says how old the file is and is not a merge gate)
  *
  *   prs-snapshot.mjs diff <old-snapshot.json> <new-snapshot.json>
  *       Pure diff of two snapshot files already on disk. No network call, no
@@ -190,7 +190,7 @@ export function readiness(pr, all = [], twinRepos = TWIN_FLOW_REPOS) {
     const reasons = [];
     if (pr.isDraft) reasons.push('draft');
     if (pr.reviewDecision !== 'APPROVED') reasons.push(`not approved (${pr.reviewDecision})`);
-    const open = pr.threads.filter((t) => !t.isResolved).length;
+    const open = (pr.threads || []).filter((t) => !t.isResolved).length;
     if (open) reasons.push(`${open} unresolved review thread(s)`);
     if (pr.threadsComplete === false) reasons.push('more than 100 review threads, not all read');
     if (pr.mergeable === 'CONFLICTING') reasons.push('merge conflict');
@@ -217,20 +217,23 @@ const defaultRun = (args) => spawnSync('gh', args, { encoding: 'utf8' });
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /**
- * After a PR merged, its open siblings in the same repos have a new base: GitHub recomputes `mergeable` lazily and answers
- * UNKNOWN until asked again. Re-asks `gh pr view` for each such sibling (up to 3 tries while UNKNOWN) and updates the snapshot in place.
- * A failed lookup leaves the old value, which readiness() will not call ready unless it already said MERGEABLE.
+ * After a PR merged, its open siblings in the same repos have a new base, so the `mergeable` the board query returned may be
+ * a cached answer from before the merge (GitHub recomputes lazily, and says UNKNOWN until asked again). Each such sibling is
+ * set to UNKNOWN, then re-asked through `gh pr view` until two answers in a row agree and are known (4 tries at most). A lookup
+ * that fails or never settles leaves it UNKNOWN, which readiness() does not call ready.
  */
 export function requerySiblings(prev, curr, { run = defaultRun, wait = pause } = {}) {
     const open = new Set(curr.prs.map((p) => p.key));
     const mergedRepos = new Set((prev?.prs || []).filter((p) => !open.has(p.key)).map((p) => p.repo));
     for (const p of curr.prs.filter((x) => mergedRepos.has(x.repo))) {
-        for (let attempt = 0; attempt < 3; attempt++) {
+        p.mergeable = 'UNKNOWN';
+        let last = '';
+        for (let attempt = 0; attempt < 4; attempt++) {
             const r = run(['pr', 'view', String(p.number), '--repo', p.repo, '--json', 'mergeable', '--jq', '.mergeable']);
             const state = r.status === 0 ? String(r.stdout).trim() : '';
             if (!state) break;
-            p.mergeable = state;
-            if (state !== 'UNKNOWN') break;
+            if (state !== 'UNKNOWN' && state === last) { p.mergeable = state; break; }
+            last = state;
             wait(1500);
         }
     }
@@ -296,7 +299,10 @@ function cmdDiffFiles() {
 
 function cmdReadyFile() {
     if (!positional[0]) { console.error('Usage: prs-snapshot.mjs ready <snapshot.json>'); process.exit(1); }
-    readyLines(JSON.parse(readFileSync(positional[0], 'utf8'))).forEach((l) => console.log(l));
+    const snapshot = JSON.parse(readFileSync(positional[0], 'utf8'));
+    const ageMin = snapshot.takenAt ? Math.round((Date.now() - Date.parse(snapshot.takenAt)) / 6e4) : null;
+    console.log(`Snapshot taken ${snapshot.takenAt || 'at an unknown time'}${ageMin > 60 ? ` (${ageMin} minutes ago: STALE)` : ''}. Not a merge gate: run \`prs-snapshot.mjs --ready\` for a live answer.`);
+    readyLines(snapshot).forEach((l) => console.log(l));
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────────
