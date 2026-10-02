@@ -150,6 +150,11 @@ const OPTIONS = {
   once: { type: 'boolean' }, interval: { type: 'string' },
 };
 
+/** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
+async function loadOverlayTypeQuietly() {
+  try { return await (await import('./event-types/index.mjs')).loadConfiguredTypes(); } catch { return {}; }
+}
+
 async function main(argv) {
   const dir = EVENT_DIR;
   const usage = (msg) => { console.error(`event-loop: ${msg}`); return EXIT.usage; };
@@ -166,15 +171,16 @@ async function main(argv) {
     } else if (cmd === 'remove') {
       const watch = listWatches(dir).find((w) => w.id === arg);
       console.log(removeWatch(dir, arg, 'removed by user') ? `removed ${arg}` : `no live watch ${arg}`);
-      if (watch) onRetired((await import('./event-types/index.mjs')).TYPES[watch.type], watch, { dir });
+      if (watch) onRetired((await import('./event-types/index.mjs')).BUILTIN_TYPES[watch.type] ?? (await loadOverlayTypeQuietly())[watch.type], watch, { dir });
     } else if (cmd === 'digest') {
       console.log(formatDigest(readDigest(dir, { consume: !v.peek })) || 'digest is empty');
     } else if (cmd === 'run') {
       const pinned = v.interval === undefined ? undefined : Number(v.interval);
       if (pinned !== undefined && !(pinned > 0)) return usage('--interval needs a positive number of seconds');
-      const { TYPES } = await import('./event-types/index.mjs');
+      const { loadConfiguredTypes } = await import('./event-types/index.mjs');
+      const types = await loadConfiguredTypes();
       acquireLock(dir);
-      return await run({ dir, types: TYPES, once: v.once, pinned });
+      return await run({ dir, types, once: v.once, pinned });
     } else return usage('commands: add | list | remove <id> | digest | run [--once]');
   } catch (err) {
     return usage(err.message);

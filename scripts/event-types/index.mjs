@@ -51,5 +51,8 @@ export async function loadTypes({ overlayDir = '', builtin = BUILTIN_TYPES } = {
   return types;
 }
 
-/** Every type this install knows: built-ins plus the configured overlay's. */
-export const TYPES = await loadTypes({ overlayDir: overlayPath ? dirname(overlayPath) : '' });
+/**
+ * Every type this install knows: built-ins plus the configured overlay's. Called where types are needed, never at
+ * import time, so a broken overlay stops the loop but not tests, `add`, or cleanup of built-in watches.
+ */
+export const loadConfiguredTypes = () => loadTypes({ overlayDir: overlayPath ? dirname(overlayPath) : '' });
