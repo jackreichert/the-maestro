@@ -728,6 +728,7 @@ function footerLines(g, done) {
 }
 
 function cmdStatus() {
+    refreshBoard();
     const g = groups(has('include-archived'));
     const d = arg('date', today());
     const rolledAt = g.rollPointOn(d);
@@ -903,7 +904,7 @@ function archivedRetros() {
 function writeStreamPages(g, doneToday, retros, d) {
     const reg = loadRegistry();
     const registered = Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k);
-    const names = [...new Set([...activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, doneToday), ...registered])].filter((s) => !retros.has(s));
+    const names = [...new Set([...activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, g.deferred, doneToday), ...registered])].filter((s) => !retros.has(s));
     if (!names.length && !retros.size) return 0;
     const streamsDir = join(dir, 'Streams');
     mkdirSync(streamsDir, { recursive: true });
@@ -2060,6 +2061,16 @@ function cmdDefer() {
     console.log(`defer  ${target.id}  until ${until}  ${target.text}`);
 }
 
+/**
+ * A deferral ends on a date but the generated pages are only written by ledger writes, so on the first read of a
+ * new day, when any defer row exists, regenerate CURRENT.md and the stream pages. Derived files only; the ledger is untouched.
+ */
+function refreshBoard() {
+    const current = join(dir, 'CURRENT.md');
+    if (dryRun || !existsSync(current) || !readLedger().some((e) => e.kind === 'defer')) return;
+    if (!readFileSync(current, 'utf8').includes(`updated: ${today()}`)) render(true);
+}
+
 /** gh's view of a PR as { state, mergedAt }, or null when gh is missing, fails or answers with something unreadable. */
 function ghPrState(repo, number) {
     const r = tryRun('gh', ['pr', 'view', String(number), '--repo', repo, '--json', 'state,mergedAt']);
@@ -2094,7 +2105,7 @@ function primeLines() {
     const approvals = approvalMap(readLedger());
     const asks = g.awaiting.filter((i) => classify(i, approvals.get(i.id)) !== BOX.PASTE);
     const paste = [...g.paste, ...g.awaiting.filter((i) => classify(i, approvals.get(i.id)) === BOX.PASTE)];
-    const label = (i) => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${i.paste}]` : ''}${i.gate ? ` [gate: ${i.gate}]` : ''}${i.stream ? ` (${i.stream})` : ''}`;
+    const label = (i) => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${clip(i.paste, 120)}]` : ''}${i.gate ? ` [gate: ${clip(i.gate, 80)}]` : ''}${i.stream ? ` (${clip(i.stream, 40)})` : ''}`;
     const sections = [
         { title: 'Needs Jack', items: asks },
         { title: 'Paste blocks for Jack', items: paste },
@@ -2102,9 +2113,11 @@ function primeLines() {
         { title: 'In flight', items: g.inflight },
     ].filter((sec) => sec.items.length).map((sec) => ({ ...sec, lines: sec.items.map(label) }));
     const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste);
-    const head = [`Board ${today()} · project ${project}`, `Today's streams: ${streams.length ? streams.join(', ') : 'none'}`];
+    const head = [clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200)];
     const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.mjs status\` and \`triage\` have the rest.`] : ['`journal.mjs status` has the rest.'];
     if (!sections.length) return [...head, '(nothing open)', ...foot];
+    // Whatever the content, the cap holds: the budget below counts lines, and this guard backs it up.
+    const capped = (lines) => (lines.length <= PRIME_MAX_LINES ? lines : [...lines.slice(0, PRIME_MAX_LINES - foot.length), ...foot]);
 
     // Round-robin the line budget so a long section cannot starve the others; a trimmed section ends in "+N more".
     let budget = PRIME_MAX_LINES - head.length - foot.length - sections.length;
@@ -2118,10 +2131,11 @@ function primeLines() {
         const keep = hidden ? Math.max(0, shown[k] - 1) : shown[k];
         return [`${sec.title} (${sec.lines.length})`, ...sec.lines.slice(0, keep).map((l) => `  ${l}`), ...(hidden ? [`  … +${hidden} more`] : [])];
     });
-    return [...head, ...body, ...foot];
+    return capped([...head, ...body, ...foot]);
 }
 
 function cmdPrime() {
+    refreshBoard();
     primeLines().forEach((l) => console.log(l));
 }
 
