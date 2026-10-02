@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
-import { addWatch, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
+import { addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
 
 const SCRIPT = new URL('./event-loop.mjs', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
@@ -203,4 +203,15 @@ test('cli: a second loop is refused while one holds the lock', () => {
   const r = cli(dir, 'run', '--once');
   assert.equal(r.status, EXIT.usage);
   assert.match(r.stderr, /another event loop is running/);
+});
+
+test('cli: info-only events survive a quiet run and show in the next actionable digest', () => {
+  const dir = tempDir();
+  cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
+  appendDigest(dir, [{ watch: 'w0', type: 't', at: 'x', summary: 'merged earlier', actionable: false, report: '' }]);
+  assert.match(cli(dir, 'run', '--once').stdout, /no actionable events/);
+  assert.match(cli(dir, 'digest', '--peek').stdout, /info w0 \(t\): merged earlier/);
+  appendDigest(dir, [{ watch: 'w1', type: 't', at: 'x', summary: 'act', actionable: true, report: '' }]);
+  const out = cli(dir, 'digest').stdout;
+  assert.match(out, /ACTION w1[\s\S]*info w0/);
 });
