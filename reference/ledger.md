@@ -75,7 +75,7 @@ Record a rule or approval the user has already stated with `rule`, after saving 
 node $J rule "branch from staging, except example-scraper" --ref ~/path/to/memory-file.md --model ... --used ...
 ```
 
-`rule` refuses (exit 1, nothing written) unless every `--ref` is an existing file (`~/` and relative paths allowed; the row stores the absolute path), so "promoted" is checked when the row is written, not just described. It takes `--approval`, `--scope`, `--stream` and the usual flags. Plain `log --kind decision` still works for a decision with no file behind it; it is just never open. Rows written as open decisions before this change read as closed records now.
+`rule` refuses (exit 1, nothing written) unless every `--ref` is an existing file (`~/` and relative paths allowed; the row stores the absolute path), so "promoted" is checked when the row is written, not just described. Any file counts, including an empty one, and a path containing a comma cannot be a ref (refs are comma-separated). It takes `--approval`, `--scope`, `--stream` and the usual flags. Plain `log --kind decision` still works for a decision with no file behind it; it is just never open. Rows written as open decisions before this change read as closed records now.
 
 ## Approvals
 
