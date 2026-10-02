@@ -34,11 +34,17 @@
  * - Report size is approximate and usage-only: the growth in context between the
  *   assistant turn before a handback and the one after it, minus the earlier
  *   turn's own output. It includes any hook output that arrived with it.
+ * - Model mix: per model family (opus/sonnet/haiku/other), cache-read tokens and input-equivalent units
+ *   (fresh 1, cache write 1.25, cache read 0.1, output 5), over orchestrator and subagent turns. The priced mix
+ *   multiplies units by `model_price_weights`; with none set only the token mix is shown. No prices are built in.
+ * - Turns since compact: the orchestrator turn count since the last compaction marker (compact_boundary or an
+ *   isCompactSummary flag); a day keeps its longest run. A small agent finished in under 10 turns.
+ * - Targets (`cost_targets`) turn the cost metrics into PASS/MISS in the day summary and --compare.
  * - Fresh = input_tokens (uncached). Context = fresh + cache write + cache read.
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN } from './local-config.mjs';
+import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, COST_TARGETS, MODEL_PRICE_WEIGHTS } from './local-config.mjs';
 
 const TABLE_HEADER = [
     'Date', 'Sessions', 'Turns', 'Prompts', 'Wakes (notif/handback)', 'Output', 'Cache write',
@@ -108,10 +114,9 @@ function main(argv) {
         writeTable(tablePath, rows);
         console.log(`\nwrote ${which.filter((d) => days.has(d)).length} row(s) to ${tablePath}`);
     }
-    if (flag('compare')) {
-        if (days.has(date)) rows = new Map(rows).set(date, toRow(days.get(date)));
-        printCompare(date, rows, baselineUntil);
-    }
+    if (days.has(date)) rows = new Map(rows).set(date, toRow(days.get(date)));
+    if (flag('compare')) printCompare(date, rows, baselineUntil);
+    else if (!flag('json') && days.has(date)) printCost(date, rows, baselineUntil);
 }
 
 // --- collection ----------------------------------------------------------------
@@ -343,7 +348,13 @@ function printDay(date, s) {
     console.log(`  subagents ${s.subagents} · ${s.subTurns} turns · ${s.subWakes} background wake-ups inside subagents · ${byModel(s)}`);
     console.log(`  subagent context growth ≈ ${compact(subGrowth(s))} tokens/turn (tool results + hooks)`);
     console.log(`  avg report ≈ ${compact(avgReport(s))} tokens over ${s.reportCount} handback(s)`);
+    console.log(`  model mix (cache read) ${mixLine(shares(readMix(s.mix), null))}`);
+    const w = MODEL_PRICE_WEIGHTS;
+    console.log(`  model mix (priced)     ${w ? mixLine(shares(unitMix(s.mix), w)) : 'price weights unset (model_price_weights): token mix only'}`);
 }
+const readMix = (mix) => Object.fromEntries(Object.entries(mix).map(([f, v]) => [f, v.read]));
+const unitMix = (mix) => Object.fromEntries(Object.entries(mix).map(([f, v]) => [f, v.units]));
+const mixLine = (sh) => FAMILIES.map((f) => `${f} ${fmtValue(sh[f], 'pct')}`).join(' · ');
 function printSessions(list) {
     if (!list.length) return;
     console.log('\nSession   Turns  Prompts  Wakes  Read/turn  Cache read  Subagents  Max since compact');
@@ -392,41 +403,110 @@ export function writeTable(path, rows) {
     writeFileSync(path, `${[...head, ...table].join('\n')}\n`);
 }
 
-// --- comparison ------------------------------------------------------------------------
+// --- comparison ------
+const FAMILIES = ['opus', 'sonnet', 'haiku'];
+/**
+ * Share of each family in `mix` ({ family: amount }), as fractions. With `weights`, each amount is multiplied by its family's
+ * price weight first and a family with no weight drops out of the denominator. NaN for every family when nothing is left.
+ */
+export function shares(mix, weights) {
+    const w = (f) => (weights ? weights[f] || 0 : 1);
+    const total = Object.entries(mix).reduce((n, [f, v]) => n + v * w(f), 0);
+    return Object.fromEntries(FAMILIES.map((f) => [f, total > 0 ? ((mix[f] || 0) * w(f)) / total : NaN]));
+}
+
 // Key metrics, read back from table cells so pruned days still compare.
 const cell = (i) => (r) => uncompact(r[i]);
 const ratio = (i, j) => (r) => { const d = uncompact(r[j]); return d ? uncompact(r[i]) / d : NaN; };
-const METRICS = [
+const share = (col, fam, weights) => (r) => shares(parseMix(r[col]), weights)[fam];
+const smallRate = (r) => { const n = uncompact(r[10]); return n ? uncompact(r[18]) / n : NaN; };
+const CORE_METRICS = [
     ['Turns', cell(2)], ['Wakes', cell(4)], ['Output', cell(5)], ['Cache read', cell(7)],
-    ['Read/turn', cell(9)], ['Read/prompt', ratio(7, 3)], ['Read/subagent', ratio(7, 10)],
+    ['Read/turn', cell(9), { cost: true, target: ['read_per_turn_max', 1, 'max'] }], ['Read/prompt', ratio(7, 3)], ['Read/subagent', ratio(7, 10)],
     ['Avg report', cell(13)], ['Sub growth', cell(14)],
 ];
+/**
+ * Every metric as [name, getter over a table row, options]. Options: cost (shown in the day summary), fmt (n, pct or ratio),
+ * worse (up, down or none: which move counts as a regression), target ([config key, scale, max|min]) or trend (lower is better, no target).
+ * Priced shares exist only when `weights` is set. Columns are the table's: 4 wakes, 15 read by model, 16 units by model,
+ * 17 max turns since compact, 18 small agents, 19 Opus subagents, 20 Opus sub tokens.
+ */
+export function metricList(weights = MODEL_PRICE_WEIGHTS) {
+    const pct = { cost: true, fmt: 'pct' };
+    return [
+        ...CORE_METRICS,
+        ['Opus share (read)', share(15, 'opus'), { ...pct, target: ['opus_share_max', 0.01, 'max'] }],
+        ['Sonnet share (read)', share(15, 'sonnet'), { ...pct, worse: 'none' }],
+        ['Haiku share (read)', share(15, 'haiku'), { ...pct, worse: 'down', target: ['haiku_share_min', 0.01, 'min'] }],
+        ...(weights ? [
+            ['Opus share (priced)', share(16, 'opus', weights), { ...pct, target: ['opus_priced_share_max', 0.01, 'max'] }],
+            ['Sonnet share (priced)', share(16, 'sonnet', weights), { ...pct, worse: 'none' }],
+            ['Haiku share (priced)', share(16, 'haiku', weights), { ...pct, worse: 'down', target: ['haiku_priced_share_min', 0.01, 'min'] }],
+        ] : []),
+        ['Wakes/prompt', ratio(4, 3), { cost: true, fmt: 'ratio', target: ['wakes_per_prompt_max', 1, 'max'] }],
+        ['Max turns/compact', cell(17), { cost: true, target: ['turns_since_compact_max', 1, 'max'] }],
+        ['Small-agent rate', smallRate, { cost: true, fmt: 'pct', trend: true }],
+        ['Opus subagents', cell(19), { cost: true, worse: 'none' }],
+        ['Opus sub tokens', cell(20), { cost: true, worse: 'none' }],
+    ];
+}
 export function median(xs) {
     const v = xs.filter(Number.isFinite).sort((a, b) => a - b);
     if (!v.length) return NaN;
     const m = Math.floor(v.length / 2);
     return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 }
-export function compare(date, rows, baselineUntil) {
+/**
+ * Each metric for `date` against the 7 rows before it and the baseline rows. `opts.targets` and `opts.weights` default to the config.
+ * `status` is PASS or MISS against a target, '-' when there is no target or no number today.
+ */
+export function compare(date, rows, baselineUntil, opts = {}) {
+    const targets = opts.targets || COST_TARGETS;
     const all = [...rows].sort((a, b) => a[0].localeCompare(b[0]));
     const today = rows.get(date);
     const prior7 = all.filter(([d]) => d < date).slice(-7).map(([, r]) => r);
     const base = all.filter(([d]) => d <= baselineUntil && d < date).map(([, r]) => r);
-    return METRICS.map(([name, val]) => {
+    return metricList(opts.weights === undefined ? MODEL_PRICE_WEIGHTS : opts.weights).map(([name, val, o = {}]) => {
         const t = today ? val(today) : NaN;
         const m7 = median(prior7.map(val));
         const b = median(base.map(val));
         const pct = (x) => (Number.isFinite(x) && x ? (t - x) / x : NaN);
-        return { name, today: t, median7: m7, baseline: b, vs7: pct(m7), vsBase: pct(b), regression: pct(m7) > 0.2 };
+        const [key, scale, dir] = o.target || [];
+        const limit = key && Number.isFinite(targets[key]) ? targets[key] * scale : NaN;
+        const worse = o.worse || 'up';
+        const status = !Number.isFinite(limit) || !Number.isFinite(t) ? '-' : (dir === 'max' ? t <= limit : t >= limit) ? 'PASS' : 'MISS';
+        return {
+            name, today: t, median7: m7, baseline: b, vs7: pct(m7), vsBase: pct(b), fmt: o.fmt || 'n', cost: Boolean(o.cost),
+            limit: Number.isFinite(limit) ? limit : NaN, dir, trend: Boolean(o.trend), status,
+            regression: worse === 'up' ? pct(m7) > 0.2 : worse === 'down' ? pct(m7) < -0.2 : false,
+        };
     });
 }
-function printCompare(date, rows, baselineUntil) {
-    const fmtPct = (p) => (Number.isFinite(p) ? `${p >= 0 ? '+' : ''}${Math.round(p * 100)}%` : '-');
-    console.log(`\nCompare ${date} · 7-day median of prior rows · baseline = median of days ≤ ${baselineUntil}`);
-    console.log('Metric         Today     7d med    vs 7d   Baseline  vs base');
-    for (const c of compare(date, rows, baselineUntil)) {
-        console.log(`${c.name.padEnd(13)} ${compact(c.today).padStart(8)} ${compact(c.median7).padStart(9)} ${fmtPct(c.vs7).padStart(7)} ${compact(c.baseline).padStart(9)} ${fmtPct(c.vsBase).padStart(7)}${c.regression ? '  REGRESSION >20%' : ''}`);
+export function fmtValue(n, fmt = 'n') {
+    if (!Number.isFinite(n)) return '-';
+    if (fmt === 'pct') return `${Math.round(n * 100)}%`;
+    if (fmt === 'ratio') return n.toFixed(2);
+    return compact(n);
+}
+const fmtPct = (p) => (Number.isFinite(p) ? `${p >= 0 ? '+' : ''}${Math.round(p * 100)}%` : '-');
+const targetText = (c) => (c.trend ? 'lower is better' : Number.isFinite(c.limit) ? `${c.dir === 'max' ? '<=' : '>='}${fmtValue(c.limit, c.fmt)}` : '-');
+
+function printMetrics(list) {
+    console.log('Metric                 Today     7d med    vs 7d   Baseline  vs base  Target           Status');
+    for (const c of list) {
+        console.log(`${c.name.padEnd(21)} ${fmtValue(c.today, c.fmt).padStart(8)} ${fmtValue(c.median7, c.fmt).padStart(9)} ${fmtPct(c.vs7).padStart(7)} ${fmtValue(c.baseline, c.fmt).padStart(9)} ${fmtPct(c.vsBase).padStart(7)}  ${targetText(c).padEnd(15)}  ${c.status}${c.regression ? '  REGRESSION >20%' : ''}`);
     }
+    if (!MODEL_PRICE_WEIGHTS) console.log('Price weights are unset: only the token mix is shown. Set model_price_weights (opus=1, sonnet=<ratio>, haiku=<ratio>) from your billing console.');
+    console.log('Opus subagents: each should be design, decision or review work.');
+}
+function printCompare(date, rows, baselineUntil) {
+    console.log(`\nCompare ${date} · 7-day median of prior rows · baseline = median of days <= ${baselineUntil}`);
+    printMetrics(compare(date, rows, baselineUntil));
+}
+/** The day summary's cost block: the cost metrics only, same columns as --compare. */
+function printCost(date, rows, baselineUntil) {
+    console.log(`\nCost targets ${date} · 7-day median of prior rows · baseline = median of days <= ${baselineUntil}`);
+    printMetrics(compare(date, rows, baselineUntil).filter((c) => c.cost));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main(process.argv.slice(2));
