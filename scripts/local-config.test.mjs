@@ -155,6 +155,23 @@ test('twin_flow_repos: empty by default, list from the file, environment wins', 
     assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: '' }).TWIN_FLOW_REPOS, '(unset)');
 });
 
+test('branch sweep settings: defaults, file values, environment wins, bad idle falls back', () => {
+    const d = show();
+    assert.equal(d.GIT_EMAILS, '(unset)');
+    assert.equal(d.PROTECTED_BRANCHES, 'main, master, staging, develop, release/*, staging/*, hotfix/*');
+    assert.equal(d.SWEEP_MERGE_TARGETS, '(unset)');
+    assert.equal(d.SWEEP_IDLE_MINUTES, '60');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('git_emails: a@example.com, b@example.com\nprotected_branches: main, release/*, backmerge/*\nsweep_merge_targets: repo_a=develop|staging, repo_b=main\nsweep_idle_minutes: 15'));
+    const f = show();
+    assert.equal(f.GIT_EMAILS, 'a@example.com, b@example.com');
+    assert.equal(f.PROTECTED_BRANCHES, 'main, release/*, backmerge/*');
+    assert.equal(f.SWEEP_MERGE_TARGETS, 'repo_a=develop|staging, repo_b=main');
+    assert.equal(f.SWEEP_IDLE_MINUTES, '15');
+    const e = show({ MAESTRO_GIT_EMAILS: 'c@example.com', MAESTRO_SWEEP_IDLE_MINUTES: 'soon' });
+    assert.equal(e.GIT_EMAILS, 'c@example.com');
+    assert.equal(e.SWEEP_IDLE_MINUTES, '60');
+});
+
 test('event loop settings: argv lists parse from JSON, junk is ignored, the dir defaults under the ledger root', () => {
     write(join(home, '.config', 'the-maestro', 'config.md'), block('ledger_root: /led\nnotify_command: ["send", "--to-me"]\ninbox_command: not json'));
     const v = show();
