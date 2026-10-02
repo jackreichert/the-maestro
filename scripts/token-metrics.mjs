@@ -320,9 +320,10 @@ const readPerTurn = (s) => (s.turns ? s.read / s.turns : NaN);
 const subGrowth = (s) => (s.subGrowthN ? s.subGrowth / s.subGrowthN : NaN);
 const byModel = (s) => Object.entries(s.subByModel).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${compact(n)}`).join(' · ') || '-';
 
-/** A mix cell: `opus 1.2M · sonnet 300k`, families with nothing left out; `-` when empty. Read back by parseMix. */
+/** A mix cell: `opus 1200000 · sonnet 300000`, families with nothing left out; `-` when empty. Read back by parseMix. */
 export function mixCell(mix, key) {
-    return Object.entries(mix || {}).filter(([, v]) => v[key] > 0).sort((a, b) => b[1][key] - a[1][key]).map(([m, v]) => `${m} ${compact(v[key])}`).join(' · ') || '-';
+    // Whole numbers, not compact(): PASS/MISS is scored from these cells, and 1-decimal k/M rounding can flip a verdict near a target.
+    return Object.entries(mix || {}).filter(([, v]) => v[key] > 0).sort((a, b) => b[1][key] - a[1][key]).map(([m, v]) => `${m} ${Math.round(v[key])}`).join(' · ') || '-';
 }
 /** The family totals back out of a mix cell: { opus: 1.2e6, sonnet: 3e5 }. */
 export function parseMix(text) {
@@ -410,7 +411,8 @@ const FAMILIES = ['opus', 'sonnet', 'haiku'];
  * price weight first and a family with no weight drops out of the denominator. NaN for every family when nothing is left.
  */
 export function shares(mix, weights) {
-    const w = (f) => (weights ? weights[f] || 0 : 1);
+    // Any family that is not opus, sonnet or haiku (fable included) takes the optional `other` weight.
+    const w = (f) => (weights ? (FAMILIES.includes(f) ? weights[f] : weights.other) || 0 : 1);
     const total = Object.entries(mix).reduce((n, [f, v]) => n + v * w(f), 0);
     return Object.fromEntries(FAMILIES.map((f) => [f, total > 0 ? ((mix[f] || 0) * w(f)) / total : NaN]));
 }
