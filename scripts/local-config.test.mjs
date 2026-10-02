@@ -167,6 +167,13 @@ test('twin_flow_repos: empty by default, list from the file, environment wins', 
     assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: '' }).TWIN_FLOW_REPOS, '(unset)');
 });
 
+test('copilot_orgs: empty by default, list from the file, environment wins', () => {
+    assert.equal(show().COPILOT_ORGS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('copilot_orgs: org_a, org_b'));
+    assert.equal(show().COPILOT_ORGS, 'org_a, org_b');
+    assert.equal(show({ MAESTRO_COPILOT_ORGS: 'only_one' }).COPILOT_ORGS, 'only_one');
+});
+
 test('branch sweep settings: defaults, file values, environment wins, bad idle falls back', () => {
     const d = show();
     assert.equal(d.GIT_EMAILS, '(unset)');

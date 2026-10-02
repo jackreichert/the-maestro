@@ -42,6 +42,7 @@ pr_max_code_lines: 400         # PR size budget: most changed code lines (adds +
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off
+copilot_orgs: my-org          # comma-separated owners whose draft PRs pr-watch.mjs requests Copilot review on; omit to request nowhere
 git_emails: me@example.com     # comma-separated; the authorship check in branch-sweep.mjs; omit to use each repo's user.email
 protected_branches: main, release/*  # names or globs (`*` within one path segment, `**` across segments) branch-sweep.mjs never lists; setting it replaces the default, which is main, master, staging, develop, release/*, staging/*, hotfix/*; add backmerge/* here to protect those too
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
@@ -100,6 +101,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.mjs` |
 | Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), PR look-back (`sweep_pr_days`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.mjs`, ledger.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
+| Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/pr-watch.mjs` |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |

@@ -5,14 +5,14 @@
  * script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
  * for the cursor `p<i>` the stub itself hands out as endCursor, so a script that ignores
  * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
- * `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
+ * `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const STUB = `#!${process.execPath}
-const { readFileSync } = require('node:fs');
+const { appendFileSync, readFileSync } = require('node:fs');
 const cfg = JSON.parse(readFileSync(process.env.GH_STUB_CONFIG, 'utf8'));
 const argv = process.argv.slice(2);
 const cursor = argv.find((a) => a.startsWith('after='));
@@ -27,7 +27,8 @@ else if (argv[0] === 'api' && cfg.failOnPage === page) {
     pageInfo: { hasNextPage: page < pages.length - 1, endCursor: 'p' + (page + 1) },
     nodes: pages[page],
   } } }));
-} else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPEN');
+} else if (argv[0] === 'pr' && argv[1] === 'edit') { if (cfg.editLog) appendFileSync(cfg.editLog, argv.join(' ') + '\\n'); }
+else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPEN');
 `;
 
 /** Writes the stub and returns an env (PATH + config) for spawning a script against it. */
