@@ -10,7 +10,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { userPath, overlayPath } from './local-config.mjs';
+import { userPath, overlayPath, SCRIPTS_SHELF_DIR } from './local-config.mjs';
 
 /** The scripts dir as invoked (absolute, symlinks kept), so a symlinked install stays valid when the
  *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.mjs. */
@@ -27,6 +27,13 @@ const LITERALS = new Set(['<base>', '<check>']);
 export function extractBlock(markdown) {
   const after = markdown.split(/^### Standing brief block.*$/m)[1] || '';
   return (after.match(/^```text\n([\s\S]*?)^```/m) || [])[1] || '';
+}
+
+/** The scripts shelf line (first ```text fence under its heading) with `<scripts_dir>` filled; empty without a dir. */
+export function shelfLine(markdown, shelfDir) {
+  const after = markdown.split(/^### Scripts shelf line.*$/m)[1] || '';
+  const line = (after.match(/^```text\n([\s\S]*?)^```/m) || [])[1] || '';
+  return shelfDir && line ? line.split('<scripts_dir>').join(shelfDir) : '';
 }
 
 /** Reads { '<slot>': value } from the "Standing brief block, filled" section of a config file. */
@@ -52,7 +59,8 @@ export function fillBlock(block, values) {
 
 function main() {
   const briefPath = fileURLToPath(new URL('../reference/brief.md', import.meta.url));
-  const block = extractBlock(readFileSync(briefPath, 'utf8'));
+  const markdown = readFileSync(briefPath, 'utf8');
+  const block = extractBlock(markdown);
   if (!block) { console.error('brief-block: standing block not found in reference/brief.md'); process.exit(1); }
   const values = {};
   // Overlay first, then the user file, so the user file wins, as everywhere else in local-config.
@@ -64,7 +72,7 @@ function main() {
     console.error(`brief-block: unfilled ${problems.join(', ')}. Set them under "Standing brief block, filled" (reference/local-config.md).`);
     process.exit(1);
   }
-  process.stdout.write(text);
+  process.stdout.write(text + shelfLine(markdown, SCRIPTS_SHELF_DIR));
 }
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };

@@ -42,6 +42,14 @@ Standing rules (hard limits):
 - Report: at most ~20 lines — outcome, numbers, links, decisions needed, what is left open. Put longer detail in a file (vault note, ticket, or report path) and link it. If tests failed or a step was skipped, say so.
 ```
 
+### Scripts shelf line — appended when `scripts_dir` is set
+
+`brief-block.mjs` appends this line after the standing block when the install sets `scripts_dir` ([local-config](local-config.md)), with `<scripts_dir>` filled. With `scripts_dir` unset nothing is appended.
+
+```text
+- Scripts: before writing a script, check <scripts_dir>/README.md for an existing helper. Put one-offs in <scripts_dir>/scratch/ (never /tmp) with a 3-line header: purpose; date + ledger id; inputs as env var names. No secrets and no outputs in that folder.
+```
+
 Why each cost habit is in this block — the measured cost of skipping it, and the rule that the
 orchestrator follows the same habits for its own tool calls — is cost material now:
 [cost/budget.md#the-standing-briefs-cost-habits](../cost/budget.md#the-standing-briefs-cost-habits).
