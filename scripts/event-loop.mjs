@@ -6,6 +6,7 @@
  *   event-loop.mjs list [--json] | remove <id> | digest [--peek]
  *   event-loop.mjs run [--once] [--interval N]
  *
+ * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
  * A type may export `retired(watch, ctx)` to delete its per-watch files when the watch retires or is removed.
  * Each tick runs every live watch's type checker (scripts/event-types/<type>.mjs), compares the new state with
  * the stored one, and records an event only when the type's diff() reports one. Events go to a digest file;
@@ -57,7 +58,7 @@ function onRetired(type, watch, ctx) {
 function checkWatch(watch, prev, { types, ctx }) {
   const type = types[watch.type];
   if (!type) throw new Error(`unknown event type "${watch.type}"`);
-  const next = type.check(watch.target, { ...ctx, watch });
+  const next = type.check(watch.target, { ...ctx, watch, prev: prev?.state ?? null });
   const events = type.diff(prev?.state ?? null, next) ?? [];
   return { events, state: next, retire: isDone(type, next, watch) ? 'done' : '' };
 }
@@ -150,6 +151,11 @@ const OPTIONS = {
   once: { type: 'boolean' }, interval: { type: 'string' },
 };
 
+/** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
+async function loadOverlayTypeQuietly() {
+  try { return await (await import('./event-types/index.mjs')).loadConfiguredTypes(); } catch { return {}; }
+}
+
 async function main(argv) {
   const dir = EVENT_DIR;
   const usage = (msg) => { console.error(`event-loop: ${msg}`); return EXIT.usage; };
@@ -166,15 +172,16 @@ async function main(argv) {
     } else if (cmd === 'remove') {
       const watch = listWatches(dir).find((w) => w.id === arg);
       console.log(removeWatch(dir, arg, 'removed by user') ? `removed ${arg}` : `no live watch ${arg}`);
-      if (watch) onRetired((await import('./event-types/index.mjs')).TYPES[watch.type], watch, { dir });
+      if (watch) onRetired((await import('./event-types/index.mjs')).BUILTIN_TYPES[watch.type] ?? (await loadOverlayTypeQuietly())[watch.type], watch, { dir });
     } else if (cmd === 'digest') {
       console.log(formatDigest(readDigest(dir, { consume: !v.peek })) || 'digest is empty');
     } else if (cmd === 'run') {
       const pinned = v.interval === undefined ? undefined : Number(v.interval);
       if (pinned !== undefined && !(pinned > 0)) return usage('--interval needs a positive number of seconds');
-      const { TYPES } = await import('./event-types/index.mjs');
+      const { loadConfiguredTypes } = await import('./event-types/index.mjs');
+      const types = await loadConfiguredTypes();
       acquireLock(dir);
-      return await run({ dir, types: TYPES, once: v.once, pinned });
+      return await run({ dir, types, once: v.once, pinned });
     } else return usage('commands: add | list | remove <id> | digest | run [--once]');
   } catch (err) {
     return usage(err.message);
