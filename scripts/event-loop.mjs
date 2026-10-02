@@ -6,6 +6,7 @@
  *   event-loop.mjs list [--json] | remove <id> | digest [--peek]
  *   event-loop.mjs run [--once] [--interval N]
  *
+ * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
  * A type may export `retired(watch, ctx)` to delete its per-watch files when the watch retires or is removed.
  * Each tick runs every live watch's type checker (scripts/event-types/<type>.mjs), compares the new state with
  * the stored one, and records an event only when the type's diff() reports one. Events go to a digest file;
@@ -57,7 +58,7 @@ function onRetired(type, watch, ctx) {
 function checkWatch(watch, prev, { types, ctx }) {
   const type = types[watch.type];
   if (!type) throw new Error(`unknown event type "${watch.type}"`);
-  const next = type.check(watch.target, { ...ctx, watch });
+  const next = type.check(watch.target, { ...ctx, watch, prev: prev?.state ?? null });
   const events = type.diff(prev?.state ?? null, next) ?? [];
   return { events, state: next, retire: isDone(type, next, watch) ? 'done' : '' };
 }
