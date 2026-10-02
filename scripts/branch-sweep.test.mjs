@@ -650,6 +650,15 @@ test('sweepWorktrees leaves a locked worktree and a live-claimed repo alone, and
     assert.equal(remoteHas(w, 'feat/lock'), true, 'a merged remote branch is out of scope');
 });
 
+test('sweepWorktrees does not fetch or scan a repo with no linked worktree, and still does for one that has one', () => {
+    const w = world();
+    sh(w.repo, 'remote', 'set-url', 'origin', join(w.root, 'nowhere.git')); // any fetch now fails and says so
+    const none = sweep(w);
+    assert.deepEqual([none.removed, none.pruned, none.kept, none.notes], [[], [], [], []], 'a fetch would have left a note');
+    const wt = join(w.root, 'linked'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'HEAD');
+    assert.match(keptReason(sweep(w), wt), /fetch failed/, 'a repo with a worktree is still fetched');
+});
+
 test('removeWorktree refuses when the worktree changed after the scan, and never forces', () => {
     const w = world();
     const wt = join(w.root, 'late'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/develop');
