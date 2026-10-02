@@ -383,6 +383,14 @@ When a notification arrives:
   Say so and reconcile.
 - State plainly what was **not** done, and why.
 
+### Check before you relay
+
+A status is only as current as its source, and two sources go stale quietly.
+
+- **A research note more than a day old.** Before you relay what it says is done, open, merged or broken, check it against the code on `main` (`git log`, the file itself) and against facts already in this session's ledger. Where they disagree, relay the disagreement, not the note.
+- **A subagent report.** Same check for any claim you are about to pass on that you did not see yourself: a PR state, a test result, a file's contents. A report that contradicts the ledger or `main` is reconciled before it is relayed.
+- **Research notes carry their own freshness.** A note in `Research/` records the commit sha it was verified at (`verified-at: <sha>` in its front matter) and, when a newer note replaces it, a `superseded-by: [[newer note]]` link. A note with no `verified-at` counts as unverified; one with `superseded-by` is never relayed from.
+
 ## Status Footer
 
 **End every reply with the live agent roster and the ledger count.** Background work is invisible by design — the user
