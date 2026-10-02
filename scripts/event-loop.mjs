@@ -64,14 +64,16 @@ function checkWatch(watch, prev, { types, ctx }) {
 export function tick(deps) {
   const { dir, types, ctx = {}, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun } = deps;
   const state = loadState(dir);
-  const quiet = Boolean(nextInterval({ now, recentEvents: state.events, config }).stop);
+  // Quiet means the clock says so, whatever quietMode does to the pace (`slow` never returns stop).
+  const quiet = nextInterval({ now, recentEvents: state.events, config: { ...config, quietMode: 'stop' } }).stop === true;
+  const retirements = [];
   const out = { events: [], retired: [], skipped: [] };
   for (const watch of listWatches(dir)) {
     const meta = state.watches[watch.id] ?? { errors: 0 };
     const make = (e) => ({ watch: watch.id, type: watch.type, at: new Date(now).toISOString(), summary: oneLine(e.summary, DIGEST_SUMMARY), actionable: e.actionable !== false, report: e.actionable === false ? '' : watch.report });
     const mayNotify = !quiet || watch.notify_overnight;
     const retire = (reason, events = []) => {
-      removeWatch(dir, watch.id, reason, now);
+      retirements.push({ id: watch.id, reason });
       delete state.watches[watch.id];
       out.retired.push({ id: watch.id, reason });
       out.events.push(...events.map((e) => ({ ...make(e), mayNotify })));
@@ -82,7 +84,7 @@ export function tick(deps) {
       const r = checkWatch(watch, state.watches[watch.id], { types, ctx: { ...ctx, now } });
       out.events.push(...r.events.map((e) => ({ ...make(e), mayNotify })));
       state.watches[watch.id] = { state: r.state, errors: 0, checkedAt: new Date(now).toISOString() };
-      if (r.retire) { removeWatch(dir, watch.id, r.retire, now); delete state.watches[watch.id]; out.retired.push({ id: watch.id, reason: r.retire }); }
+      if (r.retire) { retirements.push({ id: watch.id, reason: r.retire }); delete state.watches[watch.id]; out.retired.push({ id: watch.id, reason: r.retire }); }
     } catch (err) {
       // A failing check keeps its last good state; it speaks once, after a few failures in a row.
       meta.errors += 1;
@@ -94,6 +96,8 @@ export function tick(deps) {
   // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
   saveState(dir, state);
+  // Tombstones last: a crash before this leaves the watch live, so the next tick retires it again instead of losing its final event.
+  for (const { id, reason } of retirements) removeWatch(dir, id, reason, now);
   notify(out.events.filter((e) => e.actionable && e.mayNotify), notifyCommand, notifyRun);
   out.events = out.events.map(({ mayNotify, ...e }) => e);
   return out;
@@ -103,7 +107,7 @@ export function tick(deps) {
 export function pace({ dir, config = cadenceConfig(), now = Date.now() }) {
   const events = loadState(dir).events;
   const next = nextInterval({ now, recentEvents: events, config });
-  if (next.stop && listWatches(dir).some((w) => w.notify_overnight)) return nextInterval({ now, recentEvents: events, config: { ...config, quietHours: 'off' } });
+  if (next.stop && listWatches(dir).some((w) => w.notify_overnight)) return nextInterval({ now, recentEvents: events, config: { ...config, quietHours: 'off', quietWeekends: false, quietMode: 'stop' } });
   return next;
 }
 
@@ -112,9 +116,9 @@ export const formatDigest = (events) => [...events].sort((a, b) => Number(b.acti
   .map((e) => `${e.actionable ? 'ACTION' : 'info'} ${e.watch} (${e.type}): ${e.summary}${e.report && e.actionable ? ` | report: ${e.report}` : ''}`).join('\n');
 
 function finish(dir) {
-  const events = readDigest(dir, { consume: true });
-  if (!events.some((e) => e.actionable)) return false;
-  console.log(formatDigest(events));
+  // Peek first: info-only events stay for the next actionable batch instead of vanishing.
+  if (!readDigest(dir).some((e) => e.actionable)) return false;
+  console.log(formatDigest(readDigest(dir, { consume: true })));
   return true;
 }
 
