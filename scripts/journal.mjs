@@ -28,6 +28,9 @@
  *   journal.mjs ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
  *   journal.mjs triage [--date D] [--since D] [--apply] [--json]   box every open item and the day's decisions and notes, flag stale/unpromoted/unticketed, print the don't-miss
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
+ *   journal.mjs log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
+ *   journal.mjs defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
+ *   journal.mjs prime                         the box view for session start and after a compaction: 40 lines or fewer, ledger only (hook-safe)
  *   journal.mjs rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.mjs resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
@@ -103,8 +106,8 @@ import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMI
 import { scratchReport } from './lib/scratch.mjs';
 import { defaultContext, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
-import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween } from './lib/boxes.mjs';
-import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
+import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.mjs';
+import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag'];
@@ -374,6 +377,7 @@ function fmt(i, { showId = true, showUsage = true } = {}) {
     if (i.repo) tail.push(i.repo);
     if (i.ticket) tail.push(`[[${i.ticket}]]`);
     if (i.paste) tail.push(`block: ${i.paste}`);
+    if (i.gate) tail.push(`gate: ${i.gate}`);
     if (showUsage) tail.push(usageSuffix(i));
     if (tail.length) bits.push(`— ${tail.join(' · ')}`);
     return bits.join(' ');
@@ -432,6 +436,19 @@ function pasteFile(kind) {
 }
 
 /**
+ * `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>`: what a blocked item is waiting for. Only a `blocked` row
+ * takes one, and a malformed gate exits 1 before anything is written, so `resume` never has to guess at it.
+ */
+function gateFlag(kind) {
+    if (!has('gate')) return undefined;
+    const spec = arg('gate');
+    if (!spec) die('--gate needs a value: gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>');
+    if (kind !== 'blocked') die('--gate only goes on --kind blocked.');
+    if (!parseGate(spec)) die(`--gate "${spec}" is not gh:pr:<repo>#N, date:YYYY-MM-DD or ticket:<id>.`);
+    return spec;
+}
+
+/**
  * log, start, ask, note and rule. `ask` takes --kind question (default) or decision; a decision written by `ask`
  * is pending and stays on the board. `rule` always writes a decision, which is a record and not open.
  */
@@ -443,6 +460,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const refs = rule ? ruleRefs() : refsFromArgs();
     const paste = ask ? pasteFile(kind) : undefined;
+    const gate = gateFlag(kind);
 
     const entries = readLedger();
     const entry = {
@@ -458,6 +476,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
         pending: ask && kind === 'decision' ? true : undefined,
         box: paste ? 'paste' : undefined,
         paste,
+        gate,
         ...approvalFor(kind),
         ...usageFromArgs(),
     };
@@ -666,9 +685,11 @@ function groups(includeArchived = false) {
     const entries = readLedger();
     const folded = fold(entries);
     const items = includeArchived ? folded.items : folded.items.filter((i) => !folded.hidden.has(i.id));
-    const open = items.filter(isOpen);
+    const deferred = activeDeferrals(entries, today());
+    const open = items.filter((i) => isOpen(i) && !deferred.has(i.id));
     return {
         items,
+        deferred: items.filter((i) => isOpen(i) && deferred.has(i.id)).map((i) => ({ ...i, deferredUntil: deferred.get(i.id) })),
         inflight: open.filter((i) => i.kind === 'wip'),
         blocked: open.filter((i) => i.kind === 'blocked'),
         awaiting: open.filter((i) => (i.kind === 'question' || i.kind === 'decision') && !i.paste),
@@ -1007,11 +1028,13 @@ function triageItems(d, since) {
     const entries = readLedger();
     const folded = fold(entries);
     const approvals = approvalMap(entries);
+    const deferred = activeDeferrals(entries, today());
     const inScope = (i) => isOpen(i) || (!i.closedBy && ['decision', 'note'].includes(i.kind) && i.date >= since && i.date <= d);
     return folded.items.filter((i) => !folded.hidden.has(i.id) && inScope(i)).map((i) => {
         const box = classify(i, approvals.get(i.id));
         const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
-        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, ref, ageDays: daysBetween(i.date, d), stale: isStale(box, i, d) };
+        const until = deferred.get(i.id);
+        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d) };
     });
 }
 
@@ -1045,7 +1068,7 @@ function triageChecklist(items, blockers) {
         `${mark(!n(BOX.FINDING).length)} Every "could not be filed", "follow-up", "next session" note is a ticket or an open item${n(BOX.FINDING).length ? ` (${n(BOX.FINDING).length} without one)` : ''}. Check the handoff draft by hand too.`,
         `${mark(!short)} Every Needs-Jack item reads as a standalone question with options, not a bare id${short ? ` (${short} too short to stand alone)` : ''}`,
         `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
-        '[ ] Every gated item names its gate (by hand)',
+        `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
         '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
         '[ ] Session turn count and read/turn are in the handoff header: token-metrics.mjs (by hand)',
     ];
@@ -1058,7 +1081,7 @@ function triageLines(t) {
         if (box === BOX.NOISE) { out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`); continue; }
         out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`);
         for (const i of list) {
-            const tail = [RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
+            const tail = [RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.deferredUntil ? `deferred until ${i.deferredUntil}` : null, i.gate ? `gate ${i.gate}` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
             out.push(`  ${i.id}  ${clip(i.text, 110)}${tail.length ? `  [${tail.join('; ')}]` : ''}`);
         }
     }
@@ -1146,7 +1169,7 @@ function verifyLedger() {
         if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
         const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
         if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
-        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves']) missing(line, row, field, row[field]);
+        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
     problems.sort((a, b) => a.line - b.line);
@@ -1916,7 +1939,7 @@ function handoffText(stream, since, keptWorktrees = []) {
     const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
     const touched = items.filter((i) => isOpen(i) || recent(i));
     const arts = artifactsOf(touched);
-    const meta = (i) => [i.repo, i.ticket && `[[${i.ticket}]]`].filter(Boolean).join(' · ');
+    const meta = (i) => [i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
     const line = (i, tag) => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
     const one = (kind) => arts.filter((a) => a.kind === kind).map((a) => a.v);
 
@@ -1991,7 +2014,16 @@ function cmdResume() {
         }
     }
 
-    console.log('\n3. Loops (pgrep)');
+    console.log('\n3. Gates');
+    const gates = gateReport();
+    if (!gates.length) console.log('  none: no blocked item carries a --gate');
+    for (const gt of gates) {
+        const tag = { cleared: 'CLEARED', waiting: 'waiting', unknown: 'UNKNOWN' }[gt.state];
+        console.log(`  ${tag.padEnd(8)} ${gt.item.id} ${clip(gt.item.text, 80)} (${gt.item.gate}: ${gt.detail})`);
+        if (gt.state === 'cleared') console.log(`           the gate is clear: \`journal.mjs resolve ${gt.item.id} --answer "gate cleared"\` then \`start\` it again`);
+    }
+
+    console.log('\n4. Loops (pgrep)');
     if (!LOOP_PATTERNS.length) console.log('  none configured (set loop_patterns in the config)');
     for (const pattern of LOOP_PATTERNS) {
         const r = tryRun('pgrep', ['-f', pattern]);
@@ -1999,8 +2031,98 @@ function cmdResume() {
         else console.log(r.ok ? `  ok       ${pattern} (pid ${r.out.split('\n').join(', ')})` : `  MISSING  ${pattern}`);
     }
 
-    console.log('\n4. ListAgents');
+    console.log('\n5. ListAgents');
     console.log('  NOT RUN: ListAgents is a harness tool, not a shell command. Call it yourself before acting.');
+}
+
+// ── defer, gates and prime ──────────────────────────────────────────────────
+
+/**
+ * `defer <id> --until YYYY-MM-DD`: hide an open item from the board (status, footer, CURRENT.md, prime) until that date.
+ * Appends a `defer` row; the item itself is untouched. The date must be in the future and the item open, and the
+ * latest defer wins, so deferring again moves the date. Triage still lists it, marked deferred.
+ */
+function cmdDefer() {
+    const id = positional[0];
+    const until = arg('until');
+    if (!id || !until) die('Usage: journal.mjs defer <id> --until YYYY-MM-DD');
+    if (!isDate(until)) die('--until must be YYYY-MM-DD.');
+    if (until <= today()) die(`--until ${until} is not in the future (today is ${today()}).`);
+    const entries = readLedger();
+    const target = fold(entries).items.find((i) => i.id === id);
+    if (!target) die(`No item with id "${id}".`);
+    if (!isOpen(target)) die(`Item ${id} is not open (${target.state}); only an open item can be deferred.`);
+    append({
+        id: newId(entries), ts: now(), date: today(), kind: 'defer', defers: target.id, until,
+        text: `deferred until ${until}`, ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`defer  ${target.id}  until ${until}  ${target.text}`);
+}
+
+/** gh's view of a PR as { state, mergedAt }, or null when gh is missing, fails or answers with something unreadable. */
+function ghPrState(repo, number) {
+    const r = tryRun('gh', ['pr', 'view', String(number), '--repo', repo, '--json', 'state,mergedAt']);
+    if (!r.ok) return null;
+    try { const j = JSON.parse(r.out); return j && typeof j.state === 'string' ? j : null; } catch { return null; }
+}
+
+/** A ticket's status through the derived index; null when there is no tickets vault or no answer. */
+function ticketStatusOf(id) {
+    if (!(arg('tickets-vault') || VAULT_ROOT)) return null;
+    return ticketStatuses([id])?.get(id)?.status ?? null;
+}
+
+/**
+ * Open blocked items that carry a gate, each with where the gate stands. Read-only: it reports, it never promotes
+ * or closes an item. gh gates honour resume_gh (off means "unknown", not a gh call).
+ */
+function gateReport() {
+    const lookups = { pr: (repo, n) => (RESUME_GH ? ghPrState(repo, n) : null), ticket: ticketStatusOf };
+    return groups().blocked.filter((i) => i.gate).map((i) => ({ item: i, ...gateStatus(i.gate, today(), lookups) }));
+}
+
+/**
+ * The session-start view: at most 40 lines, however long the ledger is. Today's streams, then Needs Jack, paste blocks,
+ * gated and in-flight items in that order. When it does not fit, each section gives up lines evenly and says how many it hid.
+ * Reads only the ledger (no gh, no network), so it is safe to run from a hook.
+ */
+const PRIME_MAX_LINES = 40;
+
+function primeLines() {
+    const g = groups();
+    const approvals = approvalMap(readLedger());
+    const asks = g.awaiting.filter((i) => classify(i, approvals.get(i.id)) !== BOX.PASTE);
+    const paste = [...g.paste, ...g.awaiting.filter((i) => classify(i, approvals.get(i.id)) === BOX.PASTE)];
+    const label = (i) => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${i.paste}]` : ''}${i.gate ? ` [gate: ${i.gate}]` : ''}${i.stream ? ` (${i.stream})` : ''}`;
+    const sections = [
+        { title: 'Needs Jack', items: asks },
+        { title: 'Paste blocks for Jack', items: paste },
+        { title: 'Blocked / gated', items: g.blocked },
+        { title: 'In flight', items: g.inflight },
+    ].filter((sec) => sec.items.length).map((sec) => ({ ...sec, lines: sec.items.map(label) }));
+    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste);
+    const head = [`Board ${today()} · project ${project}`, `Today's streams: ${streams.length ? streams.join(', ') : 'none'}`];
+    const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.mjs status\` and \`triage\` have the rest.`] : ['`journal.mjs status` has the rest.'];
+    if (!sections.length) return [...head, '(nothing open)', ...foot];
+
+    // Round-robin the line budget so a long section cannot starve the others; a trimmed section ends in "+N more".
+    let budget = PRIME_MAX_LINES - head.length - foot.length - sections.length;
+    const shown = sections.map(() => 0);
+    for (let progressed = true; budget > 0 && progressed;) {
+        progressed = false;
+        sections.forEach((sec, k) => { if (budget > 0 && shown[k] < sec.lines.length) { shown[k]++; budget--; progressed = true; } });
+    }
+    const body = sections.flatMap((sec, k) => {
+        const hidden = sec.lines.length - shown[k];
+        const keep = hidden ? Math.max(0, shown[k] - 1) : shown[k];
+        return [`${sec.title} (${sec.lines.length})`, ...sec.lines.slice(0, keep).map((l) => `  ${l}`), ...(hidden ? [`  … +${hidden} more`] : [])];
+    });
+    return [...head, ...body, ...foot];
+}
+
+function cmdPrime() {
+    primeLines().forEach((l) => console.log(l));
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────────
@@ -2038,6 +2160,8 @@ switch (cmd) {
     case 'claims': cmdClaims(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
+    case 'defer': cmdDefer(); break;
+    case 'prime': cmdPrime(); break;
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
     default:
