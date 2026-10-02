@@ -171,3 +171,12 @@ test('branch sweep settings: defaults, file values, environment wins, bad idle f
     assert.equal(e.GIT_EMAILS, 'c@example.com');
     assert.equal(e.SWEEP_IDLE_MINUTES, '60');
 });
+
+test('event loop settings: argv lists parse from JSON, junk is ignored, the dir defaults under the ledger root', () => {
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('ledger_root: /led\nnotify_command: ["send", "--to-me"]\ninbox_command: not json'));
+    const v = show();
+    assert.equal(v.EVENT_DIR, '/led/Events');
+    assert.equal(v.NOTIFY_COMMAND, '(set)');
+    assert.equal(v.INBOX_COMMAND, '(unset)');
+    assert.equal(show({ MAESTRO_EVENT_DIR: '/elsewhere' }).EVENT_DIR, '/elsewhere');
+});
