@@ -60,6 +60,7 @@ watch_local_floor: 30          # event loop: fastest poll for local types (inbox
 watch_type_intervals: pr-checks=240, inbox=90  # event loop: default interval per type, seconds; the floors still apply
 inbox_command: ["my-inbox", "--unread"]     # event loop `inbox` type: argv printing one line per unread message, without marking them read; omit for none
 container_root: /path/to/container  # the only directory roll and handoff will sweep for stale worktrees, and only when run from inside it; a leading ~/ is expanded; omit and the sweep refuses
+agent_owned_repos: ~/tools, ~/notes  # repos the agent manages itself: the protected-branch stop does not apply there (commit to the default branch); every other git rule still does; omit for none
 scripts_dir: /path/to/scripts # shared scripts shelf: README.md index, scratch/, helpers/; a leading ~/ is expanded; omit to turn the shelf protocol off
 ```
 ````
