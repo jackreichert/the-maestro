@@ -17,8 +17,8 @@
  * Standing conditions (an approved PR left unmerged) wake once, when they first appear or change
  * (a new approval, a moved head), then stay quiet; every report still lists them.
  *
- * Each tick also requests a Copilot review on any draft PR that Copilot hasn't
- * reviewed and isn't already requested on. Its threads then arrive as THREAD lines.
+ * Each tick also requests a Copilot review on any draft PR, in a copilot_orgs owner,
+ * that Copilot hasn't reviewed and isn't already requested on. Its threads then arrive as THREAD lines.
  *
  *   pr-watch.mjs [--interval N] [--once] [--baseline] --state <file>
  *     --interval  pin the poll to N seconds; by default the cadence adapts to activity and
@@ -212,7 +212,8 @@ const unreported = (board, reported) => standingConditions(board).filter((c) => 
 const reportedNow = (board) => Object.fromEntries(standingConditions(board).map((c) => [c.id, c.sig]));
 
 // The user wants Copilot's pass resolved before they review a draft, so request Copilot
-// on any draft it has neither reviewed nor been asked to review. It runs once per
+// on any draft, in a repo owned by a copilot_orgs entry, that it has neither reviewed
+// nor been asked to review. It runs once per
 // PR: after that the request (or its review) makes needsCopilot false.
 function requestCopilot(board) {
   const requested = [];
