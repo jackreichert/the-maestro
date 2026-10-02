@@ -27,8 +27,15 @@ test('headerPurpose reads the first comment line across comment styles, skipping
     assert.equal(headerPurpose('// sum the totals\nconst a = 1;'), 'sum the totals');
     assert.equal(headerPurpose('-- list tables\nselect 1;'), 'list tables');
     assert.equal(headerPurpose('/* one-off */\nx'), 'one-off');
+    assert.equal(headerPurpose('/**\n * sum the totals\n * 2026-06-01 x-1\n */\nx'), 'sum the totals');
+    assert.equal(headerPurpose('/*\n   one-off\n*/\nx'), 'one-off');
     assert.equal(headerPurpose('echo no header\n'), '');
     assert.equal(headerPurpose(''), '');
+});
+
+test('scratchRows reads only the head of a large file', () => {
+    const root = shelf([['big.sh', '# big purpose\n' + 'x'.repeat(5_000_000), 1]]);
+    assert.equal(scratchRows(root, [], NOW)[0].purpose, 'big purpose');
 });
 
 test('propose: promote needs reuse and some age; delete needs more than 14 idle days; reuse beats staleness', () => {

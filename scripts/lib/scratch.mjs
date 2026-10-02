@@ -9,21 +9,29 @@
  *   delete-candidate idle > DELETE_IDLE_DAYS                       (nobody has touched it)
  *   keep             everything else
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const PROMOTE_MIN_IDLE_DAYS = 3;
 export const PROMOTE_MIN_USES = 2;
 export const DELETE_IDLE_DAYS = 14;
 const DAY_MS = 86400000;
+const HEADER_BYTES = 2000;
 
 /** The purpose line: the first comment line of the header, comment marker stripped. Empty if none. */
 export function headerPurpose(text) {
+  let inBlock = false;
   for (const raw of text.split('\n').slice(0, 8)) {
     const line = raw.trim();
     if (!line || line.startsWith('#!')) continue;
-    const m = line.match(/^(?:#|\/\/|--|\/\*+|\*)\s?(.*?)(?:\*\/)?$/);
-    return m ? m[1].trim() : '';
+    const m = line.match(/^(?:#|\/\/|--|\/\*+|\*)\s?(.*?)(?:\*\/)?$/) ?? (inBlock ? [line, line] : null);
+    if (!m) return '';
+    // A bare opening delimiter (`/*`, `/**`) or a lone closing one carries no text: read on.
+    if (!m[1].trim() && /^\/\*|^\*\/$/.test(line)) {
+      inBlock = !line.endsWith('*/');
+      continue;
+    }
+    return m[1].trim();
   }
   return '';
 }
@@ -33,6 +41,17 @@ export function propose({ idleDays, uses }) {
   if (uses >= PROMOTE_MIN_USES && idleDays >= PROMOTE_MIN_IDLE_DAYS) return 'promote';
   if (idleDays > DELETE_IDLE_DAYS) return 'delete-candidate';
   return 'keep';
+}
+
+/** At most the first HEADER_BYTES of a file as text, read without loading the rest. */
+function readHead(path) {
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(HEADER_BYTES);
+    return buf.toString('utf8', 0, readSync(fd, buf, 0, HEADER_BYTES, 0));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Rows for every regular file in <shelf>/scratch, oldest first. `ledgerTexts` is the text of the ledger rows to count uses in. */
@@ -45,7 +64,7 @@ export function scratchRows(shelf, ledgerTexts = [], now = Date.now()) {
       const path = join(dir, e.name);
       const idleDays = Math.max(0, Math.floor((now - statSync(path).mtimeMs) / DAY_MS));
       const uses = ledgerTexts.filter((t) => t.includes(e.name)).length;
-      const purpose = headerPurpose(readFileSync(path, 'utf8').slice(0, 2000));
+      const purpose = headerPurpose(readHead(path));
       return { name: e.name, idleDays, uses, purpose, proposal: propose({ idleDays, uses }) };
     })
     .sort((a, b) => b.idleDays - a.idleDays || a.name.localeCompare(b.name));
