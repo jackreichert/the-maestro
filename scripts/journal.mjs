@@ -103,7 +103,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS } from './local-config.mjs';
 import { scratchReport } from './lib/scratch.mjs';
 import { defaultContext, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
@@ -950,7 +950,7 @@ function runWorktreeSweep(dry) {
     const refusal = sweepRootRefusal(CONTAINER_ROOT, resolve(arg('container', process.cwd())));
     if (refusal) { console.log(`worktree sweep refused: ${refusal}`); return null; }
     try {
-        return sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry });
+        return sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry, budgetSeconds: SWEEP_BUDGET_SECONDS });
     } catch (e) {
         console.log(`worktree sweep skipped: ${e.message}`);
         return null;
