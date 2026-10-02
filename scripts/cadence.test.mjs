@@ -1,7 +1,7 @@
 // Run: node --test scripts/cadence.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { floorSeconds, nextInterval, parseQuietHours } from './lib/cadence.mjs';
+import { floorSeconds, nextInterval, parseQuietHours, watchFloor, watchInterval } from './lib/cadence.mjs';
 
 const MIN = 60000;
 const at = (iso) => Date.parse(iso);
@@ -86,4 +86,48 @@ test('a weekend stop resumes at the end of the weekend', () => {
 test('quiet hours in another zone resume in that zone', () => {
   const got = nextInterval({ now: at('2026-10-01T20:00:00Z'), config: { tz: 'Asia/Tokyo' } });
   assert.deepEqual([got.until, got.tz], ['07:00', 'Asia/Tokyo']);
+});
+
+test('watchFloor: 120s for network or undeclared types, 30s for local ones; a setting can only raise it', () => {
+  assert.equal(watchFloor({ network: true }), 120);
+  assert.equal(watchFloor({}), 120);
+  assert.equal(watchFloor({ network: false }), 30);
+  assert.equal(watchFloor({ network: true }, { networkFloor: 10 }), 120);
+  assert.equal(watchFloor({ network: false }, { localFloor: 1 }), 30);
+  assert.equal(watchFloor({ network: true }, { networkFloor: 300 }), 300);
+  assert.equal(watchFloor({ network: false }, { localFloor: 45 }), 45);
+});
+
+const W = (args) => watchInterval({ now: NOON, ...args });
+
+test('watchInterval: override beats config beats the type default, and nothing goes under the floor', () => {
+  const net = { interval: 180, network: true };
+  assert.equal(W({ type: 't', spec: net }).seconds, 180);
+  assert.equal(W({ type: 't', spec: net, config: { typeIntervals: { t: 240 } } }).seconds, 240);
+  assert.equal(W({ type: 't', spec: net, override: 400, config: { typeIntervals: { t: 240 } } }).seconds, 400);
+  const low = W({ type: 't', spec: net, override: 5 });
+  assert.equal(low.seconds, 120);
+  assert.match(low.reason, /raised to the 120s floor/);
+  assert.equal(W({ type: 't', spec: { interval: 60, network: false }, override: 2 }).seconds, 30);
+  assert.equal(W({ type: 't', spec: { interval: 1, network: true } }).seconds, 120);
+  assert.equal(W({ type: 't' }).seconds, 180, 'no spec at all: default interval, network floor');
+});
+
+test('watchInterval: idle stretches the interval, the cap never undercuts it, and backoff = false opts out', () => {
+  const net = { interval: 180, network: true };
+  const idle = (minutes) => [NOON - minutes * MIN];
+  assert.equal(W({ spec: net, recentEvents: idle(70) }).seconds, 270);
+  assert.equal(W({ spec: net, recentEvents: idle(130) }).seconds, 540);
+  assert.equal(W({ spec: net, recentEvents: idle(130), config: { maxInterval: 300 } }).seconds, 300);
+  assert.equal(W({ spec: { ...net, interval: 400 }, recentEvents: idle(130), config: { maxInterval: 300 } }).seconds, 400);
+  assert.equal(W({ spec: net, recentEvents: ago(NOON, 1, 2, 3) }).seconds, 180);
+  assert.equal(W({ spec: { interval: 30, network: false, backoff: false }, recentEvents: idle(130) }).seconds, 30);
+});
+
+test('watchInterval: a declared interval that is not a positive number falls back to the default', () => {
+  for (const interval of ['fast', -5, 0, NaN, null, Infinity]) assert.equal(W({ spec: { interval, network: true } }).seconds, 180);
+  for (const bad of [Infinity, NaN, 'abc', -1]) {
+    assert.equal(W({ spec: { interval: 200, network: true }, override: bad }).seconds, 200, `override ${bad} falls through to the type`);
+    assert.equal(W({ spec: { interval: 200, network: true }, config: { typeIntervals: { t: bad } }, type: 't' }).seconds, 200);
+  }
 });

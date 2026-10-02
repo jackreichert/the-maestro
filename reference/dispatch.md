@@ -440,7 +440,10 @@ new messages), do not write a one-off watcher and do not make an agent poll. Reg
 `node scripts/event-loop.mjs add --id <id> --type <type> --target <target> --report "<what you want back>"`.
 One loop polls every registered watch, and a cheap runner follows
 [playbooks/event-loop.md](../playbooks/event-loop.md) and wakes you only for an actionable event, so
-waiting costs one wake per event, not one per watcher. The event types and what each reports are in
+waiting costs one wake per event, not one per watcher. Each type polls at its own pace (override with
+`--interval S`; network types never faster than 120s). For "remind me at <time>" register a `reminder`
+watch (`--type reminder --target <ISO 8601 UTC> --report "<text>"`). A watch notifies the user only if
+added with `--notify` (reminders do by default, `--no-notify` turns it off; inbox never). The event types and what each reports are in
 `playbooks/event-types/`; a new kind of wait is a new type (script, playbook, one index line, or just script and playbook in an org
 overlay's `event-types/`), not a new watcher. Log the runner like any other agent (`journal.mjs start`).
 
