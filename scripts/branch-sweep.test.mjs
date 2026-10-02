@@ -2,14 +2,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
-const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob } = await import('./branch-sweep.mjs');
+const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines } = await import('./branch-sweep.mjs');
 
 const ME = 'me@example.com';
 const sh = (repo, ...args) => {
@@ -25,7 +25,7 @@ const commit = (repo, file, text, email = ME) => {
 
 /** A container holding `name`, a clone of a bare origin that has main, develop and staging at one commit. */
 function world(name = 'proj') {
-    const root = mkdtempSync(join(tmpdir(), 'sweep-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'sweep-')));  // git reports real paths (macOS: /private/var)
     const origin = join(root, 'origin.git');
     const repo = join(root, 'box', name);
     mkdirSync(join(root, 'box'));
@@ -236,7 +236,8 @@ test('a worktree cut with -b x origin/develop is not "gone" and never qualifies'
     const w = world();
     sh(w.repo, 'worktree', 'add', '-q', '-b', 'x', join(w.root, 'x'), 'origin/develop');
     const r = scanRepo(w.repo, ctxFor({ gh: () => [] }));
-    assert.deepEqual([r.items, r.review, r.excluded], [[], [], []]);
+    assert.deepEqual([r.items, r.review], [[], []]);
+    assert.match(r.excluded.map((e) => e.reason).join(), /branch x is not yours/);   // listed as kept, with the reason, never offered
 });
 
 test('git and gh errors fail closed: the item is left out and the reason is noted', () => {
@@ -498,4 +499,137 @@ test('a protected release branch counts as mainline, so a branch cut from it is 
 test('branchGlob: * stays inside a segment, ** crosses, everything else is literal', () => {
     const m = (g, b) => branchGlob(g).test(b);
     assert.deepEqual([m('release/*', 'release/1.0'), m('release/*', 'release/a/b'), m('release/**', 'release/a/b'), m('main', 'feat/main'), m('a.b', 'axb'), m('*', 'a/b')], [true, false, true, false, false, false]);
+});
+
+// ── sweepWorktrees: what `journal.mjs roll` runs ────────────────────────────
+
+const sweep = (w, over = {}, opts = {}) => sweepWorktrees(w.container, ctxFor({ gh: () => [], ...over }), opts);
+const keptReason = (r, path) => r.kept.find((k) => k.path === path)?.reason;
+const worktreeList = (w) => sh(w.repo, 'worktree', 'list', '--porcelain');
+
+test('sweepWorktrees removes a clean merged worktree, keeps its branch, and a second run is a no-op', () => {
+    const w = world(); feature(w, 'feat/done'); mergeInto(w, 'develop', 'feat/done'); mergeInto(w, 'staging', 'feat/done');
+    const wt = join(w.root, 'done'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/done');
+    const first = sweep(w);
+    assert.deepEqual(first.removed.map((x) => x.path), [wt]);
+    assert.equal(existsSync(wt), false);
+    assert.equal(sh(w.repo, 'branch', '--list', 'feat/done'), 'feat/done', 'the local branch stays');
+    const before = worktreeList(w);
+    const second = sweep(w);
+    assert.deepEqual([second.removed, second.pruned, second.kept], [[], [], []]);
+    assert.equal(worktreeList(w), before);
+});
+
+test('sweepWorktrees keeps a dirty worktree, whether the file is modified or untracked, and says why', () => {
+    const w = world(); feature(w, 'feat/mod'); feature(w, 'feat/new');
+    for (const b of ['feat/mod', 'feat/new']) { mergeInto(w, 'develop', b); mergeInto(w, 'staging', b); }
+    const mod = join(w.root, 'mod'); const fresh = join(w.root, 'fresh');
+    sh(w.repo, 'worktree', 'add', '-q', mod, 'feat/mod'); sh(w.repo, 'worktree', 'add', '-q', fresh, 'feat/new');
+    writeFileSync(join(mod, 'feat_mod.txt'), 'edited\n');
+    writeFileSync(join(fresh, 'scratch.txt'), 'untracked\n');
+    const r = sweep(w);
+    assert.deepEqual(r.removed, []);
+    assert.match(keptReason(r, mod), /uncommitted changes/);
+    assert.match(keptReason(r, fresh), /untracked files/);
+    assert.deepEqual([existsSync(mod), existsSync(fresh)], [true, true]);
+    assert.equal(sh(mod, 'status', '--porcelain'), 'M feat_mod.txt', 'the edit survives');
+});
+
+test('sweepWorktrees keeps a worktree with unpushed commits, merged-looking or not', () => {
+    const w = world(); feature(w, 'feat/ahead'); feature(w, 'feat/pushed');
+    const ahead = join(w.root, 'ahead'); const pushed = join(w.root, 'pushed');
+    sh(w.repo, 'worktree', 'add', '-q', ahead, 'feat/ahead'); sh(w.repo, 'worktree', 'add', '-q', pushed, 'feat/pushed');
+    commit(ahead, 'local.txt', 'not pushed\n');
+    const r = sweep(w);
+    assert.deepEqual(r.removed, []);
+    assert.match(keptReason(r, ahead), /1 unpushed commit/);
+    assert.match(keptReason(r, pushed), /pushed but not merged/);
+    assert.deepEqual([existsSync(ahead), existsSync(pushed)], [true, true]);
+});
+
+test('sweepWorktrees removes a clean detached worktree on origin, and keeps one holding commits that are not', () => {
+    const w = world();
+    const clean = join(w.root, 'clean'); const work = join(w.root, 'work');
+    sh(w.repo, 'worktree', 'add', '-q', '--detach', clean, 'origin/develop');
+    sh(w.repo, 'worktree', 'add', '-q', '--detach', work, 'origin/develop');
+    commit(work, 'wip.txt', 'detached work\n');
+    const r = sweep(w);
+    assert.deepEqual(r.removed.map((x) => x.path), [clean]);
+    assert.match(r.removed[0].why, /detached at .* reachable from origin/);
+    assert.equal(existsSync(clean), false);
+    assert.match(keptReason(r, work), /detached HEAD \w+ holds 1 commit\(s\) not on any origin ref/);
+    assert.equal(existsSync(work), true);
+});
+
+test('sweepWorktrees keeps a dirty detached worktree', () => {
+    const w = world();
+    const wt = join(w.root, 'dirty'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/develop');
+    writeFileSync(join(wt, 'base.txt'), 'changed\n');
+    const r = sweep(w);
+    assert.deepEqual(r.removed, []);
+    assert.match(keptReason(r, wt), /uncommitted changes/);
+});
+
+test('sweepWorktrees prunes an entry whose directory is gone, and a second run has nothing left to prune', () => {
+    const w = world(); feature(w, 'feat/gone'); mergeInto(w, 'develop', 'feat/gone'); mergeInto(w, 'staging', 'feat/gone');
+    const wt = join(w.root, 'gone'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/gone');
+    rmSync(wt, { recursive: true });
+    assert.match(worktreeList(w), /prunable/);
+    const first = sweep(w);
+    assert.deepEqual(first.pruned.map((x) => x.path), [wt]);
+    assert.doesNotMatch(worktreeList(w), /gone/);
+    assert.equal(sh(w.repo, 'branch', '--list', 'feat/gone'), 'feat/gone');
+    const second = sweep(w);
+    assert.deepEqual([second.removed, second.pruned, second.kept], [[], [], []]);
+});
+
+test('sweepWorktrees --dry-run changes nothing', () => {
+    const w = world(); feature(w, 'feat/dry'); mergeInto(w, 'develop', 'feat/dry'); mergeInto(w, 'staging', 'feat/dry');
+    const wt = join(w.root, 'dry'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/dry');
+    const gone = join(w.root, 'dry-gone'); sh(w.repo, 'worktree', 'add', '-q', '--detach', gone, 'origin/develop'); rmSync(gone, { recursive: true });
+    const r = sweep(w, {}, { dryRun: true });
+    assert.deepEqual([r.removed.map((x) => x.path), r.pruned.map((x) => x.path)], [[wt], [gone]]);
+    assert.equal(existsSync(wt), true);
+    assert.match(worktreeList(w), /dry-gone/);
+    assert.deepEqual(r.kept, [], 'a missing directory is listed as pruned, not also as kept');
+    assert.match(worktreeSweepLines(r, true).join('\n'), /would remove +\S+dry .*\n.*would prune +\S+dry-gone/);
+});
+
+test('sweepWorktrees leaves a locked worktree and a live-claimed repo alone, and does not touch remote branches', () => {
+    const w = world(); feature(w, 'feat/lock'); mergeInto(w, 'develop', 'feat/lock'); mergeInto(w, 'staging', 'feat/lock');
+    const wt = join(w.root, 'lock'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/develop');
+    sh(w.repo, 'worktree', 'lock', wt);
+    assert.match(keptReason(sweep(w), wt), /locked/);
+    sh(w.repo, 'worktree', 'unlock', wt);
+    const claimed = sweep(w, { claims: new Map([[w.name, { desk: 'Launch' }]]) });
+    assert.deepEqual(claimed.removed, []);
+    assert.match(keptReason(claimed, wt), /claimed by Launch/);
+    assert.equal(remoteHas(w, 'feat/lock'), true, 'a merged remote branch is out of scope');
+});
+
+test('removeWorktree refuses when the worktree changed after the scan, and never forces', () => {
+    const w = world();
+    const wt = join(w.root, 'late'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/develop');
+    const ctx = ctxFor({ gh: () => [] });
+    const [item] = scanRepo(w.repo, ctx).items;
+    writeFileSync(join(wt, 'late.txt'), 'arrived after the scan\n');
+    assert.match(removeWorktree(w.repo, item).message, /uncommitted or untracked/);
+    rmSync(join(wt, 'late.txt'));
+    commit(wt, 'late.txt', 'committed after the scan\n');
+    assert.match(removeWorktree(w.repo, item).message, /moved since it was scanned/);
+    assert.equal(existsSync(wt), true);
+});
+
+test('--apply-worktrees from the command line removes what qualifies and prints kept with reasons', () => {
+    const w = world();
+    const clean = join(w.root, 'clean'); const work = join(w.root, 'work');
+    sh(w.repo, 'worktree', 'add', '-q', '--detach', clean, 'origin/develop');
+    sh(w.repo, 'worktree', 'add', '-q', '--detach', work, 'origin/develop');
+    writeFileSync(join(work, 'new.txt'), 'x\n');
+    const r = spawnSync(process.execPath, [SCRIPT, '--apply-worktrees', '--container', w.container, '--idle-minutes', '0', '--claims-dir', join(w.root, 'none')], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH: 'false' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, new RegExp(`removed +${clean}`));
+    assert.match(r.stdout, new RegExp(`kept +${work} .*untracked`));
+    assert.match(r.stdout, /worktrees: 1 removed, 0 pruned, 1 kept\./);
+    assert.deepEqual([existsSync(clean), existsSync(work)], [false, true]);
 });

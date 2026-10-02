@@ -4,6 +4,7 @@
  *
  *   node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]
  *   node scripts/branch-sweep.mjs --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]
+ *   node scripts/branch-sweep.mjs --apply-worktrees [--dry-run] [--container <dir>] [--repo <name>]
  *
  * Read-only by default (it runs `git fetch --prune origin` and nothing else that writes). `--apply` deletes only the
  * listed ids, re-scanning each repo first and refusing anything that no longer qualifies. Deleting is
@@ -20,6 +21,12 @@
  * user's commits, and (if its branch is still on origin) is still at its PR's head. Patch-equivalence alone (`git cherry`, so a squash
  * merge, but also a squash merge that was since reverted) lists the branch under Review, and --apply refuses it.
  * Any git or gh error leaves the item out, with the reason noted.
+ * `--apply-worktrees` (what `journal.mjs roll` runs, a standing approval) is the worktree half without the id step: it runs
+ * `git worktree prune` for entries whose directory is missing, re-scans worktrees only, and removes every one that
+ * qualifies, never with --force and never a branch. A detached worktree qualifies when it passes the worktree rules and its
+ * HEAD is reachable from some origin ref. Right before each removal the worktree is re-read (HEAD unchanged, no modified or
+ * untracked file, detached HEAD still on origin). Everything else is printed as `kept` with its reason. Remote branches
+ * are untouched; they keep the listing and `--apply --ids` flow.
  * The `gh` binary is `MAESTRO_GH` if set. Settings: local-config.mjs and reference/local-config.md.
  */
 import { spawnSync } from 'node:child_process';
@@ -257,13 +264,13 @@ function mergedEvidence(g, ref, name, tip, targets, scan) {
 const why = (ev) => `merged into ${[...ev.per.map((p) => `${p.target} (${p.how})`), ...ev.weak.map((t) => `${t} (patch-equivalent only)`)].join(' and ')}`;
 const links = (ev) => ev.per.filter((p) => p.url).map((p) => p.url);
 
-/** Linked worktrees of a repo: [{ path, branch, locked, prunable }]; the main worktree, bare and detached entries are left out. Throws if git cannot list them. */
+/** Linked worktrees of a repo: [{ path, head, branch, detached, locked, prunable }]; the main worktree and bare entries are left out. Throws if git cannot list them. */
 function worktrees(g) {
   const blocks = must(g, 'worktree', 'list', '--porcelain').split('\n\n').slice(1);
   return blocks.map((b) => {
     const f = (k) => b.split('\n').find((l) => l === k || l.startsWith(`${k} `));
-    return { path: f('worktree')?.slice(9), branch: f('branch')?.replace('branch refs/heads/', ''), locked: !!f('locked'), prunable: !!f('prunable') };
-  }).filter((w) => w.path && w.branch);
+    return { path: f('worktree')?.slice(9), head: f('HEAD')?.slice(5), branch: f('branch')?.replace('branch refs/heads/', ''), detached: !!f('detached'), locked: !!f('locked'), prunable: !!f('prunable') };
+  }).filter((w) => w.path && (w.branch || w.detached));
 }
 
 const expandHome = (p) => (p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p);
@@ -374,7 +381,7 @@ export function scanRepo(repoPath, ctx) {
     wts = worktrees(g);
   } catch (e) { res.notes.push(`scan stopped: ${e.message}`); return res; }
 
-  for (const full of refs) {
+  for (const full of ctx.worktreesOnly ? [] : refs) {
     const branch = full.slice('refs/remotes/origin/'.length);
     if (full === 'refs/remotes/origin/HEAD' || isProtected(branch)) continue;
     const a = assess(g, full, branch, targets, scan);
@@ -383,17 +390,48 @@ export function scanRepo(repoPath, ctx) {
     (a.ev.state === 'ok' ? res.items : res.review).push({ id: idOf(name, 'remote-branch', branch, a.tip), repo: name, kind: 'remote-branch', name: branch, tip: a.tip, why: why(a.ev), prs: links(a.ev) });
   }
   for (const w of wts) {
-    if (isProtected(w.branch)) continue;
-    scanWorktree({ g, w, name, targets, scan, live, res });
+    if (w.detached) scanDetached({ g, w, name, scan, live, res });
+    else if (!isProtected(w.branch)) scanWorktree({ g, w, name, targets, scan, live, res });
   }
   return res;
+}
+
+/** Why a worktree whose branch is not merged stays: the branch's state first, then anything uncommitted or in use. */
+function unmergedReason(g, w, name, scan, live, a, ahead) {
+  const own = !a.mine ? `branch ${w.branch} is not yours (${a.reason})`
+    : ahead === null ? `branch ${w.branch} is not merged and git could not count what is unpushed`
+      : ahead > 0 ? `branch ${w.branch} has ${ahead} unpushed commit(s)`
+        : `branch ${w.branch} is pushed but not merged into ${a.ev.missing.join(', ')}`;
+  const blocker = worktreeBlocker(g, w, name, scan.ctx, live);
+  return blocker ? `${own}; ${blocker}` : own;
+}
+
+/**
+ * One detached worktree. It qualifies when HEAD is reachable from some origin ref (so nothing is lost with it) and it
+ * passes every worktree rule; no branch exists to judge, and no merge evidence is needed.
+ */
+function scanDetached({ g, w, name, scan, live, res }) {
+  const base = { id: idOf(name, 'worktree', w.path, w.head || 'unknown'), repo: name, kind: 'worktree', name: w.path, head: w.head, detached: true };
+  const short = (w.head || '').slice(0, 9);
+  const ahead = w.head ? unpushedCount(g, w.head) : null;
+  const reason = ahead === null ? `detached HEAD ${short}: git could not count what is not on origin`
+    : ahead > 0 ? `detached HEAD ${short} holds ${ahead} commit(s) not on any origin ref` : '';
+  const blocker = reason ? null : worktreeBlocker(g, w, name, scan.ctx, live);
+  if (reason || blocker) { res.excluded.push({ ...base, reason: reason || blocker }); return; }
+  res.items.push({ ...base, why: `detached at ${short}, reachable from origin`, prs: [] });
+}
+
+/** Commits of `ref` that no origin ref contains, or null when git cannot count them. */
+function unpushedCount(g, ref) {
+  const r = g('rev-list', '--count', ref, '--not', '--remotes=origin');
+  return r.ok && /^\d+$/.test(r.out) ? Number(r.out) : null;
 }
 
 /** One linked worktree: qualifies on its branch (or a deleted upstream with nothing unpushed), then must pass every worktree rule. */
 function scanWorktree({ g, w, name, targets, scan, live, res }) {
   const ref = `refs/heads/${w.branch}`;
   const a = assess(g, ref, w.branch, targets, scan);
-  const base = { id: idOf(name, 'worktree', w.path, a.tip || 'unknown'), repo: name, kind: 'worktree', name: w.path };
+  const base = { id: idOf(name, 'worktree', w.path, a.tip || 'unknown'), repo: name, kind: 'worktree', name: w.path, head: w.head };
   // Gone means the branch tracks its own name on origin and that ref was deleted; `-b x origin/develop` tracks develop.
   const gone = g('config', `branch.${w.branch}.remote`).out === 'origin' && g('config', `branch.${w.branch}.merge`).out === ref
     && !g('rev-parse', '--verify', '-q', `refs/remotes/origin/${w.branch}`).ok;
@@ -406,7 +444,10 @@ function scanWorktree({ g, w, name, targets, scan, live, res }) {
       || (gone && `branch ${w.branch} is gone from origin but ${ahead} commit(s) are not pushed or merged`)
       || (a.error && `skipped: ${a.error.message}`);
     if (reason) res.excluded.push({ ...base, reason });
-    if (reason || state !== 'review') return;
+    if (reason || state !== 'review') {
+      if (!reason) res.excluded.push({ ...base, reason: unmergedReason(g, w, name, scan, live, a, ahead) });
+      return;
+    }
   }
   const blocker = worktreeBlocker(g, w, name, scan.ctx, live);
   if (blocker) { res.excluded.push({ ...base, reason: blocker }); return; }
@@ -494,9 +535,77 @@ export function apply(ids, container, ctx, only) {
       return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ' (or its tip moved since it was listed)'}` };
     }
     if (item.kind === 'remote-branch') return deleteRemoteBranch(path, item, id);
-    const r = run('git', ['-C', path, 'worktree', 'remove', item.name]);
-    return { id, done: r.ok, message: r.ok ? `deleted ${item.kind} ${item.name}` : `failed: ${r.err}` };
+    return removeWorktree(path, item, id);
   });
+}
+
+/**
+ * Removes one worktree the scan listed, never with --force. Right before the removal it re-reads the worktree itself, so
+ * what the scan saw cannot have gone stale: HEAD must still be the scanned commit, nothing may be modified or untracked,
+ * and a detached HEAD must still be on origin (once removed, its commits would survive only in the reflog).
+ */
+export function removeWorktree(path, item, id = item.id) {
+  const wg = gitIn(item.name);
+  const refuse = (m) => ({ id, done: false, message: `refused: ${item.name} ${m}` });
+  const head = wg('rev-parse', 'HEAD');
+  if (!head.ok || head.out !== item.head) return refuse('moved since it was scanned');
+  const status = wg('status', '--porcelain');
+  if (!status.ok) return refuse(`status unreadable (${status.err})`);
+  if (status.out) return refuse('has uncommitted or untracked files');
+  if (item.detached && unpushedCount(wg, 'HEAD') !== 0) return refuse('is detached and not on origin');
+  const r = run('git', ['-C', path, 'worktree', 'remove', item.name]);
+  return { id, done: r.ok, message: r.ok ? `deleted ${item.kind} ${item.name}` : `failed: ${r.err}` };
+}
+
+/** `git worktree prune` for the entries whose directory is missing (locked ones stay); returns the paths dropped. Dry runs only list them. */
+function pruneMissing(path, dryRun) {
+  const gone = worktrees(gitIn(path)).filter((w) => w.prunable && !w.locked).map((w) => w.path);
+  if (!gone.length || dryRun) return gone;
+  const r = run('git', ['-C', path, 'worktree', 'prune']);
+  if (!r.ok) throw new SweepError(`git worktree prune failed: ${r.err}`);
+  const left = new Set(worktrees(gitIn(path)).map((w) => w.path));
+  return gone.filter((p) => !left.has(p));
+}
+
+/**
+ * The worktree half of the sweep, applied: prunes entries whose directory is missing, then re-scans each repo (worktrees
+ * only, after a fetch) and removes every worktree that qualifies. Never forced, never a branch. Returns
+ * { removed: [{ repo, path, why }], pruned: [{ repo, path }], kept: [{ repo, path, reason }], notes }, where kept is every
+ * worktree left in place with its reason, so uncommitted, untracked and unpushed work is listed rather than touched.
+ * With `dryRun` it only reports what it would do.
+ */
+export function sweepWorktrees(container, ctx, { only, dryRun = false } = {}) {
+  const out = { removed: [], pruned: [], kept: [], notes: [] };
+  for (const path of findRepos(container, only)) {
+    const repo = basename(path);
+    try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${e.message}`); }
+    const scan = scanRepo(path, { ...ctx, fetch: true, worktreesOnly: true });
+    out.notes.push(...scan.notes.map((n) => `${repo}: ${n}`));
+    const keep = (i, reason) => out.kept.push({ repo, path: i.name, reason });
+    const dropped = new Set(out.pruned.filter((x) => x.repo === repo).map((x) => x.path)); // a dry run still sees these
+    scan.excluded.filter((e) => !dropped.has(e.name)).forEach((e) => keep(e, e.reason));
+    scan.review.forEach((r) => keep(r, 'patch-equivalent only (no merged PR or ancestry); needs a human look'));
+    for (const item of scan.items) {
+      if (scan.fetchFailed) { keep(item, 'git fetch failed, so the refs may be stale'); continue; }
+      if (dryRun) { out.removed.push({ repo, path: item.name, why: item.why }); continue; }
+      const r = removeWorktree(path, item);
+      if (r.done) out.removed.push({ repo, path: item.name, why: item.why });
+      else keep(item, r.message.replace(`refused: ${item.name} `, 'refused: '));
+    }
+  }
+  return out;
+}
+
+/** Printable lines for a sweepWorktrees result: what went, what stayed and why, then a count. */
+export function worktreeSweepLines(r, dryRun = false) {
+  const verb = dryRun ? 'would remove' : 'removed';
+  return [
+    ...r.removed.map((x) => `${verb.padEnd(12)} ${x.path}  (${x.repo}; ${x.why})`),
+    ...r.pruned.map((x) => `${(dryRun ? 'would prune' : 'pruned').padEnd(12)} ${x.path}  (${x.repo}; directory missing)`),
+    ...r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`),
+    ...r.notes.map((n) => `note         ${n}`),
+    `worktrees: ${r.removed.length} ${dryRun ? 'to remove' : 'removed'}, ${r.pruned.length} ${dryRun ? 'to prune' : 'pruned'}, ${r.kept.length} kept.`,
+  ];
 }
 
 function table(rows) {
@@ -516,6 +625,11 @@ function main() {
   if (ctx.idleMinutes === undefined || Number.isNaN(ctx.idleMinutes)) ctx.idleMinutes = SWEEP_IDLE_MINUTES;
   if (!existsSync(container)) { console.error(`branch-sweep: no such container ${container}`); process.exit(2); }
 
+  if (argv.includes('--apply-worktrees')) {
+    const r = sweepWorktrees(container, ctx, { only, dryRun: argv.includes('--dry-run') });
+    console.log(worktreeSweepLines(r, argv.includes('--dry-run')).join('\n'));
+    return;
+  }
   if (argv.includes('--apply')) {
     const ids = (val('ids') || '').split(',').map((s) => s.trim()).filter(Boolean);
     if (!ids.length) { console.error('branch-sweep: --apply needs --ids <repo:hash,...> from a read-only run'); process.exit(2); }
