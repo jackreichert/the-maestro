@@ -32,6 +32,7 @@
  *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note (and, if configured, commit the ledger root)
+ *   journal.mjs scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
@@ -87,7 +88,8 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, dirname } from 'node:path';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR } from './local-config.mjs';
+import { scratchReport } from './lib/scratch.mjs';
 import { sessionLine } from './token-metrics.mjs';
 import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
@@ -841,6 +843,12 @@ function writeStreamPages(g, doneToday, retros, d) {
         writeFileSync(join(streamsDir, `${slug(s)}.md`), head(s, ['This stream is **archived**. Its items are hidden from the board; `journal.mjs unarchive` brings them back.', '', link, '']).join('\n'));
     }
     return names.length + retros.size;
+}
+
+/** With scripts_dir set, print the scratch triage table. Read-only: it proposes, the user decides. */
+function cmdScratch() {
+    if (!SCRIPTS_SHELF_DIR) { console.log('scratch: scripts_dir is not set; nothing to list.'); return; }
+    scratchReport(SCRIPTS_SHELF_DIR, readLedger().map((e) => e.text || '')).forEach((l) => console.log(l));
 }
 
 /**
@@ -1778,7 +1786,8 @@ switch (cmd) {
     case 'usage': cmdUsage(); break;
     case 'status': cmdStatus(); break;
     case 'standup': cmdStandup(); break;
-    case 'roll': cmdRoll(); break;
+    case 'roll': cmdRoll(); if (SCRIPTS_SHELF_DIR) cmdScratch(); break;
+    case 'scratch': cmdScratch(); break;
     case 'verify': cmdVerify(); break;
     case 'render': render(false, has('include-archived')); break;
     case 'tag': cmdTag(); break;

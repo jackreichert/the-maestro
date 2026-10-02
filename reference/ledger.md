@@ -17,6 +17,7 @@ node $J status                            # what is open + done today, with usag
 node $J status --footer                   # the reply-footer Ledger lines (below)
 node $J standup                           # end-of-day summary, ready to paste (no usage marks)
 node $J roll                              # compress: archive the day, keep open items
+node $J scratch                           # with scripts_dir set: scratch files with a promote/keep/delete-candidate proposal (roll prints it too; never moves or deletes)
 node $J usage                             # counts by model and by skill/tool
 ```
 
