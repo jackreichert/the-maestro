@@ -9,7 +9,7 @@ import { join, isAbsolute, dirname } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.mjs). The import comes after this
 // line because local-config.mjs reads its files when it is first loaded.
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { extractBlock, parseSlotValues, fillBlock, shelfLine, SLOTS } = await import('./brief-block.mjs');
+const { extractBlock, parseSlotValues, fillBlock, shelfLine, ownedReposLine, SLOTS } = await import('./brief-block.mjs');
 
 const SCRIPT = new URL('./brief-block.mjs', import.meta.url).pathname;
 const BRIEF = new URL('../reference/brief.md', import.meta.url).pathname;
@@ -120,4 +120,19 @@ test('the scripts shelf line is appended only when scripts_dir is set, and is fi
     const on = run(`${VALUES}\n\`\`\`maestro-config\nscripts_dir: /shelf\n\`\`\`\n`);
     assert.equal(on.status, 0, on.stderr);
     assert.match(on.stdout, /Report: at most ~20 lines[^\n]*\n- Scripts: before writing a script, check \/shelf\/README\.md/);
+});
+
+test('the agent-owned repos line is appended only when agent_owned_repos is set, filled, and keeps the other rules', () => {
+    const md = readFileSync(BRIEF, 'utf8');
+    assert.equal(ownedReposLine(md, []), '');
+    const line = ownedReposLine(md, ['/work/tools', '/work/notes']);
+    assert.match(line, /Agent-owned repos \(\/work\/tools, \/work\/notes\)/);
+    assert.match(line, /protected-branch stop does not apply in these repos only/);
+    assert.match(line, /Conventional Commits, staging by explicit path and no AI attribution still apply/);
+    assert.doesNotMatch(line, /<agent_owned_repos>/);
+    assert.ok(!extractBlock(md).includes('Agent-owned'), 'the standing block itself stays unconditional');
+    assert.doesNotMatch(run(VALUES).stdout, /Agent-owned repos/);
+    const on = run(`${VALUES}\n\`\`\`maestro-config\nagent_owned_repos: /work/tools, /work/notes\n\`\`\`\n`);
+    assert.equal(on.status, 0, on.stderr);
+    assert.match(on.stdout, /Report: at most ~20 lines[^\n]*\n- Agent-owned repos \(\/work\/tools, \/work\/notes\)/);
 });

@@ -50,6 +50,14 @@ Standing rules (hard limits):
 - Scripts: before writing a script, check <scripts_dir>/README.md for an existing helper. Put one-offs in <scripts_dir>/scratch/ (never /tmp) with a 3-line header: purpose; date + ledger id; inputs as env var names. No secrets and no outputs in that folder.
 ```
 
+### Agent-owned repos line — appended when `agent_owned_repos` is set
+
+`brief-block.mjs` appends this line when the install lists `agent_owned_repos` ([local-config](local-config.md)), with `<agent_owned_repos>` filled. It is the only exception to the protected-branch stop, and only for the listed paths. With the setting empty nothing is appended.
+
+```text
+- Agent-owned repos (<agent_owned_repos>): the protected-branch stop does not apply in these repos only; you may commit directly to the default branch there. Conventional Commits, staging by explicit path and no AI attribution still apply, and so do the no rebase, reset and force-push rules.
+```
+
 Why each cost habit is in this block — the measured cost of skipping it, and the rule that the
 orchestrator follows the same habits for its own tool calls — is cost material now:
 [cost/budget.md#the-standing-briefs-cost-habits](../cost/budget.md#the-standing-briefs-cost-habits).
