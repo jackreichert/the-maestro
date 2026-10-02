@@ -181,6 +181,8 @@ test('branch sweep settings: defaults, file values, environment wins, bad idle f
     assert.equal(d.SWEEP_MERGE_TARGETS, '(unset)');
     assert.equal(d.SWEEP_IDLE_MINUTES, '60');
     assert.equal(d.SWEEP_BUDGET_SECONDS, '300');
+    assert.equal(d.AGENT_OWNED_REPOS, '(unset)');
+    assert.equal(show({ MAESTRO_AGENT_OWNED_REPOS: '~/tools, /abs/notes' }).AGENT_OWNED_REPOS, `${home}/tools, /abs/notes`, 'a leading ~/ is expanded');
     assert.equal(d.TRACKER_KEY_PATTERN, '\\b[A-Z][A-Z0-9]+-\\d+\\b');
     assert.equal(show({ MAESTRO_TRACKER_KEY_PATTERN: '\\bAH-\\d+\\b' }).TRACKER_KEY_PATTERN, '\\bAH-\\d+\\b');
     assert.equal(show({ MAESTRO_TRACKER_KEY_PATTERN: '(' }).TRACKER_KEY_PATTERN, '\\b[A-Z][A-Z0-9]+-\\d+\\b', 'an invalid pattern falls back');

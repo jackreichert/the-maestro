@@ -23,7 +23,7 @@ A field you cannot fill means scout again, not dispatch.
 
 Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
-paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user.
+paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it.
 
 Print it with its slots filled by `node scripts/brief-block.mjs`. It exits non-zero, printing
 nothing, if a slot has no value, so never paste a block you wrote by hand.
@@ -37,7 +37,7 @@ Standing rules (hard limits):
 - External writes (Jira issues/comments/transitions, GitHub comments/reviews/replies, Slack): do them yourself, only when this brief authorizes them, or not at all. Never hand one to a sub-agent or fork.
 - Never read .env* or ssm-*.json. Secrets: name the key, never the value.
 - PHI: counts and ids only. No names, DOBs, addresses, MRNs, or contact details, anywhere.
-- Waits: foreground only. Use a blocking loop, e.g. `until <check>; do sleep 20; done`, sized to fit the tool timeout; repeat it if needed. Never run_in_background, background watchers, or Monitor.
+- Waits: foreground only. Never run_in_background, background watchers, or Monitor, and never poll an output file in an until/sleep loop (that is how an agent hangs). Run tests in the foreground under a hard timeout (e.g. `timeout 600 npm test`); if one hangs, stop and report which test, do not wait it out. To wait on an outside condition, use one blocking check sized to fit the tool timeout.
 - Tool output: request only the fields you need (Jira `fields=`, `gh ... --json a,b --jq ...`). Never paste raw logs or whole files; grep for counts and markers. Wrap long jobs in a script that prints a summary.
 - Report: at most ~20 lines — outcome, numbers, links, decisions needed, what is left open. Put longer detail in a file (vault note, ticket, or report path) and link it. If tests failed or a step was skipped, say so.
 ```
@@ -47,7 +47,15 @@ Standing rules (hard limits):
 `brief-block.mjs` appends this line after the standing block when the install sets `scripts_dir` ([local-config](local-config.md)), with `<scripts_dir>` filled. With `scripts_dir` unset nothing is appended.
 
 ```text
-- Scripts: before writing a script, check <scripts_dir>/README.md for an existing helper. Put one-offs in <scripts_dir>/scratch/ (never /tmp) with a 3-line header: purpose; date + ledger id; inputs as env var names. No secrets and no outputs in that folder.
+- Scripts: before writing a script, check <scripts_dir>/README.md for an existing helper. Put one-offs in <scripts_dir>/scratch/ (never /tmp) with a 3-line header: purpose; date + ledger id; inputs as env var names. No secrets and no outputs in that folder. Prod-check scripts take identifiers (locations, jobs, sensors) from a known-good sibling script or the real UI or URL, never from assumption; when a lookup matches nothing they print what does exist and exit non-zero; a fixture you wrote yourself does not validate names.
+```
+
+### Agent-owned repos line — appended when `agent_owned_repos` is set
+
+`brief-block.mjs` appends this line when the install lists `agent_owned_repos` ([local-config](local-config.md)), with `<agent_owned_repos>` filled. It is the only exception to the protected-branch stop, and only for the listed paths. With the setting empty nothing is appended.
+
+```text
+- Agent-owned repos (<agent_owned_repos>): the protected-branch stop does not apply in these repos only; you may commit directly to the default branch there. Conventional Commits, staging by explicit path and no AI attribution still apply, and so do the no rebase, reset and force-push rules.
 ```
 
 Why each cost habit is in this block — the measured cost of skipping it, and the rule that the

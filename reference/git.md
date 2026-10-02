@@ -6,6 +6,8 @@ gate; the one-liner in SKILL.md is a pointer, not a substitute for reading this.
 **Protected branches are typically `main`, `staging`, `develop`, and any branch the user did not author.** Never
 write those. On a feature branch of theirs, commit and push freely.
 
+**One exception: `agent_owned_repos`.** A repo whose path is listed in that local-config key is managed by the agent itself, so the stop above does not apply there and the default branch may be committed to directly. Conventional Commits, staging by explicit path, no AI attribution and the no rebase, reset and force-push rules apply in those repos too. Everywhere else the stop holds, and an unlisted repo is never inferred to be owned.
+
 Before writing any branch, confirm it is theirs — every commit since it diverged from its base authored
 by the user's git email(s). The emails for this install are in
 local-config (see [local-config.md](local-config.md)); otherwise discover them from

@@ -191,6 +191,8 @@ flowchart LR
     A -- "idle over 14 days:<br/>delete-candidate" --> X[you decide]
 ```
 
+Prod-check scripts (anything that reads a live system by name: a location, job or sensor) take those identifiers from a known-good sibling script or from the real UI or URL, never from assumption. When a lookup matches nothing, the script prints what does exist and exits non-zero. A fixture the same agent wrote does not validate a name, because it will contain whatever the agent assumed. The brief's scripts line carries this rule.
+
 `journal.mjs roll` (and `journal.mjs scratch`) only proposes: it never moves, edits or deletes a file.
 
 ### The morning board, PR tracking and end of day
@@ -301,6 +303,7 @@ Its pace is adaptive: 3 or more events in 30 minutes polls at `watch_min_interva
 Mid-day PR snapshot and diff, stored under the ledger root.
 
 - `prs-snapshot.mjs [--diff] [--dry-run] --vault <path>` fetches the live board; with `--diff` it first prints the actionable changes since the last snapshot (a new human review, a review decision flip, a new human-opened thread, a merge or close, a draft promoted to ready), then overwrites the snapshot unless `--dry-run`. Bot activity is summarised as one count line.
+- `prs-snapshot.mjs --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo until two known answers agree (a stale cached MERGEABLE is not trusted). `prs-snapshot.mjs ready <snapshot.json>` prints it for a file, offline, with the file's age (it is not a merge gate).
 - `prs-snapshot.mjs diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
 
 ### event-loop.mjs
@@ -313,7 +316,17 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | `list [--json]` | The live watches |
 | `remove <id>` | Retire a watch (its type may clean up its own files) |
 | `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
-| `run [--once] [--interval N]` | Check, sleep, repeat. `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error |
+| `run [--once] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error |
+
+**Exit codes of `run`.** The runner wakes the orchestrator only on 10.
+
+| Exit | Meaning | Do |
+|---|---|---|
+| 10 | Actionable events; stdout is the digest | Read the ACTION lines, handle them, then relaunch `run` |
+| 0 | `no watches registered`, or `run --once` found nothing actionable | Nothing to watch |
+| 3 | Quiet hours began (`QUIET-HOURS stop until <time>`) | Relaunch after the time given |
+| 2 | Usage or configuration error, a malformed watch, a broken overlay type, or another loop holds the lock | Read the stderr line; never delete the lock |
+| other | The process crashed or was killed | Read stderr, then relaunch (a dead owner's lock is taken over) |
 
 **Types.** A type is a script (`scripts/event-types/<type>.mjs` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.mjs`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
 
@@ -360,7 +373,7 @@ Token-cost metrics read from Claude Code transcripts: numeric usage fields, mode
 
 ### brief-block.mjs
 
-Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule.
+Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
 
 ### local-config.mjs
 
@@ -423,6 +436,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `sweep_protect_symlink_dirs` | `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS` | `~/.claude/skills` and `<container>/.claude/skills` always count | Extra directories whose symlinks mark a worktree as a live skill |
 | `sweep_disposable_ignored` | `MAESTRO_SWEEP_DISPOSABLE_IGNORED` | `node_modules, .venv, dist, __pycache__` | Ignored paths that do not keep a worktree; any other ignored file does |
 | `container_root` | `MAESTRO_CONTAINER_ROOT` | none (sweep refuses) | The container directory `roll` and `handoff` may sweep for stale worktrees; a leading `~/` is expanded. Unset, or run from outside it, the sweep prints a refusal and does nothing |
+| `agent_owned_repos` | `MAESTRO_AGENT_OWNED_REPOS` | none | Comma-separated repo paths (a leading `~/` is expanded) the agent manages itself. The protected-branch stop does not apply there, so agents may commit straight to the default branch; Conventional Commits, staging by path and no attribution still apply. The brief carries a line naming them |
 | `scripts_dir` | `MAESTRO_SCRIPTS_DIR` | none (shelf off) | The shared scripts shelf; a leading `~/` is expanded |
 
 Two more variables point scripts at a different binary or directory: `MAESTRO_GH` (the `gh` binary `branch-sweep.mjs` runs) and `MAESTRO_GH_BIN` (the one `pr-open.mjs` runs), and `MAESTRO_CLAIMS_DIR` overrides where `branch-sweep.mjs` looks for claim files. The full key reference, with the lookup order for plugin-shipped overlays, is [reference/local-config.md](reference/local-config.md).
