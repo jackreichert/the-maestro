@@ -579,6 +579,14 @@ test('handoff --learn and --next fill sections 2 and 5 on one line each, and lea
     assert.match(section(bare, 5), /Author: one concrete first step/);
 });
 
+test('handoff fills Session metrics from the newest session, and says so when there is none', () => {
+    seedHandoff();
+    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /unavailable \(no sessions in /);
+    const turn = (id) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 1 } } });
+    writeFileSync(join(projects, 'cccccccc-now.jsonl'), `${[1, 2, 3].map((n) => turn(`t${n}`)).join('\n')}\n`);
+    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* 3 turns \(1% of 180 roll\) · 100k read\/turn/);
+});
+
 test('handoff never overwrites without --force, honours --out, and appends nothing to the ledger', () => {
     seedHandoff();
     const before = readFileSync(ledgerFile(), 'utf8');
@@ -1244,6 +1252,19 @@ test('roll --fast skips the scratch review too', () => {
     writeFileSync(join(shelf, 'scratch', 'tally.sh'), '# tally the rows\n');
     assert.match(runEnv({ MAESTRO_SCRIPTS_DIR: shelf }, 'roll').out, /tally\.sh/);
     assert.doesNotMatch(runEnv({ MAESTRO_SCRIPTS_DIR: shelf }, 'roll', '--fast').out, /tally\.sh/);
+});
+
+test('handoff --all summarises the sweep as counts by reason, and --verbose lists each kept worktree', () => {
+    const w = sweepWorld();
+    run('start', 'port the fix', ...MARK, '--stream', 'Launch', '--new-stream');
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    const counts = runEnvIn(w.container, env, 'handoff', '--all', '--dry-run').out;
+    assert.match(counts, /Worktree sweep \(dry run\): 1 would be removed, 0 pruned, 1 kept\./);
+    assert.match(counts, /^- untracked files: 1$/m);
+    assert.doesNotMatch(counts, new RegExp(w.dirty));
+    assert.match(runEnvIn(w.container, env, 'handoff', '--all', '--verbose', '--dry-run').out, new RegExp(`- \`${w.dirty}\` \\(proj\\): .*untracked files`));
+    assert.match(runEnvIn(w.container, env, 'handoff', '--stream', 'Launch', '--dry-run').out, new RegExp(`- \`${w.dirty}\``), 'one stream keeps the per-worktree list');
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
 test('handoff lists the worktrees a sweep would keep under Cleanup candidates, and removes nothing', () => {
