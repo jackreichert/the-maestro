@@ -1,9 +1,29 @@
 /**
  * Optional notifier for the event loop. `notify_command` (local-config) is an argv array; the one-line
  * summary is appended as its last argument. There is no default recipient: with no command set this does nothing.
+ * Notification is opt-in per watch: only a watch added with `--notify` (a reminder: unless `--no-notify`) notifies,
+ * and the inbox type never does. watchNotifies() is the single check; the loop applies it on every tick.
  * The command runs without a shell, so event text can never be interpreted as shell syntax.
  */
 import { spawnSync } from 'node:child_process';
+
+/**
+ * Whether a watch's actionable events may be sent to `notify_command`. A type that declares `notifies = 'never'`
+ * overrides the watch's own flag, so a hand-edited registry cannot make it notify.
+ */
+export const watchNotifies = (watch, type) => type?.notifies !== 'never' && watch.notify === true;
+
+/**
+ * The `notify` value `add` stores: --notify or --no-notify if given, else the type's default (`notifies = 'default'`
+ * means on), else off. Throws on both flags together, or --notify for a type that never notifies.
+ */
+export function notifyChoice(type, { notify = false, noNotify = false } = {}) {
+  if (notify && noNotify) throw new Error('--notify and --no-notify cannot be used together');
+  if (notify && type?.notifies === 'never') throw new Error('this watch type never notifies');
+  if (type?.notifies === 'never') return false;
+  if (notify || noNotify) return notify;
+  return type?.notifies === 'default';
+}
 
 export const MAX_SUMMARY = 150;
 export const MAX_PER_TICK = 3;

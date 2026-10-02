@@ -11,8 +11,9 @@ import * as ghRun from './event-types/gh-run.mjs';
 import * as inbox from './event-types/inbox.mjs';
 import * as prChecks from './event-types/pr-checks.mjs';
 import * as prReview from './event-types/pr-review.mjs';
+import * as reminder from './event-types/reminder.mjs';
 import { installGhStub, prNode } from './lib/gh-stub.mjs';
-import { addWatch, readDigest } from './lib/watch-registry.mjs';
+import { addWatch, listWatches, readDigest } from './lib/watch-registry.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const ok = (stdout, status = 0) => ({ status, stdout, stderr: '' });
@@ -57,8 +58,9 @@ test('check() receives the watch and its previous state, so a type can keep a ba
   const seen = [];
   const types = { base: { check: (_t, ctx) => { seen.push(ctx.prev); return { first: ctx.prev?.first ?? seen.length }; }, diff: () => [] } };
   addWatch(dir, { id: 'b', type: 'base', target: 'x' });
-  tick({ dir, types, config: { quietHours: 'off' } });
-  tick({ dir, types, config: { quietHours: 'off' } });
+  const now = Date.now();
+  tick({ dir, types, config: { quietHours: 'off' }, now });
+  tick({ dir, types, config: { quietHours: 'off' }, now: now + 200 * 1000 });
   assert.deepEqual(seen, [null, { first: 1 }]);
 });
 
@@ -243,4 +245,97 @@ test('pr-checks: the whole failed set is kept, so a change past the fifth name s
   assert.equal(six('f').failed.length, 6);
   assert.equal(prChecks.diff(six('f'), six('g')).length, 1);
   assert.match(prChecks.diff(null, six('f'))[0].summary, /a, b, c, d, e and 1 more/);
+});
+
+const T0 = Date.parse('2026-10-03T12:00:00Z');
+const REMIND = (extra = {}) => ({ dir: mkdtempSync(join(tmpdir(), 'events-')), types: { reminder }, config: { quietHours: 'off' }, ctx: { run: () => { throw new Error('a reminder must not run commands'); } }, ...extra });
+
+test('reminder: a malformed target or a date that does not exist is refused', () => {
+  for (const bad of ['tomorrow', '2026-10-03', '2026-10-03T15:00:00', '2026-10-03T15:00:00+02:00', '2026-10-03 15:00:00Z', '2026-02-30T10:00:00Z', '2026-13-01T10:00:00Z', '2026-10-03T25:00:00Z', '']) {
+    assert.throws(() => reminder.parseTarget(bad), /reminder target/, bad);
+  }
+  assert.equal(reminder.parseTarget('2026-10-03T15:00:00Z'), Date.parse('2026-10-03T15:00:00Z'));
+  assert.equal(reminder.parseTarget('2026-10-03T15:00Z'), Date.parse('2026-10-03T15:00:00Z'));
+  assert.equal(reminder.parseTarget('2026-10-03T15:00:00.500Z'), Date.parse('2026-10-03T15:00:00.500Z'));
+});
+
+test('reminder: a past target is rejected at add, a future one is accepted, and an explicit ttl cannot expire it early', () => {
+  assert.throws(() => reminder.validate('2026-10-03T11:59:59Z', { now: T0 }), /in the past/);
+  assert.throws(() => reminder.validate('2026-10-03T12:00:00Z', { now: T0 }), /in the past/);
+  assert.doesNotThrow(() => reminder.validate('2026-10-03T12:00:01Z', { now: T0 }));
+  assert.throws(() => reminder.validate('2026-10-05T12:00:00Z', { now: T0, ttlMs: 3600000 }), /expire the reminder/);
+  assert.ok(reminder.defaultTtlMs('2026-10-10T12:00:00Z', T0) > 7 * 24 * 3600 * 1000, 'lives past a target a week out');
+});
+
+test('reminder: silent before the target, one actionable event at it, then retired and never again', () => {
+  const { dir, types, config, ctx } = REMIND();
+  addWatch(dir, { id: 'r', type: 'reminder', target: '2026-10-03T12:10:00Z', report: 'stand up' }, T0);
+  const at = (min) => tick({ dir, types, config, ctx, now: T0 + min * 60000 });
+  assert.deepEqual(at(0).events, []);
+  assert.deepEqual(at(9).events, []);
+  const fired = at(11);
+  assert.equal(fired.events.length, 1);
+  assert.equal(fired.events[0].actionable, true);
+  assert.equal(fired.events[0].summary, 'reminder: stand up');
+  assert.equal(fired.events[0].report, 'stand up');
+  assert.deepEqual(fired.retired, [{ id: 'r', reason: 'done' }]);
+  assert.deepEqual(at(60).events, []);
+  assert.equal(readDigest(dir).length, 1);
+});
+
+test('reminder: quiet hours hold it until morning unless --notify-overnight', () => {
+  const night = Date.parse('2026-10-03T22:00:00Z');
+  const config = { quietHours: '20:00-07:00', quietMode: 'stop', tz: 'UTC' };
+  const { dir, types, ctx } = REMIND();
+  addWatch(dir, { id: 'held', type: 'reminder', target: '2026-10-03T22:30:00Z', report: 'a' }, night);
+  addWatch(dir, { id: 'through', type: 'reminder', target: '2026-10-03T22:30:00Z', report: 'b', notify_overnight: true }, night);
+  const out = tick({ dir, types, config, ctx, now: night + 60 * 60000 });
+  assert.deepEqual(out.events.map((e) => e.watch), ['through']);
+  assert.deepEqual(out.skipped, ['held']);
+  const morning = tick({ dir, types, config, ctx, now: Date.parse('2026-10-04T07:30:00Z') });
+  assert.deepEqual(morning.events.map((e) => e.watch), ['held']);
+});
+
+test('cli: reminder add refuses a bad or past target and stores a future one with a lifetime past its target', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'events-'));
+  const cli = (...args) => spawnSync(process.execPath, [join(ROOT, 'scripts', 'event-loop.mjs'), ...args], {
+    encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir },
+  });
+  const add = (id, target, ...more) => cli('add', '--id', id, '--type', 'reminder', '--target', target, '--report', 'x', ...more);
+  assert.equal(add('a', 'soon').status, 2);
+  assert.match(add('a', '2020-01-01T00:00:00Z').stderr, /in the past/);
+  const future = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+  assert.equal(add('b', future).status, 0);
+  const [watch] = JSON.parse(cli('list', '--json').stdout);
+  assert.ok(Date.parse(watch.expires) > Date.parse(future), 'expires after the target');
+  assert.equal(add('c', future, '--ttl-hours', '1').status, 2);
+});
+
+test('reminder: a notifying reminder sends its text once; one added with --no-notify stays in the digest', () => {
+  const { dir, types, config, ctx } = REMIND();
+  const sent = [];
+  addWatch(dir, { id: 'loud', type: 'reminder', target: '2026-10-03T12:05:00Z', report: 'call back', notify: true }, T0);
+  addWatch(dir, { id: 'mute', type: 'reminder', target: '2026-10-03T12:05:00Z', report: 'private', notify: false }, T0);
+  const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
+  tick({ dir, types, config, ctx, now: T0 + 6 * 60000, notifyCommand: ['send'], notifyRun });
+  tick({ dir, types, config, ctx, now: T0 + 12 * 60000, notifyCommand: ['send'], notifyRun });
+  assert.deepEqual(sent, ['loud: reminder: call back']);
+  assert.equal(readDigest(dir).length, 2);
+});
+
+test('reminder: one that falls in a quiet weekend is held, not expired, and fires when it ends', () => {
+  const friday = Date.parse('2026-10-02T21:00:00Z');
+  const config = { quietHours: 'off', quietWeekends: true, tz: 'UTC' };
+  const { dir, types, ctx } = REMIND();
+  const target = '2026-10-03T10:00:00Z';
+  addWatch(dir, { id: 'r', type: 'reminder', target, report: 'weekend', notify: true, ttlMs: reminder.defaultTtlMs(target, friday) }, friday);
+  const sent = [];
+  const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
+  const run = (cfg, now) => tick({ dir, types, config: cfg, ctx, now, notifyCommand: ['send'], notifyRun });
+  for (let t = friday; t < Date.parse('2026-10-05T00:00:00Z'); t += 3 * 3600 * 1000) run(config, t);
+  assert.deepEqual(sent, [], 'nothing fires or expires through the quiet weekend');
+  assert.equal(listWatches(dir).length, 1);
+  const monday = run({ quietHours: 'off', tz: 'UTC' }, Date.parse('2026-10-05T07:00:00Z'));
+  assert.deepEqual(monday.events.map((e) => e.summary), ['reminder: weekend']);
+  assert.deepEqual(sent, ['r: reminder: weekend']);
 });

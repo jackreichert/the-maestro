@@ -38,17 +38,17 @@ If a watch reports `check keeps failing`, say so; it means the check could not r
 ## Hard rules
 
 - Personal data stays out of your report. The `inbox` type reports a count only; never run the inbox command yourself and never quote a message.
-- Do not send notifications. If the install has a `notify_command`, the loop already used it.
+- Do not send notifications. If the install has a `notify_command`, the loop already sent it for the watches that opted in with `--notify`.
 - Do not edit the registry except as the orchestrator told you to. `remove <id>` retires a watch; `add` registers one.
 
 ## For the orchestrator: registering a watch
 
 ```bash
 node scripts/event-loop.mjs add --id <id> --type <type> --target <target> \
-  [--done-when <rule>] [--report "<what you want back>"] [--ttl-hours N] [--notify-overnight]
+  [--done-when <rule>] [--report "<what you want back>"] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
 ```
 
-A watch expires after 24 hours unless `--ttl-hours` says otherwise, and retires itself when its type says it is done. This replaces writing a one-off watcher script. Types: [pr-checks](event-types/pr-checks.md), [pr-review](event-types/pr-review.md), [gh-run](event-types/gh-run.md), [inbox](event-types/inbox.md).
+A watch expires after 24 hours unless `--ttl-hours` says otherwise, and retires itself when its type says it is done. Each type polls at its own pace (`inbox` 60s, `pr-checks`/`pr-review` 180s, `gh-run` 120s, `reminder` 30s); `--interval S` overrides it, but never below 120s for a type that calls GitHub or 30s for a local one. Only watches added with `--notify` are sent to `notify_command`; a reminder is by default, `--no-notify` silences it, and the inbox never notifies. This replaces writing a one-off watcher script. Types: [pr-checks](event-types/pr-checks.md), [pr-review](event-types/pr-review.md), [gh-run](event-types/gh-run.md), [inbox](event-types/inbox.md), [reminder](event-types/reminder.md) (a one-time wake-up: `--type reminder --target <ISO 8601 UTC> --report "<text>"`).
 
 ## For the orchestrator: adding an event type
 

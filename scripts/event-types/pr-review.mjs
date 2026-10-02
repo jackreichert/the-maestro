@@ -11,6 +11,10 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
+export const interval = 180;
+export const network = true;
+
 const PR_WATCH = fileURLToPath(new URL('../pr-watch.mjs', import.meta.url));
 const CHANGE = /^(THREAD|REPLY|COMMENT|REVIEW|DECISION|LEFT-OPEN-SET) /;
 const STANDING = /^APPROVED-UNMERGED /;
