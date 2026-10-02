@@ -542,6 +542,18 @@ test('sweepWorktrees removes a clean merged worktree, keeps its branch, and a se
     assert.equal(worktreeList(w), before);
 });
 
+test('sweepWorktrees stops at the next repo boundary once over its budget and names the repos it skipped', () => {
+    const w = world();
+    sh(w.root, 'clone', '-q', w.origin, join(w.container, 'other'));
+    let t = 0;
+    const clock = () => (t += 6000); // each look at the clock costs 6 s
+    const over = sweep(w, {}, { budgetSeconds: 10, clock });
+    assert.equal(over.skipped.length, 1);
+    assert.match(worktreeSweepLines(over).join('\n'), /sweep budget reached: skipped 1 repo\(s\): (proj|other)\./);
+    assert.deepEqual(sweep(w, {}, { budgetSeconds: 10 }).skipped, [], 'a real clock is nowhere near 10 s here');
+    assert.deepEqual(sweep(w, {}, { clock }).skipped, [], 'no budget means no limit');
+});
+
 test('sweepWorktrees keeps a dirty worktree, whether the file is modified or untracked, and says why', () => {
     const w = world(); feature(w, 'feat/mod'); feature(w, 'feat/new');
     for (const b of ['feat/mod', 'feat/new']) { mergeInto(w, 'develop', b); mergeInto(w, 'staging', b); }

@@ -36,7 +36,7 @@ import { homedir, hostname } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, GH_LOGIN, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
+  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, GH_LOGIN, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
 } from './local-config.mjs';
 
 const run = (cmd, args, opts = {}) => {
@@ -586,12 +586,15 @@ function pruneMissing(path, dryRun) {
  * only, after a fetch) and removes every worktree that qualifies. Never forced, never a branch. Returns
  * { removed: [{ repo, path, why }], pruned: [{ repo, path }], kept: [{ repo, path, reason }], notes }, where kept is every
  * worktree left in place with its reason, so uncommitted, untracked and unpushed work is listed rather than touched.
- * With `dryRun` it only reports what it would do.
+ * With `dryRun` it only reports what it would do. With `budgetSeconds`, a repo that would start after that many seconds is
+ * not touched and is listed in `skipped` (the check is at repo boundaries, so one repo may run past the budget).
  */
-export function sweepWorktrees(container, ctx, { only, dryRun = false } = {}) {
-  const out = { removed: [], pruned: [], kept: [], notes: [] };
+export function sweepWorktrees(container, ctx, { only, dryRun = false, budgetSeconds = 0, clock = Date.now } = {}) {
+  const out = { removed: [], pruned: [], kept: [], notes: [], skipped: [] };
+  const started = clock();
   for (const path of findRepos(container, only)) {
     const repo = basename(path);
+    if (budgetSeconds > 0 && clock() - started > budgetSeconds * 1000) { out.skipped.push(repo); continue; }
     try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${e.message}`); }
     const scan = scanRepo(path, { ...ctx, fetch: true, worktreesOnly: true });
     out.notes.push(...scan.notes.map((n) => `${repo}: ${n}`));
@@ -618,6 +621,7 @@ export function worktreeSweepLines(r, dryRun = false) {
     ...r.pruned.map((x) => `${(dryRun ? 'would prune' : 'pruned').padEnd(12)} ${x.path}  (${x.repo}; directory missing)`),
     ...r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`),
     ...r.notes.map((n) => `note         ${n}`),
+    ...(r.skipped?.length ? [`sweep budget reached: skipped ${r.skipped.length} repo(s): ${r.skipped.join(', ')}. Re-run with branch-sweep.mjs --apply-worktrees --repo <name>.`] : []),
     `worktrees: ${r.removed.length} ${dryRun ? 'to remove' : 'removed'}, ${r.pruned.length} ${dryRun ? 'to prune' : 'pruned'}, ${r.kept.length} kept.`,
   ];
 }
@@ -640,7 +644,7 @@ function main() {
   if (!existsSync(container)) { console.error(`branch-sweep: no such container ${container}`); process.exit(2); }
 
   if (argv.includes('--apply-worktrees')) {
-    const r = sweepWorktrees(container, ctx, { only, dryRun: argv.includes('--dry-run') });
+    const r = sweepWorktrees(container, ctx, { only, dryRun: argv.includes('--dry-run'), budgetSeconds: val('budget') ? Number(val('budget')) : SWEEP_BUDGET_SECONDS });
     console.log(worktreeSweepLines(r, argv.includes('--dry-run')).join('\n'));
     return;
   }
