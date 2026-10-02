@@ -197,7 +197,10 @@ node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--force]
 node $J resume
 ```
 
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (open `question` and `decision` items); **5. Next concrete action** (blank, for the author). Edit it, then set `status:` past `draft`.
+Run the [branch sweep](#branch-sweep) first and put its table to the user, so the handoff leaves no
+stale worktrees or merged branches behind unreviewed.
+
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (open `question` and `decision` items); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
 
 `resume` runs the scriptable half of the verify-on-resume list: ledger `status`; `gh pr list --author @me --state open --json number,title,url` if `gh` is installed and `resume_gh` is not off (otherwise a `gh: unavailable` or `skipped` line, exit 0); `pgrep -f` for each `loop_patterns` entry (`ok` or `MISSING`). It then prints that **`ListAgents` must be called by the session itself**, since it is a harness tool. All settings come from local config ([local-config.md](local-config.md)), never from the script.
 
@@ -226,7 +229,7 @@ keeps only the one-line pointer. **One canonical home per fact; everything else 
 ## End of day
 
 When the user wraps up ("end of day", "EOD", "wrap up", "let's call it"), do this in order: PR
-pass, then tracker review, then the cost line and cost loop, then `standup`, then `roll`. The PR pass runs first because the tracker
+pass, then tracker review, then the cost line and cost loop, then `standup`, then the branch sweep, then `roll`. The PR pass runs first because the tracker
 review needs its findings — Jira and the PRs should agree before either gets written down. Run
 both before `roll`, because a roll moves today's lines into the archive.
 
@@ -279,6 +282,28 @@ reads. This step brings the tracker up to date before the day's context is gone.
 
 Precedent, 2026-09-23: dated comments on four issues and four moved to *In Progress*, logged as
 two ledger lines.
+
+### Branch sweep
+
+Right before `roll` (and at every handoff), check every repo in the container for worktrees and
+remote branches that can be deleted, and put them to the user as one batch. **Never delete without
+approval.**
+
+1. Run `node scripts/branch-sweep.mjs --container <container>` (read-only; it only fetches).
+   Add `--repo <name>` for one repo and `--json` for the machine form.
+2. Show the table as printed: `id | repo | kind | name | why | prs`. Each row says what it is merged
+   into and how (ancestry, `cherry` for squash merges, or a PR whose head is exactly the branch tip),
+   with the PR links. Show the `kept` lines too: a worktree with uncommitted or untracked files, unpushed
+   commits, a live claim or recent activity is never offered, but the user should know it is there.
+3. The user approves a batch by id. Then run `node scripts/branch-sweep.mjs --apply --ids <id,id,...>`.
+   It re-scans each repo first and refuses any id that no longer qualifies (a branch that gained a
+   commit since the table was shown, say). It uses `git worktree remove` without `--force` and
+   `git push origin --delete`, and it never deletes a local branch. Report each result line.
+4. `log` one line with the count removed and the ids refused.
+
+What qualifies, and the settings (`git_emails`, `protected_branches`, `sweep_merge_targets`,
+`sweep_idle_minutes`, `twin_flow_repos`): the header of the script and [local-config.md](local-config.md).
+Merge targets default to develop, plus staging in twin-flow repos, where both twin PRs must have merged.
 
 ## Reading it back
 
