@@ -67,7 +67,7 @@
  *   journal.mjs claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
- *   journal.mjs handoff --stream <name> | --all [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (Cleanup candidates lists the worktrees a sweep would keep, read-only)
+ *   journal.mjs handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
@@ -1951,7 +1951,7 @@ function artifactsOf(items) {
 }
 
 /** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
-function handoffText(stream, since, keptWorktrees = []) {
+function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '' } = {}) {
     const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const d = today();
     const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
@@ -1980,7 +1980,8 @@ function handoffText(stream, since, keptWorktrees = []) {
             ...doneRecently.map((i) => line(i, `done ${i.closedBy?.date || i.date}`)),
         ] : ['_none_']), '',
         '## 2. Learnings, including what was ruled out', '',
-        ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
+        ...(learn ? [`- ${learn}`] : []),
+        ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : learn ? [] : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
         '## 3. Artifacts', '',
         ...(arts.length ? [
             ...(one('pr').length ? [`- PRs: ${one('pr').join(', ')}`] : []),
@@ -1994,7 +1995,7 @@ function handoffText(stream, since, keptWorktrees = []) {
             ...(pasteBlocks.length ? ['**Paste blocks for Jack**', '', ...pasteBlocks.map((i) => `${line(i, 'paste')} — ${i.paste ? `block: ${i.paste}` : 'no block file'}${isStale(BOX.PASTE, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`)] : []),
         ] : ['_none_']), '',
         '## 5. Next concrete action', '',
-        '_Author: one concrete first step for the fresh session._', '',
+        next || '_Author: one concrete first step for the fresh session._', '',
         '## Cleanup candidates', '',
         '_Run `node scripts/branch-sweep.mjs` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
         ...(keptWorktrees.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '',
@@ -2003,13 +2004,16 @@ function handoffText(stream, since, keptWorktrees = []) {
     ].join('\n');
 }
 
+/** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
+const oneLineArg = (name) => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
+
 function cmdHandoff() {
     const { items } = fold(readLedger());
     const stream = has('all') ? null : existingStream(arg('stream'), items);
     const since = arg('since', yesterday());
     const path = arg('out') || join(dir, `HANDOFF-${today()}-${stream === null ? 'all' : slug(stream)}.md`);
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
-    const body = handoffText(stream, since, runWorktreeSweep(true)?.kept);
+    const body = handoffText(stream, since, runWorktreeSweep(true)?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next') });
     if (dryRun) { console.log(body); return; }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
