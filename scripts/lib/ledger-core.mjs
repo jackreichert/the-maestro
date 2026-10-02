@@ -15,7 +15,17 @@ export const OPEN_KINDS = ['wip', 'blocked', 'question'];
 export const isPendingDecision = (i) => i.kind === 'decision' && i.pending === true;
 export const isOpen = (i) => !i.closedBy && (OPEN_KINDS.includes(i.kind) || isPendingDecision(i));
 // Rows that are events about items, not items themselves.
-export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released'];
+export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer'];
+
+/**
+ * id -> until (YYYY-MM-DD) for every item a `defer` row hides on `today`: the latest defer row per item wins,
+ * and it stops hiding on its `until` date. A closed item is never deferred.
+ */
+export function activeDeferrals(entries, today) {
+    const latest = new Map();
+    for (const e of entries) if (e.kind === 'defer' && e.defers && e.until) latest.set(e.defers, e.until);
+    return new Map([...latest].filter(([, until]) => until > today));
+}
 
 // ── stream registry ─────────────────────────────────────────────────────────
 

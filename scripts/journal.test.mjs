@@ -1431,3 +1431,168 @@ test('handoff section 4 keeps every open question: one boxed as a rule by its ap
     const sec = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
     assert.match(sec, /\*\*Needs Jack\*\*[^]*pick a stream name/);
 });
+
+// ── prime, gates, defer (MAESTRO-15) ────────────────────────────────────────
+
+const inDays = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+
+/** A fake `gh` on PATH answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
+function ghStubDir() {
+    const dir = mkdtempSync(join(tmpdir(), 'journal-gh-'));
+    writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`, { mode: 0o755 });
+    return dir;
+}
+
+test('--gate is validated before anything is written, and only goes on blocked rows', () => {
+    for (const bad of ['gh:pr:repo', 'gh:pr:repo#x', 'date:2026-02-30', 'date:tomorrow', 'ticket:', 'nope', 'ticket:a b']) {
+        const r = run('log', 'waiting', '--kind', 'blocked', '--gate', bad, ...MARK);
+        assert.equal(r.code, 1, bad);
+        assert.match(r.err, /--gate/);
+    }
+    assert.equal(run('log', 'waiting', '--kind', 'note', '--gate', 'date:2099-01-01', ...MARK).code, 1);
+    assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ...MARK).code, 1);
+    assert.throws(() => ledger(), 'nothing was written');
+    for (const ok of ['gh:pr:owner/repo#12', 'gh:pr:repo#3', 'date:2099-01-01', 'ticket:the-maestro-013']) {
+        assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ok, ...MARK).code, 0, ok);
+    }
+    assert.equal(ledger().length, 4);
+    assert.match(run('status').out, /waiting .*gate: ticket:the-maestro-013/);
+});
+
+test('resume reports date gates as waiting or cleared, and never writes', () => {
+    const past = idOf(run('log', 'wait for the date', '--kind', 'blocked', '--gate', `date:${inDays(-1)}`, ...MARK).out);
+    const future = idOf(run('log', 'wait longer', '--kind', 'blocked', '--gate', `date:${inDays(5)}`, ...MARK).out);
+    const none = idOf(run('log', 'no gate here', '--kind', 'blocked', ...MARK).out);
+    const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    const out = runEnv({}, 'resume').out;
+    assert.match(out, new RegExp(`CLEARED\\s+${past} .*has arrived`));
+    assert.match(out, new RegExp(`waiting\\s+${future} .*until ${inDays(5)}`));
+    assert.match(out, new RegExp(`resolve ${past} --answer`));
+    assert.doesNotMatch(out, new RegExp(`(CLEARED|waiting|UNKNOWN)\\s+${none}`));
+    assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
+
+test('resume checks gh pr gates through gh pr view: merged clears, open waits, closed or failing is unknown', () => {
+    const id = idOf(run('log', 'hold for the PR', '--kind', 'blocked', '--gate', 'gh:pr:owner/repo#42', ...MARK).out);
+    const dir = ghStubDir();
+    const env = (state) => ({ MAESTRO_RESUME_GH: 'on', PATH: `${dir}:${process.env.PATH}`, STUB_STATE: state });
+    assert.match(runEnv(env('MERGED'), 'resume').out, new RegExp(`CLEARED\\s+${id} .*owner/repo#42 merged`));
+    assert.match(runEnv(env('OPEN'), 'resume').out, new RegExp(`waiting\\s+${id} .*owner/repo#42 is open`));
+    assert.match(runEnv(env('CLOSED'), 'resume').out, new RegExp(`UNKNOWN\\s+${id} .*closed without merging`));
+    assert.match(runEnv(env('fail'), 'resume').out, new RegExp(`UNKNOWN\\s+${id} .*gh could not say`));
+    assert.match(runEnv({ ...env('MERGED'), MAESTRO_RESUME_GH: 'off' }, 'resume').out, new RegExp(`UNKNOWN\\s+${id}`), 'resume_gh off makes no gh call');
+    assert.match(runEnv({ MAESTRO_RESUME_GH: 'on', PATH: '/nonexistent' }, 'resume').out, new RegExp(`UNKNOWN\\s+${id}`));
+});
+
+test('resume checks ticket gates against the tickets vault', () => {
+    mkdirSync(join(tv, 'Projects', 'p1', 'Tickets'), { recursive: true });
+    const ticket = (id, status) => writeFileSync(join(tv, 'Projects', 'p1', 'Tickets', `${id}.md`), `---\nid: "${id}"\ntitle: "T"\nstatus: "${status}"\n---\nbody\n`);
+    ticket('p1-001', 'closed');
+    ticket('p1-002', 'open');
+    const a = idOf(run('log', 'wait on 001', '--kind', 'blocked', '--gate', 'ticket:p1-001', ...MARK).out);
+    const b = idOf(run('log', 'wait on 002', '--kind', 'blocked', '--gate', 'ticket:p1-002', ...MARK).out);
+    const c = idOf(run('log', 'wait on 003', '--kind', 'blocked', '--gate', 'ticket:p1-003', ...MARK).out);
+    const out = runEnv({}, 'resume', '--tickets-vault', tv).out;
+    assert.match(out, new RegExp(`CLEARED\\s+${a} .*p1-001 is closed`));
+    assert.match(out, new RegExp(`waiting\\s+${b} .*p1-002 is open`));
+    assert.match(out, new RegExp(`UNKNOWN\\s+${c} .*status unavailable`));
+    assert.match(runEnv({}, 'resume').out, new RegExp(`UNKNOWN\\s+${a}`), 'no tickets vault: unknown, not a crash');
+});
+
+test('defer hides an open item from status, the footer and prime until its date, and refuses bad input', () => {
+    const id = idOf(run('start', 'after the push', ...MARK).out);
+    run('start', 'still on the board', ...MARK);
+    assert.equal(run('defer', id, '--until', inDays(-1), ...MARK).code, 1);
+    assert.equal(run('defer', id, '--until', 'soon', ...MARK).code, 1);
+    assert.equal(run('defer', id, ...MARK).code, 1);
+    assert.equal(run('defer', 'zzzz', '--until', inDays(3), ...MARK).code, 1);
+    const done = idOf(run('start', 'finished', ...MARK).out);
+    run('done', done, ...MARK);
+    assert.equal(run('defer', done, '--until', inDays(3), ...MARK).code, 1);
+    const rows = ledger().length;
+    const r = run('defer', id, '--until', inDays(3), ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(ledger().length, rows + 1);
+    assert.equal(ledger().at(-1).kind, 'defer');
+    assert.deepEqual(statusJson().inflight.map((i) => i.text), ['still on the board']);
+    assert.match(run('status', '--footer').out.split('\n')[0], /1 in flight/);
+    assert.doesNotMatch(run('prime').out, /after the push/);
+    assert.match(run('prime').out, /1 deferred item\(s\) hidden/);
+    assert.match(run('triage').out, new RegExp(`${id} .*deferred until ${inDays(3)}`));
+    assert.equal(run('verify').code, 0);
+});
+
+test('a deferral that has reached its date no longer hides the item, and a later defer moves the date', () => {
+    const id = idOf(run('start', 'comes back', ...MARK).out);
+    const file = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(file, `${readFileSync(file, 'utf8')}${JSON.stringify({ id: 'dd01', ts: new Date().toISOString(), date: '2020-01-01', kind: 'defer', defers: id, until: inDays(0), text: 'old', model: 'm', used: ['x'] })}\n`);
+    assert.deepEqual(statusJson().inflight.map((i) => i.id), [id], 'until today is not in the future: shown');
+    run('defer', id, '--until', inDays(2), ...MARK);
+    assert.deepEqual(statusJson().inflight, []);
+    run('defer', id, '--until', inDays(1), ...MARK);
+    assert.deepEqual(statusJson().inflight, [], 'latest defer wins, still in the future');
+    run('done', id, ...MARK);
+    assert.equal(run('verify').code, 0);
+});
+
+test('prime is at most 40 lines however much is open, shares lines between boxes, and writes nothing', () => {
+    const f = blockFile();
+    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
+    run('ask', 'run the count', '--paste', f, ...MARK);
+    run('log', 'wait on deploy', '--kind', 'blocked', '--gate', 'date:2099-01-01', ...MARK);
+    const small = run('prime');
+    assert.equal(small.code, 0, small.err);
+    assert.match(small.out, /Today's streams: Launch/);
+    assert.match(small.out, /Needs Jack \(1\)\n  \w+ Ship Friday or Monday\? \(Launch\)/);
+    assert.match(small.out, /Paste blocks for Jack \(1\)\n  \w+ run the count \[block: /);
+    assert.match(small.out, /Blocked \/ gated \(1\)\n  \w+ wait on deploy \[gate: date:2099-01-01\]/);
+    for (let i = 0; i < 60; i++) run('start', `work item number ${i} with a fairly long description to clip`, ...MARK);
+    for (let i = 0; i < 30; i++) run('ask', `question ${i}, which way?`, ...MARK);
+    const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    const big = run('prime');
+    const lines = big.out.trimEnd().split('\n');
+    assert.ok(lines.length <= 40, `${lines.length} lines`);
+    assert.match(big.out, /Needs Jack \(31\)/);
+    assert.match(big.out, /In flight \(60\)/);
+    assert.match(big.out, /… \+\d+ more/);
+    assert.match(big.out, /Paste blocks for Jack \(1\)\n  \w+ run the count/, 'a short section is not starved');
+    assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
+
+test('prime on an empty ledger says so and creates nothing', () => {
+    const out = run('prime');
+    assert.equal(out.code, 0, out.err);
+    assert.match(out.out, /\(nothing open\)/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal')), false);
+});
+
+test('handoff section 1 shows the gate of a blocked item', () => {
+    run('log', 'hold for the PR', '--kind', 'blocked', '--gate', 'gh:pr:owner/repo#7', '--stream', 'Launch', '--new-stream', ...MARK);
+    const out = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out;
+    assert.match(out, /\[blocked\] hold for the PR.* gate: gh:pr:owner\/repo#7/);
+});
+
+test('prime stays within 40 lines even when stream names, block paths and the project carry newlines', () => {
+    for (let s = 0; s < 30; s++) run('start', `w${s}`, '--stream', `st${s}\nx\ny`, '--new-stream', ...MARK);
+    for (let i = 0; i < 30; i++) run('ask', `q${i}, which?`, ...MARK);
+    for (let i = 0; i < 30; i++) run('log', `b${i}`, '--kind', 'blocked', ...MARK);
+    const lines = run('prime').out.trimEnd().split('\n');
+    assert.ok(lines.length <= 40, `${lines.length} lines`);
+    assert.match(lines.at(-1), /journal\.mjs/);
+});
+
+test('deferring the last open item of a stream empties its page, and an expired deferral shows again in CURRENT.md on the next read', () => {
+    const id = idOf(run('start', 'only item', '--stream', 'Solo', '--new-stream', ...MARK).out);
+    const journal = join(vault, 'Projects', 'test-proj', 'Journal');
+    assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+    run('defer', id, '--until', inDays(2), ...MARK);
+    assert.doesNotMatch(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+    assert.doesNotMatch(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
+    // The date passes: the deferral now ends today, and CURRENT.md was last written on an earlier day.
+    const file = join(journal, 'ledger.jsonl');
+    writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { const r = JSON.parse(l); return r.kind === 'defer' ? JSON.stringify({ ...r, until: inDays(0) }) : l; }).join('\n') + '\n');
+    writeFileSync(join(journal, 'CURRENT.md'), readFileSync(join(journal, 'CURRENT.md'), 'utf8').replace(/updated: .*/, 'updated: 2020-01-01'));
+    run('prime');
+    assert.match(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
+    assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+});

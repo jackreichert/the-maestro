@@ -353,12 +353,15 @@ node $J ask   "Split this into a follow-up PR?" "${M[@]}"
 node $J resolve "follow-up" --answer "Yes, no consumer yet" "${M[@]}"
 node $J status                               # open items + done today
 node $J standup                              # end-of-day summary, ready to paste
+node $J prime                               # 40 lines or fewer: streams, needs-you, paste blocks, gated, in flight (session start, after compaction)
+node $J defer <id> --until YYYY-MM-DD        # hide an open item until that date
+node $J log "<text>" --kind blocked --gate gh:pr:<repo>#N   # or date:YYYY-MM-DD, ticket:<id>; `resume` reports whether the gate has cleared
 node $J triage                               # box every open item and flag what is stale, unpromoted or unticketed; add --apply to close recorded rules
 node $J roll                                 # archive the day, keep open items (warns about triage blockers; --strict refuses)
 node $J ask "<what to run>" --paste <file>   # a run-this ask, listed apart from the questions
 node $J status --footer                      # the reply-footer lines: Ledger (one per active stream) and Session (turns and read/turn of the current session, `roll now` past `roll_turns` / `roll_read_per_turn`)
 node $J handoff --stream Launch              # scaffold the five-part handoff (see below)
-node $J resume                               # the verify-on-resume checklist
+node $J resume                               # the verify-on-resume checklist, including gate checks
 node $J log "<text>" --kind decision --approval standing --scope "<what it covers>"   # log a granted permission (standing | one-off)
 node $J rule "<text>" --ref <file>           # record a decision already made; refuses unless the ref file exists, never shows as awaiting
 node $J ask "<text>" --kind decision         # a decision that is really pending: stays on the awaiting-you board
@@ -501,3 +504,22 @@ The tests run each script as a subprocess against a temporary ledger and never r
 This folder is the shareable unit: `SKILL.md`, `reference/`, `cost/`, `scripts/` (with their tests), and this README. It ships no org overlay; write your own and name it as described in Personalize. State files the scripts write at run time (`prs-snapshot.json`, `pr-watch-state.json`) live under your ledger root, not here, and must not be shipped. It contains no vault data, no tickets, and no secrets.
 
 Do not commit your vault's `Journal/` or `Projects/` tree into this repo. Those are your notes. Point the script at them with `VAULT_ROOT`, or `LEDGER_ROOT` if you keep the ledger outside the vault.
+
+### Loading the board automatically
+
+`journal.mjs prime` prints a short, ledger-only board, so it can run from a Claude Code `SessionStart` hook and its output becomes session context. The matcher below covers a fresh start, a resume, a clear and a compaction. Add it to your own settings file; nothing in this repo does it for you.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "node /path/to/the-maestro/scripts/journal.mjs prime --project <container-folder-name> --vault <ledger-root>" }
+        ]
+      }
+    ]
+  }
+}
+```
