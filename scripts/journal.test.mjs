@@ -19,7 +19,7 @@ const emptyCwd = mkdtempSync(join(tmpdir(), 'journal-cwd-'));
 function run(...args) {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
-        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects },
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '' },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -505,12 +505,13 @@ test('models add is idempotent, refuses alias collisions, and coexists with stre
 
 // ── handoff and resume ──────────────────────────────────────────────────────
 
-const runEnv = (env, ...args) => {
+const runEnvIn = (cwd, env, ...args) => {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', ...env },
+        encoding: 'utf8', cwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', MAESTRO_CONTAINER_ROOT: '', ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 };
+const runEnv = (env, ...args) => runEnvIn(emptyCwd, env, ...args);
 const handoffFile = (stream) => join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${new Date().toISOString().slice(0, 10)}-${stream}.md`);
 const section = (text, n) => text.split(new RegExp(`^## ${n}\\. .*$`, 'm'))[1].split(/^## /m)[0];
 
@@ -1141,29 +1142,57 @@ function sweepWorld() {
 
 test('roll removes a stale worktree without asking, keeps dirty ones with the reason, and a second roll is a no-op', () => {
     const w = sweepWorld();
-    const idle = ['--container', w.container];
-    const env = {};
-    const first = runEnv(env, 'roll', ...idle);
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    const first = runEnvIn(w.container, env, 'roll');
     assert.equal(first.code, 0, first.err);
     assert.match(first.out, new RegExp(`removed +${w.clean}`));
     assert.match(first.out, new RegExp(`kept +${w.dirty} .*untracked files`));
     assert.match(first.out, /worktrees: 1 removed, 0 pruned, 1 kept\./);
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [false, true]);
-    assert.match(runEnv(env, 'roll', ...idle).out, /worktrees: 0 removed, 0 pruned, 1 kept\./);
+    assert.match(runEnvIn(w.container, env, 'roll').out, /worktrees: 0 removed, 0 pruned, 1 kept\./);
+});
+
+test('roll sweeps the configured root even when run from a subdirectory of it', () => {
+    const w = sweepWorld();
+    const r = runEnvIn(join(w.container, 'proj'), { MAESTRO_CONTAINER_ROOT: w.container }, 'roll');
+    assert.match(r.out, new RegExp(`removed +${w.clean}`));
+    assert.equal(existsSync(w.clean), false);
+});
+
+test('roll refuses to sweep from a directory outside the configured root, and still rolls', () => {
+    const w = sweepWorld();
+    run('start', 'finished thing', ...MARK);
+    const r = runEnvIn(emptyCwd, { MAESTRO_CONTAINER_ROOT: w.container }, 'roll');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /worktree sweep refused: .* is outside container_root/);
+    assert.doesNotMatch(r.out, /worktrees:/);
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
+    const viaFlag = runEnvIn(w.container, { MAESTRO_CONTAINER_ROOT: w.container }, 'roll', '--container', emptyCwd);
+    assert.match(viaFlag.out, /worktree sweep refused: .* is outside container_root/);
+    assert.equal(existsSync(w.clean), true);
+});
+
+test('roll refuses to sweep when no container root is configured, and still rolls', () => {
+    const w = sweepWorld();
+    const r = runEnvIn(w.container, {}, 'roll');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /worktree sweep refused: container_root is not set/);
+    assert.doesNotMatch(r.out, /worktrees:/);
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
 test('roll --dry-run and --no-worktree-sweep leave every worktree in place', () => {
     const w = sweepWorld();
-    const env = {};
-    assert.match(runEnv(env, 'roll', '--dry-run', '--container', w.container).out, /would remove +\S+clean/);
-    assert.doesNotMatch(runEnv(env, 'roll', '--no-worktree-sweep', '--container', w.container).out, /worktrees:/);
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    assert.match(runEnvIn(w.container, env, 'roll', '--dry-run').out, /would remove +\S+clean/);
+    assert.doesNotMatch(runEnvIn(w.container, env, 'roll', '--no-worktree-sweep').out, /worktrees:|refused/);
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
 test('handoff lists the worktrees a sweep would keep under Cleanup candidates, and removes nothing', () => {
     const w = sweepWorld();
     run('start', 'port the fix', ...MARK, '--stream', 'Launch', '--new-stream');
-    const r = runEnv({}, 'handoff', '--stream', 'Launch', '--container', w.container, '--dry-run');
+    const r = runEnvIn(w.container, { MAESTRO_CONTAINER_ROOT: w.container }, 'handoff', '--stream', 'Launch', '--dry-run');
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, new RegExp(`## Cleanup candidates[^]*- \`${w.dirty}\` \\(proj\\): .*untracked files`));
     assert.doesNotMatch(r.out, new RegExp(`- \`${w.clean}\``));
