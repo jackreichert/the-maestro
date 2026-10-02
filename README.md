@@ -303,7 +303,7 @@ Its pace is adaptive: 3 or more events in 30 minutes polls at `watch_min_interva
 Mid-day PR snapshot and diff, stored under the ledger root.
 
 - `prs-snapshot.mjs [--diff] [--dry-run] --vault <path>` fetches the live board; with `--diff` it first prints the actionable changes since the last snapshot (a new human review, a review decision flip, a new human-opened thread, a merge or close, a draft promoted to ready), then overwrites the snapshot unless `--dry-run`. Bot activity is summarised as one count line.
-- `prs-snapshot.mjs --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo. `prs-snapshot.mjs ready <snapshot.json>` prints it for a file, offline.
+- `prs-snapshot.mjs --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo until two known answers agree (a stale cached MERGEABLE is not trusted). `prs-snapshot.mjs ready <snapshot.json>` prints it for a file, offline, with the file's age (it is not a merge gate).
 - `prs-snapshot.mjs diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
 
 ### event-loop.mjs

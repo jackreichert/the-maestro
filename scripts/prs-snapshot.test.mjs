@@ -7,10 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installGhStub, paged, prNode } from './lib/gh-stub.mjs';
 
-const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.mjs');
-
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
+const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.mjs');
 
 const SCRIPT = new URL('./prs-snapshot.mjs', import.meta.url).pathname;
 
@@ -220,18 +219,40 @@ test('--ready on a live fetch reports mergeable and thread state from the board 
     assert.match(r.out, /org\/repo#2 — merge conflict/);
 });
 
-test('after a merge, requerySiblings re-asks the mergeable state of open PRs in that repo until it is known, and leaves other repos alone', () => {
+test('after a merge, requerySiblings distrusts the cached mergeable of open PRs in that repo until two known answers agree, and leaves other repos alone', () => {
     const prev = { prs: [good({ key: 'a/x#1', repo: 'a/x', number: 1 }), good({ key: 'a/x#2', repo: 'a/x', number: 2 }), good({ key: 'b/y#3', repo: 'b/y', number: 3 })] };
-    const curr = { prs: [good({ key: 'a/x#2', repo: 'a/x', number: 2, mergeable: 'UNKNOWN' }), good({ key: 'b/y#3', repo: 'b/y', number: 3, mergeable: 'UNKNOWN' })] };
-    const answers = ['UNKNOWN', 'CONFLICTING'];
-    const asked = [];
-    const run = (args) => { asked.push(args.slice(2, 4).join(' ')); return { status: 0, stdout: `${answers.shift()}\n` }; };
-    assert.deepEqual(requerySiblings(prev, curr, { run, wait: () => {} }), ['a/x']);
-    assert.deepEqual(asked, ['2 --repo', '2 --repo'], 'two asks for the sibling, none for the other repo');
-    assert.deepEqual(curr.prs.map((p) => p.mergeable), ['CONFLICTING', 'UNKNOWN']);
-    const failing = { prs: [good({ key: 'a/x#2', repo: 'a/x', number: 2, mergeable: 'MERGEABLE' })] };
-    requerySiblings(prev, failing, { run: () => ({ status: 1, stdout: '' }), wait: () => {} });
-    assert.equal(failing.prs[0].mergeable, 'MERGEABLE', 'a failed lookup keeps what the board query said');
-    const none = { prs: [good({ key: 'a/x#2', repo: 'a/x', number: 2 })] };
-    assert.deepEqual(requerySiblings({ prs: none.prs }, none, { run: () => { throw new Error('no merge, no asks'); } }), []);
+    const curr = () => ({ prs: [good({ key: 'a/x#2', repo: 'a/x', number: 2 }), good({ key: 'b/y#3', repo: 'b/y', number: 3 })] });
+    const feed = (answers) => { const asked = []; return { asked, run: (args) => { asked.push(args[2]); const a = answers.shift(); return a === null ? { status: 1, stdout: '' } : { status: 0, stdout: `${a}\n` }; } }; };
+
+    const settle = curr(); const f = feed(['UNKNOWN', 'CONFLICTING', 'CONFLICTING']);
+    assert.deepEqual(requerySiblings(prev, settle, { run: f.run, wait: () => {} }), ['a/x']);
+    assert.deepEqual([settle.prs[0].mergeable, settle.prs[1].mergeable], ['CONFLICTING', 'MERGEABLE'], 'the other repo keeps its board value');
+    assert.deepEqual(f.asked, ['2', '2', '2'], 'nothing is asked for the other repo');
+
+    const stale = curr(); const g = feed(['MERGEABLE', 'CONFLICTING', 'CONFLICTING']);
+    requerySiblings(prev, stale, { run: g.run, wait: () => {} });
+    assert.equal(stale.prs[0].mergeable, 'CONFLICTING', 'a first MERGEABLE is not trusted on its own: it may be the cache from before the merge');
+
+    const failing = curr();
+    requerySiblings(prev, failing, { run: feed([null]).run, wait: () => {} });
+    assert.equal(failing.prs[0].mergeable, 'UNKNOWN', 'a failed lookup fails closed, so the PR is not ready');
+    assert.match(readiness(failing.prs[0], failing.prs, []).reasons.join('|'), /mergeable state UNKNOWN/);
+
+    const never = curr();
+    requerySiblings(prev, never, { run: feed(['UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'UNKNOWN']).run, wait: () => {} });
+    assert.equal(never.prs[0].mergeable, 'UNKNOWN');
+
+    const quiet = curr();
+    assert.deepEqual(requerySiblings({ prs: quiet.prs }, quiet, { run: () => { throw new Error('no merge, no asks'); } }), []);
+});
+
+test('ready <file> says how old the snapshot is, warns when it is stale, and tolerates a snapshot with no threads field', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prs-snap-test-'));
+    const old = pr({ key: 'o/r#9', number: 9, reviewDecision: 'APPROVED', mergeable: 'MERGEABLE' });
+    delete old.threads;
+    const r = run('ready', fixture(dir, 'old.json', { takenAt: new Date(Date.now() - 3 * 36e5).toISOString(), prs: [old] }));
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Snapshot taken .*\(180 minutes ago: STALE\)\. Not a merge gate/);
+    const fresh = run('ready', fixture(dir, 'new.json', { takenAt: new Date().toISOString(), prs: [] }));
+    assert.doesNotMatch(fresh.out, /STALE/);
 });
