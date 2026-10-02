@@ -678,13 +678,16 @@ function cmdStatus() {
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
     console.log(`Ledger — ${d}`);
-    for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, done)) {
+    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, done);
+    for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
         line('In flight', inStream(g.inflight, s));
         line('Blocked', inStream(g.blocked, s));
         line('Awaiting you', inStream(g.awaiting, s));
         line(`Done ${d}`, inStream(done, s));
     }
+    // Without this heading the unstreamed sections read as part of the last stream.
+    if (streams.length && [g.inflight, g.blocked, g.awaiting, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
     line('In flight', noStream(g.inflight));
     line('Blocked', noStream(g.blocked));
     line('Awaiting you', noStream(g.awaiting));
@@ -694,7 +697,7 @@ function cmdStatus() {
     if (!g.inflight.length && !g.blocked.length && !g.awaiting.length && !done.length) {
         console.log('\n  (empty)');
     }
-    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you`);
+    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
 }
 
 function standupText(d) {

@@ -1168,3 +1168,22 @@ test('handoff lists the worktrees a sweep would keep under Cleanup candidates, a
     assert.doesNotMatch(r.out, new RegExp(`- \`${w.clean}\``));
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
+
+// ── status header and total line (MAESTRO-13) ───────────────────────────────
+
+test('status names the unstreamed section "other" once streams exist, and the total line counts blocked', () => {
+    run('start', 'streamed work', ...MARK, '--stream', 'Launch', '--new-stream');
+    run('start', 'loose work', ...MARK);
+    run('log', 'waiting on a deploy', '--kind', 'blocked', ...MARK);
+    const out = run('status').out;
+    assert.match(out, /== Launch ==[^]*== other ==[^]*loose work/);
+    assert.match(out, /0 done · 2 in flight · 0 awaiting you · 1 blocked/);
+    assert.ok(out.indexOf('streamed work') < out.indexOf('== other =='));
+});
+
+test('status prints no "other" heading when there are no streams, and no blocked count when none are blocked', () => {
+    run('start', 'plain work', ...MARK);
+    const out = run('status').out;
+    assert.doesNotMatch(out, /== other ==/);
+    assert.match(out, /0 done · 1 in flight · 0 awaiting you\n?$/);
+});
