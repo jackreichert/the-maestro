@@ -67,7 +67,7 @@
  *   journal.mjs claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
- *   journal.mjs handoff --stream <name> [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (Cleanup candidates lists the worktrees a sweep would keep, read-only)
+ *   journal.mjs handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
@@ -100,12 +100,12 @@
  * config file (see local-config.mjs).
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, linkSync, unlinkSync, realpathSync, statSync } from 'node:fs';
-import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
+import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS } from './local-config.mjs';
 import { scratchReport } from './lib/scratch.mjs';
-import { defaultContext, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
+import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.mjs';
 import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
@@ -125,7 +125,7 @@ const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all', '--update-context']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -1092,7 +1092,7 @@ function triageChecklist(items, blockers) {
         `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
         `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
         '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
-        '[ ] Session turn count and read/turn are in the handoff header: token-metrics.mjs (by hand)',
+        '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.mjs; by hand if you wrote it yourself)',
     ];
 }
 
@@ -1950,8 +1950,21 @@ function artifactsOf(items) {
     return [...found.values()];
 }
 
-function handoffText(stream, since, keptWorktrees = []) {
-    const items = fold(readLedger()).items.filter((i) => i.stream === stream);
+/**
+ * The worktrees the roll sweep keeps. One line each by default; with `summary` (a sweep result, used by `handoff --all`,
+ * where there can be hundreds) it is the sweep's totals and the kept ones as counts by reason.
+ */
+function cleanupWorktreeLines(kept, summary) {
+    if (summary) {
+        return [`Worktree sweep (dry run): ${summary.removed.length} would be removed, ${summary.pruned.length} pruned, ${kept.length} kept. Kept, by reason (\`--verbose\` lists them):`, '',
+            ...keptCounts(kept).map((c) => `- ${c.label}: ${c.count}`), ...(summary.skipped?.length ? ['', `Sweep budget reached: skipped ${summary.skipped.join(', ')}.`] : []), ''];
+    }
+    return kept.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', ...kept.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : [];
+}
+
+/** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
+function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '', sweep = null, verbose = false } = {}) {
+    const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const d = today();
     const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
     const open = items.filter((i) => isOpen(i) && (i.kind === 'wip' || i.kind === 'blocked'));
@@ -1965,21 +1978,23 @@ function handoffText(stream, since, keptWorktrees = []) {
     const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
     const touched = items.filter((i) => isOpen(i) || recent(i));
     const arts = artifactsOf(touched);
-    const meta = (i) => [i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
+    const meta = (i) => [stream === null && i.stream && `stream: ${i.stream}`, i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
     const line = (i, tag) => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
     const one = (kind) => arts.filter((a) => a.kind === kind).map((a) => a.v);
 
     return [
-        '---', 'status: draft', `stream: ${stream}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
-        `# ${stream} handoff, ${d}`, '',
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
+        `# ${stream ?? 'All streams'} handoff, ${d}`, '',
         '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
+        '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
         '## 1. Tasks with status', '',
         ...(open.length || doneRecently.length ? [
             ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
             ...doneRecently.map((i) => line(i, `done ${i.closedBy?.date || i.date}`)),
         ] : ['_none_']), '',
         '## 2. Learnings, including what was ruled out', '',
-        ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
+        ...(learn ? [`- ${learn}`] : []),
+        ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : learn ? [] : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
         '## 3. Artifacts', '',
         ...(arts.length ? [
             ...(one('pr').length ? [`- PRs: ${one('pr').join(', ')}`] : []),
@@ -1993,26 +2008,48 @@ function handoffText(stream, since, keptWorktrees = []) {
             ...(pasteBlocks.length ? ['**Paste blocks for Jack**', '', ...pasteBlocks.map((i) => `${line(i, 'paste')} — ${i.paste ? `block: ${i.paste}` : 'no block file'}${isStale(BOX.PASTE, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`)] : []),
         ] : ['_none_']), '',
         '## 5. Next concrete action', '',
-        '_Author: one concrete first step for the fresh session._', '',
+        next || '_Author: one concrete first step for the fresh session._', '',
         '## Cleanup candidates', '',
         '_Run `node scripts/branch-sweep.mjs` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
-        ...(keptWorktrees.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '',
-            ...keptWorktrees.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : []),
+        ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
         'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
     ].join('\n');
 }
 
+/** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
+const oneLineArg = (name) => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
+
 function cmdHandoff() {
     const { items } = fold(readLedger());
-    const stream = existingStream(arg('stream'), items);
+    const stream = has('all') ? null : existingStream(arg('stream'), items);
     const since = arg('since', yesterday());
-    const path = arg('out') || join(dir, `HANDOFF-${today()}-${slug(stream)}.md`);
+    const path = arg('out') || join(dir, `HANDOFF-${today()}-${stream === null ? 'all' : slug(stream)}.md`);
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
-    const body = handoffText(stream, since, runWorktreeSweep(true)?.kept);
-    if (dryRun) { console.log(body); return; }
+    const sweep = runWorktreeSweep(true);
+    const body = handoffText(stream, since, sweep?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next'), sweep, verbose: has('verbose') });
+    const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
+    if (dryRun) { console.log(body); if (contextFile) console.log(`would point ${contextFile} at ${basename(path)}`); return; }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
     console.log(`wrote ${path}`);
+    if (contextFile) updateContextLink(contextFile, path);
+}
+
+/**
+ * Points a project CONTEXT.md at the handoff just written, with one `Latest handoff: [[<note>]] (<date>)` line: an existing
+ * line is replaced, otherwise it goes under the first heading (or at the top, after any YAML frontmatter). Running it again for the same note on the same day changes nothing.
+ * A missing file is reported and fails the command; nothing else in the file is touched.
+ */
+function updateContextLink(file, handoffPath) {
+    if (!existsSync(file)) { console.error(`--update-context: ${file} does not exist; the handoff was written but nothing was linked.`); process.exitCode = 1; return; }
+    const link = `Latest handoff: [[${basename(handoffPath, '.md')}]] (${today()})`;
+    const text = readFileSync(file, 'utf8');
+    const front = text.match(/^---\n[\s\S]*?\n---\n/)?.[0] || ''; // YAML frontmatter stays first
+    const body = text.slice(front.length);
+    const next = /^Latest handoff:.*$/m.test(text) ? text.replace(/^Latest handoff:.*$/m, () => link)
+        : /^# .*$/m.test(body) ? front + body.replace(/^# .*$/m, (h) => `${h}\n\n${link}`) : `${front}${link}\n\n${body}`;
+    if (next !== text) writeFileSync(file, next);
+    console.log(`${next === text ? 'already linked' : 'linked'} ${file} -> ${basename(handoffPath, '.md')}`);
 }
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */

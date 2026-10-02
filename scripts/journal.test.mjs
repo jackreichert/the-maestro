@@ -548,6 +548,70 @@ test('handoff scaffolds the five parts from the ledger for one stream only', () 
     assert.match(text, /^## Cleanup candidates\n\n_Run `node scripts\/branch-sweep\.mjs`/m);
 });
 
+test('handoff --all covers every stream, tags each item with its stream, and writes a draft named all', () => {
+    const { wip } = seedHandoff();
+    const r = run('handoff', '--all');
+    assert.equal(r.code, 0, r.err);
+    const text = readFileSync(handoffFile('all'), 'utf8');
+    assert.match(text, /^status: draft$/m);
+    assert.match(text, /^stream: all$/m);
+    assert.match(text, /^# All streams handoff, /m);
+    const s1 = section(text, 1);
+    assert.match(s1, new RegExp(`\`${wip}\` \\[in flight\\] port the fix.*stream: Launch`));
+    assert.match(s1, /other stream work.*stream: Maestro/);
+    assert.match(section(text, 4), /\[question\] ship on Friday\?/);
+    assert.equal(run('handoff', '--all').code, 1, 'still never overwrites without --force');
+    assert.equal(run('handoff', '--all', '--stream', 'Nope', '--force').code, 0, '--all wins over --stream');
+});
+
+test('handoff --learn and --next fill sections 2 and 5 on one line each, and leave the placeholders when absent', () => {
+    seedHandoff();
+    const r = run('handoff', '--all', '--learn', 'ruled out the queue,\nit was the cache', '--next', 'rerun the sweep from the container root');
+    assert.equal(r.code, 0, r.err);
+    const text = readFileSync(handoffFile('all'), 'utf8');
+    const s2 = section(text, 2);
+    assert.match(s2, /^- ruled out the queue, it was the cache$/m);
+    assert.match(s2, /stale cache, ruled out the queue/, 'ledger matches still follow it');
+    assert.equal(section(text, 5).trim(), 'rerun the sweep from the container root');
+    run('handoff', '--stream', 'Maestro', '--learn', 'only this');
+    const bare = readFileSync(handoffFile('Maestro'), 'utf8');
+    assert.equal(section(bare, 2).trim(), '- only this', 'no placeholder once the author wrote one');
+    assert.match(section(bare, 5), /Author: one concrete first step/);
+});
+
+test('handoff fills Session metrics from the newest session, and says so when there is none', () => {
+    seedHandoff();
+    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /unavailable \(no sessions in /);
+    const turn = (id) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 1 } } });
+    writeFileSync(join(projects, 'cccccccc-now.jsonl'), `${[1, 2, 3].map((n) => turn(`t${n}`)).join('\n')}\n`);
+    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* 3 turns \(1% of 180 roll\) · 100k read\/turn/);
+});
+
+test('handoff --update-context points CONTEXT.md at the new handoff once, replacing an old link, and touches nothing else', () => {
+    seedHandoff();
+    const ctx = join(tv, 'CONTEXT.md');
+    writeFileSync(ctx, '# test-proj\n\nGoals stay as they are.\n');
+    const day = new Date().toISOString().slice(0, 10);
+    const r = run('handoff', '--all', '--update-context', '--context-file', ctx);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(readFileSync(ctx, 'utf8'), `# test-proj\n\nLatest handoff: [[HANDOFF-${day}-all]] (${day})\n\nGoals stay as they are.\n`);
+    assert.match(run('handoff', '--all', '--force', '--update-context', '--context-file', ctx).out, /already linked/);
+    run('handoff', '--stream', 'Maestro', '--update-context', '--context-file', ctx);
+    assert.equal(readFileSync(ctx, 'utf8').match(/^Latest handoff:.*$/gm).length, 1, 'replaced, not added');
+    assert.match(readFileSync(ctx, 'utf8'), /Latest handoff: \[\[HANDOFF-.*-Maestro\]\]/);
+    const dry = run('handoff', '--all', '--force', '--dry-run', '--update-context', '--context-file', ctx);
+    assert.match(dry.out, /would point/);
+    assert.match(readFileSync(ctx, 'utf8'), /-Maestro\]\]/, 'a dry run writes nothing');
+    const missing = run('handoff', '--all', '--force', '--update-context', '--context-file', join(tv, 'nope.md'));
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /does not exist; the handoff was written/);
+    assert.equal(run('handoff', '--all', '--force').code, 0, 'no flag, no link');
+    const fm = join(tv, 'FM.md');
+    writeFileSync(fm, '---\ntitle: x\n---\nPlain body, no heading.\n');
+    run('handoff', '--all', '--force', '--update-context', '--context-file', fm);
+    assert.equal(readFileSync(fm, 'utf8'), `---\ntitle: x\n---\nLatest handoff: [[HANDOFF-${day}-all]] (${day})\n\nPlain body, no heading.\n`, 'frontmatter stays first');
+});
+
 test('handoff never overwrites without --force, honours --out, and appends nothing to the ledger', () => {
     seedHandoff();
     const before = readFileSync(ledgerFile(), 'utf8');
@@ -1213,6 +1277,19 @@ test('roll --fast skips the scratch review too', () => {
     writeFileSync(join(shelf, 'scratch', 'tally.sh'), '# tally the rows\n');
     assert.match(runEnv({ MAESTRO_SCRIPTS_DIR: shelf }, 'roll').out, /tally\.sh/);
     assert.doesNotMatch(runEnv({ MAESTRO_SCRIPTS_DIR: shelf }, 'roll', '--fast').out, /tally\.sh/);
+});
+
+test('handoff --all summarises the sweep as counts by reason, and --verbose lists each kept worktree', () => {
+    const w = sweepWorld();
+    run('start', 'port the fix', ...MARK, '--stream', 'Launch', '--new-stream');
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    const counts = runEnvIn(w.container, env, 'handoff', '--all', '--dry-run').out;
+    assert.match(counts, /Worktree sweep \(dry run\): 1 would be removed, 0 pruned, 1 kept\./);
+    assert.match(counts, /^- untracked files: 1$/m);
+    assert.doesNotMatch(counts, new RegExp(w.dirty));
+    assert.match(runEnvIn(w.container, env, 'handoff', '--all', '--verbose', '--dry-run').out, new RegExp(`- \`${w.dirty}\` \\(proj\\): .*untracked files`));
+    assert.match(runEnvIn(w.container, env, 'handoff', '--stream', 'Launch', '--dry-run').out, new RegExp(`- \`${w.dirty}\``), 'one stream keeps the per-worktree list');
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
 test('handoff lists the worktrees a sweep would keep under Cleanup candidates, and removes nothing', () => {
