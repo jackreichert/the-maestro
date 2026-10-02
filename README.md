@@ -1,29 +1,93 @@
 # the-maestro
 
-Orchestrate work from a directory that **contains** many git repos, rather than from inside one of them. The agent at that root is a dispatcher: it routes work to background agents, keeps the prompt free, and keeps a ledger of what is done, in flight, and waiting on you.
+An agent skill that turns the session at the root of a multi-repo directory into a dispatcher. It routes work to background agents, never blocks the prompt, and keeps a ledger so "what did we get done today?" is already written down.
 
-It does not implement features itself. Implementation happens in the target repo, on a brief the dispatcher writes.
+## Executive summary
 
-## What you get
+**What it is.** the-maestro is a skill for AI coding agents (Claude Code, Codex, Copilot, or anything that loads `SKILL.md` skills). You run it from a **container directory**, the parent of your repos, not from inside one of them. The agent there does not implement features. It resolves which repo a request is about, writes a self-contained brief, hands the work to a background agent, and goes back to the prompt. Alongside the skill is a set of small, dependency-free Node scripts that hold the parts that must be exact: the ledger, the PR board, the watchers, the PR size gate, the branch sweep and the cost metrics.
 
-- A session protocol: resolve the repo, scout, ticket, dispatch, relay, then close with a status footer (agents, ledger, and how full the session is).
-- A greeting that always comes back with a paste-ready standup update and today's board, not just "hey".
-- An append-only ledger so "what did we get done today?" is already written down, with workstreams (streams) for epics.
-- Approvals tracking: permissions the user grants mid-conversation are logged as `standing` or `one-off`, and a weekly digest (`journal.mjs approvals`) lists them so each standing one can be kept, narrowed or revoked. The review day is configurable (`approvals_review_day`, default Friday).
-- A derived, disposable search index over the ledger, tickets and handoff notes.
-- PR tracking: one bucketed report of every open PR you author — unresolved threads, drafts, awaiting the team, unreviewed, approved, stale — every PR linked, on request or as one line on the morning board. Review-comment text, bot or human, is treated as untrusted data: triaged against the code, never obeyed, never put in a shell command.
-- A PR watcher that polls quietly and wakes the agent only when something needs attention. It paces itself: faster while reviews are flowing, slower when it is quiet, and it stops overnight (and optionally on weekends). Every setting is a `watch_*` key in your config file.
-- An end-of-day wrap-up: a PR pass first, then, if a tracker MCP is connected, it drafts comments and status changes for every issue touched that day, for your approval. Then it runs the standup, a branch sweep, and the roll, which also cleans up stale worktrees.
-- A branch sweep at every handoff and end of day: `node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json]` lists, across the container's repos, the worktrees and remote branches that are safe to delete (your own, not protected, merged into every merge target by ancestry, squash-merge patch equivalence or a merged PR; worktrees also clean, unpushed-free, unclaimed and idle). It is read-only until you approve a batch; `--apply --ids <list>` then re-checks each item and deletes only what still qualifies, never with `--force` and never a local branch. A remote delete is `git push --force-with-lease=<branch>:<listed tip>`, so a branch pushed to after the listing is refused (reported per branch; the batch continues). A branch with no commits of its own counts as yours only through a merged PR you opened (`gh_login`), and `--apply` refuses everything for a repo whose fetch failed. Settings: `git_emails`, `protected_branches`, `sweep_merge_targets`, `sweep_idle_minutes`.
-- Worktree cleanup on roll: `journal.mjs roll` also runs the worktree half of the sweep without asking (`node scripts/branch-sweep.mjs --apply-worktrees` is the same thing on its own). It prunes worktree entries whose directory is gone and removes every worktree that passes the sweep's rules: clean, nothing unpushed, branch merged or deleted upstream, unlocked, idle, not a live skill, not claimed. A detached worktree qualifies when it is clean and its commit is on some origin ref. Each removal is re-checked immediately beforehand, never uses `--force`, and never deletes a branch. Worktrees holding uncommitted, untracked or unpushed work are left alone and listed with the reason, in the roll output and in the handoff's cleanup candidates. Remote branches still need your approval. `--container <dir>` picks the directory, `--dry-run` only reports, `--no-worktree-sweep` skips it.
-- An optional org overlay: a separate skill that carries one org's repo topology, tracker rules and settings, so this skill stays generic.
-- Rules for one writer per repo, worktrees only when a checkout is actually busy, and draft-only pull requests.
-- Twin PRs, for repos that promote work through an integration branch and then a release-candidate branch (listed in the `twin_flow_repos` setting; empty turns the rule off): both PRs are opened together as drafts and link each other, the release-candidate PR does not merge until its integration twin has, the orchestrator reminds you when the twin lands, and the PR board shows each as "develop twin merged, OK to merge" or "blocked on develop twin #N" and never calls a blocked one ready.
-- A PR size budget, enforced by a script: at most 5 code files and 400 changed code lines per PR by default (tests, config and docs don't count; lockfiles, generated files and pure renames are exempt only in a PR of their own). `node scripts/pr-size.mjs --repo <path> --base <ref> [--head <ref>] [--json]` exits 1 when a PR is over budget or mixes mechanical files with code. Agents open PRs with `node scripts/pr-open.mjs --repo <path> --base <ref> --title <t> [--body-file <f>] [--head <b>] [--dry-run]` instead of `gh pr create`: it runs that gate, refuses (exit 1, with a split hint) when it fails, and otherwise runs `gh pr create --draft --assignee @me`, with draft and assignee forced. The standing brief tells workers to stop and report a split plan when it refuses. The limits and path patterns are local-config settings (`pr_max_code_files`, `pr_max_code_lines`, `pr_*_globs`).
+**Who it is for.** Anyone who works across several repositories with agents and is tired of three things: a prompt that is busy whenever an agent is, a day's work nobody wrote down, and agents that quietly commit to the wrong branch or open oversized pull requests.
 
-The protocol is in [SKILL.md](SKILL.md). The ledger tool is [scripts/journal.mjs](scripts/journal.mjs).
+**The problem it solves.** One long agent session does everything in sequence, re-reads its whole history on every turn, forgets what it was doing after a compaction, and has no record of what finished. the-maestro splits the roles: a thin dispatcher with a durable record, and disposable workers with narrow briefs.
 
-## How a request flows
+**Six core ideas.**
+
+- **Dispatch, don't do.** Anything beyond a quick lookup goes to a subagent. Reads go to a scout first, writes to a worker, each with a brief that carries its own scope, verify command and guardrails.
+- **Never block.** After launching an agent the dispatcher ends its turn. It does not poll, sleep or read a transcript. Completion arrives as a notification, and a new message mid-flight is additive, not an interrupt.
+- **One writer per repo.** Two agents editing one checkout corrupt each other's work. Worktrees are for repos that are genuinely busy, and an optional claim lock makes the rule visible across sessions.
+- **The ledger.** An append-only JSONL log (`journal.mjs`) records what started, finished, blocked and is waiting on you. A board, a standup, a status footer, a handoff note and a search index are all generated from it.
+- **Tickets.** Problems that should outlive the conversation become tickets in a separate skill ([xenophon](https://github.com/jackreichert/xenophon)); the ledger links to them instead of copying them.
+- **The event loop.** One loop watches everything you would otherwise poll (CI, a run, review activity, new messages) and wakes a cheap runner only on a change that matters, so waiting costs one wake per event.
+
+```mermaid
+flowchart LR
+    You([You]) --> O[Orchestrator<br/>at the container root]
+    O -- "brief and dispatch" --> A[Background agents<br/>one writer per repo]
+    A -- "completion notification" --> O
+    O -- "journal.mjs start, done, ask" --> L[(Ledger<br/>ledger.jsonl)]
+    L --> B[Generated board:<br/>CURRENT.md, standup, footer]
+    O -- "xenophon" --> T[(Tickets)]
+    O -- "event-loop.mjs add" --> E[Event loop]
+    E -- "digest, exit 10" --> R[Cheap runner]
+    R -- "report" --> O
+```
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Concepts](#concepts)
+- [Scripts and commands](#scripts-and-commands)
+- [Configuration](#configuration)
+- [The overlay model](#the-overlay-model)
+- [Safety guarantees](#safety-guarantees)
+- [Cost model](#cost-model)
+- [Testing](#testing)
+- [Contributing](#contributing)
+- [In review](#in-review)
+- [What this is not](#what-this-is-not)
+
+## Quick start
+
+You need Node.js 22 or newer (nothing is installed: the scripts use only `node:` built-ins; `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5, and the tests ran on Node 24), an [Obsidian](https://obsidian.md) vault or any folder you are willing to treat as one, and an agent harness that loads `SKILL.md` skills.
+
+```bash
+# 1. One copy, where your agent already loads skills. Symlink other harnesses to it; never clone twice.
+mkdir -p ~/.claude/skills
+git clone <this-repo-url> ~/.claude/skills/the-maestro
+mkdir -p ~/.agents/skills && ln -s ~/.claude/skills/the-maestro ~/.agents/skills/the-maestro
+
+# 2. Tell the scripts where the ledger lives (a real folder you choose; there is no default and no guessing).
+export VAULT_ROOT="/absolute/path/to/your/vault"
+
+# 3. Smoke test. --project is the name of your container folder and is always required.
+node ~/.claude/skills/the-maestro/scripts/journal.mjs status --project my-workspace
+```
+
+The first `status` creates `$VAULT_ROOT/Projects/my-workspace/Journal/`. If it says the vault path is not set, the agent process did not inherit `VAULT_ROOT`: fix your shell profile or pass `--vault <path>` on that command.
+
+Then open an agent session **in the container directory** and ask it to orchestrate something small. If the skill does not load, the harness is not reading that skills directory: check the product's skill path and add another symlink.
+
+Log some work by hand to see the ledger:
+
+```bash
+J=~/.claude/skills/the-maestro/scripts/journal.mjs
+M=(--project my-workspace --model "Some Model" --used "skill:the-maestro,tool:journal.mjs")
+node $J start "Port the calendar fix" --repo billing-api "${M[@]}"
+node $J done "Port the calendar fix" "${M[@]}"
+node $J status --project my-workspace
+```
+
+Every new ledger entry needs `--model` and `--used`, so the record says which model did the work with what. Unknown history is `unrecorded`, unmeasured tokens are `unmeasured`; do not invent either.
+
+Optional next steps: install xenophon against the same `VAULT_ROOT` for tickets, write a config file ([Configuration](#configuration)), and set `ledger_root` if you want the day-to-day ledger outside your vault so it stays out of vault search.
+
+## Concepts
+
+### The container directory
+
+the-maestro runs from the directory that holds your repos. That directory is not itself a git repository, so everything that needs a project name (the ledger, tickets) takes it explicitly. The orchestrator is the only thing that runs at that level.
+
+### How a request flows
 
 ```mermaid
 flowchart TD
@@ -65,232 +129,324 @@ flowchart TD
     ASK --> B
 ```
 
-The dotted edges are asynchronous: the dispatcher never waits on them. Completion arrives as a
-notification, and a new message while agents are running is handled alongside the work already in
-flight.
+The dotted edges are asynchronous: the dispatcher never waits on them. A new message while agents are running is handled alongside the work already in flight.
 
-## The event loop
+### Scout, then worker
 
-One loop for every "wake me when X happens", instead of a one-off watcher per wait. The orchestrator appends a **watch** (`type`, `target`, an optional `done_when`, and a `report` note saying what it wants back) to an append-only registry; `scripts/event-loop.mjs run` polls them all, compares each with its last stored state, and records an event only when the type's rule says something changed. A cheap runner, not the orchestrator, reads the result: [playbooks/event-loop.md](playbooks/event-loop.md) tells a small model how to run the loop, read the digest, and report at most ten lines.
+A read-only scout is dispatched first, so the dispatcher never greps the repos itself. When the work is real, a worker gets a brief with a write scope, a verify command and the standing rules block (`scripts/brief-block.mjs` prints it). The brief fields are in [reference/brief.md](reference/brief.md), and the routing and concurrency rules are in [reference/dispatch.md](reference/dispatch.md).
 
-```bash
-node scripts/event-loop.mjs add --id ci-12 --type pr-checks --target owner/repo#12 --report "tell me when CI settles"
-node scripts/event-loop.mjs run          # exits 10 with a digest on an actionable event, 0 when there is nothing to watch, 3 at quiet hours
-node scripts/event-loop.mjs run --once   # one pass, same exit codes
-node scripts/event-loop.mjs list
-node scripts/event-loop.mjs remove <id>
-node scripts/event-loop.mjs digest [--peek]
-```
+### The ledger and the board
 
-- **Pluggable types.** A type is a script (`scripts/event-types/<type>.mjs`: `check(target, ctx)` returns a state, `diff(prev, next)` returns events), a playbook (`playbooks/event-types/<type>.md`: what each line means and what to report), and one line in `scripts/event-types/index.mjs`. Shipped: `pr-checks` (CI status of a PR), `pr-review` (review activity, wrapping `pr-watch.mjs`; its per-watch state file is deleted when the watch retires), `gh-run` (a GitHub Actions run until it completes) and `inbox` (new messages from you). An org overlay adds its own types without editing this repo: put `<type>.mjs` and its playbook `<type>.md` in the overlay's `event-types/` folder (beside its `config.md`). A duplicate name or a malformed module is rejected with an error.
-- **Cadence.** The same adaptive cadence and quiet hours as the PR watcher (`scripts/lib/cadence.mjs`, nothing faster than 300 seconds). A watch expires after 24 hours unless `--ttl-hours` says otherwise and retires itself when its type says it is done. During quiet hours (including quiet weekends, and whichever `watch_quiet_hours_mode` is set) only watches registered with `--notify-overnight` keep running and notify.
-- **Info events.** Informational events (for example CI going back to pending) are kept in the digest until an actionable event arrives, then printed after it; a run with only info events does not consume them.
-- **Notifications.** Optional and local: set `notify_command` (a JSON argv array; the one-line summary, under 150 characters, is appended as the last argument). There is no default recipient; with it unset nothing is sent.
-- **Privacy.** The `inbox` type reads the command in `inbox_command`, keeps only a hash per unread line, and reports only a count. Message text never reaches the digest, a notification or a log.
-- **One loop at a time.** `run` takes a lock in `event_dir`; a second `run` is refused while the first is alive, and a dead one's lock is replaced. The lock is released on exit, Ctrl-C and SIGTERM.
-- **Where it lives.** `event_dir` in local-config (default `<ledger_root>/Events`): `watches.jsonl`, `state.json`, `digest.jsonl`.
-- **Cost.** One loop and one runner replace N watchers, so the orchestrator wakes once per actionable event. It is tracked as a cost experiment; see [cost/budget.md](cost/budget.md#one-event-loop-instead-of-n-watchers).
+`ledger.jsonl` is the only source of truth. `CURRENT.md`, the dated archives, per-stream pages and the standup are generated from it and safe to read or edit. Items fold by id: `start` opens one, `done`, `resolve` or `drop` closes it, and `ask` puts a question on the awaiting-you board. Work can be grouped into **streams** (named workstreams, usually epics). Ids are four lowercase characters, are not ticket ids, and are always quoted with their one-liner, never bare.
 
-## The scripts shelf
+### Tickets
 
-Agents write throwaway scripts all day, and a script written into `/tmp` is written again tomorrow. An optional shelf gives them one place to look first and one place to leave work. It is off until you set `scripts_dir` in the [config file](reference/local-config.md) (or `MAESTRO_SCRIPTS_DIR`) to a folder you keep, laid out as:
-
-```text
-<scripts_dir>/
-  README.md    index of helpers: name, what it does, an example call
-  scratch/     one-offs
-  helpers/     reusable, documented scripts (symlink the ones you want on PATH)
-```
-
-With it set, `node scripts/brief-block.mjs` appends a line to the standing brief: check `<scripts_dir>/README.md` before writing a script; put one-offs in `<scripts_dir>/scratch/`, never `/tmp`, with a 3-line header (purpose; date + ledger id; inputs as env var names); no secrets and no outputs in that folder.
-
-**The ladder.** A script starts in `scratch/`. When it keeps coming back it is promoted to `helpers/`: it answers `--help` by printing usage and exiting 0 without doing work, and it is idempotent and read-only unless its name or flags say otherwise. A helper that a cheap model should be able to run gets a playbook in [playbooks/](playbooks/), such as [playbooks/wait-for-pr.md](playbooks/wait-for-pr.md), which spells out the steps, the exit codes, and what to report.
-
-**The roll proposal.** `journal.mjs roll` (and `journal.mjs scratch` on its own) lists every file in `scratch/` with its idle days (since last modified), how many ledger rows name it, the purpose line from its header, and a proposal:
-
-| Proposal | When |
-|---|---|
-| `promote` | named in at least 2 ledger rows and idle for at least 3 days |
-| `delete-candidate` | idle for more than 14 days |
-| `keep` | anything else |
-
-Reuse beats staleness: a script the ledger keeps naming is proposed for promotion however old it is. The thresholds are constants in `scripts/lib/scratch.mjs`. It only proposes: it never moves, edits or deletes a file, and you decide.
-
-## Requirements
-
-- Node.js 22 or newer. Nothing is installed: the scripts use only `node:` built-ins. `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5 (the tests ran on Node 24).
-- An [Obsidian](https://obsidian.md) vault, or any directory you are willing to treat as one. The ledger is plain markdown plus a JSONL log.
-- An agent harness that loads `SKILL.md` skills (Claude Code, Codex, Copilot, or anything else that reads a skill directory).
-- Optional tickets: [xenophon](https://github.com/jackreichert/xenophon). Install it if you want problems to outlive the session. The maestro runs without it. See [How it works with xenophon](#how-it-works-with-xenophon).
-
-## Install
-
-You need one copy of this folder, on disk, where your agent already loads skills. Pick one harness as the canonical copy and symlink the others. Two edited copies drift.
-
-```bash
-# 1. Clone once. Claude Code is a fine canonical home; any path you control works.
-mkdir -p ~/.claude/skills
-git clone <this-repo-url> ~/.claude/skills/the-maestro
-
-# 2. Point every other harness at that same folder. Do not clone again.
-mkdir -p ~/.agents/skills
-ln -s ~/.claude/skills/the-maestro ~/.agents/skills/the-maestro
-
-# Copilot, if it reads ~/.copilot/skills:
-mkdir -p ~/.copilot/skills
-ln -s ~/.claude/skills/the-maestro ~/.copilot/skills/the-maestro
-```
-
-Open a new agent session in the **container** directory (the parent of your repos, not inside one repo) and ask it to orchestrate something small. If it does not load the skill, the harness is not reading that directory. Check that product's skill path and add another symlink. Do not copy the files.
-
-Nothing else is installed. The scripts use only Node built-ins. To install it as a symlink into a checkout you keep elsewhere, point the skill directory at that checkout: `ln -s /path/to/the-maestro ~/.claude/skills/the-maestro`. The scripts find their own directory through the link.
-
-## Set the vault
-
-The ledger is markdown in a folder you choose. This package has no default path and will not guess one. On first use the agent should ask:
-
-> Where should the ledger live? Absolute path to your Obsidian vault, or any folder you treat as one.
-
-Answer with a real path, for example `/Users/you/Notes`. Then put that answer where the agent's shell will see it. `~/.zshrc` is the usual place on macOS; use whatever file your agent process actually inherits.
-
-```bash
-# In the shell profile the agent inherits. Use your path, not this one.
-export VAULT_ROOT="/absolute/path/to/your/vault"
-```
-
-Open a new terminal so the variable is set, then confirm:
-
-```bash
-echo "$VAULT_ROOT"
-node ~/.claude/skills/the-maestro/scripts/journal.mjs status --project <container-folder-name>
-```
-
-`--project` is required. It is the name of the container folder (the directory that holds the repos), and the ledger is created at:
-
-```text
-$VAULT_ROOT/Projects/<container-folder-name>/Journal/
-```
-
-The first `status` creates that directory if it is missing. If the command says the vault path is not set, the agent did not inherit `VAULT_ROOT`. Fix the profile, or pass `--vault /absolute/path/to/your/vault` on that one command. `--vault` overrides the variable. It does not replace setting it.
-
-If you also install xenophon, use the same `VAULT_ROOT`. Tickets and the ledger then sit next to each other under `Projects/`.
-
-### Optional: move the ledger out of the vault
-
-`journal.mjs` and `prs-snapshot.mjs` are the only two scripts that write the day-to-day
-`Journal/` folder (ledger, `CURRENT.md`, dated archives, `prs-snapshot.json`) — everything else
-(tickets, `CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/`) stays under
-`VAULT_ROOT`, written by other skills. If that Journal folder is cluttering vault search (e.g. an
-Obsidian full-text search that keeps surfacing four-character ledger ids), give it a separate root:
-
-```bash
-export LEDGER_ROOT="/absolute/path/to/a/folder/outside/the/vault"
-```
-
-Both scripts resolve their root in this order: `--vault <path>` flag, then `LEDGER_ROOT`, then
-`VAULT_ROOT`. So setting `LEDGER_ROOT` alone is enough — you don't need to touch existing
-`--vault "$VAULT_ROOT"` calls, and a copy of this skill that never sets `LEDGER_ROOT` keeps working
-exactly as before, storing `Journal/` under `VAULT_ROOT` like it always has. Every other script
-(`token-metrics.mjs`, and any xenophon/ticket tooling) keeps using `VAULT_ROOT` unchanged.
-
-## How it works with xenophon (Tickets)
-
-[xenophon](https://github.com/jackreichert/xenophon) is the ticket file. The maestro is the dispatcher and the day log. They are separate skills. Install xenophon against `VAULT_ROOT`; the maestro's `Journal/` can stay on `VAULT_ROOT` too, or move to its own `LEDGER_ROOT` (see [Optional: move the ledger out of the vault](#optional-move-the-ledger-out-of-the-vault)) — either way tickets and the ledger cross-link by id without the scripts calling each other.
+A ticket is a problem with evidence, kept by [xenophon](https://github.com/jackreichert/xenophon) under `$VAULT_ROOT/Projects/<repo>/Tickets/`. A ledger line is a record that work happened, linked to the ticket by id. Closing one does not close the other. Without xenophon the maestro still dispatches and still journals; it just has nowhere durable to put a bug.
 
 | | the-maestro | xenophon |
 |---|---|---|
-| Question it answers | What is in flight, blocked, or done today? | What problem needs fixing, and what do we already know? |
+| Answers | What is in flight, blocked or done today? | What problem needs fixing, and what do we know? |
 | Writes | `$LEDGER_ROOT/Projects/<container>/Journal/` (falls back to `$VAULT_ROOT`) | `$VAULT_ROOT/Projects/<repo>/Tickets/` |
 | Id | four characters, `k3mp` | `{repo}-014` |
 | Lifetime | the session and the day; `roll` archives finished lines | until you close it |
 
-A ticket is a problem with evidence. A ledger line is a record that work happened. Filing a ticket is itself worth a ledger line (`journal.mjs start ... --ticket billing-api-014`). The reverse is not true: do not paste the ticket body into the journal. The journal links. The ticket holds the detail.
+### Non-blocking waits: the event loop
 
-What the agent does when both are installed:
+Waiting on something outside the session (CI, a run, review activity, a message) is a registered **watch**, not an agent polling. One loop checks every watch, compares each with its last state and records an event only when its type says something changed. A cheap runner follows [playbooks/event-loop.md](playbooks/event-loop.md) and wakes the orchestrator only on an actionable event.
 
-1. Work that should survive the conversation gets a xenophon ticket first, filed against the repo it lives in. From the container directory that means `--project <repo-name>`. The container is not a git repo, so xenophon cannot infer the name.
-2. The dispatch brief includes that ticket id, so the worker's findings have somewhere to land.
-3. `journal.mjs start` records the activity and passes `--ticket` with that id.
-4. When the work lands, the ticket is updated or closed in xenophon, and the ledger line is marked done. Closing one does not close the other.
-
-Without xenophon, the maestro still dispatches and still keeps the journal. It just has nowhere durable to put a bug. Do not invent a second ticket system inside the journal to fill that gap.
-
-```text
-$LEDGER_ROOT/Projects/            # falls back to $VAULT_ROOT if LEDGER_ROOT is unset
-    <container-name>/
-        Journal/                 # maestro
-            ledger.jsonl
-            CURRENT.md
-
-$VAULT_ROOT/Projects/
-    <repo-name>/
-        CONTEXT.md
-        Tickets/                 # xenophon
-            <repo-name>-001.md
-            _Index.md
+```mermaid
+flowchart LR
+    W[(watches.jsonl)] --> P[Check: each watch's<br/>type.check]
+    P --> D{Diff against the<br/>stored state}
+    D -- "no change" --> S[Sleep, adaptive pace] --> P
+    D -- "info event" --> G[(digest.jsonl)] --> S
+    D -- "actionable event" --> G
+    G --> X[run exits 10 with the digest]
+    X --> K[Runner wakes the orchestrator]
+    P -. "quiet hours" .-> Q[Exit 3, or only<br/>notify-overnight watches run]
 ```
 
-One vault, one `VAULT_ROOT`. A second vault splits the board from the tickets and the morning status can no longer point at them. `LEDGER_ROOT`, if you set one, only moves where `Journal/` itself lives — tickets and `CONTEXT.md` still resolve against `VAULT_ROOT`.
+### PRs: draft only, sized, linked
 
-## Personalize
+Pull requests open as drafts, assigned to you, through `pr-open.mjs`, which first runs the size gate. In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
 
-Do this after the smoke test, in your canonical copy. **Install-specific values live in one config file and one script, and only there.** [reference/local-config.md](reference/local-config.md) names every setting without values. [scripts/local-config.mjs](scripts/local-config.mjs) is the script side: GitHub org, login, container project name, transcript dir, ledger and vault roots, each overridable by an environment variable or by a config file. Every other file states its rule generically and points there.
+```mermaid
+flowchart LR
+    F[Feature branch] --> PD[Draft PR into the<br/>integration branch]
+    F --> PS[Draft twin PR into the<br/>release-candidate branch]
+    PD -- "merged and validated" --> OK[Twin may be promoted and merged]
+    PS -. "blocked until then" .-> OK
+```
 
-Org-specific rules (repo topology, tracker rules, data rules, release steps) go in an **org overlay**: a separate skill you write for your org, kept outside this repo. Name it with `MAESTRO_OVERLAY` or `overlay:` in your config file, as a skill name (`my-org-maestro`) or a plugin-qualified one (`my-plugin:my-org-maestro`). When one is configured, the agent loads it by that name and follows it; when none is, the skill is fully generic. The overlay's `config.md` can carry the `maestro-config` block the scripts read, so its values sit next to its prose.
+The twin rule applies only to repos named in `twin_flow_repos`; an empty list turns it off. The PR board shows each twin as "develop twin merged, OK to merge" or "blocked on develop twin #N" and never calls a blocked one ready.
 
-1. **Config file.** Create `~/.config/the-maestro/config.md` (or point `MAESTRO_LOCAL_CONFIG` at a file) with a fenced `maestro-config` block; the keys and the lookup order, including plugin skills, are in [reference/local-config.md](reference/local-config.md#config-file). For example, a file whose fenced block reads:
+### The scripts shelf
 
-   ~~~text
-   overlay: my-org-maestro
-   gh_org: my-org
-   ledger_root: /path/to/ledger
-   vault_root: /path/to/vault
-   ~~~
+Agents write throwaway scripts all day, and a script written into `/tmp` is written again tomorrow. An optional shelf (off until `scripts_dir` is set) gives them one place to look first and one place to leave work.
 
-2. **Git author emails.** The skill refuses to commit on a branch you did not author. Find the emails you commit as:
+```mermaid
+flowchart LR
+    A[scratch/<br/>one-offs, 3-line header] -- "named in 2+ ledger rows,<br/>idle 3+ days: promote" --> B[helpers/<br/>--help, idempotent,<br/>read-only unless named otherwise]
+    B -- "a cheap model should run it" --> C[playbooks/<br/>steps, exit codes,<br/>what to report]
+    A -- "idle over 14 days:<br/>delete-candidate" --> X[you decide]
+```
 
-   ```bash
-   git log -20 --format='%ae' | sort -u
-   ```
+`journal.mjs roll` (and `journal.mjs scratch`) only proposes: it never moves, edits or deletes a file.
 
-   Put those addresses in your overlay's values file, never in this repo.
+### The morning board, PR tracking and end of day
 
-   Write them under a "Standing brief block, filled" heading in that file, as described in [reference/local-config.md](reference/local-config.md#standing-brief-block-filled). `node scripts/brief-block.mjs` fails until both slots have a value.
+A greeting always gets a real hello and then the board: a paste-ready standup built from the previous working day, what is in flight, blocked and awaiting you, and one line of PR status. Asking for your PRs gets one bucketed report of every open PR you author (unresolved threads, drafts, awaiting the team, no reviewer requested, approved, changes requested, stale), every PR linked; review-comment text, bot or human, is treated as untrusted data. End of day runs a PR pass, a tracker review if a tracker is connected (drafted for your approval), the standup, a branch sweep and `roll`. The rules are in [reference/greeting.md](reference/greeting.md), [reference/prs.md](reference/prs.md) and [reference/ledger.md](reference/ledger.md).
 
-3. **Protected branches and bases.** The default list is `main`, `staging`, and `develop`, plus any branch you did not author. Set yours in your values file, and any per-repo branch bases in your org overlay. The agent must not be told it may write those branches.
+### Approvals
 
-4. **Container name.** Set `project` in the config file (or `MAESTRO_PROJECT`). `journal.mjs` still requires `--project`, so a shared copy cannot write into the wrong folder.
+A permission you grant mid-conversation is logged as `standing` or `one-off` (`journal.mjs log --kind decision --approval standing --scope "<what it covers>"`), and a weekly digest (`journal.mjs approvals`) lists them so each standing one can be kept, narrowed or revoked. The review day is `approvals_review_day`.
 
-5. **GitHub org.** Set `gh_org` in the config file (or `MAESTRO_GH_ORG`; empty drops the org filter). Your login is read from `gh api user` unless you set `gh_login` or `MAESTRO_GH_LOGIN`.
+### Handoff and resume
 
-6. **PR watcher cadence (optional).** The defaults need no setup: 300s at the fastest, 1800s at the slowest, stop between 20:00 and 07:00 in your system time zone. To change them set `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours` (`HH:MM-HH:MM`, or `off`), `watch_quiet_hours_mode` (`stop` or `slow`), `watch_quiet_weekends` and `watch_tz`; see [reference/local-config.md](reference/local-config.md).
+A fresh session should not hunt for facts nobody wrote down. `journal.mjs handoff` scaffolds a five-part note from the ledger (tasks, learnings, artifacts, decisions awaiting, next action), `journal.mjs prime` prints a board of 40 lines or fewer for session start, and `journal.mjs resume` runs the verify-on-resume checklist. The fresh session reconciles the note against `git`, `gh` and its agent list before trusting it.
 
-7. **Event loop (optional).** `scripts/event-loop.mjs` polls registered watches and wakes you only on a state change that matters (see [The event loop](#the-event-loop)). Its registry, state and digest live in `event_dir` (default `<ledger_root>/Events`). Set `notify_command` to a JSON argv array (the one-line summary is appended as the last argument) to be notified; with it unset nothing is ever sent. `inbox_command` feeds the `inbox` type. Both are local-config only; see [reference/local-config.md](reference/local-config.md).
+## Scripts and commands
 
-### Overlay lookup order
+Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every script reads its settings through [scripts/local-config.mjs](scripts/local-config.mjs) and takes no dependencies.
 
-Each setting is resolved as: environment variable, then the user file, then the overlay's `config.md`.
+| Script | Purpose |
+|---|---|
+| [journal.mjs](#journalmjs) | The ledger: log, board, standup, streams, claims, handoff, roll |
+| [ledger-index.mjs](#ledger-indexmjs) | Disposable full-text index over the ledger, tickets and handoffs |
+| [pr-watch.mjs](#pr-watchmjs) | Quiet PR poller that exits when something needs attention |
+| [prs-snapshot.mjs](#prs-snapshotmjs) | Mid-day PR board snapshot and actionable diff |
+| [event-loop.mjs](#event-loopmjs) | One loop for every "wake me when X" watch |
+| [pr-size.mjs](#pr-sizemjs) | PR size budget gate |
+| [pr-open.mjs](#pr-openmjs) | The only way to open a PR: gate, then a draft assigned to you |
+| [branch-sweep.mjs](#branch-sweepmjs) | List and delete merged branches and stale worktrees |
+| [token-metrics.mjs](#token-metricsmjs) | Token and cost metrics from transcripts |
+| [brief-block.mjs](#brief-blockmjs) | The standing brief block, filled from config |
+| [local-config.mjs](#local-configmjs) | Print the resolved configuration |
 
-1. The user file is `MAESTRO_LOCAL_CONFIG` (an explicit path; empty means read no file), else `~/.config/the-maestro/config.md`.
-2. The overlay is named by `MAESTRO_OVERLAY` or `overlay:` in the user file: `<skill>` or, for a skill shipped in a Claude Code plugin, `<plugin>:<skill>`.
-3. For `<plugin>:<skill>` the overlay's `config.md` is `<installPath>/skills/<skill>/config.md`, with `installPath` read from `~/.claude/plugins/installed_plugins.json`.
-4. Otherwise, or if that misses, it is `../<skill>/config.md` next to this skill (found through a symlink too), then `~/.claude/skills/<skill>/config.md`.
+### journal.mjs
 
-Run `node scripts/local-config.mjs` to see what resolved and from which file. The full key list is in [reference/local-config.md](reference/local-config.md#config-file).
+The ledger tool. `--project <name>` is required on every command; there is no default project. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. The root is `--vault`, then `LEDGER_ROOT`, then `VAULT_ROOT`. Every new row needs `--model "<name>"` and `--used "skill:x,tool:y"` (`--tokens` and `--harness` are optional).
 
-### Optional: keep a private overlay on a local-only branch
+```bash
+J=~/.claude/skills/the-maestro/scripts/journal.mjs
+```
 
-If you keep this repo public but want your org overlay versioned next to it, put the overlay on a branch that never leaves your machine, in its own worktree:
+| Command | Purpose and key flags |
+|---|---|
+| `log "<text>"` | Append a row. `--kind wip\|done\|blocked\|question\|decision\|note`, `--stream`, `--repo`, `--ticket` |
+| `start "<text>"` | Open an in-flight item (`--repo`, `--ticket`, `--stream`) |
+| `done <id\|text>` | Close an item (an id or a unique substring) |
+| `drop <id>` | Drop an item (`--why`) |
+| `ask "<question>"` | Put a question on the awaiting-you board. `--kind decision` marks a decision still pending. `--paste <file>` lists a run-this ask apart from the questions; the file must exist |
+| `resolve <id>` | Answer an ask (`--answer`, `--approval`) |
+| `rule "<text>" --ref <file>` | Record a decision already made. Refuses unless every `--ref` is an existing file; never shows as open |
+| `log ... --kind blocked --gate <gate>` | Name what a blocked item waits for: `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. `resume` reports whether it cleared |
+| `defer <id> --until YYYY-MM-DD` | Hide an open item from the board until that date |
+| `status` | Open items and done today. `--full`, `--footer` (the reply-footer Ledger lines and a Session line) |
+| `prime` | The 40-line-or-less board for session start and after a compaction; ledger only |
+| `standup [--date D]` | End-of-day summary for pasting |
+| `triage` | Box every open item, flag the stale, unpromoted and unticketed. `--date`, `--since`, `--apply` (closes recorded rules), `--json` |
+| `roll` | Archive finished work to a dated note, keep open items; also removes stale worktrees. `--strict` refuses on triage blockers, `--container`, `--no-worktree-sweep`, `--dry-run` |
+| `scratch` | With `scripts_dir` set, list `scratch/` with a promote, keep or delete-candidate proposal |
+| `verify` | Check every line parses, ids are unique and every reference exists; exit 1 on problems |
+| `render` | Rebuild `CURRENT.md` and the per-stream pages from the ledger |
+| `usage [--open]` | Counts of model and used marks |
+| `stamp <id>`, `stamp-missing` | Add usage marks to an existing row, or to every row missing them |
+| `approvals` | Weekly digest of granted permissions (standing: keep, narrow or revoke). `--since`, `--days`, `--until`, `--out`, `--force` |
+| `approve-tag <id>` | Mark an existing row as an approval (`--approval standing\|one-off`, `--scope`, `--ref`) |
+| `tag <id> --stream <name>` | File an item under a stream (`none` clears it) |
+| `streams list\|add <name> [--alias a,b]\|check` | The stream registry |
+| `models list\|add <id> [--alias a,b]\|check` | The model-name registry that folds spellings to one id |
+| `fact <key>=<value> --stream <name>` | A structured metric; never an item |
+| `carry <id> --to <stream>` | Re-home an open follow-up |
+| `retro <stream>` | Draft the stream retro (`--out`, `--force`, `--tickets-vault`) |
+| `archive <stream>`, `unarchive <stream>` | Hide a finished stream (refuses while it has open items or an unfinished retro) or bring it back |
+| `claim <repo> --desk <stream>`, `release <repo> --desk <stream>`, `claims` | Exclusive repo lock files. `claim`: `--branch`, `--why`, `--pid`. `release`: `--force`. `claims`: `--stale-hours 12`, `--json` |
+| `backfill` | Propose a stream for untagged items; read-only by default. `--dry-run`, `--samples`, `--out`, `--apply --min-confidence high\|medium\|low` |
+| `handoff --stream <name>` | Scaffold the five-part handoff (`--out`, `--since`, `--force`, `--container`) |
+| `resume` | The verify-on-resume checklist: ledger status, `gh pr list`, `pgrep` for each loop pattern, gate checks |
+
+Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed rules for each command are in [reference/ledger.md](reference/ledger.md).
+
+**Streams and registries.** If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: stream names fold to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. A `models` section in the same file folds `--model` values (an unknown name warns and is written as-is). Without the file nothing is enforced.
+
+**Claims.** `claim` creates `Claims/<repo>.lock` with an exclusive create, so of any number of racing processes exactly one wins and the rest exit 1 and name the holder. `claims` flags a claim as stale when its pid is gone on this host or it is older than `--stale-hours`. Nothing deletes a stale claim for you.
+
+**Backup.** The ledger is one file. Make `$LEDGER_ROOT` a local git repository and set `ledger_git_autocommit: on`; `roll` then runs `verify` and, if it passes, commits the changed files under that root as `chore(ledger): roll <date>`, staging each path explicitly. It never pushes.
+
+### ledger-index.mjs
+
+A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` section of `HANDOFF-*.md` notes. The JSONL stays the source of truth; deleting `Index/maestro.sqlite` loses nothing.
+
+| Command | Purpose and key flags |
+|---|---|
+| `index` | Full rebuild, atomic rename into place |
+| `search "<fts query>"` | `--source ledger\|tickets\|handoffs\|archive`, `--stream`, `--limit 20`, `--json` (rebuilds first if a source changed) |
+| `stats [--json]` | Counts per table and open items per stream |
+| `query [<name>]` | Named queries: `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs`, `tickets`; `--sql "select ..."` is read-only raw SQL |
+
+Pass `--vault` and `--tickets-vault` the way `journal.mjs` does; tickets are skipped when no tickets vault is set.
+
+### pr-watch.mjs
+
+A cheap PR poller. Each tick fetches your open PRs with one `gh api graphql` call, compares them with a state file and stays silent until something needs attention: a new unresolved review thread (bots included) or reply from anyone but you, a new top-level comment or review body, a review decision flip, or a PR that merged or closed. Approved-but-unmerged PRs wake once when they first appear or change. On a draft in a `copilot_orgs` owner it also requests a Copilot review.
+
+`pr-watch.mjs --state <file> [--interval N] [--once] [--baseline]`. `--state` is required. `--baseline` records the current state and exits without reporting. `--once` checks a single time. `--interval N` pins the poll but never below the 300s floor; a lower value is raised with a warning on stderr. Exit codes: 0 report (or a finished `--once`), 2 usage, 3 stopped for quiet hours.
+
+Its pace is adaptive: 3 or more events in 30 minutes polls at `watch_min_interval`, a little activity at 600s, an hour quiet at 900s, two hours quiet at 1800s (capped by `watch_max_interval`), and inside quiet hours it stops or slows by `watch_quiet_hours_mode`. The logic is the pure function in [scripts/lib/cadence.mjs](scripts/lib/cadence.mjs). Details in [reference/prs.md](reference/prs.md).
+
+### prs-snapshot.mjs
+
+Mid-day PR snapshot and diff, stored under the ledger root.
+
+- `prs-snapshot.mjs [--diff] [--dry-run] --vault <path>` fetches the live board; with `--diff` it first prints the actionable changes since the last snapshot (a new human review, a review decision flip, a new human-opened thread, a merge or close, a draft promoted to ready), then overwrites the snapshot unless `--dry-run`. Bot activity is summarised as one count line.
+- `prs-snapshot.mjs diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
+
+### event-loop.mjs
+
+One loop for every "wake me when X happens". The orchestrator appends a **watch** (`type`, `target`, an optional `done_when`, and a `report` note saying what it wants back) to an append-only registry; `run` checks them all and records an event only when the type's `diff()` says something changed.
+
+| Command | Purpose and key flags |
+|---|---|
+| `add --id <id> --type <type> --target <t>` | Register a watch. `--done-when <rule>`, `--report <text>`, `--ttl-hours N` (default 24), `--notify-overnight` |
+| `list [--json]` | The live watches |
+| `remove <id>` | Retire a watch (its type may clean up its own files) |
+| `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
+| `run [--once] [--interval N]` | Check, sleep, repeat. `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error |
+
+**Types.** A type is a script (`scripts/event-types/<type>.mjs` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.mjs`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
+
+| Type | Target | Reports |
+|---|---|---|
+| `pr-checks` | `owner/repo#123` or the PR URL | CI moving into failing or passing (`done_when` `settled`, the default, or `passing`) |
+| `pr-review` | ignored (`open-prs`) | Review activity on your open PRs, by wrapping `pr-watch.mjs` |
+| `gh-run` | `owner/repo:<run id>` | A GitHub Actions run completing |
+| `inbox` | ignored (`inbox`) | A count of new messages from you, read through `inbox_command`. Only a hash of each line is kept |
+
+An org overlay adds types without editing this repo: `<type>.mjs` and its playbook `<type>.md` in the overlay's `event-types/` folder. A duplicate name, a module without `check` and `diff` functions, or a missing playbook stops the loop with an error naming the file.
+
+**Behaviour.** Quiet hours apply: only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. When `notify_command` is set, each actionable event of each watch is sent to it as one line of at most 150 characters. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
+
+### pr-size.mjs
+
+The size budget gate: `pr-size.mjs --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
+
+### pr-open.mjs
+
+The only way agents and the orchestrator open a PR: `pr-open.mjs --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]`. It runs the size gate, refuses with a split hint (exit 1) when it fails, and otherwise runs `gh pr create --draft --assignee @me`. Draft and assignee are always added and cannot be turned off; no other `gh` flag passes through. `--dry-run` prints the command. Exit 0 opened, 1 refused by the gate, 2 usage or a git or `gh` error.
+
+### branch-sweep.mjs
+
+Lists, across a container's repos, the worktrees and remote branches that are safe to delete, for you to approve in a batch.
+
+- `branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]` is read-only apart from `git fetch --prune origin`.
+- `branch-sweep.mjs --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]` re-scans each repo and deletes only what still qualifies: `git worktree remove` (never `--force`) for worktrees, and `git push --force-with-lease=<branch>:<listed tip> origin :<branch>` for remote branches, so a branch pushed to after the listing is refused. Local branches are never deleted.
+- `branch-sweep.mjs --apply-worktrees [--dry-run]` is the worktree half without the id step, which is what `journal.mjs roll` runs.
+
+A remote branch qualifies only when it is yours (every commit by one of `git_emails`, or the repo's `user.email`), not protected, and merged into every merge target by ancestry or a merged PR. Squash-merge patch equivalence alone lists it under Review, and `--apply` refuses it. A worktree must also be clean, unpushed-free, unlocked, unclaimed, idle and not a live skill. Any git or `gh` error leaves the item out with the reason. Settings: `git_emails`, `protected_branches`, `sweep_merge_targets`, `sweep_idle_minutes`, `sweep_pr_days`, `sweep_protect_symlink_dirs`, `sweep_disposable_ignored`.
+
+### token-metrics.mjs
+
+Token-cost metrics read from Claude Code transcripts: numeric usage fields, model ids, timestamps and message type metadata only. Message content is never read.
+
+`token-metrics.mjs [--date YYYY-MM-DD] [--all] [--write] [--compare] [--curve] [--json] [--projects-dir <dir>] [--vault <path>] [--project <name>] [--baseline-until YYYY-MM-DD]`. With no flags it prints today. `--write` upserts the day's row in `Research/token-metrics.md` (idempotent), `--all --write` backfills every day still on disk, `--compare` sets the day against the 7-day median and a baseline and flags any metric that moved more than about 20%, and `--curve` shows cache read per turn by turn-index bucket. The method is in [cost/measure.md](cost/measure.md).
+
+### brief-block.mjs
+
+Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule.
+
+### local-config.mjs
+
+`node scripts/local-config.mjs` prints each resolved setting and which files it came from. The rest of the scripts import it.
+
+## Configuration
+
+Install-specific values live in one config file and one script, and nowhere else. The file is markdown with a fenced `maestro-config` block, one `key: value` per line (everything else in the file is prose and ignored). Every key is optional and blank values are ignored.
+
+~~~text
+```maestro-config
+overlay: my-org-maestro
+gh_org: my-org
+ledger_root: /path/to/ledger
+vault_root: /path/to/vault
+```
+~~~
+
+Each setting resolves as: **environment variable, then the user file, then the overlay's `config.md`**. The user file is `MAESTRO_LOCAL_CONFIG` (an explicit path; the empty string reads no file, which is what the tests set), else `~/.config/the-maestro/config.md`. `node scripts/local-config.mjs` shows what resolved. An environment variable set to the empty string counts as set.
+
+| Key | Environment variable | Default | Purpose |
+|---|---|---|---|
+| `overlay` | `MAESTRO_OVERLAY` | none | Org overlay skill name: `<skill>` or `<plugin>:<skill>` |
+| `gh_org` | `MAESTRO_GH_ORG` | none (no org filter) | GitHub org the PR board is scoped to |
+| `gh_login` | `MAESTRO_GH_LOGIN` | the `gh`-authenticated user | Your GitHub login |
+| `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths; `journal.mjs` still requires `--project` |
+| `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<working directory with separators as dashes>` | Claude Code transcript directory read by `token-metrics.mjs` |
+| `ledger_root` | `LEDGER_ROOT` | none | Where `Journal/` lives; falls back to `vault_root` |
+| `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
+| `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.mjs resume` checks |
+| `resume_gh` | `MAESTRO_RESUME_GH` | on | `off`, `false`, `no` or `0` stops `resume` from calling `gh` |
+| `ledger_git_autocommit` | `MAESTRO_LEDGER_GIT_AUTOCOMMIT` | off | `on`, `true`, `yes` or `1`: `roll` commits the ledger root after a clean `verify` |
+| `approvals_review_day` | `MAESTRO_APPROVALS_REVIEW_DAY` | `friday` | Weekday the greeting brings the approvals digest; a non-weekday falls back to the default |
+| `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns at which the status footer says "roll now" |
+| `roll_read_per_turn` | `MAESTRO_ROLL_READ_PER_TURN` | 350000 | Mean cache-read tokens per turn at which it says "roll now" (a plain number) |
+| `watch_min_interval` | `MAESTRO_WATCH_MIN_INTERVAL` | 300 | PR watcher: fastest poll in seconds; never below 300 |
+| `watch_max_interval` | `MAESTRO_WATCH_MAX_INTERVAL` | 1800 | PR watcher: slowest poll in seconds (also the event loop's back-off cap) |
+| `watch_quiet_hours` | `MAESTRO_WATCH_QUIET_HOURS` | `20:00-07:00` | Quiet window `HH:MM-HH:MM` in `watch_tz`; `off` disables |
+| `watch_quiet_hours_mode` | `MAESTRO_WATCH_QUIET_HOURS_MODE` | `stop` | `stop` exits until restarted; `slow` polls every 1800s |
+| `watch_quiet_weekends` | `MAESTRO_WATCH_QUIET_WEEKENDS` | off | `on`, `true`, `yes` or `1`: Saturday and Sunday are quiet too |
+| `watch_tz` | `MAESTRO_WATCH_TZ` | the system time zone | IANA zone the quiet hours are read in; an invalid name falls back |
+| `event_dir` | `MAESTRO_EVENT_DIR` | `<ledger_root>/Events`, else `~/.local/state/the-maestro/events` | Event loop registry, state and digest |
+| `notify_command` | `MAESTRO_NOTIFY_COMMAND` | none (nothing is sent) | Event loop notifier: a JSON argv array; the one-line summary is appended as the last argument |
+| `inbox_command` | `MAESTRO_INBOX_COMMAND` | none | `inbox` type: a JSON argv array printing one line per unread message, without marking them read |
+| `pr_max_code_files` | `MAESTRO_PR_MAX_CODE_FILES` | 5 | PR size budget: most code files per PR |
+| `pr_max_code_lines` | `MAESTRO_PR_MAX_CODE_LINES` | 400 | PR size budget: most changed code lines (additions plus deletions) |
+| `pr_test_globs`, `pr_config_globs`, `pr_docs_globs`, `pr_mechanical_globs` | `MAESTRO_PR_TEST_GLOBS`, `MAESTRO_PR_CONFIG_GLOBS`, `MAESTRO_PR_DOCS_GLOBS`, `MAESTRO_PR_MECHANICAL_GLOBS` | built-in patterns | Comma-separated path globs counted as tests, config, docs, or mechanical files (lockfiles, generated, vendored) |
+| `twin_flow_repos` | `MAESTRO_TWIN_FLOW_REPOS` | none (rule off) | Comma-separated repos that use the integration and release-candidate twin-PR flow |
+| `copilot_orgs` | `MAESTRO_COPILOT_ORGS` | none (nowhere) | Comma-separated owners whose draft PRs `pr-watch.mjs` requests Copilot review on |
+| `git_emails` | `MAESTRO_GIT_EMAILS` | each repo's `user.email` | Comma-separated author emails for the authorship check in `branch-sweep.mjs` |
+| `protected_branches` | `MAESTRO_PROTECTED_BRANCHES` | `main, master, staging, develop, release/*, staging/*, hotfix/*` | Names or globs (`*` within a path segment, `**` across) the sweep never lists; setting it replaces the default |
+| `sweep_merge_targets` | `MAESTRO_SWEEP_MERGE_TARGETS` | `develop` (plus `staging` in twin-flow repos) | Per-repo merge targets, `repo_a=develop\|staging, repo_b=develop` |
+| `sweep_idle_minutes` | `MAESTRO_SWEEP_IDLE_MINUTES` | 60 | Minutes a worktree must be untouched before the sweep offers it |
+| `sweep_pr_days` | `MAESTRO_SWEEP_PR_DAYS` | 180 | Days of merged PRs the sweep reads as evidence |
+| `sweep_protect_symlink_dirs` | `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS` | `~/.claude/skills` and `<container>/.claude/skills` always count | Extra directories whose symlinks mark a worktree as a live skill |
+| `sweep_disposable_ignored` | `MAESTRO_SWEEP_DISPOSABLE_IGNORED` | `node_modules, .venv, dist, __pycache__` | Ignored paths that do not keep a worktree; any other ignored file does |
+| `scripts_dir` | `MAESTRO_SCRIPTS_DIR` | none (shelf off) | The shared scripts shelf; a leading `~/` is expanded |
+
+Two more variables point scripts at a different binary or directory: `MAESTRO_GH` (the `gh` binary `branch-sweep.mjs` runs) and `MAESTRO_GH_BIN` (the one `pr-open.mjs` runs), and `MAESTRO_CLAIMS_DIR` overrides where `branch-sweep.mjs` looks for claim files. The full key reference, with the lookup order for plugin-shipped overlays, is [reference/local-config.md](reference/local-config.md).
+
+## The overlay model
+
+The skill stays generic and public. Everything specific to one org (repo topology, tracker rules, data rules, release steps, branch bases) goes in an **org overlay**: a separate skill you write, kept outside this repo. Name it with `overlay:` in the config file or `MAESTRO_OVERLAY`. When one is configured the agent loads it by that name and follows it; when none is, the skill is fully generic.
+
+```mermaid
+flowchart TD
+    subgraph generic [the-maestro: generic]
+        S[SKILL.md, reference/, playbooks/, scripts/]
+    end
+    subgraph overlay [Org overlay: a separate skill]
+        C[config.md with a maestro-config block]
+        P[Prose: repo topology, tracker and release rules]
+        ET[event-types/ scripts and playbooks]
+    end
+    ENV[Environment variables] --> LC[local-config.mjs]
+    UF[User config file] --> LC
+    C --> LC
+    LC --> SC[Every script]
+    P -- "agent loads the overlay by name" --> S
+    ET --> EL[event-loop.mjs]
+```
+
+The overlay's `config.md` is found, first hit wins: for a `<plugin>:<skill>` name, `<installPath>/skills/<skill>/config.md` with `installPath` read from `~/.claude/plugins/installed_plugins.json`; otherwise `../<skill>/config.md` next to this skill (found through a symlink too), then `~/.claude/skills/<skill>/config.md`. Your git author emails, protected-branch list and other private values belong in the overlay or your own config file, never in this repo.
+
+**A private overlay on a local-only branch.** To keep this repo public but version your overlay beside it, put the overlay on a branch that never leaves your machine, in its own worktree, and symlink that worktree as the skill:
 
 ```bash
 git worktree add ../the-maestro-private -b local/private feat/my-branch
-# add overlays/<skill>/ (SKILL.md, config.md, ...) on that branch and commit it there
-# install: symlink the worktree as the skill, and the overlay dir as its own skill
 ln -s "$PWD/../the-maestro-private" ~/.claude/skills/the-maestro
 ln -s "$PWD/../the-maestro-private/overlays/<skill>" ~/.claude/skills/<skill>
 ```
 
-Keep it in step by merging the public branch into it (`git -C ../the-maestro-private merge --no-edit <public-branch>`), one direction only. Guard the boundary with a `pre-push` hook in the shared hooks directory (`.git/hooks/pre-push`, which every worktree uses; hooks are not versioned). It refuses any push that names a `local/*` ref, and any push whose added lines match a list of private patterns kept in `.git/hooks/private-patterns.txt`, one extended regex per line:
+Merge the public branch into it, one direction only, and guard the boundary with a `pre-push` hook in the shared hooks directory that refuses any push naming a `local/*` ref and any push whose added lines match a list of private patterns:
 
 ```sh
 #!/bin/sh
@@ -313,201 +469,78 @@ done
 exit 0
 ```
 
-Make it executable, and check it with `git push --dry-run origin local/private` (must be refused) and `git push --dry-run origin <public-branch>` (must pass). Never pass `-u` for the local branch.
+Make it executable, check it with `git push --dry-run origin local/private` (must be refused) and `git push --dry-run origin <public-branch>` (must pass), and never pass `-u` for the local branch.
 
-## What the agent is expected to do
+## Safety guarantees
 
-Trigger it from the **container** directory — the parent of the repos — not from inside a single checkout.
+The honest question for every rule is whether it is **enforced at runtime** (a script refuses, so breaking it takes deliberate effort) or only a **convention** the agent is asked to follow (the skill text and the brief say so, and nothing stops a harness that ignores them).
 
-It should:
+### Enforced at runtime
 
-1. Resolve which repo the request is about.
-2. Dispatch a read-only scout before grepping itself, then return to you with a one-line ack.
-3. File durable work as a ticket (xenophon) rather than a chat TODO.
-4. Launch a worker with a self-contained brief. The worker does not see the parent conversation. The brief's fields and the standing rules block every brief carries are in [reference/brief.md](reference/brief.md). `node scripts/brief-block.mjs` prints that block with its two install-specific slots filled from your config, and exits non-zero if any is left empty. Each brief names a write scope and a verify command; a field the dispatcher cannot fill means scouting again.
-5. End the turn. It must not poll a running agent.
-6. Log the work, relay the result when it lands, and end every reply with the live agent roster and ledger counts.
-
-A new message while agents are running is normal. It handles the new request alongside or after the current one, and only stops if you contradict the work in hand.
-
-## The ledger
-
-Storage, under `$LEDGER_ROOT/Projects/<project>/Journal/` (falls back to `$VAULT_ROOT` if `LEDGER_ROOT` is unset; both can also be set in the [config file](#personalize)):
-
-| File | Role |
+| Guarantee | Enforced by |
 |---|---|
-| `ledger.jsonl` | Append-only source of truth. One JSON object per line. |
-| `CURRENT.md` | Generated board: open items plus what finished today. Safe to read; regenerated from the log. |
-| `YYYY-MM-DD.md` | Generated daily archive, written by `roll`. |
-| `Streams/<Stream>.md` | Generated per-stream page, written by every `render`: that stream's in flight, blocked, awaiting and done today. An archived stream's page links its retro. |
+| Every ledger row records the model and tools used | `journal.mjs` refuses a new row without `--model` and `--used` (`--allow-unmarked` exists for tests and migrations) |
+| A "rule" cites something real | `journal.mjs rule` refuses, writing nothing, unless every `--ref` is an existing file |
+| The ledger is consistent | `journal.mjs verify` checks parsing, unique ids and dangling references and exits 1 on any problem; `roll` runs it before an autocommit |
+| Two sessions cannot hold one repo claim | `claim` uses an exclusive file create; exactly one racing process wins |
+| A stream is not archived half-finished | `archive` refuses while it has open items, an unfinished retro or unfilled promotions |
+| PRs are drafts, assigned to you and within budget | `pr-open.mjs` runs the `pr-size.mjs` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
+| Branch deletion cannot take someone else's work or a moved branch | `branch-sweep.mjs --apply` re-scans first, never uses `--force`, never deletes a local branch, checks authorship, and pushes with a lease on the listed tip |
+| The PR watcher cannot be set to flood GitHub | `cadence.mjs` raises any `--interval` or `watch_min_interval` below 300s to 300s |
+| A notification cannot inject commands | `notify_command` runs as an argv array with no shell; the summary is one line of at most 150 characters |
+| Message text never leaves the inbox type | `inbox` keeps only a hash per line and reports a count; a test covers it |
+| Transcript content never reaches the metrics | `token-metrics.mjs` copies an allowlist of numeric and metadata fields and drops the rest; a planted-sentinel test checks it |
+| One event loop at a time | `event-loop.mjs run` takes a pid lock in `event_dir`; a dead owner's lock is replaced |
+| A broken overlay type is loud | the type loader rejects a duplicate name, a module without `check` and `diff`, or a missing playbook, naming the file |
+| The brief is complete | `brief-block.mjs` exits 1 if any slot is empty |
 
-Every new entry needs `--model "<name>"` and `--used "skill:x,tool:y"`, so the record says which model did the work with what. Do not invent either: unknown history is `unrecorded`, unmeasured tokens are `unmeasured` (`--allow-unmarked` is only for tests and migrations).
+### Convention only
 
-```bash
-J=~/.claude/skills/the-maestro/scripts/journal.mjs
-M=(--model "Some Model" --used "skill:the-maestro,tool:journal.mjs")
+These live in `SKILL.md` and the brief. A script helps with some of them, but nothing blocks an agent from breaking them.
 
-node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014 "${M[@]}"
-node $J done  "Port the calendar fix" "${M[@]}"      # id or a unique substring
-node $J ask   "Split this into a follow-up PR?" "${M[@]}"
-node $J resolve "follow-up" --answer "Yes, no consumer yet" "${M[@]}"
-node $J status                               # open items + done today
-node $J standup                              # end-of-day summary, ready to paste
-node $J prime                               # 40 lines or fewer: streams, needs-you, paste blocks, gated, in flight (session start, after compaction)
-node $J defer <id> --until YYYY-MM-DD        # hide an open item until that date
-node $J log "<text>" --kind blocked --gate gh:pr:<repo>#N   # or date:YYYY-MM-DD, ticket:<id>; `resume` reports whether the gate has cleared
-node $J triage                               # box every open item and flag what is stale, unpromoted or unticketed; add --apply to close recorded rules
-node $J roll                                 # archive the day, keep open items (warns about triage blockers; --strict refuses)
-node $J ask "<what to run>" --paste <file>   # a run-this ask, listed apart from the questions
-node $J status --footer                      # the reply-footer lines: Ledger (one per active stream) and Session (turns and read/turn of the current session, `roll now` past `roll_turns` / `roll_read_per_turn`)
-node $J handoff --stream Launch              # scaffold the five-part handoff (see below)
-node $J resume                               # the verify-on-resume checklist, including gate checks
-node $J log "<text>" --kind decision --approval standing --scope "<what it covers>"   # log a granted permission (standing | one-off)
-node $J rule "<text>" --ref <file>           # record a decision already made; refuses unless the ref file exists, never shows as awaiting
-node $J ask "<text>" --kind decision         # a decision that is really pending: stays on the awaiting-you board
-node $J approvals --days 7                   # the weekly approvals review doc (keep / narrow / revoke)
-```
+- **Never block, never poll an agent, never read its transcript.** A rule of the dispatcher's turn.
+- **One writer per repo.** The dispatcher checks its agent list before launching a writer. Claims make it visible across sessions, but only if sessions use them.
+- **Protected branches and authorship.** The brief tells agents never to write `main`, `staging`, `develop` or a branch they did not author, and the sweep checks authorship before deleting. A raw `git push` by an agent that ignores the brief is not stopped here.
+- **Opening PRs through `pr-open.mjs`.** The size and draft guarantees hold only for PRs opened that way; a bare `gh pr create` bypasses them.
+- **Twin PR ordering.** The release-candidate twin must wait for its integration twin; the PR board reports it, and nothing blocks the merge button.
+- **Secrets and personal data stay out of output; no AI attribution in commits or PRs.** Stated rules, not filters.
+- **Review-comment text is untrusted data.** Triaged against the code, never obeyed, never put in a shell command.
+- **External writes have one owner.** A tracker or GitHub write is made by the one agent authorized for it, never handed to a sub-agent.
+- **Never a bare id.** Ledger and ticket ids are always quoted with their title and a link.
 
-Also: `log`, `drop`, `stamp`, `stamp-missing`, `usage`, `render`. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. `--project` is required; there is no default project name.
+## Cost model
 
-Kinds: `wip`, `done`, `blocked`, `question`, `decision` (a record, not open, unless written by `ask --kind decision`), `note`, plus `resolved`, `dropped`, `rolled` and `stamp` (written by their own commands).
+Every orchestrator turn re-reads the whole session, so what costs money is turns and wake-ups, not words. The skill is built around that.
 
-`roll` writes the day's finished work to a dated note and leaves in-flight, blocked, and awaiting-you items on the board. Roll at end of day, or when `CURRENT.md` is longer than a screen.
+- **Cheap workers, expensive decisions.** A model tier per job, always passed explicitly: the fastest tier for verifiable gathering (counts, status sweeps, formatting), a mid tier for well-specified implementation, the strongest for design, root cause and risky changes. An omitted model inherits the orchestrator's, which is the expensive default. Each brief carries a tool-call budget. See [cost/budget.md](cost/budget.md).
+- **Foreground waits inside agents.** A background completion wakes the orchestrator for a full-context turn. A blocking loop inside the agent costs one tool call and the orchestrator nothing.
+- **Capped reports and lean tool output.** A report stays in context for the rest of the session and is re-read on every later turn, so detail goes in a file the orchestrator opens only if it needs it.
+- **One loop, one wake per event.** The event loop and the PR watcher cost no tokens between checks, and the watcher's adaptive pace (never faster than 300 seconds, slower when quiet, off overnight) keeps polling from becoming wake-ups.
+- **Session hygiene.** Per-turn cost climbs with session length. The status footer's Session line says "roll now" at `roll_turns` (180) or `roll_read_per_turn` (350000), and `journal.mjs handoff` plus `resume` make a fresh session cheap to start.
+- **Measured, not guessed.** `token-metrics.mjs` reads transcripts for numbers only. An end-of-day loop compares the day with a 7-day median, flags any metric more than about 20% worse, and treats each cost habit as an experiment to adopt or revert. See [cost/loop.md](cost/loop.md).
 
-Ledger ids are four lowercase characters (`k3mp`). They are not tickets and they are not issue-tracker keys. When you mention one, include the one-liner, not the bare id.
-
-### Streams, facts, retro, carry, archive
-
-A stream is a named workstream, usually an epic. Pass `--stream <name>` to `start`, `log`, `ask` and `fact`, or file an existing item with `tag`; `status`, `standup` and `render` show each stream in its own section first.
-
-```bash
-node $J tag <id> --stream Launch                    # file an existing item under a stream
-node $J tag <id> --stream none                      # clear it; `none` is reserved and never a stream name
-node $J streams add Launch --alias launch,launch-v2   # the registry: aliases and case fold to one name
-node $J streams list                                # counts per stream
-node $J streams check                               # dry run: how many rows would change display stream; appends nothing
-node $J fact visits_full_min=79 --stream Launch "${M[@]}"   # a structured metric; not an item, never open
-node $J carry <id> --to Maintenance "${M[@]}"       # re-home an open follow-up to another stream
-node $J retro Launch [--out <path>] [--force] --tickets-vault "$VAULT_ROOT"   # draft the retro doc (status: draft)
-node $J archive Launch "${M[@]}"                    # hide a finished stream
-node $J unarchive Launch "${M[@]}"                  # bring it back, exactly
-```
-
-If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: names are folded to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. Without the file nothing is enforced. `archive` refuses while the stream has open items (carry them elsewhere first), until the retro is no longer a draft, and until its promotions are filled in. `retro` and `archive` read ticket status through `ledger-index.mjs`, so they need `--tickets-vault` (or `VAULT_ROOT`).
-
-### Per-stream views
-
-`render` (which every write also runs) rebuilds `CURRENT.md` and one `Journal/Streams/<Stream>.md` per active stream. `CURRENT.md` stays the combined board, grouped by stream, and each stream's heading carries a `[[Streams/<Stream>]]` link. A stream page shows only that stream: in flight, blocked, awaiting you and done today, with `_none_` for an empty section. Registered streams with nothing open still get a page, so a quiet one reads `_none_` instead of going stale. An archived stream's page says so and links its retro; `CURRENT.md` lists archived streams under "Archived streams". All of these are generated and overwritten.
-
-The streams live in **one** ledger. The JSONL is deliberately not split per stream: a single file keeps ordering, ids and `carry` (which moves an item between streams) simple, and it is safe with one writer at a time. Views are cheap to generate; a split ledger would make every cross-stream move a multi-file write. Rationale in [reference/ledger.md#per-stream-views](reference/ledger.md#per-stream-views).
-
-### Integrity and backup
-
-```bash
-node $J verify [--json]      # exit 1 and a list if anything is wrong
-```
-
-`verify` reads the raw ledger file and checks that every line parses as a JSON object, that ids are unique, and that every `closes`, `carries`, `tags`, `annotates` and archive `ids` reference points at a row that exists. It prints `verify: N row(s), K problem(s)` with a line number and id per problem, and exits non-zero on any. A missing ledger is not a problem.
-
-The ledger is one file, so a bad edit or a lost disk loses everything. An optional backup uses git: make `$LEDGER_ROOT` a git repository (local only; no remote is needed), add a `.gitignore` for `**/Index/*.sqlite` and temp files, and set `ledger_git_autocommit: on` in the config file (or `MAESTRO_LEDGER_GIT_AUTOCOMMIT=on`). Then `roll` runs `verify` first and, if it passes, commits the changed files under the ledger root as `chore(ledger): roll <date>`, staging each path explicitly with `git add -- <path>` (never `-A`) and committing only those paths. If verify fails, nothing is committed and `roll` exits 1. If the root is not itself a git repository the setting is ignored with a note. Off by default. It never pushes.
-
-### Repo claims
-
-One writer per repo is easy inside one session (`ListAgents` shows who is running) and impossible to see across sessions. A claim is a lock file every session can see.
-
-```bash
-node $J claim billing-api --desk Launch [--branch feat/x] [--why "porting the fix"] [--pid <session pid>] "${M[@]}"
-node $J release billing-api --desk Launch "${M[@]}"          # only the holding desk; --force overrides
-node $J claims [--stale-hours 12] [--json]                   # who holds what, with a stale check
-```
-
-`claim` creates `$LEDGER_ROOT/Projects/<project>/Claims/<repo>.lock` (desk, pid, host, time, branch, why) with an exclusive create (`O_CREAT|O_EXCL`), so of any number of racing processes exactly one wins; the losers exit 1 and name the holder. A `claim` row goes to the ledger as the record and `release` appends `released`. Neither is an item, so they never show as open. `claims` flags a claim as stale when its pid is not running on this host, or when it is older than `--stale-hours` (default 12). A claim with no `--pid` is judged on age alone: the short-lived shell that runs the command is not a useful pid, so pass the long-lived desk session's pid if you want the liveness check. Nothing deletes a stale claim for you; `release --force` is a decision. See [reference/desks.md](reference/desks.md) (draft) for how this fits a hub-and-desks setup.
-
-Appends are safe across concurrent writers: each row is one `write()` on an `O_APPEND` file, and the tests run several processes appending at once and check that every line parses, ids are unique and none are lost. Ids are chosen by reading the ledger first, so two writers picking the same four characters in the same instant is possible in principle (about one in 1.7 million per pair); `verify` reports duplicate ids if it ever happens.
-
-### Desks (draft)
-
-[reference/desks.md](reference/desks.md) describes one hub session plus one desk session per stream: who owns what, how claims keep two sessions out of one repo, and when a desk rolls (a phase boundary past about 100 turns, with a 180-turn backstop). It is a draft: the pieces exist, the protocol has not been run for a full day.
-
-### Backfill: filing old untagged items
-
-Items logged before streams existed have none. `backfill` proposes one for each and, after you have reviewed the proposals, files them with appended `tag` rows. The ledger is never rewritten.
-
-```bash
-node $J backfill [--dry-run] [--samples 3] [--out report.md] [--json]   # the default: counts and samples, appends nothing
-node $J backfill --apply --min-confidence high "${M[@]}"                  # append the tag rows (one batch, one render)
-```
-
-Signals, all weighed against how the already-tagged items are filed, and the registry: a shared **ticket** id (4 points when every tagged item with it is in one stream, 1 otherwise), a **keyword** (the registry name or an alias, whole word, 2 points, only when exactly one stream matches), the **repo** (2 points when 90%+ of 5+ tagged items in it share a stream, else 1; a catch-all repo stays weak), and the **session** (a run of rows with no gap over 30 minutes; if the tagged items in it agree, 1 point). Proposals agreeing on a stream add up: 4+ is `high`, 2 or 3 `medium`, 1 `low`. Signals that disagree cap the proposal at `low`, and a tie proposes nothing. Archived streams are never proposed. The dry run prints counts per stream and confidence, samples, and how many items got no proposal (a legitimate state); `--out` writes the whole `id | date | kind | repo | ticket | proposed | confidence | rules` table for review.
-
-`--apply --min-confidence <level>` (default `high`) appends one `tag` row per proposal at or above that level, each carrying `backfill` (a run id), `rule`, `confidence` and `prev` (the stream before, `null` for none), plus the usual `--model` and `--used`. Re-running is a no-op because tagged items are no longer proposals. Review the dry run first; applying is the human's call.
-
-### Handoff and resume
-
-A fresh session should not have to hunt for facts nobody wrote down. `handoff` scaffolds the five-part note from the ledger; `resume` is what the fresh session runs first. The fresh session reconciles the note against `git`, `gh` and `ListAgents` before acting, then treats it as authoritative ([cost/budget.md](cost/budget.md#session-hygiene)).
-
-```bash
-node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--force]
-node $J resume
-```
-
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` (`status: draft`; the derived index already picks these up) and appends nothing to the ledger. It **never overwrites** an existing file without `--force`. The five parts: (1) tasks with status, the stream's open in-flight and blocked items plus what was done since `--since` (default yesterday); (2) learnings, from items matching learned, lesson, ruled out or cause; (3) artifacts, the PR numbers, refs, tickets and file paths mentioned by those items; (4) decisions awaiting, generated from the question and paste-block boxes, with each block's file; (5) next concrete action, left blank for the author. Sections 2 and 5 still need a human.
-
-`resume` prints the checklist and runs the parts a script can: the ledger status, `gh pr list --author @me --state open --json number,title,url` (`gh: unavailable` when it is missing or fails; the command still exits 0), and `pgrep -f` for each configured loop pattern (`ok` or `MISSING`). It ends with a reminder that **`ListAgents` is a harness tool, not a shell command**, so the session calls it itself. The loop patterns and whether `gh` is used come from local config (`loop_patterns`, `resume_gh`, or `MAESTRO_LOOP_PATTERNS`, `MAESTRO_RESUME_GH`; see [reference/local-config.md](reference/local-config.md)). Nothing is hardcoded.
-
-### Model names
-
-`--model` values drift ("Claude Opus 5.5" and "claude-opus-5-5" are the same model, and per-model rollups split in two). A `models` section in the same `streams.json` fixes it the way streams are fixed: canonical id plus aliases, applied on write and on read.
-
-```bash
-node $J models add claude-opus-5-5 --alias "Claude Opus 5.5,opus"   # idempotent; refuses an alias owned by another id
-node $J models list                                                 # ids, aliases, row counts
-node $J models check                                                # dry run: which old spellings would show under which id; appends nothing
-```
-
-An alias is written as the canonical id (`normalised model opus -> claude-opus-5-5` on stderr). An unknown name **warns and is written as-is** (the ledger has odd historic values; nothing is rejected), and `unrecorded`, `n/a` and `unmeasured` never warn. Old rows are healed on read, so `usage` and `status` show one name and the ledger is not rewritten. With no `models` section nothing changes. A registry file with only `models` does not turn on stream enforcement.
-
-### The derived index
-
-`scripts/ledger-index.mjs` builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets, and each `##` section of `HANDOFF-*.md` notes. The JSONL stays the source of truth: deleting `Index/maestro.sqlite` loses nothing.
-
-```bash
-I=~/.claude/skills/the-maestro/scripts/ledger-index.mjs
-
-node $I index                                   # full rebuild, atomic rename into place
-node $I search "calendar fix" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json]
-node $I stats [--json]                          # counts per table, open items per stream
-node $I query                                   # lists the named queries
-node $I query open --stream Launch              # one of them; `query --sql "select ..."` is read-only raw SQL
-```
-
-The named queries are `open`, `by-ticket` (takes a ticket id or an external tracker key such as `PROJ-123`, matched against the ticket's `external` field with or without its `<tracker>-` prefix), `untagged`, `stream-counts`, `handoffs` and `tickets`. `search` rebuilds first if a source changed. Items of archived streams are hidden unless you pass `--include-archived`. Pass `--vault` and `--tickets-vault` the way `journal.mjs` does.
-
-### Tests
+## Testing
 
 ```bash
 node --test scripts/*.test.mjs
 ```
 
-`scripts/lib/ledger-core.mjs` holds what both `journal.mjs` and `ledger-index.mjs` need to agree on: the fold, `isOpen`, and the stream-registry lookup. Change it there, once.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs`. Shared logic that `journal.mjs` and `ledger-index.mjs` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.mjs`: change it there, once. `ledger-index.mjs` needs a Node build with `node:sqlite` and FTS5.
 
-The tests run each script as a subprocess against a temporary ledger and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`).
+## Contributing
 
-## What this is not
-
-- Not a project manager and not a ticket database. Problems that need fixing belong in xenophon (or your issue tracker). The ledger is a record of activity.
-- Not safe to run two dispatcher sessions that both `start` / `done` the same ledger without looking. The log is append-only and last-write wins on the generated markdown.
-- Not a license to write `main`, `staging`, `develop`, or a branch you did not author. Those stay protected. Pull requests open as drafts.
-
-## Sharing
-
-This folder is the shareable unit: `SKILL.md`, `reference/`, `cost/`, `scripts/` (with their tests), and this README. It ships no org overlay; write your own and name it as described in Personalize. State files the scripts write at run time (`prs-snapshot.json`, `pr-watch-state.json`) live under your ledger root, not here, and must not be shipped. It contains no vault data, no tickets, and no secrets.
-
-Do not commit your vault's `Journal/` or `Projects/` tree into this repo. Those are your notes. Point the script at them with `VAULT_ROOT`, or `LEDGER_ROOT` if you keep the ledger outside the vault.
+- **Keep it generic.** No organisation, personal path, ticket key or private name in anything shipped here. Install-specific values go through `local-config.mjs`; org rules go in an overlay.
+- **Keep it dependency-free.** Scripts use only `node:` built-ins and read their settings through `scripts/local-config.mjs`.
+- **A new event type** is `scripts/event-types/<type>.mjs`, a playbook at `playbooks/event-types/<type>.md`, one line in `scripts/event-types/index.mjs`, and tests with fixtures and no network. The suite fails if a type has no playbook.
+- **A guarantee needs a runtime check.** If a rule can be enforced by a script, enforce it and test the refusal; do not rely on prose.
+- **Tests land with the code they cover**, in the same commit, and the full suite passes before a PR opens.
+- **Docs move with behaviour.** Change `SKILL.md`, the matching `reference/*.md` and this README in the same branch.
+- **Small, reviewable PRs.** The size budget this repo ships applies to its own PRs: roughly five code files and four hundred code lines, mechanical changes in their own commit, conventional commit messages, and PRs opened as drafts.
+- **What to share.** This folder is the shareable unit: `SKILL.md`, `reference/`, `cost/`, `playbooks/`, `scripts/` with their tests, and this README. Do not commit your own `Journal/`, tickets or run-time state files (`prs-snapshot.json`, `pr-watch-state.json`); those live under your ledger root.
 
 ### Loading the board automatically
 
-`journal.mjs prime` prints a short, ledger-only board, so it can run from a Claude Code `SessionStart` hook and its output becomes session context. The matcher below covers a fresh start, a resume, a clear and a compaction. Add it to your own settings file; nothing in this repo does it for you.
+`journal.mjs prime` prints a short, ledger-only board, so it can run from a Claude Code `SessionStart` hook and its output becomes session context. Add this to your own settings file; nothing in this repo does it for you.
 
 ```json
 {
@@ -523,3 +556,15 @@ Do not commit your vault's `Journal/` or `Projects/` tree into this repo. Those 
   }
 }
 ```
+
+## In review
+
+These are open pull requests. They are not on the main branch, so everything above describes the code without them.
+
+- [PR #21](https://github.com/jackreichert/the-maestro/pull/21): event-loop per-type cadence (each type declares a default interval; a watch can override it with `--interval`; network types never faster than 120 seconds, local ones 30), a `reminder` watch type (`--type reminder --target <ISO 8601 UTC>`), and per-watch notify opt-in (`--notify`; reminders default on, the inbox never). If it merges, `notify_command` fires only for watches that opted in.
+
+## What this is not
+
+- Not a project manager and not a ticket database. Problems that need fixing belong in xenophon or your issue tracker. The ledger is a record of activity.
+- Not safe to run two dispatcher sessions that both `start` and `done` the same ledger without looking. The log is append-only and last write wins on the generated markdown.
+- Not a license to write `main`, `staging`, `develop`, or a branch you did not author. Those stay protected, and pull requests open as drafts.
