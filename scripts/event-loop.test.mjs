@@ -6,6 +6,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
+import * as inbox from './event-types/inbox.mjs';
+import * as prChecks from './event-types/pr-checks.mjs';
+import * as reminder from './event-types/reminder.mjs';
+import { notifyChoice } from './lib/notify.mjs';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
 
 const SCRIPT = new URL('./event-loop.mjs', import.meta.url).pathname;
@@ -95,10 +99,56 @@ test('informational events are digested but not notified', () => {
   const dir = tempDir();
   const sent = [];
   const types = { t: { check: () => ({ n: 1 }), diff: () => [{ summary: 'fyi', actionable: false }, { summary: 'act' }] } };
-  addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
+  addWatch(dir, { id: 'w1', type: 't', target: 'a', notify: true }, NOON);
   tick(base(dir, types, { notifyCommand: ['send', '--to-self'], notifyRun: (c, a) => { sent.push([c, a]); return { status: 0 }; } }));
   assert.deepEqual(sent, [['send', ['--to-self', 'w1: act']]]);
   assert.equal(readDigest(dir).length, 2);
+});
+
+test('notify is opt-in per watch: only a watch added with notify reaches notify_command', () => {
+  const dir = tempDir();
+  const sent = [];
+  const types = { t: { check: () => ({}), diff: () => [{ summary: 'act' }] } };
+  addWatch(dir, { id: 'quiet', type: 't', target: 'a' }, NOON);
+  addWatch(dir, { id: 'loud', type: 't', target: 'a', notify: true }, NOON);
+  const out = tick(base(dir, types, { notifyCommand: ['send'], notifyRun: (c, a) => { sent.push(a.at(-1)); return { status: 0 }; } }));
+  assert.deepEqual(sent, ['loud: act']);
+  assert.equal(out.events.length, 2, 'both still reach the digest');
+  assert.equal(readDigest(dir).length, 2);
+});
+
+test('the inbox type never notifies, even if its watch record says notify', () => {
+  const dir = tempDir();
+  const sent = [];
+  const types = { inbox: { ...inbox, check: () => ({ ids: ['a'] }), diff: () => [{ summary: '1 new message(s) from user' }] } };
+  addWatch(dir, { id: 'in', type: 'inbox', target: 'inbox', notify: true }, NOON);
+  tick(base(dir, types, { notifyCommand: ['send'], notifyRun: (c, a) => { sent.push(a); return { status: 0 }; } }));
+  assert.deepEqual(sent, []);
+  assert.equal(readDigest(dir).length, 1);
+});
+
+test('a reminder notifies by default and not with --no-notify; the choice is stored at add', () => {
+  assert.equal(notifyChoice(reminder, {}), true);
+  assert.equal(notifyChoice(reminder, { noNotify: true }), false);
+  assert.equal(notifyChoice(prChecks, {}), false);
+  assert.equal(notifyChoice(prChecks, { notify: true }), true);
+  assert.equal(notifyChoice(inbox, {}), false);
+  assert.throws(() => notifyChoice(inbox, { notify: true }), /never notifies/);
+  assert.throws(() => notifyChoice(prChecks, { notify: true, noNotify: true }), /cannot be used together/);
+  assert.equal(notifyChoice(undefined, {}), false, 'an unknown type is opt-in');
+});
+
+test('cli: add stores notify from the flags and the type default', () => {
+  const dir = tempDir();
+  const future = new Date(Date.now() + 3600 * 1000).toISOString();
+  assert.equal(cli(dir, 'add', '--id', 'plain', '--type', 'pr-checks', '--target', 'o/r#1').status, 0);
+  assert.equal(cli(dir, 'add', '--id', 'loud', '--type', 'pr-checks', '--target', 'o/r#2', '--notify').status, 0);
+  assert.equal(cli(dir, 'add', '--id', 'rem', '--type', 'reminder', '--target', future).status, 0);
+  assert.equal(cli(dir, 'add', '--id', 'rem2', '--type', 'reminder', '--target', future, '--no-notify').status, 0);
+  assert.equal(cli(dir, 'add', '--id', 'in', '--type', 'inbox', '--target', 'inbox', '--notify').status, EXIT.usage);
+  assert.equal(cli(dir, 'add', '--id', 'both', '--type', 'pr-checks', '--target', 'o/r#3', '--notify', '--no-notify').status, EXIT.usage);
+  const by = Object.fromEntries(JSON.parse(cli(dir, 'list', '--json').stdout).map((w) => [w.id, w.notify]));
+  assert.deepEqual(by, { plain: false, loud: true, rem: true, rem2: false });
 });
 
 test('no notify command means no notification and no error', () => {
@@ -123,8 +173,8 @@ test('quiet hours do not notify for an ordinary watch that expires overnight, bu
   const dir = tempDir();
   const sent = [];
   const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
-  addWatch(dir, { id: 'day', type: 't', target: 'x', ttlMs: MIN }, NIGHT - 10 * MIN);
-  addWatch(dir, { id: 'night', type: 't', target: 'y', ttlMs: MIN, notify_overnight: true }, NIGHT - 10 * MIN);
+  addWatch(dir, { id: 'day', type: 't', target: 'x', ttlMs: MIN, notify: true }, NIGHT - 10 * MIN);
+  addWatch(dir, { id: 'night', type: 't', target: 'y', ttlMs: MIN, notify_overnight: true, notify: true }, NIGHT - 10 * MIN);
   tick(base(dir, { t: { check: () => ({}), diff: () => [] } }, { config: OPEN, now: NIGHT, notifyCommand: ['n'], notifyRun }));
   assert.equal(sent.length, 1);
   assert.match(sent[0], /^night:/);

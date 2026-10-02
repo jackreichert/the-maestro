@@ -310,3 +310,15 @@ test('cli: reminder add refuses a bad or past target and stores a future one wit
   assert.ok(Date.parse(watch.expires) > Date.parse(future), 'expires after the target');
   assert.equal(add('c', future, '--ttl-hours', '1').status, 2);
 });
+
+test('reminder: a notifying reminder sends its text once; one added with --no-notify stays in the digest', () => {
+  const { dir, types, config, ctx } = REMIND();
+  const sent = [];
+  addWatch(dir, { id: 'loud', type: 'reminder', target: '2026-10-03T12:05:00Z', report: 'call back', notify: true }, T0);
+  addWatch(dir, { id: 'mute', type: 'reminder', target: '2026-10-03T12:05:00Z', report: 'private', notify: false }, T0);
+  const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
+  tick({ dir, types, config, ctx, now: T0 + 6 * 60000, notifyCommand: ['send'], notifyRun });
+  tick({ dir, types, config, ctx, now: T0 + 12 * 60000, notifyCommand: ['send'], notifyRun });
+  assert.deepEqual(sent, ['loud: reminder: call back']);
+  assert.equal(readDigest(dir).length, 2);
+});
