@@ -1571,3 +1571,28 @@ test('handoff section 1 shows the gate of a blocked item', () => {
     const out = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out;
     assert.match(out, /\[blocked\] hold for the PR.* gate: gh:pr:owner\/repo#7/);
 });
+
+test('prime stays within 40 lines even when stream names, block paths and the project carry newlines', () => {
+    for (let s = 0; s < 30; s++) run('start', `w${s}`, '--stream', `st${s}\nx\ny`, '--new-stream', ...MARK);
+    for (let i = 0; i < 30; i++) run('ask', `q${i}, which?`, ...MARK);
+    for (let i = 0; i < 30; i++) run('log', `b${i}`, '--kind', 'blocked', ...MARK);
+    const lines = run('prime').out.trimEnd().split('\n');
+    assert.ok(lines.length <= 40, `${lines.length} lines`);
+    assert.match(lines.at(-1), /journal\.mjs/);
+});
+
+test('deferring the last open item of a stream empties its page, and an expired deferral shows again in CURRENT.md on the next read', () => {
+    const id = idOf(run('start', 'only item', '--stream', 'Solo', '--new-stream', ...MARK).out);
+    const journal = join(vault, 'Projects', 'test-proj', 'Journal');
+    assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+    run('defer', id, '--until', inDays(2), ...MARK);
+    assert.doesNotMatch(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+    assert.doesNotMatch(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
+    // The date passes: the deferral now ends today, and CURRENT.md was last written on an earlier day.
+    const file = join(journal, 'ledger.jsonl');
+    writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { const r = JSON.parse(l); return r.kind === 'defer' ? JSON.stringify({ ...r, until: inDays(0) }) : l; }).join('\n') + '\n');
+    writeFileSync(join(journal, 'CURRENT.md'), readFileSync(join(journal, 'CURRENT.md'), 'utf8').replace(/updated: .*/, 'updated: 2020-01-01'));
+    run('prime');
+    assert.match(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
+    assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+});
