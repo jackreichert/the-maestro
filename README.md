@@ -270,7 +270,7 @@ Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed r
 
 **Streams and registries.** If `$LEDGER_ROOT/Projects/<project>/streams.json` exists it is the registry: stream names fold to the canonical spelling on write and on read, an unknown name is rejected with a suggestion unless you pass `--new-stream`, and an archived stream rejects writes. A `models` section in the same file folds `--model` values (an unknown name warns and is written as-is). Without the file nothing is enforced.
 
-**Claims.** `claim` creates `Claims/<repo>.lock` with an exclusive create, so of any number of racing processes exactly one wins and the rest exit 1 and name the holder. `claims` flags a claim as stale when its pid is gone on this host or it is older than `--stale-hours`. Nothing deletes a stale claim for you.
+**Claims.** `claim` writes the whole claim to a temp file and hard-links it to `Claims/<repo>.lock`. The link is atomic and fails if the lock exists, so of any number of racing processes exactly one wins, the lock never appears half-written, and the rest exit 1 and name the holder. `claims` flags a claim as stale when its pid is gone on this host or it is older than `--stale-hours`. Nothing deletes a stale claim for you.
 
 **Backup.** The ledger is one file. Make `$LEDGER_ROOT` a local git repository and set `ledger_git_autocommit: on`; `roll` then runs `verify` and, if it passes, commits the changed files under that root as `chore(ledger): roll <date>`, staging each path explicitly. It never pushes.
 
@@ -482,7 +482,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | Every ledger row records the model and tools used | `journal.mjs` refuses a new row without `--model` and `--used` (`--allow-unmarked` exists for tests and migrations) |
 | A "rule" cites something real | `journal.mjs rule` refuses, writing nothing, unless every `--ref` is an existing file |
 | The ledger is consistent | `journal.mjs verify` checks parsing, unique ids and dangling references and exits 1 on any problem; `roll` runs it before an autocommit |
-| Two sessions cannot hold one repo claim | `claim` uses an exclusive file create; exactly one racing process wins |
+| Two sessions cannot hold one repo claim | `claim` hard-links a fully written temp file into place; exactly one racing process wins and a reader never sees a partial claim |
 | A stream is not archived half-finished | `archive` refuses while it has open items, an unfinished retro or unfilled promotions |
 | PRs are drafts, assigned to you and within budget | `pr-open.mjs` runs the `pr-size.mjs` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
 | Branch deletion cannot take someone else's work or a moved branch | `branch-sweep.mjs --apply` re-scans first, never uses `--force`, never deletes a local branch, checks authorship, and pushes with a lease on the listed tip |
