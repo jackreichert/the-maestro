@@ -8,6 +8,8 @@
 
 export const interval = 30;
 export const network = false;
+// Notification: on unless the watch is added with --no-notify.
+export const notifies = 'default';
 export const backoff = false;
 
 const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?Z$/;

@@ -2,7 +2,7 @@
 /**
  * event-loop.mjs: one loop for every "wake me when X happens" watch, so a session never runs N ad-hoc watchers.
  *
- *   event-loop.mjs add --id <id> --type <type> --target <t> [--done-when <rule>] [--report <text>] [--ttl-hours N] [--interval S] [--notify-overnight]
+ *   event-loop.mjs add --id <id> --type <type> --target <t> [--done-when <rule>] [--report <text>] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
  *   event-loop.mjs list [--json] | remove <id> | digest [--peek]
  *   event-loop.mjs run [--once] [--interval N]
  *
@@ -15,6 +15,7 @@
  * Each type declares `interval` (default seconds between checks) and `network` (false only for local types);
  * a watch may override the interval with `add --interval S`. The loop checks only watches that are due and sleeps
  * until the earliest is due. Floors, enforced in lib/cadence.mjs: 120s for network types, 30s for local ones.
+ * Only watches added with `--notify` (reminders by default, inbox never) are sent to `notify_command`.
  * Cadence is lib/cadence.mjs (floors, back-off, quiet hours). Settings are in local-config.mjs (event_dir, notify_command).
  *
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
@@ -28,7 +29,7 @@ import {
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ,
 } from './local-config.mjs';
 import { nextInterval, watchInterval } from './lib/cadence.mjs';
-import { notify, oneLine } from './lib/notify.mjs';
+import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.mjs';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.mjs';
 
 export const EXIT = { ok: 0, usage: 2, quietStop: 3, actionable: 10 };
@@ -89,7 +90,7 @@ export function tick(deps) {
   for (const watch of listWatches(dir)) {
     const meta = state.watches[watch.id] ?? { errors: 0 };
     const make = (e) => ({ watch: watch.id, type: watch.type, at: new Date(now).toISOString(), summary: oneLine(e.summary, DIGEST_SUMMARY), actionable: e.actionable !== false, report: e.actionable === false ? '' : watch.report });
-    const mayNotify = !quiet || watch.notify_overnight;
+    const mayNotify = watchNotifies(watch, types[watch.type]) && (!quiet || watch.notify_overnight);
     const retire = (reason, events = []) => {
       retirements.push({ watch, reason });
       delete state.watches[watch.id];
@@ -170,7 +171,7 @@ async function run({ dir, types, once, pinned }) {
 
 const OPTIONS = {
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
-  'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
+  'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
   once: { type: 'boolean' }, interval: { type: 'string' },
 };
 
@@ -193,7 +194,7 @@ async function main(argv) {
       const type = await typeNamed(v.type);
       const now = Date.now();
       type?.validate?.(v.target, { now, ttlMs: ttl });
-      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target, now), notify_overnight: v['notify-overnight'], interval: v.interval }, now);
+      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target, now), notify_overnight: v['notify-overnight'], interval: v.interval, notify: notifyChoice(type, { notify: v.notify, noNotify: v['no-notify'] }) }, now);
       console.log(`added ${w.id} (${w.type} ${w.target}), expires ${w.expires}`);
     } else if (cmd === 'list') {
       const ws = listWatches(dir);

@@ -2,7 +2,7 @@
  * Watch registry for the event loop: an append-only JSON lines file plus a state file.
  *
  * watches.jsonl holds two kinds of line: {op:'add', id, type, target, done_when, report, created, expires,
- * notify_overnight, interval} and {op:'remove', id, at, reason}. The live set is the adds with no later remove, so the
+ * notify_overnight, notify, interval} and {op:'remove', id, at, reason}. The live set is the adds with no later remove, so the
  * file is never rewritten. state.json holds each watch's last checked state and the event timestamps the
  * cadence reads; digest.jsonl holds events nobody has read yet.
  */
@@ -37,13 +37,13 @@ export function listWatches(dir) {
 }
 
 /** Appends a watch. `target` and `done_when` are the type's to interpret. Throws on a bad id or a duplicate live id. */
-export function addWatch(dir, { id, type, target, done_when = '', report = '', ttlMs = DEFAULT_TTL_MS, notify_overnight = false, interval = null }, now = Date.now()) {
+export function addWatch(dir, { id, type, target, done_when = '', report = '', ttlMs = DEFAULT_TTL_MS, notify_overnight = false, interval = null, notify = false }, now = Date.now()) {
   if (!ID.test(id ?? '')) throw new Error(`watch id must match ${ID}, got "${id}"`);
   if (!type || !target) throw new Error('a watch needs --type and --target');
   if (interval !== null && !(Number(interval) > 0)) throw new Error('a watch --interval needs a positive number of seconds');
   if (listWatches(dir).some((w) => w.id === id)) throw new Error(`watch "${id}" already exists`);
   const watch = {
-    op: 'add', id, type, target, done_when, report, notify_overnight: Boolean(notify_overnight), interval: interval === null ? null : Number(interval),
+    op: 'add', id, type, target, done_when, report, notify_overnight: Boolean(notify_overnight), notify: Boolean(notify), interval: interval === null ? null : Number(interval),
     created: new Date(now).toISOString(), expires: new Date(now + ttlMs).toISOString(),
   };
   append(paths(dir).watches, watch);

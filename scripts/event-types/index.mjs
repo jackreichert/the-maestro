@@ -3,7 +3,7 @@
  * { check(target, ctx) -> state, diff(prev, next) -> events[], done?(state, watch) -> boolean, retired?(watch, ctx),
  * validate?(target, { now, ttlMs }) (throws to refuse a watch at `add`), defaultTtlMs?(target, now) },
  * and optionally `interval` (default seconds between checks), `network` (false for a check that never leaves the machine),
- * `backoff` (false to skip the idle back-off),
+ * `backoff` (false to skip the idle back-off), `notifies` ('default' or 'never'; unset means opt-in with --notify),
  * plus a playbook at `playbooks/event-types/<type>.md`. Registering a built-in one is that pair of files and one line here.
  * diff(null, next) is the first check: report only what is already worth waking for. An event is { summary, actionable? }.
  *
