@@ -606,6 +606,10 @@ test('handoff --update-context points CONTEXT.md at the new handoff once, replac
     assert.equal(missing.code, 1);
     assert.match(missing.err, /does not exist; the handoff was written/);
     assert.equal(run('handoff', '--all', '--force').code, 0, 'no flag, no link');
+    const fm = join(tv, 'FM.md');
+    writeFileSync(fm, '---\ntitle: x\n---\nPlain body, no heading.\n');
+    run('handoff', '--all', '--force', '--update-context', '--context-file', fm);
+    assert.equal(readFileSync(fm, 'utf8'), `---\ntitle: x\n---\nLatest handoff: [[HANDOFF-${day}-all]] (${day})\n\nPlain body, no heading.\n`, 'frontmatter stays first');
 });
 
 test('handoff never overwrites without --force, honours --out, and appends nothing to the ledger', () => {
