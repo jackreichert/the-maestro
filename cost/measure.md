@@ -42,7 +42,9 @@ node scripts/token-metrics.mjs --json                              # machine-rea
   the 7-day median is flagged `REGRESSION >20%` — the trigger for [loop.md](loop.md) step 2.
 - The day summary and `--compare` also score the cost metrics (model mix, wake-ups per prompt, read per
   turn, max turns since compact, small-agent rate, Opus subagents) against `cost_targets`, with PASS or
-  MISS; the model mix is also shown by price when `model_price_weights` is set. Keys and targets are in the
+  MISS; when `model_prices` is set the day summary also shows estimated dollars per day (orchestrator and
+  subagents, by model and by category), the model mix by price, and a what-if line pricing the orchestrator's
+  tokens at Sonnet rates (informational: it ignores quality). Keys, targets and the default prices are in the
   README. Rework rate and corrections are ledger notes, not transcript metrics.
 - Read the printed summary, not the table file — the table is for history and for the script's own
   `--compare`, not for a human to scan by eye.
