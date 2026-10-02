@@ -376,12 +376,33 @@ The day summary and `--compare` show each cost metric with today, the 7-day medi
 | Metric | Target (`cost_targets` key) |
 |---|---|
 | Model mix: share of tokens by family (opus, sonnet, haiku), orchestrator and subagents together, by cache-read tokens | opus at most 40% (`opus_share_max`), haiku at least 15% (`haiku_share_min`) |
-| The same mix by price: input-equivalent units (cache read x0.1, cache write x1.25, output x5, relative to fresh input) times `model_price_weights`. Shown only when the weights are set; otherwise the output says they are unset | none unless you set `opus_priced_share_max` or `haiku_priced_share_min` |
+| The same mix by price: each family's share of estimated dollars, from `model_prices`. Shown only when prices are set; otherwise the output says they are unset | Opus at most 50% of dollars (`opus_priced_share_max`); no Haiku target |
+| Estimated dollars per day: orchestrator and subagents, by model and by category (read, write, output, input), from `model_prices`. Writes price as 5m unless usage splits 5m and 1h | informational; a >20% rise against the 7-day median is flagged |
 | Wake-ups per prompt: (task-notification + handback wakes) / prompts | at most 0.5 (`wakes_per_prompt_max`) |
 | Read per turn: orchestrator cache read per turn | at most 200k (`read_per_turn_max`) |
 | Max turns since compact: the longest run of orchestrator turns without a compaction, per session (the day shows the longest) | at most 150 (`turns_since_compact_max`) |
 | Small-agent rate: share of subagents that finished in under 10 turns | trend only, lower is better |
 | Opus subagents: count and tokens | informational: each should be design, decision or review work |
+
+Estimated dollars price each family's tokens (fresh input, 5m cache write, 1h cache write, cache read, output) at its `model_prices` row. The day summary also prints a what-if line: the orchestrator's cost had its tokens been on Sonnet. It is the same tokens repriced, so it ignores quality and any change in how many tokens another model would use. Table rows keep tokens by model (not dollars), so a pruned day is priced with the prices set when you read it.
+
+#### Default prices
+
+`model_prices` is not built in: set it in your config, and a config value is the only source. These are the current Anthropic list prices in dollars per million tokens, fetched 2026-10-02 from <https://platform.claude.com/docs/en/about-claude/pricing>. Paste them as a starting point and re-check the source when prices change.
+
+| Model | Input | 5m cache write | 1h cache write | Cache read | Output |
+|---|---|---|---|---|---|
+| Opus 5.5 | 4 | 5 | 8 | 0.20 | 20 |
+| Sonnet 5.5 | 2 | 2.50 | 4 | 0.20 | 10 |
+| Haiku 4.5 | 1 | 1.25 | 2 | 0.10 | 5 |
+
+Cache reads are not a fixed fraction of input: Opus 5.5 reads cost 0.05x input, Sonnet 5.5 and Haiku 4.5 0.1x. That is why one weight per model cannot price the mix.
+
+```text
+model_prices: opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: input=2, cache_write_5m=2.5, cache_write_1h=4, cache_read=0.2, output=10; haiku: input=1, cache_write_5m=1.25, cache_write_1h=2, cache_read=0.1, output=5
+```
+
+Estimates run a few percent under the billed figure when usage carries no 5m/1h split, because every write is priced as 5m.
 
 Compaction is read from transcript metadata only (the compact-boundary system line and the compact-summary flag), never from message content. The table gains columns for these metrics; run `--all --write` to fill them for days still on disk, since older rows show `-` for them.
 
@@ -426,7 +447,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns at which the status footer says "roll now" |
 | `roll_read_per_turn` | `MAESTRO_ROLL_READ_PER_TURN` | 350000 | Mean cache-read tokens per turn at which it says "roll now" (a plain number) |
 | `cost_targets` | `MAESTRO_COST_TARGETS` | `opus_share_max=40, haiku_share_min=15, opus_priced_share_max=50, wakes_per_prompt_max=0.5, read_per_turn_max=200000, turns_since_compact_max=150` | Targets `token-metrics.mjs` scores against, as `key=value` pairs; any subset overrides those keys. Shares are percent. `opus_priced_share_max` (default 50) scores the Opus share of estimated dollars |
-| `model_prices` | `MAESTRO_MODEL_PRICES` | none | Dollars per million tokens by model family, as `;`-separated groups: `opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: ...; haiku: ...`. Each family needs `input`, `cache_write_5m`, `cache_read` and `output`; `cache_write_1h` falls back to the 5m price. Needs opus, sonnet and haiku, else it counts as unset; `other` is optional. No prices are built in; the current list is under token-metrics.mjs below |
+| `model_prices` | `MAESTRO_MODEL_PRICES` | none | Dollars per million tokens by model family, as `;`-separated groups: `opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: ...; haiku: ...`. Each family needs `input`, `cache_write_5m`, `cache_read` and `output`; `cache_write_1h` falls back to the 5m price. Needs opus, sonnet and haiku, else it counts as unset; `other` is optional. No prices are built in; the current list is under token-metrics.mjs below, with a paste-ready block |
 | `watch_min_interval` | `MAESTRO_WATCH_MIN_INTERVAL` | 300 | PR watcher: fastest poll in seconds; never below 300 |
 | `watch_max_interval` | `MAESTRO_WATCH_MAX_INTERVAL` | 1800 | PR watcher: slowest poll in seconds (also the event loop's back-off cap) |
 | `watch_quiet_hours` | `MAESTRO_WATCH_QUIET_HOURS` | `20:00-07:00` | Quiet window `HH:MM-HH:MM` in `watch_tz`; `off` disables |
