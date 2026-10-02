@@ -37,9 +37,13 @@ node scripts/token-metrics.mjs --json                              # machine-rea
   on disk, which matters because Claude Code prunes old transcripts and the vault table is the only
   durable history past that point.
 - `--compare` prints today against the 7-day median and the pre-habits baseline (median of
-  2026-09-17 through 2026-09-24) for nine metrics: turns, wake-ups, output, cache read, read/turn,
-  read/prompt, read/subagent, avg report, sub growth. Any metric that moved more than ~20% against
+  2026-09-17 through 2026-09-24) for nine core metrics (turns, wake-ups, output, cache read, read/turn,
+  read/prompt, read/subagent, avg report, sub growth) plus the cost metrics below. Any metric that moved more than ~20% against
   the 7-day median is flagged `REGRESSION >20%` — the trigger for [loop.md](loop.md) step 2.
+- The day summary and `--compare` also score the cost metrics (model mix, wake-ups per prompt, read per
+  turn, max turns since compact, small-agent rate, Opus subagents) against `cost_targets`, with PASS or
+  MISS; the model mix is also shown by price when `model_price_weights` is set. Keys and targets are in the
+  README. Rework rate and corrections are ledger notes, not transcript metrics.
 - Read the printed summary, not the table file — the table is for history and for the script's own
   `--compare`, not for a human to scan by eye.
 - Tests: `scripts/token-metrics.test.mjs`. A planted-sentinel test asserts message content never

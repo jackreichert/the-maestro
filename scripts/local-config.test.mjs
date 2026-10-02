@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig } from './local-config.mjs';
+import { parseConfig, numberMap, DEFAULT_COST_TARGETS } from './local-config.mjs';
 
 const SCRIPT = new URL('./local-config.mjs', import.meta.url).pathname;
 const block = (body) => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
@@ -213,4 +213,28 @@ test('scripts_dir is unset by default, reads the file, expands ~/, and the envir
     assert.equal(show().SCRIPTS_DIR, '/shelf');
     assert.equal(show({ MAESTRO_SCRIPTS_DIR: '~/my-shelf' }).SCRIPTS_DIR, join(home, 'my-shelf'));
     assert.equal(show({ MAESTRO_SCRIPTS_DIR: '' }).SCRIPTS_DIR, '(unset)');
+});
+
+test('numberMap reads k=v, k: v and brace forms, and drops anything that is not a positive number', () => {
+    assert.deepEqual(numberMap('opus=1, sonnet=0.2'), { opus: 1, sonnet: 0.2 });
+    assert.deepEqual(numberMap('{opus: 1, "haiku": 0.07}'), { opus: 1, haiku: 0.07 });
+    assert.deepEqual(numberMap('opus=1, sonnet=free, haiku=-3, other=0, =4, junk'), { opus: 1 });
+    assert.deepEqual(numberMap(''), {});
+});
+
+test('cost_targets overrides defaults key by key; junk keeps the default; no weights is unset', () => {
+    const d = show();
+    assert.equal(d.COST_TARGETS, Object.entries(DEFAULT_COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '));
+    assert.equal(d.MODEL_PRICE_WEIGHTS, '(unset)');
+    const o = show({ MAESTRO_COST_TARGETS: 'opus_share_max=30, haiku_share_min=lots' });
+    assert.match(o.COST_TARGETS, /opus_share_max=30, haiku_share_min=15,/);
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('cost_targets: wakes_per_prompt_max=0.4   # tighter\nmodel_price_weights: opus=1, sonnet=0.2, haiku=0.07'));
+    const f = show();
+    assert.match(f.COST_TARGETS, /wakes_per_prompt_max=0.4,/);
+    assert.equal(f.MODEL_PRICE_WEIGHTS, 'opus=1, sonnet=0.2, haiku=0.07');
+});
+
+test('model_price_weights needs opus, sonnet and haiku; a partial set counts as unset', () => {
+    assert.equal(show({ MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2' }).MODEL_PRICE_WEIGHTS, '(unset)');
+    assert.equal(show({ MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2, haiku=0.1, other=2' }).MODEL_PRICE_WEIGHTS, 'opus=1, sonnet=0.2, haiku=0.1, other=2');
 });
