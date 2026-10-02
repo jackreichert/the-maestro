@@ -65,13 +65,14 @@ export function tick(deps) {
   const { dir, types, ctx = {}, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun } = deps;
   const state = loadState(dir);
   const quiet = Boolean(nextInterval({ now, recentEvents: state.events, config }).stop);
+  const retirements = [];
   const out = { events: [], retired: [], skipped: [] };
   for (const watch of listWatches(dir)) {
     const meta = state.watches[watch.id] ?? { errors: 0 };
     const make = (e) => ({ watch: watch.id, type: watch.type, at: new Date(now).toISOString(), summary: oneLine(e.summary, DIGEST_SUMMARY), actionable: e.actionable !== false, report: e.actionable === false ? '' : watch.report });
     const mayNotify = !quiet || watch.notify_overnight;
     const retire = (reason, events = []) => {
-      removeWatch(dir, watch.id, reason, now);
+      retirements.push({ id: watch.id, reason });
       delete state.watches[watch.id];
       out.retired.push({ id: watch.id, reason });
       out.events.push(...events.map((e) => ({ ...make(e), mayNotify })));
@@ -82,7 +83,7 @@ export function tick(deps) {
       const r = checkWatch(watch, state.watches[watch.id], { types, ctx: { ...ctx, now } });
       out.events.push(...r.events.map((e) => ({ ...make(e), mayNotify })));
       state.watches[watch.id] = { state: r.state, errors: 0, checkedAt: new Date(now).toISOString() };
-      if (r.retire) { removeWatch(dir, watch.id, r.retire, now); delete state.watches[watch.id]; out.retired.push({ id: watch.id, reason: r.retire }); }
+      if (r.retire) { retirements.push({ id: watch.id, reason: r.retire }); delete state.watches[watch.id]; out.retired.push({ id: watch.id, reason: r.retire }); }
     } catch (err) {
       // A failing check keeps its last good state; it speaks once, after a few failures in a row.
       meta.errors += 1;
@@ -94,6 +95,8 @@ export function tick(deps) {
   // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
   saveState(dir, state);
+  // Tombstones last: a crash before this leaves the watch live, so the next tick retires it again instead of losing its final event.
+  for (const { id, reason } of retirements) removeWatch(dir, id, reason, now);
   notify(out.events.filter((e) => e.actionable && e.mayNotify), notifyCommand, notifyRun);
   out.events = out.events.map(({ mayNotify, ...e }) => e);
   return out;
