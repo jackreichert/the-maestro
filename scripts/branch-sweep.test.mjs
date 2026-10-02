@@ -432,6 +432,15 @@ test('ownership: a fast-forwarded branch has no commits of its own, so it needs 
     assert.deepEqual(listed(w, { ghLogin: '', gh: searchGh([pr(9, 'develop', 'feat/ff', tipOf(w, 'feat/ff'))]) }), [], 'no gh_login means no PR evidence');
 });
 
+test('apply refuses everything when the fetch failed, since the refs may be stale', () => {
+    const w = world(); feature(w, 'feat/done'); mergeInto(w, 'develop', 'feat/done');
+    sh(w.repo, 'fetch', '-q', 'origin');
+    const id = scanRepo(w.repo, ctxFor()).items[0].id;
+    sh(w.repo, 'remote', 'set-url', 'origin', join(w.container, 'missing.git'));
+    const res = apply([id], w.container, ctxFor());
+    assert.match(res[0].message, /refused: git fetch failed/);
+});
+
 test('twin evidence belongs to the branch: a colleague\'s x-staging, an earlier-round twin or a moved twin does not count', () => {
     const w = world(); feature(w, 'fix/x'); feature(w, 'fix/x-staging', { email: COLLEAGUE });
     mergeInto(w, 'develop', 'fix/x', true); mergeInto(w, 'staging', 'fix/x-staging', true);

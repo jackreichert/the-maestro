@@ -361,7 +361,7 @@ export function scanRepo(repoPath, ctx) {
   const g = (ctx.gitFor || gitIn)(repoPath);
   const res = { repo: name, items: [], review: [], excluded: [], notes: [] };
   if (!g('remote', 'get-url', 'origin').ok) { res.notes.push('no origin remote'); return res; }
-  if (ctx.fetch && !g('fetch', '--prune', 'origin').ok) res.notes.push('git fetch failed; using the refs already here');
+  if (ctx.fetch && !g('fetch', '--prune', 'origin').ok) { res.notes.push('git fetch failed; using the refs already here'); res.fetchFailed = true; }
   const { targets, error } = targetsFor(g, name, ctx);
   if (error) { res.notes.push(error); return res; }
   let live; try { live = { paths: liveSkillTargets(repoPath, ctx) }; } catch (e) { live = { paths: [], error: e.message }; }
@@ -468,6 +468,7 @@ export function apply(ids, container, ctx, only) {
     const path = join(container, repo);
     if (!findRepos(container, repo).length) return { id, done: false, message: `no repo ${repo} in the container` };
     if (!scans.has(repo)) scans.set(repo, scanRepo(path, { ...ctx, fetch: true }));
+    if (scans.get(repo).fetchFailed) return { id, done: false, message: 'refused: git fetch failed, so the refs may be stale' };
     const item = scans.get(repo).items.find((i) => i.id === id);
     if (!item && scans.get(repo).review.some((i) => i.id === id)) return { id, done: false, message: 'refused: patch-equivalent only (no merged PR or ancestry); needs a human look' };
     if (!item) {
