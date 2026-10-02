@@ -15,6 +15,8 @@ Register: `node scripts/event-loop.mjs add --id ci-<n> --type pr-checks --target
 
 A failing PR with checks still running is reported at once, and again only if the set of failed checks changes. After `settled` the watch retires; if the author pushes a fix, the orchestrator registers a new watch.
 
+A PR with no checks yet reads as `none` (silent). If `gh` fails for any other reason (login expired, PR not found) the loop reports `check keeps failing` after three tries; say so rather than treating it as green.
+
 ## Do not
 
 Re-run, cancel or comment on checks, and do not paste logs. Report the line and stop.

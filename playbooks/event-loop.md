@@ -15,8 +15,8 @@ node scripts/event-loop.mjs run
 |---|---|---|
 | 10 | Actionable events. Stdout is the digest. | Step 2. |
 | 0 | Nothing to do (`no watches registered`, or `run --once` found nothing). | Report one line: the loop has nothing to watch. |
-| 3 | Quiet hours began (`QUIET-HOURS stop until <time>`). | Report one line with the time. |
-| 2 | Usage or configuration error. | Report the stderr line. Do not retry. |
+| 3 | Quiet hours or a quiet weekend began (`QUIET-HOURS stop until <time>`); no `--notify-overnight` watch is live. | Report one line with the time. |
+| 2 | Usage or configuration error, or `another event loop is running`. | Report the stderr line. Do not retry or delete the lock. |
 
 For one quick look instead of a long wait, `node scripts/event-loop.mjs run --once` does a single pass with the same exit codes.
 
@@ -25,6 +25,7 @@ For one quick look instead of a long wait, `node scripts/event-loop.mjs run --on
 Each line is `ACTION <watch id> (<type>): <summary> | report: <hint>` or `info ...`. `ACTION` lines come first.
 
 - Open the playbook for each type that appears: `playbooks/event-types/<type>.md`. Its table says what the line means and what to report.
+- `info` lines are kept from earlier quiet runs and show up with the next actionable batch. They are context, not news.
 - The loop marks actionable events; the type playbook is what you confirm them against. Do not promote an `info` line, and do not drop an `ACTION` line because it looks small. If a line is not in its type's table, report it as it is.
 - The `report:` hint is the orchestrator's own note on what it wants back. Follow it when it asks for something the type playbook allows.
 
@@ -51,7 +52,7 @@ A watch expires after 24 hours unless `--ttl-hours` says otherwise, and retires 
 
 ## For the orchestrator: adding an event type
 
-1. `scripts/event-types/<type>.mjs` exporting `check(target, ctx) -> state` and `diff(prev, next) -> events[]` (and optionally `done(state, watch)`). `ctx.run(cmd, args)` runs a command and returns `{ status, stdout, stderr }`; use it so tests can stub it. Treat `prev === null` as the first check and report only what is already worth waking for.
+1. `scripts/event-types/<type>.mjs` exporting `check(target, ctx) -> state` and `diff(prev, next) -> events[]` (and optionally `done(state, watch)`, and `retired(watch, ctx)` to delete per-watch files when the watch retires). `ctx.run(cmd, args)` runs a command and returns `{ status, stdout, stderr }`; use it so tests can stub it. Treat `prev === null` as the first check and report only what is already worth waking for.
 2. `playbooks/event-types/<type>.md`: what each digest line means, which are actionable, what to report, what never to do.
 3. One line in `scripts/event-types/index.mjs`.
 4. Tests with fixtures and no network. `node --test scripts/event-types.test.mjs` fails if a type has no playbook.
