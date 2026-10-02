@@ -659,6 +659,27 @@ test('sweepWorktrees does not fetch or scan a repo with no linked worktree, and 
     assert.match(keptReason(sweep(w), wt), /fetch failed/, 'a repo with a worktree is still fetched');
 });
 
+test('a sweep scoped to the merged repo still protects worktrees in use, and never touches another repo', () => {
+    const w = world();
+    sh(w.root, 'clone', '-q', w.origin, join(w.container, 'other'));
+    const inUse = join(w.root, 'in-use'); const dirty = join(w.root, 'dirty'); const elsewhere = join(w.root, 'elsewhere');
+    for (const p of [inUse, dirty]) sh(w.repo, 'worktree', 'add', '-q', '--detach', p, 'origin/develop');
+    sh(join(w.container, 'other'), 'worktree', 'add', '-q', '--detach', elsewhere, 'origin/develop');
+    writeFileSync(join(dirty, 'wip.txt'), 'unsaved\n');
+    const scoped = (over = {}) => sweep(w, over, { only: w.name });
+    const recent = scoped({ idleMinutes: 60 });
+    assert.deepEqual(recent.removed, [], 'just touched: idle guard');
+    assert.match(keptReason(recent, inUse), /modified .* min ago/);
+    const claimed = scoped({ claims: new Map([[w.name, { desk: 'Launch' }]]) });
+    assert.deepEqual(claimed.removed, [], 'live claim guard');
+    assert.match(keptReason(claimed, inUse), /claimed by Launch/);
+    const last = scoped();
+    assert.deepEqual(last.removed.map((x) => x.path), [inUse], 'the clean, idle, unclaimed one goes');
+    assert.match(keptReason(last, dirty), /untracked/, 'uncommitted guard');
+    assert.equal(existsSync(elsewhere), true, 'another repo is out of scope even though it qualifies');
+    assert.ok(![...last.kept, ...last.removed].some((x) => x.repo === 'other'));
+});
+
 test('removeWorktree refuses when the worktree changed after the scan, and never forces', () => {
     const w = world();
     const wt = join(w.root, 'late'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/develop');
