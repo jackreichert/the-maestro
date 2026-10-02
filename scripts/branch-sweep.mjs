@@ -28,7 +28,7 @@ import { homedir, hostname } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
+  GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, GH_LOGIN, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
 } from './local-config.mjs';
 
 const run = (cmd, args, opts = {}) => {
@@ -65,7 +65,7 @@ export function defaultContext(over = {}) {
   const claimsDir = over.claimsDir ?? process.env.MAESTRO_CLAIMS_DIR ?? ((LEDGER_ROOT || VAULT_ROOT) && join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONTAINER_PROJECT, 'Claims'));
   return {
     emails: GIT_EMAILS, protectedNames: PROTECTED_BRANCHES, twin: TWIN_FLOW_REPOS, targets: SWEEP_MERGE_TARGETS,
-    idleMinutes: SWEEP_IDLE_MINUTES, prDays: SWEEP_PR_DAYS, protectDirs: SWEEP_PROTECT_SYMLINK_DIRS, disposableIgnored: SWEEP_DISPOSABLE_IGNORED, claims: liveClaims(claimsDir), gh: ghJson, fetch: true, ...over,
+    idleMinutes: SWEEP_IDLE_MINUTES, prDays: SWEEP_PR_DAYS, protectDirs: SWEEP_PROTECT_SYMLINK_DIRS, disposableIgnored: SWEEP_DISPOSABLE_IGNORED, claims: liveClaims(claimsDir), gh: ghJson, ghLogin: GH_LOGIN, fetch: true, ...over,
   };
 }
 
@@ -134,8 +134,8 @@ function ownCommits(g, ref, protectedRefs, mainline) {
 /** Ownership rules. A branch is the user's only when all pass; no commit of its own is never enough by itself. */
 const OWNERSHIP_RULES = [
   rule('emails configured', (c) => c.emails.length > 0, () => 'no author emails (git_emails or user.email)'),
-  rule('has commits of its own, or an exact merged PR', (c) => c.own.length > 0 || c.exactPrs().length > 0,
-    () => 'no commits of its own and no merged PR with this head'),
+  rule('has commits of its own, or an exact merged PR the user opened', (c) => c.own.length > 0 || c.exactPrs().some((p) => c.ghLogin && p.author?.login === c.ghLogin),
+    () => 'no commits of its own and no merged PR with this head opened by the user (gh_login)'),
   rule('every own commit is the user\'s', (c) => c.own.every((x) => c.emails.includes(x.email)),
     (c) => `${c.own.filter((x) => !c.emails.includes(x.email)).length} of ${c.own.length} commits are by someone else`),
 ];
@@ -146,12 +146,12 @@ const emailsFor = (g, ctx) => (ctx.emails.length ? ctx.emails : [g('config', 'us
 function isMine(g, ref, branch, tip, scan) {
   const { ctx } = scan;
   const emails = emailsFor(g, ctx);
-  const c = { emails, own: ownCommits(g, ref, scan.protectedRefs, scan.mainline), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
+  const c = { emails, ghLogin: ctx.ghLogin, own: ownCommits(g, ref, scan.protectedRefs, scan.mainline), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
   const failed = firstFailure(OWNERSHIP_RULES, c);
   return failed ? { ok: false, reason: failed.reason(c) } : { ok: true };
 }
 
-const PR_FIELDS = 'number,baseRefName,headRefName,headRefOid,url,body,mergedAt';
+const PR_FIELDS = 'number,baseRefName,headRefName,headRefOid,url,body,mergedAt,author';
 const PR_PAGE = 1000; // gh search returns at most this many per query; a full page means the window may hold more
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
@@ -437,7 +437,7 @@ export function explain(repoPath, ctx, branch) {
     const emails = emailsFor(g, ctx);
     const mainline = mainlineOf(g, protectedRefs);
     const own = ownCommits(g, ref, protectedRefs, mainline);
-    const c = { emails, own, exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
+    const c = { emails, ghLogin: ctx.ghLogin, own, exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
     out.push(`  tip ${tip.slice(0, 9)}, ${own.length} own commits, targets ${targets.join('+')}, PR look-back ${ctx.prDays ?? 180} days, ${mergedPrs(g.repo, ctx).length} merged PRs read`);
     out.push(`  exact PRs (head ${branch} at tip): ${c.exactPrs().map((p) => `#${p.number}->${p.baseRefName}`).join(', ') || 'none'}`);
     out.push('ownership:', ...OWNERSHIP_RULES.map((r) => verdict(r.name, r, c)));

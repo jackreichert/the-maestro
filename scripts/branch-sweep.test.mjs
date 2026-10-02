@@ -52,7 +52,7 @@ const mergeInto = (w, target, branch, squash = false) => {
     sh(w.repo, 'push', '-q', 'origin', target);
     sh(w.repo, 'checkout', '-q', 'main');
 };
-const ctxFor = (over = {}) => defaultContext({ emails: [ME], twin: [], idleMinutes: 0, claims: new Map(), gh: () => null, ...over });
+const ctxFor = (over = {}) => defaultContext({ emails: [ME], twin: [], idleMinutes: 0, claims: new Map(), gh: () => null, ghLogin: 'me-login', ...over });
 const names = (r, kind) => r.items.filter((i) => i.kind === kind).map((i) => i.name);
 const remoteHas = (w, branch) => sh(w.repo, 'ls-remote', '--heads', 'origin', branch) !== '';
 
@@ -105,7 +105,7 @@ test('a branch with a foreign author is never listed', () => {
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), []);
 });
 
-const pr = (number, base, head, oid, body = '') => ({ number, baseRefName: base, headRefName: head, headRefOid: oid, url: `https://example.com/pull/${number}`, body, mergedAt: daysAgo(1) });
+const pr = (number, base, head, oid, body = '') => ({ number, baseRefName: base, headRefName: head, headRefOid: oid, url: `https://example.com/pull/${number}`, body, mergedAt: daysAgo(1), author: { login: 'me-login' } });
 const tipOf = (w, b) => sh(w.repo, 'rev-parse', `origin/${b}`);
 /** Branches x and its twin merged into develop and staging respectively, as separate branches (squash, so ancestry is no evidence). */
 function twins(w, x, twin, { xTarget = 'develop', twinTarget = 'staging' } = {}) {
@@ -226,7 +226,7 @@ test('a branch with no commits of its own never qualifies, unless a merged PR na
     sh(w.repo, 'push', '-q', 'origin', 'origin/develop:refs/heads/feat/empty');
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), []);
     const tip = sh(w.repo, 'rev-parse', 'origin/develop');
-    const pr = (over) => () => [{ number: 3, headRefName: 'feat/empty', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/3', body: '', ...over }];
+    const pr = (over) => () => [{ number: 3, headRefName: 'feat/empty', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/3', body: '', author: { login: 'me-login' }, ...over }];
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({}) })), 'remote-branch'), ['feat/empty']);
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({ headRefName: 'feat/other' }) })), 'remote-branch'), []);
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({ headRefOid: '0'.repeat(40) }) })), 'remote-branch'), []);
@@ -427,6 +427,9 @@ test('ownership: a fast-forwarded branch has no commits of its own, so it needs 
     sh(w.repo, 'fetch', '-q', 'origin');
     assert.deepEqual(listed(w), []);
     assert.deepEqual(listed(w, { gh: searchGh([pr(9, 'develop', 'feat/ff', tipOf(w, 'feat/ff'))]) }), ['feat/ff']);
+    const theirs = { ...pr(9, 'develop', 'feat/ff', tipOf(w, 'feat/ff')), author: { login: 'colleague' } };
+    assert.deepEqual(listed(w, { gh: searchGh([theirs]) }), [], 'a PR someone else opened is not evidence of ownership');
+    assert.deepEqual(listed(w, { ghLogin: '', gh: searchGh([pr(9, 'develop', 'feat/ff', tipOf(w, 'feat/ff'))]) }), [], 'no gh_login means no PR evidence');
 });
 
 test('twin evidence belongs to the branch: a colleague\'s x-staging, an earlier-round twin or a moved twin does not count', () => {
