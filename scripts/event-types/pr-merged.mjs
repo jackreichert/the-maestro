@@ -33,13 +33,14 @@ export function check(target, ctx) {
   return { state: pr.state, repo, number, title: String(pr.title || ''), head: pr.headRefName, base: pr.baseRefName, keys: extractKeys([pr.title, pr.headRefName]) };
 }
 
-const oneLine = (t) => (t.replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE));
+const oneLine = (t, max = MAX_TITLE) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
 export function diff(prev, next) {
   if (next.state === prev?.state) return [];
   const pr = `${next.repo}#${next.number}`;
   if (next.state === 'MERGED') {
-    return [{ summary: `MERGED ${pr} into ${next.base}: "${oneLine(next.title)}" (branch ${next.head}); tracker keys: ${next.keys.join(', ') || 'none'}` }];
+    // Keys come first and everything after is clipped, so the digest's own length cap can never cut the keys off; the title is JSON-quoted so a quote in it cannot fake a field.
+    return [{ summary: `MERGED ${pr}; tracker keys: ${next.keys.join(', ') || 'none'}; base ${oneLine(next.base, 60)}; branch ${oneLine(next.head, 80)}; title ${JSON.stringify(oneLine(next.title))}` }];
   }
   if (next.state === 'CLOSED') return [{ summary: `CLOSED without merging ${pr}`, actionable: false }];
   return [];

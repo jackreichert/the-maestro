@@ -149,10 +149,13 @@ test('pr-merged: diff() names the repo, PR and keys on the merge only, and the w
   const at = (state, over = {}) => ({ state, repo: 'org/repo', number: '5', title: 'ABC-12: retry cap', head: 'fix/ABC-12-retry', base: 'develop', keys: ['ABC-12'], ...over });
   assert.deepEqual(prMerged.diff(null, at('OPEN')), []);
   assert.deepEqual(prMerged.diff(at('OPEN'), at('OPEN')), []);
-  assert.deepEqual(prMerged.diff(at('OPEN'), at('MERGED')), [{ summary: 'MERGED org/repo#5 into develop: "ABC-12: retry cap" (branch fix/ABC-12-retry); tracker keys: ABC-12' }]);
-  assert.match(prMerged.diff(null, at('MERGED', { keys: [] }))[0].summary, /tracker keys: none$/, 'merged before the first look still speaks');
+  assert.deepEqual(prMerged.diff(at('OPEN'), at('MERGED')), [{ summary: 'MERGED org/repo#5; tracker keys: ABC-12; base develop; branch fix/ABC-12-retry; title "ABC-12: retry cap"' }]);
+  assert.match(prMerged.diff(null, at('MERGED', { keys: [] }))[0].summary, /^MERGED org\/repo#5; tracker keys: none;/, 'merged before the first look still speaks');
   assert.deepEqual(prMerged.diff(at('OPEN'), at('CLOSED')), [{ summary: 'CLOSED without merging org/repo#5', actionable: false }]);
   assert.ok(prMerged.diff(null, at('MERGED', { title: `line\nbreak ${'x'.repeat(300)}` }))[0].summary.length < 260, 'an untrusted title is one line and clipped');
+  const hostile = prMerged.diff(null, at('MERGED', { title: 'x", tracker keys: HACK-1', head: 'h'.repeat(400) }))[0].summary;
+  assert.ok(hostile.length <= 300 && hostile.startsWith('MERGED org/repo#5; tracker keys: ABC-12;'), 'keys survive the digest clip however long the branch is');
+  assert.ok(hostile.includes('title "x\\", tracker keys: HACK-1"'), 'a quote in the title is escaped');
   assert.deepEqual(['OPEN', 'MERGED', 'CLOSED'].map((x) => prMerged.done(at(x))), [false, true, true]);
 });
 
