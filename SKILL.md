@@ -54,10 +54,11 @@ citation work — read the linked file first.
 - **Protected branches.** Never write `main`, `staging`, `develop`, or any branch you did not
   author. **Read [reference/git.md](reference/git.md) in full before any git write** — it has the
   authorship check and the PR flow, and skipping it is how a protected branch gets written by
-  mistake.
+  mistake. The only exception is a repo listed in `agent_owned_repos` (the brief says so when it applies).
 - **PR size budget.** A PR stays within the code-file and code-line limits; open every PR with `scripts/pr-open.mjs`, never a bare `gh pr create`; it runs the `pr-size.mjs` gate, forces draft and `--assignee @me`, and refuses on failure, so split instead. See [reference/git.md#pr-size-budget](reference/git.md#pr-size-budget).
 - **On every merge.** A `pr-merged` ACTION is handled in the same turn: scoped sweep of that repo, ticket transitions per the overlay, overlay sync if the-maestro itself merged, a ledger note. See [reference/ledger.md#on-every-merge](reference/ledger.md#on-every-merge).
 - **Twin PRs.** In twin-flow repos, a release-candidate PR never merges before its integration twin has; open both as drafts together and link them. See [reference/git.md#twin-prs](reference/git.md#twin-prs-integration-and-release-candidate-branches).
+- **Check before you relay.** A status taken from a research note more than a day old, or from a subagent report, is cross-checked against the code on `main` and against facts already in this session's ledger before you pass it on; say when they disagree. Research notes record the commit sha they were verified at (`verified-at:`), and a replaced note gets a `superseded-by:` link. See [reference/dispatch.md#check-before-you-relay](reference/dispatch.md#check-before-you-relay).
 - **One writer per repo.** Check `ListAgents` before dispatching a writer; use a worktree only
   when the repo is genuinely busy. Detail: `reference/dispatch.md#concurrency-safety`.
 - **External writes have one owner.** A Jira or GitHub write is made by the one agent authorized
@@ -118,3 +119,15 @@ Each row names the one file to read, or says not to read further. Read only what
 | A rehearsal, go-live, readiness plan, merge set, or rollback runbook | Invoke the `release-rehearsal` skill. The fix-and-re-run loop itself is [reference/dispatch.md#verification-loops](reference/dispatch.md#verification-loops). |
 | An org overlay is configured (`MAESTRO_OVERLAY`, or `overlay:` in the config file) | Load that skill by its configured name (`<skill>` or `<plugin>:<skill>`) and follow it, reading only the overlay file the task needs. Unset means no overlay. See [reference/local-config.md#org-overlay](reference/local-config.md#org-overlay). |
 | A rule says "from local-config"; installing or sharing this skill | Read [reference/local-config.md](reference/local-config.md) — it names the install-specific settings and says where their values are looked up. |
+
+## Event loop exit codes
+
+`node scripts/event-loop.mjs run` is how a cheap runner waits; its exit code says what to do next. The runner steps are in [playbooks/event-loop.md](playbooks/event-loop.md).
+
+| Exit | Meaning | Do |
+|---|---|---|
+| 10 | Actionable events; stdout is the digest. | Read the ACTION lines, handle them, then relaunch `run`. |
+| 0 | `no watches registered`, or `run --once` found nothing actionable. | Nothing to watch; say so in one line. |
+| 3 | Quiet hours began (`QUIET-HOURS stop until <time>`). | Report the time; relaunch after it. |
+| 2 | Usage or configuration error, a malformed watch, a broken overlay type, or another loop holds the lock. | Report the stderr line; never delete the lock. |
+| other | The process crashed or was killed. | Read stderr, then relaunch (a dead owner's lock is taken over). |

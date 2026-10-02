@@ -5,12 +5,13 @@
  *
  * The values sit under "Standing brief block, filled" in the user config file or the org overlay's
  * config.md (see reference/local-config.md), one bullet per slot:  - `<slot>` → value
+ * With `scripts_dir` set it appends the scripts shelf line; with `agent_owned_repos` set, the agent-owned repos line.
  * Exits 1, printing nothing to stdout, if a slot has no value or any other `<…>` is left in the text.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { userPath, overlayPath, SCRIPTS_SHELF_DIR } from './local-config.mjs';
+import { userPath, overlayPath, AGENT_OWNED_REPOS, SCRIPTS_SHELF_DIR } from './local-config.mjs';
 
 /** The scripts dir as invoked (absolute, symlinks kept), so a symlinked install stays valid when the
  *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.mjs. */
@@ -34,6 +35,13 @@ export function shelfLine(markdown, shelfDir) {
   const after = markdown.split(/^### Scripts shelf line.*$/m)[1] || '';
   const line = (after.match(/^```text\n([\s\S]*?)^```/m) || [])[1] || '';
   return shelfDir && line ? line.split('<scripts_dir>').join(shelfDir) : '';
+}
+
+/** The agent-owned repos line (first ```text fence under its heading) with `<agent_owned_repos>` filled; empty when none are configured. */
+export function ownedReposLine(markdown, repos) {
+  const after = markdown.split(/^### Agent-owned repos line.*$/m)[1] || '';
+  const line = (after.match(/^```text\n([\s\S]*?)^```/m) || [])[1] || '';
+  return repos.length && line ? line.split('<agent_owned_repos>').join(repos.join(', ')) : '';
 }
 
 /** Reads { '<slot>': value } from the "Standing brief block, filled" section of a config file. */
@@ -72,7 +80,7 @@ function main() {
     console.error(`brief-block: unfilled ${problems.join(', ')}. Set them under "Standing brief block, filled" (reference/local-config.md).`);
     process.exit(1);
   }
-  process.stdout.write(text + shelfLine(markdown, SCRIPTS_SHELF_DIR));
+  process.stdout.write(text + shelfLine(markdown, SCRIPTS_SHELF_DIR) + ownedReposLine(markdown, AGENT_OWNED_REPOS));
 }
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };

@@ -90,7 +90,7 @@ Run every open PR through these, in order. A PR can only land in the first bucke
 4. **Ready for review, no human reviewer requested.** Not draft, no request for a `User` — only a
    `Team`, only a `Bot`, some mix of the two, or nothing at all. Flag these explicitly: nobody is
    going to pick them up without a nudge.
-5. **Approved and ready to merge.** `reviewDecision: APPROVED`, no unresolved threads.
+5. **Approved and ready to merge.** `reviewDecision: APPROVED`, not a draft, zero unresolved review threads, and GitHub's `mergeable` is `MERGEABLE`. `node scripts/prs-snapshot.mjs --ready` computes this from the board query (`reviewThreads.isResolved` and `mergeable`) and lists every approved PR that is *not* ready with the reason (open threads, merge conflict, mergeable state unknown, more than 100 threads, blocked on a twin), so a PR with an open thread or a conflict is never called ready. After a merge it re-asks `mergeable` for the open PRs in the same repo until two known answers agree, because GitHub serves a cached answer from before the merge and UNKNOWN until asked again; one that never settles stays UNKNOWN and is not ready. `prs-snapshot.mjs ready <file>` is offline, states the file's age and is not a merge gate. Twin-flow repos: a PR into `staging` is held while an open PR with the same head branch targets another base.
 6. **Changes requested, no open threads.** `reviewDecision: CHANGES_REQUESTED` but the threads that
    caused it are already resolved — usually means a re-review is overdue, not that work remains.
 7. **Stale.** `updatedAt` more than 30 days ago. Nudge-or-close candidates — surface them, don't
