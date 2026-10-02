@@ -119,3 +119,15 @@ Each row names the one file to read, or says not to read further. Read only what
 | A rehearsal, go-live, readiness plan, merge set, or rollback runbook | Invoke the `release-rehearsal` skill. The fix-and-re-run loop itself is [reference/dispatch.md#verification-loops](reference/dispatch.md#verification-loops). |
 | An org overlay is configured (`MAESTRO_OVERLAY`, or `overlay:` in the config file) | Load that skill by its configured name (`<skill>` or `<plugin>:<skill>`) and follow it, reading only the overlay file the task needs. Unset means no overlay. See [reference/local-config.md#org-overlay](reference/local-config.md#org-overlay). |
 | A rule says "from local-config"; installing or sharing this skill | Read [reference/local-config.md](reference/local-config.md) — it names the install-specific settings and says where their values are looked up. |
+
+## Event loop exit codes
+
+`node scripts/event-loop.mjs run` is how a cheap runner waits; its exit code says what to do next. The runner steps are in [playbooks/event-loop.md](playbooks/event-loop.md).
+
+| Exit | Meaning | Do |
+|---|---|---|
+| 10 | Actionable events; stdout is the digest. | Read the ACTION lines, handle them, then relaunch `run`. |
+| 0 | `no watches registered`, or `run --once` found nothing actionable. | Nothing to watch; say so in one line. |
+| 3 | Quiet hours began (`QUIET-HOURS stop until <time>`). | Report the time; relaunch after it. |
+| 2 | Usage or configuration error, a malformed watch, a broken overlay type, or another loop holds the lock. | Report the stderr line; never delete the lock. |
+| other | The process crashed or was killed. | Read stderr, then relaunch (a dead owner's lock is taken over). |

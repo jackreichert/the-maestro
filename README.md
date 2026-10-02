@@ -318,6 +318,16 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
 | `run [--once] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error |
 
+**Exit codes of `run`.** The runner wakes the orchestrator only on 10.
+
+| Exit | Meaning | Do |
+|---|---|---|
+| 10 | Actionable events; stdout is the digest | Read the ACTION lines, handle them, then relaunch `run` |
+| 0 | `no watches registered`, or `run --once` found nothing actionable | Nothing to watch |
+| 3 | Quiet hours began (`QUIET-HOURS stop until <time>`) | Relaunch after the time given |
+| 2 | Usage or configuration error, a malformed watch, a broken overlay type, or another loop holds the lock | Read the stderr line; never delete the lock |
+| other | The process crashed or was killed | Read stderr, then relaunch (a dead owner's lock is taken over) |
+
 **Types.** A type is a script (`scripts/event-types/<type>.mjs` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.mjs`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
 
 | Type | Target | Reports |
