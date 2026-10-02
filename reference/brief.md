@@ -47,7 +47,7 @@ Standing rules (hard limits):
 `brief-block.mjs` appends this line after the standing block when the install sets `scripts_dir` ([local-config](local-config.md)), with `<scripts_dir>` filled. With `scripts_dir` unset nothing is appended.
 
 ```text
-- Scripts: before writing a script, check <scripts_dir>/README.md for an existing helper. Put one-offs in <scripts_dir>/scratch/ (never /tmp) with a 3-line header: purpose; date + ledger id; inputs as env var names. No secrets and no outputs in that folder.
+- Scripts: before writing a script, check <scripts_dir>/README.md for an existing helper. Put one-offs in <scripts_dir>/scratch/ (never /tmp) with a 3-line header: purpose; date + ledger id; inputs as env var names. No secrets and no outputs in that folder. Prod-check scripts take identifiers (locations, jobs, sensors) from a known-good sibling script or the real UI or URL, never from assumption; when a lookup matches nothing they print what does exist and exit non-zero; a fixture you wrote yourself does not validate names.
 ```
 
 ### Agent-owned repos line — appended when `agent_owned_repos` is set
