@@ -8,9 +8,12 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 
-// Kinds that keep an item on the board until something closes it.
-export const OPEN_KINDS = ['wip', 'blocked', 'question', 'decision'];
-export const isOpen = (i) => !i.closedBy && OPEN_KINDS.includes(i.kind);
+// Kinds that keep an item on the board until something closes it. A `decision` is a record of
+// something already decided, so it is not open; only one written with `ask --kind decision`
+// (`pending: true`) is a decision still waiting on the user.
+export const OPEN_KINDS = ['wip', 'blocked', 'question'];
+export const isPendingDecision = (i) => i.kind === 'decision' && i.pending === true;
+export const isOpen = (i) => !i.closedBy && (OPEN_KINDS.includes(i.kind) || isPendingDecision(i));
 // Rows that are events about items, not items themselves.
 export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released'];
 
