@@ -686,6 +686,7 @@ test('concurrent claims on one repo: exactly one wins, the rest name the holder'
     for (const r of results.filter((x) => x.code !== 0)) assert.match(r.err, new RegExp(`already claimed by desk ${lock.desk},`));
     assert.equal(ledger().filter((e) => e.kind === 'claim').length, 1);
     assert.equal(ledger().find((e) => e.kind === 'claim').desk, lock.desk);
+    assert.deepEqual(readdirSync(claimsDirPath()).filter((n) => n !== 'repo-x.lock'), [], 'losers leave no temp files');
 });
 
 test('release is for the holding desk only; --force overrides; both leave a ledger row', () => {
