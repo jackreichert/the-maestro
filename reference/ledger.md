@@ -414,12 +414,16 @@ removal), `--no-worktree-sweep`, `--fast` (no sweep, no scratch review), `--verb
 printed, never fatal to the roll. Anything kept that holds work stays on the board through the handoff's
 **Cleanup candidates**.
 
+### Tracker transitions are recorded
+
+A done item that carries a tracker key (any match of `tracker_key_pattern`, in its text, its `--ticket` field or its closing row) is a promise that the ticket moved. The ledger cannot see the tracker, so the move is recorded here: `journal.mjs log "moved ABC-1 to In Staging" --transitioned ABC-1` appends a note whose `transitioned` field lists the keys (a value that is not a key is refused). `journal.mjs tickets --pending [--since D] [--json]` lists the keys of done items, finished since `D` (default 14 days), that no row has recorded; `prime` prints a one-line count and `triage` carries a checklist line, both warnings only. A key is cleared by any row that lists it, at any date, so one note can clear several tickets; a key reused for later work stays cleared. Keys are found by pattern in free text, so the generic default can also match things like `UTF-8`; an overlay narrows `tracker_key_pattern` to its own project to avoid that.
+
 ### On every merge
 
 When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way), the orchestrator does all four of these in the same turn, not at end of day. The `pr-merged` ACTION line already names the repo and PR and the tracker keys found in the title and branch ([playbooks/event-types/pr-merged.md](../playbooks/event-types/pr-merged.md)).
 
 1. **Scoped sweep.** `node scripts/branch-sweep.mjs --apply-worktrees --container <container_root> --repo <repo>`. It touches only that repo, and the same guards decide: a worktree that is not idle, is claimed or has uncommitted work stays and is listed.
-2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means). A merge with no key is worth a line saying so.
+2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means), then record it: `journal.mjs log "moved <KEY> to <status>" --transitioned <KEY>[,<KEY>]`. A merge with no key is worth a line saying so.
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch with the overlay's sync script.
 4. **Ledger.** Log the merge as a note carrying the repo and PR, so the board and the standup show that it landed.
 
