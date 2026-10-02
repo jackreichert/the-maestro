@@ -90,6 +90,31 @@ node scripts/event-loop.mjs digest [--peek]
 - **Where it lives.** `event_dir` in local-config (default `<ledger_root>/Events`): `watches.jsonl`, `state.json`, `digest.jsonl`.
 - **Cost.** One loop and one runner replace N watchers, so the orchestrator wakes once per actionable event. It is tracked as a cost experiment; see [cost/budget.md](cost/budget.md#one-event-loop-instead-of-n-watchers).
 
+## The scripts shelf
+
+Agents write throwaway scripts all day, and a script written into `/tmp` is written again tomorrow. An optional shelf gives them one place to look first and one place to leave work. It is off until you set `scripts_dir` in the [config file](reference/local-config.md) (or `MAESTRO_SCRIPTS_DIR`) to a folder you keep, laid out as:
+
+```text
+<scripts_dir>/
+  README.md    index of helpers: name, what it does, an example call
+  scratch/     one-offs
+  helpers/     reusable, documented scripts (symlink the ones you want on PATH)
+```
+
+With it set, `node scripts/brief-block.mjs` appends a line to the standing brief: check `<scripts_dir>/README.md` before writing a script; put one-offs in `<scripts_dir>/scratch/`, never `/tmp`, with a 3-line header (purpose; date + ledger id; inputs as env var names); no secrets and no outputs in that folder.
+
+**The ladder.** A script starts in `scratch/`. When it keeps coming back it is promoted to `helpers/`: it answers `--help` by printing usage and exiting 0 without doing work, and it is idempotent and read-only unless its name or flags say otherwise. A helper that a cheap model should be able to run gets a playbook in [playbooks/](playbooks/), such as [playbooks/wait-for-pr.md](playbooks/wait-for-pr.md), which spells out the steps, the exit codes, and what to report.
+
+**The roll proposal.** `journal.mjs roll` (and `journal.mjs scratch` on its own) lists every file in `scratch/` with its idle days (since last modified), how many ledger rows name it, the purpose line from its header, and a proposal:
+
+| Proposal | When |
+|---|---|
+| `promote` | named in at least 2 ledger rows and idle for at least 3 days |
+| `delete-candidate` | idle for more than 14 days |
+| `keep` | anything else |
+
+Reuse beats staleness: a script the ledger keeps naming is proposed for promotion however old it is. The thresholds are constants in `scripts/lib/scratch.mjs`. It only proposes: it never moves, edits or deletes a file, and you decide.
+
 ## Requirements
 
 - Node.js 22 or newer. Nothing is installed: the scripts use only `node:` built-ins. `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5 (the tests ran on Node 24).
