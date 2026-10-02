@@ -141,15 +141,18 @@ node $J unarchive Launch "${M[@]}"
 
 ## The footer lines
 
-`status --footer` prints the Ledger lines of the reply footer and nothing else, so the footer is never typed from memory:
+`status --footer` prints the Ledger lines and the Session line of the reply footer, so those two are never typed from memory:
 
 ```
 **Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you
 **Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked
 **Ledger (other):** 0 done today · 1 in flight · 0 awaiting you
+**Session:** 86 turns (48% of 180 roll) · 129k read/turn
 ```
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
+
+The Session line comes from `token-metrics.mjs`: the most recently modified transcript in `projects_dir`, its turn count against `roll_turns` (default 180) and its mean cache-read per turn. At 100% of `roll_turns` or at `roll_read_per_turn` (default 350000) it ends `· roll now`. With no transcript in that directory it prints `**Session:** unavailable (...)` and does not vanish. An unset `projects_dir` falls back to the transcript directory of the working directory the script runs from, which is usually not the orchestrator's; `token-metrics.mjs` warns on stderr when the directory it resolved has no sessions.
 
 ## Per-stream views
 

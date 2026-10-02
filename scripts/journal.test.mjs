@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,11 +13,12 @@ const SCRIPT = new URL('./journal.mjs', import.meta.url).pathname;
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.mjs'];
 let vault;
 let tv;
+let projects;
 
 function run(...args) {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8',
-        env: { ...process.env, VAULT_ROOT: '' },
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -28,6 +29,7 @@ const idOf = (out) => out.trim().split(/\s+/)[1];
 beforeEach(() => {
     vault = mkdtempSync(join(tmpdir(), 'journal-test-'));
     tv = mkdtempSync(join(tmpdir(), 'journal-tickets-'));
+    projects = mkdtempSync(join(tmpdir(), 'journal-projects-'));
 });
 
 test('start without --model fails and writes nothing', () => {
@@ -389,6 +391,8 @@ test('archived items are hidden by default and shown with --include-archived; un
 
 // ── status --footer ─────────────────────────────────────────────────────────
 
+const sessionNone = () => `**Session:** unavailable (no sessions in ${projects}; set projects_dir)`;
+
 test('status --footer prints one Ledger line per active stream, registry names, and an other line', () => {
     seedRegistry();
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
@@ -403,13 +407,27 @@ test('status --footer prints one Ledger line per active stream, registry names, 
         '**Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you',
         '**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked',
         '**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you',
+        sessionNone(),
     ]);
+});
+
+test('status --footer ends with the Session line for the newest session, and says roll now past the thresholds', () => {
+    const turn = (id, read) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    writeFileSync(join(projects, 'aaaaaaaa-old.jsonl'), `${turn('o1', 900000)}\n`);
+    writeFileSync(join(projects, 'bbbbbbbb-new.jsonl'), `${[1, 2, 3, 4].map((n) => turn(`m${n}`, 100000)).join('\n')}\n`);
+    utimesSync(join(projects, 'aaaaaaaa-old.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
+    const line = (extra = {}) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, ...extra },
+    }).stdout.trim().split('\n').pop();
+    assert.equal(line(), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn');
+    assert.equal(line({ MAESTRO_ROLL_TURNS: '4' }), '**Session:** 4 turns (100% of 4 roll) · 100k read/turn · roll now');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '100000' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll now');
 });
 
 test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
     run('start', 'plain', ...MARK);
     const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
-    assert.equal(run('status', '--footer').out.trim(), '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');
+    assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Ledger:** 0 done today · 1 in flight · 0 awaiting you', sessionNone()]);
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
 });
 
