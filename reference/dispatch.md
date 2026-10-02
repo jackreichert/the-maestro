@@ -433,6 +433,17 @@ Rules:
   have not yet relayed belongs in the body, not compressed into the footer.
 - Keep it to one line per agent. This is a status bar, not a report.
 
+## Waiting on an outside event
+
+When work depends on something outside the session (a PR's CI, a GitHub Actions run, review activity,
+new messages), do not write a one-off watcher and do not make an agent poll. Register a watch with
+`node scripts/event-loop.mjs add --id <id> --type <type> --target <target> --report "<what you want back>"`.
+One loop polls every registered watch, and a cheap runner follows
+[playbooks/event-loop.md](../playbooks/event-loop.md) and wakes you only for an actionable event, so
+waiting costs one wake per event, not one per watcher. The event types and what each reports are in
+`playbooks/event-types/`; a new kind of wait is a new type (script, playbook, one index line), not a new
+watcher. Log the runner like any other agent (`journal.mjs start`).
+
 ## Session hygiene
 
 When to roll to a fresh session, the measured cost curve behind the ~200-turn threshold, and what
@@ -444,6 +455,8 @@ long, and at EOD.
 
 - An agent using `run_in_background`, a watcher, or Monitor to wait. Each completion wakes the
   orchestrator for a full-context turn. Foreground loops only.
+- Writing a one-off watcher script for a PR, a CI run or an inbox. Register a watch instead, see
+  [Waiting on an outside event](#waiting-on-an-outside-event).
 - A report longer than ~20 lines, or raw JSON/logs pasted into one. It stays in context for good.
 - Restating the standing rules in prose instead of pasting the block once.
 - Grepping at the prompt instead of dispatching a scout. Every tool call you make is a turn the user
