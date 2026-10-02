@@ -181,6 +181,9 @@ test('branch sweep settings: defaults, file values, environment wins, bad idle f
     assert.equal(d.SWEEP_MERGE_TARGETS, '(unset)');
     assert.equal(d.SWEEP_IDLE_MINUTES, '60');
     assert.equal(d.SWEEP_BUDGET_SECONDS, '300');
+    assert.equal(d.TRACKER_KEY_PATTERN, '\\b[A-Z][A-Z0-9]+-\\d+\\b');
+    assert.equal(show({ MAESTRO_TRACKER_KEY_PATTERN: '\\bAH-\\d+\\b' }).TRACKER_KEY_PATTERN, '\\bAH-\\d+\\b');
+    assert.equal(show({ MAESTRO_TRACKER_KEY_PATTERN: '(' }).TRACKER_KEY_PATTERN, '\\b[A-Z][A-Z0-9]+-\\d+\\b', 'an invalid pattern falls back');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('git_emails: a@example.com, b@example.com\nprotected_branches: main, release/*, backmerge/*\nsweep_merge_targets: repo_a=develop|staging, repo_b=main\nsweep_idle_minutes: 15\nsweep_budget_seconds: 90'));
     const f = show();
     assert.equal(f.GIT_EMAILS, 'a@example.com, b@example.com');

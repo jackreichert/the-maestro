@@ -10,6 +10,7 @@ import { BUILTIN_TYPES as TYPES, loadTypes } from './event-types/index.mjs';
 import * as ghRun from './event-types/gh-run.mjs';
 import * as inbox from './event-types/inbox.mjs';
 import * as prChecks from './event-types/pr-checks.mjs';
+import * as prMerged from './event-types/pr-merged.mjs';
 import * as prReview from './event-types/pr-review.mjs';
 import * as reminder from './event-types/reminder.mjs';
 import { installGhStub, prNode } from './lib/gh-stub.mjs';
@@ -127,6 +128,35 @@ test('pr-checks: done_when defaults to settled; passing waits for green', () => 
   assert.equal(prChecks.done(failedSettled, { done_when: 'passing' }), false);
   assert.equal(prChecks.done(state([['a', 'pass']]), { done_when: 'passing' }), true);
   assert.equal(prChecks.done(state([['a', 'pending']]), {}), false);
+});
+
+// pr-merged
+const prView = (o) => ({ run: () => ok(JSON.stringify({ state: 'OPEN', title: 'fix: retry cap', headRefName: 'fix/ABC-12-retry', baseRefName: 'develop', ...o })) });
+
+test('pr-merged: check() reads the PR and finds tracker keys in the title and branch with the default and a configured pattern', () => {
+  const seen = [];
+  const run = (cmd, args) => { seen.push([cmd, ...args]); return prView({ title: 'ABC-12 and XYZ-7: retry cap' }).run(); };
+  const s = prMerged.check('org/repo#5', { run });
+  assert.deepEqual(seen[0], ['gh', 'pr', 'view', '5', '--repo', 'org/repo', '--json', 'state,title,headRefName,baseRefName']);
+  assert.deepEqual([s.repo, s.number, s.keys], ['org/repo', '5', ['ABC-12', 'XYZ-7']], 'a key in both title and branch is listed once');
+  assert.deepEqual(prMerged.extractKeys(['ABC-12 XYZ-7', 'feat/XYZ-7-x'], '\\bXYZ-\\d+\\b'), ['XYZ-7'], 'the overlay narrows the pattern');
+  assert.deepEqual(prMerged.extractKeys(['no keys here', 'lowercase-12', undefined]), []);
+  assert.throws(() => prMerged.check('org/repo#5', { run: () => ({ status: 1, stdout: '', stderr: 'gh: not found\nmore' }) }), /gh pr view failed: gh: not found/);
+  assert.throws(() => prMerged.check('nonsense', { run }), /owner\/repo#123/);
+});
+
+test('pr-merged: diff() names the repo, PR and keys on the merge only, and the watch is done when merged or closed', () => {
+  const at = (state, over = {}) => ({ state, repo: 'org/repo', number: '5', title: 'ABC-12: retry cap', head: 'fix/ABC-12-retry', base: 'develop', keys: ['ABC-12'], ...over });
+  assert.deepEqual(prMerged.diff(null, at('OPEN')), []);
+  assert.deepEqual(prMerged.diff(at('OPEN'), at('OPEN')), []);
+  assert.deepEqual(prMerged.diff(at('OPEN'), at('MERGED')), [{ summary: 'MERGED org/repo#5; tracker keys: ABC-12; base develop; branch fix/ABC-12-retry; title "ABC-12: retry cap"' }]);
+  assert.match(prMerged.diff(null, at('MERGED', { keys: [] }))[0].summary, /^MERGED org\/repo#5; tracker keys: none;/, 'merged before the first look still speaks');
+  assert.deepEqual(prMerged.diff(at('OPEN'), at('CLOSED')), [{ summary: 'CLOSED without merging org/repo#5', actionable: false }]);
+  assert.ok(prMerged.diff(null, at('MERGED', { title: `line\nbreak ${'x'.repeat(300)}` }))[0].summary.length < 260, 'an untrusted title is one line and clipped');
+  const hostile = prMerged.diff(null, at('MERGED', { title: 'x", tracker keys: HACK-1', head: 'h'.repeat(400) }))[0].summary;
+  assert.ok(hostile.length <= 300 && hostile.startsWith('MERGED org/repo#5; tracker keys: ABC-12;'), 'keys survive the digest clip however long the branch is');
+  assert.ok(hostile.includes('title "x\\", tracker keys: HACK-1"'), 'a quote in the title is escaped');
+  assert.deepEqual(['OPEN', 'MERGED', 'CLOSED'].map((x) => prMerged.done(at(x))), [false, true, true]);
 });
 
 // gh-run
