@@ -34,9 +34,11 @@
  * - Report size is approximate and usage-only: the growth in context between the
  *   assistant turn before a handback and the one after it, minus the earlier
  *   turn's own output. It includes any hook output that arrived with it.
- * - Model mix: per model family (opus/sonnet/haiku/other), cache-read tokens and input-equivalent units
- *   (fresh 1, cache write 1.25, cache read 0.1, output 5), over orchestrator and subagent turns. The priced mix
- *   multiplies units by `model_price_weights`; with none set only the token mix is shown. No prices are built in.
+ * - Model mix: per model family (opus/sonnet/haiku/other), cache-read tokens over orchestrator and subagent turns.
+ * - Estimated dollars: tokens by kind (fresh, 5m cache write, 1h cache write, cache read, output) per family, priced
+ *   from `model_prices` (dollars per MTok), reported for the orchestrator and for subagents, by model and by category
+ *   (read / write / output / input). A write counts as 5m unless usage splits it (cache_creation). The priced mix is each
+ *   family's share of those dollars. With no `model_prices` only the token mix is shown; no prices are built in.
  * - Turns since compact: the orchestrator turn count since the last compaction marker (compact_boundary or an
  *   isCompactSummary flag); a day keeps its longest run. A small agent finished in under 10 turns.
  * - Targets (`cost_targets`) turn the cost metrics into PASS/MISS in the day summary and --compare.
@@ -44,12 +46,14 @@
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, COST_TARGETS, MODEL_PRICE_WEIGHTS } from './local-config.mjs';
+import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, COST_TARGETS, MODEL_PRICES } from './local-config.mjs';
 
+const FAMILIES = ['opus', 'sonnet', 'haiku'];
 const TABLE_HEADER = [
     'Date', 'Sessions', 'Turns', 'Prompts', 'Wakes (notif/handback)', 'Output', 'Cache write',
     'Cache read', 'Fresh', 'Read/turn', 'Subagents', 'Sub turns', 'Sub tokens by model', 'Avg report',
-    'Sub growth/turn', 'Read by model', 'Units by model', 'Max turns since compact', 'Small agents', 'Opus subagents', 'Opus sub tokens',
+    'Sub growth/turn', 'Read by model', 'Orchestrator tokens by model', 'Max turns since compact', 'Small agents', 'Opus subagents', 'Opus sub tokens',
+    'Subagent tokens by model',
 ];
 
 // --- the only function allowed to look at a parsed transcript line ----------
@@ -57,6 +61,8 @@ export function pick(o) {
     const msg = o.message && typeof o.message === 'object' ? o.message : {};
     const u = msg.usage && typeof msg.usage === 'object' ? msg.usage : null;
     const num = (v) => (Number.isFinite(v) ? v : 0);
+    // The 5m/1h split of cache writes: two numeric fields of `cache_creation`, absent on older transcripts.
+    const cc = u && u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : {};
     return {
         type: typeof o.type === 'string' ? o.type : '',
         subtype: typeof o.subtype === 'string' ? o.subtype : '',
@@ -72,6 +78,8 @@ export function pick(o) {
         usage: u && {
             fresh: num(u.input_tokens),
             write: num(u.cache_creation_input_tokens),
+            write5m: num(cc.ephemeral_5m_input_tokens),
+            write1h: num(cc.ephemeral_1h_input_tokens),
             read: num(u.cache_read_input_tokens),
             out: num(u.output_tokens),
         },
@@ -168,7 +176,7 @@ export function collect(projectsDir) {
             for (const t of sub.turns) {
                 const st = bucket(t.date);
                 st.subTurns += 1;
-                addMix(st, t);
+                addMix(st, t, 'sub');
                 const fam = family(t.model);
                 st.subByModel[fam] = (st.subByModel[fam] || 0) + t.fresh + t.write + t.read + t.out;
                 if (t.growth !== undefined) { st.subGrowth += t.growth; st.subGrowthN += 1; }
@@ -259,18 +267,26 @@ const emptyStats = () => ({
     turns: 0, prompts: 0, wakesNotif: 0, wakesHandback: 0, peerMsgs: 0,
     out: 0, write: 0, read: 0, fresh: 0,
     subagents: 0, subTurns: 0, subWakes: 0, subByModel: {}, subGrowth: 0, subGrowthN: 0, reportTokens: 0, reportCount: 0,
-    mix: {}, sinceCompact: 0, subSmall: 0, subOpus: 0,
+    mix: {}, orch: {}, sub: {}, sinceCompact: 0, subSmall: 0, subOpus: 0,
 });
 function addTurn(s, t) {
     s.turns += 1; s.out += t.out; s.write += t.write; s.read += t.read; s.fresh += t.fresh;
     s.sinceCompact = Math.max(s.sinceCompact, t.since);
-    addMix(s, t);
+    addMix(s, t, 'orch');
 }
-/** Per model family, cache-read tokens and input-equivalent units (see UNIT_WEIGHTS), orchestrator and subagent turns alike. */
-function addMix(s, t) {
-    const m = s.mix[family(t.model)] || (s.mix[family(t.model)] = { read: 0, units: 0 });
+const zeroKinds = () => ({ fresh: 0, w5: 0, w1: 0, read: 0, out: 0 });
+const addKinds = (a, b) => { for (const k of Object.keys(a)) a[k] += b[k]; };
+/** A turn's tokens by price kind. A write is 5m unless usage split it into 5m and 1h. */
+export function kindsOf(t) {
+    const split = t.write5m + t.write1h > 0;
+    return { fresh: t.fresh, w5: split ? t.write5m : t.write, w1: split ? t.write1h : 0, read: t.read, out: t.out };
+}
+/** Per model family, cache-read tokens (the token mix) and tokens by price kind for `who`: `orch` (orchestrator) or `sub` (subagents). */
+function addMix(s, t, who) {
+    const f = family(t.model);
+    const m = s.mix[f] || (s.mix[f] = { read: 0 });
     m.read += t.read;
-    m.units += t.fresh * UNIT_WEIGHTS.fresh + t.write * UNIT_WEIGHTS.write + t.read * UNIT_WEIGHTS.read + t.out * UNIT_WEIGHTS.out;
+    addKinds(s[who][f] || (s[who][f] = zeroKinds()), kindsOf(t));
 }
 function addEvent(s, e) {
     if (e.kind === 'human') s.prompts += 1;
@@ -281,13 +297,12 @@ function addEvent(s, e) {
 function merge(a, b) {
     for (const [k, v] of Object.entries(b)) {
         if (k === 'subByModel') for (const [m, n] of Object.entries(v)) a.subByModel[m] = (a.subByModel[m] || 0) + n;
-        else if (k === 'mix') for (const [m, x] of Object.entries(v)) { const c = a.mix[m] || (a.mix[m] = { read: 0, units: 0 }); c.read += x.read; c.units += x.units; }
+        else if (k === 'mix') for (const [m, x] of Object.entries(v)) { const c = a.mix[m] || (a.mix[m] = { read: 0 }); c.read += x.read; }
+        else if (k === 'orch' || k === 'sub') for (const [m, x] of Object.entries(v)) addKinds(a[k][m] || (a[k][m] = zeroKinds()), x);
         else if (k === 'sinceCompact') a[k] = Math.max(a[k] || 0, v);
         else if (typeof v === 'number') a[k] = (a[k] || 0) + v;
     }
 }
-/** Cost of each token kind relative to one fresh input token. */
-export const UNIT_WEIGHTS = { fresh: 1, write: 1.25, read: 0.1, out: 5 };
 /** A subagent that finished in fewer turns than this is "small": cheaper done inline than dispatched. */
 export const SMALL_AGENT_TURNS = 10;
 export function family(model) {
@@ -332,12 +347,60 @@ export function parseMix(text) {
     return out;
 }
 
+/**
+ * A kinds cell: `opus 1/2/3/4/5 · sonnet ...`, each family's tokens as fresh/write-5m/write-1h/read/output in whole numbers;
+ * `-` when empty. Read back by parseKinds, so a pruned day can still be priced.
+ */
+export function kindsCell(byFamily) {
+    const total = (k) => k.fresh + k.w5 + k.w1 + k.read + k.out;
+    return Object.entries(byFamily || {}).filter(([, k]) => total(k) > 0).sort((a, b) => total(b[1]) - total(a[1]))
+        .map(([f, k]) => `${f} ${[k.fresh, k.w5, k.w1, k.read, k.out].map(Math.round).join('/')}`).join(' · ') || '-';
+}
+export function parseKinds(text) {
+    const out = {};
+    for (const m of String(text || '').matchAll(/([a-z]+) (\d+)\/(\d+)\/(\d+)\/(\d+)\/(\d+)/g)) {
+        out[m[1]] = { fresh: Number(m[2]), w5: Number(m[3]), w1: Number(m[4]), read: Number(m[5]), out: Number(m[6]) };
+    }
+    return out;
+}
+
+// --- pricing ---------------------------------------------------------------------
+/** Prices apply to opus, sonnet and haiku by name; any other family (fable included) takes the optional `other` row. */
+const priceKey = (f) => (FAMILIES.includes(f) ? f : 'other');
+/** Dollars for `k` tokens at `p` (dollars per MTok), split into the four report categories. */
+export function dollars(k, p) {
+    const d = { read: (k.read * p.cache_read) / 1e6, write: (k.w5 * p.cache_write_5m + k.w1 * p.cache_write_1h) / 1e6, output: (k.out * p.output) / 1e6, input: (k.fresh * p.input) / 1e6 };
+    return { ...d, total: d.read + d.write + d.output + d.input };
+}
+/** Dollars per family for { family: kinds }; a family with no price row (an `other` model with no `other` price) is left out. */
+export function priceFamilies(byFamily, prices) {
+    return Object.fromEntries(Object.entries(byFamily || {}).filter(([f]) => prices && prices[priceKey(f)]).map(([f, k]) => [f, dollars(k, prices[priceKey(f)])]));
+}
+/**
+ * What `byFamily` ({ family: kinds }) would cost with every priced token on Sonnet: { actual, onSonnet } in dollars.
+ * The same tokens repriced, so it ignores any difference in how many tokens another model would need or how good its work is.
+ */
+export function sonnetWhatIf(byFamily, prices) {
+    const priced = Object.entries(byFamily || {}).filter(([f]) => prices[priceKey(f)]);
+    return {
+        actual: priced.reduce((n, [f, k]) => n + dollars(k, prices[priceKey(f)]).total, 0),
+        onSonnet: priced.reduce((n, [, k]) => n + dollars(k, prices.sonnet).total, 0),
+    };
+}
+const sumDollars = (list) => list.reduce((a, d) => ({ read: a.read + d.read, write: a.write + d.write, output: a.output + d.output, input: a.input + d.input, total: a.total + d.total }), { read: 0, write: 0, output: 0, input: 0, total: 0 });
+/** Each family's share of the dollars in `byFamily` (priceFamilies output), as fractions; NaN when there are none. */
+export function pricedShares(byFamily) {
+    const total = Object.values(byFamily).reduce((n, d) => n + d.total, 0);
+    return Object.fromEntries(FAMILIES.map((f) => [f, total > 0 ? (byFamily[f] ? byFamily[f].total : 0) / total : NaN]));
+}
+const joinKinds = (a, b) => { const out = {}; for (const m of [a, b]) for (const [f, k] of Object.entries(m)) addKinds(out[f] || (out[f] = zeroKinds()), k); return out; };
+
 export function toRow(s) {
     return [
         s.date, s.sessions, s.turns, s.prompts, `${s.wakesNotif + s.wakesHandback} (${s.wakesNotif}/${s.wakesHandback})`,
         compact(s.out), compact(s.write), compact(s.read), compact(s.fresh), compact(readPerTurn(s)),
         s.subagents, s.subTurns, byModel(s), compact(avgReport(s)), compact(subGrowth(s)),
-        mixCell(s.mix, 'read'), mixCell(s.mix, 'units'), s.sinceCompact, s.subSmall, s.subOpus, compact(s.subByModel.opus || 0),
+        mixCell(s.mix, 'read'), kindsCell(s.orch), s.sinceCompact, s.subSmall, s.subOpus, compact(s.subByModel.opus || 0), kindsCell(s.sub),
     ].map(String);
 }
 
@@ -350,11 +413,27 @@ function printDay(date, s) {
     console.log(`  subagent context growth ≈ ${compact(subGrowth(s))} tokens/turn (tool results + hooks)`);
     console.log(`  avg report ≈ ${compact(avgReport(s))} tokens over ${s.reportCount} handback(s)`);
     console.log(`  model mix (cache read) ${mixLine(shares(readMix(s.mix), null))}`);
-    const w = MODEL_PRICE_WEIGHTS;
-    console.log(`  model mix (priced)     ${w ? mixLine(shares(unitMix(s.mix), w)) : 'price weights unset (model_price_weights): token mix only'}`);
+    printPriced(s, MODEL_PRICES);
 }
 const readMix = (mix) => Object.fromEntries(Object.entries(mix).map(([f, v]) => [f, v.read]));
-const unitMix = (mix) => Object.fromEntries(Object.entries(mix).map(([f, v]) => [f, v.units]));
+const usd = (n) => `$${n.toFixed(2)}`;
+const categories = (d) => `read ${usd(d.read)} · write ${usd(d.write)} · output ${usd(d.output)} · input ${usd(d.input)}`;
+/** The estimated-dollars block of the day summary: orchestrator and subagents, by model and by category, then the priced mix. */
+function printPriced(s, prices) {
+    if (!prices) { console.log('  est. cost              prices unset (model_prices): token mix only'); return; }
+    const parts = { orchestrator: priceFamilies(s.orch, prices), subagents: priceFamilies(s.sub, prices) };
+    for (const [who, fams] of Object.entries(parts)) {
+        console.log(`  est. $/day ${who.padEnd(12)} ${usd(sumDollars(Object.values(fams)).total).padStart(9)}  ${categories(sumDollars(Object.values(fams)))}`);
+        for (const [f, d] of Object.entries(fams).sort((a, b) => b[1].total - a[1].total)) console.log(`    ${f.padEnd(8)} ${usd(d.total).padStart(9)}  ${categories(d)}`);
+    }
+    const w = sonnetWhatIf(s.orch, prices);
+    if (w.actual > 0) {
+        const delta = (w.onSonnet - w.actual) / w.actual;
+        console.log(`  what-if: orchestrator on Sonnet ${usd(w.onSonnet)} vs ${usd(w.actual)} actual (${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%). Same tokens repriced; ignores quality effects and any change in tokens needed.`);
+    }
+    const all = priceFamilies(joinKinds(s.orch, s.sub), prices);
+    console.log(`  model mix (priced)     ${mixLine(pricedShares(all))}`);
+}
 const mixLine = (sh) => FAMILIES.map((f) => `${f} ${fmtValue(sh[f], 'pct')}`).join(' · ');
 function printSessions(list) {
     if (!list.length) return;
@@ -399,28 +478,32 @@ export function writeTable(path, rows) {
     }
     // Rows written before a column existed are padded so every row is as wide as the header.
     const body = [...rows].sort((a, b) => a[0].localeCompare(b[0])).map(([, cells]) => `| ${TABLE_HEADER.map((h, i) => cells[i] ?? '-').join(' | ')} |`);
-    const align = TABLE_HEADER.map((h, i) => ([0, 12, 15, 16].includes(i) ? '---' : '---:')).join('|');
+    const align = TABLE_HEADER.map((h, i) => ([0, 12, 15, 16, 21].includes(i) ? '---' : '---:')).join('|');
     const table = [`| ${TABLE_HEADER.join(' | ')} |`, `|${align}|`, ...body];
     writeFileSync(path, `${[...head, ...table].join('\n')}\n`);
 }
 
 // --- comparison ------
-const FAMILIES = ['opus', 'sonnet', 'haiku'];
 /**
- * Share of each family in `mix` ({ family: amount }), as fractions. With `weights`, each amount is multiplied by its family's
- * price weight first and a family with no weight drops out of the denominator. NaN for every family when nothing is left.
+ * Share of each family in `mix` ({ family: amount }), as fractions of everything in it. NaN for every family when it is empty.
  */
-export function shares(mix, weights) {
-    // Any family that is not opus, sonnet or haiku (fable included) takes the optional `other` weight.
-    const w = (f) => (weights ? (FAMILIES.includes(f) ? weights[f] : weights.other) || 0 : 1);
-    const total = Object.entries(mix).reduce((n, [f, v]) => n + v * w(f), 0);
-    return Object.fromEntries(FAMILIES.map((f) => [f, total > 0 ? ((mix[f] || 0) * w(f)) / total : NaN]));
+export function shares(mix) {
+    const total = Object.values(mix).reduce((n, v) => n + v, 0);
+    return Object.fromEntries(FAMILIES.map((f) => [f, total > 0 ? (mix[f] || 0) / total : NaN]));
 }
 
 // Key metrics, read back from table cells so pruned days still compare.
 const cell = (i) => (r) => uncompact(r[i]);
 const ratio = (i, j) => (r) => { const d = uncompact(r[j]); return d ? uncompact(r[i]) / d : NaN; };
-const share = (col, fam, weights) => (r) => shares(parseMix(r[col]), weights)[fam];
+const share = (col, fam) => (r) => shares(parseMix(r[col]))[fam];
+// Dollar getters price a row's token cells with today's prices. Orchestrator cell 16, subagent cell 21 (a day with subagents but no cell is pre-column).
+const rowKinds = (r) => ({ orch: parseKinds(r[16]), sub: parseKinds(r[21]) });
+const rowUsd = (who, prices) => (r) => {
+    const k = rowKinds(r)[who];
+    if (!Object.keys(k).length && (who === 'orch' || uncompact(r[10]) > 0)) return NaN;
+    return sumDollars(Object.values(priceFamilies(k, prices))).total;
+};
+const pricedShare = (fam, prices) => (r) => pricedShares(priceFamilies(joinKinds(...Object.values(rowKinds(r))), prices))[fam];
 const smallRate = (r) => { const n = uncompact(r[10]); return n ? uncompact(r[18]) / n : NaN; };
 const CORE_METRICS = [
     ['Turns', cell(2)], ['Wakes', cell(4)], ['Output', cell(5)], ['Cache read', cell(7)],
@@ -428,22 +511,24 @@ const CORE_METRICS = [
     ['Avg report', cell(13)], ['Sub growth', cell(14)],
 ];
 /**
- * Every metric as [name, getter over a table row, options]. Options: cost (shown in the day summary), fmt (n, pct or ratio),
+ * Every metric as [name, getter over a table row, options]. Options: cost (shown in the day summary), fmt (n, pct, ratio or usd),
  * worse (up, down or none: which move counts as a regression), target ([config key, scale, max|min]) or trend (lower is better, no target).
- * Priced shares exist only when `weights` is set. Columns are the table's: 4 wakes, 15 read by model, 16 units by model,
- * 17 max turns since compact, 18 small agents, 19 Opus subagents, 20 Opus sub tokens.
+ * Dollar metrics exist only when `prices` is set. Columns are the table's: 4 wakes, 15 read by model, 16 orchestrator tokens by model,
+ * 17 max turns since compact, 18 small agents, 19 Opus subagents, 20 Opus sub tokens, 21 subagent tokens by model.
  */
-export function metricList(weights = MODEL_PRICE_WEIGHTS) {
+export function metricList(prices = MODEL_PRICES) {
     const pct = { cost: true, fmt: 'pct' };
     return [
         ...CORE_METRICS,
         ['Opus share (read)', share(15, 'opus'), { ...pct, target: ['opus_share_max', 0.01, 'max'] }],
         ['Sonnet share (read)', share(15, 'sonnet'), { ...pct, worse: 'none' }],
         ['Haiku share (read)', share(15, 'haiku'), { ...pct, worse: 'down', target: ['haiku_share_min', 0.01, 'min'] }],
-        ...(weights ? [
-            ['Opus share (priced)', share(16, 'opus', weights), { ...pct, target: ['opus_priced_share_max', 0.01, 'max'] }],
-            ['Sonnet share (priced)', share(16, 'sonnet', weights), { ...pct, worse: 'none' }],
-            ['Haiku share (priced)', share(16, 'haiku', weights), { ...pct, worse: 'down', target: ['haiku_priced_share_min', 0.01, 'min'] }],
+        ...(prices ? [
+            ['Opus share (priced)', pricedShare('opus', prices), { ...pct, target: ['opus_priced_share_max', 0.01, 'max'] }],
+            ['Sonnet share (priced)', pricedShare('sonnet', prices), { ...pct, worse: 'none' }],
+            ['Haiku share (priced)', pricedShare('haiku', prices), { ...pct, worse: 'none' }],
+            ['Est. $ orchestrator', rowUsd('orch', prices), { cost: true, fmt: 'usd' }],
+            ['Est. $ subagents', rowUsd('sub', prices), { cost: true, fmt: 'usd' }],
         ] : []),
         ['Wakes/prompt', ratio(4, 3), { cost: true, fmt: 'ratio', target: ['wakes_per_prompt_max', 1, 'max'] }],
         ['Max turns/compact', cell(17), { cost: true, target: ['turns_since_compact_max', 1, 'max'] }],
@@ -459,7 +544,7 @@ export function median(xs) {
     return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 }
 /**
- * Each metric for `date` against the 7 rows before it and the baseline rows. `opts.targets` and `opts.weights` default to the config.
+ * Each metric for `date` against the 7 rows before it and the baseline rows. `opts.targets` and `opts.prices` default to the config.
  * `status` is PASS or MISS against a target, '-' when there is no target or no number today.
  */
 export function compare(date, rows, baselineUntil, opts = {}) {
@@ -468,7 +553,7 @@ export function compare(date, rows, baselineUntil, opts = {}) {
     const today = rows.get(date);
     const prior7 = all.filter(([d]) => d < date).slice(-7).map(([, r]) => r);
     const base = all.filter(([d]) => d <= baselineUntil && d < date).map(([, r]) => r);
-    return metricList(opts.weights === undefined ? MODEL_PRICE_WEIGHTS : opts.weights).map(([name, val, o = {}]) => {
+    return metricList(opts.prices === undefined ? MODEL_PRICES : opts.prices).map(([name, val, o = {}]) => {
         const t = today ? val(today) : NaN;
         const m7 = median(prior7.map(val));
         const b = median(base.map(val));
@@ -488,6 +573,7 @@ export function fmtValue(n, fmt = 'n') {
     if (!Number.isFinite(n)) return '-';
     if (fmt === 'pct') return `${Math.round(n * 100)}%`;
     if (fmt === 'ratio') return n.toFixed(2);
+    if (fmt === 'usd') return usd(n);
     return compact(n);
 }
 const fmtPct = (p) => (Number.isFinite(p) ? `${p >= 0 ? '+' : ''}${Math.round(p * 100)}%` : '-');
@@ -498,7 +584,7 @@ function printMetrics(list) {
     for (const c of list) {
         console.log(`${c.name.padEnd(21)} ${fmtValue(c.today, c.fmt).padStart(8)} ${fmtValue(c.median7, c.fmt).padStart(9)} ${fmtPct(c.vs7).padStart(7)} ${fmtValue(c.baseline, c.fmt).padStart(9)} ${fmtPct(c.vsBase).padStart(7)}  ${targetText(c).padEnd(15)}  ${c.status}${c.regression ? '  REGRESSION >20%' : ''}`);
     }
-    if (!MODEL_PRICE_WEIGHTS) console.log('Price weights are unset: only the token mix is shown. Set model_price_weights (opus=1, sonnet=<ratio>, haiku=<ratio>) from your billing console.');
+    if (!MODEL_PRICES) console.log('Model prices are unset: only the token mix is shown. Set model_prices (dollars per MTok per family; the README lists the current Anthropic prices).');
     console.log('Opus subagents: each should be design, decision or review work.');
 }
 function printCompare(date, rows, baselineUntil) {
