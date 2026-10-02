@@ -220,7 +220,7 @@ merged branches behind unreviewed. `handoff` itself fills **Cleanup candidates**
 [roll cleanup](#roll-removes-stale-worktrees) would keep, each with its reason (read-only; `--container <dir>`
 picks the directory, default the current one; `--no-worktree-sweep` skips it).
 
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (generated from boxes 4 and 5: **Needs Jack**, the open questions and pending decisions, then **Paste blocks for Jack** with each block file; stale ones are marked); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (generated from boxes 4 and 5: **Needs Jack**, every open question and pending decision except paste asks, then **Paste blocks for Jack** with each block file; stale ones are marked); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
 
 `resume` runs the scriptable half of the verify-on-resume list: ledger `status`; `gh pr list --author @me --state open --json number,title,url` if `gh` is installed and `resume_gh` is not off (otherwise a `gh: unavailable` or `skipped` line, exit 0); `pgrep -f` for each `loop_patterns` entry (`ok` or `MISSING`). It then prints that **`ListAgents` must be called by the session itself**, since it is a harness tool. All settings come from local config ([local-config.md](local-config.md)), never from the script.
 
@@ -239,7 +239,7 @@ Everything open falls into one of eleven boxes. `triage` sorts them and says wha
 
 | # | Box | Rule | Action |
 |---|---|---|---|
-| 1 | Decisions / rules | a `decision` (not pending), or a question that records what the user said ("Jack rule", "Jack:", "approves") with no `?` | promote to a memory file, then `rule --ref`; closed once a ref file exists |
+| 1 | Decisions / rules | a `decision` (not pending) | promote to a memory file, then `rule --ref`; closed once a ref file exists |
 | 2 | Standing approvals | effective approval `standing` (the row, its closing row, or an `approval-tag`) | same as 1 |
 | 3 | One-off approvals | approval `one-off` | close once a ref file exists |
 | 4 | Needs Jack | a question (or `ask --kind decision`) that asks the user to choose or know something | carry; stale after 2 days |
@@ -251,7 +251,7 @@ Everything open falls into one of eleven boxes. `triage` sorts them and says wha
 | 10 | Done | `done`, `dropped` | `roll` archives |
 | 11 | Noise | any other note | archive silently |
 
-Classification is by kind plus regex, so it is a proposal you can read, not a verdict. An approval is tested before the generic "recorded rule" text rule so that boxes 2 and 3 can be reached.
+Classification is by kind plus regex, so it is a proposal you can read, not a verdict. Wording alone never makes a question a record (boxes 1 to 3 need a decision row or an explicit approval), because `--apply` closes records. An approval is tested before the generic "recorded rule" text rule so that boxes 2 and 3 can be reached.
 
 ```bash
 node $J triage [--date D] [--since D] [--json]   # read-only
@@ -262,7 +262,7 @@ node $J triage --apply [--dry-run]               # append resolved rows for boxe
 
 Blockers are what `roll --strict` refuses on: a box 1-3 item with no `--ref` that is an existing file (not promoted yet), and a box 8 finding with no ticket.
 
-`--apply` is append-only and runtime-checked: it appends `resolved` rows reading "recorded → <ref>" for box 1-3 items whose ref resolves **at that moment** to an existing file. An item with no resolvable ref is left open and counted. Closed items leave the scope, so a second run appends nothing. It writes nothing outside the ledger.
+`--apply` is append-only and runtime-checked: it appends `resolved` rows reading "recorded → <ref>" for box 1-3 items whose ref resolves **at that moment** to an existing file. An item with no resolvable ref is left open and counted. `--apply` only looks at records dated `--date` (it ignores `--since`), and dates its rows with `--date`. Closed items leave the scope, so a second run appends nothing. It writes nothing outside the ledger.
 
 ### Paste blocks
 
