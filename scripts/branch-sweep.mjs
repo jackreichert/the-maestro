@@ -581,9 +581,14 @@ function pruneMissing(path, dryRun) {
   return gone.filter((p) => !left.has(p));
 }
 
+/** True when the repo has a linked worktree (the main one does not count). A repo git cannot list is not skipped: the scan reports why. */
+function hasLinkedWorktree(path) {
+  try { return worktrees(gitIn(path)).length > 0; } catch { return true; }
+}
+
 /**
- * The worktree half of the sweep, applied: prunes entries whose directory is missing, then re-scans each repo (worktrees
- * only, after a fetch) and removes every worktree that qualifies. Never forced, never a branch. Returns
+ * The worktree half of the sweep, applied: prunes entries whose directory is missing, then re-scans each repo that has a linked worktree (worktrees
+ * only, after a fetch; a repo with none costs no fetch) and removes every worktree that qualifies. Never forced, never a branch. Returns
  * { removed: [{ repo, path, why }], pruned: [{ repo, path }], kept: [{ repo, path, reason }], notes }, where kept is every
  * worktree left in place with its reason, so uncommitted, untracked and unpushed work is listed rather than touched.
  * With `dryRun` it only reports what it would do. With `budgetSeconds`, a repo that would start after that many seconds is
@@ -596,6 +601,7 @@ export function sweepWorktrees(container, ctx, { only, dryRun = false, budgetSec
     const repo = basename(path);
     if (budgetSeconds > 0 && clock() - started > budgetSeconds * 1000) { out.skipped.push(repo); continue; }
     try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${e.message}`); }
+    if (!hasLinkedWorktree(path)) continue; // nothing to remove here: no fetch, no scan
     const scan = scanRepo(path, { ...ctx, fetch: true, worktreesOnly: true });
     out.notes.push(...scan.notes.map((n) => `${repo}: ${n}`));
     const keep = (i, reason) => out.kept.push({ repo, path: i.name, reason });
