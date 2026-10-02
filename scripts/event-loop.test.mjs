@@ -226,3 +226,22 @@ test('a crash while saving state leaves a finished watch live, so its final even
   assert.equal(readDigest(dir).length, 1);
   assert.deepEqual(listWatches(dir).map((w) => w.id), ['w1']);
 });
+
+test('quiet mode "slow" still counts as quiet: ordinary watches are skipped overnight', () => {
+  const dir = tempDir();
+  const checked = [];
+  const types = { t: { check: (target) => { checked.push(target); return {}; }, diff: () => [] } };
+  addWatch(dir, { id: 'day', type: 't', target: 'day' }, NIGHT);
+  addWatch(dir, { id: 'night', type: 't', target: 'night', notify_overnight: true }, NIGHT);
+  const out = tick(base(dir, types, { config: { ...OPEN, quietMode: 'slow' }, now: NIGHT + MIN }));
+  assert.deepEqual(checked, ['night']);
+  assert.deepEqual(out.skipped, ['day']);
+});
+
+test('pace keeps an overnight watch running through quiet weekends too', () => {
+  const dir = tempDir();
+  const SATURDAY = Date.parse('2026-10-03T12:00:00Z');
+  const config = { quietHours: 'off', quietWeekends: true, tz: 'UTC' };
+  addWatch(dir, { id: 'n', type: 't', target: 'y', notify_overnight: true }, SATURDAY);
+  assert.equal(pace({ dir, config, now: SATURDAY }).stop, undefined);
+});
