@@ -1251,3 +1251,12 @@ test('status prints no "other" heading when there are no streams, and no blocked
     assert.doesNotMatch(out, /== other ==/);
     assert.match(out, /0 done · 1 in flight · 0 awaiting you\n?$/);
 });
+
+test('rule resolves a relative ref against the cwd, and the digest leaves pending decisions out of "untagged"', () => {
+    writeFileSync(join(emptyCwd, 'rel-memory.md'), 'x');
+    assert.equal(run('rule', 'relative ref rule', '--ref', 'rel-memory.md', ...MARK).code, 0);
+    assert.equal(ledger()[0].refs[0], join(realpathSync(emptyCwd), 'rel-memory.md'));
+    run('ask', 'still open?', '--kind', 'decision', ...MARK);
+    const untagged = JSON.parse(run('approvals', '--json').out).untagged.map((u) => u.text);
+    assert.deepEqual(untagged, ['relative ref rule']);
+});
