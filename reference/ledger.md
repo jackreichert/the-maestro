@@ -51,6 +51,8 @@ crashed session cannot lose entries.
 | That work lands, or the agent reports success | `done` |
 | You hit something you cannot proceed past | `log --kind blocked` |
 | A question only the user can answer | `ask` |
+| A decision that is genuinely still pending | `ask --kind decision` (stays on the board until `resolve`d) |
+| A rule or decision the user already made, once it is saved in a memory file or DECISIONS.md | `rule "<text>" --ref <file>` (see [Rules](#rules-are-records-not-asks)) |
 | They answer it | `resolve --answer "..."` |
 | A finding worth remembering that isn't a ticket | `log` |
 | The user grants permission, standing or one-off | `log --kind decision --approval standing\|one-off` (see [Approvals](#approvals)) |
@@ -62,6 +64,18 @@ somewhere durable.
 **Do not log:** lookups, status checks, anything a ticket already owns in full. A ledger entry is a
 pointer to work; the ticket holds the detail. When both exist, pass `--ticket <id>` and let the link
 carry the weight.
+
+## Rules are records, not asks
+
+A `decision` row is a record of something already decided, so it is **not open**: it never shows as "awaiting you". Only `ask --kind decision` writes a decision that is still pending (`pending: true`); it stays on the board until `resolve`d.
+
+Record a rule or approval the user has already stated with `rule`, after saving it somewhere durable:
+
+```bash
+node $J rule "branch from staging, except arya-scraper" --ref ~/path/to/memory-file.md --model ... --used ...
+```
+
+`rule` refuses (exit 1, nothing written) unless every `--ref` is an existing file (`~/` and relative paths allowed; the row stores the absolute path), so "promoted" is checked when the row is written, not just described. It takes `--approval`, `--scope`, `--stream` and the usual flags. Plain `log --kind decision` still works for a decision with no file behind it; it is just never open. Rows written as open decisions before this change read as closed records now.
 
 ## Approvals
 
@@ -206,7 +220,7 @@ merged branches behind unreviewed. `handoff` itself fills **Cleanup candidates**
 [roll cleanup](#roll-removes-stale-worktrees) would keep, each with its reason (read-only; `--container <dir>`
 picks the directory, default the current one; `--no-worktree-sweep` skips it).
 
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (open `question` and `decision` items); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (open `question` items and pending decisions); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.mjs`. Edit it, then set `status:` past `draft`.
 
 `resume` runs the scriptable half of the verify-on-resume list: ledger `status`; `gh pr list --author @me --state open --json number,title,url` if `gh` is installed and `resume_gh` is not off (otherwise a `gh: unavailable` or `skipped` line, exit 0); `pgrep -f` for each `loop_patterns` entry (`ok` or `MISSING`). It then prints that **`ListAgents` must be called by the session itself**, since it is a harness tool. All settings come from local config ([local-config.md](local-config.md)), never from the script.
 
