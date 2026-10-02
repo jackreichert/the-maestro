@@ -214,3 +214,29 @@ test('an error mid-pagination fails the tick before save and leaves the previous
   assert.equal(r.out, '');
   assert.equal(readFileSync(state, 'utf8'), before);
 });
+
+// Copilot is requested only on drafts whose owner is in copilot_orgs; unset fails closed.
+function copilotRequests(copilotOrgs, nodes) {
+  const dir = mkdtempSync(join(tmpdir(), 'pr-watch-edit-'));
+  const editLog = join(dir, 'edits.log');
+  writeFileSync(editLog, '');
+  const env = { ...installGhStub({ pages: [nodes], editLog }), MAESTRO_COPILOT_ORGS: copilotOrgs };
+  const r = runOnce(env, tempState());
+  assert.equal(r.code, 0, r.err);
+  return readFileSync(editLog, 'utf8').trim().split('\n').filter(Boolean);
+}
+const draftIn = (number, nameWithOwner) => prNode(number, { isDraft: true, repository: { nameWithOwner } });
+
+test('copilot: an owner outside copilot_orgs is never requested', () => {
+  assert.deepEqual(copilotRequests('Allowed-Org', [draftIn(1, 'other-user/repo')]), []);
+});
+
+test('copilot: an owner inside copilot_orgs is requested, case-insensitively', () => {
+  const edits = copilotRequests('allowed-org, second', [draftIn(2, 'Allowed-Org/repo'), draftIn(3, 'other-user/repo')]);
+  assert.equal(edits.length, 1);
+  assert.match(edits[0], /^pr edit 2 --repo Allowed-Org\/repo --add-reviewer @copilot$/);
+});
+
+test('copilot: copilot_orgs unset requests nowhere', () => {
+  assert.deepEqual(copilotRequests('', [draftIn(4, 'Allowed-Org/repo')]), []);
+});
