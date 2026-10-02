@@ -27,7 +27,7 @@ import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ,
 } from './local-config.mjs';
-import { nextInterval, watchFloor, watchInterval } from './lib/cadence.mjs';
+import { nextInterval, watchInterval } from './lib/cadence.mjs';
 import { notify, oneLine } from './lib/notify.mjs';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.mjs';
 
@@ -179,6 +179,9 @@ async function loadOverlayTypeQuietly() {
   try { return await (await import('./event-types/index.mjs')).loadConfiguredTypes(); } catch { return {}; }
 }
 
+/** The type registered under `name` (built-in or overlay), or undefined. `add` of an unknown type is allowed; its checks then fail loudly. */
+const typeNamed = async (name) => (await import('./event-types/index.mjs')).BUILTIN_TYPES[name] ?? (await loadOverlayTypeQuietly())[name];
+
 async function main(argv) {
   const dir = EVENT_DIR;
   const usage = (msg) => { console.error(`event-loop: ${msg}`); return EXIT.usage; };
@@ -187,7 +190,10 @@ async function main(argv) {
     if (cmd === 'add') {
       const ttl = v['ttl-hours'] === undefined ? undefined : Number(v['ttl-hours']) * 3600 * 1000;
       if (ttl !== undefined && !(ttl > 0)) return usage('--ttl-hours needs a positive number');
-      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl, notify_overnight: v['notify-overnight'], interval: v.interval });
+      const type = await typeNamed(v.type);
+      const now = Date.now();
+      type?.validate?.(v.target, { now, ttlMs: ttl });
+      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target, now), notify_overnight: v['notify-overnight'], interval: v.interval }, now);
       console.log(`added ${w.id} (${w.type} ${w.target}), expires ${w.expires}`);
     } else if (cmd === 'list') {
       const ws = listWatches(dir);
