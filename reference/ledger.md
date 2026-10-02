@@ -297,8 +297,11 @@ approval.**
    commits, a live claim or recent activity is never offered, but the user should know it is there.
 3. The user approves a batch by id. Then run `node scripts/branch-sweep.mjs --apply --ids <id,id,...>`.
    It re-scans each repo first and refuses any id that no longer qualifies (a branch that gained a
-   commit since the table was shown, say). It uses `git worktree remove` without `--force` and
-   `git push origin --delete`, and it never deletes a local branch. Report each result line.
+   commit since the table was shown, say). It uses `git worktree remove` without `--force` and, for
+   remote branches, `git push --force-with-lease=refs/heads/<branch>:<listed tip> origin :refs/heads/<branch>`,
+   so origin refuses a branch someone pushed to after the listing (reported `refused: ... moved on origin`,
+   and the rest of the batch continues). That lease on a delete is the only force-with-lease the sweep
+   uses, and it never deletes a local branch. Report each result line.
 4. `log` one line with the count removed and the ids refused.
 
 What qualifies, and the settings (`git_emails`, `protected_branches`, `sweep_merge_targets`,

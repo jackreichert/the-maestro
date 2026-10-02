@@ -9,7 +9,7 @@ import { join } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
-const { scanRepo, apply, defaultContext, explain, branchGlob } = await import('./branch-sweep.mjs');
+const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob } = await import('./branch-sweep.mjs');
 
 const ME = 'me@example.com';
 const sh = (repo, ...args) => {
@@ -298,6 +298,22 @@ test('an id is bound to the tip: apply refuses it once the branch has moved, eve
     assert.equal(res.done, false);
     assert.match(res.message, /tip moved/);
     assert.equal(remoteHas(w, 'feat/moves'), true);
+});
+
+test('a remote delete carries a lease on the listed tip: a push after the listing is refused, the next branch still goes', () => {
+    const w = world(); feature(w, 'feat/raced'); feature(w, 'feat/calm');
+    for (const b of ['feat/raced', 'feat/calm']) mergeInto(w, 'develop', b);
+    const items = scanRepo(w.repo, ctxFor()).items;
+    const raced = items.find((i) => i.name === 'feat/raced'); const calm = items.find((i) => i.name === 'feat/calm');
+    assert.match(raced.tip, /^[0-9a-f]{40}$/, 'the listed tip travels with the item');
+    sh(w.repo, 'checkout', '-q', 'feat/raced'); commit(w.repo, 'late.txt', 'late\n'); sh(w.repo, 'push', '-q', 'origin', 'feat/raced'); sh(w.repo, 'checkout', '-q', 'main');
+    // The re-scan in apply() would already refuse this; call the delete directly to exercise the lease itself.
+    const refused = deleteRemoteBranch(w.repo, raced, raced.id);
+    assert.equal(refused.done, false);
+    assert.match(refused.message, /^refused: feat\/raced moved on origin/);
+    assert.equal(remoteHas(w, 'feat/raced'), true, 'the moved branch survives');
+    assert.equal(deleteRemoteBranch(w.repo, calm, calm.id).done, true);
+    assert.equal(remoteHas(w, 'feat/calm'), false);
 });
 
 test('CLI: lists read-only as JSON through MAESTRO_GH, and --apply needs ids', () => {

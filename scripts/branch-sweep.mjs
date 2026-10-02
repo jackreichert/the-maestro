@@ -7,7 +7,8 @@
  *
  * Read-only by default (it runs `git fetch --prune origin` and nothing else that writes). `--apply` deletes only the
  * listed ids, re-scanning each repo first and refusing anything that no longer qualifies. Deleting is
- * `git worktree remove` (never --force) and `git push origin --delete refs/heads/<branch>`; local branches are never deleted.
+ * `git worktree remove` (never --force) and `git push --force-with-lease=refs/heads/<branch>:<listed tip> origin :refs/heads/<branch>` (the lease makes origin refuse
+ * a branch someone pushed to after the listing; that item is reported refused and the rest continue); local branches are never deleted.
  *
  * A remote branch qualifies when it is the user's own (it has commits of its own, and every one is by one of git_emails,
  * or by the repo's user.email; no commits means not the user's unless a merged PR names the branch and its tip), is not
@@ -379,7 +380,7 @@ export function scanRepo(repoPath, ctx) {
     const a = assess(g, full, branch, targets, scan);
     if (a.error) { noteError(res, a.error, `branch ${branch}`); continue; }
     if (!a.ev || a.ev.state === 'no') continue;
-    (a.ev.state === 'ok' ? res.items : res.review).push({ id: idOf(name, 'remote-branch', branch, a.tip), repo: name, kind: 'remote-branch', name: branch, why: why(a.ev), prs: links(a.ev) });
+    (a.ev.state === 'ok' ? res.items : res.review).push({ id: idOf(name, 'remote-branch', branch, a.tip), repo: name, kind: 'remote-branch', name: branch, tip: a.tip, why: why(a.ev), prs: links(a.ev) });
   }
   for (const w of wts) {
     if (isProtected(w.branch)) continue;
@@ -459,6 +460,18 @@ export function findRepos(container, only) {
     .map((d) => join(container, d.name)).filter((p) => statSync(join(p, '.git'), { throwIfNoEntry: false })?.isDirectory());
 }
 
+/**
+ * Deletes a remote branch only if origin still has it at `item.tip` (the tip the id was bound to): a push that landed after
+ * the listing makes git refuse the delete (a stale-info lease), and that is reported for this branch alone.
+ */
+export function deleteRemoteBranch(path, item, id) {
+  const ref = `refs/heads/${item.name}`;
+  const r = run('git', ['-C', path, 'push', `--force-with-lease=${ref}:${item.tip}`, 'origin', `:${ref}`]);
+  if (r.ok) return { id, done: true, message: `deleted ${item.kind} ${item.name}` };
+  const moved = /stale info/i.test(r.err);
+  return { id, done: false, message: moved ? `refused: ${item.name} moved on origin since it was listed (lease on ${item.tip.slice(0, 9)} failed)` : `failed: ${r.err}` };
+}
+
 /** Deletes the listed ids after re-scanning; returns [{ id, done, message }]. Anything no longer qualifying is refused. */
 export function apply(ids, container, ctx, only) {
   const scans = new Map();
@@ -475,7 +488,8 @@ export function apply(ids, container, ctx, only) {
       const ex = scans.get(repo).excluded.find((i) => i.id === id);
       return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ' (or its tip moved since it was listed)'}` };
     }
-    const r = item.kind === 'worktree' ? run('git', ['-C', path, 'worktree', 'remove', item.name]) : run('git', ['-C', path, 'push', 'origin', '--delete', `refs/heads/${item.name}`]);
+    if (item.kind === 'remote-branch') return deleteRemoteBranch(path, item, id);
+    const r = run('git', ['-C', path, 'worktree', 'remove', item.name]);
     return { id, done: r.ok, message: r.ok ? `deleted ${item.kind} ${item.name}` : `failed: ${r.err}` };
   });
 }
