@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
@@ -214,4 +214,15 @@ test('cli: info-only events survive a quiet run and show in the next actionable 
   appendDigest(dir, [{ watch: 'w1', type: 't', at: 'x', summary: 'act', actionable: true, report: '' }]);
   const out = cli(dir, 'digest').stdout;
   assert.match(out, /ACTION w1[\s\S]*info w0/);
+});
+
+test('a crash while saving state leaves a finished watch live, so its final event is not lost', () => {
+  const dir = tempDir();
+  const types = { t: { check: () => ({ done: true }), diff: () => [{ summary: 'final' }] } };
+  addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
+  // A directory where state.json goes makes the rename in saveState throw, after the digest append.
+  mkdirSync(join(dir, 'state.json'));
+  assert.throws(() => tick(base(dir, types)));
+  assert.equal(readDigest(dir).length, 1);
+  assert.deepEqual(listWatches(dir).map((w) => w.id), ['w1']);
 });
