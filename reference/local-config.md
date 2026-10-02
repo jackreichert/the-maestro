@@ -40,6 +40,9 @@ pr_max_code_lines: 400         # PR size budget: most changed code lines (adds +
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off
+event_dir: /path/to/events     # event loop: registry, state, digest; default <ledger_root>/Events, else ~/.local/state/the-maestro/events
+notify_command: ["my-notifier", "--to-me"]  # event loop: argv (JSON array); the one-line summary is appended as the last argument; omit for no notifications
+inbox_command: ["my-inbox", "--unread"]     # event loop `inbox` type: argv printing one line per unread message, without marking them read; omit for none
 ```
 ````
 
@@ -59,7 +62,7 @@ The overlay's `config.md` is found from the overlay name (set in the user file o
 3. **Plugin skill** (`<plugin>:<skill>`): Claude Code records installed plugins in `~/.claude/plugins/installed_plugins.json`, an object `plugins` keyed `<plugin>@<marketplace>`, each entry a list whose items carry an `installPath`. The skill is at `<installPath>/skills/<skill>/config.md`.
 4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repo checkout) and by its real path, and then in `~/.claude/skills/<skill>/config.md`.
 
-The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_APPROVALS_REVIEW_DAY`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`. A variable that is set to the empty string counts as set.
+The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_APPROVALS_REVIEW_DAY`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`, and the event loop overrides `MAESTRO_EVENT_DIR`, `MAESTRO_NOTIFY_COMMAND`, `MAESTRO_INBOX_COMMAND`. A variable that is set to the empty string counts as set.
 
 ## Roots and names
 
@@ -75,6 +78,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Whether `roll` commits the ledger root (`ledger_git_autocommit`) | `journal.mjs roll` |
 | Weekday of the weekly approvals review (`approvals_review_day`, default Friday) | greeting.md, `journal.mjs approvals` |
 | Loop process patterns (`loop_patterns`) and whether `resume` calls `gh` (`resume_gh`) | `journal.mjs resume` |
+| Event loop: `event_dir`, `notify_command` (no default recipient: unset means no notifications), `inbox_command` | `event-loop.mjs`, `scripts/event-types/inbox.mjs` |
 | PR watcher cadence: `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours`, `watch_quiet_hours_mode`, `watch_quiet_weekends`, `watch_tz` | `pr-watch.mjs` via `scripts/lib/cadence.mjs` |
 
 ## Git identity and branch topology
