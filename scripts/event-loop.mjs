@@ -6,6 +6,7 @@
  *   event-loop.mjs list [--json] | remove <id> | digest [--peek]
  *   event-loop.mjs run [--once] [--interval N]
  *
+ * A type may export `retired(watch, ctx)` to delete its per-watch files when the watch retires or is removed.
  * Each tick runs every live watch's type checker (scripts/event-types/<type>.mjs), compares the new state with
  * the stored one, and records an event only when the type's diff() reports one. Events go to a digest file;
  * `run` prints the digest and exits 10 as soon as one is actionable, so the caller (a cheap model) wakes the
@@ -47,6 +48,11 @@ const newest = (times) => (times.length ? Math.max(...times) : 0);
 const trimEvents = (times, now) => times.filter((t) => t === newest(times) || now - t < EVENT_HISTORY_MS);
 const isDone = (type, state, watch) => (type.done ? type.done(state, watch) : state?.done === true);
 
+/** Lets a type clean up what it keeps per watch (`retired(watch, ctx)`); cleanup is best effort and never blocks retirement. */
+function onRetired(type, watch, ctx) {
+  try { type?.retired?.(watch, ctx); } catch { /* a leftover file is not worth failing the tick */ }
+}
+
 /** Checks one watch. Returns { events, state?, retire? } where each event is { summary, actionable? }. */
 function checkWatch(watch, prev, { types, ctx }) {
   const type = types[watch.type];
@@ -73,7 +79,7 @@ export function tick(deps) {
     const make = (e) => ({ watch: watch.id, type: watch.type, at: new Date(now).toISOString(), summary: oneLine(e.summary, DIGEST_SUMMARY), actionable: e.actionable !== false, report: e.actionable === false ? '' : watch.report });
     const mayNotify = !quiet || watch.notify_overnight;
     const retire = (reason, events = []) => {
-      retirements.push({ id: watch.id, reason });
+      retirements.push({ watch, reason });
       delete state.watches[watch.id];
       out.retired.push({ id: watch.id, reason });
       out.events.push(...events.map((e) => ({ ...make(e), mayNotify })));
@@ -84,7 +90,7 @@ export function tick(deps) {
       const r = checkWatch(watch, state.watches[watch.id], { types, ctx: { ...ctx, now } });
       out.events.push(...r.events.map((e) => ({ ...make(e), mayNotify })));
       state.watches[watch.id] = { state: r.state, errors: 0, checkedAt: new Date(now).toISOString() };
-      if (r.retire) { retirements.push({ id: watch.id, reason: r.retire }); delete state.watches[watch.id]; out.retired.push({ id: watch.id, reason: r.retire }); }
+      if (r.retire) { retirements.push({ watch, reason: r.retire }); delete state.watches[watch.id]; out.retired.push({ id: watch.id, reason: r.retire }); }
     } catch (err) {
       // A failing check keeps its last good state; it speaks once, after a few failures in a row.
       meta.errors += 1;
@@ -97,7 +103,7 @@ export function tick(deps) {
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
   saveState(dir, state);
   // Tombstones last: a crash before this leaves the watch live, so the next tick retires it again instead of losing its final event.
-  for (const { id, reason } of retirements) removeWatch(dir, id, reason, now);
+  for (const { watch, reason } of retirements) { removeWatch(dir, watch.id, reason, now); onRetired(types[watch.type], watch, { ...ctx, dir }); }
   notify(out.events.filter((e) => e.actionable && e.mayNotify), notifyCommand, notifyRun);
   out.events = out.events.map(({ mayNotify, ...e }) => e);
   return out;
@@ -158,7 +164,9 @@ async function main(argv) {
       const ws = listWatches(dir);
       console.log(v.json ? JSON.stringify(ws) : ws.map((w) => `${w.id}\t${w.type}\t${w.target}\texpires ${w.expires}`).join('\n') || 'no watches registered');
     } else if (cmd === 'remove') {
+      const watch = listWatches(dir).find((w) => w.id === arg);
       console.log(removeWatch(dir, arg, 'removed by user') ? `removed ${arg}` : `no live watch ${arg}`);
+      if (watch) onRetired((await import('./event-types/index.mjs')).TYPES[watch.type], watch, { dir });
     } else if (cmd === 'digest') {
       console.log(formatDigest(readDigest(dir, { consume: !v.peek })) || 'digest is empty');
     } else if (cmd === 'run') {
