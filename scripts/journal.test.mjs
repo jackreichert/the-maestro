@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1259,4 +1259,340 @@ test('rule resolves a relative ref against the cwd, and the digest leaves pendin
     run('ask', 'still open?', '--kind', 'decision', ...MARK);
     const untagged = JSON.parse(run('approvals', '--json').out).untagged.map((u) => u.text);
     assert.deepEqual(untagged, ['relative ref rule']);
+});
+
+// ── boxes, triage, roll --strict, ask --paste (MAESTRO-14) ──────────────────
+
+const blockFile = (name = 'block.sh') => { const f = join(tv, name); writeFileSync(f, 'echo hi\n'); return f; };
+const triageJson = (...a) => JSON.parse(run('triage', '--json', ...a).out);
+const boxIds = (t, box) => (t.byBox[box] || []).map((i) => i.text);
+
+function triageWorld() {
+    const memo = blockFile('memory.md');
+    run('rule', 'Jack rule: branch from staging', '--ref', memo, ...MARK);
+    run('log', 'Jack rule: no merge on red', '--kind', 'decision', ...MARK);
+    run('log', 'may delete merged branches', '--kind', 'decision', '--approval', 'standing', ...MARK);
+    run('log', 'close one PR', '--kind', 'decision', '--approval', 'one-off', '--ref', memo, ...MARK);
+    run('ask', 'Ship Friday or Monday, which one?', ...MARK);
+    run('ask', 'run the read-only count query', '--paste', blockFile(), ...MARK);
+    run('start', 'building the thing', ...MARK);
+    run('log', 'waiting on a deploy', '--kind', 'blocked', ...MARK);
+    run('log', 'follow-up: fix the cwd default next session', ...MARK);
+    run('log', 'follow-up: tracked in the-maestro-016', ...MARK);
+    run('log', 'learned that the cause was the cwd', ...MARK);
+    run('log', 'posted reply', ...MARK);
+    return { memo };
+}
+
+test('triage boxes every item by kind, text and approval, and says what it would do', () => {
+    triageWorld();
+    const t = triageJson();
+    assert.deepEqual(boxIds(t, 1), ['Jack rule: branch from staging', 'Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
+    assert.deepEqual(boxIds(t, 3), ['close one PR']);
+    assert.deepEqual(boxIds(t, 4), ['Ship Friday or Monday, which one?']);
+    assert.deepEqual(boxIds(t, 5), ['run the read-only count query']);
+    assert.deepEqual([boxIds(t, 6), boxIds(t, 7)], [['waiting on a deploy'], ['building the thing']]);
+    assert.deepEqual(boxIds(t, 8), ['follow-up: fix the cwd default next session']);
+    assert.deepEqual(boxIds(t, 9), ['learned that the cause was the cwd']);
+    assert.deepEqual(boxIds(t, 11), ['follow-up: tracked in the-maestro-016', 'posted reply']);
+    const text = run('triage').out;
+    assert.match(text, /Box 4 Needs Jack \(1\)/);
+    assert.match(text, /Box 1 Decisions \/ rules \(2\)[^]*NO REF/);
+    assert.match(text, /Don't-miss checklist[^]*\[ \] Every rule or approval/);
+});
+
+test('triage blockers are unpromoted rules and unticketed findings, and triage itself writes nothing', () => {
+    triageWorld();
+    const before = ledger().length;
+    const t = triageJson();
+    assert.deepEqual(t.blockers.map((b) => b.why).sort(), ['finding with no ticket', 'not promoted: no --ref that is an existing file', 'not promoted: no --ref that is an existing file']);
+    assert.equal(run('triage').code, 0);
+    assert.equal(ledger().length, before);
+});
+
+test('a pending decision is Needs Jack, not a rule', () => {
+    run('ask', 'adopt the new schema?', '--kind', 'decision', ...MARK);
+    assert.deepEqual(boxIds(triageJson(), 4), ['adopt the new schema?']);
+});
+
+test('triage --apply closes only the rules and approvals whose ref is an existing file, by appending resolved rows', () => {
+    const { memo } = triageWorld();
+    const before = ledger();
+    const r = run('triage', '--apply');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /closed 2 recorded item\(s\); 2 still need a ref file/);
+    const added = ledger().slice(before.length);
+    assert.equal(added.length, 2);
+    assert.ok(added.every((e) => e.kind === 'resolved' && e.text === `recorded → ${memo}` && e.refs[0] === memo));
+    assert.deepEqual(before, ledger().slice(0, before.length), 'append-only: existing rows untouched');
+    const t = triageJson();
+    assert.deepEqual(boxIds(t, 1), ['Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 3), []);
+    assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
+});
+
+test('triage --apply is idempotent and --dry-run writes nothing', () => {
+    triageWorld();
+    const before = ledger().length;
+    assert.equal(run('triage', '--apply', '--dry-run').code, 0);
+    assert.equal(ledger().length, before);
+    run('triage', '--apply');
+    const after = ledger().length;
+    assert.match(run('triage', '--apply').out, /closed 0 recorded/);
+    assert.equal(ledger().length, after);
+});
+
+test('a ref that stops existing is not a promotion: triage --apply leaves the item open', () => {
+    const memo = blockFile('gone-soon.md');
+    run('rule', 'a rule', '--ref', memo, ...MARK);
+    rmSync(memo);
+    assert.match(run('triage', '--apply').out, /closed 0 recorded item\(s\); 1 still need/);
+});
+
+test('roll --strict refuses before changing anything; plain roll warns and carries on', () => {
+    triageWorld();
+    const id = idOf(run('start', 'finished work', ...MARK).out);
+    run('done', id, ...MARK);
+    const rows = ledger().length;
+    const strict = run('roll', '--strict');
+    assert.equal(strict.code, 1);
+    assert.match(strict.err, /roll --strict refused: triage has 3 blocker/);
+    assert.equal(ledger().length, rows, 'no rolled row');
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', `${new Date().toISOString().slice(0, 10)}.md`)), false);
+    const plain = run('roll');
+    assert.equal(plain.code, 0, plain.err);
+    assert.match(plain.out, /warning: triage has 3 blocker\(s\)/);
+    assert.ok(ledger().some((e) => e.kind === 'rolled'));
+});
+
+test('roll --strict passes once the blockers are fixed', () => {
+    const memo = blockFile('memory.md');
+    run('rule', 'Jack rule: x', '--ref', memo, ...MARK);
+    const id = idOf(run('start', 'finished work', ...MARK).out);
+    run('done', id, ...MARK);
+    assert.equal(run('roll', '--strict').code, 0);
+});
+
+test('ask --paste needs an existing block file and writes nothing otherwise', () => {
+    const missing = run('ask', 'run this', '--paste', join(tv, 'nope.sh'), ...MARK);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /not an existing file/);
+    assert.equal(run('ask', 'run this', '--paste', ...MARK).code, 1);
+    assert.equal(run('ask', 'decide', '--kind', 'decision', '--paste', blockFile(), ...MARK).code, 1);
+    assert.throws(() => ledger());
+});
+
+test('paste asks show apart from the questions in status, the footer and CURRENT.md', () => {
+    const f = blockFile();
+    run('ask', 'which way?', ...MARK);
+    run('ask', 'run the count', '--paste', f, ...MARK);
+    const s = run('status').out;
+    assert.match(s, /Awaiting you\n  `\w+` which way\?[^]*Paste blocks for you\n  `\w+` run the count .*block: /);
+    assert.doesNotMatch(s.split('Paste blocks for you')[0], /run the count/);
+    assert.match(s, /0 done · 0 in flight · 1 awaiting you · 1 to run/);
+    assert.match(run('status', '--footer').out.split('\n')[0], /1 awaiting you · 1 to run/);
+    const j = statusJson();
+    assert.deepEqual([j.awaiting.length, j.paste.length, j.paste[0].paste], [1, 1, f]);
+    const cur = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
+    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);
+});
+
+test('handoff section 4 is generated from the Needs-Jack and paste boxes, text plus options and the block file', () => {
+    const f = blockFile();
+    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
+    run('ask', 'run the count query', '--paste', f, '--stream', 'Launch', ...MARK);
+    run('rule', 'a rule that is not awaiting', '--ref', f, '--stream', 'Launch', ...MARK);
+    const out = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out;
+    const sec = out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
+    assert.match(sec, /\*\*Needs Jack\*\*[^]*Ship Friday or Monday\?/);
+    assert.match(sec, new RegExp(`\\*\\*Paste blocks for Jack\\*\\*[^]*run the count query.*block: ${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.doesNotMatch(sec, /not awaiting/);
+});
+
+test('triage --apply never closes a question on its wording, even with a ref file', () => {
+    const memo = blockFile('plan.md');
+    const id = idOf(run('ask', 'Jack: which branch ships first, A or B', '--ref', memo, ...MARK).out);
+    assert.deepEqual(boxIds(triageJson(), 4), ['Jack: which branch ships first, A or B']);
+    assert.match(run('triage', '--apply').out, /closed 0 recorded/);
+    assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
+});
+
+test('triage --apply only closes decisions dated on --date, whatever --since says', () => {
+    const memo = blockFile('memory.md');
+    run('rule', 'an old rule', '--ref', memo, '--date', '2020-01-01', ...MARK);
+    assert.match(run('triage', '--apply', '--since', '2019-01-01').out, /closed 0 recorded/);
+    assert.deepEqual(boxIds(triageJson('--since', '2019-01-01'), 1), ['an old rule']);
+});
+
+test('handoff section 4 keeps every open question: one boxed as a rule by its approval still appears under Needs Jack', () => {
+    const id = idOf(run('ask', 'Jack: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
+    run('approve-tag', id, '--approval', 'one-off');
+    const sec = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
+    assert.match(sec, /\*\*Needs Jack\*\*[^]*pick a stream name/);
+});
+
+// ── prime, gates, defer (MAESTRO-15) ────────────────────────────────────────
+
+const inDays = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+
+/** A fake `gh` on PATH answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
+function ghStubDir() {
+    const dir = mkdtempSync(join(tmpdir(), 'journal-gh-'));
+    writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`, { mode: 0o755 });
+    return dir;
+}
+
+test('--gate is validated before anything is written, and only goes on blocked rows', () => {
+    for (const bad of ['gh:pr:repo', 'gh:pr:repo#x', 'date:2026-02-30', 'date:tomorrow', 'ticket:', 'nope', 'ticket:a b']) {
+        const r = run('log', 'waiting', '--kind', 'blocked', '--gate', bad, ...MARK);
+        assert.equal(r.code, 1, bad);
+        assert.match(r.err, /--gate/);
+    }
+    assert.equal(run('log', 'waiting', '--kind', 'note', '--gate', 'date:2099-01-01', ...MARK).code, 1);
+    assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ...MARK).code, 1);
+    assert.throws(() => ledger(), 'nothing was written');
+    for (const ok of ['gh:pr:owner/repo#12', 'gh:pr:repo#3', 'date:2099-01-01', 'ticket:the-maestro-013']) {
+        assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ok, ...MARK).code, 0, ok);
+    }
+    assert.equal(ledger().length, 4);
+    assert.match(run('status').out, /waiting .*gate: ticket:the-maestro-013/);
+});
+
+test('resume reports date gates as waiting or cleared, and never writes', () => {
+    const past = idOf(run('log', 'wait for the date', '--kind', 'blocked', '--gate', `date:${inDays(-1)}`, ...MARK).out);
+    const future = idOf(run('log', 'wait longer', '--kind', 'blocked', '--gate', `date:${inDays(5)}`, ...MARK).out);
+    const none = idOf(run('log', 'no gate here', '--kind', 'blocked', ...MARK).out);
+    const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    const out = runEnv({}, 'resume').out;
+    assert.match(out, new RegExp(`CLEARED\\s+${past} .*has arrived`));
+    assert.match(out, new RegExp(`waiting\\s+${future} .*until ${inDays(5)}`));
+    assert.match(out, new RegExp(`resolve ${past} --answer`));
+    assert.doesNotMatch(out, new RegExp(`(CLEARED|waiting|UNKNOWN)\\s+${none}`));
+    assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
+
+test('resume checks gh pr gates through gh pr view: merged clears, open waits, closed or failing is unknown', () => {
+    const id = idOf(run('log', 'hold for the PR', '--kind', 'blocked', '--gate', 'gh:pr:owner/repo#42', ...MARK).out);
+    const dir = ghStubDir();
+    const env = (state) => ({ MAESTRO_RESUME_GH: 'on', PATH: `${dir}:${process.env.PATH}`, STUB_STATE: state });
+    assert.match(runEnv(env('MERGED'), 'resume').out, new RegExp(`CLEARED\\s+${id} .*owner/repo#42 merged`));
+    assert.match(runEnv(env('OPEN'), 'resume').out, new RegExp(`waiting\\s+${id} .*owner/repo#42 is open`));
+    assert.match(runEnv(env('CLOSED'), 'resume').out, new RegExp(`UNKNOWN\\s+${id} .*closed without merging`));
+    assert.match(runEnv(env('fail'), 'resume').out, new RegExp(`UNKNOWN\\s+${id} .*gh could not say`));
+    assert.match(runEnv({ ...env('MERGED'), MAESTRO_RESUME_GH: 'off' }, 'resume').out, new RegExp(`UNKNOWN\\s+${id}`), 'resume_gh off makes no gh call');
+    assert.match(runEnv({ MAESTRO_RESUME_GH: 'on', PATH: '/nonexistent' }, 'resume').out, new RegExp(`UNKNOWN\\s+${id}`));
+});
+
+test('resume checks ticket gates against the tickets vault', () => {
+    mkdirSync(join(tv, 'Projects', 'p1', 'Tickets'), { recursive: true });
+    const ticket = (id, status) => writeFileSync(join(tv, 'Projects', 'p1', 'Tickets', `${id}.md`), `---\nid: "${id}"\ntitle: "T"\nstatus: "${status}"\n---\nbody\n`);
+    ticket('p1-001', 'closed');
+    ticket('p1-002', 'open');
+    const a = idOf(run('log', 'wait on 001', '--kind', 'blocked', '--gate', 'ticket:p1-001', ...MARK).out);
+    const b = idOf(run('log', 'wait on 002', '--kind', 'blocked', '--gate', 'ticket:p1-002', ...MARK).out);
+    const c = idOf(run('log', 'wait on 003', '--kind', 'blocked', '--gate', 'ticket:p1-003', ...MARK).out);
+    const out = runEnv({}, 'resume', '--tickets-vault', tv).out;
+    assert.match(out, new RegExp(`CLEARED\\s+${a} .*p1-001 is closed`));
+    assert.match(out, new RegExp(`waiting\\s+${b} .*p1-002 is open`));
+    assert.match(out, new RegExp(`UNKNOWN\\s+${c} .*status unavailable`));
+    assert.match(runEnv({}, 'resume').out, new RegExp(`UNKNOWN\\s+${a}`), 'no tickets vault: unknown, not a crash');
+});
+
+test('defer hides an open item from status, the footer and prime until its date, and refuses bad input', () => {
+    const id = idOf(run('start', 'after the push', ...MARK).out);
+    run('start', 'still on the board', ...MARK);
+    assert.equal(run('defer', id, '--until', inDays(-1), ...MARK).code, 1);
+    assert.equal(run('defer', id, '--until', 'soon', ...MARK).code, 1);
+    assert.equal(run('defer', id, ...MARK).code, 1);
+    assert.equal(run('defer', 'zzzz', '--until', inDays(3), ...MARK).code, 1);
+    const done = idOf(run('start', 'finished', ...MARK).out);
+    run('done', done, ...MARK);
+    assert.equal(run('defer', done, '--until', inDays(3), ...MARK).code, 1);
+    const rows = ledger().length;
+    const r = run('defer', id, '--until', inDays(3), ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(ledger().length, rows + 1);
+    assert.equal(ledger().at(-1).kind, 'defer');
+    assert.deepEqual(statusJson().inflight.map((i) => i.text), ['still on the board']);
+    assert.match(run('status', '--footer').out.split('\n')[0], /1 in flight/);
+    assert.doesNotMatch(run('prime').out, /after the push/);
+    assert.match(run('prime').out, /1 deferred item\(s\) hidden/);
+    assert.match(run('triage').out, new RegExp(`${id} .*deferred until ${inDays(3)}`));
+    assert.equal(run('verify').code, 0);
+});
+
+test('a deferral that has reached its date no longer hides the item, and a later defer moves the date', () => {
+    const id = idOf(run('start', 'comes back', ...MARK).out);
+    const file = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(file, `${readFileSync(file, 'utf8')}${JSON.stringify({ id: 'dd01', ts: new Date().toISOString(), date: '2020-01-01', kind: 'defer', defers: id, until: inDays(0), text: 'old', model: 'm', used: ['x'] })}\n`);
+    assert.deepEqual(statusJson().inflight.map((i) => i.id), [id], 'until today is not in the future: shown');
+    run('defer', id, '--until', inDays(2), ...MARK);
+    assert.deepEqual(statusJson().inflight, []);
+    run('defer', id, '--until', inDays(1), ...MARK);
+    assert.deepEqual(statusJson().inflight, [], 'latest defer wins, still in the future');
+    run('done', id, ...MARK);
+    assert.equal(run('verify').code, 0);
+});
+
+test('prime is at most 40 lines however much is open, shares lines between boxes, and writes nothing', () => {
+    const f = blockFile();
+    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
+    run('ask', 'run the count', '--paste', f, ...MARK);
+    run('log', 'wait on deploy', '--kind', 'blocked', '--gate', 'date:2099-01-01', ...MARK);
+    const small = run('prime');
+    assert.equal(small.code, 0, small.err);
+    assert.match(small.out, /Today's streams: Launch/);
+    assert.match(small.out, /Needs Jack \(1\)\n  \w+ Ship Friday or Monday\? \(Launch\)/);
+    assert.match(small.out, /Paste blocks for Jack \(1\)\n  \w+ run the count \[block: /);
+    assert.match(small.out, /Blocked \/ gated \(1\)\n  \w+ wait on deploy \[gate: date:2099-01-01\]/);
+    for (let i = 0; i < 60; i++) run('start', `work item number ${i} with a fairly long description to clip`, ...MARK);
+    for (let i = 0; i < 30; i++) run('ask', `question ${i}, which way?`, ...MARK);
+    const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
+    const big = run('prime');
+    const lines = big.out.trimEnd().split('\n');
+    assert.ok(lines.length <= 40, `${lines.length} lines`);
+    assert.match(big.out, /Needs Jack \(31\)/);
+    assert.match(big.out, /In flight \(60\)/);
+    assert.match(big.out, /… \+\d+ more/);
+    assert.match(big.out, /Paste blocks for Jack \(1\)\n  \w+ run the count/, 'a short section is not starved');
+    assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
+
+test('prime on an empty ledger says so and creates nothing', () => {
+    const out = run('prime');
+    assert.equal(out.code, 0, out.err);
+    assert.match(out.out, /\(nothing open\)/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal')), false);
+});
+
+test('handoff section 1 shows the gate of a blocked item', () => {
+    run('log', 'hold for the PR', '--kind', 'blocked', '--gate', 'gh:pr:owner/repo#7', '--stream', 'Launch', '--new-stream', ...MARK);
+    const out = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out;
+    assert.match(out, /\[blocked\] hold for the PR.* gate: gh:pr:owner\/repo#7/);
+});
+
+test('prime stays within 40 lines even when stream names, block paths and the project carry newlines', () => {
+    for (let s = 0; s < 30; s++) run('start', `w${s}`, '--stream', `st${s}\nx\ny`, '--new-stream', ...MARK);
+    for (let i = 0; i < 30; i++) run('ask', `q${i}, which?`, ...MARK);
+    for (let i = 0; i < 30; i++) run('log', `b${i}`, '--kind', 'blocked', ...MARK);
+    const lines = run('prime').out.trimEnd().split('\n');
+    assert.ok(lines.length <= 40, `${lines.length} lines`);
+    assert.match(lines.at(-1), /journal\.mjs/);
+});
+
+test('deferring the last open item of a stream empties its page, and an expired deferral shows again in CURRENT.md on the next read', () => {
+    const id = idOf(run('start', 'only item', '--stream', 'Solo', '--new-stream', ...MARK).out);
+    const journal = join(vault, 'Projects', 'test-proj', 'Journal');
+    assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+    run('defer', id, '--until', inDays(2), ...MARK);
+    assert.doesNotMatch(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
+    assert.doesNotMatch(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
+    // The date passes: the deferral now ends today, and CURRENT.md was last written on an earlier day.
+    const file = join(journal, 'ledger.jsonl');
+    writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { const r = JSON.parse(l); return r.kind === 'defer' ? JSON.stringify({ ...r, until: inDays(0) }) : l; }).join('\n') + '\n');
+    writeFileSync(join(journal, 'CURRENT.md'), readFileSync(join(journal, 'CURRENT.md'), 'utf8').replace(/updated: .*/, 'updated: 2020-01-01'));
+    run('prime');
+    assert.match(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
+    assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
 });

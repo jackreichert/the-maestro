@@ -354,10 +354,15 @@ node $J ask   "Split this into a follow-up PR?" "${M[@]}"
 node $J resolve "follow-up" --answer "Yes, no consumer yet" "${M[@]}"
 node $J status                               # open items + done today
 node $J standup                              # end-of-day summary, ready to paste
-node $J roll                                 # archive the day, keep open items
+node $J prime                               # 40 lines or fewer: streams, needs-you, paste blocks, gated, in flight (session start, after compaction)
+node $J defer <id> --until YYYY-MM-DD        # hide an open item until that date
+node $J log "<text>" --kind blocked --gate gh:pr:<repo>#N   # or date:YYYY-MM-DD, ticket:<id>; `resume` reports whether the gate has cleared
+node $J triage                               # box every open item and flag what is stale, unpromoted or unticketed; add --apply to close recorded rules
+node $J roll                                 # archive the day, keep open items (warns about triage blockers; --strict refuses)
+node $J ask "<what to run>" --paste <file>   # a run-this ask, listed apart from the questions
 node $J status --footer                      # the reply-footer lines: Ledger (one per active stream) and Session (turns and read/turn of the current session, `roll now` past `roll_turns` / `roll_read_per_turn`)
 node $J handoff --stream Launch              # scaffold the five-part handoff (see below)
-node $J resume                               # the verify-on-resume checklist
+node $J resume                               # the verify-on-resume checklist, including gate checks
 node $J log "<text>" --kind decision --approval standing --scope "<what it covers>"   # log a granted permission (standing | one-off)
 node $J rule "<text>" --ref <file>           # record a decision already made; refuses unless the ref file exists, never shows as awaiting
 node $J ask "<text>" --kind decision         # a decision that is really pending: stays on the awaiting-you board
@@ -447,7 +452,7 @@ node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--force]
 node $J resume
 ```
 
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` (`status: draft`; the derived index already picks these up) and appends nothing to the ledger. It **never overwrites** an existing file without `--force`. The five parts: (1) tasks with status, the stream's open in-flight and blocked items plus what was done since `--since` (default yesterday); (2) learnings, from items matching learned, lesson, ruled out or cause; (3) artifacts, the PR numbers, refs, tickets and file paths mentioned by those items; (4) decisions awaiting, the open questions and pending decisions; (5) next concrete action, left blank for the author. Sections 2 and 5 still need a human.
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` (`status: draft`; the derived index already picks these up) and appends nothing to the ledger. It **never overwrites** an existing file without `--force`. The five parts: (1) tasks with status, the stream's open in-flight and blocked items plus what was done since `--since` (default yesterday); (2) learnings, from items matching learned, lesson, ruled out or cause; (3) artifacts, the PR numbers, refs, tickets and file paths mentioned by those items; (4) decisions awaiting, generated from the question and paste-block boxes, with each block's file; (5) next concrete action, left blank for the author. Sections 2 and 5 still need a human.
 
 `resume` prints the checklist and runs the parts a script can: the ledger status, `gh pr list --author @me --state open --json number,title,url` (`gh: unavailable` when it is missing or fails; the command still exits 0), and `pgrep -f` for each configured loop pattern (`ok` or `MISSING`). It ends with a reminder that **`ListAgents` is a harness tool, not a shell command**, so the session calls it itself. The loop patterns and whether `gh` is used come from local config (`loop_patterns`, `resume_gh`, or `MAESTRO_LOOP_PATTERNS`, `MAESTRO_RESUME_GH`; see [reference/local-config.md](reference/local-config.md)). Nothing is hardcoded.
 
@@ -500,3 +505,22 @@ The tests run each script as a subprocess against a temporary ledger and never r
 This folder is the shareable unit: `SKILL.md`, `reference/`, `cost/`, `scripts/` (with their tests), and this README. It ships no org overlay; write your own and name it as described in Personalize. State files the scripts write at run time (`prs-snapshot.json`, `pr-watch-state.json`) live under your ledger root, not here, and must not be shipped. It contains no vault data, no tickets, and no secrets.
 
 Do not commit your vault's `Journal/` or `Projects/` tree into this repo. Those are your notes. Point the script at them with `VAULT_ROOT`, or `LEDGER_ROOT` if you keep the ledger outside the vault.
+
+### Loading the board automatically
+
+`journal.mjs prime` prints a short, ledger-only board, so it can run from a Claude Code `SessionStart` hook and its output becomes session context. The matcher below covers a fresh start, a resume, a clear and a compaction. Add it to your own settings file; nothing in this repo does it for you.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "node /path/to/the-maestro/scripts/journal.mjs prime --project <container-folder-name> --vault <ledger-root>" }
+        ]
+      }
+    ]
+  }
+}
+```
