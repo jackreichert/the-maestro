@@ -112,9 +112,9 @@ export const formatDigest = (events) => [...events].sort((a, b) => Number(b.acti
   .map((e) => `${e.actionable ? 'ACTION' : 'info'} ${e.watch} (${e.type}): ${e.summary}${e.report && e.actionable ? ` | report: ${e.report}` : ''}`).join('\n');
 
 function finish(dir) {
-  const events = readDigest(dir, { consume: true });
-  if (!events.some((e) => e.actionable)) return false;
-  console.log(formatDigest(events));
+  // Peek first: info-only events stay for the next actionable batch instead of vanishing.
+  if (!readDigest(dir).some((e) => e.actionable)) return false;
+  console.log(formatDigest(readDigest(dir, { consume: true })));
   return true;
 }
 
