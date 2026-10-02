@@ -68,6 +68,8 @@
  *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
  *   journal.mjs handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
+ *   journal.mjs log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
+ *   journal.mjs tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
  *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
@@ -103,7 +105,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN } from './local-config.mjs';
 import { scratchReport } from './lib/scratch.mjs';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
@@ -125,7 +127,7 @@ const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all', '--update-context']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all', '--update-context', '--pending']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -453,6 +455,17 @@ function gateFlag(kind) {
  * log, start, ask, note and rule. `ask` takes --kind question (default) or decision; a decision written by `ask`
  * is pending and stays on the board. `rule` always writes a decision, which is a record and not open.
  */
+/** `--transitioned KEY[,KEY]` as a list of tracker keys, or undefined; a value that is not a key (tracker_key_pattern) is refused. */
+function transitionedFlag() {
+    const raw = arg('transitioned');
+    if (raw === null) return undefined;
+    const keys = raw.split(',').map((k) => k.trim()).filter(Boolean);
+    const whole = new RegExp(`^(?:${TRACKER_KEY_PATTERN})$`);
+    const bad = keys.filter((k) => !whole.test(k));
+    if (!keys.length || bad.length) die(`--transitioned needs tracker keys matching tracker_key_pattern, got: ${bad.join(', ') || raw}`);
+    return keys;
+}
+
 function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
     const text = arg('text') || positional.join(' ');
     if (!text) { console.error(`Needs text: journal.mjs ${rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
@@ -478,6 +491,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
         box: paste ? 'paste' : undefined,
         paste,
         gate,
+        transitioned: transitionedFlag(),
         ...approvalFor(kind),
         ...usageFromArgs(),
     };
@@ -1074,11 +1088,12 @@ function triageReport(d, since = d) {
     ];
     const stale = items.filter((i) => i.stale).map((i) => ({ id: i.id, box: i.box, ageDays: i.ageDays }));
     const applicable = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => i.id);
-    return { date: d, since, items, byBox, blockers, stale, applicable, checklist: triageChecklist(items, blockers) };
+    const pending = pendingTransitions(defaultPendingSince());
+    return { date: d, since, items, byBox, blockers, stale, applicable, pendingTransitions: pending, checklist: triageChecklist(items, blockers, pending) };
 }
 
 /** The don't-miss checklist: [x]/[ ] where the ledger can tell, "(by hand)" where only the session can. */
-function triageChecklist(items, blockers) {
+function triageChecklist(items, blockers, pending = []) {
     const n = (box) => items.filter((i) => i.box === box);
     const unpromoted = blockers.filter((b) => RECORD_BOXES.includes(b.box)).length;
     const toClose = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).length;
@@ -1091,6 +1106,7 @@ function triageChecklist(items, blockers) {
         `${mark(!short)} Every Needs-Jack item reads as a standalone question with options, not a bare id${short ? ` (${short} too short to stand alone)` : ''}`,
         `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
         `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
+        `${mark(!pending.length)} Every done item with a tracker key has a recorded transition${pending.length ? ` (${pending.length} pending: ${pending.map((r) => r.key).join(', ')}; run \`tickets --pending\`)` : ''}`,
         '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
         '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.mjs; by hand if you wrote it yourself)',
     ];
@@ -2175,7 +2191,9 @@ function primeLines() {
         { title: 'In flight', items: g.inflight },
     ].filter((sec) => sec.items.length).map((sec) => ({ ...sec, lines: sec.items.map(label) }));
     const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste);
-    const head = [clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200)];
+    const pending = pendingTransitions(defaultPendingSince());
+    const head = [clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
+        ...(pending.length ? [clip(`Pending tracker transitions (${pending.length}): ${pending.map((r) => r.key).join(', ')}. \`journal.mjs tickets --pending\``, 200)] : [])];
     const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.mjs status\` and \`triage\` have the rest.`] : ['`journal.mjs status` has the rest.'];
     if (!sections.length) return [...head, '(nothing open)', ...foot];
     // Whatever the content, the cap holds: the budget below counts lines, and this guard backs it up.
@@ -2199,6 +2217,45 @@ function primeLines() {
 function cmdPrime() {
     refreshBoard();
     primeLines().forEach((l) => console.log(l));
+}
+
+// ── pending tracker transitions ─────────────────────────────────────────────
+
+const PENDING_WINDOW_DAYS = 14;
+
+/** Distinct tracker keys (tracker_key_pattern) in the given texts. */
+const trackerKeys = (...texts) => [...new Set(texts.flatMap((t) => String(t || '').match(new RegExp(TRACKER_KEY_PATTERN, 'g')) || []))];
+
+/**
+ * Done items finished on or after `since` that carry a tracker key (in the ticket field, the text, or the closing row)
+ * whose transition nobody recorded. A transition is recorded by any ledger row with `transitioned: [KEY, ...]`
+ * (`journal.mjs log "moved FAKE-1 to In Staging" --transitioned FAKE-1`), at any date. One row per key: [{ key, id, text, doneOn }].
+ */
+function pendingTransitions(since) {
+    const entries = readLedger();
+    const recorded = new Set(entries.flatMap((e) => e.transitioned || []));
+    const rows = [];
+    for (const i of fold(entries).items) {
+        const doneOn = i.closedBy?.date || i.date;
+        if (i.state !== 'done' || doneOn < since) continue;
+        for (const key of trackerKeys(i.ticket, i.text, i.closedBy?.ticket, i.closedBy?.text)) {
+            if (!recorded.has(key) && !rows.some((r) => r.key === key)) rows.push({ key, id: i.id, text: i.text, doneOn });
+        }
+    }
+    return rows;
+}
+
+const defaultPendingSince = () => new Date(Date.now() - PENDING_WINDOW_DAYS * 864e5).toISOString().slice(0, 10);
+
+function cmdTickets() {
+    if (!has('pending')) die('Usage: journal.mjs tickets --pending [--since YYYY-MM-DD] [--json]');
+    const since = arg('since', defaultPendingSince());
+    if (!isDate(since)) die('--since must be YYYY-MM-DD.');
+    const rows = pendingTransitions(since);
+    if (asJson) { console.log(JSON.stringify({ since, pending: rows }, null, 2)); return; }
+    console.log(rows.length ? `Done items whose tracker transition is not recorded (since ${since}):` : `No pending tracker transitions since ${since}.`);
+    rows.forEach((r) => console.log(`  ${r.key}  ${r.id}  done ${r.doneOn}  ${clip(r.text, 90)}`));
+    if (rows.length) console.log('Move each ticket, then: journal.mjs log "moved <KEY> to <status>" --transitioned <KEY> ...');
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────────
@@ -2238,6 +2295,7 @@ switch (cmd) {
     case 'triage': cmdTriage(); break;
     case 'defer': cmdDefer(); break;
     case 'prime': cmdPrime(); break;
+    case 'tickets': cmdTickets(); break;
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
     default:

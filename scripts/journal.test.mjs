@@ -1729,3 +1729,62 @@ test('deferring the last open item of a stream empties its page, and an expired 
     assert.match(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
     assert.match(readFileSync(join(journal, 'Streams', 'Solo.md'), 'utf8'), /only item/);
 });
+
+// ── pending tracker transitions ─────────────────────────────────────────────
+
+function seedPending() {
+    const done = (text, ...more) => run('done', idOf(run('start', text, ...more, ...MARK).out), ...MARK);
+    done('ship the retry cap ABC-12');
+    done('wire the flag', '--ticket', 'XYZ-7');
+    done('tidy the readme');
+    done('already moved ABC-30');
+    run('log', 'moved ABC-30 to In Staging', '--transitioned', 'ABC-30', ...MARK);
+    run('start', 'still open ABC-99', ...MARK);
+}
+
+test('tickets --pending lists done items with a tracker key and no recorded transition, once per key', () => {
+    seedPending();
+    run('done', idOf(run('start', 'second pass at ABC-12', ...MARK).out), ...MARK);
+    const r = run('tickets', '--pending');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /ABC-12 .*ship the retry cap/);
+    assert.match(r.out, /XYZ-7 .*wire the flag/, 'a key in the --ticket field counts');
+    assert.equal(r.out.split('\n').filter((l) => l.startsWith('  ABC-12')).length, 1, 'one line per key');
+    assert.doesNotMatch(r.out, /ABC-30|ABC-99|tidy the readme/, 'recorded, open and keyless items are not pending');
+    const json = JSON.parse(run('tickets', '--pending', '--json').out);
+    assert.deepEqual(json.pending.map((p) => p.key).sort(), ['ABC-12', 'XYZ-7']);
+    assert.match(run('tickets', '--pending', '--since', '2999-01-01').out, /No pending tracker transitions/);
+    assert.equal(run('tickets').code, 1);
+});
+
+test('recording a transition with log --transitioned clears the key; a value that is not a key is refused and writes nothing', () => {
+    seedPending();
+    const before = ledger().length;
+    const bad = run('log', 'moved it', '--transitioned', 'not a key', ...MARK);
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /--transitioned needs tracker keys/);
+    assert.equal(ledger().length, before);
+    assert.equal(run('log', 'moved both', '--transitioned', 'ABC-12, XYZ-7', ...MARK).code, 0);
+    assert.deepEqual(ledger().at(-1).transitioned, ['ABC-12', 'XYZ-7']);
+    assert.match(run('tickets', '--pending').out, /No pending tracker transitions/);
+});
+
+test('the key pattern is configurable, so an overlay can narrow what counts as a tracker key', () => {
+    seedPending();
+    const narrow = runEnv({ MAESTRO_TRACKER_KEY_PATTERN: '\\bXYZ-\\d+\\b' }, 'tickets', '--pending').out;
+    assert.match(narrow, /XYZ-7/);
+    assert.doesNotMatch(narrow, /ABC-12/);
+});
+
+test('prime and triage flag pending transitions when there are some, and say nothing when there are none', () => {
+    assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
+    assert.match(run('triage').out, /\[x\] Every done item with a tracker key has a recorded transition$/m);
+    seedPending();
+    assert.match(run('prime').out, /Pending tracker transitions \(2\): ABC-12, XYZ-7\. `journal\.mjs tickets --pending`/);
+    const t = run('triage');
+    assert.match(t.out, /\[ \] Every done item with a tracker key has a recorded transition \(2 pending: ABC-12, XYZ-7/);
+    assert.deepEqual(JSON.parse(run('triage', '--json').out).pendingTransitions.map((p) => p.key).sort(), ['ABC-12', 'XYZ-7']);
+    assert.equal(run('triage').code, 0, 'a warning, never a roll blocker');
+    run('log', 'moved all', '--transitioned', 'ABC-12,XYZ-7', ...MARK);
+    assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
+});
