@@ -191,6 +191,8 @@ flowchart LR
     A -- "idle over 14 days:<br/>delete-candidate" --> X[you decide]
 ```
 
+Prod-check scripts (anything that reads a live system by name: a location, job or sensor) take those identifiers from a known-good sibling script or from the real UI or URL, never from assumption. When a lookup matches nothing, the script prints what does exist and exits non-zero. A fixture the same agent wrote does not validate a name, because it will contain whatever the agent assumed. The brief's scripts line carries this rule.
+
 `journal.mjs roll` (and `journal.mjs scratch`) only proposes: it never moves, edits or deletes a file.
 
 ### The morning board, PR tracking and end of day
@@ -314,7 +316,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | `list [--json]` | The live watches |
 | `remove <id>` | Retire a watch (its type may clean up its own files) |
 | `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
-| `run [--once] [--interval N]` | Check, sleep, repeat. `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error |
+| `run [--once] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error |
 
 **Types.** A type is a script (`scripts/event-types/<type>.mjs` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.mjs`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
 

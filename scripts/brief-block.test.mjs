@@ -114,6 +114,7 @@ test('the scripts shelf line is appended only when scripts_dir is set, and is fi
     const line = shelfLine(md, '/shelf');
     assert.match(line, /check \/shelf\/README\.md/);
     assert.match(line, /\/shelf\/scratch\/ \(never \/tmp\)/);
+    assert.match(line, /Prod-check scripts take identifiers .* never from assumption; when a lookup matches nothing they print what does exist/);
     assert.doesNotMatch(line, /<scripts_dir>/);
     assert.ok(!extractBlock(md).includes('scripts_dir'), 'the standing block itself stays unconditional');
     assert.doesNotMatch(run(VALUES).stdout, /Scripts: before writing/);
