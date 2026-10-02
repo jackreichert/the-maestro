@@ -45,7 +45,8 @@
  *                                             archive finished work to a dated note (and, if configured, commit the ledger root). It also removes
  *                                             the stale worktrees branch-sweep.mjs would offer, with no approval step (a standing approval; never
  *                                             --force, never a branch), prunes worktrees whose directory is gone, and prints what it removed and
- *                                             kept with reasons. --container defaults to the current directory; --dry-run only reports.
+ *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
+ *                                             current directory (or --container) is outside it; --dry-run only reports.
  *   journal.mjs scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
@@ -99,10 +100,10 @@
  * config file (see local-config.mjs).
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync, realpathSync, statSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT } from './local-config.mjs';
 import { scratchReport } from './lib/scratch.mjs';
 import { defaultContext, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
@@ -940,18 +941,30 @@ function cmdScratch() {
 
 /**
  * The worktree half of the branch sweep (branch-sweep.mjs owns what qualifies; this only calls it): { result, dry }, or
- * null when skipped or it failed (the reason is printed; a sweep problem never fails the roll or the handoff).
+ * null when skipped, refused or it failed (the reason is printed; a sweep problem never fails the roll or the handoff).
+ * It scans only the configured container_root, and only when run from inside it (the cwd, or --container as a stand-in
+ * for it): a sweep that follows whatever directory the shell happens to be in can remove worktrees of an unrelated tree.
  */
 function runWorktreeSweep(dry) {
     if (has('no-worktree-sweep')) return null;
-    const container = resolve(arg('container', process.cwd()));
-    if (!existsSync(container)) { console.log(`worktree sweep skipped: no such container ${container}`); return null; }
+    const refusal = sweepRootRefusal(CONTAINER_ROOT, resolve(arg('container', process.cwd())));
+    if (refusal) { console.log(`worktree sweep refused: ${refusal}`); return null; }
     try {
-        return sweepWorktrees(container, defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry });
+        return sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry });
     } catch (e) {
         console.log(`worktree sweep skipped: ${e.message}`);
         return null;
     }
+}
+
+/** Why the sweep must not run, or '' when `from` is inside the configured `root`. Paths are compared by real path. */
+function sweepRootRefusal(root, from) {
+    if (!root) return 'container_root is not set (config key container_root or MAESTRO_CONTAINER_ROOT). Set it to the directory holding your repos, or pass --no-worktree-sweep.';
+    if (!existsSync(root)) return `container_root ${root} does not exist.`;
+    if (!existsSync(from)) return `no such directory ${from}.`;
+    const rel = relative(realpathSync(root), realpathSync(from));
+    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return `${from} is outside container_root ${root}. Run it from inside the container.`;
+    return '';
 }
 
 /**
