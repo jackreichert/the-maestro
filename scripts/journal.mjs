@@ -31,7 +31,11 @@
  *   journal.mjs status [--full]               what is open + done today, with usage marks
  *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
- *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note (and, if configured, commit the ledger root)
+ *   journal.mjs roll [--date YYYY-MM-DD] [--container <dir>] [--no-worktree-sweep]
+ *                                             archive finished work to a dated note (and, if configured, commit the ledger root). It also removes
+ *                                             the stale worktrees branch-sweep.mjs would offer, with no approval step (a standing approval; never
+ *                                             --force, never a branch), prunes worktrees whose directory is gone, and prints what it removed and
+ *                                             kept with reasons. --container defaults to the current directory; --dry-run only reports.
  *   journal.mjs scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
@@ -52,7 +56,7 @@
  *   journal.mjs claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
- *   journal.mjs handoff --stream <name> [--out <path>] [--since YYYY-MM-DD] [--force]   scaffold the five-part handoff
+ *   journal.mjs handoff --stream <name> [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
@@ -85,11 +89,12 @@
  * config file (see local-config.mjs).
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync, realpathSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR } from './local-config.mjs';
 import { scratchReport } from './lib/scratch.mjs';
+import { defaultContext, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
 import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
@@ -852,12 +857,38 @@ function cmdScratch() {
 }
 
 /**
+ * The worktree half of the branch sweep (branch-sweep.mjs owns what qualifies; this only calls it): { result, dry }, or
+ * null when skipped or it failed (the reason is printed; a sweep problem never fails the roll or the handoff).
+ */
+function runWorktreeSweep(dry) {
+    if (has('no-worktree-sweep')) return null;
+    const container = resolve(arg('container', process.cwd()));
+    if (!existsSync(container)) { console.log(`worktree sweep skipped: no such container ${container}`); return null; }
+    try {
+        return sweepWorktrees(container, defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry });
+    } catch (e) {
+        console.log(`worktree sweep skipped: ${e.message}`);
+        return null;
+    }
+}
+
+/**
+ * Roll's sweep: removes every worktree that qualifies (a standing approval), prunes entries whose directory is missing,
+ * and prints what went and what stayed with reasons. It runs even when there is nothing to archive. --dry-run only reports.
+ */
+function sweepWorktreesForRoll() {
+    const result = runWorktreeSweep(dryRun);
+    if (result) console.log(worktreeSweepLines(result, dryRun).join('\n'));
+}
+
+/**
  * Compression. Writes the day's finished work to a dated note and drops it out
  * of CURRENT.md, leaving a link. Open items are NOT archived — they stay
  * visible until they are actually closed.
  */
 function cmdRoll() {
     const d = arg('date', today());
+    sweepWorktreesForRoll();
     const g = groups();
     const done = g.doneOn(d);
     const notes = g.notesOn(d);
@@ -1679,7 +1710,7 @@ function artifactsOf(items) {
     return [...found.values()];
 }
 
-function handoffText(stream, since) {
+function handoffText(stream, since, keptWorktrees = []) {
     const items = fold(readLedger()).items.filter((i) => i.stream === stream);
     const d = today();
     const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
@@ -1716,7 +1747,9 @@ function handoffText(stream, since) {
         '## 5. Next concrete action', '',
         '_Author: one concrete first step for the fresh session._', '',
         '## Cleanup candidates', '',
-        '_Run `node scripts/branch-sweep.mjs` and paste its table here; nothing is deleted without approval._', '',
+        '_Run `node scripts/branch-sweep.mjs` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
+        ...(keptWorktrees.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '',
+            ...keptWorktrees.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : []),
         'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
     ].join('\n');
 }
@@ -1727,7 +1760,7 @@ function cmdHandoff() {
     const since = arg('since', yesterday());
     const path = arg('out') || join(dir, `HANDOFF-${today()}-${slug(stream)}.md`);
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
-    const body = handoffText(stream, since);
+    const body = handoffText(stream, since, runWorktreeSweep(true)?.kept);
     if (dryRun) { console.log(body); return; }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, body);
