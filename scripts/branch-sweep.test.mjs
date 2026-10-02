@@ -305,7 +305,7 @@ test('a remote delete carries a lease on the listed tip: a push after the listin
     for (const b of ['feat/raced', 'feat/calm']) mergeInto(w, 'develop', b);
     const items = scanRepo(w.repo, ctxFor()).items;
     const raced = items.find((i) => i.name === 'feat/raced'); const calm = items.find((i) => i.name === 'feat/calm');
-    assert.match(raced.tip, /^[0-9a-f]{40}$/, 'the listed tip travels with the item');
+    assert.equal(raced.tip, sh(w.repo, 'rev-parse', 'refs/remotes/origin/feat/raced'), 'the listed tip is the remote tip');
     sh(w.repo, 'checkout', '-q', 'feat/raced'); commit(w.repo, 'late.txt', 'late\n'); sh(w.repo, 'push', '-q', 'origin', 'feat/raced'); sh(w.repo, 'checkout', '-q', 'main');
     // The re-scan in apply() would already refuse this; call the delete directly to exercise the lease itself.
     const refused = deleteRemoteBranch(w.repo, raced, raced.id);
