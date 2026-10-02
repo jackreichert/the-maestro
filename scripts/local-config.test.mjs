@@ -222,21 +222,16 @@ test('numberMap reads k=v, k: v and brace forms, and drops anything that is not 
     assert.deepEqual(numberMap(''), {});
 });
 
-test('cost_targets overrides defaults key by key; junk keeps the default; no weights is unset', () => {
+test('cost_targets overrides defaults key by key; junk keeps the default; no prices is unset', () => {
     const d = show();
     assert.equal(d.COST_TARGETS, Object.entries(DEFAULT_COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '));
-    assert.equal(d.MODEL_PRICE_WEIGHTS, '(unset)');
+    assert.equal(d.MODEL_PRICES, '(unset)');
+    assert.match(d.COST_TARGETS, /opus_priced_share_max=50/);
     const o = show({ MAESTRO_COST_TARGETS: 'opus_share_max=30, haiku_share_min=lots' });
     assert.match(o.COST_TARGETS, /opus_share_max=30, haiku_share_min=15,/);
-    write(join(home, '.config', 'the-maestro', 'config.md'), block('cost_targets: wakes_per_prompt_max=0.4   # tighter\nmodel_price_weights: opus=1, sonnet=0.2, haiku=0.07'));
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('cost_targets: wakes_per_prompt_max=0.4   # tighter'));
     const f = show();
     assert.match(f.COST_TARGETS, /wakes_per_prompt_max=0.4,/);
-    assert.equal(f.MODEL_PRICE_WEIGHTS, 'opus=1, sonnet=0.2, haiku=0.07');
-});
-
-test('model_price_weights needs opus, sonnet and haiku; a partial set counts as unset', () => {
-    assert.equal(show({ MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2' }).MODEL_PRICE_WEIGHTS, '(unset)');
-    assert.equal(show({ MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2, haiku=0.1, other=2' }).MODEL_PRICE_WEIGHTS, 'opus=1, sonnet=0.2, haiku=0.1, other=2');
 });
 
 const PRICES = 'opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: input=2, cache_write_5m=2.5, cache_write_1h=4, cache_read=0.2, output=10; haiku: input=1, cache_write_5m=1.25, cache_write_1h=2, cache_read=0.1, output=5';
