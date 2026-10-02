@@ -376,6 +376,17 @@ export function dollars(k, p) {
 export function priceFamilies(byFamily, prices) {
     return Object.fromEntries(Object.entries(byFamily || {}).filter(([f]) => prices && prices[priceKey(f)]).map(([f, k]) => [f, dollars(k, prices[priceKey(f)])]));
 }
+/**
+ * What `byFamily` ({ family: kinds }) would cost with every priced token on Sonnet: { actual, onSonnet } in dollars.
+ * The same tokens repriced, so it ignores any difference in how many tokens another model would need or how good its work is.
+ */
+export function sonnetWhatIf(byFamily, prices) {
+    const priced = Object.entries(byFamily || {}).filter(([f]) => prices[priceKey(f)]);
+    return {
+        actual: priced.reduce((n, [f, k]) => n + dollars(k, prices[priceKey(f)]).total, 0),
+        onSonnet: priced.reduce((n, [, k]) => n + dollars(k, prices.sonnet).total, 0),
+    };
+}
 const sumDollars = (list) => list.reduce((a, d) => ({ read: a.read + d.read, write: a.write + d.write, output: a.output + d.output, input: a.input + d.input, total: a.total + d.total }), { read: 0, write: 0, output: 0, input: 0, total: 0 });
 /** Each family's share of the dollars in `byFamily` (priceFamilies output), as fractions; NaN when there are none. */
 export function pricedShares(byFamily) {
@@ -414,6 +425,11 @@ function printPriced(s, prices) {
     for (const [who, fams] of Object.entries(parts)) {
         console.log(`  est. $/day ${who.padEnd(12)} ${usd(sumDollars(Object.values(fams)).total).padStart(9)}  ${categories(sumDollars(Object.values(fams)))}`);
         for (const [f, d] of Object.entries(fams).sort((a, b) => b[1].total - a[1].total)) console.log(`    ${f.padEnd(8)} ${usd(d.total).padStart(9)}  ${categories(d)}`);
+    }
+    const w = sonnetWhatIf(s.orch, prices);
+    if (w.actual > 0) {
+        const delta = (w.onSonnet - w.actual) / w.actual;
+        console.log(`  what-if: orchestrator on Sonnet ${usd(w.onSonnet)} vs ${usd(w.actual)} actual (${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%). Same tokens repriced; ignores quality effects and any change in tokens needed.`);
     }
     const all = priceFamilies(joinKinds(s.orch, s.sub), prices);
     console.log(`  model mix (priced)     ${mixLine(pricedShares(all))}`);
