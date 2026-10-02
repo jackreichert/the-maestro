@@ -111,30 +111,41 @@ function isAncestor(g, a, b) {
 /** Commits on the first-parent line of every protected ref: the mainline, which no branch owns. */
 const mainlineOf = (g, protectedRefs) => new Set(protectedRefs.flatMap((p) => must(g, 'rev-list', '--first-parent', p).split('\n').filter(Boolean)));
 
+/** The origin refs (as `origin/<name>`) that contain `commit`, in one call. Full ref names are listed, so an ambiguous short name cannot misreport. */
+const containing = (g, commit) => new Set(must(g, 'for-each-ref', '--contains', commit, '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean).map((f) => f.replace(/^refs\/remotes\//, '')));
+
 /**
- * For a protected ref that already contains `ref`: the mainline commit just before the OLDEST first-parent merge on that
- * ref that brought in `ref` (a merge, not itself reachable from `ref`, with a second or later parent that is). That is
- * where the branch forked off as far as that ref is concerned, counted from its first merge, so a commit it contributed in
- * an earlier merge round, or one it picked up from another branch merged before it, is not hidden by a later merge.
- * Null when there is no such merge (a fast-forward), so nothing is subtracted on its account.
+ * For each protected ref in `tips` that already contains `ref`: the mainline commit just before the OLDEST first-parent merge that brought `ref` in (a merge, not
+ * itself reachable from `ref`, with a second or later parent that is). That is where the branch forked off, counted
+ * from its first merge, so a commit it contributed in an earlier merge round, or one it picked up from another branch
+ * merged before it, is not hidden by a later merge. A fast-forward has no such merge, so nothing is subtracted for it.
+ * One git call: every commit the tips have and `ref` lacks is listed with its parents, so a parent that is NOT listed
+ * is reachable from `ref`.
  */
-function mergedFrom(g, ref, p) {
-  const chain = must(g, 'rev-list', '--first-parent', '--parents', '--reverse', `${ref}..${p}`).split('\n').filter(Boolean).map((l) => l.split(' '));
-  const merge = chain.find(([, , ...others]) => others.some((o) => isAncestor(g, o, ref)));
-  return merge ? merge[1] : null;
+function forkPoints(g, ref, tips) {
+  if (!tips.length) return [];
+  const parents = new Map(must(g, 'rev-list', '--parents', `^${ref}`, ...tips).split('\n').filter(Boolean).map((l) => { const [sha, ...ps] = l.split(' '); return [sha, ps]; }));
+  const forks = must(g, 'rev-parse', ...tips).split('\n').map((tip) => {
+    const line = []; // the tip's first-parent line down to where `ref` is reachable, newest first
+    for (let c = tip; parents.has(c); c = parents.get(c)[0]) line.push(c);
+    return line.reverse().map((c) => parents.get(c)).find(([, ...others]) => others.some((o) => !parents.has(o)))?.[0];
+  });
+  return [...new Set(forks.filter(Boolean))];
 }
 
 /**
- * The branch's own non-merge commits as [{ sha, email }]. Reachable from `ref`, not from a protected tip that does
- * not already contain it, not from the mainline just before the first merge into a protected tip that does (so a branch
- * cut from a busy develop does not inherit everyone else's commits), and not on a protected mainline. A squash or rebase
- * merge leaves the branch's commits all here; a --no-ff merge keeps them here too, which is what lets a merged branch
- * be judged by who wrote it.
+ * The branch's own non-merge commits as [{ sha, email }]. Reachable from `ref`, not from a protected ref that does
+ * not already contain it, not from the mainline just before the first merge into a protected ref that does (so a branch
+ * cut from a busy develop does not inherit everyone else's commits), and not on a protected mainline. `scan` carries
+ * protectedRefs (every protected origin ref, glob-matched ones such as release/* included, so a back-merge branch is
+ * subtracted against all of them) and mainline. A squash or rebase merge leaves the branch's commits all here; a
+ * --no-ff merge keeps them here too, which is what lets a merged branch be judged by who wrote it.
  */
-function ownCommits(g, ref, protectedRefs, mainline) {
-  const outside = protectedRefs.filter((p) => !isAncestor(g, ref, p));
-  const forks = protectedRefs.filter((p) => !outside.includes(p)).map((p) => mergedFrom(g, ref, p)).filter(Boolean);
-  const not = [...outside, ...forks];
+function ownCommits(g, ref, scan) {
+  const { protectedRefs, mainline } = scan;
+  const has = containing(g, ref);
+  const outside = protectedRefs.filter((p) => !has.has(p));
+  const not = [...outside, ...forkPoints(g, ref, protectedRefs.filter((p) => has.has(p)))];
   const log = must(g, 'log', '--no-merges', '--format=%H %ae', ref, ...(not.length ? ['--not', ...not] : []));
   return log.split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([sha]) => !mainline.has(sha)).map(([sha, email]) => ({ sha, email }));
 }
@@ -154,7 +165,7 @@ const emailsFor = (g, ctx) => (ctx.emails.length ? ctx.emails : [g('config', 'us
 function isMine(g, ref, branch, tip, scan) {
   const { ctx } = scan;
   const emails = emailsFor(g, ctx);
-  const c = { emails, ghLogin: ctx.ghLogin, own: ownCommits(g, ref, scan.protectedRefs, scan.mainline), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
+  const c = { emails, ghLogin: ctx.ghLogin, own: ownCommits(g, ref, scan), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
   const failed = firstFailure(OWNERSHIP_RULES, c);
   return failed ? { ok: false, reason: failed.reason(c) } : { ok: true };
 }
@@ -209,7 +220,7 @@ const TWIN_RULES = [
     return !r.ok || r.out === q.headRefOid;
   }, () => 'twin branch moved since the PR'),
   rule('every twin commit is the user\'s', (c, q) => {
-    const own = ownCommits(c.g, q.headRefOid, c.protectedRefs, c.mainline);
+    const own = ownCommits(c.g, q.headRefOid, c.scan);
     return own.length > 0 && own.every((x) => c.emails.includes(x.email));
   }, () => 'twin has commits by someone else (or none of its own)'),
 ];
@@ -249,7 +260,7 @@ function cherryEquivalent(g, target, ref) {
  */
 function mergedEvidence(g, ref, name, tip, targets, scan) {
   const { ctx } = scan;
-  const c = { g, ref, name, tip, ctx, targets, emails: emailsFor(g, ctx), protectedRefs: scan.protectedRefs, mainline: scan.mainline, exact: () => exactPrs(g.repo, name, tip, ctx) };
+  const c = { g, ref, name, tip, ctx, targets, emails: emailsFor(g, ctx), scan, exact: () => exactPrs(g.repo, name, tip, ctx) };
   const per = []; const weak = []; const missing = [];
   for (const t of targets) {
     let hit = null;
@@ -341,7 +352,8 @@ function protection(g, ctx, targets) {
   const isProtected = (b) => matchers.some((re) => re.test(b) || re.test(bare(b)));
   const refs = must(g, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean);
   const names = refs.map((f) => f.slice('refs/remotes/origin/'.length)).filter((b) => b !== 'HEAD');
-  return { isProtected, refs, protectedRefs: names.filter(isProtected).map((b) => `origin/${b}`) };
+  const protectedRefs = names.filter(isProtected).map((b) => `origin/${b}`);
+  return { isProtected, refs, protectedRefs };
 }
 
 /** One branch judged: { tip, mine, reason, ev, error }. Evidence is only sought for a branch that is the user's. */
@@ -472,23 +484,22 @@ export function explain(repoPath, ctx, branch) {
   if (error) return [...out, `  ${error}`];
   let prot;
   try { prot = protection(g, ctx, targets); } catch (e) { return [...out, `  ERROR ${e.message}`]; }
-  const { protectedRefs } = prot;
   if (prot.isProtected(branch)) return [...out, '  FAIL protected branch'];
   try {
     const tip = must(g, 'rev-parse', ref);
     const emails = emailsFor(g, ctx);
-    const mainline = mainlineOf(g, protectedRefs);
-    const own = ownCommits(g, ref, protectedRefs, mainline);
+    const scan = { ctx, protectedRefs: prot.protectedRefs, mainline: mainlineOf(g, prot.protectedRefs) };
+    const own = ownCommits(g, ref, scan);
     const c = { emails, ghLogin: ctx.ghLogin, own, exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
     out.push(`  tip ${tip.slice(0, 9)}, ${own.length} own commits, targets ${targets.join('+')}, PR look-back ${ctx.prDays ?? 180} days, ${mergedPrs(g.repo, ctx).length} merged PRs read`);
     out.push(`  exact PRs (head ${branch} at tip): ${c.exactPrs().map((p) => `#${p.number}->${p.baseRefName}`).join(', ') || 'none'}`);
     out.push('ownership:', ...OWNERSHIP_RULES.map((r) => verdict(r.name, r, c)));
-    const tc = { g, ref, name: branch, tip, ctx, targets, emails, protectedRefs, mainline, exact: c.exactPrs };
+    const tc = { g, ref, name: branch, tip, ctx, targets, emails, scan, exact: c.exactPrs };
     for (const t of targets) {
       out.push(`target ${t}:`, ...TARGET_RULES.map((r) => verdict(r.name, r, tc, t)));
       try { out.push(`  ${cherryEquivalent(g, `origin/${t}`, ref) ? 'PASS' : 'FAIL'} patch-equivalent (review only)`); } catch (e) { out.push(`  ERROR cherry: ${e.message}`); }
     }
-    const a = assess(g, ref, branch, targets, { ctx, protectedRefs, mainline });
+    const a = assess(g, ref, branch, targets, scan);
     out.push(`result: ${a.error ? `skipped (${a.error.message})` : !a.mine ? `not mine (${a.reason})` : a.ev.state === 'ok' ? `CANDIDATE, ${why(a.ev)}` : a.ev.state === 'review' ? 'REVIEW' : `not merged into ${a.ev.missing.join(', ')}`}`);
   } catch (e) { out.push(`  ERROR ${e.message}`); }
   return out;
