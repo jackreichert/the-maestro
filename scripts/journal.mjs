@@ -29,7 +29,7 @@
  *   journal.mjs stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
  *   journal.mjs usage [--open]                counts of model and used marks across items
  *   journal.mjs status [--full]               what is open + done today, with usage marks
- *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream
+ *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.mjs roll [--date YYYY-MM-DD]      archive finished work to a dated note (and, if configured, commit the ledger root)
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
@@ -87,7 +87,8 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, dirname } from 'node:path';
 import { hostname } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR } from './local-config.mjs';
+import { sessionLine } from './token-metrics.mjs';
 import { isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -662,7 +663,7 @@ function cmdStatus() {
         return;
     }
 
-    if (has('footer')) { footerLines(g, done).forEach((l) => console.log(l)); return; }
+    if (has('footer')) { [...footerLines(g, done), sessionLine(CLAUDE_PROJECTS_DIR)].forEach((l) => console.log(l)); return; }
 
     const line = (label, arr) => {
         if (!arr.length) return;

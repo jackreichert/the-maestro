@@ -130,6 +130,18 @@ test('watch_* keys: defaults, file values, environment wins, junk falls back', (
     assert.equal(junk.WATCH_QUIET_HOURS_MODE, 'stop');
 });
 
+test('roll_* keys: defaults, file values, environment wins, junk falls back', () => {
+    const d = show();
+    assert.deepEqual([d.ROLL_TURNS, d.ROLL_READ_PER_TURN], ['180', '350000']);
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('roll_turns: 120\nroll_read_per_turn: 300000'));
+    const f = show();
+    assert.deepEqual([f.ROLL_TURNS, f.ROLL_READ_PER_TURN], ['120', '300000']);
+    const e = show({ MAESTRO_ROLL_TURNS: '90' });
+    assert.deepEqual([e.ROLL_TURNS, e.ROLL_READ_PER_TURN], ['90', '300000']);
+    const junk = show({ MAESTRO_ROLL_TURNS: 'many', MAESTRO_ROLL_READ_PER_TURN: '-5' });
+    assert.deepEqual([junk.ROLL_TURNS, junk.ROLL_READ_PER_TURN], ['180', '350000'], 'junk in the winning source falls back to the default');
+});
+
 test('PR size budget: defaults, file values, env override, and bad values fall back', () => {
     const d = show();
     assert.equal(d.PR_MAX_CODE_FILES, '5');

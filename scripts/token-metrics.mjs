@@ -36,9 +36,9 @@
  *   turn's own output. It includes any hook output that arrived with it.
  * - Fresh = input_tokens (uncached). Context = fresh + cache write + cache read.
  */
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT } from './local-config.mjs';
+import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN } from './local-config.mjs';
 
 const TABLE_HEADER = [
     'Date', 'Sessions', 'Turns', 'Prompts', 'Wakes (notif/handback)', 'Output', 'Cache write',
@@ -79,6 +79,8 @@ function main(argv) {
     const date = arg('date', localDate(new Date().toISOString()));
     const baselineUntil = arg('baseline-until', '2026-09-24');
 
+    const warning = emptyDirWarning(projectsDir);
+    if (warning) console.error(warning);
     const { days, sessions, curve } = collect(projectsDir);
 
     if (flag('curve')) { printCurve(curve); return; }
@@ -110,11 +112,25 @@ function main(argv) {
 }
 
 // --- collection ----------------------------------------------------------------
+/** Session transcripts directly in `dir` (empty when it does not exist). */
+function sessionFiles(dir) {
+    return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.jsonl')) : [];
+}
+
+/**
+ * A warning when `dir` holds no sessions, else ''. Unset `projects_dir` falls back to the transcript directory of the
+ * process's working directory (local-config.mjs), which is empty or missing when the script runs from anywhere else.
+ */
+export function emptyDirWarning(dir) {
+    if (sessionFiles(dir).length) return '';
+    return `token-metrics: no sessions in ${dir}${existsSync(dir) ? '' : ' (directory does not exist)'}. Set projects_dir in local-config (or MAESTRO_PROJECTS_DIR, or --projects-dir); unset, it defaults to the transcript directory of the current working directory.`;
+}
+
 export function collect(projectsDir) {
     const days = new Map();
     const sessions = [];
     const curve = new Map();
-    const top = readdirSync(projectsDir).filter((f) => f.endsWith('.jsonl'));
+    const top = sessionFiles(projectsDir);
     for (const f of top) {
         const sid = basename(f, '.jsonl');
         const main = scanFile(join(projectsDir, f));
@@ -157,6 +173,30 @@ export function collect(projectsDir) {
         }
     }
     return { days: new Map([...days].sort()), sessions, curve };
+}
+
+/** The most recently modified session in `dir`: { session, turns, readPerTurn }, or null when there is none. */
+export function currentSession(dir) {
+    const newest = sessionFiles(dir)
+        .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
+        .sort((a, b) => b.t - a.t)[0];
+    if (!newest) return null;
+    const { turns } = scanFile(join(dir, newest.f));
+    const read = turns.reduce((n, t) => n + t.read, 0);
+    return { session: basename(newest.f, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0 };
+}
+
+/**
+ * The status-footer Session line for the current session, e.g.
+ * `**Session:** 86 turns (48% of 180 roll) · 129k read/turn`. At 100% of either threshold it ends with `roll now`.
+ * With no session on disk it says so rather than vanishing, so a misconfigured projects_dir is visible.
+ */
+export function sessionLine(dir, rollTurns = ROLL_TURNS, rollRead = ROLL_READ_PER_TURN) {
+    let s;
+    try { s = currentSession(dir); } catch (e) { return `**Session:** unavailable (${e.code || e.message.split('\n')[0]} reading ${dir})`; }
+    if (!s) return `**Session:** unavailable (no sessions in ${dir}; set projects_dir)`;
+    const roll = s.turns >= rollTurns || s.readPerTurn >= rollRead;
+    return `**Session:** ${s.turns} turns (${Math.floor((s.turns / rollTurns) * 100)}% of ${rollTurns} roll) · ${Math.floor(s.readPerTurn / 1000)}k read/turn${roll ? ' · roll now' : ''}`;
 }
 
 function scanFile(path) {
