@@ -92,3 +92,37 @@ export const ACTIONS = {
     10: 'archive (roll)',
     11: 'archive silently',
 };
+
+// ── gates ───────────────────────────────────────────────────────────────────
+
+const GATE = /^(?:gh:pr:([\w.-]+(?:\/[\w.-]+)?)#(\d+)|date:(\d{4}-\d{2}-\d{2})|ticket:([\w.-]+))$/;
+
+/** Parsed gate, or null when `spec` is not `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. */
+export function parseGate(spec) {
+    const m = GATE.exec(String(spec || ''));
+    if (!m) return null;
+    if (m[2]) return { type: 'gh:pr', repo: m[1], number: Number(m[2]) };
+    if (m[3]) return Number.isNaN(Date.parse(m[3])) || new Date(`${m[3]}T00:00:00Z`).toISOString().slice(0, 10) !== m[3] ? null : { type: 'date', date: m[3] };
+    return { type: 'ticket', id: m[4] };
+}
+
+/**
+ * Where a gate stands: { state: 'waiting' | 'cleared' | 'unknown', detail }. The caller supplies how to look
+ * things up, so this stays pure: `pr(repo, number)` returns { state, mergedAt } or null when it cannot tell,
+ * `ticket(id)` returns a status string or null.
+ */
+export function gateStatus(spec, today, { pr, ticket }) {
+    const g = parseGate(spec);
+    if (!g) return { state: 'unknown', detail: 'unreadable gate' };
+    if (g.type === 'date') return today >= g.date ? { state: 'cleared', detail: `${g.date} has arrived` } : { state: 'waiting', detail: `until ${g.date}` };
+    if (g.type === 'ticket') {
+        const status = ticket(g.id);
+        if (!status) return { state: 'unknown', detail: `ticket ${g.id}: status unavailable` };
+        return status === 'closed' ? { state: 'cleared', detail: `ticket ${g.id} is closed` } : { state: 'waiting', detail: `ticket ${g.id} is ${status}` };
+    }
+    const info = pr(g.repo, g.number);
+    if (!info) return { state: 'unknown', detail: `${g.repo}#${g.number}: gh could not say` };
+    if (info.state === 'MERGED') return { state: 'cleared', detail: `${g.repo}#${g.number} merged` };
+    if (info.state === 'CLOSED') return { state: 'unknown', detail: `${g.repo}#${g.number} closed without merging` };
+    return { state: 'waiting', detail: `${g.repo}#${g.number} is ${String(info.state).toLowerCase()}` };
+}
