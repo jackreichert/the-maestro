@@ -187,15 +187,16 @@ slicing — is [reference/git.md](git.md); don't restate it here.
 
 ## Copilot on drafts
 
-**Every draft PR the user authors gets a Copilot review requested, and Copilot's threads are handled
-and resolved before the user reviews the draft.** The user's first read of a draft should not be
-spent on what a bot could have caught.
+**Every draft PR the user authors in a `copilot_orgs` owner gets a Copilot review requested, and Copilot's
+threads are handled and resolved before the user reviews the draft.** Repos owned by anyone else,
+or every repo when `copilot_orgs` is unset, get no request. The user's first read of a draft should
+not be spent on what a bot could have caught.
 
 [scripts/pr-watch.mjs](../scripts/pr-watch.mjs) does the requesting: each tick it adds `@copilot`
-as a reviewer on any open draft Copilot has neither reviewed nor been asked to review, once per PR.
+as a reviewer on any open draft in a `copilot_orgs` owner that Copilot has neither reviewed nor been asked to review, once per PR.
 Its threads then arrive as `THREAD` lines. Handle them with [the comment workflow](#the-comment-workflow)
 — verdicts drafted, fixes committed, bot threads resolved — without waiting for the user to ask.
-If the watcher isn't running, request it by hand when the draft goes up:
+If the watcher isn't running, request it by hand when a draft in a `copilot_orgs` owner goes up:
 `gh pr edit <n> --repo <owner>/<repo> --add-reviewer @copilot`.
 
 ## The PR watcher
@@ -301,6 +302,6 @@ Before deleting a remote branch:
 - Posting a comment on a thread that's already fixed by a commit or already auto-outdated — neither
   needs one.
 - Declining a one-line bot nit when the PR is getting a commit anyway.
-- Leaving a draft without a Copilot review requested, or handing it to the user with Copilot
+- Leaving a draft in a `copilot_orgs` owner without a Copilot review requested, or handing it to the user with Copilot
   threads still open.
 - Running more than one PR watcher, or letting a dispatched agent run one.
