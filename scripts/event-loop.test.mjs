@@ -270,3 +270,17 @@ test('lock: SIGTERM releases it', async () => {
   await closed;
   assert.equal(existsSync(join(dir, 'loop.lock')), false);
 });
+
+test('a type\'s retired hook runs after a watch retires, and a throwing hook does not break the tick', () => {
+  const dir = tempDir();
+  const seen = [];
+  const types = {
+    t: { check: () => ({ done: true }), diff: () => [], retired: (watch, ctx) => { seen.push([watch.id, ctx.dir]); } },
+    u: { check: () => ({ done: true }), diff: () => [], retired: () => { throw new Error('boom'); } },
+  };
+  addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
+  addWatch(dir, { id: 'w2', type: 'u', target: 'a' }, NOON);
+  assert.equal(tick(base(dir, types)).retired.length, 2);
+  assert.deepEqual(seen, [['w1', dir]]);
+  assert.equal(listWatches(dir).length, 0);
+});
