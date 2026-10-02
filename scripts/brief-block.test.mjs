@@ -136,3 +136,11 @@ test('the agent-owned repos line is appended only when agent_owned_repos is set,
     assert.equal(on.status, 0, on.stderr);
     assert.match(on.stdout, /Report: at most ~20 lines[^\n]*\n- Agent-owned repos \(\/work\/tools, \/work\/notes\)/);
 });
+
+test('the shipped block forbids polling an output file, and says to run tests under a timeout and report a hanging test', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    assert.match(block, /never poll an output file in an until\/sleep loop/);
+    assert.match(block, /Run tests in the foreground under a hard timeout/);
+    assert.match(block, /if one hangs, stop and report which test/);
+    assert.ok(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems.length === 0, 'no new slot');
+});
