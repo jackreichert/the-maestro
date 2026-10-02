@@ -393,16 +393,22 @@ decision 7p7d). The same command is `node scripts/branch-sweep.mjs --apply-workt
 3. Right before each removal the worktree is re-read: HEAD must still be the scanned commit, nothing modified or
    untracked, a detached HEAD still on origin. Then `git worktree remove` without `--force`. A local branch is
    never deleted; remote branches are not touched and keep the flow above.
-4. It prints a line per `removed`, `pruned` and `kept` worktree with the reason (uncommitted changes, untracked
-   files, N unpushed commits, not merged, locked, live claim, idle), then a count. A fetch failure removes nothing.
-   Rerunning is a no-op once nothing qualifies.
+4. It prints a line per `removed` and `pruned` worktree, and the kept ones as counts by reason (uncommitted
+   changes, untracked files, unpushed commits, not merged, locked, live claim, not idle), then a total.
+   `--verbose` lists each kept worktree with its full reason. A fetch failure removes nothing. Rerunning is a
+   no-op once nothing qualifies.
+5. `sweep_budget_seconds` (default 300) bounds the run. Once over it, the sweep stops at the next repo boundary and
+   prints the repos it skipped; sweep one with `branch-sweep.mjs --apply-worktrees --repo <name>`.
+
+`roll` runs triage, archives, commits the ledger, and only then sweeps, so a slow sweep never delays the ledger.
+`roll --fast` skips the sweep and the scratch review.
 
 The sweep scans only the configured `container_root` (config key, or `MAESTRO_CONTAINER_ROOT`). If none is set, or
 the current directory (or `--container`, which stands in for it) is outside that root, it prints
 `worktree sweep refused: <reason>`, removes nothing, and the roll carries on.
 
 Flags on `roll`: `--container <dir>` (checked against the root in place of the current directory), `--dry-run` (report only, no prune, no
-removal), `--no-worktree-sweep`. The sweep runs even when there is nothing to archive, and a failure in it is
+removal), `--no-worktree-sweep`, `--fast` (no sweep, no scratch review), `--verbose` (list every kept worktree). The sweep runs even when there is nothing to archive, and a failure in it is
 printed, never fatal to the roll. Anything kept that holds work stays on the board through the handoff's
 **Cleanup candidates**.
 
