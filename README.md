@@ -246,7 +246,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.mjs
 | `prime` | The 40-line-or-less board for session start and after a compaction; ledger only |
 | `standup [--date D]` | End-of-day summary for pasting |
 | `triage` | Box every open item, flag the stale, unpromoted and unticketed. `--date`, `--since`, `--apply` (closes recorded rules), `--json` |
-| `roll` | Archive finished work to a dated note, keep open items; also removes stale worktrees. `--strict` refuses on triage blockers, `--container`, `--no-worktree-sweep`, `--dry-run` |
+| `roll` | Archive finished work to a dated note, keep open items; also removes stale worktrees, but only inside the configured `container_root` (it refuses and the roll goes on when none is set or you are outside it). `--strict` refuses on triage blockers, `--container`, `--no-worktree-sweep`, `--dry-run` |
 | `scratch` | With `scripts_dir` set, list `scratch/` with a promote, keep or delete-candidate proposal |
 | `verify` | Check every line parses, ids are unique and every reference exists; exit 1 on problems |
 | `render` | Rebuild `CURRENT.md` and the per-stream pages from the ledger |
@@ -416,6 +416,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `sweep_pr_days` | `MAESTRO_SWEEP_PR_DAYS` | 180 | Days of merged PRs the sweep reads as evidence |
 | `sweep_protect_symlink_dirs` | `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS` | `~/.claude/skills` and `<container>/.claude/skills` always count | Extra directories whose symlinks mark a worktree as a live skill |
 | `sweep_disposable_ignored` | `MAESTRO_SWEEP_DISPOSABLE_IGNORED` | `node_modules, .venv, dist, __pycache__` | Ignored paths that do not keep a worktree; any other ignored file does |
+| `container_root` | `MAESTRO_CONTAINER_ROOT` | none (sweep refuses) | The container directory `roll` and `handoff` may sweep for stale worktrees; a leading `~/` is expanded. Unset, or run from outside it, the sweep prints a refusal and does nothing |
 | `scripts_dir` | `MAESTRO_SCRIPTS_DIR` | none (shelf off) | The shared scripts shelf; a leading `~/` is expanded |
 
 Two more variables point scripts at a different binary or directory: `MAESTRO_GH` (the `gh` binary `branch-sweep.mjs` runs) and `MAESTRO_GH_BIN` (the one `pr-open.mjs` runs), and `MAESTRO_CLAIMS_DIR` overrides where `branch-sweep.mjs` looks for claim files. The full key reference, with the lookup order for plugin-shipped overlays, is [reference/local-config.md](reference/local-config.md).
