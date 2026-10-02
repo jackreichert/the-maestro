@@ -221,6 +221,28 @@ test('a colleague\'s commits plus my fix, merged --no-ff, are not mine; a bot br
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), ['feat/mine']);
 });
 
+test('a colleague\'s back-merge branch with no commits of its own is not mine, even when merged into a glob-protected release/* branch', () => {
+    const w = world();
+    const OTHER = 'samwise@example.com';
+    sh(w.repo, 'branch', 'release/1.0', 'main'); sh(w.repo, 'push', '-q', 'origin', 'release/1.0');
+    feature(w, 'feat/mine');
+    mergeInto(w, 'release/1.0', 'feat/mine');
+    // The colleague cut a branch from main and merged release/1.0 in: one merge commit, nothing of their own.
+    sh(w.repo, 'checkout', '-q', '-b', 'colleague/x', 'main');
+    sh(w.repo, '-c', `user.email=${OTHER}`, '-c', 'user.name=S', 'merge', '-q', '--no-ff', '-m', 'sync release', 'release/1.0');
+    sh(w.repo, 'push', '-q', 'origin', 'colleague/x');
+    // release moves on, then takes the back-merge; develop takes it too.
+    sh(w.repo, 'checkout', '-q', 'release/1.0'); commit(w.repo, 'rel.txt', 'r\n', OTHER); sh(w.repo, 'push', '-q', 'origin', 'release/1.0');
+    sh(w.repo, '-c', `user.email=${OTHER}`, '-c', 'user.name=S', 'merge', '-q', '--no-ff', '-m', 'merge', 'colleague/x'); sh(w.repo, 'push', '-q', 'origin', 'release/1.0');
+    sh(w.repo, 'checkout', '-q', 'develop');
+    sh(w.repo, '-c', `user.email=${OTHER}`, '-c', 'user.name=S', 'merge', '-q', '--no-ff', '-m', 'merge', 'colleague/x'); sh(w.repo, 'push', '-q', 'origin', 'develop');
+    sh(w.repo, 'push', '-q', 'origin', '--delete', 'feat/mine');
+    sh(w.repo, 'fetch', '-q', '--prune', 'origin'); sh(w.repo, 'checkout', '-q', 'main');
+    const ctx = ctxFor({ gh: searchGh([]) });
+    assert.deepEqual(names(scanRepo(w.repo, ctx), 'remote-branch'), []);
+    assert.match(explain(w.repo, ctx, 'colleague/x').join('\n'), /result: not mine/);
+});
+
 test('a branch with no commits of its own never qualifies, unless a merged PR names it and its tip', () => {
     const w = world();
     sh(w.repo, 'push', '-q', 'origin', 'origin/develop:refs/heads/feat/empty');

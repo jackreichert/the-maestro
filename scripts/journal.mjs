@@ -99,7 +99,7 @@
  * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT, each also settable in the
  * config file (see local-config.mjs).
  */
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, openSync, writeSync, closeSync, unlinkSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, linkSync, unlinkSync, realpathSync, statSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -1692,8 +1692,11 @@ function claimStaleness(c, hours) {
 const describeClaim = (c) => (c ? `desk ${c.desk}, pid ${c.pid ?? 'unknown'}, host ${c.host}, since ${c.time}` : 'an unreadable claim');
 
 /**
- * Exclusive create is the guarantee: openSync(path, 'wx') is O_CREAT|O_EXCL, so of any number of
- * racing processes exactly one succeeds. The `claim` ledger row is only the record.
+ * The guarantee is link(2): the full claim is written to a private temp file, then hard-linked to
+ * Claims/<repo>.lock. link fails with EEXIST if the lock exists, so of any number of racing
+ * processes exactly one succeeds, and the lock never exists half-written (an exclusive create
+ * followed by a write exposes an empty file, which a loser reads as "an unreadable claim").
+ * The `claim` ledger row is only the record.
  */
 function cmdClaim() {
     const repo = validRepo(positional[0]);
@@ -1705,16 +1708,17 @@ function cmdClaim() {
     const claim = { repo, desk, pid, host: hostname(), time: now(), branch: arg('branch') || undefined, why: arg('why') || undefined };
     if (dryRun) { console.log('[dry-run]', JSON.stringify(claim)); return; }
     mkdirSync(claimsDir, { recursive: true });
-    let fd;
-    try {
-        fd = openSync(claimPath(repo), 'wx');
-    } catch (e) {
-        if (e.code !== 'EEXIST') throw e;
+    const tmp = `${claimPath(repo)}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(claim, null, 2) + '\n', { flag: 'wx' });
+    let linkError = null;
+    try { linkSync(tmp, claimPath(repo)); } catch (e) { linkError = e; }
+    unlinkSync(tmp);
+    if (linkError) {
+        if (linkError.code !== 'EEXIST') throw linkError;
         const held = readClaim(repo);
         console.error(`${repo} is already claimed by ${describeClaim(held)}.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
         process.exit(1);
     }
-    try { writeSync(fd, JSON.stringify(claim, null, 2) + '\n'); } finally { closeSync(fd); }
     append({ id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, stream: desk, desk, branch: claim.branch, text: `claim ${repo} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage });
     if (!dryRun) render(true);
     console.log(`claim  ${repo}  ${desk}`);
