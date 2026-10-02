@@ -313,6 +313,9 @@ test('a remote delete carries a lease on the listed tip: a push after the listin
     assert.match(refused.message, /^refused: feat\/raced moved on origin/);
     assert.equal(remoteHas(w, 'feat/raced'), true, 'the moved branch survives');
     assert.equal(deleteRemoteBranch(w.repo, calm, calm.id).done, true);
+    const again = deleteRemoteBranch(w.repo, calm, calm.id);
+    assert.equal(again.done, true, 'already gone is the wanted end state, not a refusal');
+    assert.match(again.message, /already gone/);
     assert.equal(remoteHas(w, 'feat/calm'), false);
 });
 
