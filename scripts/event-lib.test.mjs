@@ -59,6 +59,13 @@ test('a corrupt registry or digest line is skipped, not fatal', () => {
   assert.equal(readDigest(d).length, 1);
 });
 
+test('a watch interval is stored, and anything but a positive number is refused', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'event-lib-'));
+  assert.equal(addWatch(dir, { id: 'a', type: 't', target: 'x', interval: '90' }).interval, 90);
+  assert.equal(addWatch(dir, { id: 'b', type: 't', target: 'x' }).interval, null);
+  for (const bad of ['0', '-5', 'soon', '']) assert.throws(() => addWatch(dir, { id: 'c', type: 't', target: 'x', interval: bad }), /interval/);
+});
+
 test('ids are validated and defaults are filled in', () => {
   const d = dir();
   assert.throws(() => addWatch(d, { id: '../x', type: 't', target: 'x' }), /watch id/);

@@ -3,6 +3,10 @@
  * State { overall: none|pending|passing|failing, total, failed[], settled }. Done_when: `settled` (default,
  * no check still pending) or `passing`. Actionable: a move into failing or passing. A re-run (back to pending) is informational.
  */
+
+// Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
+export const interval = 180;
+export const network = true;
 const TARGET = /^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)(?:#|\/pull\/)(\d+)\/?$/;
 const MAX_NAMED = 5;
 // gh pr checks exits 8 while checks are pending and 1 when any failed; both still print the JSON.

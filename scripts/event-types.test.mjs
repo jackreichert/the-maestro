@@ -57,8 +57,9 @@ test('check() receives the watch and its previous state, so a type can keep a ba
   const seen = [];
   const types = { base: { check: (_t, ctx) => { seen.push(ctx.prev); return { first: ctx.prev?.first ?? seen.length }; }, diff: () => [] } };
   addWatch(dir, { id: 'b', type: 'base', target: 'x' });
-  tick({ dir, types, config: { quietHours: 'off' } });
-  tick({ dir, types, config: { quietHours: 'off' } });
+  const now = Date.now();
+  tick({ dir, types, config: { quietHours: 'off' }, now });
+  tick({ dir, types, config: { quietHours: 'off' }, now: now + 200 * 1000 });
   assert.deepEqual(seen, [null, { first: 1 }]);
 });
 
