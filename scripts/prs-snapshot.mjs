@@ -24,6 +24,9 @@
  *       fetch, so the next run diffs against this one.
  *       Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT.
  *
+ *   prs-snapshot.mjs [--diff] [--ready] ...   --ready adds the readiness report: PRs that are ready to merge, and approved ones that are not, with why
+ *   prs-snapshot.mjs ready <snapshot.json>   the readiness report for a snapshot on disk (no network)
+ *
  *   prs-snapshot.mjs diff <old-snapshot.json> <new-snapshot.json>
  *       Pure diff of two snapshot files already on disk. No network call, no
  *       write. This is what the test file exercises.
@@ -32,9 +35,11 @@
  * the morning board, then `--diff` at mid-day and again in the end-of-day PR
  * pass (reference/ledger.md#pr-pass).
  */
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, VAULT_ROOT } from './local-config.mjs';
+import { fileURLToPath } from 'node:url';
+import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.mjs';
 import { searchAllPages } from './lib/gh-search.mjs';
 
 // Keep the bot list in one place: a literal suffix every GitHub App login
@@ -48,8 +53,8 @@ const isBot = (login) => !login || login.endsWith(BOTS.suffix) || BOTS.logins.in
 const HUMAN_REVIEW_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED']);
 
 const argv = process.argv.slice(2);
-const cmd = argv[0] === 'diff' ? 'diff' : 'snapshot';
-const positional = argv.slice(cmd === 'diff' ? 1 : 0).filter((a) => !a.startsWith('--'));
+const cmd = ['diff', 'ready'].includes(argv[0]) ? argv[0] : 'snapshot';
+const positional = argv.slice(cmd === 'snapshot' ? 0 : 1).filter((a) => !a.startsWith('--'));
 function arg(name, fallback = null) {
     const i = argv.indexOf(`--${name}`);
     return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
@@ -72,6 +77,7 @@ const QUERY = `query($after: String) {
         baseRefName
         updatedAt
         reviewDecision
+        mergeable
         repository { nameWithOwner }
         reviewRequests(first: 10) {
           nodes { requestedReviewer { ... on User { login } ... on Team { name } ... on Bot { login } } }
@@ -80,6 +86,7 @@ const QUERY = `query($after: String) {
           nodes { author { login } state submittedAt }
         }
         reviewThreads(first: 100) {
+          pageInfo { hasNextPage }
           nodes { id isResolved isOutdated comments(first: 1) { nodes { author { login } } } }
         }
         comments(last: 5) { totalCount nodes { author { login } createdAt } }
@@ -100,6 +107,8 @@ const toSnapshotPr = (n) => ({
     baseRefName: n.baseRefName,
     updatedAt: n.updatedAt,
     reviewDecision: n.reviewDecision || 'NONE',
+    mergeable: n.mergeable || 'UNKNOWN',
+    threadsComplete: !n.reviewThreads.pageInfo?.hasNextPage,
     reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login ?? r.requestedReviewer?.name).filter((x) => x != null),
     reviews: n.latestReviews.nodes.map((r) => ({ author: r.author?.login, state: r.state, submittedAt: r.submittedAt })),
     threads: n.reviewThreads.nodes.map((t) => ({ id: t.id, isResolved: t.isResolved, isOutdated: t.isOutdated, author: t.comments.nodes[0]?.author?.login })),
@@ -167,6 +176,67 @@ function diffSnapshots(prev, curr) {
     return { changes, botEvents };
 }
 
+// ── readiness ───────────────────────────────────────────────────────────────
+
+/** Branch the release-candidate twin targets in twin-flow repos (git.md "Twin PRs"); its integration twin targets any other base. */
+const RELEASE_BRANCH = 'staging';
+
+/**
+ * Why a PR is not ready to merge, from data alone: { ready, reasons }. Ready means not a draft, approved, zero unresolved
+ * review threads (and all threads read), GitHub says MERGEABLE, and, in a twin-flow repo, a release-candidate PR has no open
+ * integration twin (same repo and head branch, another base). A conflict or open thread never reads as ready.
+ */
+export function readiness(pr, all = [], twinRepos = TWIN_FLOW_REPOS) {
+    const reasons = [];
+    if (pr.isDraft) reasons.push('draft');
+    if (pr.reviewDecision !== 'APPROVED') reasons.push(`not approved (${pr.reviewDecision})`);
+    const open = pr.threads.filter((t) => !t.isResolved).length;
+    if (open) reasons.push(`${open} unresolved review thread(s)`);
+    if (pr.threadsComplete === false) reasons.push('more than 100 review threads, not all read');
+    if (pr.mergeable === 'CONFLICTING') reasons.push('merge conflict');
+    else if (pr.mergeable !== 'MERGEABLE') reasons.push(`mergeable state ${pr.mergeable || 'unknown'}`);
+    if (twinRepos.includes(pr.repo) && pr.baseRefName === RELEASE_BRANCH) {
+        const twin = all.find((o) => o.repo === pr.repo && o.headRefName === pr.headRefName && o.baseRefName !== RELEASE_BRANCH);
+        if (twin) reasons.push(`blocked on ${twin.baseRefName} twin #${twin.number}`);
+    }
+    return { ready: reasons.length === 0, reasons };
+}
+
+/** Lines for the ready bucket, and for every approved PR that is not ready with its reasons (so none vanishes). */
+export function readyLines(snapshot, twinRepos = TWIN_FLOW_REPOS) {
+    const rows = snapshot.prs.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos) }));
+    const ready = rows.filter((r) => r.ready);
+    const held = rows.filter((r) => !r.ready && r.p.reviewDecision === 'APPROVED');
+    return [
+        `Ready to merge (${ready.length}):`, ...ready.map((r) => `  ${r.p.key} — ${r.p.url}`),
+        `Approved but not ready (${held.length}):`, ...held.map((r) => `  ${r.p.key} — ${r.reasons.join('; ')} — ${r.p.url}`),
+    ];
+}
+
+const defaultRun = (args) => spawnSync('gh', args, { encoding: 'utf8' });
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * After a PR merged, its open siblings in the same repos have a new base: GitHub recomputes `mergeable` lazily and answers
+ * UNKNOWN until asked again. Re-asks `gh pr view` for each such sibling (up to 3 tries while UNKNOWN) and updates the snapshot in place.
+ * A failed lookup leaves the old value, which readiness() will not call ready unless it already said MERGEABLE.
+ */
+export function requerySiblings(prev, curr, { run = defaultRun, wait = pause } = {}) {
+    const open = new Set(curr.prs.map((p) => p.key));
+    const mergedRepos = new Set((prev?.prs || []).filter((p) => !open.has(p.key)).map((p) => p.repo));
+    for (const p of curr.prs.filter((x) => mergedRepos.has(x.repo))) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const r = run(['pr', 'view', String(p.number), '--repo', p.repo, '--json', 'mergeable', '--jq', '.mergeable']);
+            const state = r.status === 0 ? String(r.stdout).trim() : '';
+            if (!state) break;
+            p.mergeable = state;
+            if (state !== 'UNKNOWN') break;
+            wait(1500);
+        }
+    }
+    return [...mergedRepos];
+}
+
 function printDiff({ changes, botEvents }) {
     if (!changes.length && !botEvents) {
         console.log('No actionable changes since last snapshot.');
@@ -194,6 +264,7 @@ function cmdSnapshot() {
 
     const prev = loadSnapshot(path);
     const curr = fetchLive();
+    requerySiblings(prev, curr);
 
     if (has('diff')) {
         if (!prev) {
@@ -202,6 +273,8 @@ function cmdSnapshot() {
             printDiff(diffSnapshots(prev, curr));
         }
     }
+
+    if (has('ready')) readyLines(curr).forEach((l) => console.log(l));
 
     if (!has('dry-run')) {
         mkdirSync(dir, { recursive: true });
@@ -221,7 +294,16 @@ function cmdDiffFiles() {
     printDiff(diffSnapshots(prev, curr));
 }
 
+function cmdReadyFile() {
+    if (!positional[0]) { console.error('Usage: prs-snapshot.mjs ready <snapshot.json>'); process.exit(1); }
+    readyLines(JSON.parse(readFileSync(positional[0], 'utf8'))).forEach((l) => console.log(l));
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
-if (cmd === 'diff') cmdDiffFiles();
-else cmdSnapshot();
+const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isMain()) {
+    if (cmd === 'diff') cmdDiffFiles();
+    else if (cmd === 'ready') cmdReadyFile();
+    else cmdSnapshot();
+}
