@@ -1189,6 +1189,31 @@ test('roll --dry-run and --no-worktree-sweep leave every worktree in place', () 
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
+test('roll archives and commits the ledger before it sweeps, and a --fast roll sweeps nothing', () => {
+    const w = sweepWorld();
+    git(vault, 'init', '-q');
+    run('done', idOf(run('start', 'ship it', ...MARK).out), ...MARK);
+    const env = { ...gitEnv, MAESTRO_CONTAINER_ROOT: w.container, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' };
+    const fast = runEnvIn(w.container, env, 'roll', '--fast');
+    assert.equal(fast.code, 0, fast.err);
+    assert.match(fast.out, /archived 1 finished item/);
+    assert.doesNotMatch(fast.out, /worktrees:|removed +/);
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
+    const full = runEnvIn(w.container, env, 'roll');
+    const at = (re) => full.out.search(re);
+    assert.ok(at(/archived|Nothing finished/) >= 0 && at(/ledger git:/) >= 0 && at(/worktrees:/) >= 0, full.out);
+    assert.ok(at(/archived|Nothing finished/) < at(/ledger git:/) && at(/ledger git:/) < at(/removed +/), full.out);
+    assert.equal(existsSync(w.clean), false);
+});
+
+test('roll --fast skips the scratch review too', () => {
+    const shelf = mkdtempSync(join(tmpdir(), 'journal-shelf-'));
+    mkdirSync(join(shelf, 'scratch'));
+    writeFileSync(join(shelf, 'scratch', 'tally.sh'), '# tally the rows\n');
+    assert.match(runEnv({ MAESTRO_SCRIPTS_DIR: shelf }, 'roll').out, /tally\.sh/);
+    assert.doesNotMatch(runEnv({ MAESTRO_SCRIPTS_DIR: shelf }, 'roll', '--fast').out, /tally\.sh/);
+});
+
 test('handoff lists the worktrees a sweep would keep under Cleanup candidates, and removes nothing', () => {
     const w = sweepWorld();
     run('start', 'port the fix', ...MARK, '--stream', 'Launch', '--new-stream');

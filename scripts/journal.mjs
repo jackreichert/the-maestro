@@ -42,11 +42,11 @@
  *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.mjs roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
- *                                             archive finished work to a dated note (and, if configured, commit the ledger root). It also removes
+ *                                             archive finished work to a dated note, commit the ledger root if configured, and only THEN sweep: it removes
  *                                             the stale worktrees branch-sweep.mjs would offer, with no approval step (a standing approval; never
  *                                             --force, never a branch), prunes worktrees whose directory is gone, and prints what it removed and
  *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
- *                                             current directory (or --container) is outside it; --dry-run only reports.
+ *                                             current directory (or --container) is outside it; --dry-run only reports. --fast skips the sweep and the scratch review.
  *   journal.mjs scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
  *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
@@ -125,7 +125,7 @@ const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose']);
 function isFlagValue(a) {
     const i = argv.indexOf(a);
     return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
@@ -977,14 +977,22 @@ function sweepWorktreesForRoll() {
 }
 
 /**
- * Compression. Writes the day's finished work to a dated note and drops it out
- * of CURRENT.md, leaving a link. Open items are NOT archived — they stay
- * visible until they are actually closed.
+ * Compression, in the order that keeps the ledger safe: triage, archive, commit, and only then the worktree sweep.
+ * The sweep is the slow part (it talks to git remotes), so it runs last and a slow or failed one never delays or
+ * blocks the archive. `roll --fast` skips it (and the scratch review the caller runs afterwards).
  */
 function cmdRoll() {
     const d = arg('date', today());
     triageBeforeRoll(d);
-    sweepWorktreesForRoll();
+    rollArchive(d);
+    if (!has('fast')) sweepWorktreesForRoll();
+}
+
+/**
+ * Writes the day's finished work to a dated note and drops it out of CURRENT.md, leaving a link. Open items are NOT
+ * archived: they stay visible until they are actually closed. Commits the ledger when ledger_git_autocommit is on.
+ */
+function rollArchive(d) {
     const g = groups();
     const done = g.doneOn(d);
     const notes = g.notesOn(d);
@@ -2172,7 +2180,7 @@ switch (cmd) {
     case 'usage': cmdUsage(); break;
     case 'status': cmdStatus(); break;
     case 'standup': cmdStandup(); break;
-    case 'roll': cmdRoll(); if (SCRIPTS_SHELF_DIR) cmdScratch(); break;
+    case 'roll': cmdRoll(); if (SCRIPTS_SHELF_DIR && !has('fast')) cmdScratch(); break;
     case 'scratch': cmdScratch(); break;
     case 'verify': cmdVerify(); break;
     case 'render': render(false, has('include-archived')); break;
