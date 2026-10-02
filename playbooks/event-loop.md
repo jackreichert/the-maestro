@@ -24,7 +24,7 @@ For one quick look instead of a long wait, `node scripts/event-loop.mjs run --on
 
 Each line is `ACTION <watch id> (<type>): <summary> | report: <hint>` or `info ...`. `ACTION` lines come first.
 
-- Open the playbook for each type that appears: `playbooks/event-types/<type>.md`. Its table says what the line means and what to report.
+- Open the playbook for each type that appears: `playbooks/event-types/<type>.md`, or `event-types/<type>.md` in the org overlay for a type the overlay added. Its table says what the line means and what to report.
 - `info` lines are kept from earlier quiet runs and show up with the next actionable batch. They are context, not news.
 - The loop marks actionable events; the type playbook is what you confirm them against. Do not promote an `info` line, and do not drop an `ACTION` line because it looks small. If a line is not in its type's table, report it as it is.
 - The `report:` hint is the orchestrator's own note on what it wants back. Follow it when it asks for something the type playbook allows.
@@ -52,7 +52,9 @@ A watch expires after 24 hours unless `--ttl-hours` says otherwise, and retires 
 
 ## For the orchestrator: adding an event type
 
-1. `scripts/event-types/<type>.mjs` exporting `check(target, ctx) -> state` and `diff(prev, next) -> events[]` (and optionally `done(state, watch)`, and `retired(watch, ctx)` to delete per-watch files when the watch retires). `ctx.run(cmd, args)` runs a command and returns `{ status, stdout, stderr }`; use it so tests can stub it. Treat `prev === null` as the first check and report only what is already worth waking for.
+1. `scripts/event-types/<type>.mjs` exporting `check(target, ctx) -> state` and `diff(prev, next) -> events[]` (and optionally `done(state, watch)`, and `retired(watch, ctx)` to delete per-watch files when the watch retires). `ctx.watch` is the watch (with its `created` time) and `ctx.prev` the state `check` returned last time (null on the first check), for a baseline. `ctx.run(cmd, args)` runs a command and returns `{ status, stdout, stderr }`; use it so tests can stub it. Treat `prev === null` as the first check and report only what is already worth waking for.
 2. `playbooks/event-types/<type>.md`: what each digest line means, which are actionable, what to report, what never to do.
 3. One line in `scripts/event-types/index.mjs`.
 4. Tests with fixtures and no network. `node --test scripts/event-types.test.mjs` fails if a type has no playbook.
+
+An org overlay adds a type with steps 1 and 2 only, no index line: `<overlay dir>/event-types/<type>.mjs` and `<overlay dir>/event-types/<type>.md`, where the overlay dir holds the overlay's `config.md`. The loop loads them on start; a duplicate name, a module without `check`/`diff` functions or a missing playbook is an error, not a skipped file.

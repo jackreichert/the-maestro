@@ -11,6 +11,7 @@ An org overlay is a separate skill that holds one org's values and rules: repo t
 - **`overlay` in the config file, or the environment variable `MAESTRO_OVERLAY`** (the variable wins). Either a skill name (`<skill>`) or a plugin-qualified skill name (`<plugin>:<skill>`, the form Claude Code uses for plugin skills).
 - **Unset means no overlay.** The skill is then fully generic, and a rule that says "from the org overlay" simply has no extra source.
 - **If an overlay is configured, load that skill (invoke it by its configured name) and follow it.** Read only the overlay file the task needs.
+- **An overlay can add event-loop watch types.** `event-loop.mjs` also loads `<overlay dir>/event-types/<type>.mjs` (the directory holding the overlay's `config.md`), each with its playbook `<type>.md` beside it, using the same `check`/`diff`/`done` interface as [playbooks/event-loop.md](../playbooks/event-loop.md#for-the-orchestrator-adding-an-event-type). A name that is already taken, a module without `check`/`diff` functions, or a missing playbook stops the loop with an error naming the file. An overlay without `config.md`, or without an `event-types/` folder, adds nothing.
 
 ## Config file
 

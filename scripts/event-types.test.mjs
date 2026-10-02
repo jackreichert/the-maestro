@@ -2,11 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defaultRun, tick } from './event-loop.mjs';
-import { TYPES } from './event-types/index.mjs';
+import { BUILTIN_TYPES as TYPES, loadTypes } from './event-types/index.mjs';
 import * as ghRun from './event-types/gh-run.mjs';
 import * as inbox from './event-types/inbox.mjs';
 import * as prChecks from './event-types/pr-checks.mjs';
@@ -26,6 +26,59 @@ test('every registered type has check, diff and a playbook, and every type file 
   }
   const files = readdirSync(join(ROOT, 'scripts', 'event-types')).filter((f) => f.endsWith('.mjs') && f !== 'index.mjs');
   assert.deepEqual(files.map((f) => f.replace('.mjs', '')).sort(), Object.keys(TYPES).sort());
+});
+
+// overlay types
+const GOOD_TYPE = "export const check = (t) => ({ t });\nexport const diff = (p, n) => (p ? [] : [{ summary: `saw ${n.t}`, actionable: true }]);\nexport const done = () => true;\n";
+
+/** An overlay dir whose event-types/ holds the given { file: content } entries. */
+function overlayWith(files) {
+  const dir = mkdtempSync(join(tmpdir(), 'overlay-'));
+  mkdirSync(join(dir, 'event-types'));
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, 'event-types', name), text);
+  return dir;
+}
+
+test('overlay types: a type in <overlay>/event-types is loaded beside the built-ins and runs through the loop', async () => {
+  const overlayDir = overlayWith({ 'my-wait.mjs': GOOD_TYPE, 'my-wait.md': '# my-wait\n' });
+  const types = await loadTypes({ overlayDir });
+  assert.deepEqual(Object.keys(types).sort(), [...Object.keys(TYPES), 'my-wait'].sort());
+  assert.equal(types['my-wait'].check('x').t, 'x');
+  assert.equal(types['my-wait'].done(), true);
+  const dir = mkdtempSync(join(tmpdir(), 'events-'));
+  addWatch(dir, { id: 'w1', type: 'my-wait', target: 'x' });
+  const { events, retired } = tick({ dir, types, config: { quietHours: 'off' } });
+  assert.deepEqual(events.map((e) => [e.watch, e.type, e.summary, e.actionable]), [['w1', 'my-wait', 'saw x', true]]);
+  assert.equal(retired.length, 1, 'done() retires the watch');
+});
+
+test('check() receives the watch and its previous state, so a type can keep a baseline', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'events-'));
+  const seen = [];
+  const types = { base: { check: (_t, ctx) => { seen.push(ctx.prev); return { first: ctx.prev?.first ?? seen.length }; }, diff: () => [] } };
+  addWatch(dir, { id: 'b', type: 'base', target: 'x' });
+  tick({ dir, types, config: { quietHours: 'off' } });
+  tick({ dir, types, config: { quietHours: 'off' } });
+  assert.deepEqual(seen, [null, { first: 1 }]);
+});
+
+test('overlay types: a name that is already a built-in is rejected, naming the file', async () => {
+  const overlayDir = overlayWith({ 'inbox.mjs': GOOD_TYPE, 'inbox.md': '# inbox\n' });
+  await assert.rejects(loadTypes({ overlayDir }), /overlay event type inbox .*inbox\.mjs.* duplicates/);
+});
+
+test('overlay types: a malformed module is rejected (missing diff, bad hook, no playbook, syntax error)', async () => {
+  const rejects = (files, re) => assert.rejects(loadTypes({ overlayDir: overlayWith(files) }), re);
+  await rejects({ 'a.mjs': 'export const check = () => ({});\n', 'a.md': '#' }, /overlay event type a .*export diff\(\) as a function/);
+  await rejects({ 'b.mjs': GOOD_TYPE.replace('export const done = () => true;', 'export const done = true;'), 'b.md': '#' }, /overlay event type b .*done must be a function/);
+  await rejects({ 'c.mjs': GOOD_TYPE }, /overlay event type c .*no playbook c\.md/);
+  await rejects({ 'd.mjs': 'export const check = (', 'd.md': '#' }, /SyntaxError|Unexpected/);
+});
+
+test('overlay types: no overlay, or an overlay without event-types, adds nothing', async () => {
+  assert.deepEqual(Object.keys(await loadTypes({})), Object.keys(TYPES));
+  assert.deepEqual(Object.keys(await loadTypes({ overlayDir: mkdtempSync(join(tmpdir(), 'overlay-')) })), Object.keys(TYPES));
+  assert.deepEqual(Object.keys(await loadTypes({ overlayDir: join(tmpdir(), 'no-such-overlay-dir') })), Object.keys(TYPES));
 });
 
 // pr-checks
