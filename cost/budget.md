@@ -141,3 +141,19 @@ Lesson, 2026-09-27: a watcher polling every 2 minutes raised the day's wake-ups 
 for no benefit the user acted on any faster than a 10-minute poll would have — see
 [loop.md#worked-example-2026-09-27](loop.md#worked-example-2026-09-27). That measurement is what
 moved the floor from 120s to 300s, and set the quiet-day baseline at 600–900s.
+
+## One event loop instead of N watchers
+
+Every ad-hoc watcher (a PR poller, a run watcher, a queue drain) wakes the orchestrator on its own
+schedule, and each wake re-reads the whole session. `scripts/event-loop.mjs` replaces them with one
+loop over a registry of watches: a type's `diff()` decides what is a change worth waking for, the
+cadence is the same `lib/cadence.mjs` (300s floor, quiet hours), and a cheap runner following
+[playbooks/event-loop.md](../playbooks/event-loop.md) wakes the orchestrator only on an actionable event.
+Informational events go to a digest file and cost nothing until read.
+
+Registered as a cost experiment, status **proposed** (the registry itself stays in the vault, see
+[loop.md](loop.md)): the hypothesis is that wake-ups per day fall back toward the 7-day median on
+days that used to run several watchers. Measure wake-ups per day and the count of actionable events
+against the 7-day median over a few days with the loop in use; adopt it if wake-ups do not exceed the
+median and no actionable event was missed, revert it if an event was missed or the loop's own runner
+costs more than the wakes it saves.
