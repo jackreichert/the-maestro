@@ -9,7 +9,7 @@ import { join } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
-const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines } = await import('./branch-sweep.mjs');
+const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.mjs');
 
 const ME = 'me@example.com';
 const sh = (repo, ...args) => {
@@ -542,6 +542,15 @@ test('sweepWorktrees removes a clean merged worktree, keeps its branch, and a se
     assert.equal(worktreeList(w), before);
 });
 
+test('kept worktrees group by reason, biggest first, and a reason it does not know is other', () => {
+    const kept = [['a', 'locked'], ['b', '3 untracked files'], ['c', '7 untracked files'], ['d', 'branch x is pushed but not merged into develop; modified 5 min ago (idle window 60)'], ['e', 'something new']]
+        .map(([path, reason]) => ({ repo: 'r', path, reason }));
+    assert.deepEqual(keptCounts(kept), [{ label: 'untracked files', count: 2 }, { label: 'locked', count: 1 }, { label: 'not idle yet', count: 1 }, { label: 'other', count: 1 }]);
+    const lines = worktreeSweepLines({ removed: [], pruned: [], kept, notes: [] });
+    assert.equal(lines.filter((l) => l.startsWith('kept')).length, 4);
+    assert.equal(worktreeSweepLines({ removed: [], pruned: [], kept, notes: [] }, false, { verbose: true }).filter((l) => l.startsWith('kept')).length, 5);
+});
+
 test('sweepWorktrees stops at the next repo boundary once over its budget and names the repos it skipped', () => {
     const w = world();
     sh(w.root, 'clone', '-q', w.origin, join(w.container, 'other'));
@@ -669,7 +678,7 @@ test('removeWorktree re-checks ignored and hidden-untracked files itself, whatev
     assert.equal(existsSync(wt), true);
 });
 
-test('--apply-worktrees from the command line removes what qualifies and prints kept with reasons', () => {
+test('--apply-worktrees from the command line removes what qualifies and prints kept as counts, or one by one with --verbose', () => {
     const w = world();
     const clean = join(w.root, 'clean'); const work = join(w.root, 'work');
     sh(w.repo, 'worktree', 'add', '-q', '--detach', clean, 'origin/develop');
@@ -678,7 +687,10 @@ test('--apply-worktrees from the command line removes what qualifies and prints 
     const r = spawnSync(process.execPath, [SCRIPT, '--apply-worktrees', '--container', w.container, '--idle-minutes', '0', '--claims-dir', join(w.root, 'none')], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH: 'false' } });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, new RegExp(`removed +${clean}`));
-    assert.match(r.stdout, new RegExp(`kept +${work} .*untracked`));
+    assert.match(r.stdout, /kept +1  untracked files/);
+    assert.doesNotMatch(r.stdout, new RegExp(`kept +${work}`));
     assert.match(r.stdout, /worktrees: 1 removed, 0 pruned, 1 kept\./);
     assert.deepEqual([existsSync(clean), existsSync(work)], [false, true]);
+    const v = spawnSync(process.execPath, [SCRIPT, '--apply-worktrees', '--verbose', '--container', w.container, '--idle-minutes', '0', '--claims-dir', join(w.root, 'none')], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH: 'false' } });
+    assert.match(v.stdout, new RegExp(`kept +${work} .*untracked`));
 });

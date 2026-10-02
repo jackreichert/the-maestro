@@ -613,16 +613,39 @@ export function sweepWorktrees(container, ctx, { only, dryRun = false, budgetSec
   return out;
 }
 
-/** Printable lines for a sweepWorktrees result: what went, what stayed and why, then a count. */
-export function worktreeSweepLines(r, dryRun = false) {
+/** Reason text to a short label, first match wins; work that is in use (claimed, dirty, a live skill) is named before the branch's merge state. */
+const REASON_LABELS = [
+  [/locked/, 'locked'], [/claimed by/, 'repo claimed'], [/live skill/, 'live skill'], [/uncommitted changes/, 'uncommitted changes'],
+  [/untracked files/, 'untracked files'], [/ignored files kept/, 'non-disposable ignored files'], [/modified \d+ min ago/, 'not idle yet'],
+  [/not yours/, 'branch not yours'], [/unpushed|not on any origin ref|not pushed or merged|could not count/, 'unpushed or unverifiable commits'],
+  [/not merged/, 'branch not merged'], [/patch-equivalent/, 'needs a human look'], [/fetch failed/, 'fetch failed'], [/^refused/, 'refused at removal'],
+];
+const reasonLabel = (reason) => REASON_LABELS.find(([re]) => re.test(reason))?.[1] || 'other';
+
+/** Kept worktrees as `label: count` lines, biggest first. */
+function keptCounts(kept) {
+  const counts = new Map();
+  for (const k of kept) { const l = reasonLabel(k.reason); counts.set(l, (counts.get(l) || 0) + 1); }
+  return [...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([l, n]) => ({ label: l, count: n }));
+}
+export { keptCounts };
+
+/**
+ * Printable lines for a sweepWorktrees result: what went, what stayed, then a count. Kept worktrees print as counts by
+ * reason (a big tree keeps hundreds); `verbose` lists each one with its full reason instead.
+ */
+export function worktreeSweepLines(r, dryRun = false, { verbose = false } = {}) {
   const verb = dryRun ? 'would remove' : 'removed';
+  const kept = verbose
+    ? r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`)
+    : keptCounts(r.kept).map((c) => `${'kept'.padEnd(12)} ${String(c.count).padStart(3)}  ${c.label}`);
   return [
     ...r.removed.map((x) => `${verb.padEnd(12)} ${x.path}  (${x.repo}; ${x.why})`),
     ...r.pruned.map((x) => `${(dryRun ? 'would prune' : 'pruned').padEnd(12)} ${x.path}  (${x.repo}; directory missing)`),
-    ...r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`),
+    ...kept,
     ...r.notes.map((n) => `note         ${n}`),
     ...(r.skipped?.length ? [`sweep budget reached: skipped ${r.skipped.length} repo(s): ${r.skipped.join(', ')}. Re-run with branch-sweep.mjs --apply-worktrees --repo <name>.`] : []),
-    `worktrees: ${r.removed.length} ${dryRun ? 'to remove' : 'removed'}, ${r.pruned.length} ${dryRun ? 'to prune' : 'pruned'}, ${r.kept.length} kept.`,
+    `worktrees: ${r.removed.length} ${dryRun ? 'to remove' : 'removed'}, ${r.pruned.length} ${dryRun ? 'to prune' : 'pruned'}, ${r.kept.length} kept.${!verbose && r.kept.length ? ' (--verbose lists them)' : ''}`,
   ];
 }
 
@@ -645,7 +668,7 @@ function main() {
 
   if (argv.includes('--apply-worktrees')) {
     const r = sweepWorktrees(container, ctx, { only, dryRun: argv.includes('--dry-run'), budgetSeconds: val('budget') ? Number(val('budget')) : SWEEP_BUDGET_SECONDS });
-    console.log(worktreeSweepLines(r, argv.includes('--dry-run')).join('\n'));
+    console.log(worktreeSweepLines(r, argv.includes('--dry-run'), { verbose: argv.includes('--verbose') }).join('\n'));
     return;
   }
   if (argv.includes('--apply')) {
