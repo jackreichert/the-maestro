@@ -1,6 +1,7 @@
 // Run: node --test scripts/event-types.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -165,4 +166,21 @@ test('dry run: each type through tick() emits its fixture event and digests it',
   assert.ok(events.every((e) => e.actionable));
   assert.deepEqual(retired.map((r) => r.id).sort(), ['c', 'r']);
   assert.equal(readDigest(dir).length, 4);
+});
+
+test('pr-review: retiring or removing the watch deletes its pr-watch state file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pr-review-retire-'));
+  const file = join(dir, 'pr-review-w1.json');
+  writeFileSync(file, '{}');
+  addWatch(dir, { id: 'w1', type: 'pr-review', target: 'open-prs', ttlMs: 60000 }, 0);
+  tick({ dir, types: TYPES, ctx: { run: () => ({ status: 0, stdout: '', stderr: '' }) }, config: { quietHours: 'off' }, now: Date.now() });
+  assert.equal(existsSync(file), false);
+  prReview.retired({ id: 'never-existed' }, { dir });
+
+  addWatch(dir, { id: 'w2', type: 'pr-review', target: 'open-prs' });
+  writeFileSync(join(dir, 'pr-review-w2.json'), '{}');
+  const script = new URL('./event-loop.mjs', import.meta.url).pathname;
+  const r = spawnSync(process.execPath, [script, 'remove', 'w2'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
+  assert.match(r.stdout, /removed w2/);
+  assert.equal(existsSync(join(dir, 'pr-review-w2.json')), false);
 });
