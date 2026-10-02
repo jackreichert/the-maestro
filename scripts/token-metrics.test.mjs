@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine } from './token-metrics.mjs';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares } from './token-metrics.mjs';
 
 // Hermetic: never read the user's config file (see local-config.mjs).
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -61,6 +61,70 @@ test('pick keeps usage and metadata and drops content', () => {
     assert.equal(rec.model, 'claude-opus-5-5');
     assert.doesNotMatch(JSON.stringify(rec), /SENTINEL/);
     assert.doesNotMatch(JSON.stringify(pick(user('x', { kind: 'peer', handback: true, body: SENTINEL }))), /SENTINEL/);
+});
+
+test('pick reads compaction as two metadata flags and never the summary text', () => {
+    const boundary = pick({ type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'auto', summary: SENTINEL }, content: SENTINEL });
+    const summary = pick({ type: 'user', isCompactSummary: true, message: { role: 'user', content: SENTINEL } });
+    assert.deepEqual([boundary.compact, summary.compact], [true, true]);
+    assert.equal(pick(user('x', { kind: 'human' })).compact, false);
+    assert.equal(pick({ type: 'system', subtype: 'other' }).compact, false);
+    assert.equal(pick({ type: 'user', isCompactSummary: SENTINEL }).compact, false, 'only a boolean true counts');
+    assert.doesNotMatch(JSON.stringify([boundary, summary]), /SENTINEL/);
+    // The allowlist is the whole output shape: a new field here is a new thing the script reads.
+    assert.deepEqual(Object.keys(boundary).sort(), ['compact', 'handback', 'id', 'model', 'originKind', 'role', 'subtype', 'ts', 'type', 'usage']);
+});
+
+test('model mix covers orchestrator and subagent turns by family; units price the token kinds', () => {
+    const { day } = JSON.parse(run('--date', '2026-09-25', '--json').out);
+    assert.deepEqual(Object.keys(day.mix).sort(), ['haiku', 'opus', 'sonnet']);
+    assert.equal(day.mix.opus.read, 5000 + 6100 + 6310);
+    assert.equal(day.mix.haiku.read, 900);
+    assert.equal(day.mix.sonnet.read, 900);
+    // m1: fresh 10 + 1.25*1000 + 0.1*5000 + 5*100
+    assert.equal(day.mix.haiku.units, 5 + 1.25 * 100 + 0.1 * 900 + 5 * 20);
+    assert.equal(mixCell(day.mix, 'read'), 'opus 17410 · haiku 900 · sonnet 900');
+});
+
+test('mix cells round-trip through the table', () => {
+    const mix = { opus: { read: 1_200_000, units: 3e6 }, haiku: { read: 0, units: 500 }, sonnet: { read: 40_000, units: 9e4 } };
+    assert.equal(mixCell(mix, 'read'), 'opus 1200000 · sonnet 40000');
+    assert.deepEqual(parseMix(mixCell(mix, 'units')), { opus: 3e6, sonnet: 90000, haiku: 500 });
+    assert.deepEqual(parseMix('-'), {});
+    assert.deepEqual(parseMix(undefined), {});
+});
+
+test('compaction restarts the since-compact count; the day keeps the longest run', () => {
+    const day = '2026-09-26T10:00:0';
+    const turn = (n) => assistant(`c${n}`, `${day}${n % 10}Z`, [1, 1, 100, 1]);
+    writeFileSync(join(projects, 'sess0002.jsonl'), jsonl([
+        ...[1, 2, 3, 4].flatMap(turn),
+        { type: 'system', subtype: 'compact_boundary', timestamp: `${day}5Z` },
+        { type: 'user', isCompactSummary: true, timestamp: `${day}5Z`, message: { role: 'user', content: SENTINEL } },
+        ...[5, 6].flatMap(turn),
+    ]));
+    const r = JSON.parse(run('--date', '2026-09-26', '--json').out);
+    assert.equal(r.day.turns, 6);
+    assert.equal(r.day.sinceCompact, 4);
+    assert.equal(r.sessions[0].sinceCompact, 4);
+    // no marker at all: the count is the whole session
+    assert.equal(JSON.parse(run('--date', '2026-09-25', '--json').out).day.sinceCompact, 3);
+});
+
+test('small agents (<10 turns) and Opus subagents are counted per subagent', () => {
+    const day = '2026-09-27T10:00:0';
+    writeFileSync(join(projects, 'sess0003.jsonl'), jsonl([user(`${day}0Z`, { kind: 'human' }), ...assistant('o1', `${day}1Z`, [1, 1, 10, 1])]));
+    const sub = (name, n, model) => writeFileSync(join(projects, 'sess0003', 'subagents', `agent-${name}.jsonl`),
+        jsonl(Array.from({ length: n }, (_, i) => assistant(`${name}${i}`, `${day}${i % 10}Z`, [1, 1, 100, 10], model)[0])));
+    mkdirSync(join(projects, 'sess0003', 'subagents'), { recursive: true });
+    sub('small', 9, 'claude-sonnet-5');
+    sub('edge', 10, 'claude-haiku-4-5');
+    sub('opus', 3, 'claude-opus-5-5');
+    const { day: d } = JSON.parse(run('--date', '2026-09-27', '--json').out);
+    assert.deepEqual([d.subagents, d.subSmall, d.subOpus], [3, 2, 1]);
+    assert.deepEqual(d.subByModel.opus, 3 * (1 + 1 + 100 + 10));
+    const row = toRow(d);
+    assert.deepEqual(row.slice(17), ['1', '2', '1', '336'], 'since compact, small agents, Opus subagents, Opus sub tokens');
 });
 
 test('turns dedupe by message id; wake-ups and prompts come from origin metadata', () => {
@@ -158,4 +222,93 @@ test('sessionLine truncates so the rendered numbers never claim a threshold the 
     assert.equal(sessionLine(dir, 1000, 350000), '**Session:** 1 turns (0% of 1000 roll) · 349k read/turn');
     writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: 399 }, (_, i) => line(`m${i}`, 1)).join('\n')}\n`);
     assert.match(sessionLine(dir, 400, 350000), /\(99% of 400 roll\)(?! · roll now)/);
+});
+
+// A table row as toRow writes it: 21 cells, with the cost columns filled from the arguments.
+const costRow = (d, { prompts = 10, wakes = 4, read = '1M', mixRead = 'opus 400k · sonnet 400k · haiku 200k', mixUnits = 'opus 1M · sonnet 1M · haiku 1M', since = 100, subs = 10, small = 2, opusSubs = 1 } = {}) =>
+    [d, '1', '100', String(prompts), `${wakes} (${wakes}/0)`, '1k', '1k', '1M', '0', read, String(subs), '1', '-', '1k', '1k', mixRead, mixUnits, String(since), String(small), String(opusSubs), '5.0M'];
+const byName = (list, name) => list.find((c) => c.name === name);
+
+test('compare scores each cost metric against its target: PASS, MISS, or - without one', () => {
+    const rows = new Map([['2026-09-22', costRow('2026-09-22')], ['2026-09-23', costRow('2026-09-23')],
+        ['2026-09-25', costRow('2026-09-25', { mixRead: 'opus 500k · sonnet 450k · haiku 50k', wakes: 4, since: 200, read: '300k' })]]);
+    const c = compare('2026-09-25', rows, '2026-09-23', { weights: null });
+    const s = (n) => byName(c, n).status;
+    assert.deepEqual([s('Opus share (read)'), s('Haiku share (read)'), s('Wakes/prompt'), s('Max turns/compact'), s('Read/turn')], ['MISS', 'MISS', 'PASS', 'MISS', 'MISS']);
+    assert.equal(byName(c, 'Opus share (read)').today, 0.5);
+    assert.ok(Math.abs(byName(c, 'Opus share (read)').median7 - 0.4) < 0.01);
+    assert.equal(byName(c, 'Haiku share (read)').regression, true, 'a falling haiku share is the regression');
+    assert.equal(s('Sonnet share (read)'), '-');
+    assert.equal(s('Small-agent rate'), '-');
+    assert.equal(byName(c, 'Small-agent rate').today, 0.2);
+    assert.equal(byName(c, 'Opus subagents').today, 1);
+    assert.equal(byName(c, 'Max turns/compact').median7, 100);
+});
+
+test('targets come from the targets option; a pass flips to a miss when the limit moves', () => {
+    const rows = new Map([['2026-09-25', costRow('2026-09-25')]]);
+    const at = (t) => byName(compare('2026-09-25', rows, '2026-09-24', { weights: null, targets: t }), 'Opus share (read)').status;
+    assert.equal(at({ opus_share_max: 40 }), 'PASS');
+    assert.equal(at({ opus_share_max: 30 }), 'MISS');
+    assert.equal(at({}), '-', 'no target configured, no verdict');
+});
+
+test('priced shares weight units by model price and exist only when weights are set', () => {
+    const rows = new Map([['2026-09-25', costRow('2026-09-25')]]);
+    assert.equal(byName(compare('2026-09-25', rows, '2026-09-24', { weights: null }), 'Opus share (priced)'), undefined);
+    const c = compare('2026-09-25', rows, '2026-09-24', { weights: { opus: 1, sonnet: 0.2, haiku: 0.1 } });
+    // equal units per family: weighted shares are 1 / 0.2 / 0.1 over 1.3
+    assert.ok(Math.abs(byName(c, 'Opus share (priced)').today - 1 / 1.3) < 1e-9);
+    assert.ok(Math.abs(byName(c, 'Haiku share (priced)').today - 0.1 / 1.3) < 1e-9);
+    assert.equal(byName(c, 'Opus share (priced)').status, '-', 'no priced target by default');
+    const t = compare('2026-09-25', rows, '2026-09-24', { weights: { opus: 1, sonnet: 0.2, haiku: 0.1 }, targets: { opus_priced_share_max: 90 } });
+    assert.equal(byName(t, 'Opus share (priced)').status, 'PASS');
+});
+
+test('rows from before the cost columns give no number instead of a wrong one', () => {
+    const old = ['2026-09-20', '1', '100', '10', '4 (4/0)', '1k', '1k', '1M', '0', '100k', '5', '1', '-', '1k', '1k'];
+    const c = compare('2026-09-25', new Map([['2026-09-20', old], ['2026-09-25', old]]), '2026-09-24', { weights: null });
+    assert.ok(Number.isNaN(byName(c, 'Opus share (read)').today));
+    assert.equal(byName(c, 'Opus share (read)').status, '-');
+    assert.ok(Number.isNaN(byName(c, 'Small-agent rate').today));
+});
+
+test('CLI: the day summary shows the mix, the cost block and PASS/MISS; weights unset says so', () => {
+    const r = run('--date', '2026-09-25');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /model mix \(cache read\) opus 9[0-9]% · sonnet [0-9]+% · haiku [0-9]+%/);
+    assert.match(r.out, /price weights unset \(model_price_weights\): token mix only/);
+    assert.match(r.out, /Cost targets 2026-09-25/);
+    assert.match(r.out, /Opus share \(read\) +9\d% +.*<=40% +MISS/);
+    assert.match(r.out, /Wakes\/prompt +2\.00 .*<=0\.50 +MISS/);
+    assert.match(r.out, /Opus subagents: each should be design, decision or review work\./);
+    assert.doesNotMatch(r.out, /share \(priced\)/);
+    assert.doesNotMatch(r.out + r.err, /SENTINEL/);
+});
+
+test('CLI: with model_price_weights set the priced mix and rows appear; --compare carries the same metrics', () => {
+    const r = spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-25', '--compare', '--projects-dir', projects, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', TZ: 'UTC', MAESTRO_MODEL_PRICE_WEIGHTS: 'opus=1, sonnet=0.2, haiku=0.1', MAESTRO_COST_TARGETS: 'opus_share_max=95' },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /model mix \(priced\) +opus \d+% · sonnet \d+% · haiku \d+%/);
+    assert.match(r.stdout, /Haiku share \(priced\)/);
+    assert.match(r.stdout, /Opus share \(read\) +9\d% +.*<=95% +PASS/);
+    assert.match(r.stdout, /Max turns\/compact +3 .*<=150 +PASS/);
+    assert.doesNotMatch(r.stdout, /Price weights are unset/);
+    assert.doesNotMatch(r.stdout + r.stderr, /SENTINEL/);
+});
+
+test('a mix cell keeps whole-number precision, so a share just over the target is a MISS', () => {
+    const mix = { opus: { read: 1_249_000, units: 0 }, haiku: { read: 1_851_000, units: 0 } };
+    const rows = new Map([['2026-09-25', costRow('2026-09-25', { mixRead: mixCell(mix, 'read') })]]);
+    const c = byName(compare('2026-09-25', rows, '2026-09-24', { weights: null }), 'Opus share (read)');
+    assert.ok(c.today > 0.4 && c.today < 0.404);
+    assert.equal(c.status, 'MISS');
+});
+
+test('the other price weight covers any family besides opus, sonnet and haiku', () => {
+    const sh = shares({ opus: 100, fable: 100 }, { opus: 1, sonnet: 1, haiku: 1, other: 3 });
+    assert.equal(sh.opus, 0.25);
+    assert.equal(shares({ opus: 100, fable: 100 }, { opus: 1, sonnet: 1, haiku: 1 }).opus, 1, 'no other weight: left out of the priced mix');
 });

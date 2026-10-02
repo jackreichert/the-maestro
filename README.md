@@ -371,6 +371,22 @@ Token-cost metrics read from Claude Code transcripts: numeric usage fields, mode
 
 `token-metrics.mjs [--date YYYY-MM-DD] [--all] [--write] [--compare] [--curve] [--json] [--projects-dir <dir>] [--vault <path>] [--project <name>] [--baseline-until YYYY-MM-DD]`. With no flags it prints today. `--write` upserts the day's row in `Research/token-metrics.md` (idempotent), `--all --write` backfills every day still on disk, `--compare` sets the day against the 7-day median and a baseline and flags any metric that moved more than about 20%, and `--curve` shows cache read per turn by turn-index bucket. The method is in [cost/measure.md](cost/measure.md).
 
+The day summary and `--compare` show each cost metric with today, the 7-day median, the baseline, its target and PASS or MISS:
+
+| Metric | Target (`cost_targets` key) |
+|---|---|
+| Model mix: share of tokens by family (opus, sonnet, haiku), orchestrator and subagents together, by cache-read tokens | opus at most 40% (`opus_share_max`), haiku at least 15% (`haiku_share_min`) |
+| The same mix by price: input-equivalent units (cache read x0.1, cache write x1.25, output x5, relative to fresh input) times `model_price_weights`. Shown only when the weights are set; otherwise the output says they are unset | none unless you set `opus_priced_share_max` or `haiku_priced_share_min` |
+| Wake-ups per prompt: (task-notification + handback wakes) / prompts | at most 0.5 (`wakes_per_prompt_max`) |
+| Read per turn: orchestrator cache read per turn | at most 200k (`read_per_turn_max`) |
+| Max turns since compact: the longest run of orchestrator turns without a compaction, per session (the day shows the longest) | at most 150 (`turns_since_compact_max`) |
+| Small-agent rate: share of subagents that finished in under 10 turns | trend only, lower is better |
+| Opus subagents: count and tokens | informational: each should be design, decision or review work |
+
+Compaction is read from transcript metadata only (the compact-boundary system line and the compact-summary flag), never from message content. The table gains columns for these metrics; run `--all --write` to fill them for days still on disk, since older rows show `-` for them.
+
+The rework rate and corrections from the user are not computed from transcripts. They are recorded as ledger notes, and a later change will count them at roll time.
+
 ### brief-block.mjs
 
 Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
@@ -409,6 +425,8 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `approvals_review_day` | `MAESTRO_APPROVALS_REVIEW_DAY` | `friday` | Weekday the greeting brings the approvals digest; a non-weekday falls back to the default |
 | `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns at which the status footer says "roll now" |
 | `roll_read_per_turn` | `MAESTRO_ROLL_READ_PER_TURN` | 350000 | Mean cache-read tokens per turn at which it says "roll now" (a plain number) |
+| `cost_targets` | `MAESTRO_COST_TARGETS` | `opus_share_max=40, haiku_share_min=15, wakes_per_prompt_max=0.5, read_per_turn_max=200000, turns_since_compact_max=150` | Targets `token-metrics.mjs` scores against, as `key=value` pairs; any subset overrides those keys. Shares are percent. `opus_priced_share_max` and `haiku_priced_share_min` also exist and have no default |
+| `model_price_weights` | `MAESTRO_MODEL_PRICE_WEIGHTS` | none | Relative price per model family from your billing console, e.g. `opus=1, sonnet=<ratio>, haiku=<ratio>` (`other` optional). Needs all three families, else it counts as unset. There are no built-in prices |
 | `watch_min_interval` | `MAESTRO_WATCH_MIN_INTERVAL` | 300 | PR watcher: fastest poll in seconds; never below 300 |
 | `watch_max_interval` | `MAESTRO_WATCH_MAX_INTERVAL` | 1800 | PR watcher: slowest poll in seconds (also the event loop's back-off cap) |
 | `watch_quiet_hours` | `MAESTRO_WATCH_QUIET_HOURS` | `20:00-07:00` | Quiet window `HH:MM-HH:MM` in `watch_tz`; `off` disables |
