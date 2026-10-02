@@ -457,7 +457,9 @@ long, and at EOD.
 ## Anti-patterns
 
 - An agent using `run_in_background`, a watcher, or Monitor to wait. Each completion wakes the
-  orchestrator for a full-context turn. Foreground loops only.
+  orchestrator for a full-context turn. Foreground only, and never a loop that polls an output file:
+  a hung job then looks like a slow one. Run tests under a hard timeout and have the agent report
+  which test hung.
 - Writing a one-off watcher script for a PR, a CI run or an inbox. Register a watch instead, see
   [Waiting on an outside event](#waiting-on-an-outside-event).
 - A report longer than ~20 lines, or raw JSON/logs pasted into one. It stays in context for good.
