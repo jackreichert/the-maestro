@@ -52,6 +52,16 @@ test('overlay types: a type in <overlay>/event-types is loaded beside the built-
   assert.equal(retired.length, 1, 'done() retires the watch');
 });
 
+test('check() receives the watch and its previous state, so a type can keep a baseline', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'events-'));
+  const seen = [];
+  const types = { base: { check: (_t, ctx) => { seen.push(ctx.prev); return { first: ctx.prev?.first ?? seen.length }; }, diff: () => [] } };
+  addWatch(dir, { id: 'b', type: 'base', target: 'x' });
+  tick({ dir, types, config: { quietHours: 'off' } });
+  tick({ dir, types, config: { quietHours: 'off' } });
+  assert.deepEqual(seen, [null, { first: 1 }]);
+});
+
 test('overlay types: a name that is already a built-in is rejected, naming the file', async () => {
   const overlayDir = overlayWith({ 'inbox.mjs': GOOD_TYPE, 'inbox.md': '# inbox\n' });
   await assert.rejects(loadTypes({ overlayDir }), /overlay event type inbox .*inbox\.mjs.* duplicates/);
