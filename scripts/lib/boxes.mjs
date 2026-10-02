@@ -5,6 +5,10 @@
  *
  * The first matching rule wins. Compared with the research note's table, an approval is checked
  * before the generic "recorded rule" test so that boxes 2 and 3 can be reached at all.
+ *
+ * Only a non-pending `decision`, or a row carrying an explicit approval, can be a record (boxes 1 to 3).
+ * Wording alone never makes a question a rule, because triage --apply closes records: a real question
+ * must not be closed on a regex.
  */
 
 export const BOX = {
@@ -28,10 +32,9 @@ export const BOX_TITLES = {
 /** Boxes whose items are records of something the user already said: closing them needs a promotion target. */
 export const RECORD_BOXES = [BOX.RULE, BOX.STANDING, BOX.ONE_OFF];
 
-const SAID = /^\s*(jack rule|jack:|standing approval|jack approves)/i;
 const RUN_THIS = /\b(run|paste|yourself|block|jack runs)\b/i;
 const FINDING = /could not be filed|follow[- ]?up|next session|\bTODO\b/i;
-const LEARNED = /learned|lesson|ruled out|cause/i;
+const LEARNED = /learned|lesson|ruled out|\bcause\b/i;
 const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/;
 
 /** Days from YYYY-MM-DD `from` to `to`; 0 when either is missing. */
@@ -56,7 +59,6 @@ export function classify(item, approval) {
         if (approval === 'standing') return BOX.STANDING;
         if (approval === 'one-off') return BOX.ONE_OFF;
         if (item.paste || (RUN_THIS.test(text) && !text.includes('?'))) return BOX.PASTE;
-        if (SAID.test(text) && !text.includes('?')) return BOX.RULE;
         return BOX.NEEDS_JACK;
     case 'decision':
         if (item.pending) return BOX.NEEDS_JACK;

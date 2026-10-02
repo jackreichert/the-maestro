@@ -8,8 +8,8 @@ test('classify: first matching rule wins, approvals before the generic rule', ()
     assert.equal(classify({ kind: 'decision', text: 'x' }, 'standing'), BOX.STANDING);
     assert.equal(classify({ kind: 'decision', text: 'x' }, 'one-off'), BOX.ONE_OFF);
     assert.equal(classify({ kind: 'decision', text: 'x', pending: true }, 'standing'), BOX.NEEDS_JACK);
-    assert.equal(classify({ kind: 'question', text: 'Jack rule: always squash' }), BOX.RULE);
-    assert.equal(classify({ kind: 'question', text: 'Jack: squash, or merge?' }), BOX.NEEDS_JACK);
+    assert.equal(classify({ kind: 'question', text: 'Jack rule: always squash' }), BOX.NEEDS_JACK, 'wording alone never makes a question a record');
+    assert.equal(classify({ kind: 'question', text: 'Jack: pick a branch' }, 'standing'), BOX.STANDING);
     assert.equal(classify({ kind: 'question', text: 'run the read-only SQL' }), BOX.PASTE);
     assert.equal(classify({ kind: 'question', text: 'should I run it?' }), BOX.NEEDS_JACK);
     assert.equal(classify({ kind: 'question', text: 'anything', paste: '/x' }), BOX.PASTE);
@@ -23,6 +23,7 @@ test('classify notes: a finding needs no ticket on it, a learning is kept, the r
     assert.equal(classify({ kind: 'note', text: 'follow-up', ticket: 'X-1' }), BOX.NOISE);
     assert.equal(classify({ kind: 'note', text: 'root cause was the cwd' }), BOX.LEARNING);
     assert.equal(classify({ kind: 'note', text: 'posted reply' }), BOX.NOISE);
+    assert.equal(classify({ kind: 'note', text: 'skipped because it was late' }), BOX.NOISE);
 });
 
 test('staleness: needs-jack and paste after 2 days, in-flight after 1, others never', () => {
