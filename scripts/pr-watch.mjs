@@ -303,13 +303,16 @@ async function main() {
       board = fetchBoard();
     } catch (err) {
       // Network blips and gh rate limits are transient; wait and retry.
-      console.error(`fetch failed, retrying next tick: ${err.message.split('\n')[0]}`);
+      const once = flag('--once');
+      console.error(`fetch failed${once ? '' : ', retrying next tick'}: ${err.message.split('\n')[0]}`);
+      if (once) { process.exitCode = 1; return; }
       if (!(await wait(events))) return;
       continue;
     }
     const { board: prev, reported } = load() ?? { board: {}, reported: {} };
     if (looksTruncated(prev, board)) {
       console.error(`${new Date().toISOString()} search returned ${Object.keys(board).length} of ${Object.keys(prev).length} PRs; skipping tick`);
+      if (flag('--once')) { process.exitCode = 1; return; }
       if (!(await wait(events))) return;
       continue;
     }

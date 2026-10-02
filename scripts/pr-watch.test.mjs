@@ -215,6 +215,30 @@ test('an error mid-pagination fails the tick before save and leaves the previous
   assert.equal(readFileSync(state, 'utf8'), before);
 });
 
+test('--once fails fast on a truncated search instead of sleeping and retrying', () => {
+  const nodes = Array.from({ length: 53 }, (_, i) => prNode(i + 1));
+  const env = installGhStub({ pages: paged(nodes.slice(0, 5)), prState: 'OPEN' });
+  const t = Date.now();
+  const r = runOnce(env, tempState(boardOf(nodes)));
+  assert.equal(r.code, 1, r.err);
+  assert.match(r.err, /skipping tick/);
+  assert.ok(Date.now() - t < 10000, 'it did not wait out a cadence interval');
+});
+
+test('--once fails fast on a fetch error, and does not claim it will retry', () => {
+  const nodes = Array.from({ length: 53 }, (_, i) => prNode(i + 1));
+  const env = installGhStub({ pages: paged(nodes), failOnPage: 0, prState: 'OPEN' });
+  const state = tempState(boardOf(nodes));
+  const before = readFileSync(state, 'utf8');
+  const t = Date.now();
+  const r = runOnce(env, state);
+  assert.equal(r.code, 1, r.err);
+  assert.match(r.err, /fetch failed: /);
+  assert.doesNotMatch(r.err, /retrying/);
+  assert.equal(readFileSync(state, 'utf8'), before);
+  assert.ok(Date.now() - t < 10000, 'it did not wait out a cadence interval');
+});
+
 // Copilot is requested only on drafts whose owner is in copilot_orgs; unset fails closed.
 function copilotRequests(copilotOrgs, nodes) {
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-edit-'));
