@@ -148,7 +148,9 @@ export const watchFloor = (spec = {}, config = {}) => (spec.network === false
  */
 export function watchInterval({ type, spec = {}, override, now, recentEvents = [], config = {} }) {
   const floor = watchFloor(spec, config);
-  const base = override ?? config.typeIntervals?.[type] ?? spec.interval ?? DEFAULT_WATCH_INTERVAL;
+  // A declared interval that is not a positive number (an overlay type's typo) is ignored, not trusted.
+  const declared = Number(spec.interval) > 0 ? Number(spec.interval) : DEFAULT_WATCH_INTERVAL;
+  const base = override ?? config.typeIntervals?.[type] ?? declared;
   let seconds = base;
   let reason = 'steady';
   if (spec.backoff !== false) {

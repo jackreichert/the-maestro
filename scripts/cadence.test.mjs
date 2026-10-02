@@ -123,3 +123,7 @@ test('watchInterval: idle stretches the interval, the cap never undercuts it, an
   assert.equal(W({ spec: net, recentEvents: ago(NOON, 1, 2, 3) }).seconds, 180);
   assert.equal(W({ spec: { interval: 30, network: false, backoff: false }, recentEvents: idle(130) }).seconds, 30);
 });
+
+test('watchInterval: a declared interval that is not a positive number falls back to the default', () => {
+  for (const interval of ['fast', -5, 0, NaN, null]) assert.equal(W({ spec: { interval, network: true } }).seconds, 180);
+});
