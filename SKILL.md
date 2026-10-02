@@ -25,7 +25,7 @@ any command below, read the file its row names, and no others, before acting.
 6. **Brief** — self-contained; the agent does not see this conversation. Paste the standing brief
    block once (`reference/brief.md`).
 7. **Dispatch** — launch, then immediately return with a one-line ack.
-8. **Log** — `journal.mjs start` / `done` (`reference/ledger.md`). A rule the user states goes in a memory file first, then `journal.mjs rule "<text>" --ref <file>` (never an open `decision`); `ask --kind decision` is only for one still pending.
+8. **Log** — `journal.mjs start` / `done` (`reference/ledger.md`). A rule the user states goes in a memory file first, then `journal.mjs rule "<text>" --ref <file>` (never an open `decision`); `ask --kind decision` is only for one still pending. A run-this ask for the user is `ask --paste <block-file>`, not a plain question. At end of day run `journal.mjs triage` before `roll` (reference/ledger.md#boxes-and-triage).
 9. **Relay** — report the substance when the completion notification arrives.
 10. **Close** — every reply ends with the status footer, below.
 
