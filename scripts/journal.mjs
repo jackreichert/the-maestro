@@ -458,7 +458,7 @@ function gateFlag(kind) {
 /** `--transitioned KEY[,KEY]` as a list of tracker keys, or undefined; a value that is not a key (tracker_key_pattern) is refused. */
 function transitionedFlag() {
     const raw = arg('transitioned');
-    if (raw === null) return undefined;
+    if (raw === null) { if (has('transitioned')) die('--transitioned needs a value: one or more tracker keys, comma-separated.'); return undefined; }
     const keys = raw.split(',').map((k) => k.trim()).filter(Boolean);
     const whole = new RegExp(`^(?:${TRACKER_KEY_PATTERN})$`);
     const bad = keys.filter((k) => !whole.test(k));

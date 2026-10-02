@@ -1764,6 +1764,8 @@ test('recording a transition with log --transitioned clears the key; a value tha
     assert.equal(bad.code, 1);
     assert.match(bad.err, /--transitioned needs tracker keys/);
     assert.equal(ledger().length, before);
+    assert.equal(run('log', 'moved it', '--transitioned', ...MARK).code, 1, 'a bare flag is refused, not silently dropped');
+    assert.equal(ledger().length, before);
     assert.equal(run('log', 'moved both', '--transitioned', 'ABC-12, XYZ-7', ...MARK).code, 0);
     assert.deepEqual(ledger().at(-1).transitioned, ['ABC-12', 'XYZ-7']);
     assert.match(run('tickets', '--pending').out, /No pending tracker transitions/);
