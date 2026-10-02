@@ -15,7 +15,7 @@ Every line is actionable.
 | `LEFT-OPEN-SET` | The PR was merged or closed. |
 | `APPROVED-UNMERGED` | An approved PR is waiting. Reported once per approval or moved head. |
 
-pr-watch's other behaviour still applies: it requests a Copilot review on draft PRs in scope that have none.
+pr-watch's other behaviour still applies: it requests a Copilot review on draft PRs in scope that have none, only for owners in `copilot_orgs`.
 
 ## Do not
 
