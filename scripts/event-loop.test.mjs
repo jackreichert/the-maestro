@@ -1,12 +1,12 @@
 // Run: node --test scripts/event-loop.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
-import { addWatch, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
+import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
 
 const SCRIPT = new URL('./event-loop.mjs', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
@@ -203,4 +203,84 @@ test('cli: a second loop is refused while one holds the lock', () => {
   const r = cli(dir, 'run', '--once');
   assert.equal(r.status, EXIT.usage);
   assert.match(r.stderr, /another event loop is running/);
+});
+
+test('cli: info-only events survive a quiet run and show in the next actionable digest', () => {
+  const dir = tempDir();
+  cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
+  appendDigest(dir, [{ watch: 'w0', type: 't', at: 'x', summary: 'merged earlier', actionable: false, report: '' }]);
+  assert.match(cli(dir, 'run', '--once').stdout, /no actionable events/);
+  assert.match(cli(dir, 'digest', '--peek').stdout, /info w0 \(t\): merged earlier/);
+  appendDigest(dir, [{ watch: 'w1', type: 't', at: 'x', summary: 'act', actionable: true, report: '' }]);
+  const out = cli(dir, 'digest').stdout;
+  assert.match(out, /ACTION w1[\s\S]*info w0/);
+});
+
+test('a crash while saving state leaves a finished watch live, so its final event is not lost', () => {
+  const dir = tempDir();
+  const types = { t: { check: () => ({ done: true }), diff: () => [{ summary: 'final' }] } };
+  addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
+  // A directory where state.json goes makes the rename in saveState throw, after the digest append.
+  mkdirSync(join(dir, 'state.json'));
+  assert.throws(() => tick(base(dir, types)));
+  assert.equal(readDigest(dir).length, 1);
+  assert.deepEqual(listWatches(dir).map((w) => w.id), ['w1']);
+});
+
+test('quiet mode "slow" still counts as quiet: ordinary watches are skipped overnight', () => {
+  const dir = tempDir();
+  const checked = [];
+  const types = { t: { check: (target) => { checked.push(target); return {}; }, diff: () => [] } };
+  addWatch(dir, { id: 'day', type: 't', target: 'day' }, NIGHT);
+  addWatch(dir, { id: 'night', type: 't', target: 'night', notify_overnight: true }, NIGHT);
+  const out = tick(base(dir, types, { config: { ...OPEN, quietMode: 'slow' }, now: NIGHT + MIN }));
+  assert.deepEqual(checked, ['night']);
+  assert.deepEqual(out.skipped, ['day']);
+});
+
+test('pace keeps an overnight watch running through quiet weekends too', () => {
+  const dir = tempDir();
+  const SATURDAY = Date.parse('2026-10-03T12:00:00Z');
+  const config = { quietHours: 'off', quietWeekends: true, tz: 'UTC' };
+  addWatch(dir, { id: 'n', type: 't', target: 'y', notify_overnight: true }, SATURDAY);
+  assert.equal(pace({ dir, config, now: SATURDAY }).stop, undefined);
+});
+
+test('lock: a stale lock is replaced by ours, and a live or just-created empty one is refused', () => {
+  const dir = tempDir();
+  const file = join(dir, 'loop.lock');
+  writeFileSync(file, '99999999');
+  acquireLock(dir, process.pid);
+  assert.equal(readFileSync(file, 'utf8'), String(process.pid));
+  writeFileSync(file, '');
+  assert.throws(() => acquireLock(dir), /starting/);
+  const old = new Date(Date.now() - 60000);
+  utimesSync(file, old, old);
+  assert.equal(acquireLock(dir), file);
+});
+
+test('lock: SIGTERM releases it', async () => {
+  const dir = tempDir();
+  const lib = new URL('./lib/watch-registry.mjs', import.meta.url).href;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `import { acquireLock } from '${lib}'; acquireLock(${JSON.stringify(dir)}); console.log('ready'); setInterval(() => {}, 1000);`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise((resolve) => child.stdout.once('data', resolve));
+  assert.equal(existsSync(join(dir, 'loop.lock')), true);
+  const closed = new Promise((resolve) => child.once('close', resolve));
+  child.kill('SIGTERM');
+  await closed;
+  assert.equal(existsSync(join(dir, 'loop.lock')), false);
+});
+
+test('a type\'s retired hook runs after a watch retires, and a throwing hook does not break the tick', () => {
+  const dir = tempDir();
+  const seen = [];
+  const types = {
+    t: { check: () => ({ done: true }), diff: () => [], retired: (watch, ctx) => { seen.push([watch.id, ctx.dir]); } },
+    u: { check: () => ({ done: true }), diff: () => [], retired: () => { throw new Error('boom'); } },
+  };
+  addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
+  addWatch(dir, { id: 'w2', type: 'u', target: 'a' }, NOON);
+  assert.equal(tick(base(dir, types)).retired.length, 2);
+  assert.deepEqual(seen, [['w1', dir]]);
+  assert.equal(listWatches(dir).length, 0);
 });
