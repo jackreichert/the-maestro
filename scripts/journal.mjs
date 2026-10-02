@@ -1079,13 +1079,14 @@ function cmdTriage() {
     const d = arg('date', today());
     const since = arg('since', d);
     if (!isDate(d) || !isDate(since)) die('--date and --since must be YYYY-MM-DD.');
-    const t = triageReport(d, since);
+    // --apply closes records, so it only ever looks at today's: --since widens the report, never the closing.
+    const t = triageReport(d, has('apply') ? d : since);
     if (has('apply')) {
         const entries = readLedger();
         const taken = [...entries];
         const rows = t.items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => {
             const row = {
-                id: newId(taken), ts: now(), date: today(), kind: 'resolved', closes: i.id, text: `recorded → ${i.ref}`, refs: [i.ref],
+                id: newId(taken), ts: now(), date: d, kind: 'resolved', closes: i.id, text: `recorded → ${i.ref}`, refs: [i.ref],
                 model: 'n/a', used: ['tool:journal.mjs'], tokens: 'n/a',
             };
             taken.push(row);
@@ -1908,8 +1909,10 @@ function handoffText(stream, since, keptWorktrees = []) {
     const doneRecently = items.filter((i) => i.state === 'done' && (i.closedBy?.date || i.date) >= since);
     const approvals = approvalMap(readLedger());
     const boxOf = (i) => classify(i, approvals.get(i.id));
-    const needsJack = items.filter((i) => isOpen(i) && boxOf(i) === BOX.NEEDS_JACK);
-    const pasteBlocks = items.filter((i) => isOpen(i) && boxOf(i) === BOX.PASTE);
+    // Every open question is listed: paste blocks apart, everything else (whatever box triage gives it) under Needs Jack.
+    const asks = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
+    const pasteBlocks = asks.filter((i) => boxOf(i) === BOX.PASTE);
+    const needsJack = asks.filter((i) => boxOf(i) !== BOX.PASTE);
     const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
     const touched = items.filter((i) => isOpen(i) || recent(i));
     const arts = artifactsOf(touched);

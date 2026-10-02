@@ -1409,3 +1409,25 @@ test('handoff section 4 is generated from the Needs-Jack and paste boxes, text p
     assert.match(sec, new RegExp(`\\*\\*Paste blocks for Jack\\*\\*[^]*run the count query.*block: ${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
     assert.doesNotMatch(sec, /not awaiting/);
 });
+
+test('triage --apply never closes a question on its wording, even with a ref file', () => {
+    const memo = blockFile('plan.md');
+    const id = idOf(run('ask', 'Jack: which branch ships first, A or B', '--ref', memo, ...MARK).out);
+    assert.deepEqual(boxIds(triageJson(), 4), ['Jack: which branch ships first, A or B']);
+    assert.match(run('triage', '--apply').out, /closed 0 recorded/);
+    assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
+});
+
+test('triage --apply only closes decisions dated on --date, whatever --since says', () => {
+    const memo = blockFile('memory.md');
+    run('rule', 'an old rule', '--ref', memo, '--date', '2020-01-01', ...MARK);
+    assert.match(run('triage', '--apply', '--since', '2019-01-01').out, /closed 0 recorded/);
+    assert.deepEqual(boxIds(triageJson('--since', '2019-01-01'), 1), ['an old rule']);
+});
+
+test('handoff section 4 keeps every open question: one boxed as a rule by its approval still appears under Needs Jack', () => {
+    const id = idOf(run('ask', 'Jack: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
+    run('approve-tag', id, '--approval', 'one-off');
+    const sec = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
+    assert.match(sec, /\*\*Needs Jack\*\*[^]*pick a stream name/);
+});
