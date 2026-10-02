@@ -8,7 +8,7 @@ Register: `node scripts/event-loop.mjs add --id remind-<n> --type reminder --tar
 
 | Digest line | Actionable? | What to report |
 |---|---|---|
-| `reminder: <text>` | yes | The reminder text, once. The watch retires after this line; it will not repeat. |
+| `reminder: <text>` | yes | The reminder text, once. The watch retires after this line and does not repeat (a crash at the wrong moment can deliver the line twice, never zero times). |
 
 ## Notifications
 
