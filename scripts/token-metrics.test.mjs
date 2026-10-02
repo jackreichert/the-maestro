@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares } from './token-metrics.mjs';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.mjs';
 import { parseModelPrices } from './local-config.mjs';
 
 // Hermetic: never read the user's config file (see local-config.mjs).
@@ -314,6 +314,17 @@ test('real session totals price within 10% of the billed figures, the gap being 
     assert.ok(Math.abs(split.opus.total - 85.41) < 0.2 && Math.abs(split.sonnet.total - 73.84) < 0.2, `${split.opus.total} ${split.sonnet.total}`);
 });
 
+test('what-if reprices the same tokens at Sonnet prices, Sonnet itself unchanged, unpriced families left out', () => {
+    const w = sonnetWhatIf({ opus: REAL.opus }, PRICES);
+    near(w.actual, 77.5588, 1e-6);
+    // read 35.28 (same), write 5.0M x 2.5, output 0.8165M x 10, input 0.2372M x 2
+    near(w.onSonnet, 35.28 + 12.5 + 8.165 + 0.4744, 1e-6);
+    const s = sonnetWhatIf({ sonnet: REAL.sonnet }, PRICES);
+    near(s.onSonnet, s.actual);
+    const k = { fresh: 1e6, w5: 0, w1: 0, read: 0, out: 0 };
+    assert.deepEqual(sonnetWhatIf({ opus: k, haiku: k, fable: k }, PRICES), { actual: 4 + 1, onSonnet: 2 + 2 });
+});
+
 test('priced shares are shares of dollars, other families count by the other row, and none left is NaN', () => {
     const k = { fresh: 0, w5: 0, w1: 0, read: 1e6, out: 0 };
     const sh = pricedShares(priceFamilies({ opus: k, sonnet: k, haiku: k }, PRICES));
@@ -376,6 +387,9 @@ test('CLI: with model_prices set the day shows dollars by side, model and catego
     const opus = (30 * 4 + 2500 * 5 + 17410 * 0.2 + 220 * 20) / 1e6;
     assert.match(day.stdout, new RegExp(`est\\. \\$/day orchestrator +\\$${opus.toFixed(2)}  read \\$0\\.00 · write \\$0\\.01 · output \\$0\\.00 · input \\$0\\.00`));
     assert.match(day.stdout, /est\. \$\/day subagents/);
+    // what-if: the same orchestrator tokens at Sonnet prices
+    const onSonnet = (30 * 2 + 2500 * 2.5 + 17410 * 0.2 + 220 * 10) / 1e6;
+    assert.match(day.stdout, new RegExp(`what-if: orchestrator on Sonnet \\$${onSonnet.toFixed(2)} vs \\$${opus.toFixed(2)} actual \\(-\\d+%\\)\\. Same tokens repriced; ignores quality effects`));
     assert.match(day.stdout, /\n    opus +\$0\.02 /);
     assert.match(day.stdout, /\n    haiku +\$0\.00 /);
     assert.match(day.stdout, /model mix \(priced\) +opus \d+% · sonnet \d+% · haiku \d+%/);
