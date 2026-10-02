@@ -667,7 +667,7 @@ function main() {
   if (!existsSync(container)) { console.error(`branch-sweep: no such container ${container}`); process.exit(2); }
 
   if (argv.includes('--apply-worktrees')) {
-    const r = sweepWorktrees(container, ctx, { only, dryRun: argv.includes('--dry-run'), budgetSeconds: val('budget') ? Number(val('budget')) : SWEEP_BUDGET_SECONDS });
+    const r = sweepWorktrees(container, ctx, { only, dryRun: argv.includes('--dry-run'), budgetSeconds: Number(val('budget')) > 0 ? Number(val('budget')) : SWEEP_BUDGET_SECONDS });
     console.log(worktreeSweepLines(r, argv.includes('--dry-run'), { verbose: argv.includes('--verbose') }).join('\n'));
     return;
   }
