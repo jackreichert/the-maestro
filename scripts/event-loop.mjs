@@ -28,7 +28,7 @@ import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ,
 } from './local-config.mjs';
-import { nextInterval, watchInterval } from './lib/cadence.mjs';
+import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.mjs';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.mjs';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.mjs';
 
@@ -54,6 +54,10 @@ export const defaultRun = (cmd, args) => {
   if (r.error) throw r.error;
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
+
+/** In quiet hours a watch still runs if it is `notify_overnight`, or its type is `slowInQuiet` and quiet_hours_mode is `slow` (then at SLOW_QUIET_SECONDS or slower). */
+const slowOnly = (watch, types, config) => !watch.notify_overnight && config.quietMode === 'slow' && types[watch.type]?.slowInQuiet === true;
+const runsInQuiet = (watch, types, config) => watch.notify_overnight || slowOnly(watch, types, config);
 
 const newest = (times) => (times.length ? Math.max(...times) : 0);
 const trimEvents = (times, now) => times.filter((t) => t === newest(times) || now - t < EVENT_HISTORY_MS);
@@ -98,7 +102,7 @@ export function tick(deps) {
       out.events.push(...events.map((e) => ({ ...make(e), mayNotify })));
     };
     if (Date.parse(watch.expires) <= now) { retire('expired', [{ summary: `watch expired before it finished (${watch.type} ${watch.target})` }]); continue; }
-    if (quiet && !watch.notify_overnight) { out.skipped.push(watch.id); continue; }
+    if (quiet && !runsInQuiet(watch, types, config)) { out.skipped.push(watch.id); continue; }
     if ((state.watches[watch.id]?.nextDue ?? 0) > now) { out.waiting.push(watch.id); continue; }
     ran.push(watch);
     try {
@@ -116,7 +120,8 @@ export function tick(deps) {
   state.events = trimEvents([...state.events, ...out.events.map(() => now)], now);
   // Next due time from the final event history, so a burst this tick keeps the watch at its pace instead of backing off.
   for (const watch of ran) {
-    if (state.watches[watch.id]) state.watches[watch.id].nextDue = now + intervalFor(watch, { types, config, now, recentEvents: state.events }) * 1000;
+    const seconds = intervalFor(watch, { types, config, now, recentEvents: state.events });
+    if (state.watches[watch.id]) state.watches[watch.id].nextDue = now + (quiet && slowOnly(watch, types, config) ? Math.max(seconds, SLOW_QUIET_SECONDS) : seconds) * 1000;
   }
   // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
@@ -135,7 +140,7 @@ export function tick(deps) {
 export function pace({ dir, types = {}, config = cadenceConfig(), now = Date.now() }) {
   const { events, watches: checked } = loadState(dir);
   const quiet = nextInterval({ now, recentEvents: events, config: { ...config, quietMode: 'stop' } }).stop === true;
-  const live = listWatches(dir).filter((w) => !quiet || w.notify_overnight);
+  const live = listWatches(dir).filter((w) => !quiet || runsInQuiet(w, types, config));
   if (!live.length) return nextInterval({ now, recentEvents: events, config });
   const dueAt = (w) => checked[w.id]?.nextDue ?? now;
   const first = live.reduce((a, w) => (dueAt(w) < dueAt(a) ? w : a));
@@ -194,6 +199,9 @@ async function main(argv) {
       const type = await typeNamed(v.type);
       const now = Date.now();
       type?.validate?.(v.target, { now, ttlMs: ttl });
+      if (type?.singleton) {
+        for (const w of listWatches(dir)) if ((await typeNamed(w.type)) === type) throw new Error(`watch "${w.id}" already runs ${v.type}${w.type === v.type ? '' : ` (as ${w.type})`}; keep exactly one`);
+      }
       const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target, now), notify_overnight: v['notify-overnight'], interval: v.interval, notify: notifyChoice(type, { notify: v.notify, noNotify: v['no-notify'] }) }, now);
       console.log(`added ${w.id} (${w.type} ${w.target}), expires ${w.expires}`);
     } else if (cmd === 'list') {

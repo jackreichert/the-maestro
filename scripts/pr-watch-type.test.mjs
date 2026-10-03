@@ -187,3 +187,40 @@ test('the type keeps the old watcher\'s 300s floor even when the watch asks for 
   tick({ dir, types: { 'pr-watch': prWatch }, ctx: w.ctx(), config: DAY, now: NOON });
   assert.equal(loadState(dir).watches.p.nextDue, NOON + 300 * 1000);
 });
+
+test('a fresh watch never adopts a leftover pr-review file: a baseline stays silent', () => {
+  const w = world({ pages: [[approved('sha-a')]] });
+  const dir = mkdtempSync(join(tmpdir(), 'pr-watch-stale-'));
+  writeFileSync(join(dir, 'pr-review-p.json'), JSON.stringify({ board: {}, reported: {} }));
+  const first = prWatch.check('open-prs:baseline', w.ctx({ dir, watch: { id: 'p' }, prev: null }));
+  assert.deepEqual(prWatch.diff(null, first), []);
+});
+
+test('a watch lives 72h by default, not the loop\'s 24h', () => {
+  assert.equal(prWatch.defaultTtlMs(), 72 * 3600 * 1000);
+});
+
+test('watch_min_interval raises the type floor; quiet mode slow keeps the watch polling at 1800s, stop skips it', () => {
+  const w = world({ pages: [[prNode(1)]] });
+  const types = { 'pr-watch': prWatch };
+  const night = Date.parse('2026-10-01T23:00:00Z');
+  const quietCfg = (quietMode) => ({ quietHours: '20:00-07:00', tz: 'UTC', quietMode, minInterval: 900 });
+  const dir = mkdtempSync(join(tmpdir(), 'pr-watch-slow-'));
+  addWatch(dir, { id: 'p', type: 'pr-watch', target: 'open-prs' }, night);
+  assert.deepEqual(tick({ dir, types, ctx: w.ctx(), config: quietCfg('stop'), now: night }).skipped, ['p']);
+  tick({ dir, types, ctx: w.ctx(), config: quietCfg('slow'), now: night });
+  assert.equal(loadState(dir).watches.p.nextDue, night + 1800 * 1000);
+  const day = mkdtempSync(join(tmpdir(), 'pr-watch-min-'));
+  addWatch(day, { id: 'p', type: 'pr-watch', target: 'open-prs' }, NOON);
+  tick({ dir: day, types, ctx: w.ctx(), config: { ...DAY, minInterval: 900 }, now: NOON });
+  assert.equal(loadState(day).watches.p.nextDue, NOON + 900 * 1000, 'watch_min_interval 900 beats the 600s base');
+});
+
+test('add refuses a second pr-watch watch, under either name', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pr-watch-single-'));
+  const script = new URL('./event-loop.mjs', import.meta.url).pathname;
+  const add = (id, type) => spawnSync(process.execPath, [script, 'add', '--id', id, '--type', type, '--target', 'open-prs'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
+  assert.match(add('a', 'pr-review').stdout, /added a/);
+  assert.match(add('b', 'pr-watch').stderr, /watch "a" already runs pr-watch \(as pr-review\)/);
+  assert.match(add('c', 'pr-review').stderr, /already runs/);
+});
