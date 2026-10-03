@@ -42,6 +42,7 @@ flowchart LR
 - [Safety guarantees](#safety-guarantees)
 - [Cost model](#cost-model)
 - [Testing](#testing)
+- [Development](#development)
 - [Contributing](#contributing)
 - [In review](#in-review)
 - [What this is not](#what-this-is-not)
@@ -583,6 +584,18 @@ node --test scripts/*.test.mjs
 ```
 
 Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs`. Shared logic that `journal.mjs` and `ledger-index.mjs` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.mjs`: change it there, once. `ledger-index.mjs` needs a Node build with `node:sqlite` and FTS5.
+
+## Development
+
+Requires Node 24 or newer, which runs TypeScript directly by stripping types, so there is no build step.
+
+```bash
+npm install        # typescript and @types/node, dev only
+npm run typecheck  # tsc --noEmit, strict
+npm test           # node --test over scripts/*.test.mjs and scripts/**/*.test.ts
+```
+
+The scripts themselves have no runtime dependencies.
 
 ## Contributing
 
