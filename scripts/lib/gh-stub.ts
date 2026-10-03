@@ -11,6 +11,8 @@ import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+export interface GhStubConfig { pages: unknown[][]; prState?: 'OPEN' | 'MERGED' | 'CLOSED'; failOnPage?: number; editLog?: string }
+
 const STUB = `#!${process.execPath}
 const { appendFileSync, readFileSync } = require('node:fs');
 const cfg = JSON.parse(readFileSync(process.env.GH_STUB_CONFIG, 'utf8'));
@@ -32,7 +34,7 @@ else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPE
 `;
 
 /** Writes the stub and returns an env (PATH + config) for spawning a script against it. */
-export function installGhStub(config) {
+export function installGhStub(config: GhStubConfig): NodeJS.ProcessEnv {
   const dir = mkdtempSync(join(tmpdir(), 'gh-stub-'));
   writeFileSync(join(dir, 'gh'), STUB);
   chmodSync(join(dir, 'gh'), 0o755);
@@ -42,7 +44,7 @@ export function installGhStub(config) {
 }
 
 /** A search node carrying every field the pr-watch event type and prs-snapshot.mjs read. */
-export function prNode(number, overrides = {}) {
+export function prNode(number: number, overrides: Record<string, unknown> = {}) {
   return {
     number,
     title: 'x',
@@ -64,5 +66,5 @@ export function prNode(number, overrides = {}) {
 }
 
 /** Splits nodes into pages of `size`, the way the search API serves them. */
-export const paged = (nodes, size = 50) =>
+export const paged = <T>(nodes: T[], size = 50): T[][] =>
   Array.from({ length: Math.ceil(nodes.length / size) }, (_, i) => nodes.slice(i * size, (i + 1) * size));

@@ -5,11 +5,15 @@
  * `add` refuses a malformed or past target (validate), and gives the watch a lifetime that reaches past the target
  * (defaultTtlMs), since the usual 24 hours would expire a reminder set for next week before it fired.
  */
+import type { CheckContext, WatchEvent } from '../lib/types.ts';
+
+/** `due` once the target time has passed; `text` is the watch's --report. */
+export interface ReminderState { due: boolean; text: string }
 
 export const interval = 30;
 export const network = false;
 // Notification: on unless the watch is added with --no-notify.
-export const notifies = 'default';
+export const notifies = 'default' as const;
 export const backoff = false;
 
 const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?Z$/;
@@ -17,11 +21,11 @@ const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?
 const GRACE_MS = 3 * 24 * 3600 * 1000;
 
 /** Epoch milliseconds of an ISO 8601 UTC target; throws on anything else, including dates that do not exist (Feb 30). */
-export function parseTarget(target) {
+export function parseTarget(target: unknown): number {
   const m = String(target).match(ISO);
   if (!m) throw new Error(`reminder target must be an ISO 8601 UTC time like 2026-10-03T15:00:00Z, got "${target}"`);
   const [year, month, day, hour, minute] = m.slice(1, 6).map(Number);
-  const at = new Date(target);
+  const at = new Date(String(target));
   if (Number.isNaN(at.getTime()) || at.getUTCFullYear() !== year || at.getUTCMonth() + 1 !== month || at.getUTCDate() !== day
     || at.getUTCHours() !== hour || at.getUTCMinutes() !== minute) {
     throw new Error(`reminder target "${target}" is not a real date and time`);
@@ -30,20 +34,20 @@ export function parseTarget(target) {
 }
 
 /** Called by `add`: the target must parse, lie in the future, and not outlive an explicit --ttl-hours. */
-export function validate(target, { now, ttlMs }) {
+export function validate(target: string, { now, ttlMs }: { now: number; ttlMs?: number }): void {
   const at = parseTarget(target);
   if (at <= now) throw new Error(`reminder target ${target} is already in the past`);
   if (ttlMs !== undefined && now + ttlMs <= at) throw new Error('--ttl-hours would expire the reminder before its target time');
 }
 
-export const defaultTtlMs = (target, now) => parseTarget(target) - now + GRACE_MS;
+export const defaultTtlMs = (target: string, now: number): number => parseTarget(target) - now + GRACE_MS;
 
-export function check(target, ctx) {
+export function check(target: string, ctx: CheckContext): ReminderState {
   return { due: ctx.now >= parseTarget(target), text: ctx.watch?.report ?? '' };
 }
 
-export function diff(_prev, next) {
+export function diff(_prev: ReminderState | null, next: ReminderState): WatchEvent[] {
   return next.due ? [{ summary: next.text ? `reminder: ${next.text}` : 'reminder time reached' }] : [];
 }
 
-export const done = (state) => state.due === true;
+export const done = (state: ReminderState): boolean => state.due === true;

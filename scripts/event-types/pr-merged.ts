@@ -5,7 +5,10 @@
  * (pattern: `tracker_key_pattern`, generic by default), because the orchestrator's merge checklist (reference/ledger.md,
  * "On every merge") starts from them. A PR closed without merging is informational. The title is untrusted data.
  */
-import { TRACKER_KEY_PATTERN } from '../local-config.mjs';
+import { TRACKER_KEY_PATTERN } from '../local-config.ts';
+import type { CheckContext, WatchEvent } from '../lib/types.ts';
+
+export interface PrMergedState { state: string; repo: string; number: string; title: string; head: string; base: string; keys: string[] }
 
 // Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
 export const interval = 240;
@@ -13,29 +16,29 @@ export const network = true;
 const TARGET = /^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)(?:#|\/pull\/)(\d+)\/?$/;
 const MAX_TITLE = 100;
 
-export const parseTarget = (target) => {
+export const parseTarget = (target: unknown): { repo: string; number: string } => {
   const m = String(target).match(TARGET);
   if (!m) throw new Error(`pr-merged target must look like owner/repo#123, got "${target}"`);
-  return { repo: m[1], number: m[2] };
+  return { repo: m[1] as string, number: m[2] as string };
 };
 
 /** Distinct tracker keys in the given texts, in order of appearance. */
-export function extractKeys(texts, pattern = TRACKER_KEY_PATTERN) {
+export function extractKeys(texts: unknown[], pattern: string = TRACKER_KEY_PATTERN): string[] {
   const re = new RegExp(pattern, 'g');
   return [...new Set(texts.flatMap((t) => String(t || '').match(re) || []))];
 }
 
-export function check(target, ctx) {
+export function check(target: string, ctx: Pick<CheckContext, 'run'>): PrMergedState {
   const { repo, number } = parseTarget(target);
   const r = ctx.run('gh', ['pr', 'view', number, '--repo', repo, '--json', 'state,title,headRefName,baseRefName']);
   if (r.status !== 0 || !r.stdout.trim()) throw new Error(`gh pr view failed: ${(r.stderr || '').split('\n')[0]}`);
-  const pr = JSON.parse(r.stdout);
+  const pr = JSON.parse(r.stdout) as { state: string; title?: string; headRefName: string; baseRefName: string };
   return { state: pr.state, repo, number, title: String(pr.title || ''), head: pr.headRefName, base: pr.baseRefName, keys: extractKeys([pr.title, pr.headRefName]) };
 }
 
-const oneLine = (t, max = MAX_TITLE) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+const oneLine = (t: unknown, max = MAX_TITLE): string => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
-export function diff(prev, next) {
+export function diff(prev: PrMergedState | null, next: PrMergedState): WatchEvent[] {
   if (next.state === prev?.state) return [];
   const pr = `${next.repo}#${next.number}`;
   if (next.state === 'MERGED') {
@@ -46,4 +49,4 @@ export function diff(prev, next) {
   return [];
 }
 
-export const done = (state) => state.state === 'MERGED' || state.state === 'CLOSED';
+export const done = (state: PrMergedState): boolean => state.state === 'MERGED' || state.state === 'CLOSED';

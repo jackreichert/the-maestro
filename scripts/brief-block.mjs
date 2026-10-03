@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { userPath, overlayPath, AGENT_OWNED_REPOS, SCRIPTS_SHELF_DIR } from './local-config.mjs';
+import { userPath, overlayPath, AGENT_OWNED_REPOS, SCRIPTS_SHELF_DIR } from './local-config.ts';
 
 /** The scripts dir as invoked (absolute, symlinks kept), so a symlinked install stays valid when the
  *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.mjs. */

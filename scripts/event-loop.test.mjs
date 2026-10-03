@@ -6,11 +6,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
-import * as inbox from './event-types/inbox.mjs';
-import * as prChecks from './event-types/pr-checks.mjs';
-import * as reminder from './event-types/reminder.mjs';
-import { notifyChoice } from './lib/notify.mjs';
-import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.mjs';
+import * as inbox from './event-types/inbox.ts';
+import * as prChecks from './event-types/pr-checks.ts';
+import * as reminder from './event-types/reminder.ts';
+import { notifyChoice } from './lib/notify.ts';
+import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
 
 const SCRIPT = new URL('./event-loop.mjs', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
@@ -436,7 +436,7 @@ test('lock: a stale lock is replaced by ours, and a live or just-created empty o
 
 test('lock: SIGTERM releases it', async () => {
   const dir = tempDir();
-  const lib = new URL('./lib/watch-registry.mjs', import.meta.url).href;
+  const lib = new URL('./lib/watch-registry.ts', import.meta.url).href;
   const child = spawn(process.execPath, ['--input-type=module', '-e', `import { acquireLock } from '${lib}'; acquireLock(${JSON.stringify(dir)}); console.log('ready'); setInterval(() => {}, 1000);`], { stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise((resolve) => child.stdout.once('data', resolve));
   assert.equal(existsSync(join(dir, 'loop.lock')), true);

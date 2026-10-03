@@ -1,27 +1,31 @@
-// Run: node --test scripts/local-config.test.mjs
+// Run: node --test scripts/local-config.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.mjs';
+import { parseConfig, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
 
-const SCRIPT = new URL('./local-config.mjs', import.meta.url).pathname;
-const block = (body) => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
-let home;
+const SCRIPT = new URL('./local-config.ts', import.meta.url).pathname;
+const block = (body: string): string => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
+let home = '';
 
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'lc-home-')); });
 
 /** Runs the CLI with a throwaway HOME and a clean environment; returns { KEY: value } from its output. */
-function show(env = {}, cwd = home) {
-    const clean = { PATH: process.env.PATH, HOME: home };
+function show(env: Record<string, string> = {}, cwd: string = home): Record<string, string> {
+    const clean: Record<string, string> = { PATH: process.env.PATH ?? '', HOME: home };
     const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', cwd, env: { ...clean, ...env } });
     assert.equal(r.status, 0, r.stderr);
-    return Object.fromEntries(r.stdout.trim().split('\n').map((l) => l.match(/^([\w ]+?):?\s+(.*)$/).slice(1, 3)));
+    return Object.fromEntries(r.stdout.trim().split('\n').map((l): [string, string] => {
+        const m = l.match(/^([\w ]+?):?\s+(.*)$/);
+        assert.ok(m, `unparsable line: ${l}`);
+        return [m[1] ?? '', m[2] ?? ''];
+    }));
 }
 
-const write = (path, text) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, text); };
+const write = (path: string, text: string): void => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, text); };
 
 test('parseConfig reads only the maestro-config block, strips comments and quotes', () => {
     const c = parseConfig(block('overlay: my-skill   # trailing\ngh_org: "my-org"\nempty:\nledger_root: /a b/c'));

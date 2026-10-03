@@ -5,7 +5,7 @@
  * variable, the user config file, then the org overlay's config.md. Where those files are
  * looked up is documented in reference/local-config.md ("How the scripts find it").
  *
- * `node scripts/local-config.mjs` prints the resolved values and the files they came from.
+ * `node scripts/local-config.ts` prints the resolved values and the files they came from.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -13,29 +13,29 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Reads the `maestro-config` fenced block of a markdown file into { key: value }. */
-export function parseConfig(text) {
+export function parseConfig(text: string): Record<string, string> {
   const block = text.match(/^```maestro-config[^\n]*\n([\s\S]*?)^```/m);
-  const out = {};
+  const out: Record<string, string> = {};
   if (!block) return out;
-  for (const line of block[1].split('\n')) {
+  for (const line of (block[1] ?? '').split('\n')) {
     const m = line.match(/^\s*([a-z_]+)\s*:\s*(.*?)\s*$/);
     if (!m) continue;
-    const value = m[2].replace(/\s+#.*$/, '').replace(/^(["'])(.*)\1$/, '$2').trim();
-    if (value) out[m[1]] = value;
+    const value = (m[2] ?? '').replace(/\s+#.*$/, '').replace(/^(["'])(.*)\1$/, '$2').trim();
+    if (value) out[m[1] as string] = value;
   }
   return out;
 }
 
-const readConfig = (path) => (path && existsSync(path) ? parseConfig(readFileSync(path, 'utf8')) : null);
+const readConfig = (path: string | undefined): Record<string, string> | null => (path && existsSync(path) ? parseConfig(readFileSync(path, 'utf8')) : null);
 
 /** The user file: MAESTRO_LOCAL_CONFIG (empty string disables all files), else ~/.config/the-maestro/config.md. */
-function userConfigPath() {
+function userConfigPath(): string {
   if (process.env.MAESTRO_LOCAL_CONFIG !== undefined) return process.env.MAESTRO_LOCAL_CONFIG;
   return join(homedir(), '.config', 'the-maestro', 'config.md');
 }
 
 /** Directories this skill can be reached through: as started (survives symlinks) and real. */
-function skillRoots() {
+function skillRoots(): string[] {
   const roots = [join(dirname(fileURLToPath(import.meta.url)), '..')];
   if (process.argv[1]) roots.unshift(resolve(dirname(process.argv[1]), '..'));
   return [...new Set(roots.flatMap((r) => {
@@ -44,15 +44,15 @@ function skillRoots() {
 }
 
 /** Candidate config.md paths for an overlay named `<skill>` or `<plugin>:<skill>`. */
-function overlayCandidates(overlay) {
-  const [plugin, skill] = overlay.includes(':') ? overlay.split(/:(.*)/s) : [null, overlay];
-  const out = [];
+function overlayCandidates(overlay: string): string[] {
+  const [plugin, skill = ''] = overlay.includes(':') ? overlay.split(/:(.*)/s) : [null, overlay];
+  const out: string[] = [];
   if (plugin) {
     try {
-      const installed = JSON.parse(readFileSync(join(homedir(), '.claude', 'plugins', 'installed_plugins.json'), 'utf8'));
+      const installed = JSON.parse(readFileSync(join(homedir(), '.claude', 'plugins', 'installed_plugins.json'), 'utf8')) as { plugins?: Record<string, { installPath?: string } | { installPath?: string }[]> };
       for (const [key, entries] of Object.entries(installed.plugins || {})) {
         if (key.split('@')[0] !== plugin) continue;
-        for (const e of [].concat(entries)) if (e?.installPath) out.push(join(e.installPath, 'skills', skill, 'config.md'));
+        for (const e of Array.isArray(entries) ? entries : [entries]) if (e?.installPath) out.push(join(e.installPath, 'skills', skill, 'config.md'));
       }
     } catch { /* no plugin registry: fall through to the sibling lookup */ }
   }
@@ -68,7 +68,7 @@ const overlayPath = OVERLAY ? overlayCandidates(OVERLAY).find((p) => existsSync(
 const overlay = readConfig(overlayPath) || {};
 
 /** One setting: the environment variable if set (even empty), else the user file, else the overlay file. */
-const pick = (envName, key, fallback = '') => process.env[envName] ?? user[key] ?? overlay[key] ?? fallback;
+const pick = (envName: string, key: string, fallback = ''): string => process.env[envName] ?? user[key] ?? overlay[key] ?? fallback;
 
 /** The config files that were read: the user file and the overlay's config.md (either may be empty). */
 export { userPath, overlayPath };
@@ -113,13 +113,13 @@ const WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday', 'friday'
  * Weekday the morning greeting brings the approvals digest (`journal.mjs approvals --days 7`), lowercase.
  * Default friday. A value that is not a weekday name falls back to the default.
  */
-export const APPROVALS_REVIEW_DAY = ((day) => (WEEKDAYS.has(day) ? day : 'friday'))(pick('MAESTRO_APPROVALS_REVIEW_DAY', 'approvals_review_day').trim().toLowerCase());
+export const APPROVALS_REVIEW_DAY = ((day: string) => (WEEKDAYS.has(day) ? day : 'friday'))(pick('MAESTRO_APPROVALS_REVIEW_DAY', 'approvals_review_day').trim().toLowerCase());
 
 /** Positive number from a config string, else the fallback. */
-const positive = (text, fallback) => (Number(text) > 0 ? Number(text) : fallback);
+const positive = (text: string, fallback: number): number => (Number(text) > 0 ? Number(text) : fallback);
 
 /** Valid IANA time zone name, else undefined (the system zone). */
-const validZone = (name) => {
+const validZone = (name: string): string | undefined => {
   try { return name ? new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone : undefined; } catch { return undefined; }
 };
 
@@ -130,11 +130,11 @@ export const ROLL_TURNS = positive(pick('MAESTRO_ROLL_TURNS', 'roll_turns'), 180
  * A map of positive numbers from a config string: `opus=1, sonnet=0.2`, `opus: 1, sonnet: 0.2` or `{opus: 1, "sonnet": 0.2}`.
  * An entry that is not `name, separator, positive number` is dropped.
  */
-export function numberMap(text) {
-  const out = {};
+export function numberMap(text: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
   for (const entry of String(text || '').replace(/[{}"']/g, '').split(',')) {
     const m = /^\s*([a-z][a-z0-9_]*)\s*[=:]\s*(\d+(?:\.\d+)?)\s*$/.exec(entry);
-    if (m && Number(m[2]) > 0) out[m[1]] = Number(m[2]);
+    if (m && Number(m[2]) > 0) out[m[1] as string] = Number(m[2]);
   }
   return out;
 }
@@ -150,7 +150,10 @@ export const DEFAULT_COST_TARGETS = {
 export const COST_TARGETS = { ...DEFAULT_COST_TARGETS, ...numberMap(pick('MAESTRO_COST_TARGETS', 'cost_targets')) };
 
 /** The price fields a model family needs, in dollars per million tokens. `cache_write_1h` is optional and falls back to `cache_write_5m`. */
-export const PRICE_FIELDS = ['input', 'cache_write_5m', 'cache_write_1h', 'cache_read', 'output'];
+export const PRICE_FIELDS = ['input', 'cache_write_5m', 'cache_write_1h', 'cache_read', 'output'] as const;
+export type PriceField = typeof PRICE_FIELDS[number];
+/** Dollars per million tokens for one model family. */
+export type ModelPrice = Record<PriceField, number>;
 const REQUIRED_PRICE_FIELDS = PRICE_FIELDS.filter((f) => f !== 'cache_write_1h');
 
 /**
@@ -158,14 +161,14 @@ const REQUIRED_PRICE_FIELDS = PRICE_FIELDS.filter((f) => f !== 'cache_write_1h')
  * `opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: ...`.
  * A family counts only with input, cache_write_5m, cache_read and output; one missing a field is dropped.
  */
-export function parseModelPrices(text) {
-  const out = {};
+export function parseModelPrices(text: unknown): Record<string, ModelPrice> {
+  const out: Record<string, ModelPrice> = {};
   for (const group of String(text || '').replace(/[{}"']/g, '').split(';')) {
     const m = /^\s*([a-z]+)\s*:(.*)$/s.exec(group);
     if (!m) continue;
     const fields = numberMap(m[2]);
     if (!REQUIRED_PRICE_FIELDS.every((f) => fields[f])) continue;
-    out[m[1]] = Object.fromEntries(PRICE_FIELDS.map((f) => [f, fields[f] ?? fields.cache_write_5m]));
+    out[m[1] as string] = Object.fromEntries(PRICE_FIELDS.map((f) => [f, fields[f] ?? fields.cache_write_5m])) as ModelPrice;
   }
   return out;
 }
@@ -175,7 +178,7 @@ export function parseModelPrices(text) {
  * less is null and the output shows the token mix alone. `other` (any other family) is optional. No prices are built in: the
  * current Anthropic list is documented in the README to paste into your config.
  */
-export const MODEL_PRICES = ((p) => (p.opus && p.sonnet && p.haiku ? p : null))(parseModelPrices(pick('MAESTRO_MODEL_PRICES', 'model_prices')));
+export const MODEL_PRICES = ((p: Record<string, ModelPrice>) => (p.opus && p.sonnet && p.haiku ? p : null))(parseModelPrices(pick('MAESTRO_MODEL_PRICES', 'model_prices')));
 
 /** Cache-read tokens per turn at which the status footer says "roll now". A plain number, 350000 not 350k. Default 350000. */
 export const ROLL_READ_PER_TURN = positive(pick('MAESTRO_ROLL_READ_PER_TURN', 'roll_read_per_turn'), 350000);
@@ -209,10 +212,10 @@ export const WATCH_TYPE_INTERVALS = Object.fromEntries(pick('MAESTRO_WATCH_TYPE_
   .map((e) => e.split('=').map((x) => x.trim())).filter(([t, n]) => t && Number.isFinite(Number(n)) && Number(n) > 0).map(([t, n]) => [t, Number(n)]));
 
 /** A command as an argv array: a JSON array of strings in the config (`["tool", "--flag"]`). Anything else is none. */
-const argvList = (text) => {
+const argvList = (text: string): string[] => {
   try {
-    const v = JSON.parse(text);
-    return Array.isArray(v) && v.length && v.every((x) => typeof x === 'string' && x) ? v : [];
+    const v: unknown = JSON.parse(text);
+    return Array.isArray(v) && v.length && v.every((x) => typeof x === 'string' && x) ? (v as string[]) : [];
   } catch { return []; }
 };
 
@@ -226,11 +229,11 @@ export const NOTIFY_COMMAND = argvList(pick('MAESTRO_NOTIFY_COMMAND', 'notify_co
 export const INBOX_COMMAND = argvList(pick('MAESTRO_INBOX_COMMAND', 'inbox_command'));
 
 /** A positive integer setting; anything else (unset, zero, negative, text) falls back to the default. */
-const positiveInt = (raw, fallback) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0 ? Number(raw) : fallback);
+const positiveInt = (raw: string, fallback: number): number => (/^\d+$/.test(raw.trim()) && Number(raw) > 0 ? Number(raw) : fallback);
 
 /** Pattern for tracker keys (ABC-123) in a PR title or branch, used by the pr-merged event type. Generic by default; an overlay narrows it (for one project, `\bAH-\d+\b`). An invalid pattern falls back to the default. */
 const DEFAULT_TRACKER_KEY_PATTERN = '\\b[A-Z][A-Z0-9]+-\\d+\\b';
-export const TRACKER_KEY_PATTERN = ((raw) => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })(pick('MAESTRO_TRACKER_KEY_PATTERN', 'tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
+export const TRACKER_KEY_PATTERN = ((raw: string) => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })(pick('MAESTRO_TRACKER_KEY_PATTERN', 'tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
 
 /** PR size budget (pr-size.mjs): most code files a PR may change. Default 5. */
 export const PR_MAX_CODE_FILES = positiveInt(pick('MAESTRO_PR_MAX_CODE_FILES', 'pr_max_code_files'), 5);
@@ -238,7 +241,7 @@ export const PR_MAX_CODE_FILES = positiveInt(pick('MAESTRO_PR_MAX_CODE_FILES', '
 /** PR size budget: most changed code lines (additions plus deletions). Default 400. */
 export const PR_MAX_CODE_LINES = positiveInt(pick('MAESTRO_PR_MAX_CODE_LINES', 'pr_max_code_lines'), 400);
 
-const globList = (envName, key) => pick(envName, key).split(',').map((s) => s.trim()).filter(Boolean);
+const globList = (envName: string, key: string): string[] => pick(envName, key).split(',').map((s) => s.trim()).filter(Boolean);
 
 /** Repos that use the integration/release-candidate twin-PR flow (git.md "Twin PRs"), comma-separated. Empty means the rule is off. */
 export const TWIN_FLOW_REPOS = pick('MAESTRO_TWIN_FLOW_REPOS', 'twin_flow_repos').split(',').map((s) => s.trim()).filter(Boolean);
@@ -281,13 +284,13 @@ export const SWEEP_DISPOSABLE_IGNORED = globList('MAESTRO_SWEEP_DISPOSABLE_IGNOR
   ? globList('MAESTRO_SWEEP_DISPOSABLE_IGNORED', 'sweep_disposable_ignored') : ['node_modules', '.venv', 'dist', '__pycache__'];
 
 /** A shared scripts shelf (`<dir>/README.md` index, `<dir>/scratch/`, `<dir>/helpers/`). Unset means the feature is off. A leading `~/` is expanded. */
-export const SCRIPTS_SHELF_DIR = ((v) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_SCRIPTS_DIR', 'scripts_dir').trim());
+export const SCRIPTS_SHELF_DIR = ((v: string) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_SCRIPTS_DIR', 'scripts_dir').trim());
 
 /** The container root the roll's worktree sweep is allowed to scan. Unset means the sweep refuses. A leading `~/` is expanded. */
 /** Repo paths the agent manages itself (comma-separated, a leading ~/ expanded). The protected-branch stop does not apply there: agents may commit straight to the default branch. Empty means none. */
 export const AGENT_OWNED_REPOS = globList('MAESTRO_AGENT_OWNED_REPOS', 'agent_owned_repos').map((v) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v));
 
-export const CONTAINER_ROOT = ((v) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_CONTAINER_ROOT', 'container_root').trim());
+export const CONTAINER_ROOT = ((v: string) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_CONTAINER_ROOT', 'container_root').trim());
 
 /** The PR search string every PR script shares. */
 export const PR_SEARCH = `is:pr is:open author:@me${GH_ORG ? ` org:${GH_ORG}` : ''}`;

@@ -19,32 +19,33 @@ const DAY_MS = 86400000;
 const HEADER_BYTES = 2000;
 
 /** The purpose line: the first comment line of the header, comment marker stripped. Empty if none. */
-export function headerPurpose(text) {
+export function headerPurpose(text: string): string {
   let inBlock = false;
   for (const raw of text.split('\n').slice(0, 8)) {
     const line = raw.trim();
     if (!line || line.startsWith('#!')) continue;
-    const m = line.match(/^(?:#|\/\/|--|\/\*+|\*)\s?(.*?)(?:\*\/)?$/) ?? (inBlock ? [line, line] : null);
+    const m: string[] | null = line.match(/^(?:#|\/\/|--|\/\*+|\*)\s?(.*?)(?:\*\/)?$/) ?? (inBlock ? [line, line] : null);
     if (!m) return '';
+    const body = m[1] ?? '';
     // A bare opening delimiter (`/*`, `/**`) or a lone closing one carries no text: read on.
-    if (!m[1].trim() && /^\/\*|^\*\/$/.test(line)) {
+    if (!body.trim() && /^\/\*|^\*\/$/.test(line)) {
       inBlock = !line.endsWith('*/');
       continue;
     }
-    return m[1].trim();
+    return body.trim();
   }
   return '';
 }
 
 /** `promote`, `delete-candidate` or `keep` for one file. */
-export function propose({ idleDays, uses }) {
+export function propose({ idleDays, uses }: { idleDays: number; uses: number }): 'promote' | 'delete-candidate' | 'keep' {
   if (uses >= PROMOTE_MIN_USES && idleDays >= PROMOTE_MIN_IDLE_DAYS) return 'promote';
   if (idleDays > DELETE_IDLE_DAYS) return 'delete-candidate';
   return 'keep';
 }
 
 /** At most the first HEADER_BYTES of a file as text, read without loading the rest. */
-function readHead(path) {
+function readHead(path: string): string {
   const fd = openSync(path, 'r');
   try {
     const buf = Buffer.alloc(HEADER_BYTES);
@@ -55,7 +56,9 @@ function readHead(path) {
 }
 
 /** Rows for every regular file in <shelf>/scratch, oldest first. `ledgerTexts` is the text of the ledger rows to count uses in. */
-export function scratchRows(shelf, ledgerTexts = [], now = Date.now()) {
+export interface ScratchRow { name: string; idleDays: number; uses: number; purpose: string; proposal: ReturnType<typeof propose> }
+
+export function scratchRows(shelf: string, ledgerTexts: string[] = [], now: number = Date.now()): ScratchRow[] {
   const dir = join(shelf, 'scratch');
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
@@ -71,7 +74,7 @@ export function scratchRows(shelf, ledgerTexts = [], now = Date.now()) {
 }
 
 /** The printable table, one line per file, or a one-line note when there is nothing to list. */
-export function scratchReport(shelf, ledgerTexts, now) {
+export function scratchReport(shelf: string, ledgerTexts?: string[], now?: number): string[] {
   const rows = scratchRows(shelf, ledgerTexts, now);
   if (!rows.length) return [`scratch: nothing in ${join(shelf, 'scratch')}.`];
   return [
