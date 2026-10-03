@@ -1,5 +1,5 @@
 /**
- * Paginated `gh api graphql` search shared by pr-watch.mjs and prs-snapshot.mjs.
+ * Paginated `gh api graphql` search shared by the pr-watch event type and prs-snapshot.mjs.
  *
  * The query must declare `$after: String`, pass `after: $after` to `search(...)`, and select
  * `pageInfo { hasNextPage endCursor }` beside `nodes`. Returns every node across all pages.
@@ -10,12 +10,14 @@ import { execFileSync } from 'node:child_process';
 
 const MAX_PAGES = 40;
 
-function fetchPage(query, after) {
+// The default runner throws on a failed gh; a caller's `run` (the event loop's ctx.run) returns { status, stdout, stderr } instead.
+const execGh = (cmd, args) => ({ status: 0, stderr: '', stdout: execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }) });
+
+function fetchPage(query, after, run) {
   const cursorArgs = after ? ['-f', `after=${after}`] : [];
-  const out = execFileSync('gh', ['api', 'graphql', '-f', `query=${query}`, ...cursorArgs], {
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  const r = run('gh', ['api', 'graphql', '-f', `query=${query}`, ...cursorArgs]);
+  if (r.status !== 0) throw new Error(`gh api graphql failed: ${String(r.stderr || '').split('\n')[0]}`);
+  const out = r.stdout;
   const parsed = JSON.parse(out);
   if (parsed.errors?.length || !parsed.data?.search) {
     throw new Error(`partial GraphQL response: ${parsed.errors?.[0]?.message || 'no search data'}`);
@@ -23,12 +25,12 @@ function fetchPage(query, after) {
   return parsed.data.search;
 }
 
-/** Fetches every page of a search query and returns the concatenated, non-null nodes. */
-export function searchAllPages(query) {
+/** Fetches every page of a search query and returns the concatenated, non-null nodes. `run(cmd, args)` defaults to a throwing execFileSync. */
+export function searchAllPages(query, run = execGh) {
   const nodes = [];
   let after = null;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const result = fetchPage(query, after);
+    const result = fetchPage(query, after, run);
     nodes.push(...result.nodes.filter(Boolean));
     if (!result.pageInfo?.hasNextPage) return nodes;
     after = result.pageInfo.endCursor;

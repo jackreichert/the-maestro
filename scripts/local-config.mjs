@@ -180,7 +180,7 @@ export const MODEL_PRICES = ((p) => (p.opus && p.sonnet && p.haiku ? p : null))(
 /** Cache-read tokens per turn at which the status footer says "roll now". A plain number, 350000 not 350k. Default 350000. */
 export const ROLL_READ_PER_TURN = positive(pick('MAESTRO_ROLL_READ_PER_TURN', 'roll_read_per_turn'), 350000);
 
-/** PR watcher: fastest poll in seconds. pr-watch.mjs never goes under 300 whatever this says. The event loop does not read it (see the per-type floors). */
+/** PR watcher: fastest poll in seconds, never under 300 whatever this says. The event loop's per-type floors (watch_network_floor, watch_local_floor) are separate. */
 export const WATCH_MIN_INTERVAL = positive(pick('MAESTRO_WATCH_MIN_INTERVAL', 'watch_min_interval'), 300);
 
 /** PR watcher: slowest poll in seconds. */
@@ -243,7 +243,7 @@ const globList = (envName, key) => pick(envName, key).split(',').map((s) => s.tr
 /** Repos that use the integration/release-candidate twin-PR flow (git.md "Twin PRs"), comma-separated. Empty means the rule is off. */
 export const TWIN_FLOW_REPOS = pick('MAESTRO_TWIN_FLOW_REPOS', 'twin_flow_repos').split(',').map((s) => s.trim()).filter(Boolean);
 
-/** Owners (orgs or users, comma-separated) whose draft PRs pr-watch.mjs requests Copilot review on. Empty means nowhere. */
+/** Owners (orgs or users, comma-separated) whose draft PRs the pr-watch event type requests Copilot review on. Empty means nowhere. */
 export const COPILOT_ORGS = globList('MAESTRO_COPILOT_ORGS', 'copilot_orgs');
 
 /** Path globs pr-size.mjs treats as tests / config / docs / mechanical. Empty means its built-in defaults. */

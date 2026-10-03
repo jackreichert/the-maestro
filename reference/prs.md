@@ -49,7 +49,7 @@ gh api graphql -f query='query($after: String) { search(query: "is:pr is:open au
 **The search returns 50 PRs a page.** A board with more open PRs silently loses the rest unless the
 query pages: read `pageInfo { hasNextPage endCursor }` and repeat with `-f after=<endCursor>` until
 `hasNextPage` is false (or add `--paginate`, which reads the same fields from a query that declares
-`$endCursor`). `scripts/pr-watch.mjs` and `scripts/prs-snapshot.mjs` already page through
+`$endCursor`). the `pr-watch` event type and `scripts/prs-snapshot.mjs` already page through
 `scripts/lib/gh-search.mjs`; a page-one-only read made PRs past the 50th look "no longer open".
 
 Scoped to one GitHub org on purpose — personal and third-party repos are out of scope for the board. Substitute `<org>` from local-config (see [local-config.md](local-config.md)); the scripts read the same value from `scripts/local-config.mjs`.
@@ -192,61 +192,45 @@ threads are handled and resolved before the user reviews the draft.** Repos owne
 or every repo when `copilot_orgs` is unset, get no request. The user's first read of a draft should
 not be spent on what a bot could have caught.
 
-[scripts/pr-watch.mjs](../scripts/pr-watch.mjs) does the requesting: each tick it adds `@copilot`
+The [pr-watch event type](../scripts/event-types/pr-watch.mjs) does the requesting: each check it adds `@copilot`
 as a reviewer on any open draft in a `copilot_orgs` owner that Copilot has neither reviewed nor been asked to review, once per PR.
 Its threads then arrive as `THREAD` lines. Handle them with [the comment workflow](#the-comment-workflow)
 — verdicts drafted, fixes committed, bot threads resolved — without waiting for the user to ask.
-If the watcher isn't running, request it by hand when a draft in a `copilot_orgs` owner goes up:
+If the watch isn't registered, request it by hand when a draft in a `copilot_orgs` owner goes up:
 `gh pr edit <n> --repo <owner>/<repo> --add-reviewer @copilot`.
 
 ## The PR watcher
 
-The morning board starts one background watcher
+The PR watcher is the `pr-watch` type of the event loop ([playbooks/event-loop.md](../playbooks/event-loop.md)),
+not a process of its own. The morning board registers it once, with the other watches
 ([greeting.md](greeting.md#a-greeting-is-a-request-for-the-board), step 4):
 
 ```bash
-node scripts/pr-watch.mjs --baseline --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"
-node scripts/pr-watch.mjs --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"   # run_in_background
+node scripts/event-loop.mjs add --id prs --type pr-watch --target open-prs:baseline --report "<what to tell the orchestrator>"
 ```
 
-It polls quietly and exits when something needs attention: a new unresolved thread or reply, a
-new PR comment or review body from anyone but the user (bots included), a `reviewDecision` move
-into or out of `APPROVED`/`CHANGES_REQUESTED`, or a PR that merged or closed. Each report also
-lists approved-but-unmerged PRs. Handle what it reported, then relaunch it without `--baseline`.
-Keep exactly one running.
+`open-prs:baseline` records the current PRs without reporting them; later checks report only what changed.
+If `prs` is already registered (`event-loop.mjs list`), leave it. The loop polls quietly and its digest reports
+when something needs attention: a new unresolved thread or reply, a new PR comment or review body from anyone
+but the user (bots included), a `reviewDecision` move into or out of `APPROVED`/`CHANGES_REQUESTED`, or a PR
+that merged or closed. Approved-but-unmerged PRs are reported once. Handle what it reported; the watch keeps
+running. Keep exactly one `pr-watch` watch.
 
 **Standing conditions wake once.** An approved PR the user is deliberately holding back stays
-approved tick after tick; the watcher records which standing conditions it has already reported
-in its state file and wakes again only when one is new or changes (a fresh approval, a moved head).
-A relaunch with nothing new keeps running.
+approved tick after tick; the watch records which standing conditions it has already reported
+in the loop's state file and wakes again only when one is new or changes (a fresh approval, a moved head).
+A re-registration with nothing new stays quiet.
 
-**It sets its own pace.** Each tick it counts the events it saw (threads, reviews, comments,
-pushes, state changes) in the last 30 minutes and picks the next sleep, printing
-`next check in Ns (reason)` to stderr:
-
-| Recent activity | Next check |
-|---|---|
-| 3 or more events in 30 minutes | `watch_min_interval` (300s by default, never below 300) |
-| 1 or 2 events | 600s |
-| nothing for under an hour | 600s |
-| quiet for an hour | 900s |
-| quiet for two hours | 1800s (capped by `watch_max_interval`) |
-
-Inside quiet hours (`watch_quiet_hours`, default 20:00-07:00 in `watch_tz`; weekends too with
-`watch_quiet_weekends: on`) it either exits with the reason "quiet hours" (`watch_quiet_hours_mode:
-stop`, the default; the next morning greeting restarts it, see exit codes below) or polls every 1800s (`slow`).
-`--interval N` pins the poll to N seconds but never below the 300s floor (a lower value is raised to it, with a stderr warning, and a non-positive or non-numeric N exits 2); quiet hours still apply to a pinned cadence. The rule and its rationale are
+**It sets its own pace.** The type polls every 600s, and the loop stretches that when nothing has happened
+(900s after an hour quiet, 1800s after two, capped by `watch_max_interval`). It never goes under 300s, whatever
+`add --interval` or a setting says. Inside quiet hours (`watch_quiet_hours`, default 20:00-07:00 in `watch_tz`;
+weekends too with `watch_quiet_weekends: on`) the loop skips the watch, or with `watch_quiet_hours_mode: slow` polls it every 1800s; when no watch remains to run, `run`
+exits with "quiet hours" (exit 3) and the next morning greeting restarts it. The rule and its rationale are
 cost material: [../cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); the
 settings are in [local-config.md](local-config.md). The logic is the pure function in
 [scripts/lib/cadence.mjs](../scripts/lib/cadence.mjs).
 
-**Exit codes.** A background run's exit tells the orchestrator why it stopped:
-
-| Exit | Stdout | Meaning | Next step |
-|---|---|---|---|
-| 0 | the change report | something needs attention (or a `--once` check finished) | handle it, relaunch without `--baseline` |
-| 2 | none (reason on stderr) | usage error: no `--state`, or a bad `--interval` | fix the command |
-| 3 | `QUIET-HOURS stop until HH:MM <tz>` | stopped for quiet hours; the state file records `stoppedForQuietAt` | nothing until the morning greeting restarts it |
+The loop's exit codes (0, 3 for a quiet-hours stop, 10 for an actionable digest) are in [SKILL.md](../SKILL.md#event-loop-exit-codes) and [playbooks/event-loop.md](../playbooks/event-loop.md).
 
 The watcher wakes the **orchestrator** on bot threads, because Copilot threads on drafts are work
 to do (above). That is not the same as interrupting the **user**: bot threads get handled quietly
@@ -304,4 +288,4 @@ Before deleting a remote branch:
 - Declining a one-line bot nit when the PR is getting a commit anyway.
 - Leaving a draft in a `copilot_orgs` owner without a Copilot review requested, or handing it to the user with Copilot
   threads still open.
-- Running more than one PR watcher, or letting a dispatched agent run one.
+- Registering more than one `pr-watch` watch, or letting a dispatched agent register one.
