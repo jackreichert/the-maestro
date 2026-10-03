@@ -50,7 +50,7 @@ const intervalFor = (watch, { types, config, now, recentEvents }) => watchInterv
 
 /** Runs a command and returns { status, stdout }; never throws on a non-zero exit (gh uses them for "pending"). */
 export const defaultRun = (cmd, args) => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+  const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 32 * 1024 * 1024 });
   if (r.error) throw r.error;
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
