@@ -6,8 +6,8 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync } fro
 import { tmpdir } from 'node:os';
 import { join, isAbsolute, dirname } from 'node:path';
 
-// Hermetic: never read the user's config file (see local-config.mjs). The import comes after this
-// line because local-config.mjs reads its files when it is first loaded.
+// Hermetic: never read the user's config file (see local-config.ts). The import comes after this
+// line because local-config.ts reads its files when it is first loaded.
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const { extractBlock, parseSlotValues, fillBlock, shelfLine, ownedReposLine, SLOTS } = await import('./brief-block.mjs');
 

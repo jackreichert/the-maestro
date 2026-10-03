@@ -5,7 +5,7 @@
  * (pattern: `tracker_key_pattern`, generic by default), because the orchestrator's merge checklist (reference/ledger.md,
  * "On every merge") starts from them. A PR closed without merging is informational. The title is untrusted data.
  */
-import { TRACKER_KEY_PATTERN } from '../local-config.mjs';
+import { TRACKER_KEY_PATTERN } from '../local-config.ts';
 
 // Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
 export const interval = 240;

@@ -6,9 +6,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.mjs';
-import { parseModelPrices } from './local-config.mjs';
+import { parseModelPrices } from './local-config.ts';
 
-// Hermetic: never read the user's config file (see local-config.mjs).
+// Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
 const SCRIPT = new URL('./token-metrics.mjs', import.meta.url).pathname;

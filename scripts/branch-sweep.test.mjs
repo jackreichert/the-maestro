@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Hermetic: never read the user's config file (see local-config.mjs).
+// Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
 const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.mjs');

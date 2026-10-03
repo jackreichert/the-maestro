@@ -5,9 +5,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.mjs';
+import { parseConfig, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
 
-const SCRIPT = new URL('./local-config.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./local-config.ts', import.meta.url).pathname;
 const block = (body) => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
 let home;
 

@@ -15,7 +15,7 @@
  * search; falls back to $VAULT_ROOT if LEDGER_ROOT is unset).
  * This tracks the org-wide PR board, not a single repo's ledger, so unlike
  * journal.mjs there is no --project flag — the container's own project name
- * (CONTAINER_PROJECT in local-config.mjs) is the only one that makes sense here.
+ * (CONTAINER_PROJECT in local-config.ts) is the only one that makes sense here.
  *
  *   prs-snapshot.mjs [--diff] [--dry-run] --vault <path>
  *       Fetch the live board via `gh api graphql`. With --diff, compare it
@@ -39,7 +39,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.mjs';
+import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
 import { searchAllPages } from './lib/gh-search.ts';
 
 // Keep the bot list in one place: a literal suffix every GitHub App login

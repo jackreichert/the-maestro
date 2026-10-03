@@ -16,7 +16,7 @@
  * a watch may override the interval with `add --interval S`. The loop checks only watches that are due and sleeps
  * until the earliest is due. Floors, enforced in lib/cadence.ts: 120s for network types, 30s for local ones.
  * Only watches added with `--notify` (reminders by default, inbox never) are sent to `notify_command`.
- * Cadence is lib/cadence.ts (floors, back-off, quiet hours). Settings are in local-config.mjs (event_dir, notify_command).
+ * Cadence is lib/cadence.ts (floors, back-off, quiet hours). Settings are in local-config.ts (event_dir, notify_command).
  *
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
@@ -27,7 +27,7 @@ import { parseArgs } from 'node:util';
 import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ,
-} from './local-config.mjs';
+} from './local-config.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.ts';

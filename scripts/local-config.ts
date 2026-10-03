@@ -5,7 +5,7 @@
  * variable, the user config file, then the org overlay's config.md. Where those files are
  * looked up is documented in reference/local-config.md ("How the scripts find it").
  *
- * `node scripts/local-config.mjs` prints the resolved values and the files they came from.
+ * `node scripts/local-config.ts` prints the resolved values and the files they came from.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
