@@ -1,4 +1,4 @@
-// Run: node --test scripts/ledger-core.test.mjs
+// Run: node --test scripts/ledger-core.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fold, isOpen, canonicalOf, mapStreamWith } from './lib/ledger-core.ts';

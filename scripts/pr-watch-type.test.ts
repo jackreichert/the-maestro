@@ -1,4 +1,4 @@
-// Run: node --test scripts/pr-watch-type.test.mjs
+// Run: node --test scripts/pr-watch-type.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

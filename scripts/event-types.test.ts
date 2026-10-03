@@ -1,4 +1,4 @@
-// Run: node --test scripts/event-types.test.mjs
+// Run: node --test scripts/event-types.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
