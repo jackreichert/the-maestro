@@ -21,33 +21,38 @@ import * as prChecks from './pr-checks.ts';
 import * as prMerged from './pr-merged.ts';
 import * as prWatch from './pr-watch.ts';
 import * as reminder from './reminder.ts';
+import type { EventType } from '../lib/types.ts';
+
+/** Every type the loop can run, by name. */
+export type TypeRegistry = Record<string, EventType>;
 
 /** Old type names that still resolve, so watches registered under them keep working. pr-review became pr-watch. */
-export const ALIASES = { 'pr-review': 'pr-watch' };
+export const ALIASES: Record<string, string> = { 'pr-review': 'pr-watch' };
 
-const TYPES = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder };
-export const BUILTIN_TYPES = { ...TYPES, ...Object.fromEntries(Object.entries(ALIASES).map(([old, current]) => [old, TYPES[current]])) };
+const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder };
+export const BUILTIN_TYPES: TypeRegistry = { ...TYPES, ...Object.fromEntries(Object.entries(ALIASES).flatMap(([old, current]) => (TYPES[current] ? [[old, TYPES[current]]] : []))) };
 
 const OPTIONAL_HOOKS = ['done', 'retired', 'validate', 'defaultTtlMs'];
 
 /** Throws unless `mod` has check and diff functions (and done/retired, when present, are functions). */
-function assertType(name, mod, file) {
+function assertType(name: string, mod: unknown, file: string): asserts mod is EventType {
+  const exports = (typeof mod === 'object' && mod !== null ? mod : {}) as Record<string, unknown>;
   for (const fn of ['check', 'diff']) {
-    if (typeof mod?.[fn] !== 'function') throw new Error(`overlay event type ${name} (${file}): export ${fn}() as a function`);
+    if (typeof exports[fn] !== 'function') throw new Error(`overlay event type ${name} (${file}): export ${fn}() as a function`);
   }
   for (const fn of OPTIONAL_HOOKS) {
-    if (mod[fn] !== undefined && typeof mod[fn] !== 'function') throw new Error(`overlay event type ${name} (${file}): ${fn} must be a function when exported`);
+    if (exports[fn] !== undefined && typeof exports[fn] !== 'function') throw new Error(`overlay event type ${name} (${file}): ${fn} must be a function when exported`);
   }
 }
 
 /** An overlay type module: `<name>.mjs` or `<name>.ts` (not a `.d.ts`). A name present in both extensions is a duplicate. */
-const isTypeModule = (file) => (file.endsWith('.mjs') || file.endsWith('.ts')) && !file.endsWith('.d.ts');
+const isTypeModule = (file: string): boolean => (file.endsWith('.mjs') || file.endsWith('.ts')) && !file.endsWith('.d.ts');
 
 /**
  * The built-in types plus those in `<overlayDir>/event-types/*.mjs` or `*.ts`. No overlayDir, or no such folder, returns
  * the built-ins unchanged. Throws if an overlay type reuses a name, lacks check/diff, or has no playbook.
  */
-export async function loadTypes({ overlayDir = '', builtin = BUILTIN_TYPES } = {}) {
+export async function loadTypes({ overlayDir = '', builtin = BUILTIN_TYPES }: { overlayDir?: string; builtin?: TypeRegistry } = {}): Promise<TypeRegistry> {
   const types = { ...builtin };
   const typesDir = overlayDir && join(overlayDir, 'event-types');
   if (!typesDir || !existsSync(typesDir)) return types;
@@ -56,7 +61,7 @@ export async function loadTypes({ overlayDir = '', builtin = BUILTIN_TYPES } = {
     const file = join(typesDir, entry);
     if (name in types) throw new Error(`overlay event type ${name} (${file}) duplicates an existing type`);
     if (!existsSync(join(typesDir, `${name}.md`))) throw new Error(`overlay event type ${name} (${file}) has no playbook ${name}.md beside it`);
-    const mod = await import(pathToFileURL(file).href);
+    const mod: unknown = await import(pathToFileURL(file).href);
     assertType(name, mod, file);
     types[name] = mod;
   }
@@ -67,4 +72,4 @@ export async function loadTypes({ overlayDir = '', builtin = BUILTIN_TYPES } = {
  * Every type this install knows: built-ins plus the configured overlay's. Called where types are needed, never at
  * import time, so a broken overlay stops the loop but not tests, `add`, or cleanup of built-in watches.
  */
-export const loadConfiguredTypes = () => loadTypes({ overlayDir: overlayPath ? dirname(overlayPath) : '' });
+export const loadConfiguredTypes = (): Promise<TypeRegistry> => loadTypes({ overlayDir: overlayPath ? dirname(overlayPath) : '' });
