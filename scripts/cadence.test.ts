@@ -2,14 +2,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { floorSeconds, nextInterval, parseQuietHours, watchFloor, watchInterval } from './lib/cadence.ts';
+import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 
 const MIN = 60000;
-const at = (iso) => Date.parse(iso);
+const at = (iso: string): number => Date.parse(iso);
 // 2026-10-01 is a Thursday; 2026-10-03 is a Saturday. Every case reads the clock in UTC.
 const NOON = at('2026-10-01T12:00:00Z');
-const ago = (now, ...minutes) => minutes.map((m) => now - m * MIN);
+const ago = (now: number, ...minutes: number[]): number[] => minutes.map((m) => now - m * MIN);
 
-const CASES = [
+/** nextInterval answers an interval or a stop; these narrow it, failing the test on the other one. */
+const interval = (result: Interval | Stop): Interval => { assert.ok(!('stop' in result), JSON.stringify(result)); return result; };
+const stop = (result: Interval | Stop): Stop => { assert.ok('stop' in result, JSON.stringify(result)); return result; };
+
+interface Case { name: string; now: number; events?: number[]; config?: CadenceConfig; want: Record<string, number | string | boolean | RegExp> }
+
+const CASES: Case[] = [
   { name: 'three events in the window: high activity at min_interval', now: NOON, events: ago(NOON, 1, 5, 20), want: { seconds: 300, reason: /high activity: 3 event/ } },
   { name: 'two events: some activity', now: NOON, events: ago(NOON, 1, 5), want: { seconds: 600, reason: /some activity: 2 event/ } },
   { name: 'one event 25 minutes ago still counts', now: NOON, events: ago(NOON, 25), want: { seconds: 600, reason: /some activity/ } },
@@ -48,9 +55,9 @@ const CASES = [
 
 for (const c of CASES) {
   test(c.name, () => {
-    const got = nextInterval({ now: c.now, recentEvents: c.events ?? [], config: { tz: 'UTC', ...c.config } });
+    const got: Record<string, unknown> = { ...nextInterval({ now: c.now, recentEvents: c.events ?? [], config: { tz: 'UTC', ...c.config } }) };
     for (const [key, expected] of Object.entries(c.want)) {
-      if (expected instanceof RegExp) assert.match(got[key], expected);
+      if (expected instanceof RegExp) assert.match(String(got[key]), expected);
       else assert.equal(got[key], expected, JSON.stringify(got));
     }
     assert.equal('stop' in got, 'stop' in c.want);
@@ -58,7 +65,7 @@ for (const c of CASES) {
 }
 
 test('now may be a Date', () => {
-  assert.equal(nextInterval({ now: new Date(NOON), recentEvents: ago(NOON, 1, 2, 3), config: { tz: 'UTC' } }).seconds, 300);
+  assert.equal(interval(nextInterval({ now: new Date(NOON), recentEvents: ago(NOON, 1, 2, 3), config: { tz: 'UTC' } })).seconds, 300);
 });
 
 test('parseQuietHours accepts HH:MM-HH:MM and rejects everything else', () => {
@@ -74,17 +81,17 @@ test('floorSeconds is 300 unless watch_min_interval is higher', () => {
 });
 
 test('a quiet stop says when quiet hours end, in the configured zone', () => {
-  const got = nextInterval({ now: at('2026-10-01T21:00:00Z'), config: { tz: 'UTC' } });
+  const got = stop(nextInterval({ now: at('2026-10-01T21:00:00Z'), config: { tz: 'UTC' } }));
   assert.deepEqual([got.until, got.tz], ['07:00', 'UTC']);
 });
 
 test('a weekend stop resumes at the end of the weekend', () => {
-  const got = nextInterval({ now: at('2026-10-03T12:00:00Z'), config: { tz: 'UTC', quietWeekends: true } });
+  const got = stop(nextInterval({ now: at('2026-10-03T12:00:00Z'), config: { tz: 'UTC', quietWeekends: true } }));
   assert.equal(got.until, '07:00');
 });
 
 test('quiet hours in another zone resume in that zone', () => {
-  const got = nextInterval({ now: at('2026-10-01T20:00:00Z'), config: { tz: 'Asia/Tokyo' } });
+  const got = stop(nextInterval({ now: at('2026-10-01T20:00:00Z'), config: { tz: 'Asia/Tokyo' } }));
   assert.deepEqual([got.until, got.tz], ['07:00', 'Asia/Tokyo']);
 });
 
@@ -103,7 +110,7 @@ test('watchFloor: 120s for network or undeclared types, 30s for local ones; a se
   assert.equal(watchFloor({ network: false }, { localFloor: 45 }), 45);
 });
 
-const W = (args) => watchInterval({ now: NOON, ...args });
+const W = (args: Omit<Parameters<typeof watchInterval>[0], 'now'>): Interval => watchInterval({ now: NOON, ...args });
 
 test('watchInterval: override beats config beats the type default, and nothing goes under the floor', () => {
   const net = { interval: 180, network: true };
@@ -120,7 +127,7 @@ test('watchInterval: override beats config beats the type default, and nothing g
 
 test('watchInterval: idle stretches the interval, the cap never undercuts it, and backoff = false opts out', () => {
   const net = { interval: 180, network: true };
-  const idle = (minutes) => [NOON - minutes * MIN];
+  const idle = (minutes: number): number[] => [NOON - minutes * MIN];
   assert.equal(W({ spec: net, recentEvents: idle(70) }).seconds, 270);
   assert.equal(W({ spec: net, recentEvents: idle(130) }).seconds, 540);
   assert.equal(W({ spec: net, recentEvents: idle(130), config: { maxInterval: 300 } }).seconds, 300);

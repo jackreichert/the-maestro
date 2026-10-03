@@ -10,7 +10,7 @@ const NOW = Date.UTC(2026, 5, 30);
 const DAY = 86400000;
 
 /** A shelf with scratch files; each is [name, text, idleDays]. */
-function shelf(files) {
+function shelf(files: [string, string, number][]): string {
     const root = mkdtempSync(join(tmpdir(), 'scratch-'));
     mkdirSync(join(root, 'scratch'));
     for (const [name, text, idle] of files) {
