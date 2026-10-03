@@ -7,7 +7,7 @@
  * plus a playbook at `playbooks/event-types/<type>.md`. Registering a built-in one is that pair of files and one line here.
  * diff(null, next) is the first check: report only what is already worth waking for. An event is { summary, actionable? }.
  *
- * An org overlay adds types without touching this repo: `<overlay dir>/event-types/<type>.mjs` with its playbook
+ * An org overlay adds types without touching this repo: `<overlay dir>/event-types/<type>.mjs` (or `.ts`) with its playbook
  * `<overlay dir>/event-types/<type>.md` beside it, same interface. The overlay dir is the directory holding the
  * overlay's `config.md` (see local-config.mjs). `loadTypes` rejects duplicate names and malformed modules loudly.
  */
@@ -40,16 +40,19 @@ function assertType(name, mod, file) {
   }
 }
 
+/** An overlay type module: `<name>.mjs` or `<name>.ts` (not a `.d.ts`). A name present in both extensions is a duplicate. */
+const isTypeModule = (file) => (file.endsWith('.mjs') || file.endsWith('.ts')) && !file.endsWith('.d.ts');
+
 /**
- * The built-in types plus those in `<overlayDir>/event-types/*.mjs`. No overlayDir, or no such folder, returns
+ * The built-in types plus those in `<overlayDir>/event-types/*.mjs` or `*.ts`. No overlayDir, or no such folder, returns
  * the built-ins unchanged. Throws if an overlay type reuses a name, lacks check/diff, or has no playbook.
  */
 export async function loadTypes({ overlayDir = '', builtin = BUILTIN_TYPES } = {}) {
   const types = { ...builtin };
   const typesDir = overlayDir && join(overlayDir, 'event-types');
   if (!typesDir || !existsSync(typesDir)) return types;
-  for (const entry of readdirSync(typesDir).filter((f) => f.endsWith('.mjs')).sort()) {
-    const name = entry.slice(0, -'.mjs'.length);
+  for (const entry of readdirSync(typesDir).filter(isTypeModule).sort()) {
+    const name = entry.slice(0, entry.lastIndexOf('.'));
     const file = join(typesDir, entry);
     if (name in types) throw new Error(`overlay event type ${name} (${file}) duplicates an existing type`);
     if (!existsSync(join(typesDir, `${name}.md`))) throw new Error(`overlay event type ${name} (${file}) has no playbook ${name}.md beside it`);

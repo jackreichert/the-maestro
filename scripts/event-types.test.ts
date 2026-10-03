@@ -41,6 +41,15 @@ function overlayWith(files) {
   return dir;
 }
 
+test('overlay types: a .ts type loads too, and one name in both extensions is a duplicate', async () => {
+  const overlayDir = overlayWith({ 'typed-wait.ts': GOOD_TYPE, 'typed-wait.md': '# typed-wait\n', 'old-wait.mjs': GOOD_TYPE, 'old-wait.md': '# old-wait\n' });
+  const types = await loadTypes({ overlayDir });
+  assert.equal(types['typed-wait'].done(), true);
+  assert.equal(types['old-wait'].done(), true);
+  const both = overlayWith({ 'twin.mjs': GOOD_TYPE, 'twin.ts': GOOD_TYPE, 'twin.md': '# twin\n' });
+  await assert.rejects(loadTypes({ overlayDir: both }), /overlay event type twin .*twin\.ts.* duplicates/);
+});
+
 test('overlay types: a type in <overlay>/event-types is loaded beside the built-ins and runs through the loop', async () => {
   const overlayDir = overlayWith({ 'my-wait.mjs': GOOD_TYPE, 'my-wait.md': '# my-wait\n' });
   const types = await loadTypes({ overlayDir });
