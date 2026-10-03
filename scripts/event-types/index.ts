@@ -1,5 +1,5 @@
 /**
- * The event types index. A type is `scripts/event-types/<type>.mjs` exporting
+ * The event types index. A type is `scripts/event-types/<type>.ts` exporting
  * { check(target, ctx) -> state, diff(prev, next) -> events[], done?(state, watch) -> boolean, retired?(watch, ctx),
  * validate?(target, { now, ttlMs }) (throws to refuse a watch at `add`), defaultTtlMs?(target, now) },
  * and optionally `interval` (default seconds between checks), `network` (false for a check that never leaves the machine), `singleton` (true: `add` refuses a second watch of this type), `slowInQuiet` (true: runs at 1800s in quiet hours when quiet_hours_mode is slow), `floor` (a minimum interval above the network/local one),
@@ -15,12 +15,12 @@ import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { overlayPath } from '../local-config.mjs';
-import * as ghRun from './gh-run.mjs';
-import * as inbox from './inbox.mjs';
-import * as prChecks from './pr-checks.mjs';
-import * as prMerged from './pr-merged.mjs';
-import * as prWatch from './pr-watch.mjs';
-import * as reminder from './reminder.mjs';
+import * as ghRun from './gh-run.ts';
+import * as inbox from './inbox.ts';
+import * as prChecks from './pr-checks.ts';
+import * as prMerged from './pr-merged.ts';
+import * as prWatch from './pr-watch.ts';
+import * as reminder from './reminder.ts';
 
 /** Old type names that still resolve, so watches registered under them keep working. pr-review became pr-watch. */
 export const ALIASES = { 'pr-review': 'pr-watch' };

@@ -40,7 +40,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.mjs';
-import { searchAllPages } from './lib/gh-search.mjs';
+import { searchAllPages } from './lib/gh-search.ts';
 
 // Keep the bot list in one place: a literal suffix every GitHub App login
 // carries, plus the two reviewer accounts we see that don't.

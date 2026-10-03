@@ -22,7 +22,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { LEDGER_ROOT, VAULT_ROOT } from './local-config.mjs';
-import { isOpen, readRegistry, mapStreamWith, fold as foldWith } from './lib/ledger-core.mjs';
+import { isOpen, readRegistry, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 
 const SCHEMA_VERSION = '2';
 const argv = process.argv.slice(2);
@@ -67,7 +67,7 @@ const registry = readRegistry(registryPath);
 const mapStream = (s) => mapStreamWith(registry, s);
 const fold = (entries) => foldWith(entries, registry).items;
 
-/** Latest archive event per stream, unless a later unarchive cancelled it. Same archive rule as fold() in lib/ledger-core.mjs. */
+/** Latest archive event per stream, unless a later unarchive cancelled it. Same archive rule as fold() in lib/ledger-core.ts. */
 function archiveState(entries) {
     const byStream = new Map();
     for (const e of entries) {

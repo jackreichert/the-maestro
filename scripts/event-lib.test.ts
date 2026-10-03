@@ -1,8 +1,8 @@
 // Run: node --test scripts/notify.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_PER_TICK, MAX_SUMMARY, notify, oneLine } from './lib/notify.mjs';
-import { acquireLock, addWatch, listWatches, readDigest, removeWatch } from './lib/watch-registry.mjs';
+import { MAX_PER_TICK, MAX_SUMMARY, notify, oneLine } from './lib/notify.ts';
+import { acquireLock, addWatch, listWatches, readDigest, removeWatch } from './lib/watch-registry.ts';
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
