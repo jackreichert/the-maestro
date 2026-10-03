@@ -1,5 +1,5 @@
 /**
- * Paginated `gh api graphql` search shared by pr-watch.mjs and prs-snapshot.mjs.
+ * Paginated `gh api graphql` search shared by the pr-watch event type and prs-snapshot.mjs.
  *
  * The query must declare `$after: String`, pass `after: $after` to `search(...)`, and select
  * `pageInfo { hasNextPage endCursor }` beside `nodes`. Returns every node across all pages.

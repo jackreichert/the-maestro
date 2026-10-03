@@ -19,11 +19,14 @@ import * as ghRun from './gh-run.mjs';
 import * as inbox from './inbox.mjs';
 import * as prChecks from './pr-checks.mjs';
 import * as prMerged from './pr-merged.mjs';
-import * as prReview from './pr-review.mjs';
 import * as prWatch from './pr-watch.mjs';
 import * as reminder from './reminder.mjs';
 
-export const BUILTIN_TYPES = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-review': prReview, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder };
+/** Old type names that still resolve, so watches registered under them keep working. pr-review became pr-watch. */
+export const ALIASES = { 'pr-review': 'pr-watch' };
+
+const TYPES = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder };
+export const BUILTIN_TYPES = { ...TYPES, ...Object.fromEntries(Object.entries(ALIASES).map(([old, current]) => [old, TYPES[current]])) };
 
 const OPTIONAL_HOOKS = ['done', 'retired', 'validate', 'defaultTtlMs'];
 
