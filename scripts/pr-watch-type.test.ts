@@ -5,10 +5,10 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import * as prWatch from './event-types/pr-watch.mjs';
+import * as prWatch from './event-types/pr-watch.ts';
 import { tick } from './event-loop.mjs';
-import { addWatch, loadState } from './lib/watch-registry.mjs';
-import { installGhStub, paged, prNode } from './lib/gh-stub.mjs';
+import { addWatch, loadState } from './lib/watch-registry.ts';
+import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
 
 const NOON = Date.parse('2026-10-01T12:00:00Z');
 const DAY = { quietHours: 'off' };

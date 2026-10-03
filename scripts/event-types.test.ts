@@ -6,14 +6,14 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defaultRun, tick } from './event-loop.mjs';
-import { ALIASES, BUILTIN_TYPES as TYPES, loadTypes } from './event-types/index.mjs';
-import * as ghRun from './event-types/gh-run.mjs';
-import * as inbox from './event-types/inbox.mjs';
-import * as prChecks from './event-types/pr-checks.mjs';
-import * as prMerged from './event-types/pr-merged.mjs';
-import * as reminder from './event-types/reminder.mjs';
-import { installGhStub, prNode } from './lib/gh-stub.mjs';
-import { addWatch, listWatches, readDigest } from './lib/watch-registry.mjs';
+import { ALIASES, BUILTIN_TYPES as TYPES, loadTypes } from './event-types/index.ts';
+import * as ghRun from './event-types/gh-run.ts';
+import * as inbox from './event-types/inbox.ts';
+import * as prChecks from './event-types/pr-checks.ts';
+import * as prMerged from './event-types/pr-merged.ts';
+import * as reminder from './event-types/reminder.ts';
+import { installGhStub, prNode } from './lib/gh-stub.ts';
+import { addWatch, listWatches, readDigest } from './lib/watch-registry.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const ok = (stdout, status = 0) => ({ status, stdout, stderr: '' });
@@ -25,8 +25,8 @@ test('every registered type has check, diff and a playbook, and every type file 
     assert.equal(typeof type.diff, 'function', name);
     assert.ok(existsSync(join(ROOT, 'playbooks', 'event-types', `${name}.md`)), `playbook for ${name}`);
   }
-  const files = readdirSync(join(ROOT, 'scripts', 'event-types')).filter((f) => f.endsWith('.mjs') && f !== 'index.mjs');
-  assert.deepEqual(files.map((f) => f.replace('.mjs', '')).sort(), Object.keys(TYPES).filter((n) => !(n in ALIASES)).sort());
+  const files = readdirSync(join(ROOT, 'scripts', 'event-types')).filter((f) => f.endsWith('.ts') && f !== 'index.ts');
+  assert.deepEqual(files.map((f) => f.replace('.ts', '')).sort(), Object.keys(TYPES).filter((n) => !(n in ALIASES)).sort());
   for (const [old, current] of Object.entries(ALIASES)) assert.equal(TYPES[old], TYPES[current], `${old} is an alias of ${current}`);
 });
 

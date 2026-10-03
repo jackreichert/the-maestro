@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { headerPurpose, propose, scratchRows, scratchReport } from './lib/scratch.mjs';
+import { headerPurpose, propose, scratchRows, scratchReport } from './lib/scratch.ts';
 
 const NOW = Date.UTC(2026, 5, 30);
 const DAY = 86400000;

@@ -1,7 +1,7 @@
 // Run: node --test scripts/boxes.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BOX, classify, isStale, daysBetween } from './lib/boxes.mjs';
+import { BOX, classify, isStale, daysBetween } from './lib/boxes.ts';
 
 test('classify: first matching rule wins, approvals before the generic rule', () => {
     assert.equal(classify({ kind: 'decision', text: 'x' }), BOX.RULE);
@@ -34,8 +34,8 @@ test('staleness: needs-jack and paste after 2 days, in-flight after 1, others ne
     assert.equal(isStale(BOX.GATED, { date: '2026-01-01' }, '2026-10-03'), false);
 });
 
-import { parseGate, gateStatus } from './lib/boxes.mjs';
-import { activeDeferrals } from './lib/ledger-core.mjs';
+import { parseGate, gateStatus } from './lib/boxes.ts';
+import { activeDeferrals } from './lib/ledger-core.ts';
 
 test('parseGate accepts the three forms and nothing else', () => {
     assert.deepEqual(parseGate('gh:pr:org/repo#9'), { type: 'gh:pr', repo: 'org/repo', number: 9 });

@@ -1,7 +1,7 @@
 // Run: node --test scripts/ledger-core.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fold, isOpen, canonicalOf, mapStreamWith } from './lib/ledger-core.mjs';
+import { fold, isOpen, canonicalOf, mapStreamWith } from './lib/ledger-core.ts';
 
 const reg = { streams: { Launch: { aliases: ['launch-v2'], status: 'active' } } };
 

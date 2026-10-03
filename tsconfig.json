@@ -16,5 +16,6 @@
     "allowJs": false,
     "checkJs": false
   },
-  "include": ["scripts/**/*.ts"]
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["scripts/lib", "scripts/event-types", "scripts/*.test.ts"]
 }

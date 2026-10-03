@@ -14,12 +14,12 @@
  *
  * A check also requests a Copilot review on any draft PR, in a copilot_orgs owner, that Copilot has neither reviewed nor
  * been asked to review. A failed fetch, or a search that lost more than half the open set, throws: the loop keeps the
- * last good snapshot and the next tick compares against it. Cadence and quiet hours are the loop's (lib/cadence.mjs).
+ * last good snapshot and the next tick compares against it. Cadence and quiet hours are the loop's (lib/cadence.ts).
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH } from '../local-config.mjs';
-import { searchAllPages } from '../lib/gh-search.mjs';
+import { searchAllPages } from '../lib/gh-search.ts';
 
 // Scheduling: default seconds between checks (the old watcher's steady pace; idle back-off stretches it), and whether a check calls the network.
 export const interval = 600;

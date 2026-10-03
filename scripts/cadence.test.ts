@@ -1,7 +1,7 @@
 // Run: node --test scripts/cadence.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { floorSeconds, nextInterval, parseQuietHours, watchFloor, watchInterval } from './lib/cadence.mjs';
+import { floorSeconds, nextInterval, parseQuietHours, watchFloor, watchInterval } from './lib/cadence.ts';
 
 const MIN = 60000;
 const at = (iso) => Date.parse(iso);
