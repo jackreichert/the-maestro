@@ -20,9 +20,10 @@ import * as inbox from './inbox.mjs';
 import * as prChecks from './pr-checks.mjs';
 import * as prMerged from './pr-merged.mjs';
 import * as prReview from './pr-review.mjs';
+import * as prWatch from './pr-watch.mjs';
 import * as reminder from './reminder.mjs';
 
-export const BUILTIN_TYPES = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-review': prReview, 'gh-run': ghRun, inbox, reminder };
+export const BUILTIN_TYPES = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-review': prReview, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder };
 
 const OPTIONAL_HOOKS = ['done', 'retired', 'validate', 'defaultTtlMs'];
 
