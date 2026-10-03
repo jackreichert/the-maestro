@@ -35,7 +35,7 @@ approvals_review_day: friday   # weekday the morning greeting brings the approva
 watch_min_interval: 300        # PR watcher: fastest poll, seconds; never below 300; default 300
 watch_max_interval: 1800       # PR watcher: slowest poll, seconds; default 1800
 watch_quiet_hours: 20:00-07:00 # PR watcher: no polling in this local window; `off` disables; default 20:00-07:00
-watch_quiet_hours_mode: stop   # stop: exit until the next greeting restarts it; slow: poll every 1800s; default stop
+watch_quiet_hours_mode: stop   # stop: skip the PR watch (run exits if nothing else is live) until the next greeting; slow: poll every 1800s; default stop
 watch_quiet_weekends: off      # on: Saturday and Sunday count as quiet hours; default off
 watch_tz: America/New_York     # time zone for the quiet hours; default the system time zone
 pr_max_code_files: 5           # PR size budget: most code files per PR; default 5
