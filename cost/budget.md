@@ -121,7 +121,7 @@ The `pr-watch` event type costs no tokens between ticks — it runs inside the e
 poll, not a subagent — but every tick that finds something still wakes the orchestrator for a
 full-context turn, so polling too often is a real cost even though each individual poll is free. The
 cadence is automatic (replacing the manual 2026-09-27 policy of picking `--interval` by hand),
-implemented by `scripts/lib/cadence.mjs`:
+implemented by `scripts/lib/cadence.ts`:
 
 - **Base: 600s** (the type's `interval`). The loop only stretches it; busy periods keep that pace, they do not pull it in.
 - **Quiet: back off** to 900s after an hour with nothing, then 1800s after two (capped by `watch_max_interval`).
@@ -147,7 +147,7 @@ moved the floor from 120s to 300s, and set the quiet-day baseline at 600–900s.
 Every ad-hoc watcher (a PR poller, a run watcher, a queue drain) wakes the orchestrator on its own
 schedule, and each wake re-reads the whole session. `scripts/event-loop.mjs` replaces them with one
 loop over a registry of watches: a type's `diff()` decides what is a change worth waking for, the
-cadence is the same `lib/cadence.mjs` (300s floor, quiet hours), and a cheap runner following
+cadence is the same `lib/cadence.ts` (300s floor, quiet hours), and a cheap runner following
 [playbooks/event-loop.md](../playbooks/event-loop.md) wakes the orchestrator only on an actionable event.
 Informational events go to a digest file and cost nothing until read.
 

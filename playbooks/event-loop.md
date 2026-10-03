@@ -52,9 +52,9 @@ A watch expires after 24 hours unless `--ttl-hours` says otherwise, and retires 
 
 ## For the orchestrator: adding an event type
 
-1. `scripts/event-types/<type>.mjs` exporting `check(target, ctx) -> state` and `diff(prev, next) -> events[]` (and optionally `done(state, watch)`, and `retired(watch, ctx)` to delete per-watch files when the watch retires). `ctx.watch` is the watch (with its `created` time) and `ctx.prev` the state `check` returned last time (null on the first check), for a baseline. `ctx.run(cmd, args)` runs a command and returns `{ status, stdout, stderr }`; use it so tests can stub it. Treat `prev === null` as the first check and report only what is already worth waking for.
+1. `scripts/event-types/<type>.ts` exporting `check(target, ctx) -> state` and `diff(prev, next) -> events[]` (and optionally `done(state, watch)`, and `retired(watch, ctx)` to delete per-watch files when the watch retires). `ctx.watch` is the watch (with its `created` time) and `ctx.prev` the state `check` returned last time (null on the first check), for a baseline. `ctx.run(cmd, args)` runs a command and returns `{ status, stdout, stderr }`; use it so tests can stub it. Treat `prev === null` as the first check and report only what is already worth waking for.
 2. `playbooks/event-types/<type>.md`: what each digest line means, which are actionable, what to report, what never to do.
 3. One line in `scripts/event-types/index.mjs`.
-4. Tests with fixtures and no network. `node --test scripts/event-types.test.mjs` fails if a type has no playbook.
+4. Tests with fixtures and no network. `node --test scripts/event-types.test.ts` fails if a type has no playbook.
 
-An org overlay adds a type with steps 1 and 2 only, no index line: `<overlay dir>/event-types/<type>.mjs` and `<overlay dir>/event-types/<type>.md`, where the overlay dir holds the overlay's `config.md`. The loop loads them on start; a duplicate name, a module without `check`/`diff` functions or a missing playbook is an error, not a skipped file.
+An org overlay adds a type with steps 1 and 2 only, no index line: `<overlay dir>/event-types/<type>.mjs` (or `.ts`) and `<overlay dir>/event-types/<type>.md`, where the overlay dir holds the overlay's `config.md`. The loop loads them on start; a duplicate name, a module without `check`/`diff` functions or a missing playbook is an error, not a skipped file.

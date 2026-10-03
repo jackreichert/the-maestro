@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Hermetic: never read the user's config file (see local-config.mjs).
+// Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
 const SCRIPT = new URL('./journal.mjs', import.meta.url).pathname;

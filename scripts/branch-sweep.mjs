@@ -27,7 +27,7 @@
  * HEAD is reachable from some origin ref. Right before each removal the worktree is re-read (HEAD unchanged, no modified or
  * untracked file, detached HEAD still on origin). Everything else is printed as `kept` with its reason. Remote branches
  * are untouched; they keep the listing and `--apply --ids` flow.
- * The `gh` binary is `MAESTRO_GH` if set. Settings: local-config.mjs and reference/local-config.md.
+ * The `gh` binary is `MAESTRO_GH` if set. Settings: local-config.ts and reference/local-config.md.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -37,7 +37,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, GH_LOGIN, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
-} from './local-config.mjs';
+} from './local-config.ts';
 
 const run = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
