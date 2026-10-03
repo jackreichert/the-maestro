@@ -7,7 +7,7 @@
  * Reads `git diff --numstat -M -z <base>...<head>` (head defaults to HEAD), sorts each changed file
  * into code, test, config, docs or mechanical, and checks the code against two limits, whichever is
  * hit first: pr_max_code_files (default 5) and pr_max_code_lines (default 400, additions plus
- * deletions). Limits and path globs come from local-config.mjs.
+ * deletions). Limits and path globs come from local-config.ts.
  *
  * The base resolves to `origin/<base>` when that remote ref exists (after a quiet, non-fatal
  * `git fetch origin <base>`), else the local ref, so a stale local branch cannot skew the count.
@@ -22,7 +22,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_TEST_GLOBS, PR_CONFIG_GLOBS, PR_DOCS_GLOBS, PR_MECHANICAL_GLOBS,
-} from './local-config.mjs';
+} from './local-config.ts';
 
 /**
  * Default path globs. Directory globs never decide a code file's bucket: CODE_EXT files can only be

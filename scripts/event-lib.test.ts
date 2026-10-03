@@ -1,16 +1,16 @@
 // Run: node --test scripts/notify.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_PER_TICK, MAX_SUMMARY, notify, oneLine } from './lib/notify.mjs';
-import { acquireLock, addWatch, listWatches, readDigest, removeWatch } from './lib/watch-registry.mjs';
+import { MAX_PER_TICK, MAX_SUMMARY, notify, oneLine } from './lib/notify.ts';
+import { acquireLock, addWatch, listWatches, readDigest, removeWatch } from './lib/watch-registry.ts';
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const ev = (n) => ({ watch: `w${n}`, summary: `thing ${n}` });
+const ev = (n: number) => ({ watch: `w${n}`, summary: `thing ${n}` });
 
 test('the summary is appended as the last argument, without a shell', () => {
-  const calls = [];
+  const calls: [string, string[]][] = [];
   notify([ev(1)], ['sender', '--flag'], (c, a) => { calls.push([c, a]); return { status: 0 }; });
   assert.deepEqual(calls, [['sender', ['--flag', 'w1: thing 1']]]);
 });
@@ -30,7 +30,7 @@ test('a long or multi-line summary becomes one line under 150 characters', () =>
 test('a burst is capped, with one overflow line', () => {
   const sent = notify([1, 2, 3, 4, 5].map(ev), ['s'], () => ({ status: 0 }));
   assert.equal(sent.length, MAX_PER_TICK + 1);
-  assert.match(sent.at(-1), /\+2 more/);
+  assert.match(sent.at(-1) ?? '', /\+2 more/);
 });
 
 test('a failing notifier is reported and never throws', () => {

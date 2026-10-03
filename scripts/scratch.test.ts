@@ -1,16 +1,16 @@
-// Run: node --test scripts/scratch.test.mjs
+// Run: node --test scripts/scratch.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { headerPurpose, propose, scratchRows, scratchReport } from './lib/scratch.mjs';
+import { headerPurpose, propose, scratchRows, scratchReport } from './lib/scratch.ts';
 
 const NOW = Date.UTC(2026, 5, 30);
 const DAY = 86400000;
 
 /** A shelf with scratch files; each is [name, text, idleDays]. */
-function shelf(files) {
+function shelf(files: [string, string, number][]): string {
     const root = mkdtempSync(join(tmpdir(), 'scratch-'));
     mkdirSync(join(root, 'scratch'));
     for (const [name, text, idle] of files) {
