@@ -9,7 +9,7 @@ node scripts/event-loop.mjs list
 node scripts/event-loop.mjs run
 ```
 
-`run` polls every live watch, sleeps between ticks (never faster than 300 seconds; the cadence is in [cost/budget.md](../cost/budget.md#pr-watcher-cadence)), and exits when there is something to say. It is the one long-running process in this design, so start it in the background and wait for it to finish; its completion wakes you, not the orchestrator.
+`run` polls every live watch, sleeps between ticks (the cadence is in [cost/budget.md](../cost/budget.md#pr-watcher-cadence)), and exits when there is something to say. It is the one long-running process in this design, so start it in the background and wait for it to finish; its completion wakes you, not the orchestrator.
 
 | Exit | Meaning | You do |
 |---|---|---|
@@ -48,7 +48,7 @@ node scripts/event-loop.mjs add --id <id> --type <type> --target <target> \
   [--done-when <rule>] [--report "<what you want back>"] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
 ```
 
-A watch expires after 24 hours unless `--ttl-hours` says otherwise, and retires itself when its type says it is done. Each type polls at its own pace (`inbox` 60s, `pr-checks`/`pr-review` 180s, `gh-run` 120s, `reminder` 30s); `--interval S` overrides it, but never below 120s for a type that calls GitHub or 30s for a local one. Only watches added with `--notify` are sent to `notify_command`; a reminder is by default, `--no-notify` silences it, and the inbox never notifies. This replaces writing a one-off watcher script. Types: [pr-checks](event-types/pr-checks.md), [pr-review](event-types/pr-review.md), [gh-run](event-types/gh-run.md), [inbox](event-types/inbox.md), [reminder](event-types/reminder.md) (a one-time wake-up: `--type reminder --target <ISO 8601 UTC> --report "<text>"`).
+A watch expires after 24 hours unless `--ttl-hours` says otherwise, and retires itself when its type says it is done. Each type polls at its own pace (`inbox` 60s, `pr-checks` 180s, `pr-watch` 600s (floor 300s), `gh-run` 120s, `reminder` 30s); `--interval S` overrides it, but never below 120s for a type that calls GitHub (300s for `pr-watch`) or 30s for a local one. Only watches added with `--notify` are sent to `notify_command`; a reminder is by default, `--no-notify` silences it, and the inbox never notifies. This replaces writing a one-off watcher script. Types: [pr-checks](event-types/pr-checks.md), [pr-watch](event-types/pr-watch.md) (`pr-review` is its old name), [gh-run](event-types/gh-run.md), [inbox](event-types/inbox.md), [reminder](event-types/reminder.md) (a one-time wake-up: `--type reminder --target <ISO 8601 UTC> --report "<text>"`).
 
 ## For the orchestrator: adding an event type
 
