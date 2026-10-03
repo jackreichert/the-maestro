@@ -26,6 +26,12 @@ export const interval = 600;
 export const network = true;
 // Polling PRs faster than every 5 minutes cost more wake-ups than it saved (2026-09-27), so this type's floor is above the network one.
 export const floor = 300;
+// In quiet hours with watch_quiet_hours_mode: slow this watch keeps polling, at 1800s; otherwise the loop skips it.
+export const slowInQuiet = true;
+// One watch covers every open PR; a second would only duplicate its events (and pr-review resolves to this same type).
+export const singleton = true;
+// The old watcher ran until stopped, so a watch lives 72h, not the loop's 24h.
+export const defaultTtlMs = () => 72 * 3600 * 1000;
 
 const COPILOT = 'copilot-pull-request-reviewer';
 const TARGETS = new Set(['open-prs', 'open-prs:baseline']);
@@ -139,7 +145,11 @@ function legacySnapshot(ctx) {
 }
 
 /** The previous snapshot, or null: a state from the old wrapper (no board) falls back to its state file, else counts as a first check. */
-const previous = (ctx) => (ctx.prev?.board ? ctx.prev : legacySnapshot(ctx));
+// Only a watch that already has some state can have an older file to adopt; a fresh watch never replays a stale one.
+const previous = (ctx) => {
+  if (ctx.prev?.board) return ctx.prev;
+  return ctx.prev ? legacySnapshot(ctx) : null;
+};
 
 export function check(target, ctx) {
   const prev = previous(ctx);
@@ -147,6 +157,7 @@ export function check(target, ctx) {
   if (prev && looksTruncated(prev.board, board)) {
     throw new Error(`search returned ${Object.keys(board).length} of ${Object.keys(prev.board).length} PRs; skipping tick`);
   }
+  // Idempotent: GitHub ignores a repeat add-reviewer and the next fetch sees the request, so a failed save only repeats a no-op.
   requestCopilot(board, ctx);
   const left = prev ? Object.entries(prev.board).filter(([key, pr]) => !board[key] && confirmedClosed(pr, ctx)).map(([key, pr]) => `LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`) : [];
   // `reported` is what this snapshot's standing conditions look like once told (so the next diff stays quiet about them).

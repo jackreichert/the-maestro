@@ -25,6 +25,8 @@ export const FLOOR_SECONDS = 300;
 export const NETWORK_FLOOR = 120;
 export const LOCAL_FLOOR = 30;
 export const DEFAULT_WATCH_INTERVAL = 180;
+/** Poll pace of a `slowInQuiet` type during quiet hours when quiet_hours_mode is `slow`. */
+export const SLOW_QUIET_SECONDS = 1800;
 // "Steady" back-off tier in seconds: the idle tiers stretch a watch's interval by tier / this, never shrink it.
 const BACKOFF_BASE = 600;
 
@@ -54,7 +56,7 @@ export const IDLE_TIERS = [
 // What each quiet_hours_mode does when the clock says nobody is reviewing.
 const QUIET_MODES = {
   stop: (limits, resume) => ({ stop: true, reason: 'quiet hours', ...resume }),
-  slow: (limits) => ({ seconds: clamp(1800, limits), reason: 'quiet hours (slow)' }),
+  slow: (limits) => ({ seconds: clamp(SLOW_QUIET_SECONDS, limits), reason: 'quiet hours (slow)' }),
 };
 
 const WEEKEND = new Set(['Sat', 'Sun']);
@@ -135,10 +137,11 @@ export function nextInterval({ now, recentEvents = [], config = {} }) {
 
 /**
  * The lowest interval a watch may run at: 120s for network types (config may raise it, never lower it), 30s for local ones.
- * A type may declare a higher `floor` of its own (pr-watch: 300s, because polling PRs faster costs more wake-ups than it saves).
+ * A type may declare a higher `floor` of its own (pr-watch: 300s, because polling PRs faster costs more wake-ups than it saves);
+ * config.minInterval (watch_min_interval) can raise that type floor further, and never touches types without one.
  */
 export const watchFloor = (spec = {}, config = {}) => Math.max(
-  Number.isFinite(spec.floor) ? spec.floor : 0,
+  Number.isFinite(spec.floor) ? Math.max(spec.floor, config.minInterval ?? 0) : 0,
   spec.network === false ? Math.max(LOCAL_FLOOR, config.localFloor ?? 0) : Math.max(NETWORK_FLOOR, config.networkFloor ?? 0),
 );
 
