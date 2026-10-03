@@ -1,4 +1,4 @@
-// Run: node --test scripts/cadence.test.mjs
+// Run: node --test scripts/cadence.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { floorSeconds, nextInterval, parseQuietHours, watchFloor, watchInterval } from './lib/cadence.ts';

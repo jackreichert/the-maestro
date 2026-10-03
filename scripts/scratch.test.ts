@@ -1,4 +1,4 @@
-// Run: node --test scripts/scratch.test.mjs
+// Run: node --test scripts/scratch.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readdirSync, readFileSync } from 'node:fs';

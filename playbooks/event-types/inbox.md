@@ -1,6 +1,6 @@
 # Event type: inbox
 
-New messages from the user. Script: [scripts/event-types/inbox.mjs](../../scripts/event-types/inbox.mjs). The command it runs is the `inbox_command` local-config setting (an argv array printing one line per unread message); without it the check fails and the loop says so after three failures.
+New messages from the user. Script: [scripts/event-types/inbox.ts](../../scripts/event-types/inbox.ts). The command it runs is the `inbox_command` local-config setting (an argv array printing one line per unread message); without it the check fails and the loop says so after three failures.
 
 Register: `node scripts/event-loop.mjs add --id inbox --type inbox --target inbox --notify-overnight --ttl-hours 12`. Leave `--notify-overnight` off to ignore messages in quiet hours. The inbox never sends a notification, even with `--notify` (it is refused at `add`).
 

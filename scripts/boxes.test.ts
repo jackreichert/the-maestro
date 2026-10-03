@@ -1,4 +1,4 @@
-// Run: node --test scripts/boxes.test.mjs
+// Run: node --test scripts/boxes.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOX, classify, isStale, daysBetween } from './lib/boxes.ts';

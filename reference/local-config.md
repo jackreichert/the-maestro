@@ -1,6 +1,6 @@
 # Local config (install overlay)
 
-**This file names the install-specific settings; it holds no values.** Every other generic file states its rule generically and says "from local-config" where it needs one of these. Where the values live is set up per install, as described below. The script-side twin is [scripts/local-config.mjs](../scripts/local-config.mjs), which reads the same values from environment variables and from the config file.
+**This file names the install-specific settings; it holds no values.** Every other generic file states its rule generically and says "from local-config" where it needs one of these. Where the values live is set up per install, as described below. The script-side twin is [scripts/local-config.ts](../scripts/local-config.ts), which reads the same values from environment variables and from the config file.
 
 Personal preferences (greeting style, sign-offs) do not belong in either; they live in the user's own CLAUDE.md or memory.
 
@@ -11,7 +11,7 @@ An org overlay is a separate skill that holds one org's values and rules: repo t
 - **`overlay` in the config file, or the environment variable `MAESTRO_OVERLAY`** (the variable wins). Either a skill name (`<skill>`) or a plugin-qualified skill name (`<plugin>:<skill>`, the form Claude Code uses for plugin skills).
 - **Unset means no overlay.** The skill is then fully generic, and a rule that says "from the org overlay" simply has no extra source.
 - **If an overlay is configured, load that skill (invoke it by its configured name) and follow it.** Read only the overlay file the task needs.
-- **An overlay can add event-loop watch types.** `event-loop.mjs` also loads `<overlay dir>/event-types/<type>.mjs` (the directory holding the overlay's `config.md`), each with its playbook `<type>.md` beside it, using the same `check`/`diff`/`done` interface as [playbooks/event-loop.md](../playbooks/event-loop.md#for-the-orchestrator-adding-an-event-type). A name that is already taken, a module without `check`/`diff` functions, or a missing playbook stops the loop with an error naming the file. An overlay without `config.md`, or without an `event-types/` folder, adds nothing.
+- **An overlay can add event-loop watch types.** `event-loop.mjs` also loads `<overlay dir>/event-types/<type>.mjs` or `<type>.ts` (a name in both is a duplicate; the directory holding the overlay's `config.md`), each with its playbook `<type>.md` beside it, using the same `check`/`diff`/`done` interface as [playbooks/event-loop.md](../playbooks/event-loop.md#for-the-orchestrator-adding-an-event-type). A name that is already taken, a module without `check`/`diff` functions, or a missing playbook stops the loop with an error naming the file. An overlay without `config.md`, or without an `event-types/` folder, adds nothing.
 
 ## Config file
 
@@ -97,8 +97,8 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Whether `roll` commits the ledger root (`ledger_git_autocommit`) | `journal.mjs roll` |
 | Weekday of the weekly approvals review (`approvals_review_day`, default Friday) | greeting.md, `journal.mjs approvals` |
 | Loop process patterns (`loop_patterns`) and whether `resume` calls `gh` (`resume_gh`) | `journal.mjs resume` |
-| Event loop: `event_dir`, `notify_command` (no default recipient: unset means no notifications; only watches added with `--notify` use it), `inbox_command`, `watch_network_floor`, `watch_local_floor`, `watch_type_intervals` | `event-loop.mjs`, `scripts/event-types/inbox.mjs` |
-| PR watcher cadence (the event loop reads `watch_max_interval` as its back-off cap, plus the quiet-hours keys): `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours`, `watch_quiet_hours_mode`, `watch_quiet_weekends`, `watch_tz` | `scripts/event-loop.mjs` via `scripts/lib/cadence.mjs` |
+| Event loop: `event_dir`, `notify_command` (no default recipient: unset means no notifications; only watches added with `--notify` use it), `inbox_command`, `watch_network_floor`, `watch_local_floor`, `watch_type_intervals` | `event-loop.mjs`, `scripts/event-types/inbox.ts` |
+| PR watcher cadence (the event loop reads `watch_max_interval` as its back-off cap, plus the quiet-hours keys): `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours`, `watch_quiet_hours_mode`, `watch_quiet_weekends`, `watch_tz` | `scripts/event-loop.mjs` via `scripts/lib/cadence.ts` |
 
 ## Git identity and branch topology
 
@@ -106,11 +106,11 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 |---|---|
 | The user's git emails (authorship check; `git_emails`) | git.md, the standing brief block, `scripts/branch-sweep.mjs` |
 | GitHub login | PR scripts (read from `gh api user` unless `gh_login` / `MAESTRO_GH_LOGIN` is set) |
-| GitHub org for the PR board | prs.md, `GH_ORG` in local-config.mjs |
+| GitHub org for the PR board | prs.md, `GH_ORG` in local-config.ts |
 | Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.mjs` |
 | Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), PR look-back (`sweep_pr_days`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.mjs`, ledger.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
-| Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/event-types/pr-watch.mjs` |
+| Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/event-types/pr-watch.ts` |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |

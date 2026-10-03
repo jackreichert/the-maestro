@@ -50,9 +50,9 @@ gh api graphql -f query='query($after: String) { search(query: "is:pr is:open au
 query pages: read `pageInfo { hasNextPage endCursor }` and repeat with `-f after=<endCursor>` until
 `hasNextPage` is false (or add `--paginate`, which reads the same fields from a query that declares
 `$endCursor`). the `pr-watch` event type and `scripts/prs-snapshot.mjs` already page through
-`scripts/lib/gh-search.mjs`; a page-one-only read made PRs past the 50th look "no longer open".
+`scripts/lib/gh-search.ts`; a page-one-only read made PRs past the 50th look "no longer open".
 
-Scoped to one GitHub org on purpose — personal and third-party repos are out of scope for the board. Substitute `<org>` from local-config (see [local-config.md](local-config.md)); the scripts read the same value from `scripts/local-config.mjs`.
+Scoped to one GitHub org on purpose — personal and third-party repos are out of scope for the board. Substitute `<org>` from local-config (see [local-config.md](local-config.md)); the scripts read the same value from `scripts/local-config.ts`.
 
 One line per PR, tab-separated: `repo#number`, title, draft/open, `head->base`, `updatedAt`,
 `reviewDecision`, requested reviewers, latest review states, unresolved-thread count (with the
@@ -192,7 +192,7 @@ threads are handled and resolved before the user reviews the draft.** Repos owne
 or every repo when `copilot_orgs` is unset, get no request. The user's first read of a draft should
 not be spent on what a bot could have caught.
 
-The [pr-watch event type](../scripts/event-types/pr-watch.mjs) does the requesting: each check it adds `@copilot`
+The [pr-watch event type](../scripts/event-types/pr-watch.ts) does the requesting: each check it adds `@copilot`
 as a reviewer on any open draft in a `copilot_orgs` owner that Copilot has neither reviewed nor been asked to review, once per PR.
 Its threads then arrive as `THREAD` lines. Handle them with [the comment workflow](#the-comment-workflow)
 — verdicts drafted, fixes committed, bot threads resolved — without waiting for the user to ask.
@@ -228,7 +228,7 @@ weekends too with `watch_quiet_weekends: on`) the loop skips the watch, or with 
 exits with "quiet hours" (exit 3) and the next morning greeting restarts it. The rule and its rationale are
 cost material: [../cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); the
 settings are in [local-config.md](local-config.md). The logic is the pure function in
-[scripts/lib/cadence.mjs](../scripts/lib/cadence.mjs).
+[scripts/lib/cadence.ts](../scripts/lib/cadence.ts).
 
 The loop's exit codes (0, 3 for a quiet-hours stop, 10 for an actionable digest) are in [SKILL.md](../SKILL.md#event-loop-exit-codes) and [playbooks/event-loop.md](../playbooks/event-loop.md).
 
