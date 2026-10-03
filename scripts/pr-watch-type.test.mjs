@@ -179,3 +179,11 @@ test('copilot: an owner inside copilot_orgs is requested, case-insensitively', (
 test('copilot: copilot_orgs unset requests nowhere', () => {
   assert.deepEqual(copilotRequests([], [draftIn(4, 'Allowed-Org/repo')]), []);
 });
+
+test('the type keeps the old watcher\'s 300s floor even when the watch asks for less', () => {
+  const w = world({ pages: [[prNode(1)]] });
+  const dir = mkdtempSync(join(tmpdir(), 'pr-watch-floor-'));
+  addWatch(dir, { id: 'p', type: 'pr-watch', target: 'open-prs', interval: '60' }, NOON);
+  tick({ dir, types: { 'pr-watch': prWatch }, ctx: w.ctx(), config: DAY, now: NOON });
+  assert.equal(loadState(dir).watches.p.nextDue, NOON + 300 * 1000);
+});
