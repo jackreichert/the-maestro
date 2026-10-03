@@ -24,6 +24,8 @@ import { searchAllPages } from '../lib/gh-search.mjs';
 // Scheduling: default seconds between checks (the old watcher's steady pace; idle back-off stretches it), and whether a check calls the network.
 export const interval = 600;
 export const network = true;
+// Polling PRs faster than every 5 minutes cost more wake-ups than it saved (2026-09-27), so this type's floor is above the network one.
+export const floor = 300;
 
 const COPILOT = 'copilot-pull-request-reviewer';
 const TARGETS = new Set(['open-prs', 'open-prs:baseline']);

@@ -133,10 +133,14 @@ export function nextInterval({ now, recentEvents = [], config = {} }) {
   return { seconds: clamp(seconds, limits), reason };
 }
 
-/** The lowest interval a watch may run at: 120s for network types (config may raise it, never lower it), 30s for local ones. */
-export const watchFloor = (spec = {}, config = {}) => (spec.network === false
-  ? Math.max(LOCAL_FLOOR, config.localFloor ?? 0)
-  : Math.max(NETWORK_FLOOR, config.networkFloor ?? 0));
+/**
+ * The lowest interval a watch may run at: 120s for network types (config may raise it, never lower it), 30s for local ones.
+ * A type may declare a higher `floor` of its own (pr-watch: 300s, because polling PRs faster costs more wake-ups than it saves).
+ */
+export const watchFloor = (spec = {}, config = {}) => Math.max(
+  Number.isFinite(spec.floor) ? spec.floor : 0,
+  spec.network === false ? Math.max(LOCAL_FLOOR, config.localFloor ?? 0) : Math.max(NETWORK_FLOOR, config.networkFloor ?? 0),
+);
 
 /**
  * Seconds until one watch is due again, for the event loop.
