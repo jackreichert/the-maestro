@@ -15,7 +15,7 @@
  *   node token-metrics.mjs --curve              cache-read per turn by turn-index bucket
  *   node token-metrics.mjs --json               machine-readable day + sessions
  *
- * Flags: --projects-dir <dir> (default CLAUDE_PROJECTS_DIR in local-config.mjs)
+ * Flags: --projects-dir <dir> (default CLAUDE_PROJECTS_DIR in local-config.ts)
  *        --vault <path> (default $VAULT_ROOT) --project <name> (default dev-env)
  *        --baseline-until YYYY-MM-DD (default 2026-09-24: the week before the habits)
  *
@@ -46,7 +46,7 @@
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, COST_TARGETS, MODEL_PRICES } from './local-config.mjs';
+import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
 const TABLE_HEADER = [
@@ -135,7 +135,7 @@ function sessionFiles(dir) {
 
 /**
  * A warning when `dir` holds no sessions, else ''. Unset `projects_dir` falls back to the transcript directory of the
- * process's working directory (local-config.mjs), which is empty or missing when the script runs from anywhere else.
+ * process's working directory (local-config.ts), which is empty or missing when the script runs from anywhere else.
  */
 export function emptyDirWarning(dir) {
     if (sessionFiles(dir).length) return '';

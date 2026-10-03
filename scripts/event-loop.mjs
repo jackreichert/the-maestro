@@ -14,9 +14,9 @@
  * orchestrator only then. Watches retire when their type says they are done or they pass `expires`.
  * Each type declares `interval` (default seconds between checks) and `network` (false only for local types);
  * a watch may override the interval with `add --interval S`. The loop checks only watches that are due and sleeps
- * until the earliest is due. Floors, enforced in lib/cadence.mjs: 120s for network types, 30s for local ones.
+ * until the earliest is due. Floors, enforced in lib/cadence.ts: 120s for network types, 30s for local ones.
  * Only watches added with `--notify` (reminders by default, inbox never) are sent to `notify_command`.
- * Cadence is lib/cadence.mjs (floors, back-off, quiet hours). Settings are in local-config.mjs (event_dir, notify_command).
+ * Cadence is lib/cadence.ts (floors, back-off, quiet hours). Settings are in local-config.ts (event_dir, notify_command).
  *
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
@@ -27,10 +27,10 @@ import { parseArgs } from 'node:util';
 import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ,
-} from './local-config.mjs';
-import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.mjs';
-import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.mjs';
-import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.mjs';
+} from './local-config.ts';
+import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
+import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
+import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.ts';
 
 export const EXIT = { ok: 0, usage: 2, quietStop: 3, actionable: 10 };
 const EVENT_HISTORY_MS = 6 * 3600 * 1000;
@@ -182,11 +182,11 @@ const OPTIONS = {
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
 async function loadOverlayTypeQuietly() {
-  try { return await (await import('./event-types/index.mjs')).loadConfiguredTypes(); } catch { return {}; }
+  try { return await (await import('./event-types/index.ts')).loadConfiguredTypes(); } catch { return {}; }
 }
 
 /** The type registered under `name` (built-in or overlay), or undefined. `add` of an unknown type is allowed; its checks then fail loudly. */
-const typeNamed = async (name) => (await import('./event-types/index.mjs')).BUILTIN_TYPES[name] ?? (await loadOverlayTypeQuietly())[name];
+const typeNamed = async (name) => (await import('./event-types/index.ts')).BUILTIN_TYPES[name] ?? (await loadOverlayTypeQuietly())[name];
 
 async function main(argv) {
   const dir = EVENT_DIR;
@@ -210,13 +210,13 @@ async function main(argv) {
     } else if (cmd === 'remove') {
       const watch = listWatches(dir).find((w) => w.id === arg);
       console.log(removeWatch(dir, arg, 'removed by user') ? `removed ${arg}` : `no live watch ${arg}`);
-      if (watch) onRetired((await import('./event-types/index.mjs')).BUILTIN_TYPES[watch.type] ?? (await loadOverlayTypeQuietly())[watch.type], watch, { dir });
+      if (watch) onRetired((await import('./event-types/index.ts')).BUILTIN_TYPES[watch.type] ?? (await loadOverlayTypeQuietly())[watch.type], watch, { dir });
     } else if (cmd === 'digest') {
       console.log(formatDigest(readDigest(dir, { consume: !v.peek })) || 'digest is empty');
     } else if (cmd === 'run') {
       const pinned = v.interval === undefined ? undefined : Number(v.interval);
       if (pinned !== undefined && !(Number.isFinite(pinned) && pinned > 0)) return usage('--interval needs a positive number of seconds');
-      const { loadConfiguredTypes } = await import('./event-types/index.mjs');
+      const { loadConfiguredTypes } = await import('./event-types/index.ts');
       const types = await loadConfiguredTypes();
       acquireLock(dir);
       return await run({ dir, types, once: v.once, pinned });

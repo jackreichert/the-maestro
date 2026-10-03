@@ -49,7 +49,7 @@ flowchart LR
 
 ## Quick start
 
-You need Node.js 22 or newer (nothing is installed: the scripts use only `node:` built-ins; `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5, and the tests ran on Node 24), an [Obsidian](https://obsidian.md) vault or any folder you are willing to treat as one, and an agent harness that loads `SKILL.md` skills.
+You need Node.js 24 or newer (nothing is installed to run the scripts: they use only `node:` built-ins, and Node strips the types from the `.ts` modules itself; `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5), an [Obsidian](https://obsidian.md) vault or any folder you are willing to treat as one, and an agent harness that loads `SKILL.md` skills.
 
 ```bash
 # 1. One copy, where your agent already loads skills. Symlink other harnesses to it; never clone twice.
@@ -210,7 +210,7 @@ A fresh session should not hunt for facts nobody wrote down. `journal.mjs handof
 
 ## Scripts and commands
 
-Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every script reads its settings through [scripts/local-config.mjs](scripts/local-config.mjs) and takes no dependencies.
+Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
 
 | Script | Purpose |
 |---|---|
@@ -223,7 +223,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every scri
 | [branch-sweep.mjs](#branch-sweepmjs) | List and delete merged branches and stale worktrees |
 | [token-metrics.mjs](#token-metricsmjs) | Token and cost metrics from transcripts |
 | [brief-block.mjs](#brief-blockmjs) | The standing brief block, filled from config |
-| [local-config.mjs](#local-configmjs) | Print the resolved configuration |
+| [local-config.ts](#local-configts) | Print the resolved configuration |
 
 ### journal.mjs
 
@@ -320,7 +320,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | 2 | Usage or configuration error, a malformed watch, a broken overlay type, or another loop holds the lock | Read the stderr line; never delete the lock |
 | other | The process crashed or was killed | Read stderr, then relaunch (a dead owner's lock is taken over) |
 
-**Types.** A type is a script (`scripts/event-types/<type>.mjs` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.mjs`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
+**Types.** A type is a script (`scripts/event-types/<type>.ts` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.ts`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
 
 | Type | Target | Reports |
 |---|---|---|
@@ -333,7 +333,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 
 An org overlay adds types without editing this repo: `<type>.mjs` and its playbook `<type>.md` in the overlay's `event-types/` folder. A duplicate name, a module without `check` and `diff` functions, or a missing playbook stops the loop with an error naming the file.
 
-**Cadence.** Each type declares a default interval, and `add --interval S` overrides it for one watch. The loop checks only the watches that are due and sleeps until the earliest. Defaults: `inbox` 60s, `pr-checks` 180s, `pr-watch` 600s, `pr-merged` 240s, `gh-run` 120s, `reminder` 30s. Floors are enforced where the interval is computed (`scripts/lib/cadence.mjs`): 120s for network types so GitHub is not flooded, 30s for local ones. A lower `--interval` or setting is raised to the floor, and a setting can only raise it (`watch_network_floor`, `watch_local_floor`; `watch_type_intervals` changes a type's default). The adaptive back-off still stretches intervals when nothing has happened for an hour or two. `pr-watch` declares its own 300s floor, which `watch_min_interval` can raise, and with `watch_quiet_hours_mode: slow` it keeps polling at 1800s in quiet hours.
+**Cadence.** Each type declares a default interval, and `add --interval S` overrides it for one watch. The loop checks only the watches that are due and sleeps until the earliest. Defaults: `inbox` 60s, `pr-checks` 180s, `pr-watch` 600s, `pr-merged` 240s, `gh-run` 120s, `reminder` 30s. Floors are enforced where the interval is computed (`scripts/lib/cadence.ts`): 120s for network types so GitHub is not flooded, 30s for local ones. A lower `--interval` or setting is raised to the floor, and a setting can only raise it (`watch_network_floor`, `watch_local_floor`; `watch_type_intervals` changes a type's default). The adaptive back-off still stretches intervals when nothing has happened for an hour or two. `pr-watch` declares its own 300s floor, which `watch_min_interval` can raise, and with `watch_quiet_hours_mode: slow` it keeps polling at 1800s in quiet hours.
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
@@ -404,9 +404,9 @@ The rework rate and corrections from the user are not computed from transcripts.
 
 Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
 
-### local-config.mjs
+### local-config.ts
 
-`node scripts/local-config.mjs` prints each resolved setting and which files it came from. The rest of the scripts import it.
+`node scripts/local-config.ts` prints each resolved setting and which files it came from. The rest of the scripts import it.
 
 ## Configuration
 
@@ -421,7 +421,7 @@ vault_root: /path/to/vault
 ```
 ~~~
 
-Each setting resolves as: **environment variable, then the user file, then the overlay's `config.md`**. The user file is `MAESTRO_LOCAL_CONFIG` (an explicit path; the empty string reads no file, which is what the tests set), else `~/.config/the-maestro/config.md`. `node scripts/local-config.mjs` shows what resolved. An environment variable set to the empty string counts as set.
+Each setting resolves as: **environment variable, then the user file, then the overlay's `config.md`**. The user file is `MAESTRO_LOCAL_CONFIG` (an explicit path; the empty string reads no file, which is what the tests set), else `~/.config/the-maestro/config.md`. `node scripts/local-config.ts` shows what resolved. An environment variable set to the empty string counts as set.
 
 | Key | Environment variable | Default | Purpose |
 |---|---|---|---|
@@ -486,7 +486,7 @@ flowchart TD
         P[Prose: repo topology, tracker and release rules]
         ET[event-types/ scripts and playbooks]
     end
-    ENV[Environment variables] --> LC[local-config.mjs]
+    ENV[Environment variables] --> LC[local-config.ts]
     UF[User config file] --> LC
     C --> LC
     LC --> SC[Every script]
@@ -580,10 +580,10 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 ## Testing
 
 ```bash
-node --test scripts/*.test.mjs
+npm test
 ```
 
-Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs`. Shared logic that `journal.mjs` and `ledger-index.mjs` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.mjs`: change it there, once. `ledger-index.mjs` needs a Node build with `node:sqlite` and FTS5.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.mjs` and `ledger-index.mjs` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.mjs` needs a Node build with `node:sqlite` and FTS5.
 
 ## Development
 
@@ -599,9 +599,9 @@ The scripts themselves have no runtime dependencies.
 
 ## Contributing
 
-- **Keep it generic.** No organisation, personal path, ticket key or private name in anything shipped here. Install-specific values go through `local-config.mjs`; org rules go in an overlay.
-- **Keep it dependency-free.** Scripts use only `node:` built-ins and read their settings through `scripts/local-config.mjs`.
-- **A new event type** is `scripts/event-types/<type>.mjs`, a playbook at `playbooks/event-types/<type>.md`, one line in `scripts/event-types/index.mjs`, and tests with fixtures and no network. The suite fails if a type has no playbook.
+- **Keep it generic.** No organisation, personal path, ticket key or private name in anything shipped here. Install-specific values go through `local-config.ts`; org rules go in an overlay.
+- **Keep it dependency-free.** Scripts use only `node:` built-ins and read their settings through `scripts/local-config.ts`.
+- **A new event type** is `scripts/event-types/<type>.ts`, a playbook at `playbooks/event-types/<type>.md`, one line in `scripts/event-types/index.ts`, and tests with fixtures and no network. The suite fails if a type has no playbook.
 - **A guarantee needs a runtime check.** If a rule can be enforced by a script, enforce it and test the refusal; do not rely on prose.
 - **Tests land with the code they cover**, in the same commit, and the full suite passes before a PR opens.
 - **Docs move with behaviour.** Change `SKILL.md`, the matching `reference/*.md` and this README in the same branch.

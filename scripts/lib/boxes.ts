@@ -11,11 +11,23 @@
  * must not be closed on a regex.
  */
 
+/** The fields of a ledger row that box classification reads. */
+export interface BoxItem { kind?: string; text?: string; ticket?: string; paste?: string; pending?: boolean; date?: string }
+
+export type Approval = 'standing' | 'one-off' | undefined;
+
+export type Gate =
+    | { type: 'gh:pr'; repo: string; number: number }
+    | { type: 'date'; date: string }
+    | { type: 'ticket'; id: string };
+
+export interface GateStatus { state: 'waiting' | 'cleared' | 'unknown'; detail: string }
+
 export const BOX = {
     RULE: 1, STANDING: 2, ONE_OFF: 3, NEEDS_JACK: 4, PASTE: 5, GATED: 6, INFLIGHT: 7, FINDING: 8, LEARNING: 9, DONE: 10, NOISE: 11,
 };
 
-export const BOX_TITLES = {
+export const BOX_TITLES: Record<number, string> = {
     1: 'Decisions / rules',
     2: 'Standing approvals',
     3: 'One-off approvals',
@@ -38,7 +50,7 @@ const LEARNED = /learned|lesson|ruled out|\bcause\b/i;
 const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/;
 
 /** Days from YYYY-MM-DD `from` to `to`; 0 when either is missing. */
-export function daysBetween(from, to) {
+export function daysBetween(from: string | undefined, to: string | undefined): number {
     const a = Date.parse(`${from}T00:00:00Z`);
     const b = Date.parse(`${to}T00:00:00Z`);
     return Number.isNaN(a) || Number.isNaN(b) ? 0 : Math.round((b - a) / 864e5);
@@ -48,7 +60,7 @@ export function daysBetween(from, to) {
  * Box number for one item. `approval` is the item's effective approval ('standing' | 'one-off' | undefined),
  * folded from the row, its closing row and any approval-tag rows by the caller.
  */
-export function classify(item, approval) {
+export function classify(item: BoxItem, approval?: Approval): number {
     const text = String(item.text || '');
     const hasTicket = Boolean(item.ticket) || TICKET_ID.test(text);
     switch (item.kind) {
@@ -74,12 +86,15 @@ export function classify(item, approval) {
 }
 
 /** Days after which an open item in a box is flagged stale; absent means the box never goes stale. */
-export const STALE_AFTER_DAYS = { [BOX.NEEDS_JACK]: 2, [BOX.PASTE]: 2, [BOX.INFLIGHT]: 1 };
+export const STALE_AFTER_DAYS: Record<number, number> = { [BOX.NEEDS_JACK]: 2, [BOX.PASTE]: 2, [BOX.INFLIGHT]: 1 };
 
-export const isStale = (box, item, today) => box in STALE_AFTER_DAYS && daysBetween(item.date, today) > STALE_AFTER_DAYS[box];
+export const isStale = (box: number, item: BoxItem, today: string): boolean => {
+    const limit = STALE_AFTER_DAYS[box];
+    return limit !== undefined && daysBetween(item.date, today) > limit;
+};
 
 /** What `triage` proposes for an item in each box. */
-export const ACTIONS = {
+export const ACTIONS: Record<number, string> = {
     1: 'promote to a memory file, then `rule --ref` (or `triage --apply` once a ref is on the row)',
     2: 'promote, confirm it is in the weekly approvals digest, then close',
     3: 'close once a ref resolves',
@@ -98,12 +113,13 @@ export const ACTIONS = {
 const GATE = /^(?:gh:pr:([\w.-]+(?:\/[\w.-]+)?)#(\d+)|date:(\d{4}-\d{2}-\d{2})|ticket:([\w.-]+))$/;
 
 /** Parsed gate, or null when `spec` is not `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. */
-export function parseGate(spec) {
+export function parseGate(spec: unknown): Gate | null {
     const m = GATE.exec(String(spec || ''));
     if (!m) return null;
-    if (m[2]) return { type: 'gh:pr', repo: m[1], number: Number(m[2]) };
-    if (m[3]) return Number.isNaN(Date.parse(m[3])) || new Date(`${m[3]}T00:00:00Z`).toISOString().slice(0, 10) !== m[3] ? null : { type: 'date', date: m[3] };
-    return { type: 'ticket', id: m[4] };
+    const [, repo = '', prNumber, date, id = ''] = m;
+    if (prNumber) return { type: 'gh:pr', repo, number: Number(prNumber) };
+    if (date) return Number.isNaN(Date.parse(date)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date ? null : { type: 'date', date };
+    return { type: 'ticket', id };
 }
 
 /**
@@ -111,7 +127,11 @@ export function parseGate(spec) {
  * things up, so this stays pure: `pr(repo, number)` returns { state, mergedAt } or null when it cannot tell,
  * `ticket(id)` returns a status string or null.
  */
-export function gateStatus(spec, today, { pr, ticket }) {
+export function gateStatus(
+    spec: unknown,
+    today: string,
+    { pr, ticket }: { pr: (repo: string, number: number) => { state?: string; mergedAt?: string } | null; ticket: (id: string) => string | null },
+): GateStatus {
     const g = parseGate(spec);
     if (!g) return { state: 'unknown', detail: 'unreadable gate' };
     if (g.type === 'date') return today >= g.date ? { state: 'cleared', detail: `${g.date} has arrived` } : { state: 'waiting', detail: `until ${g.date}` };
