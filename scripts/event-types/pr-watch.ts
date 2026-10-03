@@ -18,7 +18,7 @@
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH } from '../local-config.mjs';
+import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH } from '../local-config.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 
 // Scheduling: default seconds between checks (the old watcher's steady pace; idle back-off stretches it), and whether a check calls the network.

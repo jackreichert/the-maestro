@@ -9,12 +9,12 @@
  *
  * An org overlay adds types without touching this repo: `<overlay dir>/event-types/<type>.mjs` (or `.ts`) with its playbook
  * `<overlay dir>/event-types/<type>.md` beside it, same interface. The overlay dir is the directory holding the
- * overlay's `config.md` (see local-config.mjs). `loadTypes` rejects duplicate names and malformed modules loudly.
+ * overlay's `config.md` (see local-config.ts). `loadTypes` rejects duplicate names and malformed modules loudly.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { overlayPath } from '../local-config.mjs';
+import { overlayPath } from '../local-config.ts';
 import * as ghRun from './gh-run.ts';
 import * as inbox from './inbox.ts';
 import * as prChecks from './pr-checks.ts';

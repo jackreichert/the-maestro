@@ -21,7 +21,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { LEDGER_ROOT, VAULT_ROOT } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { isOpen, readRegistry, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 
 const SCHEMA_VERSION = '2';

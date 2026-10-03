@@ -99,13 +99,13 @@
  * retro/archive read tickets through ledger-index.mjs: --tickets-vault <path> (else $VAULT_ROOT),
  * --repo <name> picks Projects/<name>/Archive/ for the retro doc (default dev-env).
  * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT, each also settable in the
- * config file (see local-config.mjs).
+ * config file (see local-config.ts).
  */
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, linkSync, unlinkSync, realpathSync, statSync } from 'node:fs';
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN } from './local-config.mjs';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN } from './local-config.ts';
 import { scratchReport } from './lib/scratch.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
 import { sessionLine } from './token-metrics.mjs';
