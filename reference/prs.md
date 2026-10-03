@@ -224,19 +224,13 @@ A re-registration with nothing new stays quiet.
 **It sets its own pace.** The type polls every 600s, and the loop stretches that when nothing has happened
 (900s after an hour quiet, 1800s after two, capped by `watch_max_interval`). It never goes under 300s, whatever
 `add --interval` or a setting says. Inside quiet hours (`watch_quiet_hours`, default 20:00-07:00 in `watch_tz`;
-weekends too with `watch_quiet_weekends: on`) the loop skips the watch; when no overnight watch remains, `run`
+weekends too with `watch_quiet_weekends: on`) the loop skips the watch, or with `watch_quiet_hours_mode: slow` polls it every 1800s; when no watch remains to run, `run`
 exits with "quiet hours" (exit 3) and the next morning greeting restarts it. The rule and its rationale are
 cost material: [../cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence); the
 settings are in [local-config.md](local-config.md). The logic is the pure function in
 [scripts/lib/cadence.mjs](../scripts/lib/cadence.mjs).
 
-**Exit codes.** A background run's exit tells the orchestrator why it stopped:
-
-| Exit | Stdout | Meaning | Next step |
-|---|---|---|---|
-| 0 | the change report | something needs attention (or a `--once` check finished) | handle it, relaunch without `--baseline` |
-| 2 | none (reason on stderr) | usage error: no `--state`, or a bad `--interval` | fix the command |
-| 3 | `QUIET-HOURS stop until HH:MM <tz>` | stopped for quiet hours; the state file records `stoppedForQuietAt` | nothing until the morning greeting restarts it |
+The loop's exit codes (0, 3 for a quiet-hours stop, 10 for an actionable digest) are in [SKILL.md](../SKILL.md#event-loop-exit-codes) and [playbooks/event-loop.md](../playbooks/event-loop.md).
 
 The watcher wakes the **orchestrator** on bot threads, because Copilot threads on drafts are work
 to do (above). That is not the same as interrupting the **user**: bot threads get handled quietly

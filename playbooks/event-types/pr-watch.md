@@ -2,7 +2,7 @@
 
 Review activity on the user's open PRs. Script: [scripts/event-types/pr-watch.mjs](../../scripts/event-types/pr-watch.mjs). The loop keeps the PR snapshot in its own state file and diffs each check against it, so the snapshot and the digest are saved together.
 
-Register: `node scripts/event-loop.mjs add --id reviews --type pr-watch --target open-prs --report "<what to tell the orchestrator>"`. The PR set is scoped by local-config (`gh_org`, `gh_login`), not by the target. Use `--target open-prs:baseline` to record the first snapshot without reporting what is already there.
+Register: `node scripts/event-loop.mjs add --id reviews --type pr-watch --target open-prs --report "<what to tell the orchestrator>"`. A watch lives 72 hours (the loop default for other types is 24); re-register it when it expires, with `--ttl-hours` to change that. Only one `pr-watch` watch may exist (`add` refuses a second, also under the old name `pr-review`). The PR set is scoped by local-config (`gh_org`, `gh_login`), not by the target. Use `--target open-prs:baseline` to record the first snapshot without reporting what is already there.
 
 ## What the loop reports
 
