@@ -17,5 +17,5 @@
     "checkJs": false
   },
   "include": ["scripts/**/*.ts"],
-  "exclude": ["scripts/event-types", "scripts/*.test.ts"]
+  "exclude": ["scripts/*.test.ts"]
 }
