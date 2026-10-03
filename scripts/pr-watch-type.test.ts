@@ -9,26 +9,31 @@ import * as prWatch from './event-types/pr-watch.ts';
 import { tick } from './event-loop.mjs';
 import { addWatch, loadState } from './lib/watch-registry.ts';
 import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
+import type { GhStubConfig } from './lib/gh-stub.ts';
+import type { CadenceConfig } from './lib/cadence.ts';
+import type { CheckContext, Run, Watch, WatchEvent } from './lib/types.ts';
 
 const NOON = Date.parse('2026-10-01T12:00:00Z');
-const DAY = { quietHours: 'off' };
+const DAY: CadenceConfig = { quietHours: 'off' };
+/** A watch record with just the id that matters to the test. */
+const watchNamed = (id: string): Watch => ({ op: 'add', id, type: 'pr-watch', target: 'open-prs', done_when: '', report: '', notify_overnight: false, notify: false, interval: null, created: '', expires: '' });
 
 /** A stubbed-gh world: `serve(config)` swaps what gh answers, `ctx(extra)` builds the check context. */
-function world(config) {
+function world(config: GhStubConfig) {
   const env = installGhStub(config);
-  const run = (cmd, args) => {
+  const run: Run = (cmd, args) => {
     const r = spawnSync(cmd, args, { encoding: 'utf8', env });
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
   return {
     env,
-    serve: (next) => writeFileSync(env.GH_STUB_CONFIG, JSON.stringify(next)),
-    ctx: (extra = {}) => ({ run, config: { ghLogin: 'me', copilotOrgs: [] }, ...extra }),
+    serve: (next: GhStubConfig) => writeFileSync(env.GH_STUB_CONFIG ?? '', JSON.stringify(next)),
+    ctx: (extra: Partial<CheckContext> = {}): Omit<CheckContext, 'now'> => ({ run, config: { ghLogin: 'me', copilotOrgs: [] }, ...extra }),
   };
 }
-const summaries = (events) => events.map((e) => e.summary);
-const approved = (sha, n = 4011) => prNode(n, { reviewDecision: 'APPROVED', headRefOid: sha });
-const thread = (id, who = 'rev') => ({ id, isResolved: false, comments: { nodes: [{ author: { login: who }, url: `https://x/${id}` }] }, last: { nodes: [{ id: `c-${id}`, author: { login: who }, url: `https://x/${id}` }] } });
+const summaries = (events: Pick<WatchEvent, 'summary'>[]): string[] => events.map((e) => e.summary);
+const approved = (sha: string, n = 4011) => prNode(n, { reviewDecision: 'APPROVED', headRefOid: sha });
+const thread = (id: string, who = 'rev') => ({ id, isResolved: false, comments: { nodes: [{ author: { login: who }, url: `https://x/${id}` }] }, last: { nodes: [{ id: `c-${id}`, author: { login: who }, url: `https://x/${id}` }] } });
 
 test('validate accepts open-prs and open-prs:baseline only', () => {
   prWatch.validate('open-prs');
@@ -95,7 +100,7 @@ test('a PR that left the open set is reported only once GitHub confirms it is cl
 
 test('standing: an approval speaks once, speaks again on a moved head, and again after it clears and returns', () => {
   const w = world({ pages: [[approved('sha-a')]] });
-  const step = (prev, node) => { w.serve({ pages: [[node]] }); const next = prWatch.check('open-prs', w.ctx({ prev })); return [next, summaries(prWatch.diff(prev, next))]; };
+  const step = (prev: prWatch.Snapshot, node: unknown): [prWatch.PrWatchState, string[]] => { w.serve({ pages: [[node]] }); const next = prWatch.check('open-prs', w.ctx({ prev })); return [next, summaries(prWatch.diff(prev, next))]; };
   const [one, told] = step(prWatch.check('open-prs:baseline', w.ctx()), approved('sha-a'));
   assert.deepEqual(told, [], 'already told by the baseline');
   const [two, moved] = step(one, approved('sha-b'));
@@ -123,9 +128,10 @@ test('through the loop: the snapshot lands in the loop state, a failing tick lea
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-loop-'));
   const types = { 'pr-watch': prWatch };
   addWatch(dir, { id: 'p', type: 'pr-watch', target: 'open-prs' }, NOON);
-  const deps = (now, config = DAY) => ({ dir, types, ctx: w.ctx(), config, now });
+  const deps = (now: number, config: CadenceConfig = DAY) => ({ dir, types, ctx: w.ctx(), config, now });
   assert.deepEqual(tick(deps(NOON)).events, []);
   const saved = loadState(dir).watches.p;
+  assert.ok(saved && prWatch.hasBoard(saved.state), 'the loop keeps the snapshot as the watch state');
   assert.deepEqual(Object.keys(saved.state.board), ['org/repo#1']);
   assert.equal(saved.nextDue, NOON + 600 * 1000, 'steady cadence is the old watcher\'s 600s');
   assert.ok(!existsSync(join(dir, 'pr-review-p.json')), 'no second file to fall out of step with the digest');
@@ -147,9 +153,9 @@ test('through the loop: the snapshot lands in the loop state, a failing tick lea
 test('an old pr-review state file is adopted once, so the move into the loop does not replay what it already told', () => {
   const w = world({ pages: [[approved('sha-a'), prNode(2, { reviewThreads: { nodes: [thread('t1')] } })]] });
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-legacy-'));
-  const board = (n) => ({ url: `https://github.com/org/repo/pull/${n}`, repo: 'org/repo', number: n, isDraft: false, head: 'sha-a', needsCopilot: false, decision: n === 4011 ? 'APPROVED' : 'REVIEW_REQUIRED', threads: [], replies: [], comments: [], reviews: [] });
+  const board = (n: number) => ({ url: `https://github.com/org/repo/pull/${n}`, repo: 'org/repo', number: n, isDraft: false, head: 'sha-a', needsCopilot: false, decision: n === 4011 ? 'APPROVED' : 'REVIEW_REQUIRED', threads: [], replies: [], comments: [], reviews: [] });
   writeFileSync(join(dir, 'pr-review-p.json'), JSON.stringify({ board: { 'org/repo#4011': board(4011), 'org/repo#2': board(2) }, reported: { 'APPROVED-UNMERGED org/repo#4011': 'sha-a' } }));
-  const ctx = w.ctx({ dir, watch: { id: 'p' }, prev: { changes: [], standing: [] } });
+  const ctx = w.ctx({ dir, watch: watchNamed('p'), prev: { changes: [], standing: [] } });
   const next = prWatch.check('open-prs', ctx);
   assert.deepEqual(summaries(prWatch.diff(ctx.prev, next)), ['THREAD org/repo#2 by rev: https://x/t1']);
   prWatch.retired({ id: 'p' }, { dir });
@@ -157,7 +163,7 @@ test('an old pr-review state file is adopted once, so the move into the loop doe
 });
 
 // Copilot is requested only on drafts whose owner is in copilot_orgs; unset fails closed.
-function copilotRequests(copilotOrgs, nodes) {
+function copilotRequests(copilotOrgs: string[], nodes: unknown[]): string[] {
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-edit-'));
   const editLog = join(dir, 'edits.log');
   writeFileSync(editLog, '');
@@ -165,7 +171,7 @@ function copilotRequests(copilotOrgs, nodes) {
   prWatch.check('open-prs', w.ctx({ config: { ghLogin: 'me', copilotOrgs } }));
   return readFileSync(editLog, 'utf8').trim().split('\n').filter(Boolean);
 }
-const draftIn = (number, nameWithOwner) => prNode(number, { isDraft: true, repository: { nameWithOwner } });
+const draftIn = (number: number, nameWithOwner: string) => prNode(number, { isDraft: true, repository: { nameWithOwner } });
 
 test('copilot: an owner outside copilot_orgs is never requested', () => {
   assert.deepEqual(copilotRequests(['Allowed-Org'], [draftIn(1, 'other-user/repo')]), []);
@@ -192,7 +198,7 @@ test('a fresh watch never adopts a leftover pr-review file: a baseline stays sil
   const w = world({ pages: [[approved('sha-a')]] });
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-stale-'));
   writeFileSync(join(dir, 'pr-review-p.json'), JSON.stringify({ board: {}, reported: {} }));
-  const first = prWatch.check('open-prs:baseline', w.ctx({ dir, watch: { id: 'p' }, prev: null }));
+  const first = prWatch.check('open-prs:baseline', w.ctx({ dir, watch: watchNamed('p'), prev: null }));
   assert.deepEqual(prWatch.diff(null, first), []);
 });
 
@@ -204,7 +210,7 @@ test('watch_min_interval raises the type floor; quiet mode slow keeps the watch 
   const w = world({ pages: [[prNode(1)]] });
   const types = { 'pr-watch': prWatch };
   const night = Date.parse('2026-10-01T23:00:00Z');
-  const quietCfg = (quietMode) => ({ quietHours: '20:00-07:00', tz: 'UTC', quietMode, minInterval: 900 });
+  const quietCfg = (quietMode: string): CadenceConfig => ({ quietHours: '20:00-07:00', tz: 'UTC', quietMode, minInterval: 900 });
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-slow-'));
   addWatch(dir, { id: 'p', type: 'pr-watch', target: 'open-prs' }, night);
   assert.deepEqual(tick({ dir, types, ctx: w.ctx(), config: quietCfg('stop'), now: night }).skipped, ['p']);
@@ -219,7 +225,7 @@ test('watch_min_interval raises the type floor; quiet mode slow keeps the watch 
 test('add refuses a second pr-watch watch, under either name', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-single-'));
   const script = new URL('./event-loop.mjs', import.meta.url).pathname;
-  const add = (id, type) => spawnSync(process.execPath, [script, 'add', '--id', id, '--type', type, '--target', 'open-prs'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
+  const add = (id: string, type: string) => spawnSync(process.execPath, [script, 'add', '--id', id, '--type', type, '--target', 'open-prs'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
   assert.match(add('a', 'pr-review').stdout, /added a/);
   assert.match(add('b', 'pr-watch').stderr, /watch "a" already runs pr-watch \(as pr-review\)/);
   assert.match(add('c', 'pr-review').stderr, /already runs/);

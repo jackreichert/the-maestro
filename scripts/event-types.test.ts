@@ -14,10 +14,14 @@ import * as prMerged from './event-types/pr-merged.ts';
 import * as reminder from './event-types/reminder.ts';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
 import { addWatch, listWatches, readDigest } from './lib/watch-registry.ts';
+import * as prWatch from './event-types/pr-watch.ts';
+import type { CadenceConfig } from './lib/cadence.ts';
+import type { NotifyRun } from './lib/notify.ts';
+import type { CheckContext, EventType, Run, RunResult, Watch } from './lib/types.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const ok = (stdout, status = 0) => ({ status, stdout, stderr: '' });
-const checks = (...pairs) => JSON.stringify(pairs.map(([name, bucket]) => ({ name, bucket })));
+const ok = (stdout: string, status = 0): RunResult => ({ status, stdout, stderr: '' });
+const checks = (...pairs: [string, string][]): string => JSON.stringify(pairs.map(([name, bucket]) => ({ name, bucket })));
 
 test('every registered type has check, diff and a playbook, and every type file is registered', () => {
   for (const [name, type] of Object.entries(TYPES)) {
@@ -33,8 +37,17 @@ test('every registered type has check, diff and a playbook, and every type file 
 // overlay types
 const GOOD_TYPE = "export const check = (t) => ({ t });\nexport const diff = (p, n) => (p ? [] : [{ summary: `saw ${n.t}`, actionable: true }]);\nexport const done = () => true;\n";
 
+/** A loaded type by name; fails the test if the loader did not register it. */
+const overlayType = (types: Record<string, EventType>, name: string): EventType => {
+  const type = types[name];
+  assert.ok(type, `no event type ${name}`);
+  return type;
+};
+const CTX: CheckContext = { run: () => ok(''), now: 0 };
+const WATCH: Watch = { op: 'add', id: 'w', type: 't', target: 'x', done_when: '', report: '', notify_overnight: false, notify: false, interval: null, created: '', expires: '' };
+
 /** An overlay dir whose event-types/ holds the given { file: content } entries. */
-function overlayWith(files) {
+function overlayWith(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'overlay-'));
   mkdirSync(join(dir, 'event-types'));
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, 'event-types', name), text);
@@ -44,8 +57,8 @@ function overlayWith(files) {
 test('overlay types: a .ts type loads too, and one name in both extensions is a duplicate', async () => {
   const overlayDir = overlayWith({ 'typed-wait.ts': GOOD_TYPE, 'typed-wait.md': '# typed-wait\n', 'old-wait.mjs': GOOD_TYPE, 'old-wait.md': '# old-wait\n' });
   const types = await loadTypes({ overlayDir });
-  assert.equal(types['typed-wait'].done(), true);
-  assert.equal(types['old-wait'].done(), true);
+  assert.equal(overlayType(types, 'typed-wait').done?.(null, WATCH), true);
+  assert.equal(overlayType(types, 'old-wait').done?.(null, WATCH), true);
   const both = overlayWith({ 'twin.mjs': GOOD_TYPE, 'twin.ts': GOOD_TYPE, 'twin.md': '# twin\n' });
   await assert.rejects(loadTypes({ overlayDir: both }), /overlay event type twin .*twin\.ts.* duplicates/);
 });
@@ -54,8 +67,8 @@ test('overlay types: a type in <overlay>/event-types is loaded beside the built-
   const overlayDir = overlayWith({ 'my-wait.mjs': GOOD_TYPE, 'my-wait.md': '# my-wait\n' });
   const types = await loadTypes({ overlayDir });
   assert.deepEqual(Object.keys(types).sort(), [...Object.keys(TYPES), 'my-wait'].sort());
-  assert.equal(types['my-wait'].check('x').t, 'x');
-  assert.equal(types['my-wait'].done(), true);
+  assert.deepEqual(overlayType(types, 'my-wait').check('x', CTX), { t: 'x' });
+  assert.equal(overlayType(types, 'my-wait').done?.(null, WATCH), true);
   const dir = mkdtempSync(join(tmpdir(), 'events-'));
   addWatch(dir, { id: 'w1', type: 'my-wait', target: 'x' });
   const { events, retired } = tick({ dir, types, config: { quietHours: 'off' } });
@@ -65,8 +78,8 @@ test('overlay types: a type in <overlay>/event-types is loaded beside the built-
 
 test('check() receives the watch and its previous state, so a type can keep a baseline', () => {
   const dir = mkdtempSync(join(tmpdir(), 'events-'));
-  const seen = [];
-  const types = { base: { check: (_t, ctx) => { seen.push(ctx.prev); return { first: ctx.prev?.first ?? seen.length }; }, diff: () => [] } };
+  const seen: unknown[] = [];
+  const types = { base: { check: (_t: string, ctx: CheckContext) => { seen.push(ctx.prev); return { first: (ctx.prev as { first?: number } | null)?.first ?? seen.length }; }, diff: () => [] } };
   addWatch(dir, { id: 'b', type: 'base', target: 'x' });
   const now = Date.now();
   tick({ dir, types, config: { quietHours: 'off' }, now });
@@ -80,7 +93,7 @@ test('overlay types: a name that is already a built-in is rejected, naming the f
 });
 
 test('overlay types: a malformed module is rejected (missing diff, bad hook, no playbook, syntax error)', async () => {
-  const rejects = (files, re) => assert.rejects(loadTypes({ overlayDir: overlayWith(files) }), re);
+  const rejects = (files: Record<string, string>, re: RegExp) => assert.rejects(loadTypes({ overlayDir: overlayWith(files) }), re);
   await rejects({ 'a.mjs': 'export const check = () => ({});\n', 'a.md': '#' }, /overlay event type a .*export diff\(\) as a function/);
   await rejects({ 'b.mjs': GOOD_TYPE.replace('export const done = () => true;', 'export const done = true;'), 'b.md': '#' }, /overlay event type b .*done must be a function/);
   await rejects({ 'c.mjs': GOOD_TYPE }, /overlay event type c .*no playbook c\.md/);
@@ -103,8 +116,8 @@ test('pr-checks: folds buckets into one state', () => {
 });
 
 test('pr-checks: check() reads gh, tolerates the pending and failing exit codes, and rejects other failures', () => {
-  const seen = [];
-  const run = (cmd, args) => { seen.push([cmd, ...args]); return ok(checks(['build', 'pending']), 8); };
+  const seen: string[][] = [];
+  const run: Run = (cmd, args) => { seen.push([cmd, ...args]); return ok(checks(['build', 'pending']), 8); };
   assert.equal(prChecks.check('org/repo#12', { run }).overall, 'pending');
   assert.deepEqual(seen[0], ['gh', 'pr', 'checks', '12', '--repo', 'org/repo', '--json', 'name,bucket']);
   assert.equal(prChecks.check('https://github.com/org/repo/pull/12', { run }).total, 1);
@@ -116,7 +129,7 @@ test('pr-checks: check() reads gh, tolerates the pending and failing exit codes,
   assert.throws(() => prChecks.check('nonsense', { run }), /owner\/repo#123/);
 });
 
-const state = (pairs) => prChecks.summarize(pairs.map(([name, bucket]) => ({ name, bucket })));
+const state = (pairs: [string, string][]) => prChecks.summarize(pairs.map(([name, bucket]) => ({ name, bucket })));
 test('pr-checks: diff() fixtures', () => {
   const pending = state([['a', 'pending']]);
   const failing = state([['a', 'fail'], ['b', 'pending']]);
@@ -140,11 +153,11 @@ test('pr-checks: done_when defaults to settled; passing waits for green', () => 
 });
 
 // pr-merged
-const prView = (o) => ({ run: () => ok(JSON.stringify({ state: 'OPEN', title: 'fix: retry cap', headRefName: 'fix/ABC-12-retry', baseRefName: 'develop', ...o })) });
+const prView = (o?: Record<string, unknown>) => ({ run: () => ok(JSON.stringify({ state: 'OPEN', title: 'fix: retry cap', headRefName: 'fix/ABC-12-retry', baseRefName: 'develop', ...o })) });
 
 test('pr-merged: check() reads the PR and finds tracker keys in the title and branch with the default and a configured pattern', () => {
-  const seen = [];
-  const run = (cmd, args) => { seen.push([cmd, ...args]); return prView({ title: 'ABC-12 and XYZ-7: retry cap' }).run(); };
+  const seen: string[][] = [];
+  const run: Run = (cmd, args) => { seen.push([cmd, ...args]); return prView({ title: 'ABC-12 and XYZ-7: retry cap' }).run(); };
   const s = prMerged.check('org/repo#5', { run });
   assert.deepEqual(seen[0], ['gh', 'pr', 'view', '5', '--repo', 'org/repo', '--json', 'state,title,headRefName,baseRefName']);
   assert.deepEqual([s.repo, s.number, s.keys], ['org/repo', '5', ['ABC-12', 'XYZ-7']], 'a key in both title and branch is listed once');
@@ -155,7 +168,7 @@ test('pr-merged: check() reads the PR and finds tracker keys in the title and br
 });
 
 test('pr-merged: diff() names the repo, PR and keys on the merge only, and the watch is done when merged or closed', () => {
-  const at = (state, over = {}) => ({ state, repo: 'org/repo', number: '5', title: 'ABC-12: retry cap', head: 'fix/ABC-12-retry', base: 'develop', keys: ['ABC-12'], ...over });
+  const at = (state: string, over: Record<string, unknown> = {}) => ({ state, repo: 'org/repo', number: '5', title: 'ABC-12: retry cap', head: 'fix/ABC-12-retry', base: 'develop', keys: ['ABC-12'], ...over });
   assert.deepEqual(prMerged.diff(null, at('OPEN')), []);
   assert.deepEqual(prMerged.diff(at('OPEN'), at('OPEN')), []);
   assert.deepEqual(prMerged.diff(at('OPEN'), at('MERGED')), [{ summary: 'MERGED org/repo#5; tracker keys: ABC-12; base develop; branch fix/ABC-12-retry; title "ABC-12: retry cap"' }]);
@@ -170,7 +183,7 @@ test('pr-merged: diff() names the repo, PR and keys on the merge only, and the w
 
 // gh-run
 test('gh-run: check() and diff() fixtures', () => {
-  const view = (o) => ({ run: () => ok(JSON.stringify(o)) });
+  const view = (o: Record<string, unknown>) => ({ run: () => ok(JSON.stringify(o)) });
   const running = ghRun.check('org/repo:99', view({ status: 'in_progress', conclusion: null, name: 'ci' }));
   const finished = ghRun.check('org/repo:99', view({ status: 'completed', conclusion: 'failure', name: 'ci' }));
   assert.deepEqual(running, { status: 'in_progress', conclusion: '', name: 'ci' });
@@ -186,7 +199,7 @@ test('gh-run: check() and diff() fixtures', () => {
 });
 
 // inbox
-const inboxCtx = (stdout, status = 0) => ({ config: { inboxCommand: ['reader', '--unread'] }, run: () => ok(stdout, status) });
+const inboxCtx = (stdout: string, status = 0) => ({ config: { inboxCommand: ['reader', '--unread'] }, run: () => ok(stdout, status) });
 test('inbox: only a count leaves the type, never message text', () => {
   const secret = 'please call me about the thing';
   const first = inbox.check('inbox', inboxCtx(`${secret}\nsecond message\n`));
@@ -211,7 +224,7 @@ test('dry run: each type through tick() emits its fixture event and digests it',
   const NOON = Date.parse('2026-10-01T12:00:00Z');
   const dir = mkdtempSync(join(tmpdir(), 'dry-run-'));
   let phase = 0;
-  const run = (cmd, args) => {
+  const run: Run = (cmd, args) => {
     if (cmd === 'gh' && args[0] === 'pr') return ok(checks(['build', phase ? 'fail' : 'pending']), phase ? 1 : 8);
     if (cmd === 'gh' && args[0] === 'run') return ok(JSON.stringify({ status: phase ? 'completed' : 'queued', conclusion: phase ? 'success' : null, name: 'ci' }));
     if (cmd === 'reader') return ok(phase ? 'hello\n' : '');
@@ -223,7 +236,7 @@ test('dry run: each type through tick() emits its fixture event and digests it',
   addWatch(dir, { id: 'r', type: 'gh-run', target: 'org/repo:5' }, NOON);
   addWatch(dir, { id: 'i', type: 'inbox', target: 'inbox' }, NOON);
   addWatch(dir, { id: 'p', type: 'pr-watch', target: 'open-prs' }, NOON);
-  const deps = (now) => ({ dir, types: TYPES, ctx, config: { quietHours: 'off' }, now });
+  const deps = (now: number) => ({ dir, types: TYPES, ctx, config: { quietHours: 'off' }, now });
   assert.deepEqual(tick(deps(NOON)).events, []);
   phase = 1;
   const { events, retired } = tick(deps(NOON + 700000));
@@ -240,7 +253,7 @@ test('pr-review (alias of pr-watch): retiring or removing the watch deletes the 
   addWatch(dir, { id: 'w1', type: 'pr-review', target: 'open-prs', ttlMs: 60000 }, 0);
   tick({ dir, types: TYPES, ctx: { run: () => ({ status: 0, stdout: '', stderr: '' }) }, config: { quietHours: 'off' }, now: Date.now() });
   assert.equal(existsSync(file), false);
-  TYPES['pr-review'].retired({ id: 'never-existed' }, { dir });
+  prWatch.retired({ id: 'never-existed' }, { dir });
 
   addWatch(dir, { id: 'w2', type: 'pr-review', target: 'open-prs' });
   writeFileSync(join(dir, 'pr-review-w2.json'), '{}');
@@ -251,7 +264,7 @@ test('pr-review (alias of pr-watch): retiring or removing the watch deletes the 
 });
 
 test('pr-checks: the whole failed set is kept, so a change past the fifth name still speaks', () => {
-  const six = (last) => prChecks.summarize(['a', 'b', 'c', 'd', 'e', last].map((name) => ({ name, bucket: 'fail' })));
+  const six = (last: string) => prChecks.summarize(['a', 'b', 'c', 'd', 'e', last].map((name) => ({ name, bucket: 'fail' })));
   assert.equal(six('f').failed.length, 6);
   assert.equal(prChecks.diff(six('f'), six('g')).length, 1);
   assert.match(prChecks.diff(null, six('f'))[0].summary, /a, b, c, d, e and 1 more/);
@@ -280,7 +293,7 @@ test('reminder: a past target is rejected at add, a future one is accepted, and 
 test('reminder: silent before the target, one actionable event at it, then retired and never again', () => {
   const { dir, types, config, ctx } = REMIND();
   addWatch(dir, { id: 'r', type: 'reminder', target: '2026-10-03T12:10:00Z', report: 'stand up' }, T0);
-  const at = (min) => tick({ dir, types, config, ctx, now: T0 + min * 60000 });
+  const at = (min: number) => tick({ dir, types, config, ctx, now: T0 + min * 60000 });
   assert.deepEqual(at(0).events, []);
   assert.deepEqual(at(9).events, []);
   const fired = at(11);
@@ -308,10 +321,10 @@ test('reminder: quiet hours hold it until morning unless --notify-overnight', ()
 
 test('cli: reminder add refuses a bad or past target and stores a future one with a lifetime past its target', () => {
   const dir = mkdtempSync(join(tmpdir(), 'events-'));
-  const cli = (...args) => spawnSync(process.execPath, [join(ROOT, 'scripts', 'event-loop.mjs'), ...args], {
+  const cli = (...args: string[]) => spawnSync(process.execPath, [join(ROOT, 'scripts', 'event-loop.mjs'), ...args], {
     encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir },
   });
-  const add = (id, target, ...more) => cli('add', '--id', id, '--type', 'reminder', '--target', target, '--report', 'x', ...more);
+  const add = (id: string, target: string, ...more: string[]) => cli('add', '--id', id, '--type', 'reminder', '--target', target, '--report', 'x', ...more);
   assert.equal(add('a', 'soon').status, 2);
   assert.match(add('a', '2020-01-01T00:00:00Z').stderr, /in the past/);
   const future = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
@@ -323,10 +336,10 @@ test('cli: reminder add refuses a bad or past target and stores a future one wit
 
 test('reminder: a notifying reminder sends its text once; one added with --no-notify stays in the digest', () => {
   const { dir, types, config, ctx } = REMIND();
-  const sent = [];
+  const sent: (string | undefined)[] = [];
   addWatch(dir, { id: 'loud', type: 'reminder', target: '2026-10-03T12:05:00Z', report: 'call back', notify: true }, T0);
   addWatch(dir, { id: 'mute', type: 'reminder', target: '2026-10-03T12:05:00Z', report: 'private', notify: false }, T0);
-  const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
+  const notifyRun: NotifyRun = (_c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
   tick({ dir, types, config, ctx, now: T0 + 6 * 60000, notifyCommand: ['send'], notifyRun });
   tick({ dir, types, config, ctx, now: T0 + 12 * 60000, notifyCommand: ['send'], notifyRun });
   assert.deepEqual(sent, ['loud: reminder: call back']);
@@ -339,9 +352,9 @@ test('reminder: one that falls in a quiet weekend is held, not expired, and fire
   const { dir, types, ctx } = REMIND();
   const target = '2026-10-03T10:00:00Z';
   addWatch(dir, { id: 'r', type: 'reminder', target, report: 'weekend', notify: true, ttlMs: reminder.defaultTtlMs(target, friday) }, friday);
-  const sent = [];
-  const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
-  const run = (cfg, now) => tick({ dir, types, config: cfg, ctx, now, notifyCommand: ['send'], notifyRun });
+  const sent: (string | undefined)[] = [];
+  const notifyRun: NotifyRun = (_c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
+  const run = (cfg: CadenceConfig, now: number) => tick({ dir, types, config: cfg, ctx, now, notifyCommand: ['send'], notifyRun });
   for (let t = friday; t < Date.parse('2026-10-05T00:00:00Z'); t += 3 * 3600 * 1000) run(config, t);
   assert.deepEqual(sent, [], 'nothing fires or expires through the quiet weekend');
   assert.equal(listWatches(dir).length, 1);
