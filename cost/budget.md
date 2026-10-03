@@ -117,25 +117,25 @@ threshold above already covers this; the miss was not rolling on time, not a wro
 
 ## PR watcher cadence
 
-`pr-watch.mjs` costs no tokens between ticks — it is a background poll, not a subagent — but every
-tick that finds something still wakes the orchestrator for a full-context turn, so polling too
-often is a real cost even though each individual poll is free. The cadence is now automatic
-(replacing the manual 2026-09-27 policy of picking `--interval` by hand), implemented by
-`scripts/lib/cadence.mjs`:
+The `pr-watch` event type costs no tokens between ticks — it runs inside the event loop, a background
+poll, not a subagent — but every tick that finds something still wakes the orchestrator for a
+full-context turn, so polling too often is a real cost even though each individual poll is free. The
+cadence is automatic (replacing the manual 2026-09-27 policy of picking `--interval` by hand),
+implemented by `scripts/lib/cadence.mjs`:
 
-- **Busy: `watch_min_interval`** (300s default). Three or more events in the last 30 minutes
-  (new threads, reviews, comments, pushes, state changes) means someone is working through a batch.
-- **Some activity: 600s.** One or two events in the window, or nothing yet for under an hour.
-- **Quiet: back off** to 900s after an hour with nothing, then 1800s after two.
-- **Nothing faster than 300, ever.** `watch_min_interval` is raised to 300 if set lower. The lesson
-  below is exactly why. An explicit `--interval N` pins the poll but is raised to the same floor; it does not override quiet hours.
+- **Base: 600s** (the type's `interval`). The loop only stretches it; busy periods keep that pace, they do not pull it in.
+- **Quiet: back off** to 900s after an hour with nothing, then 1800s after two (capped by `watch_max_interval`).
+- **Nothing faster than 300, ever.** The type declares a 300s floor, above the loop's 120s network floor,
+  and no setting or `add --interval` goes under it. The lesson below is exactly why.
 - **Quiet hours: 20:00-07:00 local** by default (`watch_quiet_hours`, `watch_tz`; weekends with
-  `watch_quiet_weekends: on`). Mode `stop` (default) exits the watcher with the reason "quiet
-  hours" and the next morning greeting restarts it; mode `slow` polls every 1800s instead.
+  `watch_quiet_weekends: on`). The loop skips the watch inside them (unless it was added with
+  `--notify-overnight`), and `run` exits with "quiet hours" when no overnight watch remains; the next
+  morning greeting restarts it.
 - **Standing conditions wake once.** An approved-but-unmerged PR reports when it first appears or
   changes, not every tick, so a deliberately held-back PR no longer forces a wake per poll.
 
-Every tick prints `next check in Ns (reason)` to stderr, so the cadence in force is always visible.
+Unlike the standalone watcher it replaced, a push or a draft flip no longer tightens the pace: only events the
+loop reports count as activity.
 
 Lesson, 2026-09-27: a watcher polling every 2 minutes raised the day's wake-ups 16% against trend,
 for no benefit the user acted on any faster than a 10-minute poll would have — see

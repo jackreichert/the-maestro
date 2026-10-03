@@ -53,17 +53,16 @@ What to include after the greeting, in this order:
    `node scripts/prs-snapshot.mjs --vault "$LEDGER_ROOT"` — see
    [reference/prs.md#mid-day-updates](../reference/prs.md#mid-day-updates). It writes the snapshot
    silently; nothing from it belongs in the greeting itself.
-   Then start the PR watcher in the background, so new reviews and comments surface within
+   Then register the PR watch with the event loop, so new reviews and comments surface within
    minutes instead of waiting for the next board (the user's standing request, 2026-09-27):
-   `node scripts/pr-watch.mjs --baseline --state "$LEDGER_ROOT/Projects/<container-project>/Journal/pr-watch-state.json"`,
-   then the same command without `--baseline`, run with `run_in_background`.
-   It costs no tokens between changes and exits when something needs attention. Report the change,
-   handle it, then relaunch the watcher (without `--baseline`). Keep exactly one watcher running.
-   The watcher sets its own pace (faster while reviews are flowing, slower when quiet, stopped
+   `node scripts/event-loop.mjs add --id prs --type pr-watch --target open-prs:baseline --report "<report>"`,
+   unless `event-loop.mjs list` already shows a `pr-watch` or `pr-review` watch (the same type under its old name; `add` refuses a second). The watch lives 72 hours; re-register it when it expires. The loop's `run`
+   (see [playbooks/event-loop.md](../playbooks/event-loop.md)) costs no tokens between changes and exits when
+   something needs attention. Report the change, handle it, then relaunch `run` if it exited.
+   The watch sets its own pace (slower when quiet, skipped
    overnight; [cost/budget.md#pr-watcher-cadence](../cost/budget.md#pr-watcher-cadence)), so there is
-   no interval to pick. A watcher whose last exit was a quiet stop (exit 3, stdout `QUIET-HOURS stop until HH:MM <tz>`,
-   `stoppedForQuietAt` in the state file) is restarted by the next morning greeting, this step:
-   relaunch it without `--baseline`. What it wakes on, and which of those reach the user mid-day, is in
+   no interval to pick. If `run` last exited on a quiet stop (exit 3, stdout `QUIET-HOURS stop until HH:MM <tz>`),
+   the next morning greeting, this step, relaunches it. What the watch wakes on, and which of those reach the user mid-day, is in
    [reference/prs.md#the-pr-watcher](../reference/prs.md#the-pr-watcher).
 5. **Shipped today** — only once there is something in it.
 6. **Issue-tracker sprint board** — only when an issue-tracker MCP is installed and connected.

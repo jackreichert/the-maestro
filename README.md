@@ -215,7 +215,6 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every scri
 |---|---|
 | [journal.mjs](#journalmjs) | The ledger: log, board, standup, streams, claims, handoff, roll |
 | [ledger-index.mjs](#ledger-indexmjs) | Disposable full-text index over the ledger, tickets and handoffs |
-| [pr-watch.mjs](#pr-watchmjs) | Quiet PR poller that exits when something needs attention |
 | [prs-snapshot.mjs](#prs-snapshotmjs) | Mid-day PR board snapshot and actionable diff |
 | [event-loop.mjs](#event-loopmjs) | One loop for every "wake me when X" watch |
 | [pr-size.mjs](#pr-sizemjs) | PR size budget gate |
@@ -290,14 +289,6 @@ A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` sec
 
 Pass `--vault` and `--tickets-vault` the way `journal.mjs` does; tickets are skipped when no tickets vault is set.
 
-### pr-watch.mjs
-
-A cheap PR poller. Each tick fetches your open PRs with one `gh api graphql` call, compares them with a state file and stays silent until something needs attention: a new unresolved review thread (bots included) or reply from anyone but you, a new top-level comment or review body, a review decision flip, or a PR that merged or closed. Approved-but-unmerged PRs wake once when they first appear or change. On a draft in a `copilot_orgs` owner it also requests a Copilot review.
-
-`pr-watch.mjs --state <file> [--interval N] [--once] [--baseline]`. `--state` is required. `--baseline` records the current state and exits without reporting. `--once` checks a single time. `--interval N` pins the poll but never below the 300s floor; a lower value is raised with a warning on stderr. Exit codes: 0 report (or a finished `--once`), 2 usage, 3 stopped for quiet hours.
-
-Its pace is adaptive: 3 or more events in 30 minutes polls at `watch_min_interval`, a little activity at 600s, an hour quiet at 900s, two hours quiet at 1800s (capped by `watch_max_interval`), and inside quiet hours it stops or slows by `watch_quiet_hours_mode`. The logic is the pure function in [scripts/lib/cadence.mjs](scripts/lib/cadence.mjs). Details in [reference/prs.md](reference/prs.md).
-
 ### prs-snapshot.mjs
 
 Mid-day PR snapshot and diff, stored under the ledger root.
@@ -312,7 +303,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 
 | Command | Purpose and key flags |
 |---|---|
-| `add --id <id> --type <type> --target <t>` | Register a watch. `--done-when <rule>`, `--report <text>`, `--ttl-hours N` (default 24), `--interval S` (override the type's default cadence), `--notify` / `--no-notify` (opt this watch in or out of notifications), `--notify-overnight` |
+| `add --id <id> --type <type> --target <t>` | Register a watch. `--done-when <rule>`, `--report <text>`, `--ttl-hours N` (default 24; 72 for `pr-watch`), `--interval S` (override the type's default cadence), `--notify` / `--no-notify` (opt this watch in or out of notifications), `--notify-overnight` |
 | `list [--json]` | The live watches |
 | `remove <id>` | Retire a watch (its type may clean up its own files) |
 | `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
@@ -334,14 +325,14 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 |---|---|---|
 | `pr-checks` | `owner/repo#123` or the PR URL | CI moving into failing or passing (`done_when` `settled`, the default, or `passing`) |
 | `pr-merged` | `owner/repo#123` or the PR URL | The merge: repo, PR and the tracker keys found in its title and branch (`tracker_key_pattern`); the orchestrator then runs the merge checklist |
-| `pr-review` | ignored (`open-prs`) | Review activity on your open PRs, by wrapping `pr-watch.mjs` |
+| `pr-watch` | `open-prs`, or `open-prs:baseline` to record the first snapshot without reporting it | Review activity on your open PRs: new threads, replies, comments, review bodies, decision flips, PRs that merged or closed, approved-but-unmerged PRs (once), and a Copilot review request on drafts in a `copilot_orgs` owner. `pr-review` is the old name and still works |
 | `gh-run` | `owner/repo:<run id>` | A GitHub Actions run completing |
 | `inbox` | ignored (`inbox`) | A count of new messages from you, read through `inbox_command`. Only a hash of each line is kept |
 | `reminder` | an ISO 8601 UTC time | A one-time wake-up at that time, carrying the `--report` text. A clock check with no network; a malformed or past target is refused |
 
 An org overlay adds types without editing this repo: `<type>.mjs` and its playbook `<type>.md` in the overlay's `event-types/` folder. A duplicate name, a module without `check` and `diff` functions, or a missing playbook stops the loop with an error naming the file.
 
-**Cadence.** Each type declares a default interval, and `add --interval S` overrides it for one watch. The loop checks only the watches that are due and sleeps until the earliest. Defaults: `inbox` 60s, `pr-checks` and `pr-review` 180s, `pr-merged` 240s, `gh-run` 120s, `reminder` 30s. Floors are enforced where the interval is computed (`scripts/lib/cadence.mjs`): 120s for network types so GitHub is not flooded, 30s for local ones. A lower `--interval` or setting is raised to the floor, and a setting can only raise it (`watch_network_floor`, `watch_local_floor`; `watch_type_intervals` changes a type's default). The adaptive back-off still stretches intervals when nothing has happened for an hour or two.
+**Cadence.** Each type declares a default interval, and `add --interval S` overrides it for one watch. The loop checks only the watches that are due and sleeps until the earliest. Defaults: `inbox` 60s, `pr-checks` 180s, `pr-watch` 600s, `pr-merged` 240s, `gh-run` 120s, `reminder` 30s. Floors are enforced where the interval is computed (`scripts/lib/cadence.mjs`): 120s for network types so GitHub is not flooded, 30s for local ones. A lower `--interval` or setting is raised to the floor, and a setting can only raise it (`watch_network_floor`, `watch_local_floor`; `watch_type_intervals` changes a type's default). The adaptive back-off still stretches intervals when nothing has happened for an hour or two. `pr-watch` declares its own 300s floor, which `watch_min_interval` can raise, and with `watch_quiet_hours_mode: slow` it keeps polling at 1800s in quiet hours.
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
@@ -456,7 +447,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `watch_tz` | `MAESTRO_WATCH_TZ` | the system time zone | IANA zone the quiet hours are read in; an invalid name falls back |
 | `event_dir` | `MAESTRO_EVENT_DIR` | `<ledger_root>/Events`, else `~/.local/state/the-maestro/events` | Event loop registry, state and digest |
 | `notify_command` | `MAESTRO_NOTIFY_COMMAND` | none (nothing is sent) | Event loop notifier: a JSON argv array; the one-line summary is appended as the last argument. Used only by watches added with `--notify` |
-| `watch_network_floor` | `MAESTRO_WATCH_NETWORK_FLOOR` | 120 | Event loop: fastest poll for network types (`pr-checks`, `pr-review`, `gh-run`), seconds; can only raise the floor |
+| `watch_network_floor` | `MAESTRO_WATCH_NETWORK_FLOOR` | 120 | Event loop: fastest poll for network types (`pr-checks`, `pr-watch`, `gh-run`), seconds; can only raise the floor |
 | `watch_local_floor` | `MAESTRO_WATCH_LOCAL_FLOOR` | 30 | Event loop: fastest poll for local types (`inbox`, `reminder`), seconds; can only raise the floor |
 | `watch_type_intervals` | `MAESTRO_WATCH_TYPE_INTERVALS` | per-type defaults | Event loop: JSON object of type to default interval in seconds, raised to the floor |
 | `inbox_command` | `MAESTRO_INBOX_COMMAND` | none | `inbox` type: a JSON argv array printing one line per unread message, without marking them read |
@@ -464,7 +455,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `pr_max_code_lines` | `MAESTRO_PR_MAX_CODE_LINES` | 400 | PR size budget: most changed code lines (additions plus deletions) |
 | `pr_test_globs`, `pr_config_globs`, `pr_docs_globs`, `pr_mechanical_globs` | `MAESTRO_PR_TEST_GLOBS`, `MAESTRO_PR_CONFIG_GLOBS`, `MAESTRO_PR_DOCS_GLOBS`, `MAESTRO_PR_MECHANICAL_GLOBS` | built-in patterns | Comma-separated path globs counted as tests, config, docs, or mechanical files (lockfiles, generated, vendored) |
 | `twin_flow_repos` | `MAESTRO_TWIN_FLOW_REPOS` | none (rule off) | Comma-separated repos that use the integration and release-candidate twin-PR flow |
-| `copilot_orgs` | `MAESTRO_COPILOT_ORGS` | none (nowhere) | Comma-separated owners whose draft PRs `pr-watch.mjs` requests Copilot review on |
+| `copilot_orgs` | `MAESTRO_COPILOT_ORGS` | none (nowhere) | Comma-separated owners whose draft PRs the `pr-watch` event type requests Copilot review on |
 | `git_emails` | `MAESTRO_GIT_EMAILS` | each repo's `user.email` | Comma-separated author emails for the authorship check in `branch-sweep.mjs` |
 | `protected_branches` | `MAESTRO_PROTECTED_BRANCHES` | `main, master, staging, develop, release/*, staging/*, hotfix/*` | Names or globs (`*` within a path segment, `**` across) the sweep never lists; setting it replaces the default |
 | `sweep_merge_targets` | `MAESTRO_SWEEP_MERGE_TARGETS` | `develop` (plus `staging` in twin-flow repos) | Per-repo merge targets, `repo_a=develop\|staging, repo_b=develop` |
@@ -581,7 +572,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 - **Cheap workers, expensive decisions.** A model tier per job, always passed explicitly: the fastest tier for verifiable gathering (counts, status sweeps, formatting), a mid tier for well-specified implementation, the strongest for design, root cause and risky changes. An omitted model inherits the orchestrator's, which is the expensive default. Each brief carries a tool-call budget. See [cost/budget.md](cost/budget.md).
 - **Foreground waits inside agents.** A background completion wakes the orchestrator for a full-context turn. A blocking loop inside the agent costs one tool call and the orchestrator nothing.
 - **Capped reports and lean tool output.** A report stays in context for the rest of the session and is re-read on every later turn, so detail goes in a file the orchestrator opens only if it needs it.
-- **One loop, one wake per event.** The event loop and the PR watcher cost no tokens between checks, and the watcher's adaptive pace (never faster than 300 seconds, slower when quiet, off overnight) keeps polling from becoming wake-ups.
+- **One loop, one wake per event.** The event loop, including its `pr-watch` type, costs no tokens between checks, and its adaptive pace (slower when quiet, off overnight) keeps polling from becoming wake-ups.
 - **Session hygiene.** Per-turn cost climbs with session length. The status footer's Session line says "roll now" at `roll_turns` (180) or `roll_read_per_turn` (350000), and `journal.mjs handoff` plus `resume` make a fresh session cheap to start.
 - **Measured, not guessed.** `token-metrics.mjs` reads transcripts for numbers only. An end-of-day loop compares the day with a 7-day median, flags any metric more than about 20% worse, and treats each cost habit as an experiment to adopt or revert. See [cost/loop.md](cost/loop.md).
 
@@ -602,7 +593,7 @@ Each script has a test file beside it. The tests run every script as a subproces
 - **Tests land with the code they cover**, in the same commit, and the full suite passes before a PR opens.
 - **Docs move with behaviour.** Change `SKILL.md`, the matching `reference/*.md` and this README in the same branch.
 - **Small, reviewable PRs.** The size budget this repo ships applies to its own PRs: roughly five code files and four hundred code lines, mechanical changes in their own commit, conventional commit messages, and PRs opened as drafts.
-- **What to share.** This folder is the shareable unit: `SKILL.md`, `reference/`, `cost/`, `playbooks/`, `scripts/` with their tests, and this README. Do not commit your own `Journal/`, tickets or run-time state files (`prs-snapshot.json`, `pr-watch-state.json`); those live under your ledger root.
+- **What to share.** This folder is the shareable unit: `SKILL.md`, `reference/`, `cost/`, `playbooks/`, `scripts/` with their tests, and this README. Do not commit your own `Journal/`, tickets or run-time state files (`prs-snapshot.json`); those live under your ledger root.
 
 ### Loading the board automatically
 

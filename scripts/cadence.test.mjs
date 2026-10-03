@@ -95,6 +95,11 @@ test('watchFloor: 120s for network or undeclared types, 30s for local ones; a se
   assert.equal(watchFloor({ network: true }, { networkFloor: 10 }), 120);
   assert.equal(watchFloor({ network: false }, { localFloor: 1 }), 30);
   assert.equal(watchFloor({ network: true }, { networkFloor: 300 }), 300);
+  assert.equal(watchFloor({ network: true, floor: 300 }), 300, 'a type may declare a higher floor');
+  assert.equal(watchFloor({ network: true, floor: 60 }), 120, 'but never a lower one');
+  assert.equal(watchFloor({ network: true, floor: 300 }, { networkFloor: 600 }), 600);
+  assert.equal(watchFloor({ network: true, floor: 300 }, { minInterval: 900 }), 900, 'watch_min_interval raises a type floor');
+  assert.equal(watchFloor({ network: true }, { minInterval: 900 }), 120, 'and leaves types without one alone');
   assert.equal(watchFloor({ network: false }, { localFloor: 45 }), 45);
 });
 

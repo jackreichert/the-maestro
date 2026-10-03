@@ -35,7 +35,7 @@ approvals_review_day: friday   # weekday the morning greeting brings the approva
 watch_min_interval: 300        # PR watcher: fastest poll, seconds; never below 300; default 300
 watch_max_interval: 1800       # PR watcher: slowest poll, seconds; default 1800
 watch_quiet_hours: 20:00-07:00 # PR watcher: no polling in this local window; `off` disables; default 20:00-07:00
-watch_quiet_hours_mode: stop   # stop: exit until the next greeting restarts it; slow: poll every 1800s; default stop
+watch_quiet_hours_mode: stop   # stop: skip the PR watch (run exits if nothing else is live) until the next greeting; slow: poll every 1800s; default stop
 watch_quiet_weekends: off      # on: Saturday and Sunday count as quiet hours; default off
 watch_tz: America/New_York     # time zone for the quiet hours; default the system time zone
 pr_max_code_files: 5           # PR size budget: most code files per PR; default 5
@@ -43,7 +43,7 @@ pr_max_code_lines: 400         # PR size budget: most changed code lines (adds +
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off
-copilot_orgs: my-org          # comma-separated owners whose draft PRs pr-watch.mjs requests Copilot review on; omit to request nowhere
+copilot_orgs: my-org          # comma-separated owners whose draft PRs the pr-watch event type requests Copilot review on; omit to request nowhere
 git_emails: me@example.com     # comma-separated; the authorship check in branch-sweep.mjs; omit to use each repo's user.email
 protected_branches: main, release/*  # names or globs (`*` within one path segment, `**` across segments) branch-sweep.mjs never lists; setting it replaces the default, which is main, master, staging, develop, release/*, staging/*, hotfix/*; add backmerge/* here to protect those too
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
@@ -55,7 +55,7 @@ sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a wo
 sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
 event_dir: /path/to/events     # event loop: registry, state, digest; default <ledger_root>/Events, else ~/.local/state/the-maestro/events
 notify_command: ["my-notifier", "--to-me"]  # event loop: argv (JSON array); the one-line summary is appended as the last argument; used only for watches added with --notify (reminders by default); omit for no notifications
-watch_network_floor: 120       # event loop: fastest poll for network types (pr-checks, pr-review, gh-run), seconds; can only raise the 120 floor
+watch_network_floor: 120       # event loop: fastest poll for network types (pr-checks, pr-watch, gh-run), seconds; can only raise the 120 floor
 watch_local_floor: 30          # event loop: fastest poll for local types (inbox, reminder), seconds; can only raise the 30 floor
 watch_type_intervals: pr-checks=240, inbox=90  # event loop: default interval per type, seconds; the floors still apply
 inbox_command: ["my-inbox", "--unread"]     # event loop `inbox` type: argv printing one line per unread message, without marking them read; omit for none
@@ -91,14 +91,14 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Container project name | ledger paths `Projects/<name>/Journal/`; `project` / `CONTAINER_PROJECT` |
 | `VAULT_ROOT` | tickets, `CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/` |
 | Obsidian vault name (for `obsidian://open?vault=`) | greeting.md, citations.md |
-| `LEDGER_ROOT` | `journal.mjs`, `ledger-index.mjs`, `prs-snapshot.mjs`, `pr-watch.mjs --state` |
+| `LEDGER_ROOT` | `journal.mjs`, `ledger-index.mjs`, `prs-snapshot.mjs` |
 | Claude transcript dir | `token-metrics.mjs` (`CLAUDE_PROJECTS_DIR`) |
 | Ticket skill | dispatch.md |
 | Whether `roll` commits the ledger root (`ledger_git_autocommit`) | `journal.mjs roll` |
 | Weekday of the weekly approvals review (`approvals_review_day`, default Friday) | greeting.md, `journal.mjs approvals` |
 | Loop process patterns (`loop_patterns`) and whether `resume` calls `gh` (`resume_gh`) | `journal.mjs resume` |
 | Event loop: `event_dir`, `notify_command` (no default recipient: unset means no notifications; only watches added with `--notify` use it), `inbox_command`, `watch_network_floor`, `watch_local_floor`, `watch_type_intervals` | `event-loop.mjs`, `scripts/event-types/inbox.mjs` |
-| PR watcher cadence (the event loop reads only `watch_max_interval`, as its back-off cap, and the quiet-hours keys): `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours`, `watch_quiet_hours_mode`, `watch_quiet_weekends`, `watch_tz` | `pr-watch.mjs` via `scripts/lib/cadence.mjs` |
+| PR watcher cadence (the event loop reads `watch_max_interval` as its back-off cap, plus the quiet-hours keys): `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours`, `watch_quiet_hours_mode`, `watch_quiet_weekends`, `watch_tz` | `scripts/event-loop.mjs` via `scripts/lib/cadence.mjs` |
 
 ## Git identity and branch topology
 
@@ -110,7 +110,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.mjs` |
 | Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), PR look-back (`sweep_pr_days`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.mjs`, ledger.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
-| Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/pr-watch.mjs` |
+| Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/event-types/pr-watch.mjs` |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |

@@ -6,12 +6,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defaultRun, tick } from './event-loop.mjs';
-import { BUILTIN_TYPES as TYPES, loadTypes } from './event-types/index.mjs';
+import { ALIASES, BUILTIN_TYPES as TYPES, loadTypes } from './event-types/index.mjs';
 import * as ghRun from './event-types/gh-run.mjs';
 import * as inbox from './event-types/inbox.mjs';
 import * as prChecks from './event-types/pr-checks.mjs';
 import * as prMerged from './event-types/pr-merged.mjs';
-import * as prReview from './event-types/pr-review.mjs';
 import * as reminder from './event-types/reminder.mjs';
 import { installGhStub, prNode } from './lib/gh-stub.mjs';
 import { addWatch, listWatches, readDigest } from './lib/watch-registry.mjs';
@@ -27,7 +26,8 @@ test('every registered type has check, diff and a playbook, and every type file 
     assert.ok(existsSync(join(ROOT, 'playbooks', 'event-types', `${name}.md`)), `playbook for ${name}`);
   }
   const files = readdirSync(join(ROOT, 'scripts', 'event-types')).filter((f) => f.endsWith('.mjs') && f !== 'index.mjs');
-  assert.deepEqual(files.map((f) => f.replace('.mjs', '')).sort(), Object.keys(TYPES).sort());
+  assert.deepEqual(files.map((f) => f.replace('.mjs', '')).sort(), Object.keys(TYPES).filter((n) => !(n in ALIASES)).sort());
+  for (const [old, current] of Object.entries(ALIASES)) assert.equal(TYPES[old], TYPES[current], `${old} is an alias of ${current}`);
 });
 
 // overlay types
@@ -197,36 +197,6 @@ test('inbox: identical lines count separately, and a missing or failing command 
   assert.throws(() => inbox.check('inbox', inboxCtx('', 3)), /exited 3/);
 });
 
-// pr-review
-test('pr-review: parseReport and diff() fixtures', () => {
-  const report = ['2026-10-01T12:00:00Z 2 change(s):', 'THREAD org/repo#4 by rev: https://x/1', 'APPROVED-UNMERGED org/repo#4 https://x/p', 'noise'].join('\n');
-  const parsed = prReview.parseReport(report);
-  assert.deepEqual(parsed, { changes: ['THREAD org/repo#4 by rev: https://x/1'], standing: ['APPROVED-UNMERGED org/repo#4 https://x/p'] });
-  assert.equal(prReview.diff(null, parsed).length, 2);
-  assert.deepEqual(prReview.diff(parsed, { changes: [], standing: parsed.standing }), [], 'a standing condition speaks once');
-  assert.deepEqual(prReview.parseReport('no changes\n'), { changes: [], standing: [] });
-});
-
-test('pr-review: wraps the real pr-watch --once against a stubbed gh', () => {
-  const env = installGhStub({ pages: [[prNode(7)]] });
-  const dir = mkdtempSync(join(tmpdir(), 'pr-review-test-'));
-  const saved = { PATH: process.env.PATH, GH_STUB_CONFIG: process.env.GH_STUB_CONFIG, L: process.env.MAESTRO_LOCAL_CONFIG, Q: process.env.MAESTRO_WATCH_QUIET_HOURS };
-  Object.assign(process.env, { PATH: env.PATH, GH_STUB_CONFIG: env.GH_STUB_CONFIG, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' });
-  try {
-    const ctx = { run: defaultRun, dir, watch: { id: 'prs' } };
-    const first = prReview.check('open-prs', ctx);
-    assert.deepEqual(prReview.diff(null, first), []);
-    writeFileSync(env.GH_STUB_CONFIG, JSON.stringify({ pages: [[prNode(7, { reviewThreads: { nodes: [{ id: 't1', isResolved: false, comments: { nodes: [{ author: { login: 'rev' }, url: 'https://x/t1' }] }, last: { nodes: [{ id: 'c1', author: { login: 'rev' }, url: 'https://x/t1' }] } }] } })]] }));
-    const events = prReview.diff(first, prReview.check('open-prs', ctx));
-    assert.deepEqual(events, [{ summary: 'THREAD org/repo#7 by rev: https://x/t1' }]);
-  } finally {
-    process.env.PATH = saved.PATH;
-    for (const [k, v] of [['GH_STUB_CONFIG', saved.GH_STUB_CONFIG], ['MAESTRO_LOCAL_CONFIG', saved.L], ['MAESTRO_WATCH_QUIET_HOURS', saved.Q]]) {
-      if (v === undefined) delete process.env[k]; else process.env[k] = v;
-    }
-  }
-});
-
 // A dry run of each type through the loop with fixtures: no network, nothing real executed.
 test('dry run: each type through tick() emits its fixture event and digests it', () => {
   const NOON = Date.parse('2026-10-01T12:00:00Z');
@@ -236,31 +206,32 @@ test('dry run: each type through tick() emits its fixture event and digests it',
     if (cmd === 'gh' && args[0] === 'pr') return ok(checks(['build', phase ? 'fail' : 'pending']), phase ? 1 : 8);
     if (cmd === 'gh' && args[0] === 'run') return ok(JSON.stringify({ status: phase ? 'completed' : 'queued', conclusion: phase ? 'success' : null, name: 'ci' }));
     if (cmd === 'reader') return ok(phase ? 'hello\n' : '');
-    return ok(phase ? 'THREAD org/repo#1 by rev: https://x/t\n' : 'no changes\n');
+    if (cmd === 'gh' && args[1] === 'user') return ok('me');
+    return ok(JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [prNode(1, phase ? { reviewThreads: { nodes: [{ id: 't', isResolved: false, comments: { nodes: [{ author: { login: 'rev' }, url: 'https://x/t' }] }, last: { nodes: [{ id: 'c', author: { login: 'rev' }, url: 'https://x/t' }] } }] } } : {})] } } }));
   };
   const ctx = { run, dir, config: { inboxCommand: ['reader'] } };
   addWatch(dir, { id: 'c', type: 'pr-checks', target: 'org/repo#1' }, NOON);
   addWatch(dir, { id: 'r', type: 'gh-run', target: 'org/repo:5' }, NOON);
   addWatch(dir, { id: 'i', type: 'inbox', target: 'inbox' }, NOON);
-  addWatch(dir, { id: 'p', type: 'pr-review', target: 'open-prs' }, NOON);
+  addWatch(dir, { id: 'p', type: 'pr-watch', target: 'open-prs' }, NOON);
   const deps = (now) => ({ dir, types: TYPES, ctx, config: { quietHours: 'off' }, now });
   assert.deepEqual(tick(deps(NOON)).events, []);
   phase = 1;
-  const { events, retired } = tick(deps(NOON + 300000));
+  const { events, retired } = tick(deps(NOON + 700000));
   assert.deepEqual(events.map((e) => e.watch).sort(), ['c', 'i', 'p', 'r']);
   assert.ok(events.every((e) => e.actionable));
   assert.deepEqual(retired.map((r) => r.id).sort(), ['c', 'r']);
   assert.equal(readDigest(dir).length, 4);
 });
 
-test('pr-review: retiring or removing the watch deletes its pr-watch state file', () => {
+test('pr-review (alias of pr-watch): retiring or removing the watch deletes the state file an older pr-review kept', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-review-retire-'));
   const file = join(dir, 'pr-review-w1.json');
   writeFileSync(file, '{}');
   addWatch(dir, { id: 'w1', type: 'pr-review', target: 'open-prs', ttlMs: 60000 }, 0);
   tick({ dir, types: TYPES, ctx: { run: () => ({ status: 0, stdout: '', stderr: '' }) }, config: { quietHours: 'off' }, now: Date.now() });
   assert.equal(existsSync(file), false);
-  prReview.retired({ id: 'never-existed' }, { dir });
+  TYPES['pr-review'].retired({ id: 'never-existed' }, { dir });
 
   addWatch(dir, { id: 'w2', type: 'pr-review', target: 'open-prs' });
   writeFileSync(join(dir, 'pr-review-w2.json'), '{}');
