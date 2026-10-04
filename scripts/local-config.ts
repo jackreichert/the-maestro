@@ -255,25 +255,25 @@ export const PR_CONFIG_GLOBS = globList('MAESTRO_PR_CONFIG_GLOBS', 'pr_config_gl
 export const PR_DOCS_GLOBS = globList('MAESTRO_PR_DOCS_GLOBS', 'pr_docs_globs');
 export const PR_MECHANICAL_GLOBS = globList('MAESTRO_PR_MECHANICAL_GLOBS', 'pr_mechanical_globs');
 
-/** Your git author emails (comma-separated), the authorship check branch-sweep.mjs uses. Empty means the repo's own user.email. */
+/** Your git author emails (comma-separated), the authorship check branch-sweep.ts uses. Empty means the repo's own user.email. */
 export const GIT_EMAILS = globList('MAESTRO_GIT_EMAILS', 'git_emails');
 
-/** Branch names or globs (`*` within a path segment, `**` across them) branch-sweep.mjs never lists, besides each repo's merge targets and default branch. */
+/** Branch names or globs (`*` within a path segment, `**` across them) branch-sweep.ts never lists, besides each repo's merge targets and default branch. */
 const DEFAULT_PROTECTED_BRANCHES = ['main', 'master', 'staging', 'develop', 'release/*', 'staging/*', 'hotfix/*'];
 export const PROTECTED_BRANCHES = globList('MAESTRO_PROTECTED_BRANCHES', 'protected_branches').length
   ? globList('MAESTRO_PROTECTED_BRANCHES', 'protected_branches') : DEFAULT_PROTECTED_BRANCHES;
 
-/** Per-repo merge targets for branch-sweep.mjs, `repo=develop|staging, other=develop`. A repo not listed gets the default (develop, plus staging in twin-flow repos). */
+/** Per-repo merge targets for branch-sweep.ts, `repo=develop|staging, other=develop`. A repo not listed gets the default (develop, plus staging in twin-flow repos). */
 export const SWEEP_MERGE_TARGETS = Object.fromEntries(globList('MAESTRO_SWEEP_MERGE_TARGETS', 'sweep_merge_targets')
   .map((e) => e.split('=')).filter(([r, t]) => r && t).map(([r, t]) => [r.trim(), t.split('|').map((b) => b.trim()).filter(Boolean)]));
 
-/** Minutes a worktree must be untouched before branch-sweep.mjs offers it for removal. Default 60. */
+/** Minutes a worktree must be untouched before branch-sweep.ts offers it for removal. Default 60. */
 export const SWEEP_IDLE_MINUTES = positiveInt(pick('MAESTRO_SWEEP_IDLE_MINUTES', 'sweep_idle_minutes'), 60);
 
 /** Seconds the worktree sweep may run; once over, it stops at the next repo boundary and reports the repos it skipped. Default 300. */
 export const SWEEP_BUDGET_SECONDS = positiveInt(pick('MAESTRO_SWEEP_BUDGET_SECONDS', 'sweep_budget_seconds'), 300);
 
-/** How many days of merged PRs branch-sweep.mjs reads as evidence. An older merge reads as not merged. Default 180. */
+/** How many days of merged PRs branch-sweep.ts reads as evidence. An older merge reads as not merged. Default 180. */
 export const SWEEP_PR_DAYS = positiveInt(pick('MAESTRO_SWEEP_PR_DAYS', 'sweep_pr_days'), 180);
 
 /** Directories whose symlinks mark a worktree as a live skill, added to the defaults (~/.claude/skills and <container>/.claude/skills). */

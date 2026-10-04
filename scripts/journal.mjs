@@ -43,7 +43,7 @@
  *   journal.mjs roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
  *                                             archive finished work to a dated note, commit the ledger root if configured, and only THEN sweep: it removes
- *                                             the stale worktrees branch-sweep.mjs would offer, with no approval step (a standing approval; never
+ *                                             the stale worktrees branch-sweep.ts would offer, with no approval step (a standing approval; never
  *                                             --force, never a branch), prunes worktrees whose directory is gone, and prints what it removed and
  *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
  *                                             current directory (or --container) is outside it; --dry-run only reports. --fast skips the sweep and the scratch review.
@@ -107,7 +107,7 @@ import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN } from './local-config.ts';
 import { scratchReport } from './lib/scratch.ts';
-import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
+import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
@@ -954,7 +954,7 @@ function cmdScratch() {
 }
 
 /**
- * The worktree half of the branch sweep (branch-sweep.mjs owns what qualifies; this only calls it): { result, dry }, or
+ * The worktree half of the branch sweep (branch-sweep.ts owns what qualifies; this only calls it): { result, dry }, or
  * null when skipped, refused or it failed (the reason is printed; a sweep problem never fails the roll or the handoff).
  * It scans only the configured container_root, and only when run from inside it (the cwd, or --container as a stand-in
  * for it): a sweep that follows whatever directory the shell happens to be in can remove worktrees of an unrelated tree.
@@ -2026,7 +2026,7 @@ function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '',
         '## 5. Next concrete action', '',
         next || '_Author: one concrete first step for the fresh session._', '',
         '## Cleanup candidates', '',
-        '_Run `node scripts/branch-sweep.mjs` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
+        '_Run `node scripts/branch-sweep.ts` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
         ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
         'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
     ].join('\n');

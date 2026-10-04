@@ -2,9 +2,9 @@
 /**
  * BRANCH SWEEP: lists worktrees and remote branches that can be deleted, for the user to approve in a batch.
  *
- *   node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]
- *   node scripts/branch-sweep.mjs --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]
- *   node scripts/branch-sweep.mjs --apply-worktrees [--dry-run] [--container <dir>] [--repo <name>]
+ *   node scripts/branch-sweep.ts [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]
+ *   node scripts/branch-sweep.ts --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]
+ *   node scripts/branch-sweep.ts --apply-worktrees [--dry-run] [--container <dir>] [--repo <name>]
  *
  * Read-only by default (it runs `git fetch --prune origin` and nothing else that writes). `--apply` deletes only the
  * listed ids, re-scanning each repo first and refusing anything that no longer qualifies. Deleting is
@@ -650,7 +650,7 @@ export function worktreeSweepLines(r, dryRun = false, { verbose = false } = {}) 
     ...r.pruned.map((x) => `${(dryRun ? 'would prune' : 'pruned').padEnd(12)} ${x.path}  (${x.repo}; directory missing)`),
     ...kept,
     ...r.notes.map((n) => `note         ${n}`),
-    ...(r.skipped?.length ? [`sweep budget reached: skipped ${r.skipped.length} repo(s): ${r.skipped.join(', ')}. Re-run with branch-sweep.mjs --apply-worktrees --repo <name>.`] : []),
+    ...(r.skipped?.length ? [`sweep budget reached: skipped ${r.skipped.length} repo(s): ${r.skipped.join(', ')}. Re-run with branch-sweep.ts --apply-worktrees --repo <name>.`] : []),
     `worktrees: ${r.removed.length} ${dryRun ? 'to remove' : 'removed'}, ${r.pruned.length} ${dryRun ? 'to prune' : 'pruned'}, ${r.kept.length} kept.${!verbose && r.kept.length ? ' (--verbose lists them)' : ''}`,
   ];
 }

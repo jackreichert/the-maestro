@@ -1,4 +1,4 @@
-// Run: node --test scripts/branch-sweep.test.mjs
+// Run: node --test scripts/branch-sweep.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -8,8 +8,8 @@ import { join } from 'node:path';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
-const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.mjs');
+const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
+const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.ts');
 
 const ME = 'me@example.com';
 const sh = (repo, ...args) => {
