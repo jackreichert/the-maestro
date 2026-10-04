@@ -134,7 +134,7 @@ The dotted edges are asynchronous: the dispatcher never waits on them. A new mes
 
 ### Scout, then worker
 
-A read-only scout is dispatched first, so the dispatcher never greps the repos itself. When the work is real, a worker gets a brief with a write scope, a verify command and the standing rules block (`scripts/brief-block.mjs` prints it). The brief fields are in [reference/brief.md](reference/brief.md), and the routing and concurrency rules are in [reference/dispatch.md](reference/dispatch.md).
+A read-only scout is dispatched first, so the dispatcher never greps the repos itself. When the work is real, a worker gets a brief with a write scope, a verify command and the standing rules block (`scripts/brief-block.ts` prints it). The brief fields are in [reference/brief.md](reference/brief.md), and the routing and concurrency rules are in [reference/dispatch.md](reference/dispatch.md).
 
 ### The ledger and the board
 
@@ -222,7 +222,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every scri
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
 | [branch-sweep.mjs](#branch-sweepmjs) | List and delete merged branches and stale worktrees |
 | [token-metrics.mjs](#token-metricsmjs) | Token and cost metrics from transcripts |
-| [brief-block.mjs](#brief-blockmjs) | The standing brief block, filled from config |
+| [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
 
 ### journal.mjs
@@ -400,7 +400,7 @@ Compaction is read from transcript metadata only (the compact-boundary system li
 
 The rework rate and corrections from the user are not computed from transcripts. They are recorded as ledger notes, and a later change will count them at roll time.
 
-### brief-block.mjs
+### brief-block.ts
 
 Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
 
@@ -550,7 +550,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | Transcript content never reaches the metrics | `token-metrics.mjs` copies an allowlist of numeric and metadata fields and drops the rest; a planted-sentinel test checks it |
 | One event loop at a time | `event-loop.mjs run` takes a pid lock in `event_dir`; a dead owner's lock is replaced |
 | A broken overlay type is loud | the type loader rejects a duplicate name, a module without `check` and `diff`, or a missing playbook, naming the file |
-| The brief is complete | `brief-block.mjs` exits 1 if any slot is empty |
+| The brief is complete | `brief-block.ts` exits 1 if any slot is empty |
 
 ### Convention only
 

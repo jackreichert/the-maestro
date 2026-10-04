@@ -1,4 +1,4 @@
-// Run: node --test scripts/brief-block.test.mjs
+// Run: node --test scripts/brief-block.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -9,9 +9,9 @@ import { join, isAbsolute, dirname } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.ts). The import comes after this
 // line because local-config.ts reads its files when it is first loaded.
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { extractBlock, parseSlotValues, fillBlock, shelfLine, ownedReposLine, SLOTS } = await import('./brief-block.mjs');
+const { extractBlock, parseSlotValues, fillBlock, shelfLine, ownedReposLine, SLOTS } = await import('./brief-block.ts');
 
-const SCRIPT = new URL('./brief-block.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./brief-block.ts', import.meta.url).pathname;
 const BRIEF = new URL('../reference/brief.md', import.meta.url).pathname;
 const VALUES = [
     '## Standing brief block, filled',
@@ -93,7 +93,7 @@ test('invoked through a symlinked scripts dir, the filled block keeps the symlin
     symlinkSync(dirname(SCRIPT), link);
     const config = join(dir, 'config.md');
     writeFileSync(config, VALUES);
-    const r = spawnSync(process.execPath, [join(link, 'brief-block.mjs')], {
+    const r = spawnSync(process.execPath, [join(link, 'brief-block.ts')], {
         encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MAESTRO_LOCAL_CONFIG: config },
     });
     assert.equal(r.status, 0, r.stderr);
@@ -102,7 +102,7 @@ test('invoked through a symlinked scripts dir, the filled block keeps the symlin
 });
 
 test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.ts', async () => {
-    const { scriptsDir } = await import('./brief-block.mjs');
+    const { scriptsDir } = await import('./brief-block.ts');
     const real = dirname(SCRIPT);
     assert.equal(scriptsDir(join(tmpdir(), 'elsewhere', 'x.mjs'), real), real);
     assert.equal(scriptsDir(undefined, real), real);
