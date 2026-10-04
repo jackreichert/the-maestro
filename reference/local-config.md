@@ -44,13 +44,13 @@ pr_test_globs: <globs>         # comma-separated path globs counted as tests; om
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off
 copilot_orgs: my-org          # comma-separated owners whose draft PRs the pr-watch event type requests Copilot review on; omit to request nowhere
-git_emails: me@example.com     # comma-separated; the authorship check in branch-sweep.mjs; omit to use each repo's user.email
-protected_branches: main, release/*  # names or globs (`*` within one path segment, `**` across segments) branch-sweep.mjs never lists; setting it replaces the default, which is main, master, staging, develop, release/*, staging/*, hotfix/*; add backmerge/* here to protect those too
+git_emails: me@example.com     # comma-separated; the authorship check in branch-sweep.ts; omit to use each repo's user.email
+protected_branches: main, release/*  # names or globs (`*` within one path segment, `**` across segments) branch-sweep.ts never lists; setting it replaces the default, which is main, master, staging, develop, release/*, staging/*, hotfix/*; add backmerge/* here to protect those too
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
-sweep_pr_days: 180             # days of merged PRs branch-sweep.mjs reads as evidence; default 180
+sweep_pr_days: 180             # days of merged PRs branch-sweep.ts reads as evidence; default 180
 tracker_key_pattern: \bABC-\d+\b  # regex for tracker keys in a PR title or branch, listed by the pr-merged event; default is any ABC-123 shaped key
 sweep_budget_seconds: 300     # the worktree sweep stops at the next repo boundary once over this many seconds, and names what it skipped; default 300
-sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.mjs offers it; default 60
+sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.ts offers it; default 60
 sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a worktree as a live skill; ~/.claude/skills and <container>/.claude/skills always count
 sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
 event_dir: /path/to/events     # event loop: registry, state, digest; default <ledger_root>/Events, else ~/.local/state/the-maestro/events
@@ -104,11 +104,11 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 
 | Setting | Used by |
 |---|---|
-| The user's git emails (authorship check; `git_emails`) | git.md, the standing brief block, `scripts/branch-sweep.mjs` |
+| The user's git emails (authorship check; `git_emails`) | git.md, the standing brief block, `scripts/branch-sweep.ts` |
 | GitHub login | PR scripts (read from `gh api user` unless `gh_login` / `MAESTRO_GH_LOGIN` is set) |
 | GitHub org for the PR board | prs.md, `GH_ORG` in local-config.ts |
-| Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.mjs` |
-| Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), PR look-back (`sweep_pr_days`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.mjs`, ledger.md |
+| Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.ts` |
+| Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), PR look-back (`sweep_pr_days`), live-skill dirs (`sweep_protect_symlink_dirs`) and disposable ignored paths (`sweep_disposable_ignored`) | `scripts/branch-sweep.ts`, ledger.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
 | Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/event-types/pr-watch.ts` |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
