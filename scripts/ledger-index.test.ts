@@ -238,6 +238,14 @@ test('query with no name lists queries; unknown name is a friendly error', () =>
     assert.match(r.err, /by-ticket/);
 });
 
+test('query names inherited from Object.prototype are unknown, not called', () => {
+    for (const name of ['constructor', 'toString']) {
+        const r = run('query', name);
+        assert.equal(r.code, 1, name);
+        assert.match(r.err, new RegExp(`Unknown query "${name}"`));
+    }
+});
+
 // ── stream registry and archive ─────────────────────────────────────────────
 
 const regFile = () => join(root, 'Projects', 'dev-env', 'streams.json');
