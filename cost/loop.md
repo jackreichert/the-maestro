@@ -10,7 +10,7 @@ rather than a guess.
 
 ## The loop, run at EOD
 
-1. **Measure.** `VAULT_ROOT=... node scripts/token-metrics.mjs --write --compare` — see
+1. **Measure.** `VAULT_ROOT=... node scripts/token-metrics.ts --write --compare` — see
    [measure.md](measure.md). Read the printed summary.
 2. **Compare.** Note any key metric (turns, wake-ups, cache read, read/turn, avg report) that moved
    more than ~20% against the 7-day median — the script marks these `REGRESSION >20%`.
@@ -50,7 +50,7 @@ registry's own weekly-log table in the vault.
 
 ## Worked example, 2026-09-27
 
-The day's numbers (`token-metrics.mjs --compare`, cost line in [measure.md](measure.md)) closed the
+The day's numbers (`token-metrics.ts --compare`, cost line in [measure.md](measure.md)) closed the
 loop with a concrete regression and a concrete fix, not just a rule restated:
 
 - Wake-ups ran **+16%** against the recent trend, traced to a PR watcher polling every 2 minutes

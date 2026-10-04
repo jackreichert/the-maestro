@@ -15,7 +15,7 @@ the cost content. Read only the file the task needs:
 
 | File | Holds |
 |---|---|
-| [measure.md](measure.md) | The daily cost line (`ccusage`) and `token-metrics.mjs`: what it measures, how to run it, and how to read its output. This is also the answer to "how much did today cost". |
+| [measure.md](measure.md) | The daily cost line (`ccusage`) and `token-metrics.ts`: what it measures, how to run it, and how to read its output. This is also the answer to "how much did today cost". |
 | [loop.md](loop.md) | The self-correcting loop run at EOD: compare today against the baseline and the 7-day median, the >20% regression flag, the experiment registry's statuses (proposed / running / adopted / reverted), what gets proposed versus applied without asking, and the weekly review line. |
 | [budget.md](budget.md) | Model tiers and agent choice, the standing brief's cost habits (foreground waits, capped reports, lean tool output), session hygiene (the ~200-turn roll), and the PR watcher's cadence. |
 
@@ -24,7 +24,7 @@ folder holds the rules and how to run them, not the data itself:
 
 - `Research/token-usage-strategies.md#self-correcting-loop` — the experiment registry, thresholds,
   and dated results, under `$VAULT_ROOT/Projects/<container-name>/`.
-- `Research/token-metrics.md` — the daily table `token-metrics.mjs --write` maintains, same location.
+- `Research/token-metrics.md` — the daily table `token-metrics.ts --write` maintains, same location.
 
 ## Where this folder is going
 

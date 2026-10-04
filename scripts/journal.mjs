@@ -108,7 +108,7 @@ import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN } from './local-config.ts';
 import { scratchReport } from './lib/scratch.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.mjs';
-import { sessionLine } from './token-metrics.mjs';
+import { sessionLine } from './token-metrics.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 
@@ -1108,7 +1108,7 @@ function triageChecklist(items, blockers, pending = []) {
         `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
         `${mark(!pending.length)} Every done item with a tracker key has a recorded transition${pending.length ? ` (${pending.length} pending: ${pending.map((r) => r.key).join(', ')}; run \`tickets --pending\`)` : ''}`,
         '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
-        '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.mjs; by hand if you wrote it yourself)',
+        '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.ts; by hand if you wrote it yourself)',
     ];
 }
 

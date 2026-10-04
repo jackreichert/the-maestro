@@ -1,17 +1,17 @@
-// Run: node --test scripts/token-metrics.test.mjs
+// Run: node --test scripts/token-metrics.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.mjs';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
-const SCRIPT = new URL('./token-metrics.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./token-metrics.ts', import.meta.url).pathname;
 const SENTINEL = 'SENTINEL_CONTENT_fake_id_123';
 let projects;
 let vault;
