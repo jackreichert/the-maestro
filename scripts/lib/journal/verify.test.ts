@@ -49,3 +49,14 @@ test('verifyLedger and parseLedger report the same real line number for a malfor
     assert.deepEqual(seen, [4]);
     assert.deepEqual(verifyLedger(ctx).problems.map((p) => p.line), [4]);
 });
+
+test('the backup commit reports "not a git repository root" for a vault path that does not exist, and does not throw', () => {
+    const vault = join(mkdtempSync(join(tmpdir(), 'verify-')), 'missing');
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (m: unknown) => { errors.push(String(m)); };
+    try {
+        assert.equal(autoCommitLedger({ ...ctxFor([]), autocommit: true, vault }, '2026-10-04'), true);
+    } finally { console.error = original; }
+    assert.deepEqual(errors, [`ledger_git_autocommit is on but ${vault} is not a git repository root; not committing.`]);
+});
