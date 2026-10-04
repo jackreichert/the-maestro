@@ -72,7 +72,7 @@ Log some work by hand to see the ledger:
 
 ```bash
 J=~/.claude/skills/the-maestro/scripts/journal.ts
-M=(--project my-workspace --model "Some Model" --used "skill:the-maestro,tool:journal.mjs")
+M=(--project my-workspace --model "Some Model" --used "skill:the-maestro,tool:journal.ts")
 node $J start "Port the calendar fix" --repo billing-api "${M[@]}"
 node $J done "Port the calendar fix" "${M[@]}"
 node $J status --project my-workspace

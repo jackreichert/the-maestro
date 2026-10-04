@@ -10,7 +10,7 @@ import { join } from 'node:path';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
-const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.mjs'];
+const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
 let vault: string;
 let tv: string;
 let projects: string;
@@ -57,7 +57,7 @@ beforeEach(() => {
 });
 
 test('start without --model fails and writes nothing', () => {
-    const r = run('start', 'unmarked work', '--used', 'tool:journal.mjs');
+    const r = run('start', 'unmarked work', '--used', 'tool:journal.ts');
     assert.equal(r.code, 1);
     assert.match(r.err, /--model/);
     assert.throws(() => ledger());
@@ -67,7 +67,7 @@ test('start with model and used shows the marks in status', () => {
     assert.equal(run('start', 'marked work', ...MARK).code, 0);
     const s = run('status');
     assert.equal(s.code, 0);
-    assert.match(s.out, /marked work .*model: Test Model · used: skill:the-maestro, tool:journal\.mjs/);
+    assert.match(s.out, /marked work .*model: Test Model · used: skill:the-maestro, tool:journal\.ts/);
 });
 
 test('standup hides the usage suffix', () => {
@@ -103,7 +103,7 @@ test('roll appends a marked row without needing --model', () => {
     const r = run('roll');
     assert.equal(r.code, 0, r.err);
     const rolled = must(ledger().find((e) => e.kind === 'rolled'));
-    assert.deepEqual([rolled.model, rolled.used, rolled.tokens], ['n/a', ['tool:journal.mjs'], 'n/a']);
+    assert.deepEqual([rolled.model, rolled.used, rolled.tokens], ['n/a', ['tool:journal.ts'], 'n/a']);
 });
 
 test('roll and scratch list <scripts_dir>/scratch with proposals when scripts_dir is set, and say nothing when it is not', () => {
@@ -754,7 +754,7 @@ test('backfill --out writes a review table; --apply --min-confidence high append
 const claimsDirPath = () => join(vault, 'Projects', 'test-proj', 'Claims');
 const lockFile = (repo: string) => join(claimsDirPath(), `${repo}.lock`);
 
-/** Runs journal.mjs asynchronously so several can genuinely overlap. */
+/** Runs journal.ts asynchronously so several can genuinely overlap. */
 const runAsync = (args: string[], extraEnv: Record<string, string> = {}) => new Promise<Run>((resolve) => {
     const p = spawn(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         env: { ...process.env, VAULT_ROOT: '', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -1735,7 +1735,7 @@ test('prime stays within 40 lines even when stream names, block paths and the pr
     for (let i = 0; i < 30; i++) run('log', `b${i}`, '--kind', 'blocked', ...MARK);
     const lines = run('prime').out.trimEnd().split('\n');
     assert.ok(lines.length <= 40, `${lines.length} lines`);
-    assert.match(String(lines.at(-1)), /journal\.mjs/);
+    assert.match(String(lines.at(-1)), /journal\.ts/);
 });
 
 test('deferring the last open item of a stream empties its page, and an expired deferral shows again in CURRENT.md on the next read', () => {
@@ -1806,7 +1806,7 @@ test('prime and triage flag pending transitions when there are some, and say not
     assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
     assert.match(run('triage').out, /\[x\] Every done item with a tracker key has a recorded transition$/m);
     seedPending();
-    assert.match(run('prime').out, /Pending tracker transitions \(2\): ABC-12, XYZ-7\. `journal\.mjs tickets --pending`/);
+    assert.match(run('prime').out, /Pending tracker transitions \(2\): ABC-12, XYZ-7\. `journal\.ts tickets --pending`/);
     const t = run('triage');
     assert.match(t.out, /\[ \] Every done item with a tracker key has a recorded transition \(2 pending: ABC-12, XYZ-7/);
     assert.deepEqual(parse(run('triage', '--json').out).pendingTransitions.map((p) => p.key).sort(), ['ABC-12', 'XYZ-7']);

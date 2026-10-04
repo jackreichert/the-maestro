@@ -67,7 +67,7 @@ export function autoCommitLedger(ctx: VerifyContext, d: string): boolean {
     }
     const { problems } = verifyLedger(ctx);
     if (problems.length) {
-        console.error(`Not committing: verify found ${problems.length} problem(s). Run \`journal.mjs verify\`.`);
+        console.error(`Not committing: verify found ${problems.length} problem(s). Run \`journal.ts verify\`.`);
         return false;
     }
     const st = git('status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all');

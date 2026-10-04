@@ -7,7 +7,7 @@ The user should not have to ask what happened today. The ledger is how that prom
 
 ```bash
 J=<this-skill>/scripts/journal.ts
-M=(--model "<your model>" --used "skill:the-maestro,tool:journal.mjs")
+M=(--model "<your model>" --used "skill:the-maestro,tool:journal.ts")
 
 node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014 "${M[@]}"
 node $J done  "Port the calendar fix" "${M[@]}"  # id or a unique substring
