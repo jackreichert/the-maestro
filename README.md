@@ -15,7 +15,7 @@ An agent skill that turns the session at the root of a multi-repo directory into
 - **Dispatch, don't do.** Anything beyond a quick lookup goes to a subagent. Reads go to a scout first, writes to a worker, each with a brief that carries its own scope, verify command and guardrails.
 - **Never block.** After launching an agent the dispatcher ends its turn. It does not poll, sleep or read a transcript. Completion arrives as a notification, and a new message mid-flight is additive, not an interrupt.
 - **One writer per repo.** Two agents editing one checkout corrupt each other's work. Worktrees are for repos that are genuinely busy, and an optional claim lock makes the rule visible across sessions.
-- **The ledger.** An append-only JSONL log (`journal.mjs`) records what started, finished, blocked and is waiting on you. A board, a standup, a status footer, a handoff note and a search index are all generated from it.
+- **The ledger.** An append-only JSONL log (`journal.ts`) records what started, finished, blocked and is waiting on you. A board, a standup, a status footer, a handoff note and a search index are all generated from it.
 - **Tickets.** Problems that should outlive the conversation become tickets in a separate skill ([xenophon](https://github.com/jackreichert/xenophon)); the ledger links to them instead of copying them.
 - **The event loop.** One loop watches everything you would otherwise poll (CI, a run, review activity, new messages, a reminder time) and wakes a cheap runner only on a change that matters, so waiting costs one wake per event.
 
@@ -24,7 +24,7 @@ flowchart LR
     You([You]) --> O[Orchestrator<br/>at the container root]
     O -- "brief and dispatch" --> A[Background agents<br/>one writer per repo]
     A -- "completion notification" --> O
-    O -- "journal.mjs start, done, ask" --> L[(Ledger<br/>ledger.jsonl)]
+    O -- "journal.ts start, done, ask" --> L[(Ledger<br/>ledger.jsonl)]
     L --> B[Generated board:<br/>CURRENT.md, standup, footer]
     O -- "xenophon" --> T[(Tickets)]
     O -- "event-loop.ts add" --> E[Event loop]
@@ -61,7 +61,7 @@ mkdir -p ~/.agents/skills && ln -s ~/.claude/skills/the-maestro ~/.agents/skills
 export VAULT_ROOT="/absolute/path/to/your/vault"
 
 # 3. Smoke test. --project is the name of your container folder and is always required.
-node ~/.claude/skills/the-maestro/scripts/journal.mjs status --project my-workspace
+node ~/.claude/skills/the-maestro/scripts/journal.ts status --project my-workspace
 ```
 
 The first `status` creates `$VAULT_ROOT/Projects/my-workspace/Journal/`. If it says the vault path is not set, the agent process did not inherit `VAULT_ROOT`: fix your shell profile or pass `--vault <path>` on that command.
@@ -71,7 +71,7 @@ Then open an agent session **in the container directory** and ask it to orchestr
 Log some work by hand to see the ledger:
 
 ```bash
-J=~/.claude/skills/the-maestro/scripts/journal.mjs
+J=~/.claude/skills/the-maestro/scripts/journal.ts
 M=(--project my-workspace --model "Some Model" --used "skill:the-maestro,tool:journal.mjs")
 node $J start "Port the calendar fix" --repo billing-api "${M[@]}"
 node $J done "Port the calendar fix" "${M[@]}"
@@ -113,20 +113,20 @@ flowchart TD
     Q -- no --> T
 
     T[File a vault ticket<br/>xenophon] --> W[Stage 2: brief and dispatch<br/>a worker, one writer per repo,<br/>guardrails in the brief]
-    W --> L1[journal.mjs start]
+    W --> L1[journal.ts start]
     L1 --> ACK2[One-line ack.<br/>End the turn]
     ACK2 -. completion notification .-> WR[Worker reports:<br/>commits, tests, findings]
 
     WR --> INC{Incidental findings?}
     INC -- yes --> TK[One ticket per problem,<br/>in the repo it lives in]
     TK --> L2
-    INC -- no --> L2[journal.mjs done / ask / log]
+    INC -- no --> L2[journal.ts done / ask / log]
     L2 --> REL[Relay the substance:<br/>links, not bare ids]
     I --> F
     REL --> F[Close with the status footer:<br/>agents running, awaiting you]
 
     U2([New message mid-turn]) -. "additive, not an interrupt" .-> R
-    WR -. "needs a user decision" .-> ASK[journal.mjs ask<br/>goes on the awaiting-you board]
+    WR -. "needs a user decision" .-> ASK[journal.ts ask<br/>goes on the awaiting-you board]
     ASK --> B
 ```
 
@@ -194,7 +194,7 @@ flowchart LR
 
 Prod-check scripts (anything that reads a live system by name: a location, job or sensor) take those identifiers from a known-good sibling script or from the real UI or URL, never from assumption. When a lookup matches nothing, the script prints what does exist and exits non-zero. A fixture the same agent wrote does not validate a name, because it will contain whatever the agent assumed. The brief's scripts line carries this rule.
 
-`journal.mjs roll` (and `journal.mjs scratch`) only proposes: it never moves, edits or deletes a file.
+`journal.ts roll` (and `journal.ts scratch`) only proposes: it never moves, edits or deletes a file.
 
 ### The morning board, PR tracking and end of day
 
@@ -202,11 +202,11 @@ A greeting always gets a real hello and then the board: a paste-ready standup bu
 
 ### Approvals
 
-A permission you grant mid-conversation is logged as `standing` or `one-off` (`journal.mjs log --kind decision --approval standing --scope "<what it covers>"`), and a weekly digest (`journal.mjs approvals`) lists them so each standing one can be kept, narrowed or revoked. The review day is `approvals_review_day`.
+A permission you grant mid-conversation is logged as `standing` or `one-off` (`journal.ts log --kind decision --approval standing --scope "<what it covers>"`), and a weekly digest (`journal.ts approvals`) lists them so each standing one can be kept, narrowed or revoked. The review day is `approvals_review_day`.
 
 ### Handoff and resume
 
-A fresh session should not hunt for facts nobody wrote down. `journal.mjs handoff` scaffolds a five-part note from the ledger (tasks, learnings, artifacts, decisions awaiting, next action), `journal.mjs prime` prints a board of 40 lines or fewer for session start, and `journal.mjs resume` runs the verify-on-resume checklist. The fresh session reconciles the note against `git`, `gh` and its agent list before trusting it.
+A fresh session should not hunt for facts nobody wrote down. `journal.ts handoff` scaffolds a five-part note from the ledger (tasks, learnings, artifacts, decisions awaiting, next action), `journal.ts prime` prints a board of 40 lines or fewer for session start, and `journal.ts resume` runs the verify-on-resume checklist. The fresh session reconciles the note against `git`, `gh` and its agent list before trusting it.
 
 ## Scripts and commands
 
@@ -214,7 +214,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node s
 
 | Script | Purpose |
 |---|---|
-| [journal.mjs](#journalmjs) | The ledger: log, board, standup, streams, claims, handoff, roll |
+| [journal.ts](#journalts) | The ledger: log, board, standup, streams, claims, handoff, roll |
 | [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets and handoffs |
 | [prs-snapshot.ts](#prs-snapshotts) | Mid-day PR board snapshot and actionable diff |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
@@ -225,12 +225,12 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node s
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
 
-### journal.mjs
+### journal.ts
 
 The ledger tool. `--project <name>` is required on every command; there is no default project. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. The root is `--vault`, then `LEDGER_ROOT`, then `VAULT_ROOT`. Every new row needs `--model "<name>"` and `--used "skill:x,tool:y"` (`--tokens` and `--harness` are optional).
 
 ```bash
-J=~/.claude/skills/the-maestro/scripts/journal.mjs
+J=~/.claude/skills/the-maestro/scripts/journal.ts
 ```
 
 | Command | Purpose and key flags |
@@ -288,7 +288,7 @@ A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` sec
 | `stats [--json]` | Counts per table and open items per stream |
 | `query [<name>]` | Named queries: `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs`, `tickets`; `--sql "select ..."` is read-only raw SQL |
 
-Pass `--vault` and `--tickets-vault` the way `journal.mjs` does; tickets are skipped when no tickets vault is set.
+Pass `--vault` and `--tickets-vault` the way `journal.ts` does; tickets are skipped when no tickets vault is set.
 
 ### prs-snapshot.ts
 
@@ -351,7 +351,7 @@ Lists, across a container's repos, the worktrees and remote branches that are sa
 
 - `branch-sweep.ts [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]` is read-only apart from `git fetch --prune origin`.
 - `branch-sweep.ts --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]` re-scans each repo and deletes only what still qualifies: `git worktree remove` (never `--force`) for worktrees, and `git push --force-with-lease=<branch>:<listed tip> origin :<branch>` for remote branches, so a branch pushed to after the listing is refused. Local branches are never deleted.
-- `branch-sweep.ts --apply-worktrees [--dry-run] [--verbose] [--budget <seconds>]` is the worktree half without the id step, which is what `journal.mjs roll` runs. A repo with no linked worktree is skipped without a fetch. Kept worktrees print as counts by reason (`--verbose` lists them); past the budget it stops at the next repo and names the repos it skipped.
+- `branch-sweep.ts --apply-worktrees [--dry-run] [--verbose] [--budget <seconds>]` is the worktree half without the id step, which is what `journal.ts roll` runs. A repo with no linked worktree is skipped without a fetch. Kept worktrees print as counts by reason (`--verbose` lists them); past the budget it stops at the next repo and names the repos it skipped.
 
 A remote branch qualifies only when it is yours (every commit by one of `git_emails`, or the repo's `user.email`), not protected, and merged into every merge target by ancestry or a merged PR. Squash-merge patch equivalence alone lists it under Review, and `--apply` refuses it. A worktree must also be clean, unpushed-free, unlocked, unclaimed, idle and not a live skill. Any git or `gh` error leaves the item out with the reason. Settings: `git_emails`, `protected_branches`, `sweep_merge_targets`, `sweep_idle_minutes`, `sweep_pr_days`, `sweep_protect_symlink_dirs`, `sweep_disposable_ignored`.
 
@@ -428,11 +428,11 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `overlay` | `MAESTRO_OVERLAY` | none | Org overlay skill name: `<skill>` or `<plugin>:<skill>` |
 | `gh_org` | `MAESTRO_GH_ORG` | none (no org filter) | GitHub org the PR board is scoped to |
 | `gh_login` | `MAESTRO_GH_LOGIN` | the `gh`-authenticated user | Your GitHub login |
-| `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths; `journal.mjs` still requires `--project` |
+| `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths; `journal.ts` still requires `--project` |
 | `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<working directory with separators as dashes>` | Claude Code transcript directory read by `token-metrics.ts` |
 | `ledger_root` | `LEDGER_ROOT` | none | Where `Journal/` lives; falls back to `vault_root` |
 | `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
-| `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.mjs resume` checks |
+| `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.ts resume` checks |
 | `resume_gh` | `MAESTRO_RESUME_GH` | on | `off`, `false`, `no` or `0` stops `resume` from calling `gh` |
 | `ledger_git_autocommit` | `MAESTRO_LEDGER_GIT_AUTOCOMMIT` | off | `on`, `true`, `yes` or `1`: `roll` commits the ledger root after a clean `verify` |
 | `approvals_review_day` | `MAESTRO_APPROVALS_REVIEW_DAY` | `friday` | Weekday the greeting brings the approvals digest; a non-weekday falls back to the default |
@@ -537,9 +537,9 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 
 | Guarantee | Enforced by |
 |---|---|
-| Every ledger row records the model and tools used | `journal.mjs` refuses a new row without `--model` and `--used` (`--allow-unmarked` exists for tests and migrations) |
-| A "rule" cites something real | `journal.mjs rule` refuses, writing nothing, unless every `--ref` is an existing file |
-| The ledger is consistent | `journal.mjs verify` checks parsing, unique ids and dangling references and exits 1 on any problem; `roll` runs it before an autocommit |
+| Every ledger row records the model and tools used | `journal.ts` refuses a new row without `--model` and `--used` (`--allow-unmarked` exists for tests and migrations) |
+| A "rule" cites something real | `journal.ts rule` refuses, writing nothing, unless every `--ref` is an existing file |
+| The ledger is consistent | `journal.ts verify` checks parsing, unique ids and dangling references and exits 1 on any problem; `roll` runs it before an autocommit |
 | Two sessions cannot hold one repo claim | `claim` hard-links a fully written temp file into place; exactly one racing process wins and a reader never sees a partial claim |
 | A stream is not archived half-finished | `archive` refuses while it has open items, an unfinished retro or unfilled promotions |
 | PRs are drafts, assigned to you and within budget | `pr-open.ts` runs the `pr-size.ts` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
@@ -574,7 +574,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 - **Foreground waits inside agents.** A background completion wakes the orchestrator for a full-context turn. A blocking loop inside the agent costs one tool call and the orchestrator nothing.
 - **Capped reports and lean tool output.** A report stays in context for the rest of the session and is re-read on every later turn, so detail goes in a file the orchestrator opens only if it needs it.
 - **One loop, one wake per event.** The event loop, including its `pr-watch` type, costs no tokens between checks, and its adaptive pace (slower when quiet, off overnight) keeps polling from becoming wake-ups.
-- **Session hygiene.** Per-turn cost climbs with session length. The status footer's Session line says "roll now" at `roll_turns` (180) or `roll_read_per_turn` (350000), and `journal.mjs handoff` plus `resume` make a fresh session cheap to start.
+- **Session hygiene.** Per-turn cost climbs with session length. The status footer's Session line says "roll now" at `roll_turns` (180) or `roll_read_per_turn` (350000), and `journal.ts handoff` plus `resume` make a fresh session cheap to start.
 - **Measured, not guessed.** `token-metrics.ts` reads transcripts for numbers only. An end-of-day loop compares the day with a 7-day median, flags any metric more than about 20% worse, and treats each cost habit as an experiment to adopt or revert. See [cost/loop.md](cost/loop.md).
 
 ## Testing
@@ -583,7 +583,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 npm test
 ```
 
-Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.mjs` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.ts` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
 
 ## Development
 
@@ -610,7 +610,7 @@ The scripts themselves have no runtime dependencies.
 
 ### Loading the board automatically
 
-`journal.mjs prime` prints a short, ledger-only board, so it can run from a Claude Code `SessionStart` hook and its output becomes session context. Add this to your own settings file; nothing in this repo does it for you.
+`journal.ts prime` prints a short, ledger-only board, so it can run from a Claude Code `SessionStart` hook and its output becomes session context. Add this to your own settings file; nothing in this repo does it for you.
 
 ```json
 {
@@ -619,7 +619,7 @@ The scripts themselves have no runtime dependencies.
       {
         "matcher": "startup|resume|clear|compact",
         "hooks": [
-          { "type": "command", "command": "node /path/to/the-maestro/scripts/journal.mjs prime --project <container-folder-name> --vault <ledger-root>" }
+          { "type": "command", "command": "node /path/to/the-maestro/scripts/journal.ts prime --project <container-folder-name> --vault <ledger-root>" }
         ]
       }
     ]

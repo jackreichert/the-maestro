@@ -98,19 +98,19 @@ export const LEDGER_ROOT = pick('LEDGER_ROOT', 'ledger_root');
 /** The vault holding tickets, CONTEXT.md and the rest. Empty means "not set". */
 export const VAULT_ROOT = pick('VAULT_ROOT', 'vault_root');
 
-/** Process patterns `journal.mjs resume` checks with pgrep, comma-separated in the config. Empty means none. */
+/** Process patterns `journal.ts resume` checks with pgrep, comma-separated in the config. Empty means none. */
 export const LOOP_PATTERNS = pick('MAESTRO_LOOP_PATTERNS', 'loop_patterns').split(',').map((s) => s.trim()).filter(Boolean);
 
-/** Whether `journal.mjs resume` lists open PRs through `gh`. Anything but off/false/no/0 means on. */
+/** Whether `journal.ts resume` lists open PRs through `gh`. Anything but off/false/no/0 means on. */
 export const RESUME_GH = !/^(off|false|no|0)$/i.test(pick('MAESTRO_RESUME_GH', 'resume_gh').trim());
 
-/** Whether `journal.mjs roll` commits the ledger root after a clean `verify`. Off unless set to on/true/yes/1. */
+/** Whether `journal.ts roll` commits the ledger root after a clean `verify`. Off unless set to on/true/yes/1. */
 export const LEDGER_GIT_AUTOCOMMIT = /^(on|true|yes|1)$/i.test(pick('MAESTRO_LEDGER_GIT_AUTOCOMMIT', 'ledger_git_autocommit').trim());
 
 const WEEKDAYS = new Set(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']);
 
 /**
- * Weekday the morning greeting brings the approvals digest (`journal.mjs approvals --days 7`), lowercase.
+ * Weekday the morning greeting brings the approvals digest (`journal.ts approvals --days 7`), lowercase.
  * Default friday. A value that is not a weekday name falls back to the default.
  */
 export const APPROVALS_REVIEW_DAY = ((day: string) => (WEEKDAYS.has(day) ? day : 'friday'))(pick('MAESTRO_APPROVALS_REVIEW_DAY', 'approvals_review_day').trim().toLowerCase());
