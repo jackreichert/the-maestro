@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as prWatch from './event-types/pr-watch.ts';
-import { tick } from './event-loop.mjs';
+import { tick } from './event-loop.ts';
 import { addWatch, loadState } from './lib/watch-registry.ts';
 import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
 import type { GhStubConfig } from './lib/gh-stub.ts';
@@ -224,7 +224,7 @@ test('watch_min_interval raises the type floor; quiet mode slow keeps the watch 
 
 test('add refuses a second pr-watch watch, under either name', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-single-'));
-  const script = new URL('./event-loop.mjs', import.meta.url).pathname;
+  const script = new URL('./event-loop.ts', import.meta.url).pathname;
   const add = (id: string, type: string) => spawnSync(process.execPath, [script, 'add', '--id', id, '--type', type, '--target', 'open-prs'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
   assert.match(add('a', 'pr-review').stdout, /added a/);
   assert.match(add('b', 'pr-watch').stderr, /watch "a" already runs pr-watch \(as pr-review\)/);

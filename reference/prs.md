@@ -206,11 +206,11 @@ not a process of its own. The morning board registers it once, with the other wa
 ([greeting.md](greeting.md#a-greeting-is-a-request-for-the-board), step 4):
 
 ```bash
-node scripts/event-loop.mjs add --id prs --type pr-watch --target open-prs:baseline --report "<what to tell the orchestrator>"
+node scripts/event-loop.ts add --id prs --type pr-watch --target open-prs:baseline --report "<what to tell the orchestrator>"
 ```
 
 `open-prs:baseline` records the current PRs without reporting them; later checks report only what changed.
-If `prs` is already registered (`event-loop.mjs list`), leave it. The loop polls quietly and its digest reports
+If `prs` is already registered (`event-loop.ts list`), leave it. The loop polls quietly and its digest reports
 when something needs attention: a new unresolved thread or reply, a new PR comment or review body from anyone
 but the user (bots included), a `reviewDecision` move into or out of `APPROVED`/`CHANGES_REQUESTED`, or a PR
 that merged or closed. Approved-but-unmerged PRs are reported once. Handle what it reported; the watch keeps

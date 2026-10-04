@@ -2,7 +2,7 @@
 
 Wakes the orchestrator once at a set time. Script: [scripts/event-types/reminder.ts](../../scripts/event-types/reminder.ts). The check reads the clock only; it never touches the network.
 
-Register: `node scripts/event-loop.mjs add --id remind-<n> --type reminder --target <ISO 8601 UTC time> --report "<what to do or say at that time>"`, for example `--target 2026-10-03T15:00:00Z`. `add` refuses a malformed target or one already in the past. Quiet hours hold it until morning; add `--notify-overnight` to fire through the night.
+Register: `node scripts/event-loop.ts add --id remind-<n> --type reminder --target <ISO 8601 UTC time> --report "<what to do or say at that time>"`, for example `--target 2026-10-03T15:00:00Z`. `add` refuses a malformed target or one already in the past. Quiet hours hold it until morning; add `--notify-overnight` to fire through the night.
 
 ## What the loop reports
 
