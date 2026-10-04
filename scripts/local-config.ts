@@ -235,7 +235,7 @@ const positiveInt = (raw: string, fallback: number): number => (/^\d+$/.test(raw
 const DEFAULT_TRACKER_KEY_PATTERN = '\\b[A-Z][A-Z0-9]+-\\d+\\b';
 export const TRACKER_KEY_PATTERN = ((raw: string) => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })(pick('MAESTRO_TRACKER_KEY_PATTERN', 'tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
 
-/** PR size budget (pr-size.mjs): most code files a PR may change. Default 5. */
+/** PR size budget (pr-size.ts): most code files a PR may change. Default 5. */
 export const PR_MAX_CODE_FILES = positiveInt(pick('MAESTRO_PR_MAX_CODE_FILES', 'pr_max_code_files'), 5);
 
 /** PR size budget: most changed code lines (additions plus deletions). Default 400. */
@@ -249,7 +249,7 @@ export const TWIN_FLOW_REPOS = pick('MAESTRO_TWIN_FLOW_REPOS', 'twin_flow_repos'
 /** Owners (orgs or users, comma-separated) whose draft PRs the pr-watch event type requests Copilot review on. Empty means nowhere. */
 export const COPILOT_ORGS = globList('MAESTRO_COPILOT_ORGS', 'copilot_orgs');
 
-/** Path globs pr-size.mjs treats as tests / config / docs / mechanical. Empty means its built-in defaults. */
+/** Path globs pr-size.ts treats as tests / config / docs / mechanical. Empty means its built-in defaults. */
 export const PR_TEST_GLOBS = globList('MAESTRO_PR_TEST_GLOBS', 'pr_test_globs');
 export const PR_CONFIG_GLOBS = globList('MAESTRO_PR_CONFIG_GLOBS', 'pr_config_globs');
 export const PR_DOCS_GLOBS = globList('MAESTRO_PR_DOCS_GLOBS', 'pr_docs_globs');

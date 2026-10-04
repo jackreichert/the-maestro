@@ -1,4 +1,4 @@
-// Run: node --test scripts/pr-size.test.mjs
+// Run: node --test scripts/pr-size.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -6,8 +6,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-const SCRIPT = new URL('./pr-size.mjs', import.meta.url).pathname;
-const { globToRegExp, parseNumstat, makeClassifier } = await import('./pr-size.mjs');
+const SCRIPT = new URL('./pr-size.ts', import.meta.url).pathname;
+const { globToRegExp, parseNumstat, makeClassifier } = await import('./pr-size.ts');
 
 const git = (repo, ...args) => {
     const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
@@ -224,7 +224,7 @@ test('a stale local base with an updated origin base is measured against origin/
 });
 
 test('resolveBase falls back to the local ref when there is no origin, and a failed fetch is not fatal', async () => {
-    const { resolveBase } = await import('./pr-size.mjs');
+    const { resolveBase } = await import('./pr-size.ts');
     const repo = repoWith({}, (r) => put(r, 'src/seed.py', lines(1)));
     assert.equal(resolveBase(repo, 'main'), 'main');
     git(repo, 'remote', 'add', 'origin', join(repo, 'does-not-exist'));

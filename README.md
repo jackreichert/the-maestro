@@ -218,7 +218,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every scri
 | [ledger-index.mjs](#ledger-indexmjs) | Disposable full-text index over the ledger, tickets and handoffs |
 | [prs-snapshot.mjs](#prs-snapshotmjs) | Mid-day PR board snapshot and actionable diff |
 | [event-loop.mjs](#event-loopmjs) | One loop for every "wake me when X" watch |
-| [pr-size.mjs](#pr-sizemjs) | PR size budget gate |
+| [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.mjs](#pr-openmjs) | The only way to open a PR: gate, then a draft assigned to you |
 | [branch-sweep.mjs](#branch-sweepmjs) | List and delete merged branches and stale worktrees |
 | [token-metrics.mjs](#token-metricsmjs) | Token and cost metrics from transcripts |
@@ -337,9 +337,9 @@ An org overlay adds types without editing this repo: `<type>.mjs` and its playbo
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
-### pr-size.mjs
+### pr-size.ts
 
-The size budget gate: `pr-size.mjs --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
+The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
 
 ### pr-open.mjs
 
@@ -542,7 +542,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | The ledger is consistent | `journal.mjs verify` checks parsing, unique ids and dangling references and exits 1 on any problem; `roll` runs it before an autocommit |
 | Two sessions cannot hold one repo claim | `claim` hard-links a fully written temp file into place; exactly one racing process wins and a reader never sees a partial claim |
 | A stream is not archived half-finished | `archive` refuses while it has open items, an unfinished retro or unfilled promotions |
-| PRs are drafts, assigned to you and within budget | `pr-open.mjs` runs the `pr-size.mjs` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
+| PRs are drafts, assigned to you and within budget | `pr-open.mjs` runs the `pr-size.ts` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
 | Branch deletion cannot take someone else's work or a moved branch | `branch-sweep.mjs --apply` re-scans first, never uses `--force`, never deletes a local branch, checks authorship, and pushes with a lease on the listed tip |
 | The PR watcher cannot be set to flood GitHub | `cadence.mjs` raises any `--interval` or `watch_min_interval` below 300s to 300s |
 | A notification cannot inject commands | `notify_command` runs as an argv array with no shell; the summary is one line of at most 150 characters |

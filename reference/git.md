@@ -51,7 +51,7 @@ So a "make a PR" request ends like this:
 3. **Reviewed locally before it goes up** — a reviewer pass on the diff, plus a security review when
    the change touches auth, permissions, logging, secrets or multi-tenant scoping. Report what it found
    and what you did with each item.
-4. **Within the PR size budget** — `pr-open.mjs` runs the `pr-size.mjs` gate and refuses otherwise ([below](#pr-size-budget)).
+4. **Within the PR size budget** — `pr-open.mjs` runs the `pr-size.ts` gate and refuses otherwise ([below](#pr-size-budget)).
 5. Committed and pushed, then opened as a **draft** PR, assigned to the user (`--assignee @me`).
    The user promotes it to ready for review; you never do, and a deploy PR (`staging` → `main` or
    equivalent) is not yours to open at all. Copilot review on the draft is handled per
@@ -79,11 +79,11 @@ The PR board shows the state per PR: [prs.md#twin-prs](prs.md#twin-prs).
 ## PR size budget
 
 **Open every PR with `node <scripts dir>/pr-open.mjs --repo <repo> --base <base> --title "..." [--body-file <f>] [--head <branch>]`, never a bare `gh pr create`.**
-It runs the `pr-size.mjs` gate (which reads `git diff --numstat -M <base>...<head>`), and on exit 1 it refuses, prints
+It runs the `pr-size.ts` gate (which reads `git diff --numstat -M <base>...<head>`), and on exit 1 it refuses, prints
 the summary and a split hint, and never calls gh. On a pass it runs `gh pr create --draft --assignee @me`; draft and
 assignee are always forced and cannot be turned off. `--dry-run` prints the gh command instead. If it refuses,
 **split instead of opening**: stop, and report a split plan (which files and lines go in which PR, in merge order).
-`pr-size.mjs` alone is the read-only check.
+`pr-size.ts` alone is the read-only check.
 
 - A PR may change at most `pr_max_code_files` code files (default 5) **and** at most `pr_max_code_lines`
   changed lines of code (default 400, additions plus deletions). Whichever limit is hit first applies.
@@ -154,7 +154,7 @@ covered by this rule.
 - Letting a harness default stamp `Co-Authored-By` or "Generated with" onto a commit or PR body.
 - In a twin-flow repo, opening one half of the pair without the other, or letting the release-candidate PR
   merge (or be called ready) while its integration twin is still open.
-- Opening a PR with a bare `gh pr create` instead of `pr-open.mjs`, or one that `pr-size.mjs` fails, instead of reporting a split plan, or burying a lockfile or
+- Opening a PR with a bare `gh pr create` instead of `pr-open.mjs`, or one that `pr-size.ts` fails, instead of reporting a split plan, or burying a lockfile or
   generated-file change inside a code PR.
 - Opening a PR without reviewing the diff locally first, and letting the bots find it instead.
 - Accepting a safety guarantee because it is written down, without checking it is enforced on the

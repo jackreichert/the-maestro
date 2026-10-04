@@ -114,7 +114,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |
-| PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`) | git.md, `scripts/pr-size.mjs` |
+| PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`) | git.md, `scripts/pr-size.ts` |
 
 ## Issue tracker
 
