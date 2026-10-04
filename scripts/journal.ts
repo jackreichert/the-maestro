@@ -30,7 +30,7 @@
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
  *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
  *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
- *   journal.ts prime                         the box view for session start and after a compaction: 40 lines or fewer, ledger only (hook-safe)
+ *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
@@ -105,7 +105,9 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN } from './local-config.ts';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, UPDATE_CHECK, AUTO_PULL } from './local-config.ts';
+import { checkForUpdate } from './lib/self-update.ts';
+import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
@@ -169,7 +171,6 @@ const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, tick
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
 const verifyLedger = () => verifyLedgerIn(verifyCtx());
 const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
-const primeLines = () => primeLinesIn(primeCtx());
 const gateReport = () => gateReportIn(primeCtx());
 const pendingTransitions = (since: string) => pendingTransitionsIn(primeCtx(), since);
 
@@ -1271,9 +1272,19 @@ function refreshBoard() {
     if (!readFileSync(current, 'utf8').includes(`updated: ${today()}`)) render(true);
 }
 
+/** This skill's checkout: the directory above scripts/. */
+const SKILL_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** The skill's own update line, or none: skipped for --no-update-check, update_check off and --dry-run. */
+function updateNotices(): string[] {
+    if (has('no-update-check') || dryRun || !UPDATE_CHECK) return [];
+    const line = checkForUpdate({ repo: SKILL_DIR, autoPull: AUTO_PULL }).line;
+    return line ? [line] : [];
+}
+
 function cmdPrime() {
     refreshBoard();
-    primeLines().forEach((l) => console.log(l));
+    primeLinesIn({ ...primeCtx(), notices: updateNotices() }).forEach((l) => console.log(l));
 }
 
 // ── pending tracker transitions ─────────────────────────────────────────────
