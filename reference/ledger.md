@@ -167,7 +167,7 @@ node $J unarchive Launch "${M[@]}"
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
-The Session line comes from `token-metrics.ts`: the most recently modified transcript in `projects_dir`, its turn count against `roll_turns` (default 180) and its mean cache-read per turn. At 100% of `roll_turns` or at `roll_read_per_turn` (default 350000) it ends `· roll now`. With no transcript in that directory it prints `**Session:** unavailable (...)` and does not vanish. An unset `projects_dir` falls back to the transcript directory of the working directory the script runs from, which is usually not the orchestrator's; `token-metrics.ts` warns on stderr when the directory it resolved has no sessions.
+The Session line comes from `token-metrics.ts`: the most recently modified transcript in `projects_dir`, its turn count against `roll_turns` (default 180) and its mean cache-read per turn. At 100% of `roll_turns` or at `roll_read_per_turn` (default 350000) it ends `· roll now`. With no transcript in that directory it prints `**Session:** unavailable (...)` and does not vanish. An unset `projects_dir` follows `container_root` when that is set, else the transcript directory of the working directory the script runs from, which is usually not the orchestrator's; `token-metrics.ts` warns on stderr when the directory it resolved has no sessions.
 
 ## Per-stream views
 
