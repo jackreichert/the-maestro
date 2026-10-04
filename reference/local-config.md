@@ -23,7 +23,7 @@ overlay: <skill>            # or <plugin>:<skill>; omit for no overlay
 gh_org: <github-org>        # PR board scope; omit for no org filter
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
-projects_dir: /path/to/claude/projects/<container>
+projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
 roll_turns: 180                # the status footer's Session line says "roll now" at this many turns; default 180
 roll_read_per_turn: 350000     # ... or at this mean cache-read per turn (a plain number); default 350000
 ledger_root: /path/to/ledger
