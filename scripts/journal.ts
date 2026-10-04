@@ -123,6 +123,8 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import { sessionLine } from './token-metrics.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
+import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
+import type { TryRun } from './lib/journal/prime.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag'];
@@ -134,7 +136,7 @@ const APPROVALS = new Set(['standing', 'one-off']);
 const APPROVAL_WRITE_KINDS = new Set(['decision', 'resolved']);
 
 /** Row kinds an approval can point at: the user's decision, their answer to an ask, or the ask itself. */
-const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
+const APPROVABLE_KINDS = new Set<string | undefined>(['decision', 'resolved', 'question']);
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -148,36 +150,41 @@ if (!vault) {
     console.error('Ledger root is not set. Ask where the ledger lives, then set LEDGER_ROOT (or VAULT_ROOT), or pass --vault <path>.');
     process.exit(1);
 }
-const project = arg('project');
-if (!project) {
+const projectArg = arg('project');
+if (!projectArg) {
     console.error('Pass --project <container-folder-name>. There is no default.');
     process.exit(1);
 }
+const project: string = projectArg;
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = openStore({ vault, project, dryRun });
-const today = () => new Date().toISOString().slice(0, 10);
-const now = () => new Date().toISOString();
+const today = (): string => new Date().toISOString().slice(0, 10);
+const now = (): string => new Date().toISOString();
+/** The message of a caught value; `catch` binds `unknown`. */
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
 const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
 const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg });
-const triageReport = (d, since) => triageReportIn(triageCtx(), d, since);
+const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
 const verifyLedger = () => verifyLedgerIn(verifyCtx());
-const autoCommitLedger = (d) => autoCommitLedgerIn(verifyCtx(), d);
+const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
 const primeLines = () => primeLinesIn(primeCtx());
 const gateReport = () => gateReportIn(primeCtx());
-const pendingTransitions = (since) => pendingTransitionsIn(primeCtx(), since);
+const pendingTransitions = (since: string) => pendingTransitionsIn(primeCtx(), since);
 
 // ── stream registry ─────────────────────────────────────────────────────────
 
 /** Read-time mapping through the loaded registry. */
-const mapStream = (s) => mapStreamWith(loadRegistry(), s);
+const mapStream = (s: string | undefined) => mapStreamWith(loadRegistry(), s);
 
 /**
  * Write-time normalisation for --stream. `none` stays reserved and passes through. With no
  * registry nothing is enforced. An unknown name is rejected with a suggestion unless --new-stream.
  */
-function normaliseStream(raw) {
+function normaliseStream(raw: string): string;
+function normaliseStream(raw: string | null): string | null;
+function normaliseStream(raw: string | null): string | null {
     if (!raw) return raw;
     if (isNoStream(raw)) return 'none';
     const reg = loadRegistry();
@@ -207,25 +214,25 @@ function normaliseStream(raw) {
 }
 
 /** Stream for a new row: `none` (reserved) and absent both mean no stream. */
-function streamOrNone(raw) {
+function streamOrNone(raw: string | null): string | undefined {
     const s = normaliseStream(raw);
     return s === 'none' ? undefined : s || undefined;
 }
 
-const fold = (entries) => foldWith(entries, loadRegistry());
+const fold = (entries: LedgerRow[]) => foldWith(entries, loadRegistry());
 
 // The board modules read the run through this: the ledger, the registry and the clock.
 const boardCtx = { readLedger, fold, today, rollPoint, has, mapStream, loadRegistry, dryRun, ensureDir, dir };
-const groups = (includeArchived) => boardGroups(boardCtx, includeArchived);
-const standupText = (d) => boardStandupText(boardCtx, d);
-const render = (quiet, includeArchived) => boardRender(boardCtx, quiet, includeArchived);
+const groups = (includeArchived?: boolean) => boardGroups(boardCtx, includeArchived);
+const standupText = (d: string) => boardStandupText(boardCtx, d);
+const render = (quiet?: boolean, includeArchived?: boolean) => boardRender(boardCtx, quiet, includeArchived);
 
-function resolveTarget(items, needle) {
+function resolveTarget(items: LedgerItem[], needle: string | undefined): LedgerItem | null {
     if (!needle) return null;
     const exact = items.find((i) => i.id === needle);
     if (exact) return exact;
     const open = items.filter(isOpen);
-    const matches = open.filter((i) => i.text.toLowerCase().includes(needle.toLowerCase()));
+    const matches = open.filter((i) => i.text?.toLowerCase().includes(needle.toLowerCase()));
     if (matches.length === 1) return matches[0];
     if (matches.length > 1) {
         console.error(`"${needle}" matches ${matches.length} open items:`);
@@ -235,7 +242,7 @@ function resolveTarget(items, needle) {
     return null;
 }
 
-function parseList(name) {
+function parseList(name: string): string[] | undefined {
     const raw = arg(name);
     if (!raw) return undefined;
     const list = raw.split(',').map((s) => s.trim()).filter(Boolean);
@@ -249,7 +256,7 @@ const MODEL_SENTINELS = new Set(['unrecorded', 'n/a', 'unmeasured']);
  * changes. A registered alias is written as its canonical id. An unknown name is warned about and
  * written as-is: the ledger has odd historic values, so this never rejects.
  */
-function normaliseModel(raw) {
+function normaliseModel(raw: string | null): string | null {
     const reg = loadRegistry();
     if (!raw || MODEL_SENTINELS.has(raw) || !reg?.models || !Object.keys(reg.models).length) return raw;
     const canon = canonicalModel(reg, raw);
@@ -261,7 +268,10 @@ function normaliseModel(raw) {
     return canon;
 }
 
-function usageFromArgs() {
+/** The usage marks every written row carries, from --model, --used and the optional --tokens, --harness and --agent. */
+interface Usage { model?: string; used?: string[]; tokens?: string; harness?: string; agent?: string }
+
+function usageFromArgs(): Usage {
     const model = normaliseModel(arg('model'));
     const used = parseList('used');
     if (!has('allow-unmarked') && (!model || !used)) {
@@ -269,12 +279,15 @@ function usageFromArgs() {
         console.error('Do not guess. Unknown is --model unrecorded --used unrecorded. Tests may pass --allow-unmarked.');
         process.exit(1);
     }
-    const usage = {};
+    const usage: Usage = {};
     if (model) usage.model = model;
     if (used) usage.used = used;
-    if (arg('tokens')) usage.tokens = arg('tokens');
-    if (arg('harness')) usage.harness = arg('harness');
-    if (arg('agent')) usage.agent = arg('agent');
+    const tokens = arg('tokens');
+    const harness = arg('harness');
+    const agent = arg('agent');
+    if (tokens) usage.tokens = tokens;
+    if (harness) usage.harness = harness;
+    if (agent) usage.agent = agent;
     return usage;
 }
 
@@ -286,7 +299,7 @@ const refsFromArgs = () => (arg('ref') || '').split(',').map((s) => s.trim()).fi
  * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
  * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
  */
-function parseApproval() {
+function parseApproval(): { approval?: string; scope?: string } {
     const approval = arg('approval');
     if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
     if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
@@ -295,14 +308,14 @@ function parseApproval() {
 }
 
 /** parseApproval for a row of `kind`: --approval is only allowed on the kinds in APPROVAL_WRITE_KINDS. */
-function approvalFor(kind) {
+function approvalFor(kind: string) {
     const fields = parseApproval();
     if (fields.approval && !APPROVAL_WRITE_KINDS.has(kind)) die(`--approval only goes on: ${[...APPROVAL_WRITE_KINDS].join(', ')} (not ${kind}).`);
     return fields;
 }
 
 /** Absolute path of a ref that names an existing file (`~/` and relative paths allowed); null when it does not. */
-function resolveRefFile(ref) {
+function resolveRefFile(ref: string): string | null {
     const p = resolve(ref.startsWith('~/') ? join(homedir(), ref.slice(2)) : ref);
     try { return statSync(p).isFile() ? p : null; } catch { return null; }
 }
@@ -312,7 +325,7 @@ function resolveRefFile(ref) {
  * durable (a memory file, a DECISIONS.md), so it needs at least one --ref and every one must be an
  * existing file; anything else exits 1 before the ledger is touched.
  */
-function ruleRefs() {
+function ruleRefs(): string[] {
     const refs = refsFromArgs();
     if (!refs.length) die('A rule needs --ref <file>: the memory file or DECISIONS.md entry it was promoted to. Use `ask --kind decision` for a decision that is still pending.');
     return refs.map((r) => resolveRefFile(r) || die(`--ref ${r} is not an existing file. Promote the rule first, then record it.`));
@@ -322,7 +335,7 @@ function ruleRefs() {
  * `ask --paste <file>`: a run-this ask. The block file must exist (checked before anything is written), and the row
  * is boxed as a paste block, shown apart from the questions. Only a question can be one. Returns the absolute path.
  */
-function pasteFile(kind) {
+function pasteFile(kind: string): string | undefined {
     if (!has('paste')) return undefined;
     const given = arg('paste');
     if (!given) die('--paste needs a block file: journal.mjs ask "<what to run>" --paste <file>');
@@ -334,7 +347,7 @@ function pasteFile(kind) {
  * `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>`: what a blocked item is waiting for. Only a `blocked` row
  * takes one, and a malformed gate exits 1 before anything is written, so `resume` never has to guess at it.
  */
-function gateFlag(kind) {
+function gateFlag(kind: string): string | undefined {
     if (!has('gate')) return undefined;
     const spec = arg('gate');
     if (!spec) die('--gate needs a value: gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>');
@@ -348,7 +361,7 @@ function gateFlag(kind) {
  * is pending and stays on the board. `rule` always writes a decision, which is a record and not open.
  */
 /** `--transitioned KEY[,KEY]` as a list of tracker keys, or undefined; a value that is not a key (tracker_key_pattern) is refused. */
-function transitionedFlag() {
+function transitionedFlag(): string[] | undefined {
     const raw = arg('transitioned');
     if (raw === null) { if (has('transitioned')) die('--transitioned needs a value: one or more tracker keys, comma-separated.'); return undefined; }
     const keys = raw.split(',').map((k) => k.trim()).filter(Boolean);
@@ -394,12 +407,12 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
 }
 
 /** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
-const approvalClose = (kind) => {
+const approvalClose = (kind: string) => {
     const fields = approvalFor(kind);
     return fields.approval ? { ...fields, refs: refsFromArgs() } : {};
 };
 
-function cmdClose(newKind) {
+function cmdClose(newKind: string): void {
     const needle = positional[0];
     const { items } = fold(readLedger());
     const target = resolveTarget(items, needle);
@@ -503,7 +516,7 @@ function cmdStatus() {
 
     if (has('footer')) { [...footerLines(g, done), sessionLine(CLAUDE_PROJECTS_DIR)].forEach((l) => console.log(l)); return; }
 
-    const line = (label, arr) => {
+    const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
         console.log(`\n${label}`);
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
@@ -549,20 +562,20 @@ function cmdScratch() {
  * It scans only the configured container_root, and only when run from inside it (the cwd, or --container as a stand-in
  * for it): a sweep that follows whatever directory the shell happens to be in can remove worktrees of an unrelated tree.
  */
-function runWorktreeSweep(dry) {
+function runWorktreeSweep(dry: boolean) {
     if (has('no-worktree-sweep')) return null;
     const refusal = sweepRootRefusal(CONTAINER_ROOT, resolve(arg('container', process.cwd())));
     if (refusal) { console.log(`worktree sweep refused: ${refusal}`); return null; }
     try {
         return sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry, budgetSeconds: SWEEP_BUDGET_SECONDS });
     } catch (e) {
-        console.log(`worktree sweep skipped: ${e.message}`);
+        console.log(`worktree sweep skipped: ${errorMessage(e)}`);
         return null;
     }
 }
 
 /** Why the sweep must not run, or '' when `from` is inside the configured `root`. Paths are compared by real path. */
-function sweepRootRefusal(root, from) {
+function sweepRootRefusal(root: string, from: string): string | null {
     if (!root) return 'container_root is not set (config key container_root or MAESTRO_CONTAINER_ROOT). Set it to the directory holding your repos, or pass --no-worktree-sweep.';
     if (!existsSync(root)) return `container_root ${root} does not exist.`;
     if (!existsSync(from)) return `no such directory ${from}.`;
@@ -596,7 +609,7 @@ function cmdRoll() {
  * Writes the day's finished work to a dated note and drops it out of CURRENT.md, leaving a link. Open items are NOT
  * archived: they stay visible until they are actually closed. Commits the ledger when ledger_git_autocommit is on.
  */
-function rollArchive(d) {
+function rollArchive(d: string): void {
     const g = groups();
     const done = g.doneOn(d);
     const notes = g.notesOn(d);
@@ -651,9 +664,9 @@ function cmdTriage() {
     if (has('apply')) {
         const entries = readLedger();
         const taken = [...entries];
-        const rows = t.items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => {
-            const row = {
-                id: newId(taken), ts: now(), date: d, kind: 'resolved', closes: i.id, text: `recorded → ${i.ref}`, refs: [i.ref],
+        const rows = t.items.flatMap((i) => (RECORD_BOXES.includes(i.box) && i.ref ? [{ item: i, ref: i.ref }] : [])).map(({ item, ref }) => {
+            const row: LedgerRow = {
+                id: newId(taken), ts: now(), date: d, kind: 'resolved', closes: item.id, text: `recorded → ${ref}`, refs: [ref],
                 model: 'n/a', used: ['tool:journal.mjs'], tokens: 'n/a',
             };
             taken.push(row);
@@ -661,7 +674,7 @@ function cmdTriage() {
         });
         appendMany(rows);
         if (!dryRun && rows.length) render(true);
-        if (asJson) console.log(JSON.stringify({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs[0] })), report: { ...t, items: undefined, byBox: undefined } }, null, 2));
+        if (asJson) console.log(JSON.stringify({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs?.[0] })), report: { ...t, items: undefined, byBox: undefined } }, null, 2));
         else console.log(`triage --apply: closed ${rows.length} recorded item(s)${dryRun ? ' (dry-run)' : ''}; ${t.items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).length} still need a ref file.`);
         return;
     }
@@ -670,7 +683,7 @@ function cmdTriage() {
 }
 
 /** roll's gate: warns about triage blockers, or with --strict prints them and exits 1 before anything is changed. */
-function triageBeforeRoll(d) {
+function triageBeforeRoll(d: string): void {
     const { blockers } = triageReport(d);
     if (!blockers.length) return;
     const lines = blockers.map((b) => `  ${b.id}  box ${b.box}: ${b.why}`);
@@ -718,22 +731,23 @@ function cmdStamp() {
  */
 function cmdStampMissing() {
     const entries = readLedger();
-    const marks = new Map();
+    const marks = new Map<string, ReturnType<typeof mergeMark>>();
     for (const e of entries) if (e.annotates) marks.set(e.annotates, mergeMark(marks.get(e.annotates), e));
     const fill = {
         model: normaliseModel(arg('model', 'unrecorded')),
         used: parseList('used') || ['unrecorded'],
         tokens: arg('tokens', 'unmeasured'),
     };
+    const FILL_FIELDS: (keyof typeof fill)[] = ['model', 'used', 'tokens'];
     const taken = [...entries];
     let count = 0;
     for (const e of entries) {
         if (!e.id || e.annotates || e.kind === 'stamp') continue;
         const cur = { ...e, ...(marks.get(e.id) || {}) };
         if (cur.model && cur.used) continue;
-        const add = {};
-        for (const f of ['model', 'used', 'tokens']) if (cur[f] === undefined) add[f] = fill[f];
-        const row = { id: newId(taken), ts: now(), date: today(), kind: 'stamp', annotates: e.id, text: `stamp ${e.id}`, ...add };
+        const add: Record<string, unknown> = {};
+        for (const f of FILL_FIELDS) if (cur[f] === undefined) add[f] = fill[f];
+        const row: LedgerRow = { id: newId(taken), ts: now(), date: today(), kind: 'stamp', annotates: e.id, text: `stamp ${e.id}`, ...add };
         taken.push(row);
         append(row);
         count++;
@@ -745,14 +759,15 @@ function cmdStampMissing() {
 function cmdUsage() {
     const { items } = fold(readLedger());
     const pool = has('open') ? items.filter(isOpen) : items;
-    const models = new Map();
-    const used = new Map();
-    const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+    const models = new Map<string, number>();
+    const used = new Map<string, number>();
+    const bump = (m: Map<string, number>, k: string): void => { m.set(k, (m.get(k) || 0) + 1); };
     for (const i of pool) {
         bump(models, i.model || 'unrecorded');
-        (Array.isArray(i.used) ? i.used : [i.used || 'unrecorded']).forEach((x) => bump(used, x));
+        const marks: unknown[] = Array.isArray(i.used) ? i.used : [i.used || 'unrecorded'];
+        marks.forEach((x) => bump(used, String(x)));
     }
-    const sorted = (m) => [...m].sort((a, b) => b[1] - a[1]);
+    const sorted = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
     if (asJson) {
         console.log(JSON.stringify({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) }, null, 2));
         return;
@@ -766,8 +781,8 @@ function cmdUsage() {
 
 // ── streams, facts, carry, retro, archive ───────────────────────────────────
 
-const die = (msg) => { console.error(msg); process.exit(1); };
-const tally = (items) => ({
+function die(msg: string): never { console.error(msg); process.exit(1); }
+const tally = (items: LedgerItem[]) => ({
     open: items.filter(isOpen).length,
     done: items.filter((i) => i.state === 'done').length,
     dropped: items.filter((i) => i.state === 'dropped').length,
@@ -775,9 +790,10 @@ const tally = (items) => ({
 });
 
 /** Canonical stream for a command argument; unknown to both registry and ledger is an error. */
-function existingStream(name, items) {
+function existingStream(name: string | null | undefined, items: LedgerItem[]): string {
     if (!name) die('Needs a stream name.');
-    const stream = mapStream(name);
+    // `none` maps to no stream; the callers only pass names that exist, so a stream is there once this returns.
+    const stream = mapStream(name) as string;
     if (!items.some((i) => i.stream === stream) && !loadRegistry()?.streams[stream]) {
         die(`No stream "${name}" in the registry or the ledger.`);
     }
@@ -789,7 +805,7 @@ function cmdStreams() {
     const reg = loadRegistry();
     const { items } = fold(readLedger());
     if (sub === 'list') {
-        const seen = [...new Set(items.map((i) => i.stream).filter(Boolean))];
+        const seen = [...new Set(items.flatMap((i) => (i.stream ? [i.stream] : [])))];
         const names = [...new Set([...Object.keys(reg?.streams || {}), ...seen])];
         const rows = names.map((name) => ({
             stream: name,
@@ -809,31 +825,33 @@ function cmdStreams() {
         if (isNoStream(name)) die('"none" is reserved: it means no stream, so it cannot be registered.');
         if (!name) die('Usage: journal.mjs streams add <name> [--alias a,b]');
         const aliases = parseList('alias') || [];
-        const next = { ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
+        const next: Registry = { models: undefined, ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
         const owner = canonicalOf(next, name);
         if (owner && owner !== name) die(`"${name}" is already registered as "${owner}" (name or alias, case-insensitive).`);
         const entry = next.streams[name] || { aliases: [], status: 'active' };
+        // A registry entry without an aliases list stays a TypeError here, as before.
+        const aliasesOf = entry.aliases as unknown[];
         for (const a of aliases) {
             const other = canonicalOf(next, a);
             if (other && other !== name) die(`Alias "${a}" already belongs to "${other}".`);
-            if (a.toLowerCase() !== name.toLowerCase() && !entry.aliases.some((x) => x.toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
+            if (a.toLowerCase() !== name.toLowerCase() && !aliasesOf.some((x) => String(x).toLowerCase() === a.toLowerCase())) aliasesOf.push(a);
         }
         next.streams[name] = entry;
         const changed = JSON.stringify(reg?.streams?.[name]) !== JSON.stringify(entry);
         if (changed && !dryRun) saveRegistry(next);
-        console.log(`${changed ? (reg?.streams[name] ? 'updated' : 'added') : 'unchanged'}  ${name}  aliases: ${entry.aliases.join(', ') || '(none)'}${dryRun && changed ? ' (dry-run)' : ''}`);
+        console.log(`${changed ? (reg?.streams[name] ? 'updated' : 'added') : 'unchanged'}  ${name}  aliases: ${aliasesOf.join(', ') || '(none)'}${dryRun && changed ? ' (dry-run)' : ''}`);
         return;
     }
     if (sub === 'check') {
         // Phase 2a dry run: how many rows would change display stream under the mapping. Appends nothing.
         const entries = readLedger();
         const raw = fold(entries).items;
-        const rawStreams = new Map();
+        const rawStreams = new Map<string | undefined, string | undefined>();
         for (const e of entries) {
-            if (e.id && !e.closes && !e.annotates && !NON_ITEM_KINDS.includes(e.kind)) rawStreams.set(e.id, e.stream);
+            if (e.id && !e.closes && !e.annotates && !NON_ITEM_KINDS.includes(e.kind ?? '')) rawStreams.set(e.id, e.stream);
             if ((e.kind === 'tag' && e.tags) || (e.kind === 'carry' && e.carries)) rawStreams.set(e.tags || e.carries, e.stream || undefined);
         }
-        const changes = new Map();
+        const changes = new Map<string, number>();
         for (const i of raw) {
             const before = rawStreams.get(i.id);
             if (before && before !== i.stream) changes.set(`${before} -> ${i.stream}`, (changes.get(`${before} -> ${i.stream}`) || 0) + 1);
@@ -919,7 +937,7 @@ function cmdModels() {
         for (const a of parseList('alias') || []) {
             const other = canonicalModel(next, a);
             if (other && other !== id) die(`Alias "${a}" already belongs to "${other}".`);
-            if (a.toLowerCase() !== id.toLowerCase() && !entry.aliases.some((x) => x.toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
+            if (a.toLowerCase() !== id.toLowerCase() && !entry.aliases.some((x) => String(x).toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
         }
         next.models[id] = entry;
         const changed = JSON.stringify(reg?.models?.[id]) !== JSON.stringify(entry);
@@ -955,10 +973,10 @@ const ticketsBase = () => {
 };
 const retroDir = () => join(ticketsBase(), 'Projects', arg('repo') || 'dev-env', 'Archive');
 const retroCtx = () => ({ vault, project, ticketsBase, readLedger, fold, mapStream, today, arg, retroDir, ticketStatuses });
-const retroText = (stream) => retroTextIn(retroCtx(), stream);
-const ticketStatuses = (ids) => ticketStatusesIn(retroCtx(), ids);
-const findRetro = (stream) => findRetroIn(retroCtx(), stream);
-const archiveBlockers = (stream, items) => archiveBlockersIn(retroCtx(), stream, items);
+const retroText = (stream: string) => retroTextIn(retroCtx(), stream);
+const ticketStatuses = (ids: string[]) => ticketStatusesIn(retroCtx(), ids);
+const findRetro = (stream: string) => findRetroIn(retroCtx(), stream);
+const archiveBlockers = (stream: string, items: LedgerItem[]) => archiveBlockersIn(retroCtx(), stream, items);
 
 function cmdRetro() {
     const { items } = fold(readLedger());
@@ -1008,7 +1026,7 @@ function cmdUnarchive() {
     console.log(`unarchive  ${stream}  ${(last?.ids || []).length} item(s) restored`);
 }
 
-function setRegistryStatus(stream, status) {
+function setRegistryStatus(stream: string, status: string): void {
     const reg = loadRegistry();
     if (!reg) { console.error(`  (no registry; ${stream} not marked ${status} there)`); return; }
     reg.streams[stream] = { aliases: [], ...(reg.streams[stream] || {}), status };
@@ -1018,14 +1036,15 @@ function setRegistryStatus(stream, status) {
 // ── repo claims ─────────────────────────────────────────────────────────────
 
 const claimsDir = join(vault, 'Projects', project, 'Claims');
-const claimPath = (repo) => claimPathIn(claimsDir, repo);
-const validRepo = (r) => validRepoIn(die, r);
-const readClaim = (repo) => readClaimIn(claimsDir, repo);
+const claimPath = (repo: string) => claimPathIn(claimsDir, repo);
+const validRepo = (r: string | undefined) => validRepoIn(die, r);
+const readClaim = (repo: string) => readClaimIn(claimsDir, repo);
 
 function cmdClaim() {
     const repo = validRepo(positional[0]);
-    if (!arg('desk')) die('Usage: journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]');
-    const desk = normaliseStream(arg('desk'));
+    const deskArg = arg('desk');
+    if (!deskArg) die('Usage: journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]');
+    const desk = normaliseStream(deskArg);
     const usage = usageFromArgs();
     const pid = arg('pid') ? Number(arg('pid')) : null;
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
@@ -1033,7 +1052,7 @@ function cmdClaim() {
     if (dryRun) { console.log('[dry-run]', JSON.stringify(claim)); return; }
     const linkError = acquireClaimLock(claimsDir, repo, claim);
     if (linkError) {
-        if (linkError.code !== 'EEXIST') throw linkError;
+        if (!('code' in linkError && linkError.code === 'EEXIST')) throw linkError;
         const held = readClaim(repo);
         console.error(`${repo} is already claimed by ${describeClaim(held)}.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
         process.exit(1);
@@ -1077,14 +1096,16 @@ function cmdClaims() {
 
 const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
 const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR });
-const handoffText = (stream, since, keptWorktrees, opts) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
-const updateContextLink = (file, handoffPath) => updateContextLinkIn(handoffCtx(), file, handoffPath);
+const handoffText = (stream: string | null, since: string, keptWorktrees?: Parameters<typeof handoffTextIn>[3], opts?: Parameters<typeof handoffTextIn>[4]) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
+const updateContextLink = (file: string, handoffPath: string) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 
 function cmdBackfill() {
     const minConf = arg('min-confidence', 'high');
     if (!CONF.includes(minConf)) die(`--min-confidence must be one of: ${CONF.join(', ')}`);
     const { proposals, untagged } = backfillProposals();
-    const proposed = proposals.filter((p) => p.stream);
+    type Proposed = (typeof proposals)[number];
+    // A proposal with a stream always has a confidence; a tie has neither.
+    const proposed = proposals.filter((p): p is Proposed & { stream: string; confidence: string } => Boolean(p.stream));
     const apply = has('apply');
     const selected = proposed.filter((p) => CONF.indexOf(p.confidence) >= CONF.indexOf(minConf));
 
@@ -1093,7 +1114,7 @@ function cmdBackfill() {
         const runId = `bf-${newId(entries)}`;
         const taken = [...entries];
         const rows = selected.map((p) => {
-            const row = {
+            const row: LedgerRow = {
                 id: newId(taken), ts: now(), date: today(), kind: 'tag', tags: p.item.id, stream: p.stream,
                 text: `stream ${p.stream} (backfill)`, backfill: runId, rule: p.rules.join('+'), confidence: p.confidence, prev: p.item.stream ?? null,
                 ...usageFromArgs(),
@@ -1107,10 +1128,10 @@ function cmdBackfill() {
         return;
     }
 
-    const groups = new Map();
+    const groups = new Map<string, Record<string, Proposed[]>>();
     for (const p of proposed) {
         const g = groups.get(p.stream) || { high: [], medium: [], low: [] };
-        g[p.confidence].push(p);
+        g[String(p.confidence)].push(p);
         groups.set(p.stream, g);
     }
     const perStream = [...groups].map(([stream, g]) => ({ stream, high: g.high.length, medium: g.medium.length, low: g.low.length, total: g.high.length + g.medium.length + g.low.length }))
@@ -1118,12 +1139,13 @@ function cmdBackfill() {
     const perConf = Object.fromEntries(CONF.slice().reverse().map((c) => [c, proposed.filter((p) => p.confidence === c).length]));
     const noProposal = proposals.length - proposed.length;
     const nSamples = Number(arg('samples', '3'));
-    const sample = (p) => `${p.item.id}  ${clip(p.item.text, 90)}  [${p.rules.join('+')}${p.item.repo ? `; repo ${p.item.repo}` : ''}]`;
+    const sample = (p: Proposed): string => `${p.item.id}  ${clip(p.item.text, 90)}  [${p.rules.join('+')}${p.item.repo ? `; repo ${p.item.repo}` : ''}]`;
 
-    if (arg('out')) {
+    const outPath = arg('out');
+    if (outPath) {
         const table = ['| id | date | kind | repo | ticket | proposed | confidence | rules |', '|---|---|---|---|---|---|---|---|',
             ...proposals.map((p) => `| ${p.item.id} | ${p.item.date} | ${p.item.kind} | ${cell(p.item.repo)} | ${cell(p.item.ticket)} | ${p.stream || ''} | ${p.confidence || ''} | ${p.rules.join('+')} |`)];
-        writeFileSync(arg('out'), ['---', 'type: backfill-report', `generated: ${today()}`, '---', '', '# Backfill dry run', '', ...table, ''].join('\n'));
+        writeFileSync(outPath, ['---', 'type: backfill-report', `generated: ${today()}`, '---', '', '# Backfill dry run', '', ...table, ''].join('\n'));
     }
     if (asJson) {
         console.log(JSON.stringify({ untagged, proposed: proposed.length, noProposal, byConfidence: perConf, byStream: perStream }, null, 2));
@@ -1136,7 +1158,7 @@ function cmdBackfill() {
     if (nSamples > 0) {
         console.log(`\nSamples (up to ${nSamples} per group):`);
         for (const s of perStream) for (const c of CONF.slice().reverse()) {
-            const list = groups.get(s.stream)[c];
+            const list = groups.get(s.stream)?.[c] ?? [];
             if (!list.length) continue;
             console.log(`  ${s.stream} / ${c}`);
             list.slice(0, nSamples).forEach((p) => console.log(`    ${sample(p)}`));
@@ -1148,7 +1170,7 @@ function cmdBackfill() {
 // ── handoff and resume ──────────────────────────────────────────────────────
 
 /** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
-const oneLineArg = (name) => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
+const oneLineArg = (name: string): string => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
 
 function cmdHandoff() {
     const { items } = fold(readLedger());
@@ -1167,10 +1189,10 @@ function cmdHandoff() {
 }
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
-function tryRun(cmdName, args) {
+const tryRun: TryRun = (cmdName, args) => {
     const r = spawnSync(cmdName, args, { encoding: 'utf8' });
     return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
-}
+};
 
 function cmdResume() {
     console.log('== Verify on resume ==');
@@ -1184,7 +1206,7 @@ function cmdResume() {
         if (r.missing) console.log('  gh: unavailable (not installed)');
         else if (!r.ok) console.log(`  gh: unavailable (${clip(r.err, 120) || 'gh exited non-zero'})`);
         else {
-            let prs = [];
+            let prs: { number: number; title: string; url: string }[] = [];
             try { prs = JSON.parse(r.out || '[]'); } catch { /* fall through to the count */ }
             console.log(`  ${prs.length} open`);
             prs.forEach((p) => console.log(`  #${p.number} ${p.title} ${p.url}`));
