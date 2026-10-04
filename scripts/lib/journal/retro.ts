@@ -2,14 +2,33 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isOpen } from '../ledger-core.ts';
+import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
+import type { Args } from './args.ts';
+import type { BoardContext } from './board.ts';
 import { cell, clip, itemText, slug } from './format.ts';
+
+/** A ticket row as the derived index returns it. */
+export interface TicketRow { id: string; status?: string; title?: string }
+/** What the retro and archive checks read from the run. */
+export interface RetroContext {
+    vault: string;
+    project: string;
+    ticketsBase: () => string;
+    retroDir: () => string;
+    readLedger: () => LedgerRow[];
+    fold: BoardContext['fold'];
+    mapStream: (stream: string | undefined) => string | undefined;
+    today: () => string;
+    arg: Args['arg'];
+    ticketStatuses: (ids: string[]) => Map<string, TicketRow> | null;
+}
 
 export const PR_WORDS = /\bPRs?\b|pull request|release|#\d{2,}/i;
 export const LEARNING = /learned|lesson|ruled out|cause/i;
 export const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/g;
 
 /** Ticket status through ledger-index.ts (the derived index); null when the index cannot be read. */
-export function ticketStatuses(ctx, ids) {
+export function ticketStatuses(ctx: Pick<RetroContext, 'vault' | 'project' | 'ticketsBase'>, ids: string[]): Map<string, TicketRow> | null {
     const { vault, project, ticketsBase } = ctx;
     const safe = ids.filter((id) => /^[\w.-]+$/.test(id));
     if (!safe.length) return new Map();
@@ -19,15 +38,15 @@ export function ticketStatuses(ctx, ids) {
         '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
     ], { encoding: 'utf8' });
     if (r.status !== 0) return null;
-    try { return new Map(JSON.parse(r.stdout).map((t) => [t.id, t])); } catch { return null; }
+    try { const rows: TicketRow[] = JSON.parse(r.stdout); return new Map(rows.map((t): [string, TicketRow] => [t.id, t])); } catch { return null; }
 }
 
-export function retroText(ctx, stream) {
+export function retroText(ctx: RetroContext, stream: string): string {
     const { readLedger, fold, mapStream, today, ticketStatuses: statusesOf } = ctx;
     const entries = readLedger();
     const items = fold(entries).items.filter((i) => i.stream === stream);
     const facts = entries.filter((e) => e.kind === 'fact' && mapStream(e.stream) === stream);
-    const carriedOut = entries.filter((e) => e.kind === 'carry' && e.from && mapStream(e.from) === stream && mapStream(e.stream) !== stream);
+    const carriedOut = entries.filter((e) => e.kind === 'carry' && typeof e.from === 'string' && mapStream(e.from) === stream && mapStream(e.stream) !== stream);
     const open = items.filter(isOpen);
     const done = items.filter((i) => i.state === 'done');
     const dropped = items.filter((i) => i.state === 'dropped');
@@ -38,14 +57,14 @@ export function retroText(ctx, stream) {
     ].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
     const first = touched[0];
     const last = touched[touched.length - 1];
-    const perDay = new Map();
+    const perDay = new Map<string | undefined, number>();
     for (const t of touched) perDay.set(t.date, (perDay.get(t.date) || 0) + 1);
 
     const shipped = done.filter((i) => PR_WORDS.test(itemText(i)) || (i.refs || []).length);
-    const refsOf = (i) => [...new Set([...(itemText(i).match(/#\d{2,}/g) || []), ...(i.refs || []).filter((r) => /^#\d+$/.test(r))])];
+    const refsOf = (i: LedgerItem): string[] => [...new Set([...(itemText(i).match(/#\d{2,}/g) || []), ...(i.refs || []).filter((r) => /^#\d+$/.test(r))])];
     const learnings = items.filter((i) => LEARNING.test(itemText(i)));
 
-    const cited = new Map();
+    const cited = new Map<string, boolean>();
     for (const i of items) {
         if (i.ticket) cited.set(i.ticket, true);
         for (const id of itemText(i).match(TICKET_ID) || []) if (!cited.has(id)) cited.set(id, false);
@@ -65,7 +84,7 @@ export function retroText(ctx, stream) {
         first ? `- First row: ${first.date} \`${first.id}\` ${clip(first.text, 100)}` : '- (no rows)',
         last ? `- Last row: ${last.date} \`${last.id}\` ${clip(last.text, 100)}` : '',
         '', '| Date | Rows |', '|---|---|',
-        ...[...perDay].sort((a, b) => a[0].localeCompare(b[0])).map(([d, n]) => `| ${d} | ${n} |`), '',
+        ...[...perDay].sort((a, b) => (a[0] ?? '').localeCompare(b[0] ?? '')).map(([d, n]) => `| ${d} | ${n} |`), '',
         '## Facts', '',
         ...(facts.length ? ['| Key | Value | Date |', '|---|---|---|', ...facts.map((f) => `| ${cell(f.key)} | ${cell(f.value)} | ${f.date} |`)] : ['_none_']), '',
         '## Shipped', '',
@@ -91,7 +110,7 @@ export function retroText(ctx, stream) {
     return out.join('\n');
 }
 
-export function findRetro(ctx, stream) {
+export function findRetro(ctx: Pick<RetroContext, 'arg' | 'retroDir'>, stream: string): string | null {
     const { arg, retroDir } = ctx;
     const explicit = arg('retro');
     if (explicit) return existsSync(explicit) ? explicit : null;
@@ -101,19 +120,19 @@ export function findRetro(ctx, stream) {
     return hits.length ? join(dirPath, hits[hits.length - 1]) : null;
 }
 
-export const retroStatus = (text) => (text.match(/^---\n([\s\S]*?)\n---/)?.[1].match(/^status:\s*["']?([^"'\s]+)/m) || [])[1] || 'draft';
+export const retroStatus = (text: string): string => (text.match(/^---\n([\s\S]*?)\n---/)?.[1].match(/^status:\s*["']?([^"'\s]+)/m) || [])[1] || 'draft';
 
 /** Lines of the "Promoted to" checklist that still have no target. */
-export function unfilledPromotions(text) {
+export function unfilledPromotions(text: string): string[] {
     const sec = text.split(/^## Promoted to\s*$/m)[1];
     if (!sec) return [];
     return sec.split(/^## /m)[0].split('\n').filter((l) => /^- \[[ xX]\] /.test(l))
         .filter((l) => !((l.match(/Promoted to:\s*(.*)$/) || [])[1] || '').trim());
 }
 
-export function archiveBlockers(ctx, stream, items) {
+export function archiveBlockers(ctx: Pick<RetroContext, 'arg' | 'retroDir'>, stream: string, items: LedgerItem[]): { blockers: string[]; retro: string | null } {
     const { retroDir } = ctx;
-    const blockers = [];
+    const blockers: string[] = [];
     const open = items.filter((i) => i.stream === stream && isOpen(i));
     for (const i of open) blockers.push(`open item ${i.id} [${i.kind}]: ${clip(i.text, 80)} (finish it, or \`carry ${i.id} --to <stream>\`)`);
     const retro = findRetro(ctx, stream);
