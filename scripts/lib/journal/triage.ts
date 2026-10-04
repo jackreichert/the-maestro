@@ -2,7 +2,7 @@ import { activeDeferrals, isOpen } from '../ledger-core.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween } from '../boxes.ts';
 import { clip } from './format.ts';
 import { approvalMap } from './approvals.ts';
-import { defaultPendingSince, pendingTransitions } from './prime.mjs';
+import { defaultPendingSince, pendingTransitions } from './prime.ts';
 
 /**
  * Every item triage looks at, boxed: open items of any age, plus decisions and notes dated since..d that nothing
