@@ -43,7 +43,7 @@ export function installGhStub(config: GhStubConfig): NodeJS.ProcessEnv {
   return { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
 }
 
-/** A search node carrying every field the pr-watch event type and prs-snapshot.mjs read. */
+/** A search node carrying every field the pr-watch event type and prs-snapshot.ts read. */
 export function prNode(number: number, overrides: Record<string, unknown> = {}) {
   return {
     number,

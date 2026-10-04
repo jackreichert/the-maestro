@@ -1,4 +1,4 @@
-// Run: node --test scripts/prs-snapshot.test.mjs
+// Run: node --test scripts/prs-snapshot.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -9,9 +9,9 @@ import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.mjs');
+const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.ts');
 
-const SCRIPT = new URL('./prs-snapshot.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./prs-snapshot.ts', import.meta.url).pathname;
 
 function run(...args) {
     return runWith(process.env, ...args);
@@ -143,7 +143,7 @@ test('a brand-new PR with no prior entry is not reported as a change', () => {
 test('missing arguments print usage and exit non-zero', () => {
     const r = run('diff', '/tmp/does-not-matter.json');
     assert.notEqual(r.code, 0);
-    assert.match(r.err, /Usage: prs-snapshot\.mjs diff/);
+    assert.match(r.err, /Usage: prs-snapshot\.ts diff/);
 });
 
 test('--diff reads every search page: PRs past the 50th are not "no longer open"', () => {
@@ -207,7 +207,7 @@ test('ready <snapshot> prints the report offline, and a missing argument prints 
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /Ready to merge \(0\)/);
     assert.match(r.out, /1 unresolved review thread/);
-    assert.match(run('ready').err, /Usage: prs-snapshot\.mjs ready/);
+    assert.match(run('ready').err, /Usage: prs-snapshot\.ts ready/);
 });
 
 test('--ready on a live fetch reports mergeable and thread state from the board query', () => {
