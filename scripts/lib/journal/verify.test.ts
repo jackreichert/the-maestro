@@ -1,0 +1,42 @@
+// Run: node --test scripts/lib/journal/verify.test.ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { autoCommitLedger, verifyLedger } from './verify.ts';
+import type { VerifyContext } from './verify.ts';
+
+/** A context over a ledger file holding `lines`. */
+function ctxFor(lines: string[], over: Partial<VerifyContext> = {}): VerifyContext {
+    const vault = mkdtempSync(join(tmpdir(), 'verify-'));
+    const ledgerPath = join(vault, 'ledger.jsonl');
+    writeFileSync(ledgerPath, lines.join('\n') + '\n');
+    return { ledgerPath, approvals: new Set(['standing', 'one-off']), approvableKinds: new Set(['decision', 'resolved', 'question']), autocommit: false, dryRun: false, vault, ...over };
+}
+
+test('verifyLedger reports unparseable lines, duplicate ids, bad approvals and dangling references with their line numbers', () => {
+    const { rows, problems } = verifyLedger(ctxFor([
+        JSON.stringify({ id: 'aaaa', kind: 'decision' }),
+        'not json',
+        JSON.stringify({ id: 'aaaa', kind: 'note' }),
+        JSON.stringify({ id: 'bbbb', kind: 'done', closes: 'zzzz' }),
+        JSON.stringify({ id: 'cccc', kind: 'decision', approval: 'forever' }),
+        JSON.stringify({ id: 'dddd', kind: 'approval-tag', approves: 'bbbb', approval: 'standing' }),
+    ]));
+    assert.equal(rows, 5);
+    assert.deepEqual(problems.map((p) => [p.line, p.problem]), [
+        [2, 'line does not parse as a JSON object'],
+        [3, 'duplicate id (first on line 1)'],
+        [4, 'closes refers to zzzz, which does not exist'],
+        [5, 'approval "forever" is not one of: standing, one-off'],
+        [6, 'approves bbbb, a done row; only decision, resolved, question can be approved'],
+    ]);
+});
+
+test('a clean ledger has no problems, and the backup commit does nothing when it is off', () => {
+    const ctx = ctxFor([JSON.stringify({ id: 'aaaa', kind: 'wip' })]);
+    assert.deepEqual(verifyLedger(ctx), { rows: 1, problems: [] });
+    assert.equal(autoCommitLedger(ctx, '2026-10-03'), true);
+    assert.equal(autoCommitLedger({ ...ctx, autocommit: true, dryRun: true }, '2026-10-03'), true);
+});

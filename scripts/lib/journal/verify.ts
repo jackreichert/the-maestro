@@ -1,29 +1,43 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import type { LedgerRow } from '../ledger-core.ts';
+
+/** What verify and the backup commit read from the run. The sets are the values `--approval` accepts and the kinds an approval can point at. */
+export interface VerifyContext {
+    ledgerPath: string;
+    approvals: ReadonlySet<string | undefined>;
+    approvableKinds: ReadonlySet<string | undefined>;
+    autocommit: boolean;
+    dryRun: boolean;
+    vault: string;
+}
+/** One integrity problem, on a 1-based line of the raw file. */
+export interface Problem { line: number; id?: unknown; problem: string }
 
 /** Integrity problems in the raw ledger file: unparseable lines, duplicate ids, references to ids that do not exist. */
-export function verifyLedger(ctx) {
+export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Problem[] } {
     const { ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS } = ctx;
-    const problems = [];
+    const problems: Problem[] = [];
     const text = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8') : '';
-    const rows = [];
+    const rows: { row: LedgerRow; line: number }[] = [];
     text.split('\n').forEach((l, n) => {
         if (!l.trim()) return;
         try {
-            const row = JSON.parse(l);
-            if (row === null || typeof row !== 'object' || Array.isArray(row)) throw new Error('not an object');
-            rows.push({ row, line: n + 1 });
+            const parsed: unknown = JSON.parse(l);
+            if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+            // A JSON object; rows carry whatever the writer put there, which is what verify checks.
+            rows.push({ row: parsed as LedgerRow, line: n + 1 });
         } catch {
             problems.push({ line: n + 1, problem: 'line does not parse as a JSON object' });
         }
     });
-    const seen = new Map();
+    const seen = new Map<unknown, number>();
     for (const { row, line } of rows) {
         if (row.id === undefined) continue;
         if (seen.has(row.id)) problems.push({ line, id: row.id, problem: `duplicate id (first on line ${seen.get(row.id)})` });
         else seen.set(row.id, line);
     }
-    const missing = (line, row, field, id) => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
+    const missing = (line: number, row: LedgerRow, field: string, id: unknown): void => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
     for (const { row, line } of rows) {
         if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
         if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
@@ -42,10 +56,10 @@ export function verifyLedger(ctx) {
  * (`git add -- <path>...`), never -A, and commits just those paths. Returns false when it should have
  * committed and could not.
  */
-export function autoCommitLedger(ctx, d) {
+export function autoCommitLedger(ctx: VerifyContext, d: string): boolean {
     const { autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault } = ctx;
     if (!LEDGER_GIT_AUTOCOMMIT || dryRun) return true;
-    const git = (...a) => spawnSync('git', ['-C', vault, ...a], { encoding: 'utf8' });
+    const git = (...a: string[]) => spawnSync('git', ['-C', vault, ...a], { encoding: 'utf8' });
     const top = git('rev-parse', '--show-toplevel');
     if (top.status !== 0 || realpathSync(top.stdout.trim()) !== realpathSync(vault)) {
         console.error(`ledger_git_autocommit is on but ${vault} is not a git repository root; not committing.`);
