@@ -83,3 +83,13 @@ test('--dry-run prints the gh command and does not run gh; an over-budget dry ru
     const big = fixture({ 'src/big.py': lines(500) });
     assert.equal(open(big, ['--dry-run']).status, 1);
 });
+
+test('inherited object keys are unknown arguments, not passthrough flags', () => {
+    const f = fixture({ 'src/a.py': lines(3) });
+    for (const key of ['constructor', 'toString']) {
+        const r = open(f, [key]);
+        assert.equal(r.status, 2, key);
+        assert.match(r.stderr, new RegExp(`unknown argument ${key}`));
+    }
+    assert.ok(!existsSync(f.log), 'gh must not run');
+});

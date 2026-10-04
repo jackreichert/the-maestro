@@ -33,7 +33,7 @@ export function parseArgs(argv: string[]): OpenArgs {
     const a = argv[i];
     if (a === '--dry-run') o.dryRun = true;
     else if (a === '--repo' || a === '--base') o[a === '--repo' ? 'repo' : 'base'] = argv[++i] ?? '';
-    else if (PASSTHROUGH[a]) o.pass.push(PASSTHROUGH[a], argv[++i] ?? '');
+    else if (Object.hasOwn(PASSTHROUGH, a)) o.pass.push(PASSTHROUGH[a], argv[++i] ?? '');
     else usage(`unknown argument ${a} (draft and assignee are always set; use --repo, --base, --title, --body-file, --head, --dry-run)`);
   }
   if (!o.repo || !o.base) usage('--repo and --base are required');
