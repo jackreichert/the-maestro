@@ -512,6 +512,16 @@ test('both spellings of a model are written as the canonical id; an unknown mode
     assert.equal(run('start', 'five', '--model', 'unrecorded', ...usedFlags).err, '');   // sentinels never warn
 });
 
+test('usage counts a numeric mark and its string form as one row', () => {
+    run('start', 'base', '--model', 'claude-opus-5-5', ...usedFlags);
+    const hand = (id: string, used: unknown) => JSON.stringify({ id, kind: 'wip', ts: '2026-10-03T09:00:00Z', date: '2026-10-03', text: `hand ${id}`, used }) + '\n';
+    writeFileSync(ledgerFile(), readFileSync(ledgerFile(), 'utf8') + hand('h001', 1) + hand('h002', '1') + hand('h003', [1, '1', 'tool:x']));
+    const used = parse<{ used: Record<string, number> }>(run('usage', '--json').out).used;
+    assert.equal(used['1'], 4);
+    assert.equal(used['tool:x'], 1);
+    assert.equal(Object.keys(used).filter((k) => k === '1').length, 1);
+});
+
 test('read-time mapping heals old rows without touching the ledger; models check is a dry run', () => {
     run('start', 'legacy', '--model', 'Claude Opus 5.5', ...usedFlags);
     run('start', 'modern', '--model', 'claude-opus-5-5', ...usedFlags);
