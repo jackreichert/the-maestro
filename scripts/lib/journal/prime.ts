@@ -3,17 +3,40 @@ import { BOX, classify, gateStatus } from '../boxes.ts';
 import { approvalMap } from './approvals.ts';
 import { activeStreams } from './board.ts';
 import { clip } from './format.ts';
+import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
+import type { Args } from './args.ts';
+import type { BoardContext, Groups } from './board.ts';
+
+/** gh's view of a PR; the board gates read only `state`. */
+export interface PrState { state: string; mergedAt?: string }
+const isPrState = (j: unknown): j is PrState => typeof j === 'object' && j !== null && 'state' in j && typeof j.state === 'string';
+/** A command run that reports instead of throwing: `ok` is false when it is missing or exits non-zero. */
+export type TryRun = (cmd: string, args: string[]) => { ok: boolean; missing?: boolean; out: string; err: string };
+/** What the pending-transitions check reads: the ledger and its fold. */
+export interface PendingContext { readLedger: () => LedgerRow[]; fold: BoardContext['fold'] }
+/** What the session-start view reads from the run. */
+export interface PrimeContext extends PendingContext {
+    groups: (includeArchived?: boolean) => Groups;
+    today: () => string;
+    project: string;
+    tryRun: TryRun;
+    ticketStatuses: (ids: string[]) => Map<string, { status?: string }> | null;
+    arg: Args['arg'];
+}
+/** A done item whose tracker transition nobody recorded, one per key. */
+export interface PendingRow { key: string; id?: string; text?: string; doneOn?: string }
+
 
 /** gh's view of a PR as { state, mergedAt }, or null when gh is missing, fails or answers with something unreadable. */
-export function ghPrState(ctx, repo, number) {
+export function ghPrState(ctx: PrimeContext, repo: string, number: number): PrState | null {
     const { tryRun } = ctx;
     const r = tryRun('gh', ['pr', 'view', String(number), '--repo', repo, '--json', 'state,mergedAt']);
     if (!r.ok) return null;
-    try { const j = JSON.parse(r.out); return j && typeof j.state === 'string' ? j : null; } catch { return null; }
+    try { const j: unknown = JSON.parse(r.out); return isPrState(j) ? j : null; } catch { return null; }
 }
 
 /** A ticket's status through the derived index; null when there is no tickets vault or no answer. */
-export function ticketStatusOf(ctx, id) {
+export function ticketStatusOf(ctx: PrimeContext, id: string): string | null {
     const { arg, ticketStatuses } = ctx;
     if (!(arg('tickets-vault') || VAULT_ROOT)) return null;
     return ticketStatuses([id])?.get(id)?.status ?? null;
@@ -23,9 +46,9 @@ export function ticketStatusOf(ctx, id) {
  * Open blocked items that carry a gate, each with where the gate stands. Read-only: it reports, it never promotes
  * or closes an item. gh gates honour resume_gh (off means "unknown", not a gh call).
  */
-export function gateReport(ctx) {
+export function gateReport(ctx: PrimeContext) {
     const { groups, today } = ctx;
-    const lookups = { pr: (repo, n) => (RESUME_GH ? ghPrState(ctx, repo, n) : null), ticket: (id) => ticketStatusOf(ctx, id) };
+    const lookups = { pr: (repo: string, n: number) => (RESUME_GH ? ghPrState(ctx, repo, n) : null), ticket: (id: string) => ticketStatusOf(ctx, id) };
     return groups().blocked.filter((i) => i.gate).map((i) => ({ item: i, ...gateStatus(i.gate, today(), lookups) }));
 }
 
@@ -36,13 +59,13 @@ export function gateReport(ctx) {
  */
 export const PRIME_MAX_LINES = 40;
 
-export function primeLines(ctx) {
+export function primeLines(ctx: PrimeContext): string[] {
     const { groups, readLedger, today, project } = ctx;
     const g = groups();
     const approvals = approvalMap(readLedger());
-    const asks = g.awaiting.filter((i) => classify(i, approvals.get(i.id)) !== BOX.PASTE);
-    const paste = [...g.paste, ...g.awaiting.filter((i) => classify(i, approvals.get(i.id)) === BOX.PASTE)];
-    const label = (i) => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${clip(i.paste, 120)}]` : ''}${i.gate ? ` [gate: ${clip(i.gate, 80)}]` : ''}${i.stream ? ` (${clip(i.stream, 40)})` : ''}`;
+    const asks = g.awaiting.filter((i) => classify(i, approvals.get(i.id ?? '')) !== BOX.PASTE);
+    const paste = [...g.paste, ...g.awaiting.filter((i) => classify(i, approvals.get(i.id ?? '')) === BOX.PASTE)];
+    const label = (i: LedgerItem): string => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${clip(i.paste, 120)}]` : ''}${i.gate ? ` [gate: ${clip(i.gate, 80)}]` : ''}${i.stream ? ` (${clip(i.stream, 40)})` : ''}`;
     const sections = [
         { title: 'Needs Jack', items: asks },
         { title: 'Paste blocks for Jack', items: paste },
@@ -56,7 +79,7 @@ export function primeLines(ctx) {
     const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.mjs status\` and \`triage\` have the rest.`] : ['`journal.mjs status` has the rest.'];
     if (!sections.length) return [...head, '(nothing open)', ...foot];
     // Whatever the content, the cap holds: the budget below counts lines, and this guard backs it up.
-    const capped = (lines) => (lines.length <= PRIME_MAX_LINES ? lines : [...lines.slice(0, PRIME_MAX_LINES - foot.length), ...foot]);
+    const capped = (lines: string[]): string[] => (lines.length <= PRIME_MAX_LINES ? lines : [...lines.slice(0, PRIME_MAX_LINES - foot.length), ...foot]);
 
     // Round-robin the line budget so a long section cannot starve the others; a trimmed section ends in "+N more".
     let budget = PRIME_MAX_LINES - head.length - foot.length - sections.length;
@@ -76,21 +99,21 @@ export function primeLines(ctx) {
 export const PENDING_WINDOW_DAYS = 14;
 
 /** Distinct tracker keys (tracker_key_pattern) in the given texts. */
-export const trackerKeys = (...texts) => [...new Set(texts.flatMap((t) => String(t || '').match(new RegExp(TRACKER_KEY_PATTERN, 'g')) || []))];
+export const trackerKeys = (...texts: unknown[]): string[] => [...new Set(texts.flatMap((t) => String(t || '').match(new RegExp(TRACKER_KEY_PATTERN, 'g')) || []))];
 
 /**
  * Done items finished on or after `since` that carry a tracker key (in the ticket field, the text, or the closing row)
  * whose transition nobody recorded. A transition is recorded by any ledger row with `transitioned: [KEY, ...]`
  * (`journal.mjs log "moved FAKE-1 to In Staging" --transitioned FAKE-1`), at any date. One row per key: [{ key, id, text, doneOn }].
  */
-export function pendingTransitions(ctx, since) {
+export function pendingTransitions(ctx: PendingContext, since: string): PendingRow[] {
     const { readLedger, fold } = ctx;
     const entries = readLedger();
     const recorded = new Set(entries.flatMap((e) => e.transitioned || []));
-    const rows = [];
+    const rows: PendingRow[] = [];
     for (const i of fold(entries).items) {
         const doneOn = i.closedBy?.date || i.date;
-        if (i.state !== 'done' || doneOn < since) continue;
+        if (i.state !== 'done' || (doneOn !== undefined && doneOn < since)) continue;
         for (const key of trackerKeys(i.ticket, i.text, i.closedBy?.ticket, i.closedBy?.text)) {
             if (!recorded.has(key) && !rows.some((r) => r.key === key)) rows.push({ key, id: i.id, text: i.text, doneOn });
         }
@@ -98,4 +121,4 @@ export function pendingTransitions(ctx, since) {
     return rows;
 }
 
-export const defaultPendingSince = () => new Date(Date.now() - PENDING_WINDOW_DAYS * 864e5).toISOString().slice(0, 10);
+export const defaultPendingSince = (): string => new Date(Date.now() - PENDING_WINDOW_DAYS * 864e5).toISOString().slice(0, 10);
