@@ -1,11 +1,12 @@
 // Run: node --test scripts/lib/journal/verify.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { autoCommitLedger, verifyLedger } from './verify.ts';
 import type { VerifyContext } from './verify.ts';
+import { parseLedger } from '../ledger-core.ts';
 
 /** A context over a ledger file holding `lines`. */
 function ctxFor(lines: string[], over: Partial<VerifyContext> = {}): VerifyContext {
@@ -39,4 +40,12 @@ test('a clean ledger has no problems, and the backup commit does nothing when it
     assert.deepEqual(verifyLedger(ctx), { rows: 1, problems: [] });
     assert.equal(autoCommitLedger(ctx, '2026-10-03'), true);
     assert.equal(autoCommitLedger({ ...ctx, autocommit: true, dryRun: true }, '2026-10-03'), true);
+});
+
+test('verifyLedger and parseLedger report the same real line number for a malformed line after blank lines', () => {
+    const ctx = ctxFor([JSON.stringify({ id: 'aaaa', kind: 'note' }), '', '', 'not json', JSON.stringify({ id: 'bbbb', kind: 'note' })]);
+    const seen: number[] = [];
+    parseLedger(readFileSync(ctx.ledgerPath, 'utf8'), (n) => seen.push(n));
+    assert.deepEqual(seen, [4]);
+    assert.deepEqual(verifyLedger(ctx).problems.map((p) => p.line), [4]);
 });

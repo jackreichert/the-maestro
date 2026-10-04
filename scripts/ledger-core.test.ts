@@ -32,11 +32,11 @@ test('fold closes, re-homes, stamps and archives without touching the input', ()
     assert.equal(JSON.stringify(rows), copy);
 });
 
-test('parseLedger skips blank lines, drops malformed ones, and numbers them among the non-blank lines', () => {
+test('parseLedger skips blank lines, drops malformed ones, and numbers them by the real file line', () => {
     const seen: number[] = [];
     const rows = parseLedger('{"id":"a"}\n\n{oops\n{"id":"b","text":"x"}\n', (n) => seen.push(n));
     assert.deepEqual(rows.map((r) => r.id), ['a', 'b']);
     assert.equal(rows[1]?.text, 'x');
-    assert.deepEqual(seen, [2]);
+    assert.deepEqual(seen, [3]);   // the real file line: the blank line counts
     assert.deepEqual(parseLedger(''), []);
 });
