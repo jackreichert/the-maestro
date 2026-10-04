@@ -18,7 +18,7 @@ Two kinds of id exist. Do not mix them up.
 
 Example: `[[billing-api-011]] — Integration suite cannot run against the shared test DB`
 
-**Ledger ids** (`k3mp`, four lowercase alphanumerics from `journal.mjs`) have **no Obsidian note**.
+**Ledger ids** (`k3mp`, four lowercase alphanumerics from `journal.ts`) have **no Obsidian note**.
 Always give the id **and** the ledger one-liner (`text` from that row). Example:
 `k3mp — agent addressing review comments on the billing PR` (billing-api).
 

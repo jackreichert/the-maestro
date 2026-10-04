@@ -9,7 +9,7 @@
  *   ledger-index.ts query <name> [args] [--json]  named queries and read-only --sql; `query` lists them
  *
  * Streams: if $LEDGER_ROOT/Projects/<project>/streams.json exists, stream names are mapped through it
- * (aliases and case fold to the canonical name), like journal.mjs. Items of archived streams are hidden
+ * (aliases and case fold to the canonical name), like journal.ts. Items of archived streams are hidden
  * from search, stats and the named queries unless --include-archived; each archived stream leaves one
  * `archive` doc pointing at its retro, so a default search still finds the epic. `query --sql` is raw
  * and sees everything (items.archived, rows.archived, docs.archived mark the hidden ones).

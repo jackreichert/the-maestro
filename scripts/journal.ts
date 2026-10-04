@@ -111,11 +111,20 @@ import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
+import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
+import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
+import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
+import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
+import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
+import { yesterday, handoffText as handoffTextIn, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
+import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
+import type { TryRun } from './lib/journal/prime.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag'];
@@ -127,7 +136,7 @@ const APPROVALS = new Set(['standing', 'one-off']);
 const APPROVAL_WRITE_KINDS = new Set(['decision', 'resolved']);
 
 /** Row kinds an approval can point at: the user's decision, their answer to an ask, or the ask itself. */
-const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
+const APPROVABLE_KINDS = new Set<string | undefined>(['decision', 'resolved', 'question']);
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -141,25 +150,41 @@ if (!vault) {
     console.error('Ledger root is not set. Ask where the ledger lives, then set LEDGER_ROOT (or VAULT_ROOT), or pass --vault <path>.');
     process.exit(1);
 }
-const project = arg('project');
-if (!project) {
+const projectArg = arg('project');
+if (!projectArg) {
     console.error('Pass --project <container-folder-name>. There is no default.');
     process.exit(1);
 }
+const project: string = projectArg;
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = openStore({ vault, project, dryRun });
-const today = () => new Date().toISOString().slice(0, 10);
-const now = () => new Date().toISOString();
+const today = (): string => new Date().toISOString().slice(0, 10);
+const now = (): string => new Date().toISOString();
+/** The message of a caught value; `catch` binds `unknown`. */
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+// Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
+const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
+const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
+const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg });
+const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
+const verifyLedger = () => verifyLedgerIn(verifyCtx());
+const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
+const primeLines = () => primeLinesIn(primeCtx());
+const gateReport = () => gateReportIn(primeCtx());
+const pendingTransitions = (since: string) => pendingTransitionsIn(primeCtx(), since);
 
 // ── stream registry ─────────────────────────────────────────────────────────
 
 /** Read-time mapping through the loaded registry. */
-const mapStream = (s) => mapStreamWith(loadRegistry(), s);
+const mapStream = (s: string | undefined) => mapStreamWith(loadRegistry(), s);
 
 /**
  * Write-time normalisation for --stream. `none` stays reserved and passes through. With no
  * registry nothing is enforced. An unknown name is rejected with a suggestion unless --new-stream.
  */
-function normaliseStream(raw) {
+function normaliseStream(raw: string): string;
+function normaliseStream(raw: string | null): string | null;
+function normaliseStream(raw: string | null): string | null {
     if (!raw) return raw;
     if (isNoStream(raw)) return 'none';
     const reg = loadRegistry();
@@ -189,25 +214,25 @@ function normaliseStream(raw) {
 }
 
 /** Stream for a new row: `none` (reserved) and absent both mean no stream. */
-function streamOrNone(raw) {
+function streamOrNone(raw: string | null): string | undefined {
     const s = normaliseStream(raw);
     return s === 'none' ? undefined : s || undefined;
 }
 
-const fold = (entries) => foldWith(entries, loadRegistry());
+const fold = (entries: LedgerRow[]) => foldWith(entries, loadRegistry());
 
 // The board modules read the run through this: the ledger, the registry and the clock.
 const boardCtx = { readLedger, fold, today, rollPoint, has, mapStream, loadRegistry, dryRun, ensureDir, dir };
-const groups = (includeArchived) => boardGroups(boardCtx, includeArchived);
-const standupText = (d) => boardStandupText(boardCtx, d);
-const render = (quiet, includeArchived) => boardRender(boardCtx, quiet, includeArchived);
+const groups = (includeArchived?: boolean) => boardGroups(boardCtx, includeArchived);
+const standupText = (d: string) => boardStandupText(boardCtx, d);
+const render = (quiet?: boolean, includeArchived?: boolean) => boardRender(boardCtx, quiet, includeArchived);
 
-function resolveTarget(items, needle) {
+function resolveTarget(items: LedgerItem[], needle: string | undefined): LedgerItem | null {
     if (!needle) return null;
     const exact = items.find((i) => i.id === needle);
     if (exact) return exact;
     const open = items.filter(isOpen);
-    const matches = open.filter((i) => i.text.toLowerCase().includes(needle.toLowerCase()));
+    const matches = open.filter((i) => i.text?.toLowerCase().includes(needle.toLowerCase()));
     if (matches.length === 1) return matches[0];
     if (matches.length > 1) {
         console.error(`"${needle}" matches ${matches.length} open items:`);
@@ -217,7 +242,7 @@ function resolveTarget(items, needle) {
     return null;
 }
 
-function parseList(name) {
+function parseList(name: string): string[] | undefined {
     const raw = arg(name);
     if (!raw) return undefined;
     const list = raw.split(',').map((s) => s.trim()).filter(Boolean);
@@ -231,7 +256,7 @@ const MODEL_SENTINELS = new Set(['unrecorded', 'n/a', 'unmeasured']);
  * changes. A registered alias is written as its canonical id. An unknown name is warned about and
  * written as-is: the ledger has odd historic values, so this never rejects.
  */
-function normaliseModel(raw) {
+function normaliseModel(raw: string | null): string | null {
     const reg = loadRegistry();
     if (!raw || MODEL_SENTINELS.has(raw) || !reg?.models || !Object.keys(reg.models).length) return raw;
     const canon = canonicalModel(reg, raw);
@@ -243,7 +268,10 @@ function normaliseModel(raw) {
     return canon;
 }
 
-function usageFromArgs() {
+/** The usage marks every written row carries, from --model, --used and the optional --tokens, --harness and --agent. */
+interface Usage { model?: string; used?: string[]; tokens?: string; harness?: string; agent?: string }
+
+function usageFromArgs(): Usage {
     const model = normaliseModel(arg('model'));
     const used = parseList('used');
     if (!has('allow-unmarked') && (!model || !used)) {
@@ -251,12 +279,15 @@ function usageFromArgs() {
         console.error('Do not guess. Unknown is --model unrecorded --used unrecorded. Tests may pass --allow-unmarked.');
         process.exit(1);
     }
-    const usage = {};
+    const usage: Usage = {};
     if (model) usage.model = model;
     if (used) usage.used = used;
-    if (arg('tokens')) usage.tokens = arg('tokens');
-    if (arg('harness')) usage.harness = arg('harness');
-    if (arg('agent')) usage.agent = arg('agent');
+    const tokens = arg('tokens');
+    const harness = arg('harness');
+    const agent = arg('agent');
+    if (tokens) usage.tokens = tokens;
+    if (harness) usage.harness = harness;
+    if (agent) usage.agent = agent;
     return usage;
 }
 
@@ -268,7 +299,7 @@ const refsFromArgs = () => (arg('ref') || '').split(',').map((s) => s.trim()).fi
  * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
  * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
  */
-function parseApproval() {
+function parseApproval(): { approval?: string; scope?: string } {
     const approval = arg('approval');
     if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
     if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
@@ -277,14 +308,14 @@ function parseApproval() {
 }
 
 /** parseApproval for a row of `kind`: --approval is only allowed on the kinds in APPROVAL_WRITE_KINDS. */
-function approvalFor(kind) {
+function approvalFor(kind: string) {
     const fields = parseApproval();
     if (fields.approval && !APPROVAL_WRITE_KINDS.has(kind)) die(`--approval only goes on: ${[...APPROVAL_WRITE_KINDS].join(', ')} (not ${kind}).`);
     return fields;
 }
 
 /** Absolute path of a ref that names an existing file (`~/` and relative paths allowed); null when it does not. */
-function resolveRefFile(ref) {
+function resolveRefFile(ref: string): string | null {
     const p = resolve(ref.startsWith('~/') ? join(homedir(), ref.slice(2)) : ref);
     try { return statSync(p).isFile() ? p : null; } catch { return null; }
 }
@@ -294,7 +325,7 @@ function resolveRefFile(ref) {
  * durable (a memory file, a DECISIONS.md), so it needs at least one --ref and every one must be an
  * existing file; anything else exits 1 before the ledger is touched.
  */
-function ruleRefs() {
+function ruleRefs(): string[] {
     const refs = refsFromArgs();
     if (!refs.length) die('A rule needs --ref <file>: the memory file or DECISIONS.md entry it was promoted to. Use `ask --kind decision` for a decision that is still pending.');
     return refs.map((r) => resolveRefFile(r) || die(`--ref ${r} is not an existing file. Promote the rule first, then record it.`));
@@ -304,7 +335,7 @@ function ruleRefs() {
  * `ask --paste <file>`: a run-this ask. The block file must exist (checked before anything is written), and the row
  * is boxed as a paste block, shown apart from the questions. Only a question can be one. Returns the absolute path.
  */
-function pasteFile(kind) {
+function pasteFile(kind: string): string | undefined {
     if (!has('paste')) return undefined;
     const given = arg('paste');
     if (!given) die('--paste needs a block file: journal.mjs ask "<what to run>" --paste <file>');
@@ -316,7 +347,7 @@ function pasteFile(kind) {
  * `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>`: what a blocked item is waiting for. Only a `blocked` row
  * takes one, and a malformed gate exits 1 before anything is written, so `resume` never has to guess at it.
  */
-function gateFlag(kind) {
+function gateFlag(kind: string): string | undefined {
     if (!has('gate')) return undefined;
     const spec = arg('gate');
     if (!spec) die('--gate needs a value: gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>');
@@ -330,7 +361,7 @@ function gateFlag(kind) {
  * is pending and stays on the board. `rule` always writes a decision, which is a record and not open.
  */
 /** `--transitioned KEY[,KEY]` as a list of tracker keys, or undefined; a value that is not a key (tracker_key_pattern) is refused. */
-function transitionedFlag() {
+function transitionedFlag(): string[] | undefined {
     const raw = arg('transitioned');
     if (raw === null) { if (has('transitioned')) die('--transitioned needs a value: one or more tracker keys, comma-separated.'); return undefined; }
     const keys = raw.split(',').map((k) => k.trim()).filter(Boolean);
@@ -376,12 +407,12 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
 }
 
 /** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
-const approvalClose = (kind) => {
+const approvalClose = (kind: string) => {
     const fields = approvalFor(kind);
     return fields.approval ? { ...fields, refs: refsFromArgs() } : {};
 };
 
-function cmdClose(newKind) {
+function cmdClose(newKind: string): void {
     const needle = positional[0];
     const { items } = fold(readLedger());
     const target = resolveTarget(items, needle);
@@ -485,7 +516,7 @@ function cmdStatus() {
 
     if (has('footer')) { [...footerLines(g, done), sessionLine(CLAUDE_PROJECTS_DIR)].forEach((l) => console.log(l)); return; }
 
-    const line = (label, arr) => {
+    const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
         console.log(`\n${label}`);
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
@@ -531,20 +562,20 @@ function cmdScratch() {
  * It scans only the configured container_root, and only when run from inside it (the cwd, or --container as a stand-in
  * for it): a sweep that follows whatever directory the shell happens to be in can remove worktrees of an unrelated tree.
  */
-function runWorktreeSweep(dry) {
+function runWorktreeSweep(dry: boolean) {
     if (has('no-worktree-sweep')) return null;
     const refusal = sweepRootRefusal(CONTAINER_ROOT, resolve(arg('container', process.cwd())));
     if (refusal) { console.log(`worktree sweep refused: ${refusal}`); return null; }
     try {
         return sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry, budgetSeconds: SWEEP_BUDGET_SECONDS });
     } catch (e) {
-        console.log(`worktree sweep skipped: ${e.message}`);
+        console.log(`worktree sweep skipped: ${errorMessage(e)}`);
         return null;
     }
 }
 
 /** Why the sweep must not run, or '' when `from` is inside the configured `root`. Paths are compared by real path. */
-function sweepRootRefusal(root, from) {
+function sweepRootRefusal(root: string, from: string): string | null {
     if (!root) return 'container_root is not set (config key container_root or MAESTRO_CONTAINER_ROOT). Set it to the directory holding your repos, or pass --no-worktree-sweep.';
     if (!existsSync(root)) return `container_root ${root} does not exist.`;
     if (!existsSync(from)) return `no such directory ${from}.`;
@@ -578,7 +609,7 @@ function cmdRoll() {
  * Writes the day's finished work to a dated note and drops it out of CURRENT.md, leaving a link. Open items are NOT
  * archived: they stay visible until they are actually closed. Commits the ledger when ledger_git_autocommit is on.
  */
-function rollArchive(d) {
+function rollArchive(d: string): void {
     const g = groups();
     const done = g.doneOn(d);
     const notes = g.notesOn(d);
@@ -620,81 +651,6 @@ function rollArchive(d) {
 
 
 /**
- * Every item triage looks at, boxed: open items of any age, plus decisions and notes dated since..d that nothing
- * has closed. Each carries `ref` (the first --ref that is an existing file, else null) and `stale`.
- */
-function triageItems(d, since) {
-    const entries = readLedger();
-    const folded = fold(entries);
-    const approvals = approvalMap(entries);
-    const deferred = activeDeferrals(entries, today());
-    const inScope = (i) => isOpen(i) || (!i.closedBy && ['decision', 'note'].includes(i.kind) && i.date >= since && i.date <= d);
-    return folded.items.filter((i) => !folded.hidden.has(i.id) && inScope(i)).map((i) => {
-        const box = classify(i, approvals.get(i.id));
-        const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
-        const until = deferred.get(i.id);
-        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d) };
-    });
-}
-
-/**
- * The triage report as data. `blockers` are what `roll --strict` refuses on: a rule or approval with no ref file
- * to point at (not yet promoted), and an incidental finding with no ticket. Stale items are warnings only.
- */
-function triageReport(d, since = d) {
-    const items = triageItems(d, since);
-    const byBox = {};
-    for (const i of items) (byBox[i.box] ||= []).push(i);
-    const blockers = [
-        ...items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).map((i) => ({ id: i.id, box: i.box, why: 'not promoted: no --ref that is an existing file' })),
-        ...items.filter((i) => i.box === BOX.FINDING).map((i) => ({ id: i.id, box: i.box, why: 'finding with no ticket' })),
-    ];
-    const stale = items.filter((i) => i.stale).map((i) => ({ id: i.id, box: i.box, ageDays: i.ageDays }));
-    const applicable = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => i.id);
-    const pending = pendingTransitions(defaultPendingSince());
-    return { date: d, since, items, byBox, blockers, stale, applicable, pendingTransitions: pending, checklist: triageChecklist(items, blockers, pending) };
-}
-
-/** The don't-miss checklist: [x]/[ ] where the ledger can tell, "(by hand)" where only the session can. */
-function triageChecklist(items, blockers, pending = []) {
-    const n = (box) => items.filter((i) => i.box === box);
-    const unpromoted = blockers.filter((b) => RECORD_BOXES.includes(b.box)).length;
-    const toClose = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).length;
-    const short = n(BOX.NEEDS_JACK).filter((i) => String(i.text).trim().length < 25).length;
-    const unfiled = n(BOX.PASTE).filter((i) => !i.paste).length;
-    const mark = (ok) => (ok ? '[x]' : '[ ]');
-    return [
-        `${mark(!unpromoted && !toClose)} Every rule or approval stated today has a memory file and a HOW-WE-WORK line (by hand), and its ledger row is closed${unpromoted ? ` (${unpromoted} with no ref file)` : ''}${toClose ? ` (${toClose} ready: run \`triage --apply\`)` : ''}`,
-        `${mark(!n(BOX.FINDING).length)} Every "could not be filed", "follow-up", "next session" note is a ticket or an open item${n(BOX.FINDING).length ? ` (${n(BOX.FINDING).length} without one)` : ''}. Check the handoff draft by hand too.`,
-        `${mark(!short)} Every Needs-Jack item reads as a standalone question with options, not a bare id${short ? ` (${short} too short to stand alone)` : ''}`,
-        `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
-        `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
-        `${mark(!pending.length)} Every done item with a tracker key has a recorded transition${pending.length ? ` (${pending.length} pending: ${pending.map((r) => r.key).join(', ')}; run \`tickets --pending\`)` : ''}`,
-        '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
-        '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.ts; by hand if you wrote it yourself)',
-    ];
-}
-
-function triageLines(t) {
-    const out = [`Triage — ${t.date} (open items, plus decisions and notes since ${t.since})`];
-    for (const box of Object.keys(t.byBox).map(Number).sort((a, b) => a - b)) {
-        const list = t.byBox[box];
-        if (box === BOX.NOISE) { out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`); continue; }
-        out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`);
-        for (const i of list) {
-            const tail = [RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.deferredUntil ? `deferred until ${i.deferredUntil}` : null, i.gate ? `gate ${i.gate}` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
-            out.push(`  ${i.id}  ${clip(i.text, 110)}${tail.length ? `  [${tail.join('; ')}]` : ''}`);
-        }
-    }
-    if (!t.items.length) out.push('\n  (nothing to box)');
-    out.push('', `Blockers (roll --strict refuses): ${t.blockers.length}`);
-    t.blockers.forEach((b) => out.push(`  ${b.id}  box ${b.box}: ${b.why}`));
-    out.push(`Stale: ${t.stale.length}${t.stale.length ? ` (${t.stale.map((s) => `${s.id} ${s.ageDays}d`).join(', ')})` : ''}`);
-    out.push('', "Don't-miss checklist", ...t.checklist.map((l) => `  ${l}`));
-    return out;
-}
-
-/**
  * `triage [--date D] [--since D] [--json]` is read-only. `--apply` appends a `resolved` row ("recorded → <ref>") for
  * each rule or approval (boxes 1 to 3) whose ref is an existing file, and nothing else; it never closes an item
  * with no resolvable ref. Closed items fall out of scope, so a second run appends nothing.
@@ -708,9 +664,9 @@ function cmdTriage() {
     if (has('apply')) {
         const entries = readLedger();
         const taken = [...entries];
-        const rows = t.items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => {
-            const row = {
-                id: newId(taken), ts: now(), date: d, kind: 'resolved', closes: i.id, text: `recorded → ${i.ref}`, refs: [i.ref],
+        const rows = t.items.flatMap((i) => (RECORD_BOXES.includes(i.box) && i.ref ? [{ item: i, ref: i.ref }] : [])).map(({ item, ref }) => {
+            const row: LedgerRow = {
+                id: newId(taken), ts: now(), date: d, kind: 'resolved', closes: item.id, text: `recorded → ${ref}`, refs: [ref],
                 model: 'n/a', used: ['tool:journal.mjs'], tokens: 'n/a',
             };
             taken.push(row);
@@ -718,7 +674,7 @@ function cmdTriage() {
         });
         appendMany(rows);
         if (!dryRun && rows.length) render(true);
-        if (asJson) console.log(JSON.stringify({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs[0] })), report: { ...t, items: undefined, byBox: undefined } }, null, 2));
+        if (asJson) console.log(JSON.stringify({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs?.[0] })), report: { ...t, items: undefined, byBox: undefined } }, null, 2));
         else console.log(`triage --apply: closed ${rows.length} recorded item(s)${dryRun ? ' (dry-run)' : ''}; ${t.items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).length} still need a ref file.`);
         return;
     }
@@ -727,7 +683,7 @@ function cmdTriage() {
 }
 
 /** roll's gate: warns about triage blockers, or with --strict prints them and exits 1 before anything is changed. */
-function triageBeforeRoll(d) {
+function triageBeforeRoll(d: string): void {
     const { blockers } = triageReport(d);
     if (!blockers.length) return;
     const lines = blockers.map((b) => `  ${b.id}  box ${b.box}: ${b.why}`);
@@ -743,40 +699,6 @@ function triageBeforeRoll(d) {
 
 // ── verify and the ledger backup commit ─────────────────────────────────────
 
-/** Integrity problems in the raw ledger file: unparseable lines, duplicate ids, references to ids that do not exist. */
-function verifyLedger() {
-    const problems = [];
-    const text = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8') : '';
-    const rows = [];
-    text.split('\n').forEach((l, n) => {
-        if (!l.trim()) return;
-        try {
-            const row = JSON.parse(l);
-            if (row === null || typeof row !== 'object' || Array.isArray(row)) throw new Error('not an object');
-            rows.push({ row, line: n + 1 });
-        } catch {
-            problems.push({ line: n + 1, problem: 'line does not parse as a JSON object' });
-        }
-    });
-    const seen = new Map();
-    for (const { row, line } of rows) {
-        if (row.id === undefined) continue;
-        if (seen.has(row.id)) problems.push({ line, id: row.id, problem: `duplicate id (first on line ${seen.get(row.id)})` });
-        else seen.set(row.id, line);
-    }
-    const missing = (line, row, field, id) => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
-    for (const { row, line } of rows) {
-        if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
-        if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
-        const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
-        if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
-        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers']) missing(line, row, field, row[field]);
-        if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
-    }
-    problems.sort((a, b) => a.line - b.line);
-    return { rows: rows.length, problems };
-}
-
 function cmdVerify() {
     const { rows, problems } = verifyLedger();
     if (asJson) console.log(JSON.stringify({ ledger: ledgerPath, rows, problems }, null, 2));
@@ -786,37 +708,6 @@ function cmdVerify() {
         if (problems.length > 50) console.log(`  ... and ${problems.length - 50} more`);
     }
     if (problems.length) process.exit(1);
-}
-
-/**
- * The optional backup after a roll: only when ledger_git_autocommit is on and the ledger root is itself a
- * git repo. Runs verify first and refuses to commit a ledger that fails it. Stages explicit paths
- * (`git add -- <path>...`), never -A, and commits just those paths. Returns false when it should have
- * committed and could not.
- */
-function autoCommitLedger(d) {
-    if (!LEDGER_GIT_AUTOCOMMIT || dryRun) return true;
-    const git = (...a) => spawnSync('git', ['-C', vault, ...a], { encoding: 'utf8' });
-    const top = git('rev-parse', '--show-toplevel');
-    if (top.status !== 0 || realpathSync(top.stdout.trim()) !== realpathSync(vault)) {
-        console.error(`ledger_git_autocommit is on but ${vault} is not a git repository root; not committing.`);
-        return true;
-    }
-    const { problems } = verifyLedger();
-    if (problems.length) {
-        console.error(`Not committing: verify found ${problems.length} problem(s). Run \`journal.mjs verify\`.`);
-        return false;
-    }
-    const st = git('status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all');
-    if (st.status !== 0) { console.error(`git status failed: ${st.stderr.trim()}`); return false; }
-    const paths = st.stdout.split('\0').filter(Boolean).map((e) => e.slice(3));
-    if (!paths.length) { console.log('ledger git: nothing to commit.'); return true; }
-    const add = git('add', '--', ...paths);
-    if (add.status !== 0) { console.error(`git add failed: ${add.stderr.trim()}`); return false; }
-    const commit = git('commit', '-m', `chore(ledger): roll ${d}`, '--', ...paths);
-    if (commit.status !== 0) { console.error(`git commit failed: ${(commit.stderr || commit.stdout).trim()}`); return false; }
-    console.log(`ledger git: committed ${paths.length} path(s) as "chore(ledger): roll ${d}".`);
-    return true;
 }
 
 /** Annotate one existing entry (an item or a closing row) without rewriting the JSONL. */
@@ -840,22 +731,23 @@ function cmdStamp() {
  */
 function cmdStampMissing() {
     const entries = readLedger();
-    const marks = new Map();
+    const marks = new Map<string, ReturnType<typeof mergeMark>>();
     for (const e of entries) if (e.annotates) marks.set(e.annotates, mergeMark(marks.get(e.annotates), e));
     const fill = {
         model: normaliseModel(arg('model', 'unrecorded')),
         used: parseList('used') || ['unrecorded'],
         tokens: arg('tokens', 'unmeasured'),
     };
+    const FILL_FIELDS: (keyof typeof fill)[] = ['model', 'used', 'tokens'];
     const taken = [...entries];
     let count = 0;
     for (const e of entries) {
         if (!e.id || e.annotates || e.kind === 'stamp') continue;
         const cur = { ...e, ...(marks.get(e.id) || {}) };
         if (cur.model && cur.used) continue;
-        const add = {};
-        for (const f of ['model', 'used', 'tokens']) if (cur[f] === undefined) add[f] = fill[f];
-        const row = { id: newId(taken), ts: now(), date: today(), kind: 'stamp', annotates: e.id, text: `stamp ${e.id}`, ...add };
+        const add: Record<string, unknown> = {};
+        for (const f of FILL_FIELDS) if (cur[f] === undefined) add[f] = fill[f];
+        const row: LedgerRow = { id: newId(taken), ts: now(), date: today(), kind: 'stamp', annotates: e.id, text: `stamp ${e.id}`, ...add };
         taken.push(row);
         append(row);
         count++;
@@ -867,14 +759,15 @@ function cmdStampMissing() {
 function cmdUsage() {
     const { items } = fold(readLedger());
     const pool = has('open') ? items.filter(isOpen) : items;
-    const models = new Map();
-    const used = new Map();
-    const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+    const models = new Map<string, number>();
+    const used = new Map<string, number>();
+    const bump = (m: Map<string, number>, k: string): void => { m.set(k, (m.get(k) || 0) + 1); };
     for (const i of pool) {
         bump(models, i.model || 'unrecorded');
-        (Array.isArray(i.used) ? i.used : [i.used || 'unrecorded']).forEach((x) => bump(used, x));
+        const marks: unknown[] = Array.isArray(i.used) ? i.used : [i.used || 'unrecorded'];
+        marks.forEach((x) => bump(used, String(x)));
     }
-    const sorted = (m) => [...m].sort((a, b) => b[1] - a[1]);
+    const sorted = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
     if (asJson) {
         console.log(JSON.stringify({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) }, null, 2));
         return;
@@ -888,8 +781,8 @@ function cmdUsage() {
 
 // ── streams, facts, carry, retro, archive ───────────────────────────────────
 
-const die = (msg) => { console.error(msg); process.exit(1); };
-const tally = (items) => ({
+function die(msg: string): never { console.error(msg); process.exit(1); }
+const tally = (items: LedgerItem[]) => ({
     open: items.filter(isOpen).length,
     done: items.filter((i) => i.state === 'done').length,
     dropped: items.filter((i) => i.state === 'dropped').length,
@@ -897,9 +790,10 @@ const tally = (items) => ({
 });
 
 /** Canonical stream for a command argument; unknown to both registry and ledger is an error. */
-function existingStream(name, items) {
+function existingStream(name: string | null | undefined, items: LedgerItem[]): string {
     if (!name) die('Needs a stream name.');
-    const stream = mapStream(name);
+    // `none` maps to no stream; the callers only pass names that exist, so a stream is there once this returns.
+    const stream = mapStream(name) as string;
     if (!items.some((i) => i.stream === stream) && !loadRegistry()?.streams[stream]) {
         die(`No stream "${name}" in the registry or the ledger.`);
     }
@@ -911,7 +805,7 @@ function cmdStreams() {
     const reg = loadRegistry();
     const { items } = fold(readLedger());
     if (sub === 'list') {
-        const seen = [...new Set(items.map((i) => i.stream).filter(Boolean))];
+        const seen = [...new Set(items.flatMap((i) => (i.stream ? [i.stream] : [])))];
         const names = [...new Set([...Object.keys(reg?.streams || {}), ...seen])];
         const rows = names.map((name) => ({
             stream: name,
@@ -931,31 +825,33 @@ function cmdStreams() {
         if (isNoStream(name)) die('"none" is reserved: it means no stream, so it cannot be registered.');
         if (!name) die('Usage: journal.mjs streams add <name> [--alias a,b]');
         const aliases = parseList('alias') || [];
-        const next = { ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
+        const next: Registry = { models: undefined, ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
         const owner = canonicalOf(next, name);
         if (owner && owner !== name) die(`"${name}" is already registered as "${owner}" (name or alias, case-insensitive).`);
         const entry = next.streams[name] || { aliases: [], status: 'active' };
+        // A registry entry without an aliases list stays a TypeError here, as before.
+        const aliasesOf = entry.aliases as unknown[];
         for (const a of aliases) {
             const other = canonicalOf(next, a);
             if (other && other !== name) die(`Alias "${a}" already belongs to "${other}".`);
-            if (a.toLowerCase() !== name.toLowerCase() && !entry.aliases.some((x) => x.toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
+            if (a.toLowerCase() !== name.toLowerCase() && !aliasesOf.some((x) => String(x).toLowerCase() === a.toLowerCase())) aliasesOf.push(a);
         }
         next.streams[name] = entry;
         const changed = JSON.stringify(reg?.streams?.[name]) !== JSON.stringify(entry);
         if (changed && !dryRun) saveRegistry(next);
-        console.log(`${changed ? (reg?.streams[name] ? 'updated' : 'added') : 'unchanged'}  ${name}  aliases: ${entry.aliases.join(', ') || '(none)'}${dryRun && changed ? ' (dry-run)' : ''}`);
+        console.log(`${changed ? (reg?.streams[name] ? 'updated' : 'added') : 'unchanged'}  ${name}  aliases: ${aliasesOf.join(', ') || '(none)'}${dryRun && changed ? ' (dry-run)' : ''}`);
         return;
     }
     if (sub === 'check') {
         // Phase 2a dry run: how many rows would change display stream under the mapping. Appends nothing.
         const entries = readLedger();
         const raw = fold(entries).items;
-        const rawStreams = new Map();
+        const rawStreams = new Map<string | undefined, string | undefined>();
         for (const e of entries) {
-            if (e.id && !e.closes && !e.annotates && !NON_ITEM_KINDS.includes(e.kind)) rawStreams.set(e.id, e.stream);
+            if (e.id && !e.closes && !e.annotates && !NON_ITEM_KINDS.includes(e.kind ?? '')) rawStreams.set(e.id, e.stream);
             if ((e.kind === 'tag' && e.tags) || (e.kind === 'carry' && e.carries)) rawStreams.set(e.tags || e.carries, e.stream || undefined);
         }
-        const changes = new Map();
+        const changes = new Map<string, number>();
         for (const i of raw) {
             const before = rawStreams.get(i.id);
             if (before && before !== i.stream) changes.set(`${before} -> ${i.stream}`, (changes.get(`${before} -> ${i.stream}`) || 0) + 1);
@@ -1041,7 +937,7 @@ function cmdModels() {
         for (const a of parseList('alias') || []) {
             const other = canonicalModel(next, a);
             if (other && other !== id) die(`Alias "${a}" already belongs to "${other}".`);
-            if (a.toLowerCase() !== id.toLowerCase() && !entry.aliases.some((x) => x.toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
+            if (a.toLowerCase() !== id.toLowerCase() && !entry.aliases.some((x) => String(x).toLowerCase() === a.toLowerCase())) entry.aliases.push(a);
         }
         next.models[id] = entry;
         const changed = JSON.stringify(reg?.models?.[id]) !== JSON.stringify(entry);
@@ -1076,90 +972,11 @@ const ticketsBase = () => {
     return base;
 };
 const retroDir = () => join(ticketsBase(), 'Projects', arg('repo') || 'dev-env', 'Archive');
-const PR_WORDS = /\bPRs?\b|pull request|release|#\d{2,}/i;
-const LEARNING = /learned|lesson|ruled out|cause/i;
-const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/g;
-
-/** Ticket status through ledger-index.ts (the derived index); null when the index cannot be read. */
-function ticketStatuses(ids) {
-    const safe = ids.filter((id) => /^[\w.-]+$/.test(id));
-    if (!safe.length) return new Map();
-    const sql = `select id, status, title from tickets where id in (${safe.map((id) => `'${id}'`).join(',')})`;
-    const r = spawnSync(process.execPath, [
-        new URL('./ledger-index.ts', import.meta.url).pathname, 'query', '--sql', sql, '--json',
-        '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
-    ], { encoding: 'utf8' });
-    if (r.status !== 0) return null;
-    try { return new Map(JSON.parse(r.stdout).map((t) => [t.id, t])); } catch { return null; }
-}
-
-function retroText(stream) {
-    const entries = readLedger();
-    const items = fold(entries).items.filter((i) => i.stream === stream);
-    const facts = entries.filter((e) => e.kind === 'fact' && mapStream(e.stream) === stream);
-    const carriedOut = entries.filter((e) => e.kind === 'carry' && e.from && mapStream(e.from) === stream && mapStream(e.stream) !== stream);
-    const open = items.filter(isOpen);
-    const done = items.filter((i) => i.state === 'done');
-    const dropped = items.filter((i) => i.state === 'dropped');
-
-    const touched = [
-        ...items.flatMap((i) => [{ id: i.id, ts: i.ts, date: i.date, text: i.text, kind: i.kind }, ...(i.closedBy ? [{ id: i.closedBy.id, ts: i.closedBy.ts, date: i.closedBy.date, text: i.closedBy.text, kind: i.closedBy.kind }] : [])]),
-        ...facts.map((f) => ({ id: f.id, ts: f.ts, date: f.date, text: f.text, kind: 'fact' })),
-    ].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    const first = touched[0];
-    const last = touched[touched.length - 1];
-    const perDay = new Map();
-    for (const t of touched) perDay.set(t.date, (perDay.get(t.date) || 0) + 1);
-
-    const shipped = done.filter((i) => PR_WORDS.test(itemText(i)) || (i.refs || []).length);
-    const refsOf = (i) => [...new Set([...(itemText(i).match(/#\d{2,}/g) || []), ...(i.refs || []).filter((r) => /^#\d+$/.test(r))])];
-    const learnings = items.filter((i) => LEARNING.test(itemText(i)));
-
-    const cited = new Map();
-    for (const i of items) {
-        if (i.ticket) cited.set(i.ticket, true);
-        for (const id of itemText(i).match(TICKET_ID) || []) if (!cited.has(id)) cited.set(id, false);
-    }
-    const statuses = ticketStatuses([...cited.keys()]);
-
-    const out = [
-        '---', 'status: draft', `stream: ${stream}`, `generated: ${today()}`, 'type: retro', '---', '',
-        `# ${stream} retro`, '',
-        '> Draft generated by `journal.mjs retro`. Polish it, then change `status:` above to `reviewed` and fill every "Promoted to" line before `archive`.', '',
-        '## Summary', '',
-        `- Items done: ${done.length}`, `- Items dropped: ${dropped.length}`, `- Items open: ${open.length}`,
-        `- Other rows (notes, resolved, decisions): ${items.length - done.length - dropped.length - open.length}`,
-        `- Facts recorded: ${facts.length}`,
-        `- Date span: ${first ? `${first.date} to ${last.date}` : '(no rows)'}`, '',
-        '## Timeline', '',
-        first ? `- First row: ${first.date} \`${first.id}\` ${clip(first.text, 100)}` : '- (no rows)',
-        last ? `- Last row: ${last.date} \`${last.id}\` ${clip(last.text, 100)}` : '',
-        '', '| Date | Rows |', '|---|---|',
-        ...[...perDay].sort((a, b) => a[0].localeCompare(b[0])).map(([d, n]) => `| ${d} | ${n} |`), '',
-        '## Facts', '',
-        ...(facts.length ? ['| Key | Value | Date |', '|---|---|---|', ...facts.map((f) => `| ${cell(f.key)} | ${cell(f.value)} | ${f.date} |`)] : ['_none_']), '',
-        '## Shipped', '',
-        ...(shipped.length ? shipped.map((i) => `- \`${i.id}\` ${clip(itemText(i), 200)}${refsOf(i).length ? ` (${refsOf(i).join(', ')})` : ''}`) : ['_none_']), '',
-        '## Tickets referenced', '',
-        ...(cited.size ? [
-            '| Ticket | Status | Title |', '|---|---|---|',
-            ...[...cited].flatMap(([id, explicit]) => {
-                const t = statuses?.get(id);
-                if (t) return [`| ${cell(id)} | ${cell(t.status)} | ${cell(t.title)} |`];
-                return explicit || !statuses ? [`| ${cell(id)} | ${statuses ? 'not in index' : 'index unavailable'} | |`] : [];
-            }),
-        ] : ['_none_']), '',
-        '## Learnings', '',
-        ...(learnings.length ? learnings.map((i) => `- \`${i.id}\` ${clip(itemText(i), 300)}`) : ['_none_']), '',
-        '## Open follow-ups', '',
-        ...(open.length ? open.map((i) => `- \`${i.id}\` [${i.kind}] ${clip(i.text, 200)}`) : ['_none_']),
-        ...carriedOut.map((c) => `- carried to ${mapStream(c.stream)}: \`${c.carries}\``), '',
-        '## Promoted to', '',
-        'One line per learning. Give each a target (a DECISIONS.md entry, a skill, a ticket id) or `one-off`.', '',
-        ...(learnings.length ? learnings.map((i) => `- [ ] ${clip(itemText(i), 120)} (\`${i.id}\`) — Promoted to: `) : ['_no learnings to promote_']), '',
-    ];
-    return out.join('\n');
-}
+const retroCtx = () => ({ vault, project, ticketsBase, readLedger, fold, mapStream, today, arg, retroDir, ticketStatuses });
+const retroText = (stream: string) => retroTextIn(retroCtx(), stream);
+const ticketStatuses = (ids: string[]) => ticketStatusesIn(retroCtx(), ids);
+const findRetro = (stream: string) => findRetroIn(retroCtx(), stream);
+const archiveBlockers = (stream: string, items: LedgerItem[]) => archiveBlockersIn(retroCtx(), stream, items);
 
 function cmdRetro() {
     const { items } = fold(readLedger());
@@ -1174,40 +991,6 @@ function cmdRetro() {
 }
 
 // archive ------------------------------------------------------------------
-
-function findRetro(stream) {
-    const explicit = arg('retro');
-    if (explicit) return existsSync(explicit) ? explicit : null;
-    const dirPath = retroDir();
-    if (!existsSync(dirPath)) return null;
-    const hits = readdirSync(dirPath).filter((n) => n.startsWith(`${slug(stream)}-retro-`) && n.endsWith('.md')).sort();
-    return hits.length ? join(dirPath, hits[hits.length - 1]) : null;
-}
-
-const retroStatus = (text) => (text.match(/^---\n([\s\S]*?)\n---/)?.[1].match(/^status:\s*["']?([^"'\s]+)/m) || [])[1] || 'draft';
-
-/** Lines of the "Promoted to" checklist that still have no target. */
-function unfilledPromotions(text) {
-    const sec = text.split(/^## Promoted to\s*$/m)[1];
-    if (!sec) return [];
-    return sec.split(/^## /m)[0].split('\n').filter((l) => /^- \[[ xX]\] /.test(l))
-        .filter((l) => !((l.match(/Promoted to:\s*(.*)$/) || [])[1] || '').trim());
-}
-
-function archiveBlockers(stream, items) {
-    const blockers = [];
-    const open = items.filter((i) => i.stream === stream && isOpen(i));
-    for (const i of open) blockers.push(`open item ${i.id} [${i.kind}]: ${clip(i.text, 80)} (finish it, or \`carry ${i.id} --to <stream>\`)`);
-    const retro = findRetro(stream);
-    if (!retro) blockers.push(`no retro doc found in ${retroDir()} (run \`retro ${stream}\`)`);
-    else {
-        const text = readFileSync(retro, 'utf8');
-        if (retroStatus(text) === 'draft') blockers.push(`retro ${retro} still has status: draft`);
-        const blank = unfilledPromotions(text);
-        if (blank.length) blockers.push(`${blank.length} "Promoted to" line(s) in ${retro} have no target or one-off`);
-    }
-    return { blockers, retro };
-}
 
 function cmdArchive() {
     const { items, archivedStreams } = fold(readLedger());
@@ -1243,7 +1026,7 @@ function cmdUnarchive() {
     console.log(`unarchive  ${stream}  ${(last?.ids || []).length} item(s) restored`);
 }
 
-function setRegistryStatus(stream, status) {
+function setRegistryStatus(stream: string, status: string): void {
     const reg = loadRegistry();
     if (!reg) { console.error(`  (no registry; ${stream} not marked ${status} there)`); return; }
     reg.streams[stream] = { aliases: [], ...(reg.streams[stream] || {}), status };
@@ -1253,51 +1036,23 @@ function setRegistryStatus(stream, status) {
 // ── repo claims ─────────────────────────────────────────────────────────────
 
 const claimsDir = join(vault, 'Projects', project, 'Claims');
-const claimPath = (repo) => join(claimsDir, `${repo}.lock`);
-const validRepo = (r) => (r && /^[\w.-]+$/.test(r) && r !== '.' && r !== '..' ? r : die('Give a plain repo name (letters, digits, . _ -).'));
+const claimPath = (repo: string) => claimPathIn(claimsDir, repo);
+const validRepo = (r: string | undefined) => validRepoIn(die, r);
+const readClaim = (repo: string) => readClaimIn(claimsDir, repo);
 
-function readClaim(repo) {
-    try { return JSON.parse(readFileSync(claimPath(repo), 'utf8')); } catch { return null; }
-}
-
-function pidAlive(pid) {
-    try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
-/** { stale, reason } for a claim: its pid is dead on this host, or it is older than `hours`. A claim with no pid is judged on age alone. */
-function claimStaleness(c, hours) {
-    const age = c?.time ? (Date.now() - Date.parse(c.time)) / 36e5 : Infinity;
-    if (c?.pid && c.host === hostname() && !pidAlive(c.pid)) return { stale: true, reason: `pid ${c.pid} is not running`, ageHours: age };
-    if (age > hours) return { stale: true, reason: `older than ${hours}h`, ageHours: age };
-    return { stale: false, reason: null, ageHours: age };
-}
-
-const describeClaim = (c) => (c ? `desk ${c.desk}, pid ${c.pid ?? 'unknown'}, host ${c.host}, since ${c.time}` : 'an unreadable claim');
-
-/**
- * The guarantee is link(2): the full claim is written to a private temp file, then hard-linked to
- * Claims/<repo>.lock. link fails with EEXIST if the lock exists, so of any number of racing
- * processes exactly one succeeds, and the lock never exists half-written (an exclusive create
- * followed by a write exposes an empty file, which a loser reads as "an unreadable claim").
- * The `claim` ledger row is only the record.
- */
 function cmdClaim() {
     const repo = validRepo(positional[0]);
-    if (!arg('desk')) die('Usage: journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]');
-    const desk = normaliseStream(arg('desk'));
+    const deskArg = arg('desk');
+    if (!deskArg) die('Usage: journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]');
+    const desk = normaliseStream(deskArg);
     const usage = usageFromArgs();
     const pid = arg('pid') ? Number(arg('pid')) : null;
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
     const claim = { repo, desk, pid, host: hostname(), time: now(), branch: arg('branch') || undefined, why: arg('why') || undefined };
     if (dryRun) { console.log('[dry-run]', JSON.stringify(claim)); return; }
-    mkdirSync(claimsDir, { recursive: true });
-    const tmp = `${claimPath(repo)}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(claim, null, 2) + '\n', { flag: 'wx' });
-    let linkError = null;
-    try { linkSync(tmp, claimPath(repo)); } catch (e) { linkError = e; }
-    unlinkSync(tmp);
+    const linkError = acquireClaimLock(claimsDir, repo, claim);
     if (linkError) {
-        if (linkError.code !== 'EEXIST') throw linkError;
+        if (!('code' in linkError && linkError.code === 'EEXIST')) throw linkError;
         const held = readClaim(repo);
         console.error(`${repo} is already claimed by ${describeClaim(held)}.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
         process.exit(1);
@@ -1339,112 +1094,18 @@ function cmdClaims() {
 
 // ── backfill ────────────────────────────────────────────────────────────────
 
-const CONF = ['low', 'medium', 'high'];
-const SESSION_GAP_MS = 30 * 60 * 1000;
-
-/**
- * Evidence about how already-tagged items are filed: stream counts per repo, per ticket id, and per
- * work session (a run of rows with no gap over 30 minutes; the ledger has no session field).
- */
-function backfillEvidence(items) {
-    const tagged = items.filter((i) => i.stream);
-    const tally = (map, key, stream) => { if (!key) return; const m = map.get(key) || new Map(); m.set(stream, (m.get(stream) || 0) + 1); map.set(key, m); };
-    const byRepo = new Map();
-    const byTicket = new Map();
-    for (const i of tagged) {
-        tally(byRepo, i.repo, i.stream);
-        for (const t of new Set([i.ticket, ...(itemText(i).match(TICKET_ID) || [])].filter(Boolean))) tally(byTicket, t, i.stream);
-    }
-    const sorted = [...items].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    const sessionOf = new Map();
-    let n = 0;
-    let last = null;
-    for (const i of sorted) {
-        const t = Date.parse(i.ts);
-        if (last !== null && t - last > SESSION_GAP_MS) n++;
-        sessionOf.set(i.id, n);
-        last = t;
-    }
-    const bySession = new Map();
-    for (const i of tagged) tally(bySession, sessionOf.get(i.id), i.stream);
-    return { byRepo, byTicket, bySession, sessionOf };
-}
-
-/** The top stream of a tally with its share and total, or null when empty or tied. */
-function dominant(m) {
-    if (!m) return null;
-    const rows = [...m].sort((a, b) => b[1] - a[1]);
-    const total = rows.reduce((a, [, c]) => a + c, 0);
-    if (rows.length > 1 && rows[0][1] === rows[1][1]) return null;
-    return { stream: rows[0][0], n: rows[0][1], total, share: rows[0][1] / total };
-}
-
-/** Streams a backfill may propose: registered and not archived, plus every stream the ledger already uses. */
-function candidateStreams(items, archived) {
-    const reg = loadRegistry();
-    const names = new Set([...Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k), ...items.map((i) => i.stream).filter(Boolean)]);
-    for (const a of archived) names.delete(a);
-    return names;
-}
-
-/** Votes for one untagged item: [{ rule, stream, points }]. Points: ticket 4 (unanimous, 2+ items) or 1, keyword 2, repo 2 (90%+ of 5+ items) or 1, session neighbours 1. 4+ is high, 2-3 medium, 1 low. */
-function votesFor(item, ev, keywords) {
-    const votes = [];
-    const tickets = new Set([item.ticket, ...(itemText(item).match(TICKET_ID) || [])].filter(Boolean));
-    let best = null;
-    for (const t of tickets) {
-        const d = dominant(ev.byTicket.get(t));
-        if (!d) continue;
-        const points = d.share === 1 && d.n >= 2 ? 4 : 1;
-        if (!best || points > best.points) best = { rule: 'ticket', stream: d.stream, points };
-    }
-    if (best) votes.push(best);
-
-    const text = itemText(item).toLowerCase();
-    const hits = new Set(keywords.filter((k) => k.re.test(text)).map((k) => k.stream));
-    if (hits.size === 1) votes.push({ rule: 'keyword', stream: [...hits][0], points: 2 });
-
-    const r = dominant(ev.byRepo.get(item.repo));
-    if (r) votes.push({ rule: 'repo', stream: r.stream, points: r.share >= 0.9 && r.total >= 5 ? 2 : 1 });
-
-    const s = dominant(ev.bySession.get(ev.sessionOf.get(item.id)));
-    if (s && s.total >= 2 && s.share >= 0.6) votes.push({ rule: 'session', stream: s.stream, points: 1 });
-    return votes;
-}
-
-/** { stream, confidence, rules } for an untagged item, or null when nothing votes. Disagreement caps it at low. */
-function proposalFor(item, ev, keywords, allowed) {
-    const votes = votesFor(item, ev, keywords).filter((v) => allowed.has(v.stream));
-    if (!votes.length) return null;
-    const score = new Map();
-    for (const v of votes) score.set(v.stream, (score.get(v.stream) || 0) + v.points);
-    const ranked = [...score].sort((a, b) => b[1] - a[1]);
-    if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return { stream: null, confidence: 'low', rules: votes.map((v) => v.rule), tie: true };
-    const [stream, points] = ranked[0];
-    const conflict = ranked.length > 1;
-    const confidence = conflict ? 'low' : points >= 4 ? 'high' : points >= 2 ? 'medium' : 'low';
-    return { stream, confidence, rules: votes.filter((v) => v.stream === stream).map((v) => v.rule), conflict };
-}
-
-function backfillProposals() {
-    const folded = fold(readLedger());
-    const untagged = folded.items.filter((i) => !i.stream && !folded.hidden.has(i.id));
-    const ev = backfillEvidence(folded.items);
-    const allowed = candidateStreams(folded.items, folded.archivedStreams);
-    const reg = loadRegistry();
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const keywords = Object.entries(reg?.streams || {}).filter(([canon]) => allowed.has(canon)).flatMap(([canon, meta]) =>
-        [canon, ...(meta?.aliases || [])].map(String).filter((w) => w.length >= 3)
-            .map((w) => ({ stream: canon, re: new RegExp(`(?<![\\w-])${esc(w.toLowerCase())}(?![\\w-])`) })));
-    const proposals = untagged.map((item) => ({ item, ...(proposalFor(item, ev, keywords, allowed) || { stream: null, confidence: null, rules: [] }) }));
-    return { proposals, untagged: untagged.length };
-}
+const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
+const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR });
+const handoffText = (stream: string | null, since: string, keptWorktrees?: Parameters<typeof handoffTextIn>[3], opts?: Parameters<typeof handoffTextIn>[4]) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
+const updateContextLink = (file: string, handoffPath: string) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 
 function cmdBackfill() {
     const minConf = arg('min-confidence', 'high');
     if (!CONF.includes(minConf)) die(`--min-confidence must be one of: ${CONF.join(', ')}`);
     const { proposals, untagged } = backfillProposals();
-    const proposed = proposals.filter((p) => p.stream);
+    type Proposed = (typeof proposals)[number];
+    // A proposal with a stream always has a confidence; a tie has neither.
+    const proposed = proposals.filter((p): p is Proposed & { stream: string; confidence: string } => Boolean(p.stream));
     const apply = has('apply');
     const selected = proposed.filter((p) => CONF.indexOf(p.confidence) >= CONF.indexOf(minConf));
 
@@ -1453,7 +1114,7 @@ function cmdBackfill() {
         const runId = `bf-${newId(entries)}`;
         const taken = [...entries];
         const rows = selected.map((p) => {
-            const row = {
+            const row: LedgerRow = {
                 id: newId(taken), ts: now(), date: today(), kind: 'tag', tags: p.item.id, stream: p.stream,
                 text: `stream ${p.stream} (backfill)`, backfill: runId, rule: p.rules.join('+'), confidence: p.confidence, prev: p.item.stream ?? null,
                 ...usageFromArgs(),
@@ -1467,10 +1128,10 @@ function cmdBackfill() {
         return;
     }
 
-    const groups = new Map();
+    const groups = new Map<string, Record<string, Proposed[]>>();
     for (const p of proposed) {
         const g = groups.get(p.stream) || { high: [], medium: [], low: [] };
-        g[p.confidence].push(p);
+        g[String(p.confidence)].push(p);
         groups.set(p.stream, g);
     }
     const perStream = [...groups].map(([stream, g]) => ({ stream, high: g.high.length, medium: g.medium.length, low: g.low.length, total: g.high.length + g.medium.length + g.low.length }))
@@ -1478,12 +1139,13 @@ function cmdBackfill() {
     const perConf = Object.fromEntries(CONF.slice().reverse().map((c) => [c, proposed.filter((p) => p.confidence === c).length]));
     const noProposal = proposals.length - proposed.length;
     const nSamples = Number(arg('samples', '3'));
-    const sample = (p) => `${p.item.id}  ${clip(p.item.text, 90)}  [${p.rules.join('+')}${p.item.repo ? `; repo ${p.item.repo}` : ''}]`;
+    const sample = (p: Proposed): string => `${p.item.id}  ${clip(p.item.text, 90)}  [${p.rules.join('+')}${p.item.repo ? `; repo ${p.item.repo}` : ''}]`;
 
-    if (arg('out')) {
+    const outPath = arg('out');
+    if (outPath) {
         const table = ['| id | date | kind | repo | ticket | proposed | confidence | rules |', '|---|---|---|---|---|---|---|---|',
             ...proposals.map((p) => `| ${p.item.id} | ${p.item.date} | ${p.item.kind} | ${cell(p.item.repo)} | ${cell(p.item.ticket)} | ${p.stream || ''} | ${p.confidence || ''} | ${p.rules.join('+')} |`)];
-        writeFileSync(arg('out'), ['---', 'type: backfill-report', `generated: ${today()}`, '---', '', '# Backfill dry run', '', ...table, ''].join('\n'));
+        writeFileSync(outPath, ['---', 'type: backfill-report', `generated: ${today()}`, '---', '', '# Backfill dry run', '', ...table, ''].join('\n'));
     }
     if (asJson) {
         console.log(JSON.stringify({ untagged, proposed: proposed.length, noProposal, byConfidence: perConf, byStream: perStream }, null, 2));
@@ -1496,7 +1158,7 @@ function cmdBackfill() {
     if (nSamples > 0) {
         console.log(`\nSamples (up to ${nSamples} per group):`);
         for (const s of perStream) for (const c of CONF.slice().reverse()) {
-            const list = groups.get(s.stream)[c];
+            const list = groups.get(s.stream)?.[c] ?? [];
             if (!list.length) continue;
             console.log(`  ${s.stream} / ${c}`);
             list.slice(0, nSamples).forEach((p) => console.log(`    ${sample(p)}`));
@@ -1507,92 +1169,8 @@ function cmdBackfill() {
 
 // ── handoff and resume ──────────────────────────────────────────────────────
 
-const PATH_LIKE = /(?:^|[\s(`'"])((?:~\/|\.{1,2}\/|\/)[\w.@~+-]+(?:\/[\w.@~+-]+)*(?::\d+)?|[\w.@-]+(?:\/[\w.@-]+)+\.\w{1,6}(?::\d+)?)(?=[\s),.;:`'"]|$)/g;
-const yesterday = () => new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-
-/** PR numbers, refs, tickets and file paths mentioned by a set of items, each listed once. */
-function artifactsOf(items) {
-    const found = new Map();
-    const add = (kind, v) => found.set(`${kind} ${v}`, { kind, v });
-    for (const i of items) {
-        const text = itemText(i);
-        for (const r of i.refs || []) add(/^#\d+$/.test(r) ? 'pr' : 'ref', r);
-        for (const n of text.match(/#\d{2,}/g) || []) add('pr', n);
-        if (i.ticket) add('ticket', i.ticket);
-        for (const t of text.match(TICKET_ID) || []) add('ticket', t);
-        for (const m of text.matchAll(PATH_LIKE)) add('path', m[1]);
-    }
-    return [...found.values()];
-}
-
-/**
- * The worktrees the roll sweep keeps. One line each by default; with `summary` (a sweep result, used by `handoff --all`,
- * where there can be hundreds) it is the sweep's totals and the kept ones as counts by reason.
- */
-function cleanupWorktreeLines(kept, summary) {
-    if (summary) {
-        return [`Worktree sweep (dry run): ${summary.removed.length} would be removed, ${summary.pruned.length} pruned, ${kept.length} kept. Kept, by reason (\`--verbose\` lists them):`, '',
-            ...keptCounts(kept).map((c) => `- ${c.label}: ${c.count}`), ...(summary.skipped?.length ? ['', `Sweep budget reached: skipped ${summary.skipped.join(', ')}.`] : []), ''];
-    }
-    return kept.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', ...kept.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : [];
-}
-
-/** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
-function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '', sweep = null, verbose = false } = {}) {
-    const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
-    const d = today();
-    const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
-    const open = items.filter((i) => isOpen(i) && (i.kind === 'wip' || i.kind === 'blocked'));
-    const doneRecently = items.filter((i) => i.state === 'done' && (i.closedBy?.date || i.date) >= since);
-    const approvals = approvalMap(readLedger());
-    const boxOf = (i) => classify(i, approvals.get(i.id));
-    // Every open question is listed: paste blocks apart, everything else (whatever box triage gives it) under Needs Jack.
-    const asks = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
-    const pasteBlocks = asks.filter((i) => boxOf(i) === BOX.PASTE);
-    const needsJack = asks.filter((i) => boxOf(i) !== BOX.PASTE);
-    const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
-    const touched = items.filter((i) => isOpen(i) || recent(i));
-    const arts = artifactsOf(touched);
-    const meta = (i) => [stream === null && i.stream && `stream: ${i.stream}`, i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
-    const line = (i, tag) => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
-    const one = (kind) => arts.filter((a) => a.kind === kind).map((a) => a.v);
-
-    return [
-        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
-        `# ${stream ?? 'All streams'} handoff, ${d}`, '',
-        '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
-        '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
-        '## 1. Tasks with status', '',
-        ...(open.length || doneRecently.length ? [
-            ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
-            ...doneRecently.map((i) => line(i, `done ${i.closedBy?.date || i.date}`)),
-        ] : ['_none_']), '',
-        '## 2. Learnings, including what was ruled out', '',
-        ...(learn ? [`- ${learn}`] : []),
-        ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : learn ? [] : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
-        '## 3. Artifacts', '',
-        ...(arts.length ? [
-            ...(one('pr').length ? [`- PRs: ${one('pr').join(', ')}`] : []),
-            ...(one('ticket').length ? [`- Tickets: ${one('ticket').join(', ')}`] : []),
-            ...(one('ref').length ? [`- Refs: ${one('ref').join(', ')}`] : []),
-            ...(one('path').length ? [`- Paths: ${one('path').join(', ')}`] : []),
-        ] : ['_none_']), '',
-        '## 4. Decisions awaiting', '',
-        ...(needsJack.length || pasteBlocks.length ? [
-            ...(needsJack.length ? ['**Needs Jack**', '', ...needsJack.map((i) => `${line(i, i.kind)}${isStale(BOX.NEEDS_JACK, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`), ''] : []),
-            ...(pasteBlocks.length ? ['**Paste blocks for Jack**', '', ...pasteBlocks.map((i) => `${line(i, 'paste')} — ${i.paste ? `block: ${i.paste}` : 'no block file'}${isStale(BOX.PASTE, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`)] : []),
-        ] : ['_none_']), '',
-        '## 5. Next concrete action', '',
-        next || '_Author: one concrete first step for the fresh session._', '',
-        '## Cleanup candidates', '',
-        '_Run `node scripts/branch-sweep.ts` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
-        ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
-        'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
-    ].join('\n');
-}
-
 /** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
-const oneLineArg = (name) => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
+const oneLineArg = (name: string): string => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
 
 function cmdHandoff() {
     const { items } = fold(readLedger());
@@ -1610,28 +1188,11 @@ function cmdHandoff() {
     if (contextFile) updateContextLink(contextFile, path);
 }
 
-/**
- * Points a project CONTEXT.md at the handoff just written, with one `Latest handoff: [[<note>]] (<date>)` line: an existing
- * line is replaced, otherwise it goes under the first heading (or at the top, after any YAML frontmatter). Running it again for the same note on the same day changes nothing.
- * A missing file is reported and fails the command; nothing else in the file is touched.
- */
-function updateContextLink(file, handoffPath) {
-    if (!existsSync(file)) { console.error(`--update-context: ${file} does not exist; the handoff was written but nothing was linked.`); process.exitCode = 1; return; }
-    const link = `Latest handoff: [[${basename(handoffPath, '.md')}]] (${today()})`;
-    const text = readFileSync(file, 'utf8');
-    const front = text.match(/^---\n[\s\S]*?\n---\n/)?.[0] || ''; // YAML frontmatter stays first
-    const body = text.slice(front.length);
-    const next = /^Latest handoff:.*$/m.test(text) ? text.replace(/^Latest handoff:.*$/m, () => link)
-        : /^# .*$/m.test(body) ? front + body.replace(/^# .*$/m, (h) => `${h}\n\n${link}`) : `${front}${link}\n\n${body}`;
-    if (next !== text) writeFileSync(file, next);
-    console.log(`${next === text ? 'already linked' : 'linked'} ${file} -> ${basename(handoffPath, '.md')}`);
-}
-
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
-function tryRun(cmdName, args) {
+const tryRun: TryRun = (cmdName, args) => {
     const r = spawnSync(cmdName, args, { encoding: 'utf8' });
     return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
-}
+};
 
 function cmdResume() {
     console.log('== Verify on resume ==');
@@ -1645,7 +1206,7 @@ function cmdResume() {
         if (r.missing) console.log('  gh: unavailable (not installed)');
         else if (!r.ok) console.log(`  gh: unavailable (${clip(r.err, 120) || 'gh exited non-zero'})`);
         else {
-            let prs = [];
+            let prs: { number: number; title: string; url: string }[] = [];
             try { prs = JSON.parse(r.out || '[]'); } catch { /* fall through to the count */ }
             console.log(`  ${prs.length} open`);
             prs.forEach((p) => console.log(`  #${p.number} ${p.title} ${p.url}`));
@@ -1708,103 +1269,12 @@ function refreshBoard() {
     if (!readFileSync(current, 'utf8').includes(`updated: ${today()}`)) render(true);
 }
 
-/** gh's view of a PR as { state, mergedAt }, or null when gh is missing, fails or answers with something unreadable. */
-function ghPrState(repo, number) {
-    const r = tryRun('gh', ['pr', 'view', String(number), '--repo', repo, '--json', 'state,mergedAt']);
-    if (!r.ok) return null;
-    try { const j = JSON.parse(r.out); return j && typeof j.state === 'string' ? j : null; } catch { return null; }
-}
-
-/** A ticket's status through the derived index; null when there is no tickets vault or no answer. */
-function ticketStatusOf(id) {
-    if (!(arg('tickets-vault') || VAULT_ROOT)) return null;
-    return ticketStatuses([id])?.get(id)?.status ?? null;
-}
-
-/**
- * Open blocked items that carry a gate, each with where the gate stands. Read-only: it reports, it never promotes
- * or closes an item. gh gates honour resume_gh (off means "unknown", not a gh call).
- */
-function gateReport() {
-    const lookups = { pr: (repo, n) => (RESUME_GH ? ghPrState(repo, n) : null), ticket: ticketStatusOf };
-    return groups().blocked.filter((i) => i.gate).map((i) => ({ item: i, ...gateStatus(i.gate, today(), lookups) }));
-}
-
-/**
- * The session-start view: at most 40 lines, however long the ledger is. Today's streams, then Needs Jack, paste blocks,
- * gated and in-flight items in that order. When it does not fit, each section gives up lines evenly and says how many it hid.
- * Reads only the ledger (no gh, no network), so it is safe to run from a hook.
- */
-const PRIME_MAX_LINES = 40;
-
-function primeLines() {
-    const g = groups();
-    const approvals = approvalMap(readLedger());
-    const asks = g.awaiting.filter((i) => classify(i, approvals.get(i.id)) !== BOX.PASTE);
-    const paste = [...g.paste, ...g.awaiting.filter((i) => classify(i, approvals.get(i.id)) === BOX.PASTE)];
-    const label = (i) => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${clip(i.paste, 120)}]` : ''}${i.gate ? ` [gate: ${clip(i.gate, 80)}]` : ''}${i.stream ? ` (${clip(i.stream, 40)})` : ''}`;
-    const sections = [
-        { title: 'Needs Jack', items: asks },
-        { title: 'Paste blocks for Jack', items: paste },
-        { title: 'Blocked / gated', items: g.blocked },
-        { title: 'In flight', items: g.inflight },
-    ].filter((sec) => sec.items.length).map((sec) => ({ ...sec, lines: sec.items.map(label) }));
-    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste);
-    const pending = pendingTransitions(defaultPendingSince());
-    const head = [clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
-        ...(pending.length ? [clip(`Pending tracker transitions (${pending.length}): ${pending.map((r) => r.key).join(', ')}. \`journal.mjs tickets --pending\``, 200)] : [])];
-    const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.mjs status\` and \`triage\` have the rest.`] : ['`journal.mjs status` has the rest.'];
-    if (!sections.length) return [...head, '(nothing open)', ...foot];
-    // Whatever the content, the cap holds: the budget below counts lines, and this guard backs it up.
-    const capped = (lines) => (lines.length <= PRIME_MAX_LINES ? lines : [...lines.slice(0, PRIME_MAX_LINES - foot.length), ...foot]);
-
-    // Round-robin the line budget so a long section cannot starve the others; a trimmed section ends in "+N more".
-    let budget = PRIME_MAX_LINES - head.length - foot.length - sections.length;
-    const shown = sections.map(() => 0);
-    for (let progressed = true; budget > 0 && progressed;) {
-        progressed = false;
-        sections.forEach((sec, k) => { if (budget > 0 && shown[k] < sec.lines.length) { shown[k]++; budget--; progressed = true; } });
-    }
-    const body = sections.flatMap((sec, k) => {
-        const hidden = sec.lines.length - shown[k];
-        const keep = hidden ? Math.max(0, shown[k] - 1) : shown[k];
-        return [`${sec.title} (${sec.lines.length})`, ...sec.lines.slice(0, keep).map((l) => `  ${l}`), ...(hidden ? [`  … +${hidden} more`] : [])];
-    });
-    return capped([...head, ...body, ...foot]);
-}
-
 function cmdPrime() {
     refreshBoard();
     primeLines().forEach((l) => console.log(l));
 }
 
 // ── pending tracker transitions ─────────────────────────────────────────────
-
-const PENDING_WINDOW_DAYS = 14;
-
-/** Distinct tracker keys (tracker_key_pattern) in the given texts. */
-const trackerKeys = (...texts) => [...new Set(texts.flatMap((t) => String(t || '').match(new RegExp(TRACKER_KEY_PATTERN, 'g')) || []))];
-
-/**
- * Done items finished on or after `since` that carry a tracker key (in the ticket field, the text, or the closing row)
- * whose transition nobody recorded. A transition is recorded by any ledger row with `transitioned: [KEY, ...]`
- * (`journal.mjs log "moved AH-1 to In Staging" --transitioned AH-1`), at any date. One row per key: [{ key, id, text, doneOn }].
- */
-function pendingTransitions(since) {
-    const entries = readLedger();
-    const recorded = new Set(entries.flatMap((e) => e.transitioned || []));
-    const rows = [];
-    for (const i of fold(entries).items) {
-        const doneOn = i.closedBy?.date || i.date;
-        if (i.state !== 'done' || doneOn < since) continue;
-        for (const key of trackerKeys(i.ticket, i.text, i.closedBy?.ticket, i.closedBy?.text)) {
-            if (!recorded.has(key) && !rows.some((r) => r.key === key)) rows.push({ key, id: i.id, text: i.text, doneOn });
-        }
-    }
-    return rows;
-}
-
-const defaultPendingSince = () => new Date(Date.now() - PENDING_WINDOW_DAYS * 864e5).toISOString().slice(0, 10);
 
 function cmdTickets() {
     if (!has('pending')) die('Usage: journal.mjs tickets --pending [--since YYYY-MM-DD] [--json]');
