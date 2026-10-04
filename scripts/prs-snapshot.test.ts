@@ -68,6 +68,19 @@ test('a new human review is reported by author and state', () => {
     assert.match(r.out, /alice CHANGES_REQUESTED/);
 });
 
+test('diffing against an older snapshot without reviews or threads does not throw and reports what is new', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prs-snap-test-'));
+    const { reviews: _r, threads: _t, ...legacy } = pr();
+    const newSnap = {
+        takenAt: 't2',
+        prs: [pr({ reviews: [{ author: 'alice', state: 'APPROVED', submittedAt: 'a' }], threads: [{ id: 'T1', isResolved: false, isOutdated: false, author: 'bob' }] })],
+    };
+    const r = run('diff', fixture(dir, 'old.json', { takenAt: 't', prs: [legacy] }), fixture(dir, 'new.json', newSnap));
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /alice APPROVED/);
+    assert.match(r.out, /new thread opened by bob/);
+});
+
 test('a bot review is summarised in the count line, never itemised', () => {
     const dir = mkdtempSync(join(tmpdir(), 'prs-snap-test-'));
     const oldSnap = { takenAt: 't', prs: [pr()] };
