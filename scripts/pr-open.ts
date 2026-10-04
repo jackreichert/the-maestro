@@ -3,7 +3,7 @@
  * PR OPEN: the only way agents and the orchestrator open a PR. Runs the pr-size gate, then
  * `gh pr create --draft --assignee @me`, so the size budget is enforced, not just described.
  *
- *   node scripts/pr-open.mjs --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]
+ *   node scripts/pr-open.ts --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]
  *
  * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
  * never calls gh. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
@@ -20,7 +20,7 @@ const PASSTHROUGH = { '--title': '--title', '--body-file': '--body-file', '--hea
 
 function usage(msg) {
   if (msg) console.error(`pr-open: ${msg}`);
-  console.error('usage: node scripts/pr-open.mjs --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]');
+  console.error('usage: node scripts/pr-open.ts --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]');
   process.exit(2);
 }
 
