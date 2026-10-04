@@ -1,4 +1,4 @@
-import { clip } from './format.mjs';
+import { clip } from './format.ts';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
