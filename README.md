@@ -210,7 +210,7 @@ A fresh session should not hunt for facts nobody wrote down. `journal.ts handoff
 
 ## Scripts and commands
 
-Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node scripts/<name>.ts` for the scripts already converted to TypeScript (the table names each file). Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
+Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips the types itself; the table names each file). Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
 
 | Script | Purpose |
 |---|---|
@@ -544,7 +544,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | A stream is not archived half-finished | `archive` refuses while it has open items, an unfinished retro or unfilled promotions |
 | PRs are drafts, assigned to you and within budget | `pr-open.ts` runs the `pr-size.ts` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
 | Branch deletion cannot take someone else's work or a moved branch | `branch-sweep.ts --apply` re-scans first, never uses `--force`, never deletes a local branch, checks authorship, and pushes with a lease on the listed tip |
-| The PR watcher cannot be set to flood GitHub | `cadence.mjs` raises any `--interval` or `watch_min_interval` below 300s to 300s |
+| The PR watcher cannot be set to flood GitHub | `cadence.ts` raises any `--interval` or `watch_min_interval` below 300s to 300s |
 | A notification cannot inject commands | `notify_command` runs as an argv array with no shell; the summary is one line of at most 150 characters |
 | Message text never leaves the inbox type | `inbox` keeps only a hash per line and reports a count; a test covers it |
 | Transcript content never reaches the metrics | `token-metrics.ts` copies an allowlist of numeric and metadata fields and drops the rest; a planted-sentinel test checks it |
@@ -583,7 +583,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 npm test
 ```
 
-Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.ts` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.ts`. Shared logic that `journal.ts` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
 
 ## Development
 
@@ -592,7 +592,7 @@ Requires Node 24 or newer, which runs TypeScript directly by stripping types, so
 ```bash
 npm install        # typescript and @types/node, dev only
 npm run typecheck  # tsc --noEmit, strict
-npm test           # node --test over scripts/*.test.mjs and scripts/**/*.test.ts
+npm test           # node --test over scripts/**/*.test.ts
 ```
 
 The scripts themselves have no runtime dependencies.
