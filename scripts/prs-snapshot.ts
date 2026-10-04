@@ -14,7 +14,7 @@
  * (moved out of the vault on 2026-09-26 so the ledger stays out of Obsidian
  * search; falls back to $VAULT_ROOT if LEDGER_ROOT is unset).
  * This tracks the org-wide PR board, not a single repo's ledger, so unlike
- * journal.mjs there is no --project flag — the container's own project name
+ * journal.ts there is no --project flag — the container's own project name
  * (CONTAINER_PROJECT in local-config.ts) is the only one that makes sense here.
  *
  *   prs-snapshot.ts [--diff] [--dry-run] --vault <path>
