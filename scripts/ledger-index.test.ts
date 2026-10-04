@@ -281,6 +281,17 @@ function archiveAlpha() {
     append(row({ id: 'ar01', kind: 'archive', stream: 'Alpha', ids: ['aaaa'], retro: retroFile(), text: 'archived stream Alpha (1 items)' }));
 }
 
+test('archive and unarchive rows for the reserved none stream are skipped by the index build', () => {
+    append(row({ id: 'ar0n', kind: 'archive', stream: 'none', ids: ['bbbb'], text: 'archived stream none (1 items)' }),
+        row({ id: 'un0n', kind: 'unarchive', stream: 'None', ids: ['bbbb'], text: 'unarchived stream none' }),
+        row({ id: 'ar1n', kind: 'archive', stream: 'none', ids: ['bbbb'], text: 'archived stream none (1 items)' }));
+    const r = run('index');
+    assert.equal(r.code, 0, r.err);
+    assert.equal(q("SELECT count(*) AS n FROM docs WHERE source = 'archive'")[0].n, 0);
+    assert.equal(q("SELECT archived FROM items WHERE id = 'bbbb'")[0].archived, 0);
+    assert.equal(q("SELECT count(*) AS n FROM rows WHERE kind IN ('archive', 'unarchive')")[0].n, 3);
+});
+
 test('archived items are hidden by default and shown with --include-archived', () => {
     archiveAlpha();
     assert.deepEqual(refs('widget', '--source', 'ledger'), []);

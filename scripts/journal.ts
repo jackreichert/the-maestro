@@ -764,8 +764,10 @@ function cmdUsage() {
     const bump = (m: Map<string, number>, k: string): void => { m.set(k, (m.get(k) || 0) + 1); };
     for (const i of pool) {
         bump(models, i.model || 'unrecorded');
-        const marks: unknown[] = Array.isArray(i.used) ? i.used : [i.used || 'unrecorded'];
-        marks.forEach((x) => bump(used, String(x)));
+        // Marks are coerced to strings on read, so a hand-edited numeric mark (1) and its string form ("1") are one row on
+        // purpose. journal only writes string marks; stored rows are never rewritten.
+        const marks = (Array.isArray(i.used) ? i.used : [i.used || 'unrecorded']).map(String);
+        marks.forEach((x) => bump(used, x));
     }
     const sorted = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
     if (asJson) {
