@@ -1,4 +1,4 @@
-// Run: node --test scripts/pr-open.test.mjs
+// Run: node --test scripts/pr-open.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodS
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-const SCRIPT = new URL('./pr-open.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
 
 const git = (repo, ...args) => {
     const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });

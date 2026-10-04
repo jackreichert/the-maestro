@@ -72,16 +72,16 @@ test('CLI exits 1 when no config holds any value', () => {
 
 test('the shipped block tells workers to run the PR size gate before opening a PR', () => {
     const block = extractBlock(readFileSync(BRIEF, 'utf8'));
-    assert.match(block, /Open every PR with `node <maestro scripts dir>\/pr-open\.mjs --repo \. --base <base> --title "\.\.\." --body-file BODY\.md`, never a bare `gh pr create`/);
+    assert.match(block, /Open every PR with `node <maestro scripts dir>\/pr-open\.ts --repo \. --base <base> --title "\.\.\." --body-file BODY\.md`, never a bare `gh pr create`/);
     assert.match(block, /If it refuses, stop and report a split plan instead of opening\./);
     assert.ok(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems.length === 0, 'the new line adds no unfilled slot');
 });
 
-test('the filled block names an absolute, existing path to pr-open.mjs, and no <skill> placeholder', () => {
+test('the filled block names an absolute, existing path to pr-open.ts, and no <skill> placeholder', () => {
     const r = run(VALUES);
     assert.equal(r.status, 0, r.stderr);
-    const m = r.stdout.match(/`node (\/[^ `]+\/pr-open\.mjs) --repo/);
-    assert.ok(m, 'an absolute path precedes pr-open.mjs');
+    const m = r.stdout.match(/`node (\/[^ `]+\/pr-open\.ts) --repo/);
+    assert.ok(m, 'an absolute path precedes pr-open.ts');
     assert.ok(existsSync(m[1]), m[1]);
     assert.ok(isAbsolute(m[1]));
     assert.doesNotMatch(r.stdout, /<skill>|<maestro scripts dir>/);
@@ -97,11 +97,11 @@ test('invoked through a symlinked scripts dir, the filled block keeps the symlin
         encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MAESTRO_LOCAL_CONFIG: config },
     });
     assert.equal(r.status, 0, r.stderr);
-    assert.ok(r.stdout.includes(`${link}/pr-open.mjs`), r.stdout);
-    assert.ok(!r.stdout.includes(`${dirname(SCRIPT)}/pr-open.mjs`));
+    assert.ok(r.stdout.includes(`${link}/pr-open.ts`), r.stdout);
+    assert.ok(!r.stdout.includes(`${dirname(SCRIPT)}/pr-open.ts`));
 });
 
-test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.mjs', async () => {
+test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.ts', async () => {
     const { scriptsDir } = await import('./brief-block.mjs');
     const real = dirname(SCRIPT);
     assert.equal(scriptsDir(join(tmpdir(), 'elsewhere', 'x.mjs'), real), real);

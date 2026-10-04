@@ -14,10 +14,10 @@ import { fileURLToPath } from 'node:url';
 import { userPath, overlayPath, AGENT_OWNED_REPOS, SCRIPTS_SHELF_DIR } from './local-config.ts';
 
 /** The scripts dir as invoked (absolute, symlinks kept), so a symlinked install stays valid when the
- *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.mjs. */
+ *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.ts. */
 export function scriptsDir(argv1 = process.argv[1], realDir = dirname(fileURLToPath(import.meta.url))) {
   const invoked = argv1 ? dirname(resolve(argv1)) : '';
-  return invoked && existsSync(resolve(invoked, 'pr-open.mjs')) ? invoked : resolve(realDir);
+  return invoked && existsSync(resolve(invoked, 'pr-open.ts')) ? invoked : resolve(realDir);
 }
 export const SCRIPTS_DIR = scriptsDir();
 export const SLOTS = ['<user git emails>', '<tracker key example>', '<maestro scripts dir>'];
