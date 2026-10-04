@@ -210,7 +210,7 @@ A fresh session should not hunt for facts nobody wrote down. `journal.mjs handof
 
 ## Scripts and commands
 
-Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
+Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node scripts/<name>.ts` for the scripts already converted to TypeScript (the table names each file). Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
 
 | Script | Purpose |
 |---|---|
