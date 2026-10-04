@@ -704,7 +704,7 @@ export { keptCounts };
  * Printable lines for a sweepWorktrees result: what went, what stayed, then a count. Kept worktrees print as counts by
  * reason (a big tree keeps hundreds); `verbose` lists each one with its full reason instead.
  */
-export function worktreeSweepLines(r: WorktreeSweep, dryRun = false, { verbose = false }: { verbose?: boolean } = {}): string[] {
+export function worktreeSweepLines(r: Omit<WorktreeSweep, 'skipped'> & { skipped?: string[] }, dryRun = false, { verbose = false }: { verbose?: boolean } = {}): string[] {
   const verb = dryRun ? 'would remove' : 'removed';
   const kept = verbose
     ? r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`)
