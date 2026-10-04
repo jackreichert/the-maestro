@@ -50,13 +50,13 @@ What to include after the greeting, in this order:
    [reference/prs.md](../reference/prs.md); this is the one-line digest of it, e.g.:
    `PRs: 3 with new comments · 2 drafts ready for you · [repo#438](https://github.com/org/repo/pull/438) has no reviewer · 1 approved, ready to merge`
    As part of this step, take the morning baseline with
-   `node scripts/prs-snapshot.mjs --vault "$LEDGER_ROOT"` — see
+   `node scripts/prs-snapshot.ts --vault "$LEDGER_ROOT"` — see
    [reference/prs.md#mid-day-updates](../reference/prs.md#mid-day-updates). It writes the snapshot
    silently; nothing from it belongs in the greeting itself.
    Then register the PR watch with the event loop, so new reviews and comments surface within
    minutes instead of waiting for the next board (the user's standing request, 2026-09-27):
-   `node scripts/event-loop.mjs add --id prs --type pr-watch --target open-prs:baseline --report "<report>"`,
-   unless `event-loop.mjs list` already shows a `pr-watch` or `pr-review` watch (the same type under its old name; `add` refuses a second). The watch lives 72 hours; re-register it when it expires. The loop's `run`
+   `node scripts/event-loop.ts add --id prs --type pr-watch --target open-prs:baseline --report "<report>"`,
+   unless `event-loop.ts list` already shows a `pr-watch` or `pr-review` watch (the same type under its old name; `add` refuses a second). The watch lives 72 hours; re-register it when it expires. The loop's `run`
    (see [playbooks/event-loop.md](../playbooks/event-loop.md)) costs no tokens between changes and exits when
    something needs attention. Report the change, handle it, then relaunch `run` if it exited.
    The watch sets its own pace (slower when quiet, skipped

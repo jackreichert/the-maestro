@@ -1,18 +1,22 @@
-// Run: node --test scripts/event-loop.test.mjs
+// Run: node --test scripts/event-loop.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
+import { EXIT, formatDigest, pace, tick } from './event-loop.ts';
+import type { TickDeps } from './event-loop.ts';
+import type { TypeRegistry } from './event-types/index.ts';
+import type { Interval, Stop } from './lib/cadence.ts';
+import type { CheckContext, EventType, Watch } from './lib/types.ts';
 import * as inbox from './event-types/inbox.ts';
 import * as prChecks from './event-types/pr-checks.ts';
 import * as reminder from './event-types/reminder.ts';
 import { notifyChoice } from './lib/notify.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
 
-const SCRIPT = new URL('./event-loop.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
 const NOON = Date.parse('2026-10-01T12:00:00Z');
 const NIGHT = Date.parse('2026-10-01T22:00:00Z');
@@ -21,17 +25,20 @@ const OPEN = { quietHours: '20:00-07:00', quietMode: 'stop', tz: 'UTC' };
 const ALWAYS = { quietHours: 'off', tz: 'UTC' };
 
 // A counter type: check reads the target's number from ctx; an event fires when it grows; done at 3.
-const counter = (values) => ({
+const counter = (values: Record<string, number>): EventType<{ n: number; done: boolean }> => ({
   check: (target) => ({ n: values[target], done: values[target] >= 3 }),
   diff: (prev, next) => (prev && next.n > prev.n ? [{ summary: `n is ${next.n}` }] : []),
 });
-const base = (dir, types, extra = {}) => ({ dir, types, config: ALWAYS, now: NOON, ...extra });
+const secondsOf = (r: Interval | Stop): number | undefined => ('seconds' in r ? r.seconds : undefined);
+const stopOf = (r: Interval | Stop): true | undefined => ('stop' in r ? r.stop : undefined);
+const prChecksType: EventType = prChecks;
+const base = (dir: string, types: TypeRegistry, extra: Partial<TickDeps> = {}): TickDeps => ({ dir, types, config: ALWAYS, now: NOON, ...extra });
 
 test('a first check records state and emits nothing; a change emits one event', () => {
   const dir = tempDir();
   const values = { a: 1 };
   addWatch(dir, { id: 'w1', type: 'counter', target: 'a', report: 'say the number' }, NOON);
-  const types = { counter: counter(values) };
+  const types: TypeRegistry = { counter: counter(values) };
   assert.deepEqual(tick(base(dir, types)).events, []);
   values.a = 2;
   const { events } = tick(base(dir, types, { now: NOON + 5 * MIN }));
@@ -45,7 +52,7 @@ test('a first check records state and emits nothing; a change emits one event', 
 test('an unchanged state stays silent however many ticks pass', () => {
   const dir = tempDir();
   addWatch(dir, { id: 'w1', type: 'counter', target: 'a' }, NOON);
-  const types = { counter: counter({ a: 1 }) };
+  const types: TypeRegistry = { counter: counter({ a: 1 }) };
   for (let i = 0; i < 4; i++) assert.deepEqual(tick(base(dir, types, { now: NOON + i * 5 * MIN })).events, []);
   assert.deepEqual(readDigest(dir), []);
 });
@@ -54,7 +61,7 @@ test('a watch whose type says done retires after its final event', () => {
   const dir = tempDir();
   const values = { a: 2 };
   addWatch(dir, { id: 'w1', type: 'counter', target: 'a' }, NOON);
-  const types = { counter: counter(values) };
+  const types: TypeRegistry = { counter: counter(values) };
   tick(base(dir, types));
   values.a = 3;
   const out = tick(base(dir, types, { now: NOON + 5 * MIN }));
@@ -67,7 +74,7 @@ test('a watch whose type says done retires after its final event', () => {
 test('an expired watch retires with one actionable event and is not checked', () => {
   const dir = tempDir();
   addWatch(dir, { id: 'w1', type: 'counter', target: 'a', ttlMs: MIN }, NOON);
-  const types = { counter: { check: () => { throw new Error('must not run'); }, diff: () => [] } };
+  const types: TypeRegistry = { counter: { check: () => { throw new Error('must not run'); }, diff: () => [] } };
   const out = tick(base(dir, types, { now: NOON + 2 * MIN }));
   assert.deepEqual(out.retired, [{ id: 'w1', reason: 'expired' }]);
   assert.match(out.events[0].summary, /expired/);
@@ -79,7 +86,7 @@ test('a failing check speaks once after three failures in a row, then recovers s
   const dir = tempDir();
   addWatch(dir, { id: 'w1', type: 'bad', target: 'a' }, NOON);
   let fail = true;
-  const types = { bad: { check: () => { if (fail) throw new Error('boom\nsecond line'); return { n: 1 }; }, diff: () => [] } };
+  const types: TypeRegistry = { bad: { check: () => { if (fail) throw new Error('boom\nsecond line'); return { n: 1 }; }, diff: () => [] } };
   const seen = [1, 2, 3, 4].map((i) => tick(base(dir, types, { now: NOON + i * 5 * MIN })).events.length);
   assert.deepEqual(seen, [0, 0, 1, 0]);
   assert.match(readDigest(dir)[0].summary, /keeps failing: boom$/);
@@ -97,8 +104,8 @@ test('an unknown type counts as a failing check, not a crash', () => {
 
 test('informational events are digested but not notified', () => {
   const dir = tempDir();
-  const sent = [];
-  const types = { t: { check: () => ({ n: 1 }), diff: () => [{ summary: 'fyi', actionable: false }, { summary: 'act' }] } };
+  const sent: [string, string[]][] = [];
+  const types: TypeRegistry = { t: { check: () => ({ n: 1 }), diff: () => [{ summary: 'fyi', actionable: false }, { summary: 'act' }] } };
   addWatch(dir, { id: 'w1', type: 't', target: 'a', notify: true }, NOON);
   tick(base(dir, types, { notifyCommand: ['send', '--to-self'], notifyRun: (c, a) => { sent.push([c, a]); return { status: 0 }; } }));
   assert.deepEqual(sent, [['send', ['--to-self', 'w1: act']]]);
@@ -107,8 +114,8 @@ test('informational events are digested but not notified', () => {
 
 test('notify is opt-in per watch: only a watch added with notify reaches notify_command', () => {
   const dir = tempDir();
-  const sent = [];
-  const types = { t: { check: () => ({}), diff: () => [{ summary: 'act' }] } };
+  const sent: (string | undefined)[] = [];
+  const types: TypeRegistry = { t: { check: () => ({}), diff: () => [{ summary: 'act' }] } };
   addWatch(dir, { id: 'quiet', type: 't', target: 'a' }, NOON);
   addWatch(dir, { id: 'loud', type: 't', target: 'a', notify: true }, NOON);
   const out = tick(base(dir, types, { notifyCommand: ['send'], notifyRun: (c, a) => { sent.push(a.at(-1)); return { status: 0 }; } }));
@@ -119,8 +126,8 @@ test('notify is opt-in per watch: only a watch added with notify reaches notify_
 
 test('the inbox type never notifies, even if its watch record says notify', () => {
   const dir = tempDir();
-  const sent = [];
-  const types = { inbox: { ...inbox, check: () => ({ ids: ['a'] }), diff: () => [{ summary: '1 new message(s) from user' }] } };
+  const sent: string[][] = [];
+  const types: TypeRegistry = { inbox: { ...inbox, check: () => ({ ids: ['a'] }), diff: () => [{ summary: '1 new message(s) from user' }] } };
   addWatch(dir, { id: 'in', type: 'inbox', target: 'inbox', notify: true }, NOON);
   tick(base(dir, types, { notifyCommand: ['send'], notifyRun: (c, a) => { sent.push(a); return { status: 0 }; } }));
   assert.deepEqual(sent, []);
@@ -130,11 +137,11 @@ test('the inbox type never notifies, even if its watch record says notify', () =
 test('a reminder notifies by default and not with --no-notify; the choice is stored at add', () => {
   assert.equal(notifyChoice(reminder, {}), true);
   assert.equal(notifyChoice(reminder, { noNotify: true }), false);
-  assert.equal(notifyChoice(prChecks, {}), false);
-  assert.equal(notifyChoice(prChecks, { notify: true }), true);
+  assert.equal(notifyChoice(prChecksType, {}), false);
+  assert.equal(notifyChoice(prChecksType, { notify: true }), true);
   assert.equal(notifyChoice(inbox, {}), false);
   assert.throws(() => notifyChoice(inbox, { notify: true }), /never notifies/);
-  assert.throws(() => notifyChoice(prChecks, { notify: true, noNotify: true }), /cannot be used together/);
+  assert.throws(() => notifyChoice(prChecksType, { notify: true, noNotify: true }), /cannot be used together/);
   assert.equal(notifyChoice(undefined, {}), false, 'an unknown type is opt-in');
 });
 
@@ -147,21 +154,21 @@ test('cli: add stores notify from the flags and the type default', () => {
   assert.equal(cli(dir, 'add', '--id', 'rem2', '--type', 'reminder', '--target', future, '--no-notify').status, 0);
   assert.equal(cli(dir, 'add', '--id', 'in', '--type', 'inbox', '--target', 'inbox', '--notify').status, EXIT.usage);
   assert.equal(cli(dir, 'add', '--id', 'both', '--type', 'pr-checks', '--target', 'o/r#3', '--notify', '--no-notify').status, EXIT.usage);
-  const by = Object.fromEntries(JSON.parse(cli(dir, 'list', '--json').stdout).map((w) => [w.id, w.notify]));
+  const by = Object.fromEntries(JSON.parse(cli(dir, 'list', '--json').stdout).map((w: Watch) => [w.id, w.notify]));
   assert.deepEqual(by, { plain: false, loud: true, rem: true, rem2: false });
 });
 
 test('no notify command means no notification and no error', () => {
   const dir = tempDir();
-  const types = { t: { check: () => ({}), diff: () => [{ summary: 'act' }] } };
+  const types: TypeRegistry = { t: { check: () => ({}), diff: () => [{ summary: 'act' }] } };
   addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
   assert.equal(tick(base(dir, types, { notifyRun: () => { throw new Error('must not run'); } })).events.length, 1);
 });
 
 test('quiet hours skip ordinary watches and still check notify_overnight ones', () => {
   const dir = tempDir();
-  const checked = [];
-  const types = { t: { check: (target) => { checked.push(target); return {}; }, diff: () => [] } };
+  const checked: string[] = [];
+  const types: TypeRegistry = { t: { check: (target) => { checked.push(target); return {}; }, diff: () => [] } };
   addWatch(dir, { id: 'day', type: 't', target: 'day' }, NIGHT);
   addWatch(dir, { id: 'night', type: 't', target: 'night', notify_overnight: true }, NIGHT);
   const out = tick(base(dir, types, { config: OPEN, now: NIGHT + MIN }));
@@ -171,26 +178,26 @@ test('quiet hours skip ordinary watches and still check notify_overnight ones', 
 
 test('quiet hours do not notify for an ordinary watch that expires overnight, but do for notify_overnight', () => {
   const dir = tempDir();
-  const sent = [];
-  const notifyRun = (c, a) => { sent.push(a.at(-1)); return { status: 0 }; };
+  const sent: (string | undefined)[] = [];
+  const notifyRun = (_c: string, a: string[]) => { sent.push(a.at(-1)); return { status: 0 }; };
   addWatch(dir, { id: 'day', type: 't', target: 'x', ttlMs: MIN, notify: true }, NIGHT - 10 * MIN);
   addWatch(dir, { id: 'night', type: 't', target: 'y', ttlMs: MIN, notify_overnight: true, notify: true }, NIGHT - 10 * MIN);
   tick(base(dir, { t: { check: () => ({}), diff: () => [] } }, { config: OPEN, now: NIGHT, notifyCommand: ['n'], notifyRun }));
   assert.equal(sent.length, 1);
-  assert.match(sent[0], /^night:/);
+  assert.match(String(sent[0]), /^night:/);
 });
 
-const LOCAL = (extra = {}) => ({ check: () => ({}), diff: () => [], interval: 60, network: false, ...extra });
-const NET = (extra = {}) => ({ check: () => ({}), diff: () => [], interval: 180, network: true, ...extra });
-const spy = (type, log, name) => ({ ...type, check: () => { log.push(name); return {}; } });
+const LOCAL = (extra: Partial<EventType> = {}): EventType => ({ check: () => ({}), diff: () => [], interval: 60, network: false, ...extra });
+const NET = (extra: Partial<EventType> = {}): EventType => ({ check: () => ({}), diff: () => [], interval: 180, network: true, ...extra });
+const spy = (type: EventType, log: string[], name: string): EventType => ({ ...type, check: () => { log.push(name); return {}; } });
 
 test('only due watches are checked: each type runs on its own interval', () => {
   const dir = tempDir();
-  const log = [];
-  const types = { fast: spy(LOCAL(), log, 'fast'), slow: spy(NET(), log, 'slow') };
+  const log: string[] = [];
+  const types: TypeRegistry = { fast: spy(LOCAL(), log, 'fast'), slow: spy(NET(), log, 'slow') };
   addWatch(dir, { id: 'f', type: 'fast', target: 'x' }, NOON);
   addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
-  const at = (sec) => tick(base(dir, types, { now: NOON + sec * 1000 }));
+  const at = (sec: number) => tick(base(dir, types, { now: NOON + sec * 1000 }));
   at(0);
   assert.deepEqual(log.splice(0), ['fast', 'slow'], 'a new watch is due at once');
   assert.deepEqual(at(30).waiting, ['f', 's']);
@@ -203,25 +210,25 @@ test('only due watches are checked: each type runs on its own interval', () => {
 
 test('pace sleeps until the earliest watch is due', () => {
   const dir = tempDir();
-  const types = { fast: LOCAL(), slow: NET() };
+  const types: TypeRegistry = { fast: LOCAL(), slow: NET() };
   addWatch(dir, { id: 'f', type: 'fast', target: 'x' }, NOON);
   addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
   tick(base(dir, types));
-  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON }).seconds, 60);
-  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON + 45 * 1000 }).seconds, 15);
-  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON + 200 * 1000 }).seconds, 1, 'an overdue watch means no wait');
+  assert.equal(secondsOf(pace({ dir, types, config: ALWAYS, now: NOON })), 60);
+  assert.equal(secondsOf(pace({ dir, types, config: ALWAYS, now: NOON + 45 * 1000 })), 15);
+  assert.equal(secondsOf(pace({ dir, types, config: ALWAYS, now: NOON + 200 * 1000 })), 1, 'an overdue watch means no wait');
 });
 
 test('a watch added before the first tick is due immediately, so pace does not wait for it', () => {
   const dir = tempDir();
   addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
-  assert.equal(pace({ dir, types: { slow: NET() }, config: ALWAYS, now: NOON }).seconds, 1);
+  assert.equal(secondsOf(pace({ dir, types: { slow: NET() }, config: ALWAYS, now: NOON })), 1);
 });
 
 test('a per-watch interval overrides the type default', () => {
   const dir = tempDir();
-  const log = [];
-  const types = { slow: spy(NET(), log, 'slow') };
+  const log: string[] = [];
+  const types: TypeRegistry = { slow: spy(NET(), log, 'slow') };
   addWatch(dir, { id: 's', type: 'slow', target: 'x', interval: 400 }, NOON);
   tick(base(dir, types));
   assert.deepEqual(tick(base(dir, types, { now: NOON + 300 * 1000 })).waiting, ['s']);
@@ -231,8 +238,8 @@ test('a per-watch interval overrides the type default', () => {
 
 test('a loop-wide pin applies to watches without their own interval, and the floor still holds', () => {
   const dir = tempDir();
-  const log = [];
-  const types = { slow: spy(NET(), log, 'slow') };
+  const log: string[] = [];
+  const types: TypeRegistry = { slow: spy(NET(), log, 'slow') };
   addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
   const config = { ...ALWAYS, pinned: 10 };
   tick(base(dir, types, { config }));
@@ -244,8 +251,8 @@ test('a loop-wide pin applies to watches without their own interval, and the flo
 
 test('the network floor holds against --interval, config and a type that declares less', () => {
   const dir = tempDir();
-  const log = [];
-  const types = { greedy: spy(NET({ interval: 5 }), log, 'greedy'), silent: spy({ check: () => ({}), diff: () => [] }, log, 'silent') };
+  const log: string[] = [];
+  const types: TypeRegistry = { greedy: spy(NET({ interval: 5 }), log, 'greedy'), silent: spy({ check: () => ({}), diff: () => [] }, log, 'silent') };
   addWatch(dir, { id: 'a', type: 'greedy', target: 'x' }, NOON);
   addWatch(dir, { id: 'b', type: 'greedy', target: 'x', interval: 1 }, NOON);
   addWatch(dir, { id: 'c', type: 'silent', target: 'x', interval: 1 }, NOON);
@@ -259,8 +266,8 @@ test('the network floor holds against --interval, config and a type that declare
 
 test('a local type may go down to 30s but no lower, and a raised floor setting is honoured', () => {
   const dir = tempDir();
-  const log = [];
-  const types = { local: spy(LOCAL({ interval: 1 }), log, 'local') };
+  const log: string[] = [];
+  const types: TypeRegistry = { local: spy(LOCAL({ interval: 1 }), log, 'local') };
   addWatch(dir, { id: 'l', type: 'local', target: 'x' }, NOON);
   tick(base(dir, types));
   assert.deepEqual(tick(base(dir, types, { now: NOON + 29 * 1000 })).waiting, ['l']);
@@ -275,7 +282,7 @@ test('a local type may go down to 30s but no lower, and a raised floor setting i
 test('a failing check waits for its interval before the retry', () => {
   const dir = tempDir();
   let calls = 0;
-  const types = { bad: NET({ check: () => { calls += 1; throw new Error('boom'); } }) };
+  const types: TypeRegistry = { bad: NET({ check: () => { calls += 1; throw new Error('boom'); } }) };
   addWatch(dir, { id: 'w', type: 'bad', target: 'x' }, NOON);
   tick(base(dir, types));
   tick(base(dir, types, { now: NOON + 10 * 1000 }));
@@ -286,46 +293,46 @@ test('a failing check waits for its interval before the retry', () => {
 
 test('quiet hours still hold: nothing is due-checked overnight except overnight watches', () => {
   const dir = tempDir();
-  const log = [];
-  const types = { t: spy(LOCAL(), log, 't') };
+  const log: string[] = [];
+  const types: TypeRegistry = { t: spy(LOCAL(), log, 't') };
   addWatch(dir, { id: 'day', type: 't', target: 'a' }, NIGHT);
   addWatch(dir, { id: 'night', type: 't', target: 'b', notify_overnight: true }, NIGHT);
   tick(base(dir, types, { config: OPEN, now: NIGHT }));
   assert.equal(log.length, 1);
-  assert.equal(pace({ dir, types, config: OPEN, now: NIGHT }).seconds, 60);
+  assert.equal(secondsOf(pace({ dir, types, config: OPEN, now: NIGHT })), 60);
 });
 
 test('quiet hours with no overnight watch stop the loop; no watch at all falls back to the adaptive pace', () => {
   const dir = tempDir();
-  assert.equal(pace({ dir, config: OPEN, now: NIGHT }).stop, true);
+  assert.equal(stopOf(pace({ dir, config: OPEN, now: NIGHT })), true);
   addWatch(dir, { id: 'day', type: 't', target: 'a' }, NIGHT);
-  assert.equal(pace({ dir, types: { t: LOCAL() }, config: OPEN, now: NIGHT }).stop, true);
+  assert.equal(stopOf(pace({ dir, types: { t: LOCAL() }, config: OPEN, now: NIGHT })), true);
 });
 
 test('events feed the back-off: a burst keeps the watch at its pace, a quiet loop stretches it', () => {
   const dir = tempDir();
-  const types = { t: NET({ diff: () => [{ summary: 'a' }, { summary: 'b' }, { summary: 'c' }] }) };
+  const types: TypeRegistry = { t: NET({ diff: () => [{ summary: 'a' }, { summary: 'b' }, { summary: 'c' }] }) };
   addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
   tick(base(dir, types));
-  assert.equal(pace({ dir, types, config: ALWAYS, now: NOON }).seconds, 180);
+  assert.equal(secondsOf(pace({ dir, types, config: ALWAYS, now: NOON })), 180);
   const quiet = tempDir();
   const once = { t: NET({ diff: (prev) => (prev ? [] : [{ summary: 'first' }]) }) };
   addWatch(quiet, { id: 'w1', type: 't', target: 'a' }, NOON);
   tick(base(quiet, once, { now: NOON }));
   const later = NOON + 3 * 3600 * 1000;
   tick(base(quiet, once, { now: later }));
-  assert.equal(pace({ dir: quiet, types: once, config: ALWAYS, now: later }).seconds, 540, '3 hours since the last event stretches 180s by 3x');
+  assert.equal(secondsOf(pace({ dir: quiet, types: once, config: ALWAYS, now: later })), 540, '3 hours since the last event stretches 180s by 3x');
 });
 
 test('formatDigest lists actionable events first and carries the report hint only on those', () => {
   const text = formatDigest([
-    { watch: 'a', type: 't', summary: 'fyi', actionable: false, report: '' },
-    { watch: 'b', type: 't', summary: 'go', actionable: true, report: 'name the PR' },
+    { watch: 'a', type: 't', at: '2026-10-01T12:00:00Z', summary: 'fyi', actionable: false, report: '' },
+    { watch: 'b', type: 't', at: '2026-10-01T12:00:00Z', summary: 'go', actionable: true, report: 'name the PR' },
   ]);
   assert.equal(text, 'ACTION b (t): go | report: name the PR\ninfo a (t): fyi');
 });
 
-const cli = (dir, ...args) => spawnSync(process.execPath, [SCRIPT, ...args], {
+const cli = (dir: string, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args], {
   encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' },
 });
 
@@ -363,7 +370,7 @@ test('cli: run --once with an unknown-type watch does not crash and reports noth
 
 test('cli: digest consumes what it prints; --peek does not', () => {
   const dir = tempDir();
-  const types = { t: { check: () => ({}), diff: () => [{ summary: 'act' }] } };
+  const types: TypeRegistry = { t: { check: () => ({}), diff: () => [{ summary: 'act' }] } };
   addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
   tick(base(dir, types));
   assert.match(cli(dir, 'digest', '--peek').stdout, /ACTION w1/);
@@ -393,7 +400,7 @@ test('cli: info-only events survive a quiet run and show in the next actionable 
 
 test('a crash while saving state leaves a finished watch live, so its final event is not lost', () => {
   const dir = tempDir();
-  const types = { t: { check: () => ({ done: true }), diff: () => [{ summary: 'final' }] } };
+  const types: TypeRegistry = { t: { check: () => ({ done: true }), diff: () => [{ summary: 'final' }] } };
   addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
   // A directory where state.json goes makes the rename in saveState throw, after the digest append.
   mkdirSync(join(dir, 'state.json'));
@@ -404,8 +411,8 @@ test('a crash while saving state leaves a finished watch live, so its final even
 
 test('quiet mode "slow" still counts as quiet: ordinary watches are skipped overnight', () => {
   const dir = tempDir();
-  const checked = [];
-  const types = { t: { check: (target) => { checked.push(target); return {}; }, diff: () => [] } };
+  const checked: string[] = [];
+  const types: TypeRegistry = { t: { check: (target) => { checked.push(target); return {}; }, diff: () => [] } };
   addWatch(dir, { id: 'day', type: 't', target: 'day' }, NIGHT);
   addWatch(dir, { id: 'night', type: 't', target: 'night', notify_overnight: true }, NIGHT);
   const out = tick(base(dir, types, { config: { ...OPEN, quietMode: 'slow' }, now: NIGHT + MIN }));
@@ -418,7 +425,7 @@ test('pace keeps an overnight watch running through quiet weekends too', () => {
   const SATURDAY = Date.parse('2026-10-03T12:00:00Z');
   const config = { quietHours: 'off', quietWeekends: true, tz: 'UTC' };
   addWatch(dir, { id: 'n', type: 't', target: 'y', notify_overnight: true }, SATURDAY);
-  assert.equal(pace({ dir, config, now: SATURDAY }).stop, undefined);
+  assert.equal(stopOf(pace({ dir, config, now: SATURDAY })), undefined);
 });
 
 test('lock: a stale lock is replaced by ours, and a live or just-created empty one is refused', () => {
@@ -448,9 +455,9 @@ test('lock: SIGTERM releases it', async () => {
 
 test('a type\'s retired hook runs after a watch retires, and a throwing hook does not break the tick', () => {
   const dir = tempDir();
-  const seen = [];
-  const types = {
-    t: { check: () => ({ done: true }), diff: () => [], retired: (watch, ctx) => { seen.push([watch.id, ctx.dir]); } },
+  const seen: [string, string | undefined][] = [];
+  const types: TypeRegistry = {
+    t: { check: () => ({ done: true }), diff: () => [], retired: (watch: Watch, ctx: CheckContext) => { seen.push([watch.id, ctx.dir]); } },
     u: { check: () => ({ done: true }), diff: () => [], retired: () => { throw new Error('boom'); } },
   };
   addWatch(dir, { id: 'w1', type: 't', target: 'a' }, NOON);
@@ -466,11 +473,11 @@ test('cli: run --interval refuses Infinity, zero and text, so a pin cannot defea
 
 test('a pin of Infinity that reaches tick anyway still honours the floor', () => {
   const dir = tempDir();
-  const log = [];
-  const types = { slow: spy(NET(), log, 'slow') };
+  const log: string[] = [];
+  const types: TypeRegistry = { slow: spy(NET(), log, 'slow') };
   addWatch(dir, { id: 's', type: 'slow', target: 'x' }, NOON);
   const config = { ...ALWAYS, pinned: Infinity };
   tick(base(dir, types, { config }));
   assert.equal(Number.isFinite(loadState(dir).watches.s.nextDue), true);
-  assert.equal(pace({ dir, types, config, now: NOON }).seconds, 180);
+  assert.equal(secondsOf(pace({ dir, types, config, now: NOON })), 180);
 });

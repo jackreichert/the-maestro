@@ -1,4 +1,4 @@
-// Run: node --test scripts/ledger-index.test.mjs
+// Run: node --test scripts/ledger-index.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,19 +10,27 @@ import { join } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
-const SCRIPT = new URL('./ledger-index.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./ledger-index.ts', import.meta.url).pathname;
 const JOURNAL = new URL('./journal.mjs', import.meta.url).pathname;
 const TODAY = new Date().toISOString().slice(0, 10);
-let root, tickets, jdir, dbFile;
+let root: string, tickets: string, jdir: string, dbFile: string;
 
-const run = (...args) => {
+/** A row or hit as the CLI prints it as JSON; the tests read only a few fields of each. */
+interface Row { id: string; stream: string | null; [field: string]: unknown }
+interface Hit { source: string; ref: string }
+interface Status { inflight: Row[]; blocked: Row[]; awaiting: Row[] }
+interface Stats { counts: { items: number; tickets: number }; open: number; streams: unknown }
+interface QueryJson { total: number; items: Row[]; streams: Row[]; rows: Row[]; ticket: Row[]; tickets: Row[]; by_project: unknown; by_date: unknown; handoffs: unknown }
+const parse = <T>(text: string): T => JSON.parse(text);
+
+const run = (...args: string[]) => {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', root, '--tickets-vault', tickets], {
         encoding: 'utf8', env: { ...process.env, LEDGER_ROOT: '', VAULT_ROOT: '' },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 };
-const row = (o) => JSON.stringify({ ts: `${TODAY}T10:00:00.000Z`, date: TODAY, refs: [], ...o }) + '\n';
-const q = (sql) => { const db = new DatabaseSync(dbFile, { readOnly: true }); try { return db.prepare(sql).all(); } finally { db.close(); } };
+const row = (o: Record<string, unknown>): string => JSON.stringify({ ts: `${TODAY}T10:00:00.000Z`, date: TODAY, refs: [], ...o }) + '\n';
+const q = (sql: string) => { const db = new DatabaseSync(dbFile, { readOnly: true }); try { return db.prepare(sql).all(); } finally { db.close(); } };
 
 beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'lidx-ledger-'));
@@ -77,7 +85,7 @@ test('items fold: effective stream, status, closed_by', () => {
 test('open items match journal.mjs status --json', () => {
     const j = spawnSync(process.execPath, [JOURNAL, 'status', '--json', '--vault', root, '--project', 'dev-env'], { encoding: 'utf8' });
     assert.equal(j.status, 0, j.stderr);
-    const s = JSON.parse(j.stdout);
+    const s = parse<Status>(j.stdout);
     const theirs = [...s.inflight, ...s.blocked, ...s.awaiting].map((i) => `${i.id}:${i.stream ?? ''}`).sort();
     run('index');
     const ours = q('SELECT id, stream FROM items WHERE is_open = 1').map((i) => `${i.id}:${i.stream ?? ''}`).sort();
@@ -86,9 +94,9 @@ test('open items match journal.mjs status --json', () => {
 });
 
 test('planted terms are found with the right source', () => {
-    const t = JSON.parse(run('search', 'planted-ticket-term', '--json').out);
+    const t = parse<Hit[]>(run('search', 'planted-ticket-term', '--json').out);
     assert.deepEqual(t.map((h) => [h.source, h.ref]), [['tickets', 'p1-001']]);
-    const h = JSON.parse(run('search', '"planted-handoff-term"', '--json').out);
+    const h = parse<Hit[]>(run('search', '"planted-handoff-term"', '--json').out);
     assert.deepEqual(h.map((x) => [x.source, x.ref]), [['handoffs', 'HANDOFF-2026-01-01.md#2']]);
 });
 
@@ -97,7 +105,7 @@ test('appending a ledger row makes the next search rebuild', () => {
     assert.equal(run('search', 'narwhal').out.trim(), '(no hits)');
     appendFileSync(join(jdir, 'ledger.jsonl'), row({ id: 'hhhh', kind: 'note', text: 'narwhal sighted' }));
     const r = run('search', 'narwhal', '--source', 'ledger', '--json');
-    assert.equal(JSON.parse(r.out)[0].ref, 'hhhh');
+    assert.equal(parse<Hit[]>(r.out)[0].ref, 'hhhh');
 });
 
 test('changed ticket file (mtime) triggers rebuild', () => {
@@ -105,19 +113,19 @@ test('changed ticket file (mtime) triggers rebuild', () => {
     const p = join(tickets, 'Projects', 'p1', 'Tickets', 'p1-001.md');
     writeFileSync(p, '---\nid: "p1-001"\ntitle: "Fix thing"\n---\nnow mentions pangolin\n');
     utimesSync(p, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
-    assert.equal(JSON.parse(run('search', 'pangolin', '--json').out).length, 1);
+    assert.equal(parse<Hit[]>(run('search', 'pangolin', '--json').out).length, 1);
 });
 
 test('--source and --stream filters', () => {
     appendFileSync(join(jdir, 'ledger.jsonl'), row({ id: 'iiii', kind: 'note', text: 'widget in ledger and planted-ticket-term' }));
-    const all = JSON.parse(run('search', 'widget OR planted-ticket-term', '--json').out);
+    const all = parse<Hit[]>(run('search', 'widget OR planted-ticket-term', '--json').out);
     assert.ok(new Set(all.map((h) => h.source)).size >= 2);
-    const led = JSON.parse(run('search', 'widget OR planted-ticket-term', '--source', 'ledger', '--json').out);
+    const led = parse<Hit[]>(run('search', 'widget OR planted-ticket-term', '--source', 'ledger', '--json').out);
     assert.ok(led.length >= 2 && led.every((h) => h.source === 'ledger'));
-    const alpha = JSON.parse(run('search', 'widget', '--stream', 'Alpha', '--json').out);
+    const alpha = parse<Hit[]>(run('search', 'widget', '--stream', 'Alpha', '--json').out);
     assert.deepEqual(alpha.map((h) => h.ref).sort(), ['aaaa', 'dddd']);   // closer inherits the item's stream
-    assert.equal(JSON.parse(run('search', 'widget', '--stream', 'Beta', '--json').out).length, 0);
-    assert.equal(JSON.parse(run('search', 'widget', '--limit', '1', '--json').out).length, 1);
+    assert.equal(parse<Hit[]>(run('search', 'widget', '--stream', 'Beta', '--json').out).length, 0);
+    assert.equal(parse<Hit[]>(run('search', 'widget', '--limit', '1', '--json').out).length, 1);
 });
 
 test('bad FTS syntax and bad flags give friendly errors, not stack traces', () => {
@@ -130,13 +138,13 @@ test('bad FTS syntax and bad flags give friendly errors, not stack traces', () =
 });
 
 test('stats reports counts and open items per stream', () => {
-    const r = JSON.parse(run('stats', '--json').out);
+    const r = parse<Stats>(run('stats', '--json').out);
     assert.equal(r.counts.items, 4);
     assert.equal(r.open, 2);
     assert.deepEqual(r.streams, [{ stream: 'Beta', open: 2 }]);
 });
 
-const qj = (...args) => JSON.parse(run('query', ...args, '--json').out);
+const qj = (...args: string[]) => parse<QueryJson>(run('query', ...args, '--json').out);
 
 test('query open lists open ids and streams, newest first', () => {
     const r = qj('open');
@@ -233,8 +241,8 @@ test('query with no name lists queries; unknown name is a friendly error', () =>
 // ── stream registry and archive ─────────────────────────────────────────────
 
 const regFile = () => join(root, 'Projects', 'dev-env', 'streams.json');
-const append = (...rows) => appendFileSync(join(jdir, 'ledger.jsonl'), rows.join(''));
-const refs = (query, ...flags) => JSON.parse(run('search', query, ...flags, '--json').out).map((h) => `${h.source}:${h.ref}`).sort();
+const append = (...rows: string[]) => appendFileSync(join(jdir, 'ledger.jsonl'), rows.join(''));
+const refs = (query: string, ...flags: string[]) => parse<Hit[]>(run('search', query, ...flags, '--json').out).map((h) => `${h.source}:${h.ref}`).sort();
 
 test('registry maps aliases and case at read time, so the split heals', () => {
     append(row({ id: 'jjjj', kind: 'wip', text: 'lowercase twin', stream: 'beta' }));
@@ -245,7 +253,7 @@ test('registry maps aliases and case at read time, so the split heals', () => {
     assert.equal(s.beta, undefined);
     assert.equal(s.Beta.flag, '');
     assert.equal(qj('open', '--stream', 'beta').total, 3);   // an alias works as a filter
-    assert.deepEqual(JSON.parse(run('stats', '--json').out).streams, [{ stream: 'Beta', open: 3 }]);
+    assert.deepEqual(parse<Stats>(run('stats', '--json').out).streams, [{ stream: 'Beta', open: 3 }]);
     assert.equal(refs('widget', '--stream', 'alpha').length, 2);
 });
 
@@ -270,7 +278,7 @@ test('archived items are hidden by default and shown with --include-archived', (
     assert.deepEqual(refs('widget', '--source', 'ledger'), []);
     assert.deepEqual(refs('widget', '--source', 'ledger', '--include-archived'), ['ledger:aaaa', 'ledger:dddd']);
     assert.equal(qj('stream-counts').streams.find((r) => r.stream === 'Alpha'), undefined);
-    assert.equal(qj('stream-counts', '--include-archived').streams.find((r) => r.stream === 'Alpha').done, 1);
+    assert.equal(qj('stream-counts', '--include-archived').streams.find((r) => r.stream === 'Alpha')?.done, 1);
     run('index');
     assert.equal(q('SELECT archived FROM items WHERE id = \'aaaa\'')[0].archived, 1);
     assert.equal(q('SELECT archived FROM items WHERE id = \'bbbb\'')[0].archived, 0);
@@ -285,9 +293,9 @@ test('an archived stream leaves one pointer doc that a default search finds', ()
     assert.equal(docs.length, 1);
     assert.equal(docs[0].ref, 'Alpha');
     assert.equal(docs[0].stream, 'Alpha');
-    assert.match(docs[0].body, /retro: .*retro\.md/);
-    assert.match(docs[0].body, /quantumleap/);
-    assert.doesNotMatch(docs[0].body, /## Timeline|other/);   // summary section only
+    assert.match(String(docs[0].body), /retro: .*retro\.md/);
+    assert.match(String(docs[0].body), /quantumleap/);
+    assert.doesNotMatch(String(docs[0].body), /## Timeline|other/);   // summary section only
     assert.deepEqual(refs('quantumleap'), ['archive:Alpha']);
     assert.deepEqual(refs('quantumleap', '--source', 'archive'), ['archive:Alpha']);
     assert.deepEqual(refs('quantumleap', '--stream', 'Alpha'), ['archive:Alpha']);
@@ -299,7 +307,7 @@ test('an archived stream leaves one pointer doc that a default search finds', ()
 
 test('archive then unarchive leaves fold, stats and search counts identical', () => {
     const snap = () => JSON.stringify({
-        stats: (({ open, streams, counts }) => ({ open, streams, items: counts.items, tickets: counts.tickets }))(JSON.parse(run('stats', '--json').out)),
+        stats: (({ open, streams, counts }) => ({ open, streams, items: counts.items, tickets: counts.tickets }))(parse<Stats>(run('stats', '--json').out)),
         counts: qj('stream-counts').streams, open: qj('open').items.map((i) => i.id).sort(),
         widget: refs('widget'), all: refs('widget OR zebrafish OR quokka OR narwhal OR plain'),
         items: q('SELECT id, stream, status, is_open, archived FROM items ORDER BY id'),
@@ -309,8 +317,8 @@ test('archive then unarchive leaves fold, stats and search counts identical', ()
     assert.notEqual(snap(), before);
     append(row({ id: 'un01', kind: 'unarchive', stream: 'Alpha', ids: ['aaaa'], text: 'unarchived stream Alpha' }));
     // the two extra rows are ledger docs themselves; compare everything except those
-    const after = JSON.parse(snap());
-    const was = JSON.parse(before);
+    const after = parse<Record<string, unknown>>(snap());
+    const was = parse<Record<string, unknown>>(before);
     assert.deepEqual(after.stats, was.stats);
     assert.deepEqual(after.counts, was.counts);
     assert.deepEqual(after.open, was.open);
@@ -325,7 +333,7 @@ test('with a registry, carry and archive, open items still match journal.mjs sta
         row({ id: 'cr01', kind: 'carry', carries: 'cccc', from: 'Beta', stream: 'Alpha', text: 'carry' }));
     archiveAlpha();   // hides Alpha's aaaa only; the carried cccc stays visible in the ids-based view
     const j = spawnSync(process.execPath, [JOURNAL, 'status', '--json', '--vault', root, '--project', 'dev-env'], { encoding: 'utf8' });
-    const s = JSON.parse(j.stdout);
+    const s = parse<Status>(j.stdout);
     const theirs = [...s.inflight, ...s.blocked, ...s.awaiting].map((i) => `${i.id}:${i.stream ?? ''}`).sort();
     run('index');
     const ours = q('SELECT id, stream FROM items WHERE is_open = 1 AND archived = 0').map((i) => `${i.id}:${i.stream ?? ''}`).sort();

@@ -49,7 +49,7 @@ gh api graphql -f query='query($after: String) { search(query: "is:pr is:open au
 **The search returns 50 PRs a page.** A board with more open PRs silently loses the rest unless the
 query pages: read `pageInfo { hasNextPage endCursor }` and repeat with `-f after=<endCursor>` until
 `hasNextPage` is false (or add `--paginate`, which reads the same fields from a query that declares
-`$endCursor`). the `pr-watch` event type and `scripts/prs-snapshot.mjs` already page through
+`$endCursor`). the `pr-watch` event type and `scripts/prs-snapshot.ts` already page through
 `scripts/lib/gh-search.ts`; a page-one-only read made PRs past the 50th look "no longer open".
 
 Scoped to one GitHub org on purpose — personal and third-party repos are out of scope for the board. Substitute `<org>` from local-config (see [local-config.md](local-config.md)); the scripts read the same value from `scripts/local-config.ts`.
@@ -71,7 +71,7 @@ what separates "awaiting the team" from "nobody will pick this up" below — a T
 alone does not mean a human is on the hook yet.
 
 The query also carries `reviewThreads.nodes[].id` and `latestReviews.nodes[].submittedAt` — the
-board's `--jq` ignores both, but [scripts/prs-snapshot.mjs](../scripts/prs-snapshot.mjs) needs them
+board's `--jq` ignores both, but [scripts/prs-snapshot.ts](../scripts/prs-snapshot.ts) needs them
 as stable identity for its mid-day diff (see [Mid-day updates](#mid-day-updates)). Keep them in the
 query even though the human-readable report doesn't print them.
 
@@ -90,7 +90,7 @@ Run every open PR through these, in order. A PR can only land in the first bucke
 4. **Ready for review, no human reviewer requested.** Not draft, no request for a `User` — only a
    `Team`, only a `Bot`, some mix of the two, or nothing at all. Flag these explicitly: nobody is
    going to pick them up without a nudge.
-5. **Approved and ready to merge.** `reviewDecision: APPROVED`, not a draft, zero unresolved review threads, and GitHub's `mergeable` is `MERGEABLE`. `node scripts/prs-snapshot.mjs --ready` computes this from the board query (`reviewThreads.isResolved` and `mergeable`) and lists every approved PR that is *not* ready with the reason (open threads, merge conflict, mergeable state unknown, more than 100 threads, blocked on a twin), so a PR with an open thread or a conflict is never called ready. After a merge it re-asks `mergeable` for the open PRs in the same repo until two known answers agree, because GitHub serves a cached answer from before the merge and UNKNOWN until asked again; one that never settles stays UNKNOWN and is not ready. `prs-snapshot.mjs ready <file>` is offline, states the file's age and is not a merge gate. Twin-flow repos: a PR into `staging` is held while an open PR with the same head branch targets another base.
+5. **Approved and ready to merge.** `reviewDecision: APPROVED`, not a draft, zero unresolved review threads, and GitHub's `mergeable` is `MERGEABLE`. `node scripts/prs-snapshot.ts --ready` computes this from the board query (`reviewThreads.isResolved` and `mergeable`) and lists every approved PR that is *not* ready with the reason (open threads, merge conflict, mergeable state unknown, more than 100 threads, blocked on a twin), so a PR with an open thread or a conflict is never called ready. After a merge it re-asks `mergeable` for the open PRs in the same repo until two known answers agree, because GitHub serves a cached answer from before the merge and UNKNOWN until asked again; one that never settles stays UNKNOWN and is not ready. `prs-snapshot.ts ready <file>` is offline, states the file's age and is not a merge gate. Twin-flow repos: a PR into `staging` is held while an open PR with the same head branch targets another base.
 6. **Changes requested, no open threads.** `reviewDecision: CHANGES_REQUESTED` but the threads that
    caused it are already resolved — usually means a re-review is overdue, not that work remains.
 7. **Stale.** `updatedAt` more than 30 days ago. Nudge-or-close candidates — surface them, don't
@@ -206,11 +206,11 @@ not a process of its own. The morning board registers it once, with the other wa
 ([greeting.md](greeting.md#a-greeting-is-a-request-for-the-board), step 4):
 
 ```bash
-node scripts/event-loop.mjs add --id prs --type pr-watch --target open-prs:baseline --report "<what to tell the orchestrator>"
+node scripts/event-loop.ts add --id prs --type pr-watch --target open-prs:baseline --report "<what to tell the orchestrator>"
 ```
 
 `open-prs:baseline` records the current PRs without reporting them; later checks report only what changed.
-If `prs` is already registered (`event-loop.mjs list`), leave it. The loop polls quietly and its digest reports
+If `prs` is already registered (`event-loop.ts list`), leave it. The loop polls quietly and its digest reports
 when something needs attention: a new unresolved thread or reply, a new PR comment or review body from anyone
 but the user (bots included), a `reviewDecision` move into or out of `APPROVED`/`CHANGES_REQUESTED`, or a PR
 that merged or closed. Approved-but-unmerged PRs are reported once. Handle what it reported; the watch keeps
@@ -245,14 +245,14 @@ human review landed, `reviewDecision` flipped, a human opened a new unresolved t
 or closed, or a draft got promoted to ready. A bot review, a bot thread, a CI status flip, or
 routine activity waits for the next board — don't interrupt for it.
 
-[scripts/prs-snapshot.mjs](../scripts/prs-snapshot.mjs) automates exactly this check. It runs the
+[scripts/prs-snapshot.ts](../scripts/prs-snapshot.ts) automates exactly this check. It runs the
 query above via `gh api graphql`, and stores the result as JSON at
 `$LEDGER_ROOT/Projects/<container-project>/Journal/prs-snapshot.json` (a root of its own, outside the vault;
 falls back to `$VAULT_ROOT` if `LEDGER_ROOT` is unset):
 
 ```bash
-node scripts/prs-snapshot.mjs --vault "$LEDGER_ROOT"          # take the baseline (morning)
-node scripts/prs-snapshot.mjs --diff --vault "$LEDGER_ROOT"   # compare + report (mid-day, EOD)
+node scripts/prs-snapshot.ts --vault "$LEDGER_ROOT"          # take the baseline (morning)
+node scripts/prs-snapshot.ts --diff --vault "$LEDGER_ROOT"   # compare + report (mid-day, EOD)
 ```
 
 Cadence: take a plain snapshot as part of the morning board

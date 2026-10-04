@@ -5,8 +5,8 @@ You are the runner. The orchestrator registers watches; you run the loop, read w
 ## 1. Run it
 
 ```bash
-node scripts/event-loop.mjs list
-node scripts/event-loop.mjs run
+node scripts/event-loop.ts list
+node scripts/event-loop.ts run
 ```
 
 `run` polls every live watch, sleeps between ticks (the cadence is in [cost/budget.md](../cost/budget.md#pr-watcher-cadence)), and exits when there is something to say. It is the one long-running process in this design, so start it in the background and wait for it to finish; its completion wakes you, not the orchestrator.
@@ -18,7 +18,7 @@ node scripts/event-loop.mjs run
 | 3 | Quiet hours or a quiet weekend began (`QUIET-HOURS stop until <time>`); no `--notify-overnight` watch is live. | Report one line with the time. |
 | 2 | Usage or configuration error, or `another event loop is running`. | Report the stderr line. Do not retry or delete the lock. |
 
-For one quick look instead of a long wait, `node scripts/event-loop.mjs run --once` does a single pass with the same exit codes.
+For one quick look instead of a long wait, `node scripts/event-loop.ts run --once` does a single pass with the same exit codes.
 
 ## 2. Read the digest
 
@@ -31,7 +31,7 @@ Each line is `ACTION <watch id> (<type>): <summary> | report: <hint>` or `info .
 
 ## 3. Report back (at most 10 lines)
 
-One line per actionable event: watch id, what happened, the link or name from the digest. Then one line saying whether the loop is still running or has exited, and which watches remain (`node scripts/event-loop.mjs list`). Nothing else: no logs, no JSON, no message text.
+One line per actionable event: watch id, what happened, the link or name from the digest. Then one line saying whether the loop is still running or has exited, and which watches remain (`node scripts/event-loop.ts list`). Nothing else: no logs, no JSON, no message text.
 
 If a watch reports `check keeps failing`, say so; it means the check could not run (a missing command, an expired login), not that nothing happened.
 
@@ -44,7 +44,7 @@ If a watch reports `check keeps failing`, say so; it means the check could not r
 ## For the orchestrator: registering a watch
 
 ```bash
-node scripts/event-loop.mjs add --id <id> --type <type> --target <target> \
+node scripts/event-loop.ts add --id <id> --type <type> --target <target> \
   [--done-when <rule>] [--report "<what you want back>"] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
 ```
 

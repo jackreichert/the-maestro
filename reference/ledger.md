@@ -34,7 +34,7 @@ Why, and the token-saving tests this feeds: `Projects/<container-name>/Research/
 
 Storage is `$LEDGER_ROOT/Projects/{container-name}/Journal/` — a root of its own, separate from the
 Obsidian vault, so the day-to-day ledger doesn't clutter vault search. `journal.mjs` and
-`prs-snapshot.mjs` resolve the root as `--vault`, then `$LEDGER_ROOT`, then `$VAULT_ROOT` (so an
+`prs-snapshot.ts` resolve the root as `--vault`, then `$LEDGER_ROOT`, then `$VAULT_ROOT` (so an
 unset `LEDGER_ROOT` still works against the old single-root layout). Everything else — tickets,
 `CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/` — stays under `$VAULT_ROOT`. Pass
 `--project` as the container folder's name; there is no default. `ledger.jsonl` is append-only and
@@ -314,7 +314,7 @@ the end of the standup.
 
 ### PR pass
 
-Run `node scripts/prs-snapshot.mjs --diff --vault "$LEDGER_ROOT"`
+Run `node scripts/prs-snapshot.ts --diff --vault "$LEDGER_ROOT"`
 ([reference/prs.md#mid-day-updates](prs.md#mid-day-updates)) for the mechanical first pass — it
 diffs against whatever the mid-day check last saved and prints only actionable changes — then run
 the full query in [reference/prs.md](prs.md) and diff it against the morning board for anything the
@@ -443,15 +443,15 @@ session before asking the user anything. It, plus
 
 ## Search (derived index)
 
-`scripts/ledger-index.mjs` (which folds the ledger through the same `scripts/lib/ledger-core.ts` as `journal.mjs`, so the two cannot disagree about what is open) builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets (including `Tickets/Archive/`) and one row per `##` section of each `HANDOFF-*.md`. The JSONL stays the source of truth; the index lives at `$LEDGER_ROOT/Projects/{container-name}/Index/maestro.sqlite`, and deleting it loses nothing.
+`scripts/ledger-index.ts` (which folds the ledger through the same `scripts/lib/ledger-core.ts` as `journal.mjs`, so the two cannot disagree about what is open) builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets (including `Tickets/Archive/`) and one row per `##` section of each `HANDOFF-*.md`. The JSONL stays the source of truth; the index lives at `$LEDGER_ROOT/Projects/{container-name}/Index/maestro.sqlite`, and deleting it loses nothing.
 
-`node scripts/ledger-index.mjs index` does a full rebuild into a temp file and renames it into place, then prints the table counts and the elapsed ms. Pass `--vault <path>` for the ledger root and `--tickets-vault <path>` for the vault root, the same way `journal.mjs` takes `--vault`.
+`node scripts/ledger-index.ts index` does a full rebuild into a temp file and renames it into place, then prints the table counts and the elapsed ms. Pass `--vault <path>` for the ledger root and `--tickets-vault <path>` for the vault root, the same way `journal.mjs` takes `--vault`.
 
-`node scripts/ledger-index.mjs search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]` prints the ref, source, title and a snippet per hit, ranked by bm25. It rebuilds first if the ledger, a handoff or the ticket files changed since the last build. Bare ids like `KEY-1234` and `my_db` work without quoting; a query it still cannot parse gives a short error, not a stack trace.
+`node scripts/ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]` prints the ref, source, title and a snippet per hit, ranked by bm25. It rebuilds first if the ledger, a handoff or the ticket files changed since the last build. Bare ids like `KEY-1234` and `my_db` work without quoting; a query it still cannot parse gives a short error, not a stack trace.
 
-`node scripts/ledger-index.mjs stats [--json]` prints the count per table and the open items per stream, which should agree with `journal.mjs status --json`.
+`node scripts/ledger-index.ts stats [--json]` prints the count per table and the open items per stream, which should agree with `journal.mjs status --json`.
 
-`node scripts/ledger-index.mjs query <name> [args] [--json]` answers common questions from the index without a throwaway script; it rebuilds first if a source changed, prints aligned tables (long text clipped) by default and JSON with `--json`. `query` with no name, or `query --help`, lists the queries; an unknown name gives a friendly error.
+`node scripts/ledger-index.ts query <name> [args] [--json]` answers common questions from the index without a throwaway script; it rebuilds first if a source changed, prints aligned tables (long text clipped) by default and JSON with `--json`. `query` with no name, or `query --help`, lists the queries; an unknown name gives a friendly error.
 
 The named queries are `open [--stream X]` (open items, newest first; the total agrees with `journal.mjs status --json`), `by-ticket <ticket-id|external-key>` (ledger rows whose ticket field, refs or text mention the key, plus the ticket's own row; a ticket matches by its id or by its `external` front-matter field, either `<tracker>-PROJ-123` or the bare `PROJ-123`), `untagged [--since YYYY-MM-DD]` (items with no effective stream, counted by date and then listed, as a backfill review aid), `stream-counts` (open, done, dropped and total per stream, with case variants such as `Launch` and `onboarding` kept as separate rows and flagged `CASE SPLIT`), `handoffs [--limit N]` (handoff files newest first with their section titles) and `tickets [--project P] [--status S] [--type T]` (counts by project, type and status, plus the list when any filter is given).
 

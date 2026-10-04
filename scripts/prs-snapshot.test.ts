@@ -1,4 +1,4 @@
-// Run: node --test scripts/prs-snapshot.test.mjs
+// Run: node --test scripts/prs-snapshot.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -9,26 +9,27 @@ import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.mjs');
+import type { StoredPr } from './prs-snapshot.ts';
+const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.ts');
 
-const SCRIPT = new URL('./prs-snapshot.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./prs-snapshot.ts', import.meta.url).pathname;
 
-function run(...args) {
+function run(...args: string[]) {
     return runWith(process.env, ...args);
 }
 
-function runWith(env, ...args) {
+function runWith(env: NodeJS.ProcessEnv, ...args: string[]) {
     const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
-function fixture(dir, name, snapshot) {
+function fixture(dir: string, name: string, snapshot: unknown): string {
     const p = join(dir, name);
     writeFileSync(p, JSON.stringify(snapshot));
     return p;
 }
 
-function pr(overrides = {}) {
+function pr(overrides: Partial<StoredPr> = {}): StoredPr {
     return {
         key: 'org/repo#1',
         repo: 'org/repo',
@@ -143,7 +144,7 @@ test('a brand-new PR with no prior entry is not reported as a change', () => {
 test('missing arguments print usage and exit non-zero', () => {
     const r = run('diff', '/tmp/does-not-matter.json');
     assert.notEqual(r.code, 0);
-    assert.match(r.err, /Usage: prs-snapshot\.mjs diff/);
+    assert.match(r.err, /Usage: prs-snapshot\.ts diff/);
 });
 
 test('--diff reads every search page: PRs past the 50th are not "no longer open"', () => {
@@ -161,13 +162,13 @@ test('--diff reads every search page: PRs past the 50th are not "no longer open"
 
 // ── readiness ───────────────────────────────────────────────────────────────
 
-const good = (o = {}) => pr({ reviewDecision: 'APPROVED', mergeable: 'MERGEABLE', threadsComplete: true, ...o });
-const thread = (id, isResolved) => ({ id, isResolved, isOutdated: false, author: 'rev' });
+const good = (o: Partial<StoredPr> = {}): StoredPr => pr({ reviewDecision: 'APPROVED', mergeable: 'MERGEABLE', threadsComplete: true, ...o });
+const thread = (id: string, isResolved: boolean) => ({ id, isResolved, isOutdated: false, author: 'rev' });
 
 test('a PR is ready only when approved, not a draft, with zero unresolved threads, MERGEABLE, and every condition says why when it fails', () => {
     assert.deepEqual(readiness(good()), { ready: true, reasons: [] });
     assert.deepEqual(readiness(good({ threads: [thread('a', true)] })).ready, true, 'resolved threads do not count');
-    const why = (o) => readiness(good(o)).reasons.join('|');
+    const why = (o: Partial<StoredPr>) => readiness(good(o)).reasons.join('|');
     assert.match(why({ threads: [thread('a', false), thread('b', false), thread('c', true)] }), /2 unresolved review thread\(s\)/);
     assert.match(why({ mergeable: 'CONFLICTING' }), /merge conflict/);
     assert.match(why({ mergeable: 'UNKNOWN' }), /mergeable state UNKNOWN/);
@@ -207,7 +208,7 @@ test('ready <snapshot> prints the report offline, and a missing argument prints 
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /Ready to merge \(0\)/);
     assert.match(r.out, /1 unresolved review thread/);
-    assert.match(run('ready').err, /Usage: prs-snapshot\.mjs ready/);
+    assert.match(run('ready').err, /Usage: prs-snapshot\.ts ready/);
 });
 
 test('--ready on a live fetch reports mergeable and thread state from the board query', () => {
@@ -222,7 +223,7 @@ test('--ready on a live fetch reports mergeable and thread state from the board 
 test('after a merge, requerySiblings distrusts the cached mergeable of open PRs in that repo until two known answers agree, and leaves other repos alone', () => {
     const prev = { prs: [good({ key: 'a/x#1', repo: 'a/x', number: 1 }), good({ key: 'a/x#2', repo: 'a/x', number: 2 }), good({ key: 'b/y#3', repo: 'b/y', number: 3 })] };
     const curr = () => ({ prs: [good({ key: 'a/x#2', repo: 'a/x', number: 2 }), good({ key: 'b/y#3', repo: 'b/y', number: 3 })] });
-    const feed = (answers) => { const asked = []; return { asked, run: (args) => { asked.push(args[2]); const a = answers.shift(); return a === null ? { status: 1, stdout: '' } : { status: 0, stdout: `${a}\n` }; } }; };
+    const feed = (answers: (string | null)[]) => { const asked: string[] = []; return { asked, run: (args: string[]) => { asked.push(args[2]); const a = answers.shift(); return a === null ? { status: 1, stdout: '' } : { status: 0, stdout: `${a}\n` }; } }; };
 
     const settle = curr(); const f = feed(['UNKNOWN', 'CONFLICTING', 'CONFLICTING']);
     assert.deepEqual(requerySiblings(prev, settle, { run: f.run, wait: () => {} }), ['a/x']);

@@ -2,7 +2,7 @@
 
 One pull request, reported when it merges. Script: [scripts/event-types/pr-merged.ts](../../scripts/event-types/pr-merged.ts).
 
-Register when you open or learn of a PR: `node scripts/event-loop.mjs add --id merged-<n> --type pr-merged --target <owner>/<repo>#<n> --report "run the merge checklist"`. The watch retires itself once the PR is merged or closed.
+Register when you open or learn of a PR: `node scripts/event-loop.ts add --id merged-<n> --type pr-merged --target <owner>/<repo>#<n> --report "run the merge checklist"`. The watch retires itself once the PR is merged or closed.
 
 ## What the loop reports
 

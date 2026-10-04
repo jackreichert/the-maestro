@@ -445,7 +445,7 @@ Rules:
 
 When work depends on something outside the session (a PR's CI, a GitHub Actions run, review activity,
 new messages), do not write a one-off watcher and do not make an agent poll. Register a watch with
-`node scripts/event-loop.mjs add --id <id> --type <type> --target <target> --report "<what you want back>"`.
+`node scripts/event-loop.ts add --id <id> --type <type> --target <target> --report "<what you want back>"`.
 One loop polls every registered watch, and a cheap runner follows
 [playbooks/event-loop.md](../playbooks/event-loop.md) and wakes you only for an actionable event, so
 waiting costs one wake per event, not one per watcher. Each type polls at its own pace (override with
