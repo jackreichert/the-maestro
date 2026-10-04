@@ -116,8 +116,8 @@ import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn 
 import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
-import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.mjs';
-import { yesterday, handoffText as handoffTextIn, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.mjs';
+import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
+import { yesterday, handoffText as handoffTextIn, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
