@@ -198,13 +198,15 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
     }
     const closed = new Map<string, LedgerRow>();
     const streams = new Map<string, string | undefined>();
-    const archivedBy = new Map<string | undefined, string[]>();
+    const archivedBy = new Map<string, string[]>();
     for (const e of entries) {
         if (e.closes) closed.set(e.closes, mapModel(withStamp(e, stamped)));
         if (e.kind === 'tag' && e.tags) streams.set(e.tags, e.stream || undefined);
         if (e.kind === 'carry' && e.carries) streams.set(e.carries, e.stream || undefined);
-        if (e.kind === 'archive' && e.stream) archivedBy.set(mapStream(e.stream), e.ids || []);
-        if (e.kind === 'unarchive' && e.stream) archivedBy.delete(mapStream(e.stream));
+        // A stream that maps to undefined is the reserved `none` ("no stream"): there is nothing to archive, so skip the row.
+        const archiveStream = e.stream ? mapStream(e.stream) : undefined;
+        if (e.kind === 'archive' && archiveStream !== undefined) archivedBy.set(archiveStream, e.ids || []);
+        if (e.kind === 'unarchive' && archiveStream !== undefined) archivedBy.delete(archiveStream);
     }
     const items: LedgerItem[] = [];
     for (const e of entries) {
