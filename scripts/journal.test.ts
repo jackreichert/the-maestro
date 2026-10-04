@@ -1836,3 +1836,27 @@ test('prime and triage flag pending transitions when there are some, and say not
     run('log', 'moved all', '--transitioned', 'ABC-12,XYZ-7', ...MARK);
     assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
 });
+
+// ── --project from the local config (MAESTRO-3) ─────────────────────────────
+
+test('--project defaults to the configured project; an explicit one wins; with neither it refuses', () => {
+    const cfgHome = mkdtempSync(join(tmpdir(), 'journal-cfg-'));
+    const cfgFile = join(cfgHome, 'config.md');
+    writeFileSync(cfgFile, '```maestro-config\nproject: cfg-proj\n```\n');
+    const go = (cfg: string, ...args: string[]) => {
+        const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, ...MARK], {
+            encoding: 'utf8', cwd: emptyCwd,
+            env: (({ MAESTRO_PROJECT: _drop, ...rest }) => ({ ...rest, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: cfg }))(process.env),
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const viaConfig = go(cfgFile, 'start', 'from config');
+    assert.equal(viaConfig.code, 0, viaConfig.err);
+    assert.ok(existsSync(join(vault, 'Projects', 'cfg-proj', 'Journal', 'ledger.jsonl')), 'wrote under the configured project');
+    const explicit = go(cfgFile, 'start', 'explicit', '--project', 'flag-proj');
+    assert.equal(explicit.code, 0, explicit.err);
+    assert.ok(existsSync(join(vault, 'Projects', 'flag-proj', 'Journal', 'ledger.jsonl')), 'the flag wins over the config');
+    const none = go('', 'start', 'nothing');
+    assert.equal(none.code, 1);
+    assert.match(none.err, /Pass --project/);
+});
