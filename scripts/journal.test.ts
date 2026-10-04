@@ -1,4 +1,4 @@
-// Run: node --test scripts/journal.test.mjs
+// Run: node --test scripts/journal.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';

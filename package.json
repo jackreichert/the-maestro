@@ -7,7 +7,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'scripts/*.test.mjs' 'scripts/**/*.test.ts'"
+    "test": "node --test 'scripts/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

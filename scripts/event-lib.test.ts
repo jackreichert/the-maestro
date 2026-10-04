@@ -1,4 +1,4 @@
-// Run: node --test scripts/notify.test.mjs
+// Run: node --test scripts/event-lib.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MAX_PER_TICK, MAX_SUMMARY, notify, oneLine } from './lib/notify.ts';
