@@ -18,7 +18,7 @@ The tracker keys are the matches of `tracker_key_pattern` (see [reference/local-
 On every `MERGED` line, do all of these in the same turn (the rule is in [reference/ledger.md](../../reference/ledger.md), "On every merge"):
 
 1. **Scoped sweep.** `node scripts/branch-sweep.ts --apply-worktrees --container <container_root> --repo <repo>` (the repo name, not the owner). The usual guards still decide: a worktree that is not idle, is claimed, or has uncommitted work stays and is listed.
-2. **Tickets.** Transition each key per the overlay's tracker rules, record it with `journal.mjs log "moved <KEY> to <status>" --transitioned <KEY>` (so `journal.mjs tickets --pending` stays empty), and say which you moved.
+2. **Tickets.** Transition each key per the overlay's tracker rules, record it with `journal.ts log "moved <KEY> to <status>" --transitioned <KEY>` (so `journal.ts tickets --pending` stays empty), and say which you moved.
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch (the overlay's sync script).
 4. **Ledger.** Log the merge (a note carrying the repo and PR) so the board shows it landed.
 

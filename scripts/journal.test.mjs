@@ -9,7 +9,7 @@ import { join } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
-const SCRIPT = new URL('./journal.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.mjs'];
 let vault;
 let tv;
