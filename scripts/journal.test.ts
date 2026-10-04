@@ -1,4 +1,4 @@
-// Run: node --test scripts/journal.test.mjs
+// Run: node --test scripts/journal.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
@@ -10,13 +10,36 @@ import { join } from 'node:path';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
-const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.mjs'];
-let vault;
-let tv;
-let projects;
+const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
+let vault: string;
+let tv: string;
+let projects: string;
+
+/** One row or item as the CLI prints it as JSON; the tests read only a few fields of each. */
+interface Out {
+    id?: string; stream?: string; text?: string; kind?: string; key?: string; why?: string; scope?: string; refs?: string[]; repo?: string;
+    stale?: boolean; model?: string; status?: string; total?: number; open?: number; done?: number; dropped?: number;
+    date?: string; ts?: string; desk?: string; pid?: number | null; until?: string; closes?: string; doneOn?: string; box?: number; line?: number; problem?: string;
+    canonical?: string; ids?: string[]; rows?: number; high?: number; medium?: number; low?: number; used?: string[]; tokens?: string; [field: string]: unknown;
+}
+/** The JSON documents the commands print; each test reads the part it needs. */
+interface Doc {
+    inflight: Out[]; blocked: Out[]; awaiting: Out[]; paste: Out[]; done: Out[]; streams: Out[]; claims: Out[]; models: Out[];
+    standing: Out[]; oneOff: Out[]; untagged: Out[]; byStream: Out[]; pending: Out[]; blockers: Out[]; pendingTransitions: Out[];
+    byBox: Record<string, Out[] | undefined>; problems: Out[]; model: Record<string, number>; [field: string]: unknown;
+}
+const parse = <T = Doc>(text: string): T => JSON.parse(text);
 const emptyCwd = mkdtempSync(join(tmpdir(), 'journal-cwd-'));
 
-function run(...args) {
+/** What a CLI run reports. */
+interface Run { code: number | null; out: string; err: string }
+/** A value the test expects to be present (a find() that must hit). */
+function must<T>(v: T | undefined | null, label = 'value'): T {
+    assert.ok(v !== undefined && v !== null, label);
+    return v;
+}
+
+function run(...args: string[]): Run {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
         env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '' },
@@ -24,8 +47,8 @@ function run(...args) {
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
 const ledger = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8')
-    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
-const idOf = (out) => out.trim().split(/\s+/)[1];
+    .split('\n').filter(Boolean).map((l) => parse<Out>(l));
+const idOf = (out: string): string => out.trim().split(/\s+/)[1];
 
 beforeEach(() => {
     vault = mkdtempSync(join(tmpdir(), 'journal-test-'));
@@ -34,7 +57,7 @@ beforeEach(() => {
 });
 
 test('start without --model fails and writes nothing', () => {
-    const r = run('start', 'unmarked work', '--used', 'tool:journal.mjs');
+    const r = run('start', 'unmarked work', '--used', 'tool:journal.ts');
     assert.equal(r.code, 1);
     assert.match(r.err, /--model/);
     assert.throws(() => ledger());
@@ -44,7 +67,7 @@ test('start with model and used shows the marks in status', () => {
     assert.equal(run('start', 'marked work', ...MARK).code, 0);
     const s = run('status');
     assert.equal(s.code, 0);
-    assert.match(s.out, /marked work .*model: Test Model · used: skill:the-maestro, tool:journal\.mjs/);
+    assert.match(s.out, /marked work .*model: Test Model · used: skill:the-maestro, tool:journal\.ts/);
 });
 
 test('standup hides the usage suffix', () => {
@@ -59,7 +82,7 @@ test('stamp-missing marks an unmarked entry as unrecorded, once', () => {
     const id = idOf(run('start', 'legacy work', '--allow-unmarked').out);
     const first = run('stamp-missing');
     assert.match(first.out, /stamped 1 entry/);
-    const stamp = ledger().find((e) => e.annotates === id);
+    const stamp = must(ledger().find((e) => e.annotates === id));
     assert.deepEqual([stamp.model, stamp.used, stamp.tokens], ['unrecorded', ['unrecorded'], 'unmeasured']);
     assert.match(run('status').out, /legacy work .*model: unrecorded · used: unrecorded · tokens: unmeasured/);
     assert.match(run('stamp-missing').out, /stamped 0 entries/);
@@ -69,7 +92,7 @@ test('fold does not duplicate a stamped item', () => {
     const id = idOf(run('start', 'only once', '--allow-unmarked').out);
     run('stamp', id, ...MARK);
     run('stamp-missing');
-    const s = JSON.parse(run('status', '--json').out);
+    const s = parse(run('status', '--json').out);
     assert.equal(s.inflight.length, 1);
     assert.equal(s.inflight[0].model, 'Test Model');
 });
@@ -79,8 +102,8 @@ test('roll appends a marked row without needing --model', () => {
     run('done', id, ...MARK);
     const r = run('roll');
     assert.equal(r.code, 0, r.err);
-    const rolled = ledger().find((e) => e.kind === 'rolled');
-    assert.deepEqual([rolled.model, rolled.used, rolled.tokens], ['n/a', ['tool:journal.mjs'], 'n/a']);
+    const rolled = must(ledger().find((e) => e.kind === 'rolled'));
+    assert.deepEqual([rolled.model, rolled.used, rolled.tokens], ['n/a', ['tool:journal.ts'], 'n/a']);
 });
 
 test('roll and scratch list <scripts_dir>/scratch with proposals when scripts_dir is set, and say nothing when it is not', () => {
@@ -92,7 +115,7 @@ test('roll and scratch list <scripts_dir>/scratch with proposals when scripts_di
     utimesSync(f, old, old);
     const id = idOf(run('start', 'finished', ...MARK).out);
     run('done', id, ...MARK);
-    const on = (...a) => runEnv({ MAESTRO_SCRIPTS_DIR: shelfDir }, ...a);
+    const on = (...a: string[]) => runEnv({ MAESTRO_SCRIPTS_DIR: shelfDir }, ...a);
     for (const cmd of ['roll', 'scratch']) {
         const r = on(cmd);
         assert.equal(r.code, 0, r.err);
@@ -107,7 +130,7 @@ test('root precedence: --vault beats LEDGER_ROOT beats VAULT_ROOT', () => {
     const ledgerRoot = mkdtempSync(join(tmpdir(), 'journal-ledger-root-'));
     const vaultRoot = mkdtempSync(join(tmpdir(), 'journal-vault-root-'));
     const explicitVault = mkdtempSync(join(tmpdir(), 'journal-explicit-vault-'));
-    const writes = (base) => join(base, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    const writes = (base: string) => join(base, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
 
     // Neither flag nor LEDGER_ROOT: falls back to VAULT_ROOT.
     let r = spawnSync(process.execPath, [SCRIPT, 'start', 'fallback to vault_root', ...MARK, '--project', 'test-proj'], {
@@ -138,14 +161,15 @@ test('root precedence: --vault beats LEDGER_ROOT beats VAULT_ROOT', () => {
 // ── streams, facts, carry, retro, archive ───────────────────────────────────
 
 const registryFile = () => join(vault, 'Projects', 'test-proj', 'streams.json');
-const registry = () => JSON.parse(readFileSync(registryFile(), 'utf8'));
-function seedRegistry(streams = { Launch: { aliases: ['launch', 'launch-v2'], status: 'active' }, Maestro: { aliases: [], status: 'active' } }) {
+interface RegistryFile { streams: Record<string, { aliases: string[]; status?: string }>; models: Record<string, { aliases: string[] }> }
+const registry = (): RegistryFile => parse<RegistryFile>(readFileSync(registryFile(), 'utf8'));
+function seedRegistry(streams: Record<string, { aliases: string[]; status: string }> = { Launch: { aliases: ['launch', 'launch-v2'], status: 'active' }, Maestro: { aliases: [], status: 'active' } }) {
     mkdirSync(join(vault, 'Projects', 'test-proj'), { recursive: true });
     writeFileSync(registryFile(), JSON.stringify({ streams }, null, 2));
 }
-const runT = (...args) => run(...args, '--tickets-vault', tv);
-const statusJson = (...a) => JSON.parse(run('status', '--json', ...a).out);
-const retroPath = (stream) => join(tv, 'Projects', 'dev-env', 'Archive', `${stream}-retro-${new Date().toISOString().slice(0, 10)}.md`);
+const runT = (...args: string[]) => run(...args, '--tickets-vault', tv);
+const statusJson = (...a: string[]) => parse(run('status', '--json', ...a).out);
+const retroPath = (stream: string) => join(tv, 'Projects', 'dev-env', 'Archive', `${stream}-retro-${new Date().toISOString().slice(0, 10)}.md`);
 
 test('write normalises case and aliases to the canonical stream', () => {
     seedRegistry();
@@ -157,10 +181,10 @@ test('write normalises case and aliases to the canonical stream', () => {
     assert.deepEqual([...new Set(ledger().map((e) => e.stream))], ['Launch']);
     const id = idOf(run('start', 'to retag', ...MARK).out);
     assert.equal(run('tag', id, '--stream', 'maestro', ...MARK).code, 0);
-    assert.equal(ledger().find((e) => e.kind === 'tag').stream, 'Maestro');
+    assert.equal(must(ledger().find((e) => e.kind === 'tag')).stream, 'Maestro');
     assert.equal(run('ask', 'q?', '--stream', 'launch', ...MARK).code, 0);
     assert.equal(run('log', 'n', '--stream', 'launch', ...MARK).code, 0);
-    assert.ok(ledger().filter((e) => e.stream).every((e) => ['Launch', 'Maestro'].includes(e.stream)));
+    assert.ok(ledger().filter((e) => e.stream).every((e) => ['Launch', 'Maestro'].includes(String(e.stream))));
 });
 
 test('an unknown stream is rejected with a suggestion, and --new-stream registers it', () => {
@@ -201,7 +225,7 @@ test('tag --stream none clears a stream, and the footer drops it', () => {
     const id = idOf(run('start', 'keeps stream', '--stream', 'Launch', ...MARK).out);
     assert.match(run('status', '--footer').out, /Ledger \(Launch\)/);
     assert.equal(run('tag', 'to clear', '--stream', 'none', ...MARK).code, 0);
-    assert.equal(ledger().find((e) => e.kind === 'tag').stream, undefined);
+    assert.equal(must(ledger().find((e) => e.kind === 'tag')).stream, undefined);
     const streams = statusJson().inflight.map((i) => i.stream);
     assert.deepEqual(streams.sort(), [undefined, 'Launch'].sort());
     assert.doesNotMatch(run('status', '--footer').out, /Ledger \(none\)/);
@@ -244,7 +268,7 @@ test('streams add is idempotent and refuses alias collisions; list shows counts'
     assert.equal(run('streams', 'add', 'Other', '--alias', 'launch').code, 1);
     assert.equal(run('streams', 'add', 'LAUNCH').code, 1);
     run('start', 'one', '--stream', 'launch', ...MARK);
-    const l = JSON.parse(run('streams', 'list', '--json').out);
+    const l = parse(run('streams', 'list', '--json').out);
     assert.deepEqual(l.streams.map((r) => [r.stream, r.open, r.total]), [['Launch', 1, 1]]);
 });
 
@@ -268,11 +292,11 @@ test('fact rows are not items and never show as open', () => {
     seedRegistry();
     const r = run('fact', 'v1_visits_full_min=79', '--stream', 'launch', ...MARK);
     assert.equal(r.code, 0, r.err);
-    const row = ledger().find((e) => e.kind === 'fact');
+    const row = must(ledger().find((e) => e.kind === 'fact'));
     assert.deepEqual([row.key, row.value, row.stream], ['v1_visits_full_min', '79', 'Launch']);
     const s = statusJson();
     assert.deepEqual([s.inflight, s.blocked, s.awaiting, s.done], [[], [], [], []]);
-    assert.deepEqual(JSON.parse(run('streams', 'list', '--json').out).streams.map((r) => r.total), [0, 0]);   // registered, but no items
+    assert.deepEqual(parse(run('streams', 'list', '--json').out).streams.map((r) => r.total), [0, 0]);   // registered, but no items
     assert.equal(run('fact', 'no-equals', '--stream', 'Launch', ...MARK).code, 1);
     assert.equal(run('fact', 'k=v', ...MARK).code, 1);
 });
@@ -281,7 +305,7 @@ test('carry re-homes an item', () => {
     seedRegistry();
     const id = idOf(run('start', 'follow-up', '--stream', 'Launch', ...MARK).out);
     assert.equal(run('carry', id, '--to', 'maestro', ...MARK).code, 0);
-    const c = ledger().find((e) => e.kind === 'carry');
+    const c = must(ledger().find((e) => e.kind === 'carry'));
     assert.deepEqual([c.carries, c.from, c.stream], [id, 'Launch', 'Maestro']);
     assert.equal(statusJson().inflight[0].stream, 'Maestro');
     assert.equal(run('carry', id, '--to', 'Nope', ...MARK).code, 1);
@@ -357,10 +381,10 @@ test('archive refuses on open items, a draft retro and unfilled promotions, then
     assert.equal(r.code, 0, r.err);
     const rows = ledger();
     assert.equal(rows.length, rowsBefore + 1);   // one archive event, nothing deleted
-    const ev = rows.at(-1);
+    const ev = must(rows.at(-1));
     assert.equal(ev.kind, 'archive');
     assert.equal(ev.stream, 'Launch');
-    assert.equal(ev.ids.length, 3);
+    assert.equal(ev.ids?.length, 3);
     assert.equal(ev.retro, path);
     assert.equal(registry().streams.Launch.status, 'archived');
     assert.equal(runT('archive', 'Launch', ...MARK).code, 1);   // already archived
@@ -384,7 +408,7 @@ test('archived items are hidden by default and shown with --include-archived; un
     const other = idOf(run('start', 'other stream work', '--stream', 'Maestro', ...MARK).out);
     const snap = () => ({
         status: run('status', '--json').out, standup: run('standup').out,
-        streams: JSON.parse(run('streams', 'list', '--json').out).streams.map(({ stream, open, done, dropped, total }) => [stream, open, done, dropped, total]),
+        streams: parse(run('streams', 'list', '--json').out).streams.map(({ stream, open, done, dropped, total }) => [stream, open, done, dropped, total]),
     });
     const before = snap();
     runT('retro', 'Launch');
@@ -394,10 +418,10 @@ test('archived items are hidden by default and shown with --include-archived; un
 
     const hidden = snap();
     assert.doesNotMatch(hidden.standup, /ship the widget/);
-    assert.equal(JSON.parse(hidden.status).done.length, 0);
-    assert.deepEqual(JSON.parse(hidden.status).inflight.map((i) => i.id), [other]);
+    assert.equal(parse(hidden.status).done.length, 0);
+    assert.deepEqual(parse(hidden.status).inflight.map((i) => i.id), [other]);
     const shown = run('status', '--json', '--include-archived').out;
-    assert.equal(JSON.parse(shown).done.length, 1);
+    assert.equal(parse(shown).done.length, 1);
     assert.match(run('standup', '--include-archived').out, /ship the widget/);
     const current = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
     assert.doesNotMatch(current(), /ship the widget/);
@@ -433,7 +457,7 @@ test('status --footer prints one Ledger line per active stream, registry names, 
 });
 
 test('status --footer ends with the Session line for the newest session, and says roll now past the thresholds', () => {
-    const turn = (id, read) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    const turn = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
     writeFileSync(join(projects, 'aaaaaaaa-old.jsonl'), `${turn('o1', 900000)}\n`);
     writeFileSync(join(projects, 'bbbbbbbb-new.jsonl'), `${[1, 2, 3, 4].map((n) => turn(`m${n}`, 100000)).join('\n')}\n`);
     utimesSync(join(projects, 'aaaaaaaa-old.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
@@ -480,10 +504,10 @@ test('read-time mapping heals old rows without touching the ledger; models check
     run('start', 'legacy', '--model', 'Claude Opus 5.5', ...usedFlags);
     run('start', 'modern', '--model', 'claude-opus-5-5', ...usedFlags);
     const before = readFileSync(ledgerFile(), 'utf8');
-    assert.deepEqual(JSON.parse(run('usage', '--json').out).model, { 'Claude Opus 5.5': 1, 'claude-opus-5-5': 1 });   // no models section: nothing enforced
+    assert.deepEqual(parse(run('usage', '--json').out).model, { 'Claude Opus 5.5': 1, 'claude-opus-5-5': 1 });   // no models section: nothing enforced
     seedModels();
-    assert.deepEqual(JSON.parse(run('usage', '--json').out).model, { 'claude-opus-5-5': 2 });
-    const c = JSON.parse(run('models', 'check', '--json').out);
+    assert.deepEqual(parse(run('usage', '--json').out).model, { 'claude-opus-5-5': 2 });
+    const c = parse(run('models', 'check', '--json').out);
     assert.equal(c.rows, 1);
     assert.deepEqual(c.models.map((m) => [m.model, m.status]).sort(), [['Claude Opus 5.5', 'alias'], ['claude-opus-5-5', 'canonical']]);
     assert.match(run('models', 'check').out, /1 row\(s\) would show under a different model name; nothing appended/);
@@ -505,15 +529,15 @@ test('models add is idempotent, refuses alias collisions, and coexists with stre
 
 // ── handoff and resume ──────────────────────────────────────────────────────
 
-const runEnvIn = (cwd, env, ...args) => {
+const runEnvIn = (cwd: string, env: Record<string, string>, ...args: string[]): Run => {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', MAESTRO_CONTAINER_ROOT: '', ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 };
-const runEnv = (env, ...args) => runEnvIn(emptyCwd, env, ...args);
-const handoffFile = (stream) => join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${new Date().toISOString().slice(0, 10)}-${stream}.md`);
-const section = (text, n) => text.split(new RegExp(`^## ${n}\\. .*$`, 'm'))[1].split(/^## /m)[0];
+const runEnv = (env: Record<string, string>, ...args: string[]) => runEnvIn(emptyCwd, env, ...args);
+const handoffFile = (stream: string) => join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${new Date().toISOString().slice(0, 10)}-${stream}.md`);
+const section = (text: string, n: number | string) => text.split(new RegExp(`^## ${n}\\. .*$`, 'm'))[1].split(/^## /m)[0];
 
 function seedHandoff() {
     seedRegistry();
@@ -582,7 +606,7 @@ test('handoff --learn and --next fill sections 2 and 5 on one line each, and lea
 test('handoff fills Session metrics from the newest session, and says so when there is none', () => {
     seedHandoff();
     assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /unavailable \(no sessions in /);
-    const turn = (id) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 1 } } });
+    const turn = (id: string) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 1 } } });
     writeFileSync(join(projects, 'cccccccc-now.jsonl'), `${[1, 2, 3].map((n) => turn(`t${n}`)).join('\n')}\n`);
     assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* 3 turns \(1% of 180 roll\) · 100k read\/turn/);
 });
@@ -597,7 +621,7 @@ test('handoff --update-context points CONTEXT.md at the new handoff once, replac
     assert.equal(readFileSync(ctx, 'utf8'), `# test-proj\n\nLatest handoff: [[HANDOFF-${day}-all]] (${day})\n\nGoals stay as they are.\n`);
     assert.match(run('handoff', '--all', '--force', '--update-context', '--context-file', ctx).out, /already linked/);
     run('handoff', '--stream', 'Maestro', '--update-context', '--context-file', ctx);
-    assert.equal(readFileSync(ctx, 'utf8').match(/^Latest handoff:.*$/gm).length, 1, 'replaced, not added');
+    assert.equal(readFileSync(ctx, 'utf8').match(/^Latest handoff:.*$/gm)?.length, 1, 'replaced, not added');
     assert.match(readFileSync(ctx, 'utf8'), /Latest handoff: \[\[HANDOFF-.*-Maestro\]\]/);
     const dry = run('handoff', '--all', '--force', '--dry-run', '--update-context', '--context-file', ctx);
     assert.match(dry.out, /would point/);
@@ -657,8 +681,8 @@ test('resume reports missing loops, found loops, gh off or unavailable, and the 
 function seedBackfill() {
     seedRegistry({ Launch: { aliases: ['launch-v2'], status: 'active' }, Maestro: { aliases: ['orchestrator'], status: 'active' } });
     const day = new Date().toISOString().slice(0, 10);
-    const at = (h, m = 0) => `${day}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`;
-    const row = (id, h, m, o) => JSON.stringify({ id, ts: at(h, m), date: day, kind: 'wip', refs: [], model: 'm', used: ['x'], ...o });
+    const at = (h: number, m = 0) => `${day}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`;
+    const row = (id: string, h: number, m: number, o: Record<string, unknown>) => JSON.stringify({ id, ts: at(h, m), date: day, kind: 'wip', refs: [], model: 'm', used: ['x'], ...o });
     const rows = [
         // evidence: five tagged Launch items in billing (two on ticket api-1), two tagged Maestro items in one session
         row('t001', 1, 0, { text: 'tagged one', stream: 'Launch', repo: 'billing', ticket: 'api-1' }),
@@ -680,7 +704,7 @@ function seedBackfill() {
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
     writeFileSync(ledgerFile(), rows.join('\n') + '\n');
 }
-const bfJson = (...a) => JSON.parse(run('backfill', '--json', ...a).out);
+const bfJson = (...a: string[]) => parse(run('backfill', '--json', ...a).out);
 
 test('backfill dry run proposes streams with confidence levels and appends nothing', () => {
     seedBackfill();
@@ -716,7 +740,7 @@ test('backfill --out writes a review table; --apply --min-confidence high append
     const added = ledger().slice(14);
     assert.deepEqual(added.map((e) => [e.kind, e.tags, e.stream, e.confidence, e.prev]), [['tag', 'u001', 'Launch', 'high', null], ['tag', 'u002', 'Launch', 'high', null]]);
     assert.equal(new Set(added.map((e) => e.backfill)).size, 1);
-    assert.match(added[0].backfill, /^bf-/);
+    assert.match(String(added[0]?.backfill), /^bf-/);
     assert.equal(new Set(ledger().map((e) => e.id)).size, ledger().length);
     assert.equal(bfJson().untagged, 5);
     assert.match(run('backfill', '--apply', '--min-confidence', 'high', ...MARK).out, /0 tag row\(s\)/);   // idempotent
@@ -728,10 +752,10 @@ test('backfill --out writes a review table; --apply --min-confidence high append
 // ── claims and concurrent writers ───────────────────────────────────────────
 
 const claimsDirPath = () => join(vault, 'Projects', 'test-proj', 'Claims');
-const lockFile = (repo) => join(claimsDirPath(), `${repo}.lock`);
+const lockFile = (repo: string) => join(claimsDirPath(), `${repo}.lock`);
 
-/** Runs journal.mjs asynchronously so several can genuinely overlap. */
-const runAsync = (args, extraEnv = {}) => new Promise((resolve) => {
+/** Runs journal.ts asynchronously so several can genuinely overlap. */
+const runAsync = (args: string[], extraEnv: Record<string, string> = {}) => new Promise<Run>((resolve) => {
     const p = spawn(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         env: { ...process.env, VAULT_ROOT: '', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -746,11 +770,11 @@ test('concurrent claims on one repo: exactly one wins, the rest name the holder'
     const results = await Promise.all(Array.from({ length: 8 }, (_, i) => runAsync(['claim', 'repo-x', '--desk', `desk${i}`, ...MARK])));
     const winners = results.map((r, i) => ({ r, i })).filter(({ r }) => r.code === 0);
     assert.equal(winners.length, 1, results.map((r) => r.err).join('\n'));
-    const lock = JSON.parse(readFileSync(lockFile('repo-x'), 'utf8'));
+    const lock = parse(readFileSync(lockFile('repo-x'), 'utf8'));
     assert.equal(lock.desk, `desk${winners[0].i}`);
     for (const r of results.filter((x) => x.code !== 0)) assert.match(r.err, new RegExp(`already claimed by desk ${lock.desk},`));
     assert.equal(ledger().filter((e) => e.kind === 'claim').length, 1);
-    assert.equal(ledger().find((e) => e.kind === 'claim').desk, lock.desk);
+    assert.equal(must(ledger().find((e) => e.kind === 'claim')).desk, lock.desk);
     assert.deepEqual(readdirSync(claimsDirPath()).filter((n) => n !== 'repo-x.lock'), [], 'losers leave no temp files');
 });
 
@@ -778,15 +802,15 @@ test('claims lists claims and flags a dead pid and an old claim as stale; claim 
     assert.equal(run('claim', 'live', '--desk', 'alpha', '--pid', String(process.pid), ...MARK).code, 0);
     assert.equal(run('claim', 'gone', '--desk', 'alpha', '--pid', dead.stdout, ...MARK).code, 0);
     assert.equal(run('claim', 'nopid', '--desk', 'beta', ...MARK).code, 0);
-    const old = JSON.parse(readFileSync(lockFile('nopid'), 'utf8'));
+    const old = parse(readFileSync(lockFile('nopid'), 'utf8'));
     writeFileSync(lockFile('nopid'), JSON.stringify({ ...old, time: new Date(Date.now() - 30 * 36e5).toISOString() }));
-    const byRepo = Object.fromEntries(JSON.parse(run('claims', '--json').out).claims.map((c) => [c.repo, c]));
+    const byRepo = Object.fromEntries(parse(run('claims', '--json').out).claims.map((c) => [c.repo, c]));
     assert.equal(byRepo.live.stale, false);
     assert.equal(byRepo.gone.stale, true);
     assert.match(byRepo.gone.reason, /is not running/);
     assert.equal(byRepo.nopid.stale, true);
     assert.match(byRepo.nopid.reason, /older than 12h/);
-    assert.equal(JSON.parse(run('claims', '--json', '--stale-hours', '48').out).claims.find((c) => c.repo === 'nopid').stale, false);
+    assert.equal(must(parse(run('claims', '--json', '--stale-hours', '48').out).claims.find((c) => c.repo === 'nopid')).stale, false);
     assert.match(run('claims').out, /gone {2}desk alpha.*STALE \(pid \d+ is not running\)/);
     assert.deepEqual([statusJson().inflight, statusJson().awaiting], [[], []]);
     assert.equal(run('claims', '--vault', mkdtempSync(join(tmpdir(), 'empty-'))).out.trim(), 'No claims.');
@@ -795,7 +819,7 @@ test('claims lists claims and flags a dead pid and an old claim as stale; claim 
 test('concurrent appends: N processes x M rows all parse, with unique ids and the full count', async () => {
     const N = 4;
     const M = 25;
-    const workers = Array.from({ length: N }, (_, w) => new Promise((resolve) => {
+    const workers = Array.from({ length: N }, (_, w) => new Promise<{ code: number | null; err: string }>((resolve) => {
         const script = `const {spawnSync}=require('child_process');for(let i=0;i<${M};i++){const r=spawnSync(process.execPath,[${JSON.stringify(SCRIPT)},'log','w${w}-'+i,'--vault',${JSON.stringify(vault)},'--project','test-proj','--model','m','--used','tool:t'],{encoding:'utf8',env:{...process.env,VAULT_ROOT:''}});if(r.status!==0){console.error(r.stderr);process.exit(1)}}`;
         const p = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
         let err = '';
@@ -806,7 +830,7 @@ test('concurrent appends: N processes x M rows all parse, with unique ids and th
     results.forEach((r) => assert.equal(r.code, 0, r.err));
     const lines = readFileSync(ledgerFile(), 'utf8').split('\n').filter(Boolean);
     assert.equal(lines.length, N * M);
-    const rows = lines.map((l) => JSON.parse(l));   // throws on any torn or interleaved line
+    const rows = lines.map((l) => parse(l));   // throws on any torn or interleaved line
     assert.equal(new Set(rows.map((r) => r.id)).size, N * M);
     assert.equal(new Set(rows.map((r) => r.text)).size, N * M);
 });
@@ -834,13 +858,13 @@ test('verify passes a clean ledger and reports every kind of problem with a non-
     assert.match(bad.out, /carries refers to ghost2/);
     assert.match(bad.out, /archive ids refers to ghost3/);
     assert.match(bad.out, /line 7: line does not parse/);
-    const j = JSON.parse(run('verify', '--json').out);
+    const j = parse(run('verify', '--json').out);
     assert.equal(j.problems.length, 5);
     assert.equal(run('verify', '--vault', mkdtempSync(join(tmpdir(), 'empty-'))).code, 0);   // no ledger yet is not a problem
 });
 
 const gitEnv = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
-const git = (cwd, ...a) => spawnSync('git', ['-C', cwd, ...a], { encoding: 'utf8', env: { ...process.env, ...gitEnv } });
+const git = (cwd: string, ...a: string[]) => spawnSync('git', ['-C', cwd, ...a], { encoding: 'utf8', env: { ...process.env, ...gitEnv } });
 
 test('roll commits the changed ledger files when ledger_git_autocommit is on, by explicit path, and honours .gitignore', () => {
     git(vault, 'init', '-q');
@@ -888,7 +912,7 @@ test('roll does not commit when the config is off, the root is not a repo, or ve
 
 // ── per-stream views ────────────────────────────────────────────────────────
 
-const streamPage = (name) => join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', `${name}.md`);
+const streamPage = (name: string) => join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', `${name}.md`);
 const currentMd = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
 
 test('render writes one page per active stream and CURRENT.md stays the combined board, linking each page', () => {
@@ -923,7 +947,7 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     assert.match(cur, /loose/);
     assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Other.md')), false);
 });
-const section2 = (text, title) => text.split(new RegExp(`^## ${title}.*$`, 'm'))[1].split(/^## /m)[0];
+const section2 = (text: string, title: string) => text.split(new RegExp(`^## ${title}.*$`, 'm'))[1].split(/^## /m)[0];
 
 test('an archived stream gets a page that links its retro; the ledger stays one file', () => {
     seedRegistry();
@@ -948,7 +972,7 @@ test('an archived stream gets a page that links its retro; the ledger stays one 
 test('log --approval records the field, scope and ref on a decision row', () => {
     const r = run('log', 'may resolve declined bot threads', '--kind', 'decision', '--approval', 'standing', '--scope', 'bot threads only', '--ref', 'memory/bot-threads.md', ...MARK);
     assert.equal(r.code, 0);
-    const row = ledger().find((e) => e.id === idOf(r.out));
+    const row = must(ledger().find((e) => e.id === idOf(r.out)));
     assert.equal(row.approval, 'standing');
     assert.equal(row.scope, 'bot threads only');
     assert.deepEqual(row.refs, ['memory/bot-threads.md']);
@@ -966,7 +990,7 @@ test('log rejects an invalid --approval value and writes nothing', () => {
 test('resolve accepts --approval when the user answers an ask with one', () => {
     const q = idOf(run('ask', 'retarget #3934?', ...MARK).out);
     assert.equal(run('resolve', q, '--answer', 'yes, retarget #3934', '--approval', 'one-off', ...MARK).code, 0);
-    assert.equal(ledger().find((e) => e.closes === q).approval, 'one-off');
+    assert.equal(must(ledger().find((e) => e.closes === q)).approval, 'one-off');
     const q2 = idOf(run('ask', 'another?', ...MARK).out);
     assert.equal(run('resolve', q2, '--approval', 'bogus', ...MARK).code, 1);
 });
@@ -978,7 +1002,7 @@ test('approve-tag marks an existing decision without rewriting the ledger', () =
     assert.equal(r.code, 0);
     const after = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
     assert.ok(after.startsWith(before));   // append-only
-    const tag = ledger().find((e) => e.kind === 'approval-tag');
+    const tag = must(ledger().find((e) => e.kind === 'approval-tag'));
     assert.deepEqual([tag.approves, tag.approval, tag.scope, tag.refs], [id, 'standing', 'own branches', ['memory/x.md']]);
     assert.equal(run('approve-tag', 'nope00', '--approval', 'standing', ...MARK).code, 1);
     assert.equal(run('approve-tag', id, '--approval', 'sometimes', ...MARK).code, 1);
@@ -994,8 +1018,8 @@ test('approve-tag only accepts decision, resolved and question rows', () => {
     const decision = idOf(run('log', 'use sqlite', '--kind', 'decision', ...MARK).out);
     const resolved = idOf(run('resolve', q, '--answer', 'yes', ...MARK).out);
     for (const id of [decision, resolved]) assert.equal(run('approve-tag', id, '--approval', 'one-off', ...MARK).code, 0, id);
-    const tag = ledger().find((e) => e.kind === 'approval-tag').id;
-    for (const id of [wip, done, dropped, tag]) {
+    const tag = must(ledger().find((e) => e.kind === 'approval-tag')).id;
+    for (const id of [wip, done, dropped, tag].map(String)) {
         const r = run('approve-tag', id, '--approval', 'one-off', ...MARK);
         assert.equal(r.code, 1, id);
         assert.match(r.err, /can be approved/);
@@ -1038,13 +1062,13 @@ test('verify accepts approval rows and flags a bad value or a dangling approves'
 
 // ── approvals digest ────────────────────────────────────────────────────────
 
-const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+const daysAgo = (n: number): string => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 const digestPath = join(tmpdir(), `approvals-${process.pid}.md`);
-const digest = (...a) => run('approvals', '--tickets-vault', tv, ...a);
-const jsonDigest = (...a) => JSON.parse(digest('--json', ...a).out);
+const digest = (...a: string[]) => run('approvals', '--tickets-vault', tv, ...a);
+const jsonDigest = (...a: string[]) => parse(digest('--json', ...a).out);
 
 function seedApprovals() {
-    const mk = (text, date, ...extra) => idOf(run('log', text, '--kind', 'decision', '--date', date, ...extra, ...MARK).out);
+    const mk = (text: string, date: string, ...extra: string[]) => idOf(run('log', text, '--kind', 'decision', '--date', date, ...extra, ...MARK).out);
     const standing = mk('may resolve declined bot threads', daysAgo(1), '--approval', 'standing', '--scope', 'bot threads', '--ref', 'memory/bot.md');
     const oneOff = mk('yes, retarget #3934', daysAgo(1), '--approval', 'one-off');
     const untagged = mk('use sqlite for the index', daysAgo(1));
@@ -1060,14 +1084,14 @@ test('approvals groups standing, one-off and untagged decisions, including retro
     assert.deepEqual(g.standing.map((a) => a.id).sort(), [ids.standing, retro].sort());
     assert.deepEqual(g.oneOff.map((a) => a.id), [ids.oneOff]);
     assert.deepEqual(g.untagged.map((a) => a.id), [ids.untagged]);
-    assert.equal(g.standing.find((a) => a.id === retro).scope, 'own branches');
-    assert.deepEqual(g.standing.find((a) => a.id === ids.standing).refs, ['memory/bot.md']);
+    assert.equal(must(g.standing.find((a) => a.id === retro)).scope, 'own branches');
+    assert.deepEqual(must(g.standing.find((a) => a.id === ids.standing)).refs, ['memory/bot.md']);
 });
 
 test('a decision closed with an approval is not also listed as untagged', () => {
     const d = idOf(run('log', 'retarget #3934?', '--kind', 'decision', '--date', daysAgo(1), ...MARK).out);
     assert.equal(run('resolve', d, '--approval', 'one-off', ...MARK).code, 0);
-    const closer = ledger().find((e) => e.closes === d);
+    const closer = must(ledger().find((e) => e.closes === d));
     assert.equal(closer.approval, 'one-off');
     const g = jsonDigest('--days', '7');
     assert.deepEqual(g.oneOff.map((a) => a.id), [closer.id]);
@@ -1078,10 +1102,10 @@ test('a later tag overrides only the fields it sets', () => {
     const id = idOf(run('log', 'merge base into my branches', '--kind', 'decision', '--date', daysAgo(1), ...MARK).out);
     run('approve-tag', id, '--approval', 'standing', '--scope', 'own branches', '--ref', 'memory/a.md', ...MARK);
     run('approve-tag', id, '--approval', 'one-off', ...MARK);
-    let row = jsonDigest('--days', '7').oneOff.find((a) => a.id === id);
+    let row = must(jsonDigest('--days', '7').oneOff.find((a) => a.id === id));
     assert.deepEqual([row.scope, row.refs], ['own branches', ['memory/a.md']]);
     run('approve-tag', id, '--approval', 'one-off', '--scope', 'only this PR', '--ref', 'memory/b.md', ...MARK);
-    row = jsonDigest('--days', '7').oneOff.find((a) => a.id === id);
+    row = must(jsonDigest('--days', '7').oneOff.find((a) => a.id === id));
     assert.deepEqual([row.scope, row.refs], ['only this PR', ['memory/b.md']]);
 });
 
@@ -1099,7 +1123,7 @@ test('approvals --days and --since set the window; an old row that is retro-tagg
 });
 
 test('--days N covers exactly N days ending today, so weekly digests do not overlap', () => {
-    const mk = (n) => idOf(run('log', `grant ${n} days ago`, '--kind', 'decision', '--date', daysAgo(n), '--approval', 'one-off', ...MARK).out);
+    const mk = (n: number) => idOf(run('log', `grant ${n} days ago`, '--kind', 'decision', '--date', daysAgo(n), '--approval', 'one-off', ...MARK).out);
     const [today0, six, seven] = [mk(0), mk(6), mk(7)];
     const ids = jsonDigest('--days', '7').oneOff.map((a) => a.id);
     assert.ok(ids.includes(today0) && ids.includes(six));
@@ -1184,7 +1208,7 @@ test('a grant that is both resolved with --approval and approve-tagged is listed
 /** A container holding one repo cloned from a bare origin, with a clean and a dirty detached worktree outside the container. */
 function sweepWorld() {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'roll-sweep-')));
-    const git = (cwd, ...a) => { const r = spawnSync('git', ['-C', cwd, '-c', 'user.email=me@example.com', '-c', 'user.name=T', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+    const git = (cwd: string, ...a: string[]) => { const r = spawnSync('git', ['-C', cwd, '-c', 'user.email=me@example.com', '-c', 'user.name=T', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
     git(root, 'init', '-q', '--bare', '-b', 'main', 'origin.git');
     mkdirSync(join(root, 'box'));
     git(root, 'clone', '-q', join(root, 'origin.git'), join(root, 'box', 'proj'));
@@ -1265,7 +1289,7 @@ test('roll archives and commits the ledger before it sweeps, and a --fast roll s
     assert.doesNotMatch(fast.out, /worktrees:|removed +/);
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
     const full = runEnvIn(w.container, env, 'roll');
-    const at = (re) => full.out.search(re);
+    const at = (re: RegExp) => full.out.search(re);
     assert.ok(at(/archived|Nothing finished/) >= 0 && at(/ledger git:/) >= 0 && at(/worktrees:/) >= 0, full.out);
     assert.ok(at(/archived|Nothing finished/) < at(/ledger git:/) && at(/ledger git:/) < at(/removed +/), full.out);
     assert.equal(existsSync(w.clean), false);
@@ -1316,7 +1340,7 @@ test('ask --kind decision is pending: it shows as awaiting until resolved', () =
     assert.equal(r.code, 0, r.err);
     const id = idOf(r.out);
     assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
-    assert.equal(ledger().find((e) => e.id === id).pending, true);
+    assert.equal(must(ledger().find((e) => e.id === id)).pending, true);
     run('resolve', id, '--answer', 'Monday', ...MARK);
     assert.deepEqual(statusJson().awaiting, []);
 });
@@ -1363,7 +1387,7 @@ test('rule can carry an approval, and the approvals digest sees it', () => {
     const memo = join(tv, 'memory.md');
     writeFileSync(memo, 'x');
     assert.equal(run('rule', 'may delete merged branches', '--ref', memo, '--approval', 'standing', '--scope', 'merged only', ...MARK).code, 0);
-    const d = JSON.parse(run('approvals', '--json').out);
+    const d = parse(run('approvals', '--json').out);
     assert.equal(d.standing.length, 1);
     assert.equal(d.untagged.length, 0);
 });
@@ -1388,17 +1412,17 @@ test('status prints no "other" heading when there are no streams, and no blocked
 test('rule resolves a relative ref against the cwd, and the digest leaves pending decisions out of "untagged"', () => {
     writeFileSync(join(emptyCwd, 'rel-memory.md'), 'x');
     assert.equal(run('rule', 'relative ref rule', '--ref', 'rel-memory.md', ...MARK).code, 0);
-    assert.equal(ledger()[0].refs[0], join(realpathSync(emptyCwd), 'rel-memory.md'));
+    assert.equal(ledger()[0]?.refs?.[0], join(realpathSync(emptyCwd), 'rel-memory.md'));
     run('ask', 'still open?', '--kind', 'decision', ...MARK);
-    const untagged = JSON.parse(run('approvals', '--json').out).untagged.map((u) => u.text);
+    const untagged = parse(run('approvals', '--json').out).untagged.map((u) => u.text);
     assert.deepEqual(untagged, ['relative ref rule']);
 });
 
 // ── boxes, triage, roll --strict, ask --paste (MAESTRO-14) ──────────────────
 
 const blockFile = (name = 'block.sh') => { const f = join(tv, name); writeFileSync(f, 'echo hi\n'); return f; };
-const triageJson = (...a) => JSON.parse(run('triage', '--json', ...a).out);
-const boxIds = (t, box) => (t.byBox[box] || []).map((i) => i.text);
+const triageJson = (...a: string[]) => parse(run('triage', '--json', ...a).out);
+const boxIds = (t: Doc, box: number) => (t.byBox[box] || []).map((i) => i.text);
 
 function triageWorld() {
     const memo = blockFile('memory.md');
@@ -1457,7 +1481,7 @@ test('triage --apply closes only the rules and approvals whose ref is an existin
     assert.match(r.out, /closed 2 recorded item\(s\); 2 still need a ref file/);
     const added = ledger().slice(before.length);
     assert.equal(added.length, 2);
-    assert.ok(added.every((e) => e.kind === 'resolved' && e.text === `recorded → ${memo}` && e.refs[0] === memo));
+    assert.ok(added.every((e) => e.kind === 'resolved' && e.text === `recorded → ${memo}` && e.refs?.[0] === memo));
     assert.deepEqual(before, ledger().slice(0, before.length), 'append-only: existing rows untouched');
     const t = triageJson();
     assert.deepEqual(boxIds(t, 1), ['Jack rule: no merge on red']);
@@ -1567,7 +1591,7 @@ test('handoff section 4 keeps every open question: one boxed as a rule by its ap
 
 // ── prime, gates, defer (MAESTRO-15) ────────────────────────────────────────
 
-const inDays = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const inDays = (n: number): string => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 
 /** A fake `gh` on PATH answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
 function ghStubDir() {
@@ -1608,7 +1632,7 @@ test('resume reports date gates as waiting or cleared, and never writes', () => 
 test('resume checks gh pr gates through gh pr view: merged clears, open waits, closed or failing is unknown', () => {
     const id = idOf(run('log', 'hold for the PR', '--kind', 'blocked', '--gate', 'gh:pr:owner/repo#42', ...MARK).out);
     const dir = ghStubDir();
-    const env = (state) => ({ MAESTRO_RESUME_GH: 'on', PATH: `${dir}:${process.env.PATH}`, STUB_STATE: state });
+    const env = (state: string) => ({ MAESTRO_RESUME_GH: 'on', PATH: `${dir}:${process.env.PATH}`, STUB_STATE: state });
     assert.match(runEnv(env('MERGED'), 'resume').out, new RegExp(`CLEARED\\s+${id} .*owner/repo#42 merged`));
     assert.match(runEnv(env('OPEN'), 'resume').out, new RegExp(`waiting\\s+${id} .*owner/repo#42 is open`));
     assert.match(runEnv(env('CLOSED'), 'resume').out, new RegExp(`UNKNOWN\\s+${id} .*closed without merging`));
@@ -1619,7 +1643,7 @@ test('resume checks gh pr gates through gh pr view: merged clears, open waits, c
 
 test('resume checks ticket gates against the tickets vault', () => {
     mkdirSync(join(tv, 'Projects', 'p1', 'Tickets'), { recursive: true });
-    const ticket = (id, status) => writeFileSync(join(tv, 'Projects', 'p1', 'Tickets', `${id}.md`), `---\nid: "${id}"\ntitle: "T"\nstatus: "${status}"\n---\nbody\n`);
+    const ticket = (id: string, status: string) => writeFileSync(join(tv, 'Projects', 'p1', 'Tickets', `${id}.md`), `---\nid: "${id}"\ntitle: "T"\nstatus: "${status}"\n---\nbody\n`);
     ticket('p1-001', 'closed');
     ticket('p1-002', 'open');
     const a = idOf(run('log', 'wait on 001', '--kind', 'blocked', '--gate', 'ticket:p1-001', ...MARK).out);
@@ -1646,7 +1670,7 @@ test('defer hides an open item from status, the footer and prime until its date,
     const r = run('defer', id, '--until', inDays(3), ...MARK);
     assert.equal(r.code, 0, r.err);
     assert.equal(ledger().length, rows + 1);
-    assert.equal(ledger().at(-1).kind, 'defer');
+    assert.equal(ledger().at(-1)?.kind, 'defer');
     assert.deepEqual(statusJson().inflight.map((i) => i.text), ['still on the board']);
     assert.match(run('status', '--footer').out.split('\n')[0], /1 in flight/);
     assert.doesNotMatch(run('prime').out, /after the push/);
@@ -1711,7 +1735,7 @@ test('prime stays within 40 lines even when stream names, block paths and the pr
     for (let i = 0; i < 30; i++) run('log', `b${i}`, '--kind', 'blocked', ...MARK);
     const lines = run('prime').out.trimEnd().split('\n');
     assert.ok(lines.length <= 40, `${lines.length} lines`);
-    assert.match(lines.at(-1), /journal\.mjs/);
+    assert.match(String(lines.at(-1)), /journal\.ts/);
 });
 
 test('deferring the last open item of a stream empties its page, and an expired deferral shows again in CURRENT.md on the next read', () => {
@@ -1723,7 +1747,7 @@ test('deferring the last open item of a stream empties its page, and an expired 
     assert.doesNotMatch(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
     // The date passes: the deferral now ends today, and CURRENT.md was last written on an earlier day.
     const file = join(journal, 'ledger.jsonl');
-    writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { const r = JSON.parse(l); return r.kind === 'defer' ? JSON.stringify({ ...r, until: inDays(0) }) : l; }).join('\n') + '\n');
+    writeFileSync(file, readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { const r = parse(l); return r.kind === 'defer' ? JSON.stringify({ ...r, until: inDays(0) }) : l; }).join('\n') + '\n');
     writeFileSync(join(journal, 'CURRENT.md'), readFileSync(join(journal, 'CURRENT.md'), 'utf8').replace(/updated: .*/, 'updated: 2020-01-01'));
     run('prime');
     assert.match(readFileSync(join(journal, 'CURRENT.md'), 'utf8'), /only item/);
@@ -1733,7 +1757,7 @@ test('deferring the last open item of a stream empties its page, and an expired 
 // ── pending tracker transitions ─────────────────────────────────────────────
 
 function seedPending() {
-    const done = (text, ...more) => run('done', idOf(run('start', text, ...more, ...MARK).out), ...MARK);
+    const done = (text: string, ...more: string[]) => run('done', idOf(run('start', text, ...more, ...MARK).out), ...MARK);
     done('ship the retry cap ABC-12');
     done('wire the flag', '--ticket', 'XYZ-7');
     done('tidy the readme');
@@ -1751,7 +1775,7 @@ test('tickets --pending lists done items with a tracker key and no recorded tran
     assert.match(r.out, /XYZ-7 .*wire the flag/, 'a key in the --ticket field counts');
     assert.equal(r.out.split('\n').filter((l) => l.startsWith('  ABC-12')).length, 1, 'one line per key');
     assert.doesNotMatch(r.out, /ABC-30|ABC-99|tidy the readme/, 'recorded, open and keyless items are not pending');
-    const json = JSON.parse(run('tickets', '--pending', '--json').out);
+    const json = parse(run('tickets', '--pending', '--json').out);
     assert.deepEqual(json.pending.map((p) => p.key).sort(), ['ABC-12', 'XYZ-7']);
     assert.match(run('tickets', '--pending', '--since', '2999-01-01').out, /No pending tracker transitions/);
     assert.equal(run('tickets').code, 1);
@@ -1767,7 +1791,7 @@ test('recording a transition with log --transitioned clears the key; a value tha
     assert.equal(run('log', 'moved it', '--transitioned', ...MARK).code, 1, 'a bare flag is refused, not silently dropped');
     assert.equal(ledger().length, before);
     assert.equal(run('log', 'moved both', '--transitioned', 'ABC-12, XYZ-7', ...MARK).code, 0);
-    assert.deepEqual(ledger().at(-1).transitioned, ['ABC-12', 'XYZ-7']);
+    assert.deepEqual(ledger().at(-1)?.transitioned, ['ABC-12', 'XYZ-7']);
     assert.match(run('tickets', '--pending').out, /No pending tracker transitions/);
 });
 
@@ -1782,10 +1806,10 @@ test('prime and triage flag pending transitions when there are some, and say not
     assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
     assert.match(run('triage').out, /\[x\] Every done item with a tracker key has a recorded transition$/m);
     seedPending();
-    assert.match(run('prime').out, /Pending tracker transitions \(2\): ABC-12, XYZ-7\. `journal\.mjs tickets --pending`/);
+    assert.match(run('prime').out, /Pending tracker transitions \(2\): ABC-12, XYZ-7\. `journal\.ts tickets --pending`/);
     const t = run('triage');
     assert.match(t.out, /\[ \] Every done item with a tracker key has a recorded transition \(2 pending: ABC-12, XYZ-7/);
-    assert.deepEqual(JSON.parse(run('triage', '--json').out).pendingTransitions.map((p) => p.key).sort(), ['ABC-12', 'XYZ-7']);
+    assert.deepEqual(parse(run('triage', '--json').out).pendingTransitions.map((p) => p.key).sort(), ['ABC-12', 'XYZ-7']);
     assert.equal(run('triage').code, 0, 'a warning, never a roll blocker');
     run('log', 'moved all', '--transitioned', 'ABC-12,XYZ-7', ...MARK);
     assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);

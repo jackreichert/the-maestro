@@ -7,7 +7,7 @@ The user should not have to ask what happened today. The ledger is how that prom
 
 ```bash
 J=<this-skill>/scripts/journal.ts
-M=(--model "<your model>" --used "skill:the-maestro,tool:journal.mjs")
+M=(--model "<your model>" --used "skill:the-maestro,tool:journal.ts")
 
 node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014 "${M[@]}"
 node $J done  "Port the calendar fix" "${M[@]}"  # id or a unique substring
@@ -191,7 +191,7 @@ node $J release billing-api --desk Launch "${M[@]}"                 # holder onl
 node $J claims --json
 ```
 
-**Concurrent appends.** The ledger takes no lock, and needs none: `appendFileSync` issues one `write()` on an `O_APPEND` descriptor, so concurrent rows land whole and in some order. `journal.test.mjs` has a test that runs several processes appending at once and asserts every line parses, ids are unique and the count is exact, and it passed without adding a lock (also stress-checked once at 8 processes x 40 rows). The one residual risk is `newId` picking the same four characters in two processes inside the same instant; `verify` reports duplicates. `append` and the backfill batch (`appendMany`) each use a single write.
+**Concurrent appends.** The ledger takes no lock, and needs none: `appendFileSync` issues one `write()` on an `O_APPEND` descriptor, so concurrent rows land whole and in some order. `journal.test.ts` has a test that runs several processes appending at once and asserts every line parses, ids are unique and the count is exact, and it passed without adding a lock (also stress-checked once at 8 processes x 40 rows). The one residual risk is `newId` picking the same four characters in two processes inside the same instant; `verify` reports duplicates. `append` and the backfill batch (`appendMany`) each use a single write.
 
 Desks and the hub/desk split that uses claims: [desks.md](desks.md) (draft).
 

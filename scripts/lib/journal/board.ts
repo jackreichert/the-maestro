@@ -149,7 +149,7 @@ export function render(ctx: BoardContext, quiet = false, includeArchived = false
         '',
         '# Current ledger',
         '',
-        '> Generated from `ledger.jsonl` by `journal.mjs render`. Edits here are',
+        '> Generated from `ledger.jsonl` by `journal.ts render`. Edits here are',
         '> overwritten — the JSONL is the source of truth. Dated archives are',
         '> written once and are yours to edit.',
         '',
@@ -227,7 +227,7 @@ export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: Ledger
     const streamsDir = join(dir, 'Streams');
     mkdirSync(streamsDir, { recursive: true });
     const head = (s: string, extra: string[] = []): string[] => ['---', 'generated: true', `stream: ${s}`, `updated: ${d}`, '---', '', `# ${s}`, '',
-        '> Generated from `ledger.jsonl` by `journal.mjs render`. Edits here are overwritten. The combined board is [[CURRENT]].', '', ...extra];
+        '> Generated from `ledger.jsonl` by `journal.ts render`. Edits here are overwritten. The combined board is [[CURRENT]].', '', ...extra];
     for (const s of names) {
         const out = head(s);
         const section = (title: string, arr: LedgerItem[]): void => {
@@ -245,7 +245,7 @@ export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: Ledger
     }
     for (const [s, retro] of retros) {
         const link = retro ? `Retro: [[${retro.split('/').slice(-1)[0].replace(/\.md$/, '')}]] (${retro})` : 'Retro: (path not recorded)';
-        writeFileSync(join(streamsDir, `${slug(streamName(s))}.md`), head(streamName(s), ['This stream is **archived**. Its items are hidden from the board; `journal.mjs unarchive` brings them back.', '', link, '']).join('\n'));
+        writeFileSync(join(streamsDir, `${slug(streamName(s))}.md`), head(streamName(s), ['This stream is **archived**. Its items are hidden from the board; `journal.ts unarchive` brings them back.', '', link, '']).join('\n'));
     }
     return names.length + retros.size;
 }

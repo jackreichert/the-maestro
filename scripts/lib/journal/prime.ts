@@ -75,8 +75,8 @@ export function primeLines(ctx: PrimeContext): string[] {
     const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste);
     const pending = pendingTransitions(ctx, defaultPendingSince());
     const head = [clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
-        ...(pending.length ? [clip(`Pending tracker transitions (${pending.length}): ${pending.map((r) => r.key).join(', ')}. \`journal.mjs tickets --pending\``, 200)] : [])];
-    const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.mjs status\` and \`triage\` have the rest.`] : ['`journal.mjs status` has the rest.'];
+        ...(pending.length ? [clip(`Pending tracker transitions (${pending.length}): ${pending.map((r) => r.key).join(', ')}. \`journal.ts tickets --pending\``, 200)] : [])];
+    const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.ts status\` and \`triage\` have the rest.`] : ['`journal.ts status` has the rest.'];
     if (!sections.length) return [...head, '(nothing open)', ...foot];
     // Whatever the content, the cap holds: the budget below counts lines, and this guard backs it up.
     const capped = (lines: string[]): string[] => (lines.length <= PRIME_MAX_LINES ? lines : [...lines.slice(0, PRIME_MAX_LINES - foot.length), ...foot]);
@@ -104,7 +104,7 @@ export const trackerKeys = (...texts: unknown[]): string[] => [...new Set(texts.
 /**
  * Done items finished on or after `since` that carry a tracker key (in the ticket field, the text, or the closing row)
  * whose transition nobody recorded. A transition is recorded by any ledger row with `transitioned: [KEY, ...]`
- * (`journal.mjs log "moved FAKE-1 to In Staging" --transitioned FAKE-1`), at any date. One row per key: [{ key, id, text, doneOn }].
+ * (`journal.ts log "moved FAKE-1 to In Staging" --transitioned FAKE-1`), at any date. One row per key: [{ key, id, text, doneOn }].
  */
 export function pendingTransitions(ctx: PendingContext, since: string): PendingRow[] {
     const { readLedger, fold } = ctx;

@@ -19,58 +19,58 @@
  * The JSONL is the source of truth precisely so the markdown can be read and
  * edited freely without breaking anything. Regenerate with `render`.
  *
- *   journal.mjs log "<text>" --model "<name>" --used "skill:x,tool:y" [--kind note]
- *   journal.mjs start "<text>" --model "<name>" --used "skill:x,tool:y" [--repo x]
- *   journal.mjs done <id|text> --model "<name>" --used "skill:x,tool:y"
- *   journal.mjs drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
- *   journal.mjs ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts log "<text>" --model "<name>" --used "skill:x,tool:y" [--kind note]
+ *   journal.ts start "<text>" --model "<name>" --used "skill:x,tool:y" [--repo x]
+ *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
+ *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
- *   journal.mjs ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
- *   journal.mjs triage [--date D] [--since D] [--apply] [--json]   box every open item and the day's decisions and notes, flag stale/unpromoted/unticketed, print the don't-miss
+ *   journal.ts ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
+ *   journal.ts triage [--date D] [--since D] [--apply] [--json]   box every open item and the day's decisions and notes, flag stale/unpromoted/unticketed, print the don't-miss
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
- *   journal.mjs log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
- *   journal.mjs defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
- *   journal.mjs prime                         the box view for session start and after a compaction: 40 lines or fewer, ledger only (hook-safe)
- *   journal.mjs rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
+ *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
+ *   journal.ts prime                         the box view for session start and after a compaction: 40 lines or fewer, ledger only (hook-safe)
+ *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
- *   journal.mjs resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
- *   journal.mjs stamp <id> --model "<name>" --used "skill:x,tool:y"
- *   journal.mjs stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
- *   journal.mjs usage [--open]                counts of model and used marks across items
- *   journal.mjs status [--full]               what is open + done today, with usage marks
- *   journal.mjs status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
- *   journal.mjs standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
- *   journal.mjs roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
+ *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
+ *   journal.ts stamp <id> --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
+ *   journal.ts usage [--open]                counts of model and used marks across items
+ *   journal.ts status [--full]               what is open + done today, with usage marks
+ *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
+ *   journal.ts standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
+ *   journal.ts roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
  *                                             archive finished work to a dated note, commit the ledger root if configured, and only THEN sweep: it removes
  *                                             the stale worktrees branch-sweep.ts would offer, with no approval step (a standing approval; never
  *                                             --force, never a branch), prunes worktrees whose directory is gone, and prints what it removed and
  *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
  *                                             current directory (or --container) is outside it; --dry-run only reports. --fast skips the sweep and the scratch review.
- *   journal.mjs scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
- *   journal.mjs verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
- *   journal.mjs render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
- *   journal.mjs tag <id> --stream <name>      file an existing item under a workstream
- *   journal.mjs log "<text>" --kind decision --approval standing|one-off [--scope "<what it covers>"] [--ref <memory-file-or-url>] --model ... --used ...
+ *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
+ *   journal.ts verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
+ *   journal.ts render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
+ *   journal.ts tag <id> --stream <name>      file an existing item under a workstream
+ *   journal.ts log "<text>" --kind decision --approval standing|one-off [--scope "<what it covers>"] [--ref <memory-file-or-url>] --model ... --used ...
  *                                             an approval the user granted; `resolve` takes --approval too
- *   journal.mjs approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]   the approvals digest: standing (keep/narrow/revoke), one-off, untagged decisions
- *   journal.mjs approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]   mark an existing row as an approval (appends a row; nothing is rewritten)
- *   journal.mjs streams [list|add <name> [--alias a,b]|check]   the stream registry
- *   journal.mjs models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
- *   journal.mjs fact <key>=<value> --stream <name>   a structured metric; not an item, never open
- *   journal.mjs carry <id> --to <stream>      re-home an item (e.g. an open follow-up) to another stream
- *   journal.mjs retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
- *   journal.mjs archive <stream>              hide a finished stream; refuses until retro + promotions are done
- *   journal.mjs unarchive <stream>            bring an archived stream back, exactly
- *   journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]   take an exclusive repo lock (Claims/<repo>.lock)
- *   journal.mjs release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
- *   journal.mjs claims [--stale-hours 12] [--json]         list claims with a stale check
- *   journal.mjs backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
- *   journal.mjs backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
- *   journal.mjs handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
- *   journal.mjs log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
- *   journal.mjs tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
- *   journal.mjs resume                        the verify-on-resume checklist, running the parts a script can run
+ *   journal.ts approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]   the approvals digest: standing (keep/narrow/revoke), one-off, untagged decisions
+ *   journal.ts approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]   mark an existing row as an approval (appends a row; nothing is rewritten)
+ *   journal.ts streams [list|add <name> [--alias a,b]|check]   the stream registry
+ *   journal.ts models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
+ *   journal.ts fact <key>=<value> --stream <name>   a structured metric; not an item, never open
+ *   journal.ts carry <id> --to <stream>      re-home an item (e.g. an open follow-up) to another stream
+ *   journal.ts retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
+ *   journal.ts archive <stream>              hide a finished stream; refuses until retro + promotions are done
+ *   journal.ts unarchive <stream>            bring an archived stream back, exactly
+ *   journal.ts claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]   take an exclusive repo lock (Claims/<repo>.lock)
+ *   journal.ts release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
+ *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
+ *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
+ *   journal.ts backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
+ *   journal.ts handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
+ *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
+ *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
+ *   journal.ts resume                        the verify-on-resume checklist, running the parts a script can run
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
  * and the item is shown in its own section, e.g. "Launch", ahead of the rest.
@@ -192,7 +192,7 @@ function normaliseStream(raw: string | null): string | null {
     const canon = canonicalOf(reg, raw);
     if (canon) {
         if (reg.streams[canon]?.status === 'archived') {
-            console.error(`Stream "${canon}" is archived. Run \`journal.mjs unarchive ${canon}\` first.`);
+            console.error(`Stream "${canon}" is archived. Run \`journal.ts unarchive ${canon}\` first.`);
             process.exit(1);
         }
         if (canon !== raw) console.error(`normalised ${raw} -> ${canon}`);
@@ -209,7 +209,7 @@ function normaliseStream(raw: string | null): string | null {
     }
     const near = didYouMean(reg, raw);
     console.error(`Unknown stream "${raw}".${near ? ` Did you mean "${near}"?` : ''}`);
-    console.error(`Known: ${Object.keys(reg.streams).join(', ') || '(none)'}. Pass --new-stream to register it, or \`journal.mjs streams add <name>\`.`);
+    console.error(`Known: ${Object.keys(reg.streams).join(', ') || '(none)'}. Pass --new-stream to register it, or \`journal.ts streams add <name>\`.`);
     process.exit(1);
 }
 
@@ -261,7 +261,7 @@ function normaliseModel(raw: string | null): string | null {
     if (!raw || MODEL_SENTINELS.has(raw) || !reg?.models || !Object.keys(reg.models).length) return raw;
     const canon = canonicalModel(reg, raw);
     if (!canon) {
-        console.error(`unknown model "${raw}": not in the registry, written as-is. Register it with \`journal.mjs models add <id> --alias "${raw}"\`.`);
+        console.error(`unknown model "${raw}": not in the registry, written as-is. Register it with \`journal.ts models add <id> --alias "${raw}"\`.`);
         return raw;
     }
     if (canon !== raw) console.error(`normalised model ${raw} -> ${canon}`);
@@ -338,7 +338,7 @@ function ruleRefs(): string[] {
 function pasteFile(kind: string): string | undefined {
     if (!has('paste')) return undefined;
     const given = arg('paste');
-    if (!given) die('--paste needs a block file: journal.mjs ask "<what to run>" --paste <file>');
+    if (!given) die('--paste needs a block file: journal.ts ask "<what to run>" --paste <file>');
     if (kind !== 'question') die('--paste only goes on a question.');
     return resolveRefFile(given) || die(`--paste ${given} is not an existing file. Write the block to a file first.`);
 }
@@ -373,7 +373,7 @@ function transitionedFlag(): string[] | undefined {
 
 function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
     const text = arg('text') || positional.join(' ');
-    if (!text) { console.error(`Needs text: journal.mjs ${rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
+    if (!text) { console.error(`Needs text: journal.ts ${rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
@@ -440,7 +440,7 @@ function cmdClose(newKind: string): void {
 function cmdTag() {
     const needle = positional[0];
     const stream = normaliseStream(arg('stream'));
-    if (!needle || !stream) { console.error('Usage: journal.mjs tag <id|text> --stream <name>'); process.exit(1); }
+    if (!needle || !stream) { console.error('Usage: journal.ts tag <id|text> --stream <name>'); process.exit(1); }
     const { items } = fold(readLedger());
     const target = items.find((i) => i.id === needle) || resolveTarget(items, needle);
     if (!target) { console.error(`No item matching "${needle}".`); process.exit(1); }
@@ -463,7 +463,7 @@ function cmdTag() {
 function cmdApproveTag() {
     const id = positional[0];
     const fields = parseApproval();
-    if (!id || !fields.approval) die('Usage: journal.mjs approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]');
+    if (!id || !fields.approval) die('Usage: journal.ts approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]');
     const entries = readLedger();
     const target = entries.find((e) => e.id === id && !e.annotates);
     if (!target) die(`No row with id "${id}".`);
@@ -639,7 +639,7 @@ function rollArchive(d: string): void {
     writeFileSync(dest, body);
     append({
         id: newId(readLedger()), ts: now(), date: d, kind: 'rolled', text: `archived ${done.length} item(s)`,
-        model: 'n/a', used: ['tool:journal.mjs'], tokens: 'n/a',
+        model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a',
     });
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
@@ -667,7 +667,7 @@ function cmdTriage() {
         const rows = t.items.flatMap((i) => (RECORD_BOXES.includes(i.box) && i.ref ? [{ item: i, ref: i.ref }] : [])).map(({ item, ref }) => {
             const row: LedgerRow = {
                 id: newId(taken), ts: now(), date: d, kind: 'resolved', closes: item.id, text: `recorded → ${ref}`, refs: [ref],
-                model: 'n/a', used: ['tool:journal.mjs'], tokens: 'n/a',
+                model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a',
             };
             taken.push(row);
             return row;
@@ -690,7 +690,7 @@ function triageBeforeRoll(d: string): void {
     if (has('strict')) {
         console.error(`roll --strict refused: triage has ${blockers.length} blocker(s). Nothing was archived or removed.`);
         lines.forEach((l) => console.error(l));
-        console.error('Run `journal.mjs triage`, fix them (promote the rule, file the ticket), then roll again.');
+        console.error('Run `journal.ts triage`, fix them (promote the rule, file the ticket), then roll again.');
         process.exit(1);
     }
     console.log(`warning: triage has ${blockers.length} blocker(s) (roll --strict would refuse):`);
@@ -823,7 +823,7 @@ function cmdStreams() {
     if (sub === 'add') {
         const name = positional[1];
         if (isNoStream(name)) die('"none" is reserved: it means no stream, so it cannot be registered.');
-        if (!name) die('Usage: journal.mjs streams add <name> [--alias a,b]');
+        if (!name) die('Usage: journal.ts streams add <name> [--alias a,b]');
         const aliases = parseList('alias') || [];
         const next: Registry = { models: undefined, ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
         const owner = canonicalOf(next, name);
@@ -863,14 +863,14 @@ function cmdStreams() {
         for (const [k, n] of changes) console.log(`  ${String(n).padStart(4)}  ${k}`);
         return;
     }
-    die('Usage: journal.mjs streams [list|add <name> [--alias a,b]|check]');
+    die('Usage: journal.ts streams [list|add <name> [--alias a,b]|check]');
 }
 
 /** A structured metric for a stream. Not an item: it never shows as open and never reaches the board. */
 function cmdFact() {
     const pair = arg('text') || positional.join(' ');
     const eq = pair.indexOf('=');
-    if (eq < 1) die('Usage: journal.mjs fact <key>=<value> --stream <name>');
+    if (eq < 1) die('Usage: journal.ts fact <key>=<value> --stream <name>');
     if (!arg('stream') || isNoStream(arg('stream'))) die('fact needs --stream <name>.');
     const key = pair.slice(0, eq).trim();
     const value = pair.slice(eq + 1).trim();
@@ -889,7 +889,7 @@ function cmdFact() {
 function cmdCarry() {
     const needle = positional[0];
     const to = arg('to');
-    if (!needle || !to) die('Usage: journal.mjs carry <id|text> --to <stream>');
+    if (!needle || !to) die('Usage: journal.ts carry <id|text> --to <stream>');
     const { items } = fold(readLedger());
     const target = items.find((i) => i.id === needle) || resolveTarget(items, needle);
     if (!target) die(`No item matching "${needle}".`);
@@ -929,7 +929,7 @@ function cmdModels() {
     }
     if (sub === 'add') {
         const id = positional[1];
-        if (!id) die('Usage: journal.mjs models add <canonical-id> [--alias a,b]');
+        if (!id) die('Usage: journal.ts models add <canonical-id> [--alias a,b]');
         const next = { streams: {}, hasStreams: false, ...(reg || {}), models: { ...(reg?.models || {}) } };
         const owner = canonicalModel(next, id);
         if (owner && owner !== id) die(`"${id}" is already registered as "${owner}" (id or alias, case-insensitive).`);
@@ -958,7 +958,7 @@ function cmdModels() {
         for (const r of rows) console.log(`  ${String(r.rows).padStart(5)}  ${r.model}  [${r.status}]${r.status === 'alias' ? ` -> ${r.canonical}` : ''}`);
         return;
     }
-    die('Usage: journal.mjs models [list|add <canonical-id> [--alias a,b]|check]');
+    die('Usage: journal.ts models [list|add <canonical-id> [--alias a,b]|check]');
 }
 
 // retro --------------------------------------------------------------------
@@ -1043,7 +1043,7 @@ const readClaim = (repo: string) => readClaimIn(claimsDir, repo);
 function cmdClaim() {
     const repo = validRepo(positional[0]);
     const deskArg = arg('desk');
-    if (!deskArg) die('Usage: journal.mjs claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]');
+    if (!deskArg) die('Usage: journal.ts claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]');
     const desk = normaliseStream(deskArg);
     const usage = usageFromArgs();
     const pid = arg('pid') ? Number(arg('pid')) : null;
@@ -1219,7 +1219,7 @@ function cmdResume() {
     for (const gt of gates) {
         const tag = { cleared: 'CLEARED', waiting: 'waiting', unknown: 'UNKNOWN' }[gt.state];
         console.log(`  ${tag.padEnd(8)} ${gt.item.id} ${clip(gt.item.text, 80)} (${gt.item.gate}: ${gt.detail})`);
-        if (gt.state === 'cleared') console.log(`           the gate is clear: \`journal.mjs resolve ${gt.item.id} --answer "gate cleared"\` then \`start\` it again`);
+        if (gt.state === 'cleared') console.log(`           the gate is clear: \`journal.ts resolve ${gt.item.id} --answer "gate cleared"\` then \`start\` it again`);
     }
 
     console.log('\n4. Loops (pgrep)');
@@ -1244,7 +1244,7 @@ function cmdResume() {
 function cmdDefer() {
     const id = positional[0];
     const until = arg('until');
-    if (!id || !until) die('Usage: journal.mjs defer <id> --until YYYY-MM-DD');
+    if (!id || !until) die('Usage: journal.ts defer <id> --until YYYY-MM-DD');
     if (!isDate(until)) die('--until must be YYYY-MM-DD.');
     if (until <= today()) die(`--until ${until} is not in the future (today is ${today()}).`);
     const entries = readLedger();
@@ -1277,14 +1277,14 @@ function cmdPrime() {
 // ── pending tracker transitions ─────────────────────────────────────────────
 
 function cmdTickets() {
-    if (!has('pending')) die('Usage: journal.mjs tickets --pending [--since YYYY-MM-DD] [--json]');
+    if (!has('pending')) die('Usage: journal.ts tickets --pending [--since YYYY-MM-DD] [--json]');
     const since = arg('since', defaultPendingSince());
     if (!isDate(since)) die('--since must be YYYY-MM-DD.');
     const rows = pendingTransitions(since);
     if (asJson) { console.log(JSON.stringify({ since, pending: rows }, null, 2)); return; }
     console.log(rows.length ? `Done items whose tracker transition is not recorded (since ${since}):` : `No pending tracker transitions since ${since}.`);
     rows.forEach((r) => console.log(`  ${r.key}  ${r.id}  done ${r.doneOn}  ${clip(r.text, 90)}`));
-    if (rows.length) console.log('Move each ticket, then: journal.mjs log "moved <KEY> to <status>" --transitioned <KEY> ...');
+    if (rows.length) console.log('Move each ticket, then: journal.ts log "moved <KEY> to <status>" --transitioned <KEY> ...');
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────────
