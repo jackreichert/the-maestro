@@ -1,12 +1,12 @@
 # The Ledger
 
-Read this before running any `journal.mjs` command other than plain `status` (which SKILL.md
+Read this before running any `journal.ts` command other than plain `status` (which SKILL.md
 already covers).
 
 The user should not have to ask what happened today. The ledger is how that promise is kept.
 
 ```bash
-J=<this-skill>/scripts/journal.mjs
+J=<this-skill>/scripts/journal.ts
 M=(--model "<your model>" --used "skill:the-maestro,tool:journal.mjs")
 
 node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014 "${M[@]}"
@@ -33,7 +33,7 @@ node $J usage                             # counts by model and by skill/tool
 Why, and the token-saving tests this feeds: `Projects/<container-name>/Research/token-usage-strategies.md` in the vault.
 
 Storage is `$LEDGER_ROOT/Projects/{container-name}/Journal/` — a root of its own, separate from the
-Obsidian vault, so the day-to-day ledger doesn't clutter vault search. `journal.mjs` and
+Obsidian vault, so the day-to-day ledger doesn't clutter vault search. `journal.ts` and
 `prs-snapshot.ts` resolve the root as `--vault`, then `$LEDGER_ROOT`, then `$VAULT_ROOT` (so an
 unset `LEDGER_ROOT` still works against the old single-root layout). Everything else — tickets,
 `CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/` — stays under `$VAULT_ROOT`. Pass
@@ -94,17 +94,17 @@ node $J log "yes, retarget #3934" --kind decision --approval one-off --model ...
 
 ### Weekly approvals review
 
-`journal.mjs approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]` collects approval rows and their tags and writes a review doc, by default `$VAULT_ROOT/Projects/<container-project>/Reviews/approvals-<ISO-week>.md` (`--tickets-vault` overrides the vault), with `type: review`, `status: draft` and `week: YYYY-Www`. It never overwrites without `--force`, and it appends nothing to the ledger. `--days N` covers exactly N calendar days ending on `--until` (default today, inclusive), so `--days 7` run weekly never overlaps; the default is 7 and N must be at least 1. `--since` sets the first day instead, and `--until` the last. The file is named after the ISO week of the window's end date. `--json` prints the groups and writes no file.
+`journal.ts approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]` collects approval rows and their tags and writes a review doc, by default `$VAULT_ROOT/Projects/<container-project>/Reviews/approvals-<ISO-week>.md` (`--tickets-vault` overrides the vault), with `type: review`, `status: draft` and `week: YYYY-Www`. It never overwrites without `--force`, and it appends nothing to the ledger. `--days N` covers exactly N calendar days ending on `--until` (default today, inclusive), so `--days 7` run weekly never overlaps; the default is 7 and N must be at least 1. `--since` sets the first day instead, and `--until` the last. The file is named after the ISO week of the window's end date. `--json` prints the groups and writes no file.
 
 - **Standing approvals**: date, text, scope, ref and source row id, each with the line `- [ ] keep  - [ ] narrow  - [ ] revoke`.
 - **One-off approvals**: date, text and ref, for awareness only.
 - **Untagged decisions**: `decision` rows in the window with no approval. Classify any that were permissions with `approve-tag`.
 
-Once a week, on the first session of `approvals_review_day` (local config, default Friday), the morning greeting runs `journal.mjs approvals --days 7`, links the doc, and asks the user to tick keep, narrow or revoke for each standing approval. Then update every place a narrowed or revoked approval is recorded (memory files, config, instructions), and log the outcome.
+Once a week, on the first session of `approvals_review_day` (local config, default Friday), the morning greeting runs `journal.ts approvals --days 7`, links the doc, and asks the user to tick keep, narrow or revoke for each standing approval. Then update every place a narrowed or revoked approval is recorded (memory files, config, instructions), and log the outcome.
 
 ## Workstreams (tags)
 
-To pull a slice of work out into its own section, e.g. "Launch" on a go-live day or "Today" for today's priority, pass `--stream <name>` to `start`/`ask`/`log`/`fact`, or file an existing item with `journal.mjs tag <id> --stream <name>`. `status`, `standup` and CURRENT.md show each stream first, under its own heading, then everything else. Clear it with `--stream none` once the push is over. `none` is reserved: on `start`, `ask` and `log` it records no stream, on `tag` it clears the stream, and `streams add none` is refused. Older rows that stored a stream literally named `none` read as unstreamed; the ledger is never rewritten. Use a stream only when the user asks to track something separately; the default is no stream.
+To pull a slice of work out into its own section, e.g. "Launch" on a go-live day or "Today" for today's priority, pass `--stream <name>` to `start`/`ask`/`log`/`fact`, or file an existing item with `journal.ts tag <id> --stream <name>`. `status`, `standup` and CURRENT.md show each stream first, under its own heading, then everything else. Clear it with `--stream none` once the push is over. `none` is reserved: on `start`, `ask` and `log` it records no stream, on `tag` it clears the stream, and `streams add none` is refused. Older rows that stored a stream literally named `none` read as unstreamed; the ledger is never rewritten. Use a stream only when the user asks to track something separately; the default is no stream.
 
 **An epic is a stream.** An epic is a ledger stream, e.g. `Launch`; retro and archive key on the stream.
 
@@ -416,14 +416,14 @@ printed, never fatal to the roll. Anything kept that holds work stays on the boa
 
 ### Tracker transitions are recorded
 
-A done item that carries a tracker key (any match of `tracker_key_pattern`, in its text, its `--ticket` field or its closing row) is a promise that the ticket moved. The ledger cannot see the tracker, so the move is recorded here: `journal.mjs log "moved ABC-1 to In Staging" --transitioned ABC-1` appends a note whose `transitioned` field lists the keys (a value that is not a key is refused). `journal.mjs tickets --pending [--since D] [--json]` lists the keys of done items, finished since `D` (default 14 days), that no row has recorded; `prime` prints a one-line count and `triage` carries a checklist line, both warnings only. A key is cleared by any row that lists it, at any date, so one note can clear several tickets; a key reused for later work stays cleared. Keys are found by pattern in free text, so the generic default can also match things like `UTF-8`; an overlay narrows `tracker_key_pattern` to its own project to avoid that.
+A done item that carries a tracker key (any match of `tracker_key_pattern`, in its text, its `--ticket` field or its closing row) is a promise that the ticket moved. The ledger cannot see the tracker, so the move is recorded here: `journal.ts log "moved ABC-1 to In Staging" --transitioned ABC-1` appends a note whose `transitioned` field lists the keys (a value that is not a key is refused). `journal.ts tickets --pending [--since D] [--json]` lists the keys of done items, finished since `D` (default 14 days), that no row has recorded; `prime` prints a one-line count and `triage` carries a checklist line, both warnings only. A key is cleared by any row that lists it, at any date, so one note can clear several tickets; a key reused for later work stays cleared. Keys are found by pattern in free text, so the generic default can also match things like `UTF-8`; an overlay narrows `tracker_key_pattern` to its own project to avoid that.
 
 ### On every merge
 
 When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way), the orchestrator does all four of these in the same turn, not at end of day. The `pr-merged` ACTION line already names the repo and PR and the tracker keys found in the title and branch ([playbooks/event-types/pr-merged.md](../playbooks/event-types/pr-merged.md)).
 
 1. **Scoped sweep.** `node scripts/branch-sweep.ts --apply-worktrees --container <container_root> --repo <repo>`. It touches only that repo, and the same guards decide: a worktree that is not idle, is claimed or has uncommitted work stays and is listed.
-2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means), then record it: `journal.mjs log "moved <KEY> to <status>" --transitioned <KEY>[,<KEY>]`. A merge with no key is worth a line saying so.
+2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means), then record it: `journal.ts log "moved <KEY> to <status>" --transitioned <KEY>[,<KEY>]`. A merge with no key is worth a line saying so.
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch with the overlay's sync script.
 4. **Ledger.** Log the merge as a note carrying the repo and PR, so the board and the standup show that it landed.
 
@@ -443,19 +443,19 @@ session before asking the user anything. It, plus
 
 ## Search (derived index)
 
-`scripts/ledger-index.ts` (which folds the ledger through the same `scripts/lib/ledger-core.ts` as `journal.mjs`, so the two cannot disagree about what is open) builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets (including `Tickets/Archive/`) and one row per `##` section of each `HANDOFF-*.md`. The JSONL stays the source of truth; the index lives at `$LEDGER_ROOT/Projects/{container-name}/Index/maestro.sqlite`, and deleting it loses nothing.
+`scripts/ledger-index.ts` (which folds the ledger through the same `scripts/lib/ledger-core.ts` as `journal.ts`, so the two cannot disagree about what is open) builds a disposable SQLite FTS5 index over the ledger rows, the vault tickets (including `Tickets/Archive/`) and one row per `##` section of each `HANDOFF-*.md`. The JSONL stays the source of truth; the index lives at `$LEDGER_ROOT/Projects/{container-name}/Index/maestro.sqlite`, and deleting it loses nothing.
 
-`node scripts/ledger-index.ts index` does a full rebuild into a temp file and renames it into place, then prints the table counts and the elapsed ms. Pass `--vault <path>` for the ledger root and `--tickets-vault <path>` for the vault root, the same way `journal.mjs` takes `--vault`.
+`node scripts/ledger-index.ts index` does a full rebuild into a temp file and renames it into place, then prints the table counts and the elapsed ms. Pass `--vault <path>` for the ledger root and `--tickets-vault <path>` for the vault root, the same way `journal.ts` takes `--vault`.
 
 `node scripts/ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]` prints the ref, source, title and a snippet per hit, ranked by bm25. It rebuilds first if the ledger, a handoff or the ticket files changed since the last build. Bare ids like `KEY-1234` and `my_db` work without quoting; a query it still cannot parse gives a short error, not a stack trace.
 
-`node scripts/ledger-index.ts stats [--json]` prints the count per table and the open items per stream, which should agree with `journal.mjs status --json`.
+`node scripts/ledger-index.ts stats [--json]` prints the count per table and the open items per stream, which should agree with `journal.ts status --json`.
 
 `node scripts/ledger-index.ts query <name> [args] [--json]` answers common questions from the index without a throwaway script; it rebuilds first if a source changed, prints aligned tables (long text clipped) by default and JSON with `--json`. `query` with no name, or `query --help`, lists the queries; an unknown name gives a friendly error.
 
-The named queries are `open [--stream X]` (open items, newest first; the total agrees with `journal.mjs status --json`), `by-ticket <ticket-id|external-key>` (ledger rows whose ticket field, refs or text mention the key, plus the ticket's own row; a ticket matches by its id or by its `external` front-matter field, either `<tracker>-PROJ-123` or the bare `PROJ-123`), `untagged [--since YYYY-MM-DD]` (items with no effective stream, counted by date and then listed, as a backfill review aid), `stream-counts` (open, done, dropped and total per stream, with case variants such as `Launch` and `onboarding` kept as separate rows and flagged `CASE SPLIT`), `handoffs [--limit N]` (handoff files newest first with their section titles) and `tickets [--project P] [--status S] [--type T]` (counts by project, type and status, plus the list when any filter is given).
+The named queries are `open [--stream X]` (open items, newest first; the total agrees with `journal.ts status --json`), `by-ticket <ticket-id|external-key>` (ledger rows whose ticket field, refs or text mention the key, plus the ticket's own row; a ticket matches by its id or by its `external` front-matter field, either `<tracker>-PROJ-123` or the bare `PROJ-123`), `untagged [--since YYYY-MM-DD]` (items with no effective stream, counted by date and then listed, as a backfill review aid), `stream-counts` (open, done, dropped and total per stream, with case variants such as `Launch` and `onboarding` kept as separate rows and flagged `CASE SPLIT`), `handoffs [--limit N]` (handoff files newest first with their section titles) and `tickets [--project P] [--status S] [--type T]` (counts by project, type and status, plus the list when any filter is given).
 
-The index maps streams through the registry the same way `journal.mjs` does, and hides archived streams from `search`, `stats` and the named queries unless `--include-archived`. Each archived stream leaves one `archive` doc (ref = the stream, body = the retro's Summary section and its path), so a default search still finds the epic through its retro. `--sql` is raw: it sees everything, and the `archived` columns on `items`, `rows` and `docs` mark what the defaults hide.
+The index maps streams through the registry the same way `journal.ts` does, and hides archived streams from `search`, `stats` and the named queries unless `--include-archived`. Each archived stream leaves one `archive` doc (ref = the stream, body = the retro's Summary section and its path), so a default search still finds the epic through its retro. `--sql` is raw: it sees everything, and the `archived` columns on `items`, `rows` and `docs` mark what the defaults hide.
 
 `query --sql "<select>"` runs arbitrary SQL against the tables `rows`, `items`, `tickets`, `handoffs`, `docs` and `meta` on a connection opened read-only, so write statements fail with a read-only error and the index cannot be modified.
 

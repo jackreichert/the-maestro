@@ -410,7 +410,7 @@ Format — one line per agent, most recently dispatched last:
 **Ledger:** 4 done today · 2 in flight · 1 awaiting you
 ```
 
-The ledger line comes from `journal.mjs status`, not from memory. One line, counts only — the detail
+The ledger line comes from `journal.ts status`, not from memory. One line, counts only — the detail
 lives in `CURRENT.md`. Omit it only when the ledger is completely empty.
 
 When more than two are live, use a list instead:
@@ -453,7 +453,7 @@ waiting costs one wake per event, not one per watcher. Each type polls at its ow
 watch (`--type reminder --target <ISO 8601 UTC> --report "<text>"`). A watch notifies the user only if
 added with `--notify` (reminders do by default, `--no-notify` turns it off; inbox never). The event types and what each reports are in
 `playbooks/event-types/`; a new kind of wait is a new type (script, playbook, one index line, or just script and playbook in an org
-overlay's `event-types/`), not a new watcher. Log the runner like any other agent (`journal.mjs start`).
+overlay's `event-types/`), not a new watcher. Log the runner like any other agent (`journal.ts start`).
 
 ## Session hygiene
 
@@ -485,7 +485,7 @@ long, and at EOD.
 - Two writers in one repo with no worktree isolation.
 - Reporting an agent's conclusions as your own verified findings.
 - Ending a reply with no status footer, so in-flight work goes unmentioned.
-- Writing the footer from memory instead of `ListAgents` and `journal.mjs status`.
+- Writing the footer from memory instead of `ListAgents` and `journal.ts status`.
 - A helper agent handing a Jira or GitHub write to a sub-agent or fork, or two agents holding the
   same external write.
 - Filing an external-tracker issue nobody asked for, instead of offering it.
