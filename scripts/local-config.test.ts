@@ -259,3 +259,15 @@ test('model_prices needs opus, sonnet and haiku; no prices are built in', () => 
     write(join(home, '.config', 'the-maestro', 'config.md'), block(`model_prices: ${PRICES}   # fetched 2026-10-02`));
     assert.match(show().MODEL_PRICES, /haiku\(input=1 cache_write_5m=1\.25 cache_write_1h=2 cache_read=0\.1 output=5\)$/);
 });
+
+test('projects_dir: unset follows container_root, not the working directory; an explicit value wins', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'lc-elsewhere-'));
+    const fromCwd = show({}, elsewhere).CLAUDE_PROJECTS_DIR ?? '';
+    assert.ok(fromCwd.endsWith(elsewhere.replace(/[\\/]/g, '-')), 'no container_root: the working directory, as before');
+    const container = join(home, 'work', 'my-container');
+    const viaRoot = show({ MAESTRO_CONTAINER_ROOT: container }, elsewhere).CLAUDE_PROJECTS_DIR ?? '';
+    assert.equal(viaRoot, join(home, '.claude', 'projects', container.replace(/[\\/]/g, '-')));
+    const viaTilde = show({ MAESTRO_CONTAINER_ROOT: '~/work/my-container' }, elsewhere).CLAUDE_PROJECTS_DIR ?? '';
+    assert.equal(viaTilde, viaRoot, 'a leading ~/ is expanded');
+    assert.equal(show({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_PROJECTS_DIR: '/explicit/dir' }, elsewhere).CLAUDE_PROJECTS_DIR, '/explicit/dir');
+});
