@@ -90,12 +90,17 @@ const registry = readRegistry(registryPath);
 const mapStream = (s: string | undefined): string | undefined => mapStreamWith(registry, s);
 const fold = (entries: LedgerRow[]) => foldWith(entries, registry).items;
 
-/** Latest archive event per stream, unless a later unarchive cancelled it. Same archive rule as fold() in lib/ledger-core.ts. */
-function archiveState(entries: LedgerRow[]): { events: Map<string | undefined, LedgerRow>; hidden: Set<string> } {
-    const byStream = new Map<string | undefined, LedgerRow>();
+/**
+ * Latest archive event per stream, unless a later unarchive cancelled it. Same archive rule as fold() in lib/ledger-core.ts,
+ * except that a row whose stream maps to undefined (the reserved `none`, "no stream") is skipped: there is no stream to archive.
+ */
+function archiveState(entries: LedgerRow[]): { events: Map<string, LedgerRow>; hidden: Set<string> } {
+    const byStream = new Map<string, LedgerRow>();
     for (const e of entries) {
-        if (e.kind === 'archive' && e.stream) byStream.set(mapStream(e.stream), e);
-        if (e.kind === 'unarchive' && e.stream) byStream.delete(mapStream(e.stream));
+        const stream = e.stream ? mapStream(e.stream) : undefined;
+        if (stream === undefined) continue;
+        if (e.kind === 'archive') byStream.set(stream, e);
+        if (e.kind === 'unarchive') byStream.delete(stream);
     }
     return { events: byStream, hidden: new Set([...byStream.values()].flatMap((e) => e.ids || [])) };
 }
@@ -198,7 +203,8 @@ function rebuild(): { counts: Record<string, number>; ms: number } {
     const { events: archivedEvents, hidden } = archiveState(rows);
     const archivedStreams = new Set(archivedEvents.keys());
     // A row is hidden when its item is, or (for facts) when its stream is archived.
-    const rowHidden = (r: LedgerRow): boolean => (r.kind === 'fact' ? archivedStreams.has(mapStream(r.stream)) : hidden.has(r.closes || r.tags || r.carries || r.annotates || r.id || ''));
+    const streamArchived = (stream: string | undefined): boolean => stream !== undefined && archivedStreams.has(stream);
+    const rowHidden = (r: LedgerRow): boolean => (r.kind === 'fact' ? streamArchived(mapStream(r.stream)) : hidden.has(r.closes || r.tags || r.carries || r.annotates || r.id || ''));
     const tickets = walkTickets().map(parseTicket);
     const handoffs = readHandoffs();
 
@@ -252,8 +258,8 @@ function rebuild(): { counts: Record<string, number>; ms: number } {
             const retroPath = retroOf(e);
             const retro = retroPath && existsSync(retroPath) ? readFileSync(retroPath, 'utf8') : '';
             const summary = (retro.split(/^## Summary\s*$/m)[1] || '').split(/^## /m)[0].trim();
-            insDoc.run('archive', stream as string, `archived stream ${stream}`,
-                [`archived ${e.date || ''}`, retroPath && `retro: ${retroPath}`, summary || e.text].filter(Boolean).join('\n'), stream as string, '0');
+            insDoc.run('archive', stream, `archived stream ${stream}`,
+                [`archived ${e.date || ''}`, retroPath && `retro: ${retroPath}`, summary || e.text].filter(Boolean).join('\n'), stream, '0');
         }
         const meta = db.prepare('INSERT INTO meta VALUES (?, ?)');
         meta.run('schema_version', SCHEMA_VERSION);
