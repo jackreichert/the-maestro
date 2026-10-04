@@ -96,7 +96,7 @@
  * Kinds: wip | done | blocked | question | decision (not open, unless `ask --kind decision`) | note | resolved | dropped | rolled | stamp
  *        (rows only written by their own commands: tag | fact | carry | archive | unarchive)
  * Common flags: --vault <path> --project <name> --json --dry-run --include-archived
- * retro/archive read tickets through ledger-index.mjs: --tickets-vault <path> (else $VAULT_ROOT),
+ * retro/archive read tickets through ledger-index.ts: --tickets-vault <path> (else $VAULT_ROOT),
  * --repo <name> picks Projects/<name>/Archive/ for the retro doc (default dev-env).
  * Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT, each also settable in the
  * config file (see local-config.ts).
@@ -1521,13 +1521,13 @@ const LEARNING = /learned|lesson|ruled out|cause/i;
 const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/g;
 const itemText = (i) => [i.text, i.closedBy && i.closedBy.text !== i.text ? i.closedBy.text : ''].filter(Boolean).join(' — ');
 
-/** Ticket status through ledger-index.mjs (the derived index); null when the index cannot be read. */
+/** Ticket status through ledger-index.ts (the derived index); null when the index cannot be read. */
 function ticketStatuses(ids) {
     const safe = ids.filter((id) => /^[\w.-]+$/.test(id));
     if (!safe.length) return new Map();
     const sql = `select id, status, title from tickets where id in (${safe.map((id) => `'${id}'`).join(',')})`;
     const r = spawnSync(process.execPath, [
-        new URL('./ledger-index.mjs', import.meta.url).pathname, 'query', '--sql', sql, '--json',
+        new URL('./ledger-index.ts', import.meta.url).pathname, 'query', '--sql', sql, '--json',
         '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
     ], { encoding: 'utf8' });
     if (r.status !== 0) return null;

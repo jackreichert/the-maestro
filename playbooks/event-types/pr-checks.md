@@ -2,7 +2,7 @@
 
 CI status of one pull request. Script: [scripts/event-types/pr-checks.ts](../../scripts/event-types/pr-checks.ts).
 
-Register: `node scripts/event-loop.mjs add --id ci-<n> --type pr-checks --target <owner>/<repo>#<n> --report "<what to tell the orchestrator>"`.
+Register: `node scripts/event-loop.ts add --id ci-<n> --type pr-checks --target <owner>/<repo>#<n> --report "<what to tell the orchestrator>"`.
 `--done-when passing` waits for all green; the default (`settled`) retires the watch once no check is pending, pass or fail.
 
 ## What the loop reports

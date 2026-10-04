@@ -27,7 +27,7 @@ flowchart LR
     O -- "journal.mjs start, done, ask" --> L[(Ledger<br/>ledger.jsonl)]
     L --> B[Generated board:<br/>CURRENT.md, standup, footer]
     O -- "xenophon" --> T[(Tickets)]
-    O -- "event-loop.mjs add" --> E[Event loop]
+    O -- "event-loop.ts add" --> E[Event loop]
     E -- "digest, exit 10" --> R[Cheap runner]
     R -- "report" --> O
 ```
@@ -49,7 +49,7 @@ flowchart LR
 
 ## Quick start
 
-You need Node.js 24 or newer (nothing is installed to run the scripts: they use only `node:` built-ins, and Node strips the types from the `.ts` modules itself; `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5), an [Obsidian](https://obsidian.md) vault or any folder you are willing to treat as one, and an agent harness that loads `SKILL.md` skills.
+You need Node.js 24 or newer (nothing is installed to run the scripts: they use only `node:` built-ins, and Node strips the types from the `.ts` modules itself; `ledger-index.ts` needs a Node build whose `node:sqlite` includes FTS5), an [Obsidian](https://obsidian.md) vault or any folder you are willing to treat as one, and an agent harness that loads `SKILL.md` skills.
 
 ```bash
 # 1. One copy, where your agent already loads skills. Symlink other harnesses to it; never clone twice.
@@ -215,9 +215,9 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node s
 | Script | Purpose |
 |---|---|
 | [journal.mjs](#journalmjs) | The ledger: log, board, standup, streams, claims, handoff, roll |
-| [ledger-index.mjs](#ledger-indexmjs) | Disposable full-text index over the ledger, tickets and handoffs |
-| [prs-snapshot.mjs](#prs-snapshotmjs) | Mid-day PR board snapshot and actionable diff |
-| [event-loop.mjs](#event-loopmjs) | One loop for every "wake me when X" watch |
+| [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets and handoffs |
+| [prs-snapshot.ts](#prs-snapshotts) | Mid-day PR board snapshot and actionable diff |
+| [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
 | [branch-sweep.mjs](#branch-sweepmjs) | List and delete merged branches and stale worktrees |
@@ -276,7 +276,7 @@ Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed r
 
 **Backup.** The ledger is one file. Make `$LEDGER_ROOT` a local git repository and set `ledger_git_autocommit: on`; `roll` then runs `verify` and, if it passes, commits the changed files under that root as `chore(ledger): roll <date>`, staging each path explicitly. It never pushes.
 
-### ledger-index.mjs
+### ledger-index.ts
 
 A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` section of `HANDOFF-*.md` notes. The JSONL stays the source of truth; deleting `Index/maestro.sqlite` loses nothing.
 
@@ -290,15 +290,15 @@ A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` sec
 
 Pass `--vault` and `--tickets-vault` the way `journal.mjs` does; tickets are skipped when no tickets vault is set.
 
-### prs-snapshot.mjs
+### prs-snapshot.ts
 
 Mid-day PR snapshot and diff, stored under the ledger root.
 
-- `prs-snapshot.mjs [--diff] [--dry-run] --vault <path>` fetches the live board; with `--diff` it first prints the actionable changes since the last snapshot (a new human review, a review decision flip, a new human-opened thread, a merge or close, a draft promoted to ready), then overwrites the snapshot unless `--dry-run`. Bot activity is summarised as one count line.
-- `prs-snapshot.mjs --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo until two known answers agree (a stale cached MERGEABLE is not trusted). `prs-snapshot.mjs ready <snapshot.json>` prints it for a file, offline, with the file's age (it is not a merge gate).
-- `prs-snapshot.mjs diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
+- `prs-snapshot.ts [--diff] [--dry-run] --vault <path>` fetches the live board; with `--diff` it first prints the actionable changes since the last snapshot (a new human review, a review decision flip, a new human-opened thread, a merge or close, a draft promoted to ready), then overwrites the snapshot unless `--dry-run`. Bot activity is summarised as one count line.
+- `prs-snapshot.ts --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo until two known answers agree (a stale cached MERGEABLE is not trusted). `prs-snapshot.ts ready <snapshot.json>` prints it for a file, offline, with the file's age (it is not a merge gate).
+- `prs-snapshot.ts diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
 
-### event-loop.mjs
+### event-loop.ts
 
 One loop for every "wake me when X happens". The orchestrator appends a **watch** (`type`, `target`, an optional `done_when`, and a `report` note saying what it wants back) to an append-only registry; `run` checks them all and records an event only when the type's `diff()` says something changed.
 
@@ -491,7 +491,7 @@ flowchart TD
     C --> LC
     LC --> SC[Every script]
     P -- "agent loads the overlay by name" --> S
-    ET --> EL[event-loop.mjs]
+    ET --> EL[event-loop.ts]
 ```
 
 The overlay's `config.md` is found, first hit wins: for a `<plugin>:<skill>` name, `<installPath>/skills/<skill>/config.md` with `installPath` read from `~/.claude/plugins/installed_plugins.json`; otherwise `../<skill>/config.md` next to this skill (found through a symlink too), then `~/.claude/skills/<skill>/config.md`. Your git author emails, protected-branch list and other private values belong in the overlay or your own config file, never in this repo.
@@ -548,7 +548,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | A notification cannot inject commands | `notify_command` runs as an argv array with no shell; the summary is one line of at most 150 characters |
 | Message text never leaves the inbox type | `inbox` keeps only a hash per line and reports a count; a test covers it |
 | Transcript content never reaches the metrics | `token-metrics.mjs` copies an allowlist of numeric and metadata fields and drops the rest; a planted-sentinel test checks it |
-| One event loop at a time | `event-loop.mjs run` takes a pid lock in `event_dir`; a dead owner's lock is replaced |
+| One event loop at a time | `event-loop.ts run` takes a pid lock in `event_dir`; a dead owner's lock is replaced |
 | A broken overlay type is loud | the type loader rejects a duplicate name, a module without `check` and `diff`, or a missing playbook, naming the file |
 | The brief is complete | `brief-block.ts` exits 1 if any slot is empty |
 
@@ -583,7 +583,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 npm test
 ```
 
-Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.mjs` and `ledger-index.mjs` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.mjs` needs a Node build with `node:sqlite` and FTS5.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.mjs` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
 
 ## Development
 

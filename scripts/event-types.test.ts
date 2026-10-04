@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { defaultRun, tick } from './event-loop.mjs';
+import { defaultRun, tick } from './event-loop.ts';
 import { ALIASES, BUILTIN_TYPES as TYPES, loadTypes } from './event-types/index.ts';
 import * as ghRun from './event-types/gh-run.ts';
 import * as inbox from './event-types/inbox.ts';
@@ -257,7 +257,7 @@ test('pr-review (alias of pr-watch): retiring or removing the watch deletes the 
 
   addWatch(dir, { id: 'w2', type: 'pr-review', target: 'open-prs' });
   writeFileSync(join(dir, 'pr-review-w2.json'), '{}');
-  const script = new URL('./event-loop.mjs', import.meta.url).pathname;
+  const script = new URL('./event-loop.ts', import.meta.url).pathname;
   const r = spawnSync(process.execPath, [script, 'remove', 'w2'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
   assert.match(r.stdout, /removed w2/);
   assert.equal(existsSync(join(dir, 'pr-review-w2.json')), false);
@@ -321,7 +321,7 @@ test('reminder: quiet hours hold it until morning unless --notify-overnight', ()
 
 test('cli: reminder add refuses a bad or past target and stores a future one with a lifetime past its target', () => {
   const dir = mkdtempSync(join(tmpdir(), 'events-'));
-  const cli = (...args: string[]) => spawnSync(process.execPath, [join(ROOT, 'scripts', 'event-loop.mjs'), ...args], {
+  const cli = (...args: string[]) => spawnSync(process.execPath, [join(ROOT, 'scripts', 'event-loop.ts'), ...args], {
     encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir },
   });
   const add = (id: string, target: string, ...more: string[]) => cli('add', '--id', id, '--type', 'reminder', '--target', target, '--report', 'x', ...more);
