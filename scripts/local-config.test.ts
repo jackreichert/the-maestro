@@ -269,3 +269,15 @@ test('update_check is on and auto_pull is off by default; the file and the envir
     const e = show({ MAESTRO_UPDATE_CHECK: 'yes', MAESTRO_AUTO_PULL: 'no' });
     assert.deepEqual([e.UPDATE_CHECK, e.AUTO_PULL], ['on', 'off']);
 });
+
+test('projects_dir: unset follows container_root, not the working directory; an explicit value wins', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'lc-elsewhere-'));
+    const fromCwd = show({}, elsewhere).CLAUDE_PROJECTS_DIR ?? '';
+    assert.ok(fromCwd.endsWith(elsewhere.replace(/[\\/]/g, '-')), 'no container_root: the working directory, as before');
+    const container = join(home, 'work', 'my-container');
+    const viaRoot = show({ MAESTRO_CONTAINER_ROOT: container }, elsewhere).CLAUDE_PROJECTS_DIR ?? '';
+    assert.equal(viaRoot, join(home, '.claude', 'projects', container.replace(/[\\/]/g, '-')));
+    const viaTilde = show({ MAESTRO_CONTAINER_ROOT: '~/work/my-container' }, elsewhere).CLAUDE_PROJECTS_DIR ?? '';
+    assert.equal(viaTilde, viaRoot, 'a leading ~/ is expanded');
+    assert.equal(show({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_PROJECTS_DIR: '/explicit/dir' }, elsewhere).CLAUDE_PROJECTS_DIR, '/explicit/dir');
+});

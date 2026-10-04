@@ -429,7 +429,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `gh_org` | `MAESTRO_GH_ORG` | none (no org filter) | GitHub org the PR board is scoped to |
 | `gh_login` | `MAESTRO_GH_LOGIN` | the `gh`-authenticated user | Your GitHub login |
 | `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths; `journal.ts` still requires `--project` |
-| `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<working directory with separators as dashes>` | Claude Code transcript directory read by `token-metrics.ts` |
+| `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<container_root, else the working directory, with separators as dashes>` | Claude Code transcript directory read by `token-metrics.ts`. Unset, it follows `container_root` so the roll nudge works from any directory |
 | `ledger_root` | `LEDGER_ROOT` | none | Where `Journal/` lives; falls back to `vault_root` |
 | `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
 | `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.ts resume` checks |
