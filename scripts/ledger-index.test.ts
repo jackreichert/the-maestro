@@ -1,4 +1,4 @@
-// Run: node --test scripts/ledger-index.test.mjs
+// Run: node --test scripts/ledger-index.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ import { join } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
-const SCRIPT = new URL('./ledger-index.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./ledger-index.ts', import.meta.url).pathname;
 const JOURNAL = new URL('./journal.mjs', import.meta.url).pathname;
 const TODAY = new Date().toISOString().slice(0, 10);
 let root, tickets, jdir, dbFile;
