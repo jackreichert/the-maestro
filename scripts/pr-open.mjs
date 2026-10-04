@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const PR_SIZE = fileURLToPath(new URL('./pr-size.mjs', import.meta.url));
+const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 const PASSTHROUGH = { '--title': '--title', '--body-file': '--body-file', '--head': '--head' };
 
 function usage(msg) {

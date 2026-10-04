@@ -2,7 +2,7 @@
 /**
  * PR SIZE: the budget gate run before a draft PR is opened (reference/git.md, "PR size budget").
  *
- *   node scripts/pr-size.mjs --repo <path> --base <ref> [--head <ref>] [--json]
+ *   node scripts/pr-size.ts --repo <path> --base <ref> [--head <ref>] [--json]
  *
  * Reads `git diff --numstat -M -z <base>...<head>` (head defaults to HEAD), sorts each changed file
  * into code, test, config, docs or mechanical, and checks the code against two limits, whichever is
@@ -141,7 +141,7 @@ export function resolveBase(repo, base) {
 
 function usage(msg) {
   if (msg) console.error(`pr-size: ${msg}`);
-  console.error('usage: node scripts/pr-size.mjs --repo <path> --base <ref> [--head <ref>] [--json]');
+  console.error('usage: node scripts/pr-size.ts --repo <path> --base <ref> [--head <ref>] [--json]');
   process.exit(2);
 }
 
