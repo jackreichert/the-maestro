@@ -1,22 +1,23 @@
-// Run: node --test scripts/token-metrics.test.mjs
+// Run: node --test scripts/token-metrics.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.mjs';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
+import type { Comparison } from './token-metrics.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
-const SCRIPT = new URL('./token-metrics.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./token-metrics.ts', import.meta.url).pathname;
 const SENTINEL = 'SENTINEL_CONTENT_fake_id_123';
-let projects;
-let vault;
+let projects: string;
+let vault: string;
 
-function run(...args) {
+function run(...args: string[]) {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--projects-dir', projects, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8',
         env: { ...process.env, VAULT_ROOT: '', TZ: 'UTC' },
@@ -26,14 +27,15 @@ function run(...args) {
 const tablePath = () => join(vault, 'Projects', 'test-proj', 'Research', 'token-metrics.md');
 
 // One API response, written the way Claude Code writes it: one line per content block.
-function assistant(id, ts, usage, model = 'claude-opus-5-5', blocks = 2) {
+interface Line { type: string; timestamp: string; message: { id: string; role: string; model: string; usage: Record<string, unknown>; content: unknown } }
+function assistant(id: string, ts: string, usage: number[], model = 'claude-opus-5-5', blocks = 2): Line[] {
     const u = { input_tokens: usage[0], cache_creation_input_tokens: usage[1], cache_read_input_tokens: usage[2], output_tokens: usage[3] };
     return Array.from({ length: blocks }, () => ({
         type: 'assistant', timestamp: ts, message: { id, role: 'assistant', model, usage: u, content: [{ type: 'text', text: SENTINEL }] },
     }));
 }
-const user = (ts, origin) => ({ type: 'user', timestamp: ts, origin, message: { role: 'user', content: SENTINEL } });
-const jsonl = (recs) => `${recs.map((r) => JSON.stringify(r)).join('\n')}\n`;
+const user = (ts: string, origin: Record<string, unknown>) => ({ type: 'user', timestamp: ts, origin, message: { role: 'user', content: SENTINEL } });
+const jsonl = (recs: unknown[]) => `${recs.map((r) => JSON.stringify(r)).join('\n')}\n`;
 
 beforeEach(() => {
     projects = mkdtempSync(join(tmpdir(), 'tm-proj-'));
@@ -116,7 +118,7 @@ test('mix cells round-trip through the table', () => {
 
 test('compaction restarts the since-compact count; the day keeps the longest run', () => {
     const day = '2026-09-26T10:00:0';
-    const turn = (n) => assistant(`c${n}`, `${day}${n % 10}Z`, [1, 1, 100, 1]);
+    const turn = (n: number) => assistant(`c${n}`, `${day}${n % 10}Z`, [1, 1, 100, 1]);
     writeFileSync(join(projects, 'sess0002.jsonl'), jsonl([
         ...[1, 2, 3, 4].flatMap(turn),
         { type: 'system', subtype: 'compact_boundary', timestamp: `${day}5Z` },
@@ -134,7 +136,7 @@ test('compaction restarts the since-compact count; the day keeps the longest run
 test('small agents (<10 turns) and Opus subagents are counted per subagent', () => {
     const day = '2026-09-27T10:00:0';
     writeFileSync(join(projects, 'sess0003.jsonl'), jsonl([user(`${day}0Z`, { kind: 'human' }), ...assistant('o1', `${day}1Z`, [1, 1, 10, 1])]));
-    const sub = (name, n, model) => writeFileSync(join(projects, 'sess0003', 'subagents', `agent-${name}.jsonl`),
+    const sub = (name: string, n: number, model: string) => writeFileSync(join(projects, 'sess0003', 'subagents', `agent-${name}.jsonl`),
         jsonl(Array.from({ length: n }, (_, i) => assistant(`${name}${i}`, `${day}${i % 10}Z`, [1, 1, 100, 10], model)[0])));
     mkdirSync(join(projects, 'sess0003', 'subagents'), { recursive: true });
     sub('small', 9, 'claude-sonnet-5');
@@ -182,16 +184,16 @@ test('write is idempotent: rerunning a day replaces its row and keeps the rest',
     run('--date', '2026-09-25', '--write');
     run('--date', '2026-09-25', '--write');
     const text = readFileSync(tablePath(), 'utf8');
-    assert.equal(text.match(/^\| 2026-09-25 \|/gm).length, 1);
+    assert.equal(text.match(/^\| 2026-09-25 \|/gm)?.length, 1);
     assert.match(text, /^\| 2026-09-20 \|/m);
     assert.match(text, /notes Jack wrote/);
     assert.match(text, /\| 2026-09-25 \| 1 \| 3 \| 1 \| 2 \(1\/1\) \|/);
 });
 
 test('compare flags a >20% regression against the 7-day median', () => {
-    const row = (d, turns) => [d, '1', String(turns), '1', '0 (0/0)', '1k', '1k', '1M', '0', '100k', '0', '0', '-', '1k', '1k'];
+    const row = (d: string, turns: number) => [d, '1', String(turns), '1', '0 (0/0)', '1k', '1k', '1M', '0', '100k', '0', '0', '-', '1k', '1k'];
     const rows = new Map([['2026-09-22', row('2026-09-22', 100)], ['2026-09-23', row('2026-09-23', 100)], ['2026-09-25', row('2026-09-25', 130)]]);
-    const turns = compare('2026-09-25', rows, '2026-09-23').find((c) => c.name === 'Turns');
+    const turns = metric(compare('2026-09-25', rows, '2026-09-23'), 'Turns');
     assert.equal(turns.median7, 100);
     assert.equal(turns.baseline, 100);
     assert.equal(turns.regression, true);
@@ -221,8 +223,8 @@ test('CLI: warns on stderr when the projects dir has no sessions, instead of cra
 test('sessionLine reports the newest session against the thresholds', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
     assert.match(sessionLine(dir), /^\*\*Session:\*\* unavailable/);
-    const u = (read) => ({ input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 });
-    const line = (id, read) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: u(read) } });
+    const u = (read: number) => ({ input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 });
+    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: u(read) } });
     writeFileSync(join(dir, 's2.jsonl'), `${line('a', 100000)}\n${line('a', 100000)}\n${line('b', 300000)}\n`);
     assert.equal(sessionLine(dir, 4, 350000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn');
     assert.equal(sessionLine(dir, 2, 350000), '**Session:** 2 turns (100% of 2 roll) · 200k read/turn · roll now');
@@ -237,7 +239,7 @@ test('sessionLine degrades to unavailable instead of throwing when the directory
 
 test('sessionLine truncates so the rendered numbers never claim a threshold the roll decision has not reached', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-trunc-'));
-    const line = (id, read) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
     writeFileSync(join(dir, 's.jsonl'), `${line('a', 349500)}\n`);
     assert.equal(sessionLine(dir, 1000, 350000), '**Session:** 1 turns (0% of 1000 roll) · 349k read/turn');
     writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: 399 }, (_, i) => line(`m${i}`, 1)).join('\n')}\n`);
@@ -245,29 +247,35 @@ test('sessionLine truncates so the rendered numbers never claim a threshold the 
 });
 
 // A table row as toRow writes it: 22 cells, with the cost columns filled from the arguments.
-const costRow = (d, { prompts = 10, wakes = 4, read = '1M', mixRead = 'opus 400k · sonnet 400k · haiku 200k', mixOrch = 'opus 0/0/0/1000000/0 · sonnet 0/0/0/1000000/0', mixSub = 'haiku 0/0/0/1000000/0', since = 100, subs = 10, small = 2, opusSubs = 1 } = {}) =>
+const costRow = (d: string, { prompts = 10, wakes = 4, read = '1M', mixRead = 'opus 400k · sonnet 400k · haiku 200k', mixOrch = 'opus 0/0/0/1000000/0 · sonnet 0/0/0/1000000/0', mixSub = 'haiku 0/0/0/1000000/0', since = 100, subs = 10, small = 2, opusSubs = 1 }: Partial<Record<'prompts' | 'wakes' | 'subs' | 'small' | 'opusSubs' | 'since', number> & Record<'read' | 'mixRead' | 'mixOrch' | 'mixSub', string>> = {}) =>
     [d, '1', '100', String(prompts), `${wakes} (${wakes}/0)`, '1k', '1k', '1M', '0', read, String(subs), '1', '-', '1k', '1k', mixRead, mixOrch, String(since), String(small), String(opusSubs), '5.0M', mixSub];
-const byName = (list, name) => list.find((c) => c.name === name);
+const byName = (list: Comparison[], name: string): Comparison | undefined => list.find((c) => c.name === name);
+/** The named metric, which the test expects to exist. */
+const metric = (list: Comparison[], name: string): Comparison => {
+    const found = byName(list, name);
+    assert.ok(found, name);
+    return found;
+};
 
 test('compare scores each cost metric against its target: PASS, MISS, or - without one', () => {
     const rows = new Map([['2026-09-22', costRow('2026-09-22')], ['2026-09-23', costRow('2026-09-23')],
         ['2026-09-25', costRow('2026-09-25', { mixRead: 'opus 500k · sonnet 450k · haiku 50k', wakes: 4, since: 200, read: '300k' })]]);
     const c = compare('2026-09-25', rows, '2026-09-23', { prices: null });
-    const s = (n) => byName(c, n).status;
+    const s = (n: string) => metric(c, n).status;
     assert.deepEqual([s('Opus share (read)'), s('Haiku share (read)'), s('Wakes/prompt'), s('Max turns/compact'), s('Read/turn')], ['MISS', 'MISS', 'PASS', 'MISS', 'MISS']);
-    assert.equal(byName(c, 'Opus share (read)').today, 0.5);
-    assert.ok(Math.abs(byName(c, 'Opus share (read)').median7 - 0.4) < 0.01);
-    assert.equal(byName(c, 'Haiku share (read)').regression, true, 'a falling haiku share is the regression');
+    assert.equal(metric(c, 'Opus share (read)').today, 0.5);
+    assert.ok(Math.abs(metric(c, 'Opus share (read)').median7 - 0.4) < 0.01);
+    assert.equal(metric(c, 'Haiku share (read)').regression, true, 'a falling haiku share is the regression');
     assert.equal(s('Sonnet share (read)'), '-');
     assert.equal(s('Small-agent rate'), '-');
-    assert.equal(byName(c, 'Small-agent rate').today, 0.2);
-    assert.equal(byName(c, 'Opus subagents').today, 1);
-    assert.equal(byName(c, 'Max turns/compact').median7, 100);
+    assert.equal(metric(c, 'Small-agent rate').today, 0.2);
+    assert.equal(metric(c, 'Opus subagents').today, 1);
+    assert.equal(metric(c, 'Max turns/compact').median7, 100);
 });
 
 test('targets come from the targets option; a pass flips to a miss when the limit moves', () => {
     const rows = new Map([['2026-09-25', costRow('2026-09-25')]]);
-    const at = (t) => byName(compare('2026-09-25', rows, '2026-09-24', { prices: null, targets: t }), 'Opus share (read)').status;
+    const at = (t: Record<string, number>) => metric(compare('2026-09-25', rows, '2026-09-24', { prices: null, targets: t }), 'Opus share (read)').status;
     assert.equal(at({ opus_share_max: 40 }), 'PASS');
     assert.equal(at({ opus_share_max: 30 }), 'MISS');
     assert.equal(at({}), '-', 'no target configured, no verdict');
@@ -275,7 +283,7 @@ test('targets come from the targets option; a pass flips to a miss when the limi
 
 const PRICES_TEXT = 'opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: input=2, cache_write_5m=2.5, cache_write_1h=4, cache_read=0.2, output=10; haiku: input=1, cache_write_5m=1.25, cache_write_1h=2, cache_read=0.1, output=5';
 const PRICES = parseModelPrices(PRICES_TEXT);
-const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
+const near = (a: number, b: number, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
 test('dollars price each kind per MTok: Opus cache reads cost 0.05x input, Sonnet 0.1x', () => {
     const million = { fresh: 0, w5: 0, w1: 0, read: 1e6, out: 0 };
@@ -341,28 +349,28 @@ test('priced metrics weight dollars, exist only with prices, and the Opus target
         mixOrch: 'opus 0/0/0/1000000/0 · sonnet 0/0/0/1000000/0', mixSub: 'haiku 0/0/0/1000000/0' })]]);
     assert.equal(byName(compare('2026-09-25', rows, '2026-09-24', { prices: null }), 'Opus share (priced)'), undefined);
     const c = compare('2026-09-25', rows, '2026-09-24', { prices: PRICES, targets: { opus_priced_share_max: 50 } });
-    near(byName(c, 'Opus share (priced)').today, 0.2 / 0.5);
-    near(byName(c, 'Haiku share (priced)').today, 0.1 / 0.5);
-    assert.equal(byName(c, 'Opus share (priced)').status, 'PASS');
-    assert.equal(byName(c, 'Haiku share (priced)').status, '-', 'no Haiku priced target');
-    near(byName(c, 'Est. $ orchestrator').today, 0.4);
-    near(byName(c, 'Est. $ subagents').today, 0.1);
-    assert.equal(byName(compare('2026-09-25', rows, '2026-09-24', { prices: PRICES, targets: { opus_priced_share_max: 30 } }), 'Opus share (priced)').status, 'MISS');
+    near(metric(c, 'Opus share (priced)').today, 0.2 / 0.5);
+    near(metric(c, 'Haiku share (priced)').today, 0.1 / 0.5);
+    assert.equal(metric(c, 'Opus share (priced)').status, 'PASS');
+    assert.equal(metric(c, 'Haiku share (priced)').status, '-', 'no Haiku priced target');
+    near(metric(c, 'Est. $ orchestrator').today, 0.4);
+    near(metric(c, 'Est. $ subagents').today, 0.1);
+    assert.equal(metric(compare('2026-09-25', rows, '2026-09-24', { prices: PRICES, targets: { opus_priced_share_max: 30 } }), 'Opus share (priced)').status, 'MISS');
 });
 
 test('a day with subagents but no subagent cell has no subagent dollars instead of zero', () => {
     const old = costRow('2026-09-25', { mixSub: '-', subs: 10 });
-    assert.ok(Number.isNaN(byName(compare('2026-09-25', new Map([['2026-09-25', old]]), '2026-09-24', { prices: PRICES }), 'Est. $ subagents').today));
+    assert.ok(Number.isNaN(metric(compare('2026-09-25', new Map([['2026-09-25', old]]), '2026-09-24', { prices: PRICES }), 'Est. $ subagents').today));
     const none = costRow('2026-09-25', { mixSub: '-', subs: 0 });
-    assert.equal(byName(compare('2026-09-25', new Map([['2026-09-25', none]]), '2026-09-24', { prices: PRICES }), 'Est. $ subagents').today, 0);
+    assert.equal(metric(compare('2026-09-25', new Map([['2026-09-25', none]]), '2026-09-24', { prices: PRICES }), 'Est. $ subagents').today, 0);
 });
 
 test('rows from before the cost columns give no number instead of a wrong one', () => {
     const old = ['2026-09-20', '1', '100', '10', '4 (4/0)', '1k', '1k', '1M', '0', '100k', '5', '1', '-', '1k', '1k'];
     const c = compare('2026-09-25', new Map([['2026-09-20', old], ['2026-09-25', old]]), '2026-09-24', { prices: null });
-    assert.ok(Number.isNaN(byName(c, 'Opus share (read)').today));
-    assert.equal(byName(c, 'Opus share (read)').status, '-');
-    assert.ok(Number.isNaN(byName(c, 'Small-agent rate').today));
+    assert.ok(Number.isNaN(metric(c, 'Opus share (read)').today));
+    assert.equal(metric(c, 'Opus share (read)').status, '-');
+    assert.ok(Number.isNaN(metric(c, 'Small-agent rate').today));
 });
 
 test('CLI: the day summary shows the mix, the cost block and PASS/MISS; prices unset says so', () => {
@@ -380,7 +388,7 @@ test('CLI: the day summary shows the mix, the cost block and PASS/MISS; prices u
 
 test('CLI: with model_prices set the day shows dollars by side, model and category; --compare carries the same metrics', () => {
     const env = { ...process.env, VAULT_ROOT: '', TZ: 'UTC', MAESTRO_MODEL_PRICES: PRICES_TEXT, MAESTRO_COST_TARGETS: 'opus_share_max=95' };
-    const go = (...a) => spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-25', ...a, '--projects-dir', projects, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', env });
+    const go = (...a: string[]) => spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-25', ...a, '--projects-dir', projects, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', env });
     const day = go();
     assert.equal(day.status, 0, day.stderr);
     // orchestrator: opus 30 fresh, 2500 5m writes, 17410 read, 220 out
@@ -406,7 +414,7 @@ test('CLI: with model_prices set the day shows dollars by side, model and catego
 test('a mix cell keeps whole-number precision, so a share just over the target is a MISS', () => {
     const mix = { opus: { read: 1_249_000 }, haiku: { read: 1_851_000 } };
     const rows = new Map([['2026-09-25', costRow('2026-09-25', { mixRead: mixCell(mix, 'read') })]]);
-    const c = byName(compare('2026-09-25', rows, '2026-09-24', { prices: null }), 'Opus share (read)');
+    const c = metric(compare('2026-09-25', rows, '2026-09-24', { prices: null }), 'Opus share (read)');
     assert.ok(c.today > 0.4 && c.today < 0.404);
     assert.equal(c.status, 'MISS');
 });
