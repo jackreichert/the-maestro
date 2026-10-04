@@ -485,7 +485,7 @@ function cmdQuery(): void {
     const sql = arg('sql');
     if (has('help') || (!name && !has('sql'))) { console.log(QUERY_HELP); return; }
     if (has('sql') && !sql) fail('Usage: query --sql "<select>"');
-    if (!sql && !QUERIES[name]) fail(`Unknown query "${name}".\n\n${QUERY_HELP}`);
+    if (!sql && !Object.hasOwn(QUERIES, name)) fail(`Unknown query "${name}".\n\n${QUERY_HELP}`);
     if (isStale()) rebuild();
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
