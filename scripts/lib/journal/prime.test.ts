@@ -36,7 +36,7 @@ test('primeLines lists Needs Jack, blocked and in flight under a head and a foot
     assert.ok(lines.some((l) => l.startsWith('Needs Jack (1)')));
     assert.ok(lines.some((l) => l.includes('bbbb wait for date [gate: date:2099-01-01]')));
     assert.ok(lines.length <= 40);
-    assert.match(lines.at(-1) ?? '', /journal\.mjs status/);
+    assert.match(lines.at(-1) ?? '', /journal\.ts status/);
 });
 
 test('pendingTransitions finds done items with an unrecorded tracker key, and trackerKeys dedupes', () => {

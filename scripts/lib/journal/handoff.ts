@@ -72,7 +72,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
     return [
         '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
         `# ${stream ?? 'All streams'} handoff, ${d}`, '',
-        '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
+        '> Scaffolded by `journal.ts handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.ts resume`, and calls `ListAgents` itself.', '',
         '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
         '## 1. Tasks with status', '',
         ...(open.length || doneRecently.length ? [
@@ -99,7 +99,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
         '## Cleanup candidates', '',
         '_Run `node scripts/branch-sweep.ts` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
         ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
-        'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
+        'Then run `journal.ts resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
     ].join('\n');
 }
 
