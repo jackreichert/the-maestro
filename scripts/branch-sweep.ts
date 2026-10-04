@@ -21,7 +21,7 @@
  * user's commits, and (if its branch is still on origin) is still at its PR's head. Patch-equivalence alone (`git cherry`, so a squash
  * merge, but also a squash merge that was since reverted) lists the branch under Review, and --apply refuses it.
  * Any git or gh error leaves the item out, with the reason noted.
- * `--apply-worktrees` (what `journal.mjs roll` runs, a standing approval) is the worktree half without the id step: it runs
+ * `--apply-worktrees` (what `journal.ts roll` runs, a standing approval) is the worktree half without the id step: it runs
  * `git worktree prune` for entries whose directory is missing, re-scans worktrees only, and removes every one that
  * qualifies, never with --force and never a branch. A detached worktree qualifies when it passes the worktree rules and its
  * HEAD is reachable from some origin ref. Right before each removal the worktree is re-read (HEAD unchanged, no modified or
