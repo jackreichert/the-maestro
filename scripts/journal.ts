@@ -828,16 +828,16 @@ function cmdStreams() {
         const next: Registry = { models: undefined, ...(reg || {}), hasStreams: true, streams: { ...(reg?.streams || {}) } };
         const owner = canonicalOf(next, name);
         if (owner && owner !== name) die(`"${name}" is already registered as "${owner}" (name or alias, case-insensitive).`);
-        const entry = next.streams[name] || { aliases: [], status: 'active' };
-        // A registry entry without an aliases list stays a TypeError here, as before.
-        const aliasesOf = entry.aliases as unknown[];
+        const existing = next.streams[name];
+        const entry = { status: 'active', ...(existing || {}), aliases: [...(existing?.aliases || [])] };   // a hand-edited entry without an aliases list counts as empty
+        const aliasesOf = entry.aliases;
         for (const a of aliases) {
             const other = canonicalOf(next, a);
             if (other && other !== name) die(`Alias "${a}" already belongs to "${other}".`);
             if (a.toLowerCase() !== name.toLowerCase() && !aliasesOf.some((x) => String(x).toLowerCase() === a.toLowerCase())) aliasesOf.push(a);
         }
         next.streams[name] = entry;
-        const changed = JSON.stringify(reg?.streams?.[name]) !== JSON.stringify(entry);
+        const changed = !existing || (existing.aliases?.length ?? 0) !== aliasesOf.length;
         if (changed && !dryRun) saveRegistry(next);
         console.log(`${changed ? (reg?.streams[name] ? 'updated' : 'added') : 'unchanged'}  ${name}  aliases: ${aliasesOf.join(', ') || '(none)'}${dryRun && changed ? ' (dry-run)' : ''}`);
         return;
