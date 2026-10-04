@@ -116,6 +116,8 @@ import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn 
 import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
+import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.mjs';
+import { yesterday, handoffText as handoffTextIn, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.mjs';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
@@ -1073,106 +1075,10 @@ function cmdClaims() {
 
 // ── backfill ────────────────────────────────────────────────────────────────
 
-const CONF = ['low', 'medium', 'high'];
-const SESSION_GAP_MS = 30 * 60 * 1000;
-
-/**
- * Evidence about how already-tagged items are filed: stream counts per repo, per ticket id, and per
- * work session (a run of rows with no gap over 30 minutes; the ledger has no session field).
- */
-function backfillEvidence(items) {
-    const tagged = items.filter((i) => i.stream);
-    const tally = (map, key, stream) => { if (!key) return; const m = map.get(key) || new Map(); m.set(stream, (m.get(stream) || 0) + 1); map.set(key, m); };
-    const byRepo = new Map();
-    const byTicket = new Map();
-    for (const i of tagged) {
-        tally(byRepo, i.repo, i.stream);
-        for (const t of new Set([i.ticket, ...(itemText(i).match(TICKET_ID) || [])].filter(Boolean))) tally(byTicket, t, i.stream);
-    }
-    const sorted = [...items].sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    const sessionOf = new Map();
-    let n = 0;
-    let last = null;
-    for (const i of sorted) {
-        const t = Date.parse(i.ts);
-        if (last !== null && t - last > SESSION_GAP_MS) n++;
-        sessionOf.set(i.id, n);
-        last = t;
-    }
-    const bySession = new Map();
-    for (const i of tagged) tally(bySession, sessionOf.get(i.id), i.stream);
-    return { byRepo, byTicket, bySession, sessionOf };
-}
-
-/** The top stream of a tally with its share and total, or null when empty or tied. */
-function dominant(m) {
-    if (!m) return null;
-    const rows = [...m].sort((a, b) => b[1] - a[1]);
-    const total = rows.reduce((a, [, c]) => a + c, 0);
-    if (rows.length > 1 && rows[0][1] === rows[1][1]) return null;
-    return { stream: rows[0][0], n: rows[0][1], total, share: rows[0][1] / total };
-}
-
-/** Streams a backfill may propose: registered and not archived, plus every stream the ledger already uses. */
-function candidateStreams(items, archived) {
-    const reg = loadRegistry();
-    const names = new Set([...Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k), ...items.map((i) => i.stream).filter(Boolean)]);
-    for (const a of archived) names.delete(a);
-    return names;
-}
-
-/** Votes for one untagged item: [{ rule, stream, points }]. Points: ticket 4 (unanimous, 2+ items) or 1, keyword 2, repo 2 (90%+ of 5+ items) or 1, session neighbours 1. 4+ is high, 2-3 medium, 1 low. */
-function votesFor(item, ev, keywords) {
-    const votes = [];
-    const tickets = new Set([item.ticket, ...(itemText(item).match(TICKET_ID) || [])].filter(Boolean));
-    let best = null;
-    for (const t of tickets) {
-        const d = dominant(ev.byTicket.get(t));
-        if (!d) continue;
-        const points = d.share === 1 && d.n >= 2 ? 4 : 1;
-        if (!best || points > best.points) best = { rule: 'ticket', stream: d.stream, points };
-    }
-    if (best) votes.push(best);
-
-    const text = itemText(item).toLowerCase();
-    const hits = new Set(keywords.filter((k) => k.re.test(text)).map((k) => k.stream));
-    if (hits.size === 1) votes.push({ rule: 'keyword', stream: [...hits][0], points: 2 });
-
-    const r = dominant(ev.byRepo.get(item.repo));
-    if (r) votes.push({ rule: 'repo', stream: r.stream, points: r.share >= 0.9 && r.total >= 5 ? 2 : 1 });
-
-    const s = dominant(ev.bySession.get(ev.sessionOf.get(item.id)));
-    if (s && s.total >= 2 && s.share >= 0.6) votes.push({ rule: 'session', stream: s.stream, points: 1 });
-    return votes;
-}
-
-/** { stream, confidence, rules } for an untagged item, or null when nothing votes. Disagreement caps it at low. */
-function proposalFor(item, ev, keywords, allowed) {
-    const votes = votesFor(item, ev, keywords).filter((v) => allowed.has(v.stream));
-    if (!votes.length) return null;
-    const score = new Map();
-    for (const v of votes) score.set(v.stream, (score.get(v.stream) || 0) + v.points);
-    const ranked = [...score].sort((a, b) => b[1] - a[1]);
-    if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return { stream: null, confidence: 'low', rules: votes.map((v) => v.rule), tie: true };
-    const [stream, points] = ranked[0];
-    const conflict = ranked.length > 1;
-    const confidence = conflict ? 'low' : points >= 4 ? 'high' : points >= 2 ? 'medium' : 'low';
-    return { stream, confidence, rules: votes.filter((v) => v.stream === stream).map((v) => v.rule), conflict };
-}
-
-function backfillProposals() {
-    const folded = fold(readLedger());
-    const untagged = folded.items.filter((i) => !i.stream && !folded.hidden.has(i.id));
-    const ev = backfillEvidence(folded.items);
-    const allowed = candidateStreams(folded.items, folded.archivedStreams);
-    const reg = loadRegistry();
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const keywords = Object.entries(reg?.streams || {}).filter(([canon]) => allowed.has(canon)).flatMap(([canon, meta]) =>
-        [canon, ...(meta?.aliases || [])].map(String).filter((w) => w.length >= 3)
-            .map((w) => ({ stream: canon, re: new RegExp(`(?<![\\w-])${esc(w.toLowerCase())}(?![\\w-])`) })));
-    const proposals = untagged.map((item) => ({ item, ...(proposalFor(item, ev, keywords, allowed) || { stream: null, confidence: null, rules: [] }) }));
-    return { proposals, untagged: untagged.length };
-}
+const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
+const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR });
+const handoffText = (stream, since, keptWorktrees, opts) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
+const updateContextLink = (file, handoffPath) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 
 function cmdBackfill() {
     const minConf = arg('min-confidence', 'high');
@@ -1241,90 +1147,6 @@ function cmdBackfill() {
 
 // ── handoff and resume ──────────────────────────────────────────────────────
 
-const PATH_LIKE = /(?:^|[\s(`'"])((?:~\/|\.{1,2}\/|\/)[\w.@~+-]+(?:\/[\w.@~+-]+)*(?::\d+)?|[\w.@-]+(?:\/[\w.@-]+)+\.\w{1,6}(?::\d+)?)(?=[\s),.;:`'"]|$)/g;
-const yesterday = () => new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-
-/** PR numbers, refs, tickets and file paths mentioned by a set of items, each listed once. */
-function artifactsOf(items) {
-    const found = new Map();
-    const add = (kind, v) => found.set(`${kind} ${v}`, { kind, v });
-    for (const i of items) {
-        const text = itemText(i);
-        for (const r of i.refs || []) add(/^#\d+$/.test(r) ? 'pr' : 'ref', r);
-        for (const n of text.match(/#\d{2,}/g) || []) add('pr', n);
-        if (i.ticket) add('ticket', i.ticket);
-        for (const t of text.match(TICKET_ID) || []) add('ticket', t);
-        for (const m of text.matchAll(PATH_LIKE)) add('path', m[1]);
-    }
-    return [...found.values()];
-}
-
-/**
- * The worktrees the roll sweep keeps. One line each by default; with `summary` (a sweep result, used by `handoff --all`,
- * where there can be hundreds) it is the sweep's totals and the kept ones as counts by reason.
- */
-function cleanupWorktreeLines(kept, summary) {
-    if (summary) {
-        return [`Worktree sweep (dry run): ${summary.removed.length} would be removed, ${summary.pruned.length} pruned, ${kept.length} kept. Kept, by reason (\`--verbose\` lists them):`, '',
-            ...keptCounts(kept).map((c) => `- ${c.label}: ${c.count}`), ...(summary.skipped?.length ? ['', `Sweep budget reached: skipped ${summary.skipped.join(', ')}.`] : []), ''];
-    }
-    return kept.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', ...kept.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : [];
-}
-
-/** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
-function handoffText(stream, since, keptWorktrees = [], { learn = '', next = '', sweep = null, verbose = false } = {}) {
-    const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
-    const d = today();
-    const recent = (i) => (i.closedBy?.date || i.date) >= since || i.date >= since;
-    const open = items.filter((i) => isOpen(i) && (i.kind === 'wip' || i.kind === 'blocked'));
-    const doneRecently = items.filter((i) => i.state === 'done' && (i.closedBy?.date || i.date) >= since);
-    const approvals = approvalMap(readLedger());
-    const boxOf = (i) => classify(i, approvals.get(i.id));
-    // Every open question is listed: paste blocks apart, everything else (whatever box triage gives it) under Needs Jack.
-    const asks = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
-    const pasteBlocks = asks.filter((i) => boxOf(i) === BOX.PASTE);
-    const needsJack = asks.filter((i) => boxOf(i) !== BOX.PASTE);
-    const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
-    const touched = items.filter((i) => isOpen(i) || recent(i));
-    const arts = artifactsOf(touched);
-    const meta = (i) => [stream === null && i.stream && `stream: ${i.stream}`, i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
-    const line = (i, tag) => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
-    const one = (kind) => arts.filter((a) => a.kind === kind).map((a) => a.v);
-
-    return [
-        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
-        `# ${stream ?? 'All streams'} handoff, ${d}`, '',
-        '> Scaffolded by `journal.mjs handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.mjs resume`, and calls `ListAgents` itself.', '',
-        '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
-        '## 1. Tasks with status', '',
-        ...(open.length || doneRecently.length ? [
-            ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
-            ...doneRecently.map((i) => line(i, `done ${i.closedBy?.date || i.date}`)),
-        ] : ['_none_']), '',
-        '## 2. Learnings, including what was ruled out', '',
-        ...(learn ? [`- ${learn}`] : []),
-        ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : learn ? [] : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
-        '## 3. Artifacts', '',
-        ...(arts.length ? [
-            ...(one('pr').length ? [`- PRs: ${one('pr').join(', ')}`] : []),
-            ...(one('ticket').length ? [`- Tickets: ${one('ticket').join(', ')}`] : []),
-            ...(one('ref').length ? [`- Refs: ${one('ref').join(', ')}`] : []),
-            ...(one('path').length ? [`- Paths: ${one('path').join(', ')}`] : []),
-        ] : ['_none_']), '',
-        '## 4. Decisions awaiting', '',
-        ...(needsJack.length || pasteBlocks.length ? [
-            ...(needsJack.length ? ['**Needs Jack**', '', ...needsJack.map((i) => `${line(i, i.kind)}${isStale(BOX.NEEDS_JACK, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`), ''] : []),
-            ...(pasteBlocks.length ? ['**Paste blocks for Jack**', '', ...pasteBlocks.map((i) => `${line(i, 'paste')} — ${i.paste ? `block: ${i.paste}` : 'no block file'}${isStale(BOX.PASTE, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`)] : []),
-        ] : ['_none_']), '',
-        '## 5. Next concrete action', '',
-        next || '_Author: one concrete first step for the fresh session._', '',
-        '## Cleanup candidates', '',
-        '_Run `node scripts/branch-sweep.ts` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
-        ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
-        'Then run `journal.mjs resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
-    ].join('\n');
-}
-
 /** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
 const oneLineArg = (name) => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
 
@@ -1342,23 +1164,6 @@ function cmdHandoff() {
     writeFileSync(path, body);
     console.log(`wrote ${path}`);
     if (contextFile) updateContextLink(contextFile, path);
-}
-
-/**
- * Points a project CONTEXT.md at the handoff just written, with one `Latest handoff: [[<note>]] (<date>)` line: an existing
- * line is replaced, otherwise it goes under the first heading (or at the top, after any YAML frontmatter). Running it again for the same note on the same day changes nothing.
- * A missing file is reported and fails the command; nothing else in the file is touched.
- */
-function updateContextLink(file, handoffPath) {
-    if (!existsSync(file)) { console.error(`--update-context: ${file} does not exist; the handoff was written but nothing was linked.`); process.exitCode = 1; return; }
-    const link = `Latest handoff: [[${basename(handoffPath, '.md')}]] (${today()})`;
-    const text = readFileSync(file, 'utf8');
-    const front = text.match(/^---\n[\s\S]*?\n---\n/)?.[0] || ''; // YAML frontmatter stays first
-    const body = text.slice(front.length);
-    const next = /^Latest handoff:.*$/m.test(text) ? text.replace(/^Latest handoff:.*$/m, () => link)
-        : /^# .*$/m.test(body) ? front + body.replace(/^# .*$/m, (h) => `${h}\n\n${link}`) : `${front}${link}\n\n${body}`;
-    if (next !== text) writeFileSync(file, next);
-    console.log(`${next === text ? 'already linked' : 'linked'} ${file} -> ${basename(handoffPath, '.md')}`);
 }
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
