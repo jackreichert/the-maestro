@@ -259,3 +259,13 @@ test('model_prices needs opus, sonnet and haiku; no prices are built in', () => 
     write(join(home, '.config', 'the-maestro', 'config.md'), block(`model_prices: ${PRICES}   # fetched 2026-10-02`));
     assert.match(show().MODEL_PRICES, /haiku\(input=1 cache_write_5m=1\.25 cache_write_1h=2 cache_read=0\.1 output=5\)$/);
 });
+
+test('update_check is on and auto_pull is off by default; the file and the environment change them', () => {
+    const d = show();
+    assert.deepEqual([d.UPDATE_CHECK, d.AUTO_PULL], ['on', 'off']);
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('update_check: off\nauto_pull: on'));
+    const f = show();
+    assert.deepEqual([f.UPDATE_CHECK, f.AUTO_PULL], ['off', 'on']);
+    const e = show({ MAESTRO_UPDATE_CHECK: 'yes', MAESTRO_AUTO_PULL: 'no' });
+    assert.deepEqual([e.UPDATE_CHECK, e.AUTO_PULL], ['on', 'off']);
+});
