@@ -92,7 +92,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | `VAULT_ROOT` | tickets, `CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/` |
 | Obsidian vault name (for `obsidian://open?vault=`) | greeting.md, citations.md |
 | `LEDGER_ROOT` | `journal.mjs`, `ledger-index.ts`, `prs-snapshot.ts` |
-| Claude transcript dir | `token-metrics.mjs` (`CLAUDE_PROJECTS_DIR`) |
+| Claude transcript dir | `token-metrics.ts` (`CLAUDE_PROJECTS_DIR`) |
 | Ticket skill | dispatch.md |
 | Whether `roll` commits the ledger root (`ledger_git_autocommit`) | `journal.mjs roll` |
 | Weekday of the weekly approvals review (`approvals_review_day`, default Friday) | greeting.md, `journal.mjs approvals` |

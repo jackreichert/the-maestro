@@ -221,7 +221,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node s
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
 | [branch-sweep.mjs](#branch-sweepmjs) | List and delete merged branches and stale worktrees |
-| [token-metrics.mjs](#token-metricsmjs) | Token and cost metrics from transcripts |
+| [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
 
@@ -265,7 +265,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.mjs
 | `archive <stream>`, `unarchive <stream>` | Hide a finished stream (refuses while it has open items or an unfinished retro) or bring it back |
 | `claim <repo> --desk <stream>`, `release <repo> --desk <stream>`, `claims` | Exclusive repo lock files. `claim`: `--branch`, `--why`, `--pid`. `release`: `--force`. `claims`: `--stale-hours 12`, `--json` |
 | `backfill` | Propose a stream for untagged items; read-only by default. `--dry-run`, `--samples`, `--out`, `--apply --min-confidence high\|medium\|low` |
-| `handoff --stream <name>` or `--all` | Scaffold the five-part handoff, for one stream or generated across every stream (`--out`, `--since`, `--force`, `--container`). It fills Session metrics from `token-metrics.mjs`; `--learn "<text>"` and `--next "<text>"` fill sections 2 and 5; `--all` summarises the sweep as counts by reason (`--verbose` lists them); `--update-context [--context-file <path>]` points the project `CONTEXT.md` at the new note with a `Latest handoff:` line |
+| `handoff --stream <name>` or `--all` | Scaffold the five-part handoff, for one stream or generated across every stream (`--out`, `--since`, `--force`, `--container`). It fills Session metrics from `token-metrics.ts`; `--learn "<text>"` and `--next "<text>"` fill sections 2 and 5; `--all` summarises the sweep as counts by reason (`--verbose` lists them); `--update-context [--context-file <path>]` points the project `CONTEXT.md` at the new note with a `Latest handoff:` line |
 | `resume` | The verify-on-resume checklist: ledger status, `gh pr list`, `pgrep` for each loop pattern, gate checks |
 
 Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed rules for each command are in [reference/ledger.md](reference/ledger.md).
@@ -357,11 +357,11 @@ A remote branch qualifies only when it is yours (every commit by one of `git_ema
 
 Ownership is decided with a fixed number of git calls per branch (one `for-each-ref --contains`, one `rev-list --parents` and one `rev-parse`, whatever the number of protected refs), so a scan stays fast in repos with many `release/*` branches. Every protected ref, glob-matched ones included, counts when the branch's fork point is worked out.
 
-### token-metrics.mjs
+### token-metrics.ts
 
 Token-cost metrics read from Claude Code transcripts: numeric usage fields, model ids, timestamps and message type metadata only. Message content is never read.
 
-`token-metrics.mjs [--date YYYY-MM-DD] [--all] [--write] [--compare] [--curve] [--json] [--projects-dir <dir>] [--vault <path>] [--project <name>] [--baseline-until YYYY-MM-DD]`. With no flags it prints today. `--write` upserts the day's row in `Research/token-metrics.md` (idempotent), `--all --write` backfills every day still on disk, `--compare` sets the day against the 7-day median and a baseline and flags any metric that moved more than about 20%, and `--curve` shows cache read per turn by turn-index bucket. The method is in [cost/measure.md](cost/measure.md).
+`token-metrics.ts [--date YYYY-MM-DD] [--all] [--write] [--compare] [--curve] [--json] [--projects-dir <dir>] [--vault <path>] [--project <name>] [--baseline-until YYYY-MM-DD]`. With no flags it prints today. `--write` upserts the day's row in `Research/token-metrics.md` (idempotent), `--all --write` backfills every day still on disk, `--compare` sets the day against the 7-day median and a baseline and flags any metric that moved more than about 20%, and `--curve` shows cache read per turn by turn-index bucket. The method is in [cost/measure.md](cost/measure.md).
 
 The day summary and `--compare` show each cost metric with today, the 7-day median, the baseline, its target and PASS or MISS:
 
@@ -429,7 +429,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `gh_org` | `MAESTRO_GH_ORG` | none (no org filter) | GitHub org the PR board is scoped to |
 | `gh_login` | `MAESTRO_GH_LOGIN` | the `gh`-authenticated user | Your GitHub login |
 | `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths; `journal.mjs` still requires `--project` |
-| `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<working directory with separators as dashes>` | Claude Code transcript directory read by `token-metrics.mjs` |
+| `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<working directory with separators as dashes>` | Claude Code transcript directory read by `token-metrics.ts` |
 | `ledger_root` | `LEDGER_ROOT` | none | Where `Journal/` lives; falls back to `vault_root` |
 | `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
 | `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.mjs resume` checks |
@@ -438,8 +438,8 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `approvals_review_day` | `MAESTRO_APPROVALS_REVIEW_DAY` | `friday` | Weekday the greeting brings the approvals digest; a non-weekday falls back to the default |
 | `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns at which the status footer says "roll now" |
 | `roll_read_per_turn` | `MAESTRO_ROLL_READ_PER_TURN` | 350000 | Mean cache-read tokens per turn at which it says "roll now" (a plain number) |
-| `cost_targets` | `MAESTRO_COST_TARGETS` | `opus_share_max=40, haiku_share_min=15, opus_priced_share_max=50, wakes_per_prompt_max=0.5, read_per_turn_max=200000, turns_since_compact_max=150` | Targets `token-metrics.mjs` scores against, as `key=value` pairs; any subset overrides those keys. Shares are percent. `opus_priced_share_max` (default 50) scores the Opus share of estimated dollars |
-| `model_prices` | `MAESTRO_MODEL_PRICES` | none | Dollars per million tokens by model family, as `;`-separated groups: `opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: ...; haiku: ...`. Each family needs `input`, `cache_write_5m`, `cache_read` and `output`; `cache_write_1h` falls back to the 5m price. Needs opus, sonnet and haiku, else it counts as unset; `other` is optional. No prices are built in; the current list is under token-metrics.mjs below, with a paste-ready block |
+| `cost_targets` | `MAESTRO_COST_TARGETS` | `opus_share_max=40, haiku_share_min=15, opus_priced_share_max=50, wakes_per_prompt_max=0.5, read_per_turn_max=200000, turns_since_compact_max=150` | Targets `token-metrics.ts` scores against, as `key=value` pairs; any subset overrides those keys. Shares are percent. `opus_priced_share_max` (default 50) scores the Opus share of estimated dollars |
+| `model_prices` | `MAESTRO_MODEL_PRICES` | none | Dollars per million tokens by model family, as `;`-separated groups: `opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: ...; haiku: ...`. Each family needs `input`, `cache_write_5m`, `cache_read` and `output`; `cache_write_1h` falls back to the 5m price. Needs opus, sonnet and haiku, else it counts as unset; `other` is optional. No prices are built in; the current list is under token-metrics.ts below, with a paste-ready block |
 | `watch_min_interval` | `MAESTRO_WATCH_MIN_INTERVAL` | 300 | PR watcher: fastest poll in seconds; never below 300 |
 | `watch_max_interval` | `MAESTRO_WATCH_MAX_INTERVAL` | 1800 | PR watcher: slowest poll in seconds (also the event loop's back-off cap) |
 | `watch_quiet_hours` | `MAESTRO_WATCH_QUIET_HOURS` | `20:00-07:00` | Quiet window `HH:MM-HH:MM` in `watch_tz`; `off` disables |
@@ -547,7 +547,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | The PR watcher cannot be set to flood GitHub | `cadence.mjs` raises any `--interval` or `watch_min_interval` below 300s to 300s |
 | A notification cannot inject commands | `notify_command` runs as an argv array with no shell; the summary is one line of at most 150 characters |
 | Message text never leaves the inbox type | `inbox` keeps only a hash per line and reports a count; a test covers it |
-| Transcript content never reaches the metrics | `token-metrics.mjs` copies an allowlist of numeric and metadata fields and drops the rest; a planted-sentinel test checks it |
+| Transcript content never reaches the metrics | `token-metrics.ts` copies an allowlist of numeric and metadata fields and drops the rest; a planted-sentinel test checks it |
 | One event loop at a time | `event-loop.ts run` takes a pid lock in `event_dir`; a dead owner's lock is replaced |
 | A broken overlay type is loud | the type loader rejects a duplicate name, a module without `check` and `diff`, or a missing playbook, naming the file |
 | The brief is complete | `brief-block.ts` exits 1 if any slot is empty |
@@ -575,7 +575,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 - **Capped reports and lean tool output.** A report stays in context for the rest of the session and is re-read on every later turn, so detail goes in a file the orchestrator opens only if it needs it.
 - **One loop, one wake per event.** The event loop, including its `pr-watch` type, costs no tokens between checks, and its adaptive pace (slower when quiet, off overnight) keeps polling from becoming wake-ups.
 - **Session hygiene.** Per-turn cost climbs with session length. The status footer's Session line says "roll now" at `roll_turns` (180) or `roll_read_per_turn` (350000), and `journal.mjs handoff` plus `resume` make a fresh session cheap to start.
-- **Measured, not guessed.** `token-metrics.mjs` reads transcripts for numbers only. An end-of-day loop compares the day with a 7-day median, flags any metric more than about 20% worse, and treats each cost habit as an experiment to adopt or revert. See [cost/loop.md](cost/loop.md).
+- **Measured, not guessed.** `token-metrics.ts` reads transcripts for numbers only. An end-of-day loop compares the day with a 7-day median, flags any metric more than about 20% worse, and treats each cost habit as an experiment to adopt or revert. See [cost/loop.md](cost/loop.md).
 
 ## Testing
 

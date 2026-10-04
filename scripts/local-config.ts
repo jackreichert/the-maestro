@@ -86,7 +86,7 @@ export const GH_LOGIN = pick('MAESTRO_GH_LOGIN', 'gh_login');
 export const CONTAINER_PROJECT = pick('MAESTRO_PROJECT', 'project') || 'dev-env';
 
 /**
- * Claude Code's transcript directory for the container, read by token-metrics.mjs. Claude Code
+ * Claude Code's transcript directory for the container, read by token-metrics.ts. Claude Code
  * names it after the working directory with every path separator turned into a dash.
  */
 export const CLAUDE_PROJECTS_DIR =
@@ -140,7 +140,7 @@ export function numberMap(text: unknown): Record<string, number> {
 }
 
 /**
- * Cost targets token-metrics.mjs scores each day against. Shares are percent of tokens (40 means 40%), the rest plain numbers.
+ * Cost targets token-metrics.ts scores each day against. Shares are percent of tokens (40 means 40%), the rest plain numbers.
  * `opus_share_max` and `haiku_share_min` apply to the cache-read model mix; `opus_priced_share_max` applies to the share of
  * estimated dollars and only scores once `model_prices` is set. There is no Haiku priced target: Haiku is cheap by design.
  */
@@ -174,7 +174,7 @@ export function parseModelPrices(text: unknown): Record<string, ModelPrice> {
 }
 
 /**
- * Prices per model family for the dollar estimates in token-metrics.mjs. Only a complete opus, sonnet and haiku set counts; anything
+ * Prices per model family for the dollar estimates in token-metrics.ts. Only a complete opus, sonnet and haiku set counts; anything
  * less is null and the output shows the token mix alone. `other` (any other family) is optional. No prices are built in: the
  * current Anthropic list is documented in the README to paste into your config.
  */

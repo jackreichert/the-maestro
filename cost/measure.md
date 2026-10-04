@@ -17,19 +17,19 @@ comparison is the whole point of running the line daily rather than trusting a g
 tracks the day's actual work volume, not a habit change, and the loop below is what checks whether
 any of that change is a regression worth explaining.
 
-## `token-metrics.mjs`
+## `token-metrics.ts`
 
 The script behind the cost loop and the daily table. It reads Claude Code's local transcripts —
 usage numbers, model ids, timestamps, and message type/role/origin metadata only, never message
 content — and never touches the vault except to upsert its own table.
 
 ```bash
-VAULT_ROOT=... node scripts/token-metrics.mjs --write --compare   # today's row + comparison
-node scripts/token-metrics.mjs                                    # today, printed, no vault write
-node scripts/token-metrics.mjs --date 2026-09-25                  # a specific day
-node scripts/token-metrics.mjs --all --write                      # backfill every day still on disk
-node scripts/token-metrics.mjs --curve                            # cache-read per turn, by turn-index bucket
-node scripts/token-metrics.mjs --json                              # machine-readable day + sessions
+VAULT_ROOT=... node scripts/token-metrics.ts --write --compare   # today's row + comparison
+node scripts/token-metrics.ts                                    # today, printed, no vault write
+node scripts/token-metrics.ts --date 2026-09-25                  # a specific day
+node scripts/token-metrics.ts --all --write                      # backfill every day still on disk
+node scripts/token-metrics.ts --curve                            # cache-read per turn, by turn-index bucket
+node scripts/token-metrics.ts --json                              # machine-readable day + sessions
 ```
 
 - `--write` upserts today's row into `Research/token-metrics.md` (idempotent — rerunning a day
@@ -48,7 +48,7 @@ node scripts/token-metrics.mjs --json                              # machine-rea
   README. Rework rate and corrections are ledger notes, not transcript metrics.
 - Read the printed summary, not the table file — the table is for history and for the script's own
   `--compare`, not for a human to scan by eye.
-- Tests: `scripts/token-metrics.test.mjs`. A planted-sentinel test asserts message content never
+- Tests: `scripts/token-metrics.test.ts`. A planted-sentinel test asserts message content never
   reaches stdout or the vault file, enforcing the content-safety claim above at runtime, not just in
   the comment.
 
