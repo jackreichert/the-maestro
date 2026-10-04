@@ -1,7 +1,7 @@
 // Run: node --test scripts/ledger-core.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fold, isOpen, canonicalOf, mapStreamWith } from './lib/ledger-core.ts';
+import { fold, isOpen, canonicalOf, mapStreamWith, parseLedger } from './lib/ledger-core.ts';
 
 const reg = { streams: { Launch: { aliases: ['launch-v2'], status: 'active' } } };
 
@@ -30,4 +30,13 @@ test('fold closes, re-homes, stamps and archives without touching the input', ()
     assert.deepEqual([...hidden], ['aaaa']);
     assert.deepEqual([...archivedStreams], ['Launch']);
     assert.equal(JSON.stringify(rows), copy);
+});
+
+test('parseLedger skips blank lines, drops malformed ones, and numbers them among the non-blank lines', () => {
+    const seen: number[] = [];
+    const rows = parseLedger('{"id":"a"}\n\n{oops\n{"id":"b","text":"x"}\n', (n) => seen.push(n));
+    assert.deepEqual(rows.map((r) => r.id), ['a', 'b']);
+    assert.equal(rows[1]?.text, 'x');
+    assert.deepEqual(seen, [2]);
+    assert.deepEqual(parseLedger(''), []);
 });
