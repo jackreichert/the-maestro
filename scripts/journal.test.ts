@@ -272,6 +272,18 @@ test('streams add is idempotent and refuses alias collisions; list shows counts'
     assert.deepEqual(l.streams.map((r) => [r.stream, r.open, r.total]), [['Launch', 1, 1]]);
 });
 
+test('streams add and models add treat a registry entry without an aliases list as empty', () => {
+    mkdirSync(join(vault, 'Projects', 'test-proj'), { recursive: true });
+    writeFileSync(registryFile(), JSON.stringify({ streams: { Launch: { status: 'active' } }, models: { 'm-one': {} } }));
+    const s = run('streams', 'add', 'Launch', '--alias', 'go');
+    assert.equal(s.code, 0, s.err);
+    assert.match(s.out, /updated\s+Launch\s+aliases: go/);
+    assert.deepEqual(registry().streams.Launch, { status: 'active', aliases: ['go'] });
+    const m = run('models', 'add', 'm-one', '--alias', 'mo');
+    assert.equal(m.code, 0, m.err);
+    assert.deepEqual(registry().models['m-one'].aliases, ['mo']);
+});
+
 test('read-time mapping heals the case split without touching the ledger', () => {
     run('start', 'lower', '--stream', 'launch', ...MARK);
     run('start', 'upper', '--stream', 'Launch', ...MARK);
