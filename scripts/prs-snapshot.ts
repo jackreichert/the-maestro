@@ -53,6 +53,8 @@ export interface SnapshotPr {
 }
 export interface Snapshot { takenAt?: string; prs: SnapshotPr[] }
 /** A PR as an older snapshot file may hold it: readiness and the sibling re-query tolerate a missing mergeable, threads or threadsComplete. */
+/** A PR in the older snapshot being diffed against: it may predate the reviews and threads fields. */
+export type PrevPr = Omit<SnapshotPr, 'reviews' | 'threads'> & Partial<Pick<SnapshotPr, 'reviews' | 'threads'>>;
 export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'> & Partial<Pick<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'>>;
 
 /** The fields QUERY selects. gh's JSON is not validated against this; it is only as right as the query. */
@@ -161,8 +163,8 @@ function loadSnapshot(path: string): Snapshot | null {
  * actionable lines prs.md#mid-day-updates asks for; everything bot-authored
  * folds into the single `botEvents` count instead of being itemised.
  */
-function diffSnapshots(prev: Snapshot | null, curr: Snapshot): SnapshotDiff {
-    const prevByKey = new Map<string, SnapshotPr>((prev?.prs || []).map((p) => [p.key, p]));
+function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot): SnapshotDiff {
+    const prevByKey = new Map<string, PrevPr>((prev?.prs || []).map((p) => [p.key, p]));
     const currKeys = new Set(curr.prs.map((p) => p.key));
     const changes: string[] = [];
     let botEvents = 0;
@@ -178,7 +180,7 @@ function diffSnapshots(prev: Snapshot | null, curr: Snapshot): SnapshotDiff {
             changes.push(`${p.key} reviewDecision ${old.reviewDecision} -> ${p.reviewDecision} — ${p.url}`);
         }
 
-        const oldReviewKeys = new Set(old.reviews.map((r) => `${r.author}|${r.state}|${r.submittedAt}`));
+        const oldReviewKeys = new Set((old.reviews ?? []).map((r) => `${r.author}|${r.state}|${r.submittedAt}`));
         for (const r of p.reviews) {
             if (oldReviewKeys.has(`${r.author}|${r.state}|${r.submittedAt}`)) continue;
             if (isBot(r.author)) { botEvents++; continue; }
@@ -187,7 +189,7 @@ function diffSnapshots(prev: Snapshot | null, curr: Snapshot): SnapshotDiff {
             }
         }
 
-        const oldThreadIds = new Set(old.threads.map((t) => t.id));
+        const oldThreadIds = new Set((old.threads ?? []).map((t) => t.id));
         for (const t of p.threads) {
             if (oldThreadIds.has(t.id)) continue;
             if (isBot(t.author)) { botEvents++; continue; }
