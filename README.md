@@ -49,7 +49,7 @@ flowchart LR
 
 ## Quick start
 
-You need Node.js 24 or newer (nothing is installed to run the scripts: they use only `node:` built-ins, and Node strips the types from the `.ts` modules itself; `ledger-index.mjs` needs a Node build whose `node:sqlite` includes FTS5), an [Obsidian](https://obsidian.md) vault or any folder you are willing to treat as one, and an agent harness that loads `SKILL.md` skills.
+You need Node.js 24 or newer (nothing is installed to run the scripts: they use only `node:` built-ins, and Node strips the types from the `.ts` modules itself; `ledger-index.ts` needs a Node build whose `node:sqlite` includes FTS5), an [Obsidian](https://obsidian.md) vault or any folder you are willing to treat as one, and an agent harness that loads `SKILL.md` skills.
 
 ```bash
 # 1. One copy, where your agent already loads skills. Symlink other harnesses to it; never clone twice.
@@ -215,7 +215,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node s
 | Script | Purpose |
 |---|---|
 | [journal.mjs](#journalmjs) | The ledger: log, board, standup, streams, claims, handoff, roll |
-| [ledger-index.mjs](#ledger-indexmjs) | Disposable full-text index over the ledger, tickets and handoffs |
+| [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets and handoffs |
 | [prs-snapshot.mjs](#prs-snapshotmjs) | Mid-day PR board snapshot and actionable diff |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
@@ -276,7 +276,7 @@ Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed r
 
 **Backup.** The ledger is one file. Make `$LEDGER_ROOT` a local git repository and set `ledger_git_autocommit: on`; `roll` then runs `verify` and, if it passes, commits the changed files under that root as `chore(ledger): roll <date>`, staging each path explicitly. It never pushes.
 
-### ledger-index.mjs
+### ledger-index.ts
 
 A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` section of `HANDOFF-*.md` notes. The JSONL stays the source of truth; deleting `Index/maestro.sqlite` loses nothing.
 
@@ -583,7 +583,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 npm test
 ```
 
-Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.mjs` and `ledger-index.mjs` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.mjs` needs a Node build with `node:sqlite` and FTS5.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.mjs` (or `.test.ts`, for the modules already converted to TypeScript: `scripts/lib/`, `scripts/event-types/` and `local-config`). Shared logic that `journal.mjs` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
 
 ## Development
 

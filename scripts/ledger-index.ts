@@ -3,10 +3,10 @@
  * Derived, disposable SQLite FTS5 index over the ledger, vault tickets and handoff notes.
  * The JSONL stays the source of truth; deleting the DB loses nothing.
  *
- *   ledger-index.mjs index                       full rebuild, atomic rename into place
- *   ledger-index.mjs search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json]
- *   ledger-index.mjs stats [--json]              counts per table, open items per stream
- *   ledger-index.mjs query <name> [args] [--json]  named queries and read-only --sql; `query` lists them
+ *   ledger-index.ts index                       full rebuild, atomic rename into place
+ *   ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json]
+ *   ledger-index.ts stats [--json]              counts per table, open items per stream
+ *   ledger-index.ts query <name> [args] [--json]  named queries and read-only --sql; `query` lists them
  *
  * Streams: if $LEDGER_ROOT/Projects/<project>/streams.json exists, stream names are mapped through it
  * (aliases and case fold to the canonical name), like journal.mjs. Items of archived streams are hidden
@@ -273,7 +273,7 @@ function cmdIndex() {
 
 function cmdSearch() {
     const query = positional.join(' ').trim();
-    if (!query) fail('Usage: ledger-index.mjs search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]');
+    if (!query) fail('Usage: ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]');
     const source = arg('source');
     if (source && !['ledger', 'tickets', 'handoffs', 'archive'].includes(source)) fail('--source must be ledger, tickets, handoffs or archive.');
     const limit = Number.parseInt(arg('limit', '20'), 10);
@@ -326,7 +326,7 @@ function cmdStats() {
 
 // ── query ───────────────────────────────────────────────────────────────────
 
-const QUERY_HELP = `Usage: ledger-index.mjs query <name> [args] [--json]
+const QUERY_HELP = `Usage: ledger-index.ts query <name> [args] [--json]
 
 Named queries (each rebuilds the index first if a source changed):
   open [--stream X]                         open items, newest first

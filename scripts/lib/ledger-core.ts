@@ -1,6 +1,6 @@
 /**
  * The ledger's shared core: what a row means once the append-only log is folded, and how a stream
- * name maps through the registry. journal.mjs and ledger-index.mjs both import it, so there is one
+ * name maps through the registry. journal.mjs and ledger-index.ts both import it, so there is one
  * definition of "open", of the fold, and of the alias mapping.
  *
  * Pure functions only. Importing this module runs no CLI and touches no file until you call
