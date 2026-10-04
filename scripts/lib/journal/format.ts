@@ -17,7 +17,7 @@ export function editDistance(a: string, b: string): number {
 /** Nearest registered name or alias, as its canonical stream; null when nothing is close. */
 export function didYouMean(reg: Pick<Registry, 'streams'>, name: string): string | null {
     const k = name.trim().toLowerCase();
-    let best = null as { canon: string; dist: number } | null;
+    let best: { canon: string; dist: number } | null = null;
     for (const [canon, meta] of Object.entries(reg.streams)) {
         for (const cand of [canon, ...(meta?.aliases || [])]) {
             const c = String(cand).toLowerCase();

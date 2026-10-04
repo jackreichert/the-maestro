@@ -97,18 +97,18 @@ and at least every ~20 turns in between. Once the session reaches **~180 turns**
 tops **~350k**, tell the user it's time to roll up and refresh: give the turn count and the
 read/turn, and offer to write the handoff and run `roll`. That leaves room to finish the handoff
 before the 200 mark. Nudge once, then again at 200 if they haven't rolled, and after that only at
-EOD. When the user asks for the nudge, log it with `journal.mjs log` so the request survives a
+EOD. When the user asks for the nudge, log it with `journal.ts log` so the request survives a
 context compaction.
 
 The handoff is what the fresh session reads, and it has five fixed headings, the ones
-`journal.mjs handoff --stream <name>` scaffolds: **Tasks with status**; **Learnings, including what
+`journal.ts handoff --stream <name>` scaffolds: **Tasks with status**; **Learnings, including what
 was ruled out** (what was tried, too); **Artifacts**, as paths or `file:line`, never code blocks;
 **Decisions awaiting** the user; **Next concrete action**. Anything decision-relevant that lives
 only in chat goes under one of them before the roll: the 2026-09-25 experiment showed a fresh
 session burns ~10x the tokens hunting for a fact nobody wrote down, and still misses it.
 
 **Resume by reconciling, not trusting.** The fresh session checks `CURRENT.md` against `git`, `gh`
-and `ListAgents` before acting (`journal.mjs resume` runs the parts a script can), then treats the
+and `ListAgents` before acting (`journal.ts resume` runs the parts a script can), then treats the
 reconciled note as authoritative instead of redoing its work.
 
 Lesson, 2026-09-27: a session ran to 316 turns without being rolled, and read/turn rose 13% for the

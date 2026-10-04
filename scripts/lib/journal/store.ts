@@ -12,7 +12,7 @@ export interface Store {
     dir: string;
     ledgerPath: string;
     registryPath: string;
-    rollPoint(entries: LedgerRow[], d: string): string | null | undefined;
+    rollPoint(entries: LedgerRow[], d: string | undefined): string | null | undefined;
     ensureDir(): void;
     readLedger(): LedgerRow[];
     append<E>(entry: E): E;
@@ -31,7 +31,7 @@ export function openStore({ vault, project, dryRun }: StoreOptions): Store {
      * archive file existing. Work finished AFTER a roll still shows in CURRENT.md,
      * so rolling at 5pm does not hide the evening's work.
      */
-    function rollPoint(entries: LedgerRow[], d: string): string | null | undefined {
+    function rollPoint(entries: LedgerRow[], d: string | undefined): string | null | undefined {
         const marks = entries.filter((e) => e.kind === 'rolled' && e.date === d);
         return marks.length ? marks[marks.length - 1].ts : null;
     }
