@@ -15,6 +15,8 @@ export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | '
     dryRun: boolean;
 }
 type Streamed = { stream?: string };
+/** A retro's stream key: undefined only for the reserved `none` stream, which is never archived. */
+const streamName = (s: string | undefined): string => s as string;
 /** The ledger folded into the lists the board shows; the `*On` functions answer for one day. */
 export interface Groups {
     items: LedgerItem[];
@@ -44,7 +46,7 @@ export const noStream = <T extends Streamed>(arr: T[]): T[] => arr.filter((i) =>
 export function groups(ctx: BoardContext, includeArchived = false): Groups {
     const { readLedger, fold, today, rollPoint } = ctx;
     // Folded items are the rows that have an id.
-    const idOf = (i: LedgerItem): string => i.id as string;
+    const idOf = (i: LedgerItem): string => i.id ?? '';
     const entries = readLedger();
     const folded = fold(entries);
     const items = includeArchived ? folded.items : folded.items.filter((i) => !folded.hidden.has(idOf(i)));
@@ -61,7 +63,7 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
         rollPointOn: (d: string | undefined) => rollPoint(entries, d),
         doneOn: (d: string, { sinceRoll = false }: { sinceRoll?: boolean } = {}) => {
             const cut = sinceRoll ? rollPoint(entries, d) : null;
-            const after = (ts: string | undefined): boolean => !cut || (ts as string) > cut;
+            const after = (ts: string | undefined): boolean => !cut || (ts ?? '') > cut;
             return items
                 .filter((i) => i.closedBy?.kind === 'done' && i.closedBy.date === d && after(i.closedBy.ts))
                 .concat(items.filter((i) => i.state === 'done' && i.date === d && !i.closedBy && after(i.ts)));
@@ -124,7 +126,7 @@ export function standupText(ctx: BoardContext, d: string): string {
     const decided = g.decidedOn(d);
     if (decided.length) {
         out.push('## Decided', '');
-        decided.forEach((i) => out.push(`- ${i.text} — ${(i.closedBy as LedgerRow).text}`));
+        decided.forEach((i) => out.push(`- ${i.text} — ${i.closedBy?.text}`));
         out.push('');
     }
 
@@ -180,7 +182,7 @@ export function render(ctx: BoardContext, quiet = false, includeArchived = false
     const retros = archivedRetros(ctx);
     if (retros.size) {
         out.push('## Archived streams', '');
-        for (const s of retros.keys()) out.push(`- [[${streamPageLink(s as string)}]]`);
+        for (const s of retros.keys()) out.push(`- [[${streamPageLink(streamName(s))}]]`);
         out.push('');
     }
 
@@ -205,7 +207,7 @@ export function archivedRetros(ctx: BoardContext): Map<string | undefined, strin
     const { readLedger, mapStream } = ctx;
     const out = new Map<string | undefined, string>();
     for (const e of readLedger()) {
-        if (e.kind === 'archive' && e.stream) out.set(mapStream(e.stream), (e.retro as string | undefined) || '');
+        if (e.kind === 'archive' && e.stream) out.set(mapStream(e.stream), String(e.retro || ''));
         if (e.kind === 'unarchive' && e.stream) out.delete(mapStream(e.stream));
     }
     return out;
@@ -242,8 +244,8 @@ export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: Ledger
         writeFileSync(join(streamsDir, `${slug(s)}.md`), out.join('\n'));
     }
     for (const [s, retro] of retros) {
-        const link = retro ? `Retro: [[${(retro.split('/').pop() as string).replace(/\.md$/, '')}]] (${retro})` : 'Retro: (path not recorded)';
-        writeFileSync(join(streamsDir, `${slug(s as string)}.md`), head(s as string, ['This stream is **archived**. Its items are hidden from the board; `journal.mjs unarchive` brings them back.', '', link, '']).join('\n'));
+        const link = retro ? `Retro: [[${retro.split('/').slice(-1)[0].replace(/\.md$/, '')}]] (${retro})` : 'Retro: (path not recorded)';
+        writeFileSync(join(streamsDir, `${slug(streamName(s))}.md`), head(streamName(s), ['This stream is **archived**. Its items are hidden from the board; `journal.mjs unarchive` brings them back.', '', link, '']).join('\n'));
     }
     return names.length + retros.size;
 }
