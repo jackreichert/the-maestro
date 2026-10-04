@@ -612,7 +612,7 @@ The scripts themselves have no runtime dependencies.
 
 ### Loading the board automatically
 
-`journal.ts prime` prints a short board built from the ledger, plus one update line when the skill's own checkout is out of date (that part runs `git fetch`, capped at 15 seconds, and is skipped by `--no-update-check`), so it can run from a Claude Code `SessionStart` hook and its output becomes session context. Add this to your own settings file; nothing in this repo does it for you.
+`journal.ts prime` prints a short board built from the ledger, plus one update line when the skill's own checkout is out of date (that part runs `git fetch`, capped at 15 seconds and never prompting for a password, so give the hook a timeout above that, and skipped by `--no-update-check`), so it can run from a Claude Code `SessionStart` hook and its output becomes session context. Add this to your own settings file; nothing in this repo does it for you.
 
 ```json
 {
