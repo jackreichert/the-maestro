@@ -8,15 +8,15 @@ import { join, dirname } from 'node:path';
 
 const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
 
-const git = (repo, ...args) => {
+const git = (repo: string, ...args: string[]): void => {
     const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
 };
-const lines = (n) => Array.from({ length: n }, (_, i) => `x${i}`).join('\n') + '\n';
-const put = (repo, path, text) => { mkdirSync(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), text); };
+const lines = (n: number): string => Array.from({ length: n }, (_, i) => `x${i}`).join('\n') + '\n';
+const put = (repo: string, path: string, text: string): void => { mkdirSync(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), text); };
 
 /** A repo with a feature branch holding `files`, plus a fake gh that logs its argv to <repo>/gh.log. */
-function fixture(files) {
+function fixture(files: Record<string, string>) {
     const repo = mkdtempSync(join(tmpdir(), 'pr-open-'));
     git(repo, 'init', '-q', '-b', 'main');
     git(repo, 'config', 'user.email', 'test@example.com');
@@ -36,7 +36,7 @@ function fixture(files) {
     return { repo, log, gh };
 }
 
-const open = ({ repo, gh }, extra = []) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...extra], {
+const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = []) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...extra], {
     encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh },
 });
 
