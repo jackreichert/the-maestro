@@ -109,6 +109,8 @@ import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMI
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
+import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.mjs';
+import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.mjs';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
@@ -151,31 +153,6 @@ const now = () => new Date().toISOString();
 
 /** Read-time mapping through the loaded registry. */
 const mapStream = (s) => mapStreamWith(loadRegistry(), s);
-
-function editDistance(a, b) {
-    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
-    for (let j = 1; j <= b.length; j++) d[0][j] = j;
-    for (let i = 1; i <= a.length; i++) {
-        for (let j = 1; j <= b.length; j++) {
-            d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-        }
-    }
-    return d[a.length][b.length];
-}
-
-/** Nearest registered name or alias, as its canonical stream; null when nothing is close. */
-function didYouMean(reg, name) {
-    const k = name.trim().toLowerCase();
-    let best = null;
-    for (const [canon, meta] of Object.entries(reg.streams)) {
-        for (const cand of [canon, ...(meta?.aliases || [])]) {
-            const c = String(cand).toLowerCase();
-            const dist = c.includes(k) || k.includes(c) ? 1 : editDistance(k, c);
-            if (dist <= Math.max(2, Math.floor(k.length / 3)) && (!best || dist < best.dist)) best = { canon, dist };
-        }
-    }
-    return best?.canon ?? null;
-}
 
 /**
  * Write-time normalisation for --stream. `none` stays reserved and passes through. With no
@@ -274,37 +251,6 @@ function usageFromArgs() {
     if (arg('harness')) usage.harness = arg('harness');
     if (arg('agent')) usage.agent = arg('agent');
     return usage;
-}
-
-function formatUsed(used) {
-    if (!used) return null;
-    return Array.isArray(used) ? used.join(', ') : String(used);
-}
-
-function usageSuffix(i) {
-    const model = i.model || 'unrecorded';
-    const used = formatUsed(i.used) || 'unrecorded';
-    const bits = [`model: ${model}`, `used: ${used}`];
-    if (i.closedBy?.model && i.closedBy.model !== i.model) {
-        bits[0] = `model: ${model} → ${i.closedBy.model}`;
-    }
-    if (i.harness) bits.push(`harness: ${i.harness}`);
-    if (i.tokens) bits.push(`tokens: ${i.tokens}`);
-    return bits.join(' · ');
-}
-
-function fmt(i, { showId = true, showUsage = true } = {}) {
-    const bits = [];
-    if (showId) bits.push(`\`${i.id}\``);
-    bits.push(i.text);
-    const tail = [];
-    if (i.repo) tail.push(i.repo);
-    if (i.ticket) tail.push(`[[${i.ticket}]]`);
-    if (i.paste) tail.push(`block: ${i.paste}`);
-    if (i.gate) tail.push(`gate: ${i.gate}`);
-    if (showUsage) tail.push(usageSuffix(i));
-    if (tail.length) bits.push(`— ${tail.join(' · ')}`);
-    return bits.join(' ');
 }
 
 // ── commands ────────────────────────────────────────────────────────────────
@@ -501,103 +447,12 @@ function cmdApproveTag() {
 
 // approvals digest ----------------------------------------------------------
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** ISO 8601 week label (YYYY-Www) for a YYYY-MM-DD date. */
-function isoWeek(d) {
-    const t = new Date(`${d}T00:00:00Z`);
-    t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));   // the Thursday of this week decides the year
-    const yearStart = Date.UTC(t.getUTCFullYear(), 0, 1);
-    return `${t.getUTCFullYear()}-W${String(Math.ceil(((t - yearStart) / DAY_MS + 1) / 7)).padStart(2, '0')}`;
-}
-
-/** A real calendar date: YYYY-MM-DD that reads back unchanged, so 2026-02-30 is rejected. */
-const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d)) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
-const shiftDay = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
-
-/**
- * The digest window as { since, until }, both inclusive. `until` is --until, else today. `since` is
- * --since, else `--days N` (default 7) ending on `until`: exactly N calendar days, so weekly runs do not overlap.
- */
-function approvalsWindow() {
-    if (has('until') && !arg('until')) die('--until needs a value: YYYY-MM-DD.');
-    const until = arg('until') ?? today();
-    if (!isDate(until)) die('--until must be YYYY-MM-DD.');
-    const since = arg('since');
-    if (since) {
-        if (!isDate(since)) die('--since must be YYYY-MM-DD.');
-        if (since > until) die(`--since (${since}) is after --until (${until}).`);
-        return { since, until };
-    }
-    const days = arg('days', '7');
-    if (!/^[1-9]\d*$/.test(days)) die('--days must be a whole number of at least 1.');
-    return { since: shiftDay(until, 1 - Number(days)), until };
-}
-
-/**
- * Approvals in the window, grouped, one entry per grant. A grant is a row that carries `approval`
- * itself, is pointed at by an `approval-tag` row, or closes a row with `--approval`; a closing row and
- * the row it closes are the same grant. The events of a grant merge field by field in ledger order: the
- * latest event that sets a field wins it, `scope` and `refs` carry over until replaced, and the entry
- * is reported under the latest event's row. A grant is in the window when any of its rows or tags is.
- * Untagged: `decision` rows that no approval touches.
- */
-function collectApprovals(entries, { since, until }) {
-    const byId = new Map(entries.filter((e) => e.id).map((e) => [e.id, e]));
-    const grantOf = (row) => row.closes || row.id;
-    const events = new Map();
-    const add = (key, event) => events.set(key, [...(events.get(key) || []), event]);
-    for (const e of entries) {
-        if (!e.id || e.annotates) continue;
-        if (e.kind === 'approval-tag') {
-            const target = byId.get(e.approves);
-            if (target) add(grantOf(target), { subject: target, fields: e, tag: e });
-        } else if (e.approval) add(grantOf(e), { subject: e, fields: e });
-    }
-    const inWindow = (d) => String(d || '') >= since && String(d || '') <= until;
-    const lastSet = (list, field) => list.map((ev) => ev.fields[field]).filter((v) => (Array.isArray(v) ? v.length : v)).pop();
-    const out = { standing: [], oneOff: [], untagged: [] };
-    const bucket = { standing: out.standing, 'one-off': out.oneOff };
-    for (const list of events.values()) {
-        const latest = list[list.length - 1].subject;
-        if (!list.some((ev) => inWindow(ev.subject.date) || inWindow(ev.fields.date))) continue;
-        bucket[lastSet(list, 'approval')]?.push({ id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'), refs: lastSet(list, 'refs') || [], taggedBy: list.filter((ev) => ev.tag).pop()?.tag.id });
-    }
-    for (const e of entries) {
-        if (e.id && !e.annotates && e.kind === 'decision' && !e.pending && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
-    }
-    for (const list of Object.values(out)) list.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    return out;
-}
-
-function approvalsText(g, { since, until }, week) {
-    const refLine = (a) => (a.refs.length ? a.refs.join(', ') : 'none');
-    return [
-        '---', 'type: review', 'status: draft', `week: ${week}`, `generated: ${today()}`, `since: ${since}`, `until: ${until}`, '---', '',
-        `# Approvals review ${week}`, '',
-        `Generated by \`journal.mjs approvals\` for approvals dated ${since} to ${until}. Tick keep, narrow or revoke for each standing approval, then update wherever a narrowed or revoked one is recorded (memory files, config, instructions).`, '',
-        '## Standing approvals', '',
-        ...(g.standing.length ? g.standing.flatMap((a) => [
-            `### ${a.date} \`${a.id}\``, '',
-            clip(a.text, 400), '',
-            `- Scope: ${a.scope || 'not recorded'}`, `- Ref: ${refLine(a)}`, `- Source row: \`${a.id}\`${a.taggedBy ? ` (tagged by \`${a.taggedBy}\`)` : ''}`,
-            '- [ ] keep  - [ ] narrow  - [ ] revoke', '',
-        ]) : ['_none_', '']),
-        '## One-off approvals', '',
-        'For awareness. No action needed.', '',
-        ...(g.oneOff.length ? g.oneOff.map((a) => `- ${a.date} \`${a.id}\` ${clip(a.text, 200)} (ref: ${refLine(a)})`) : ['_none_']), '',
-        '## Untagged decisions', '',
-        'Decision rows with no approval tag. If any was the user granting permission, classify it with `journal.mjs approve-tag <id> --approval standing|one-off`.', '',
-        ...(g.untagged.length ? g.untagged.map((a) => `- ${a.date} \`${a.id}\` ${clip(a.text, 200)}`) : ['_none_']), '',
-    ].join('\n');
-}
-
 function cmdApprovals() {
-    const window = approvalsWindow();
+    const window = approvalsWindow({ arg, has, die, today });
     const g = collectApprovals(readLedger(), window);
     const week = isoWeek(window.until);
     if (asJson) { console.log(JSON.stringify({ ...window, week, ...g }, null, 2)); return; }
-    const body = approvalsText(g, window, week);
+    const body = approvalsText(g, window, week, today);
     if (dryRun) { console.log(body); return; }
     const path = arg('out') || join(ticketsBase(), 'Projects', project, 'Reviews', `approvals-${week}.md`);
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it.`);
@@ -967,15 +822,6 @@ function rollArchive(d) {
 
 // ── boxes and triage ────────────────────────────────────────────────────────
 
-/** Effective approval per row id: a row's own, its closing row's, and `approval-tag` rows; the latest one set wins. */
-function approvalMap(entries) {
-    const out = new Map();
-    for (const e of entries) {
-        if (e.kind === 'approval-tag' && e.approves && e.approval) out.set(e.approves, e.approval);
-        else if (e.id && !e.annotates && e.approval) out.set(e.closes || e.id, e.approval);
-    }
-    return out;
-}
 
 /**
  * Every item triage looks at, boxed: open items of any age, plus decisions and notes dated since..d that nothing
@@ -1434,13 +1280,9 @@ const ticketsBase = () => {
     return base;
 };
 const retroDir = () => join(ticketsBase(), 'Projects', arg('repo') || 'dev-env', 'Archive');
-const slug = (s) => s.trim().replace(/[\s/\\]+/g, '-');
-const cell = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
-const clip = (v, n = 140) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const PR_WORDS = /\bPRs?\b|pull request|release|#\d{2,}/i;
 const LEARNING = /learned|lesson|ruled out|cause/i;
 const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/g;
-const itemText = (i) => [i.text, i.closedBy && i.closedBy.text !== i.text ? i.closedBy.text : ''].filter(Boolean).join(' — ');
 
 /** Ticket status through ledger-index.ts (the derived index); null when the index cannot be read. */
 function ticketStatuses(ids) {
