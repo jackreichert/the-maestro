@@ -42,7 +42,7 @@ function must<T>(v: T | undefined | null, label = 'value'): T {
 function run(...args: string[]): Run {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
-        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '' },
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off' },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }

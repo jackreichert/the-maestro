@@ -11,9 +11,12 @@ on our plate", "where are we" — all of them mean *hello, then the board*. They
 follow up with "…and status?"
 
 ```bash
+node $J prime
 node $J status
 node $J standup --date <previous working day>
 ```
+
+`prime` opens with the skill's update check: if its first line says the-maestro is behind, ahead, diverged or dirty (or that `auto_pull` just fast-forwarded it), pass that line on in the greeting in one short sentence, and say nothing when there is no such line.
 
 **Greet first.** A real greeting, not just "Hey" bolted onto a status dump. One or two
 sentences: match the time of day if they used it, and make it briefly uplifting — glad to see them,

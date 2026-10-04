@@ -54,3 +54,13 @@ test('gateReport reports a date gate as waiting, and ghPrState reads gh output o
     assert.equal(ghPrState(ctxFor({}, () => ({ ok: true, out: '{"nope":1}', err: '' })), 'o/r', 7), null);
     assert.equal(ghPrState(ctxFor(), 'o/r', 7), null);
 });
+
+test('primeLines puts the update notice first and still holds the cap on a long board', () => {
+    const many: LedgerRow[] = Array.from({ length: 60 }, (_, n) => ({ id: `w${String(n).padStart(3, '0')}`, kind: 'wip', ts: `${TODAY}T09:00:00Z`, date: TODAY, text: `task ${n}` }));
+    const board = ctxFor();
+    const ctx: PrimeContext = { ...board, readLedger: () => many, groups: (inc) => groups({ readLedger: () => many, fold: board.fold, today: board.today, rollPoint: () => null, has: parseArgs(['prime']).has, mapStream: (s) => mapStreamWith(null, s), loadRegistry: () => null, ensureDir: () => {}, dir: '/nowhere', dryRun: false }, inc), notices: ['the-maestro: 3 commit(s) behind origin/main.'] };
+    const lines = primeLines(ctx);
+    assert.equal(lines[0], 'the-maestro: 3 commit(s) behind origin/main.');
+    assert.ok(lines.length <= 40, `${lines.length} lines`);
+    assert.deepEqual(primeLines(ctxFor())[0]?.startsWith('Board'), true, 'no notice, no extra line');
+});
