@@ -71,11 +71,11 @@ export function collectApprovals(entries: LedgerRow[], { since, until }: Window)
     const inWindow = (d: unknown): boolean => String(d || '') >= since && String(d || '') <= until;
     const lastSet = (list: GrantEvent[], field: string): unknown => list.map((ev) => ev.fields[field]).filter((v) => (Array.isArray(v) ? v.length : v)).pop();
     const out: Digest = { standing: [], oneOff: [], untagged: [] };
-    const bucket: Record<string, Grant[]> = { standing: out.standing, 'one-off': out.oneOff };
+    const bucket = new Map<string, Grant[]>([['standing', out.standing], ['one-off', out.oneOff]]);
     for (const list of events.values()) {
         const latest = list[list.length - 1].subject;
         if (!list.some((ev) => inWindow(ev.subject.date) || inWindow(ev.fields.date))) continue;
-        bucket[String(lastSet(list, 'approval'))]?.push({ id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'), refs: (lastSet(list, 'refs') || []) as string[], taggedBy: list.filter((ev) => ev.tag).pop()?.tag?.id });
+        bucket.get(String(lastSet(list, 'approval')))?.push({ id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'), refs: (lastSet(list, 'refs') || []) as string[], taggedBy: list.filter((ev) => ev.tag).pop()?.tag?.id });
     }
     for (const e of entries) {
         if (e.id && !e.annotates && e.kind === 'decision' && !e.pending && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });

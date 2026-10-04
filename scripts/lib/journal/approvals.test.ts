@@ -57,3 +57,9 @@ test('approvalMap takes the latest approval set per row and approvalsText render
     assert.match(text, /- 2026-10-02 `bbbb` one time push \(ref: none\)/);
     assert.match(text, /## Untagged decisions[\s\S]*- 2026-10-02 `dddd` no approval touches this/);
 });
+
+test('collectApprovals ignores an approval value that is not standing or one-off, including inherited object keys', () => {
+    const odd: LedgerRow[] = ['constructor', 'toString', '__proto__', 'bogus'].map((approval, i) => ({ id: `odd${i}`, kind: 'decision', date: '2026-10-02', text: 'hand edited', approval }));
+    const g = collectApprovals(odd, { since: '2026-09-27', until: TODAY });
+    assert.deepEqual([g.standing, g.oneOff], [[], []]);
+});
