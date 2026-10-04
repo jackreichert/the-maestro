@@ -19,7 +19,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 
 /** A real git against `repo`; a missing git binary or a timeout reads as a non-zero status. */
 export const gitIn = (repo: string): GitRun => (args, timeoutMs = 10_000) => {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: timeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: timeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes' } });
   return { status: r.status, stdout: r.stdout ?? '' };
 };
 
