@@ -43,6 +43,24 @@ test('handoffText scaffolds the five sections for one stream, with the stream fi
     assert.match(all, /## 5\. Next concrete action\n\nship it/);
 });
 
+test('handoffText falls back to the ts day for a missing date, and lists items with neither under Undated', () => {
+    const old = '2026-09-01';
+    const hand: LedgerRow[] = [
+        { id: 't001', kind: 'wip', ts: `${old}T09:00:00Z`, text: 'old, no date field', stream: 'Alpha' },
+        { id: 't002', kind: 'done', ts: `${D}T09:00:00Z`, text: 'recent, ts only', closes: 't001', stream: 'Alpha' },
+        { id: 't003', kind: 'wip', ts: `${old}T09:00:00Z`, text: 'ancient ts only', stream: 'Alpha' },
+        { id: 't004', kind: 'done', ts: `${old}T10:00:00Z`, text: 'ancient closer', closes: 't003', stream: 'Alpha' },
+        { id: 't005', kind: 'wip', text: 'no date at all', stream: 'Alpha' },
+        { id: 't006', kind: 'done', text: 'closer, no date at all', closes: 't005', stream: 'Alpha' },
+    ];
+    const text = handoffText({ ...ctx, readLedger: () => hand }, 'Alpha', '2026-10-02', [], {});
+    assert.match(text, /- `t001` \[done 2026-10-03\] old, no date field/);
+    assert.doesNotMatch(text, /ancient ts only/);
+    assert.match(text, /### Undated\n\n[^\n]*\n\n- `t005` \[done, undated\] no date at all/);
+    assert.doesNotMatch(text.split('### Undated')[0] ?? '', /t005/);
+    assert.doesNotMatch(handoffText(ctx, 'Alpha', '2026-10-02', [], {}), /Undated/);
+});
+
 test('cleanupWorktreeLines lists kept worktrees, or summarises a sweep', () => {
     const kept = [{ path: '/w/a', repo: 'r', reason: 'uncommitted changes (2 files)' }];
     assert.deepEqual(cleanupWorktreeLines(kept, null), ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', '- `/w/a` (r): uncommitted changes (2 files)', '']);

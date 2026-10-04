@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fold, mapStreamWith } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 import { parseArgs } from './args.ts';
-import { activeStreams, footerLines, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
+import { activeStreams, archivedRetros, footerLines, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
 import type { BoardContext } from './board.ts';
 
 const TODAY = '2026-10-03';
@@ -84,4 +84,20 @@ test('render writes CURRENT.md and one page per active stream, and a dry run wri
     const dry = ctxFor({ dryRun: true });
     render(dry, true);
     assert.deepEqual(readdirSync(dry.dir), []);
+});
+
+test('archive and unarchive rows for the reserved none stream are skipped, not keyed as undefined', () => {
+    const withNone: LedgerRow[] = [
+        ...rows,
+        { id: 'gggg', kind: 'archive', ts: `${TODAY}T13:00:00Z`, date: TODAY, text: 'archived stream none', stream: 'none', ids: ['bbbb'], retro: '/x/retro.md' },
+        { id: 'hhhh', kind: 'unarchive', ts: `${TODAY}T13:01:00Z`, date: TODAY, text: 'unarchived stream none', stream: 'None', ids: ['bbbb'] },
+        { id: 'iiii', kind: 'archive', ts: `${TODAY}T13:02:00Z`, date: TODAY, text: 'archived stream none', stream: 'none', ids: ['bbbb'], retro: '/x/retro.md' },
+    ];
+    const ctx = ctxFor({ readLedger: () => withNone });
+    assert.deepEqual([...archivedRetros(ctx)], []);
+    render(ctx, true);
+    assert.match(readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8'), /Stream page: \[\[Streams\/Beta\]\]/);
+    assert.deepEqual(readdirSync(join(ctx.dir, 'Streams')).sort(), ['Beta.md']);
+    const real = ctxFor({ readLedger: () => [...withNone, { id: 'jjjj', kind: 'archive', ts: `${TODAY}T14:00:00Z`, date: TODAY, text: 'archived stream Beta', stream: 'Beta', ids: ['cccc'], retro: '/x/Beta-retro.md' }] });
+    assert.deepEqual([...archivedRetros(real)], [['Beta', '/x/Beta-retro.md']]);
 });

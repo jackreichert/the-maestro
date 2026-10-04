@@ -53,9 +53,14 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
     const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const d = today();
     const onOrAfter = (day: string | undefined): boolean => day !== undefined && day >= since;
-    const recent = (i: LedgerItem): boolean => onOrAfter(i.closedBy?.date || i.date) || onOrAfter(i.date);
+    // journal writes both `date` and `ts` on every row, so a row without a date was hand-edited: fall back to the day part of `ts`.
+    // Only a row with neither has no day at all; it is listed under "Undated" below rather than silently counted as old.
+    const dayOf = (r: LedgerRow | null): string | undefined => r?.date || r?.ts?.slice(0, 10) || undefined;
+    const doneDay = (i: LedgerItem): string | undefined => dayOf(i.closedBy) || dayOf(i);
+    const recent = (i: LedgerItem): boolean => onOrAfter(doneDay(i)) || onOrAfter(dayOf(i));
     const open = items.filter((i) => isOpen(i) && (i.kind === 'wip' || i.kind === 'blocked'));
-    const doneRecently = items.filter((i) => i.state === 'done' && onOrAfter(i.closedBy?.date || i.date));
+    const doneRecently = items.filter((i) => i.state === 'done' && onOrAfter(doneDay(i)));
+    const undatedDone = items.filter((i) => i.state === 'done' && doneDay(i) === undefined);
     const approvals = approvalMap(readLedger());
     const boxOf = (i: LedgerItem): number => classify(i, approvals.get(i.id ?? ''));
     // Every open question is listed: paste blocks apart, everything else (whatever box triage gives it) under Needs Jack.
@@ -77,8 +82,9 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
         '## 1. Tasks with status', '',
         ...(open.length || doneRecently.length ? [
             ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
-            ...doneRecently.map((i) => line(i, `done ${i.closedBy?.date || i.date}`)),
+            ...doneRecently.map((i) => line(i, `done ${doneDay(i)}`)),
         ] : ['_none_']), '',
+        ...(undatedDone.length ? ['### Undated', '', 'Done, but neither `date` nor `ts` is set, so `since` cannot place them:', '', ...undatedDone.map((i) => line(i, 'done, undated')), ''] : []),
         '## 2. Learnings, including what was ruled out', '',
         ...(learn ? [`- ${learn}`] : []),
         ...(learnings.length ? learnings.map((i) => line(i, i.kind)) : learn ? [] : ['_None matched learned, lesson, ruled out or cause. Write what was ruled out here._']), '',
