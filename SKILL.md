@@ -25,7 +25,7 @@ any command below, read the file its row names, and no others, before acting.
 6. **Brief** — self-contained; the agent does not see this conversation. Paste the standing brief
    block once (`reference/brief.md`).
 7. **Dispatch** — launch, then immediately return with a one-line ack.
-8. **Log** — `journal.mjs start` / `done` (`reference/ledger.md`). A rule the user states goes in a memory file first, then `journal.mjs rule "<text>" --ref <file>` (never an open `decision`); `ask --kind decision` is only for one still pending. A run-this ask for the user is `ask --paste <block-file>`, not a plain question. A blocked item names what it waits for with `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>` (`resume` reports it); `journal.mjs defer <id> --until <date>` parks an item off the board. At the start of a session, and right after a compaction, run `journal.mjs prime` (40 lines or fewer). At end of day run `journal.mjs triage` before `roll` (reference/ledger.md#boxes-and-triage).
+8. **Log** — `journal.ts start` / `done` (`reference/ledger.md`). A rule the user states goes in a memory file first, then `journal.ts rule "<text>" --ref <file>` (never an open `decision`); `ask --kind decision` is only for one still pending. A run-this ask for the user is `ask --paste <block-file>`, not a plain question. A blocked item names what it waits for with `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>` (`resume` reports it); `journal.ts defer <id> --until <date>` parks an item off the board. At the start of a session, and right after a compaction, run `journal.ts prime` (40 lines or fewer). At end of day run `journal.ts triage` before `roll` (reference/ledger.md#boxes-and-triage).
 9. **Relay** — report the substance when the completion notification arrives.
 10. **Close** — every reply ends with the status footer, below.
 
@@ -70,7 +70,7 @@ citation work — read the linked file first.
 ## Status footer
 
 End every reply with the live agent roster and the ledger count. Call `ListAgents` and
-`journal.mjs status` to build it — never write it from memory.
+`journal.ts status` to build it — never write it from memory.
 
 ```
 **Agents:** `trace-client-id` running 4m · `map-amada-uat` completed
@@ -78,7 +78,7 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 **Session:** 86 turns (48% of 180 roll) · 129k read/turn
 ```
 
-`journal.mjs status --footer` prints the Ledger lines, one per active stream when streams are in use,
+`journal.ts status --footer` prints the Ledger lines, one per active stream when streams are in use,
 then the Session line for the current session (the newest transcript in `projects_dir`; at 100% of
 the roll thresholds it ends `· roll now`)
 ([reference/ledger.md#the-footer-lines](reference/ledger.md#the-footer-lines)).
@@ -105,7 +105,7 @@ Each row names the one file to read, or says not to read further. Read only what
 
 | Command / trigger | Action |
 |---|---|
-| `status`, "what's running", "what did we ship today" | Run `journal.mjs status` + `ListAgents` directly, per the table above. Do not open any reference file. |
+| `status`, "what's running", "what did we ship today" | Run `journal.ts status` + `ListAgents` directly, per the table above. Do not open any reference file. |
 | A greeting — "good morning", "hey", "what's on our plate", etc. | Read [reference/greeting.md](reference/greeting.md) before replying: greet, then standup, then board. |
 | A new question or task; "dispatch/scout/fan out this" | Read [reference/brief.md](reference/brief.md) before touching any tool: the brief and the standing block. Open [reference/dispatch.md](reference/dispatch.md) sections only when you need a rule: [routing](reference/dispatch.md#repo-routing), [concurrency](reference/dispatch.md#concurrency-safety), [verification loops](reference/dispatch.md#verification-loops), plus ticketing, two-stage dispatch, following up and relaying. |
 | "wake me when X" (a PR's CI, a run, review activity, new messages), or any need to wait on something outside the session | Register a watch, do not write a one-off watcher: `node scripts/event-loop.ts add ...`; a cheap runner then follows [playbooks/event-loop.md](playbooks/event-loop.md). `add --type reminder --target <ISO 8601 UTC> --report "<text>"` is a one-time wake-up at a set time. Each type polls at its own pace (`--interval S` overrides it; network types never faster than 120s, local ones 30s). `--notify` opts a watch into `notify_command` (reminders default on, `--no-notify` to silence; inbox never). An org overlay can add its own types in its `event-types/` folder. A short foreground wait on one PR (merged, or checks finished) is [playbooks/wait-for-pr.md](playbooks/wait-for-pr.md). |
