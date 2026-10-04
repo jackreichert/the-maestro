@@ -16,20 +16,23 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
-const PASSTHROUGH = { '--title': '--title', '--body-file': '--body-file', '--head': '--head' };
+/** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
+export interface OpenArgs { repo: string; base: string; dryRun: boolean; pass: string[] }
 
-function usage(msg) {
+const PASSTHROUGH: Record<string, string> = { '--title': '--title', '--body-file': '--body-file', '--head': '--head' };
+
+function usage(msg?: string): never {
   if (msg) console.error(`pr-open: ${msg}`);
   console.error('usage: node scripts/pr-open.ts --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]');
   process.exit(2);
 }
 
-export function parseArgs(argv) {
-  const o = { repo: '', base: '', dryRun: false, pass: [] };
+export function parseArgs(argv: string[]): OpenArgs {
+  const o: OpenArgs = { repo: '', base: '', dryRun: false, pass: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') o.dryRun = true;
-    else if (a === '--repo' || a === '--base') o[a.slice(2)] = argv[++i] ?? '';
+    else if (a === '--repo' || a === '--base') o[a === '--repo' ? 'repo' : 'base'] = argv[++i] ?? '';
     else if (PASSTHROUGH[a]) o.pass.push(PASSTHROUGH[a], argv[++i] ?? '');
     else usage(`unknown argument ${a} (draft and assignee are always set; use --repo, --base, --title, --body-file, --head, --dry-run)`);
   }
@@ -38,9 +41,9 @@ export function parseArgs(argv) {
 }
 
 /** The gh argv: draft and assignee first, so they can never be dropped. */
-export const ghArgs = ({ base, pass }) => ['pr', 'create', '--draft', '--assignee', '@me', '--base', base, ...pass];
+export const ghArgs = ({ base, pass }: Pick<OpenArgs, 'base' | 'pass'>): string[] => ['pr', 'create', '--draft', '--assignee', '@me', '--base', base, ...pass];
 
-function main() {
+function main(): void {
   const o = parseArgs(process.argv.slice(2));
   const gate = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, ...(headOf(o) ? ['--head', headOf(o)] : [])], { encoding: 'utf8' });
   process.stdout.write(gate.stdout || '');
@@ -56,7 +59,7 @@ function main() {
   process.exit(r.status ?? 2);
 }
 
-const headOf = (o) => { const i = o.pass.indexOf('--head'); return i >= 0 ? o.pass[i + 1] : ''; };
+const headOf = (o: OpenArgs): string => { const i = o.pass.indexOf('--head'); return i >= 0 ? o.pass[i + 1] : ''; };
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
 
