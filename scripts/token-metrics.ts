@@ -7,13 +7,13 @@
  * goes straight through `pick()`, which copies the allowed fields and drops the
  * rest, and nothing else touches the parsed object. A test enforces this.
  *
- *   node token-metrics.mjs                      today: day summary + sessions
- *   node token-metrics.mjs --date 2026-09-25    one day
- *   node token-metrics.mjs --write              upsert that day's row in the vault table
- *   node token-metrics.mjs --all --write        backfill every day still on disk
- *   node token-metrics.mjs --compare            day vs 7-day median vs baseline
- *   node token-metrics.mjs --curve              cache-read per turn by turn-index bucket
- *   node token-metrics.mjs --json               machine-readable day + sessions
+ *   node token-metrics.ts                      today: day summary + sessions
+ *   node token-metrics.ts --date 2026-09-25    one day
+ *   node token-metrics.ts --write              upsert that day's row in the vault table
+ *   node token-metrics.ts --all --write        backfill every day still on disk
+ *   node token-metrics.ts --compare            day vs 7-day median vs baseline
+ *   node token-metrics.ts --curve              cache-read per turn by turn-index bucket
+ *   node token-metrics.ts --json               machine-readable day + sessions
  *
  * Flags: --projects-dir <dir> (default CLAUDE_PROJECTS_DIR in local-config.ts)
  *        --vault <path> (default $VAULT_ROOT) --project <name> (default dev-env)
@@ -46,9 +46,50 @@
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import type { ModelPrice } from './local-config.ts';
 import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
+
+/** Per-turn tokens: uncached input, cache writes (total, and the 5m/1h split when usage gives one), cache reads, output. */
+export interface Usage { fresh: number; write: number; write5m: number; write1h: number; read: number; out: number }
+/** The only fields of a transcript line that survive `pick`. */
+export interface Picked {
+    type: string; subtype: string; role: string; ts: string; id: string; model: string; originKind: string;
+    handback: boolean; compact: boolean; usage: Usage | null;
+}
+/** A deduplicated API response. `growth` is context growth since the previous turn (unset for the first). */
+export interface Turn extends Usage { date: string; model: string; since: number; growth?: number }
+export interface TurnEvent { date: string; kind: string }
+export interface ScanResult { turns: Turn[]; events: TurnEvent[]; reports: { date: string; tokens: number }[] }
+/** Tokens by price kind: fresh input, 5m and 1h cache writes, cache reads, output. */
+export interface Kinds { fresh: number; w5: number; w1: number; read: number; out: number }
+export type FamilyKinds = Record<string, Kinds>;
+/** Dollars in the four report categories, and their total. */
+export interface Dollars { read: number; write: number; output: number; input: number; total: number }
+export type Prices = Record<string, ModelPrice> | null;
+/** One day's (or one session's) counters, as emptyStats builds them. */
+export interface Stats {
+    turns: number; prompts: number; wakesNotif: number; wakesHandback: number; peerMsgs: number;
+    out: number; write: number; read: number; fresh: number;
+    subagents: number; subTurns: number; subWakes: number; subByModel: Record<string, number>; subGrowth: number; subGrowthN: number;
+    reportTokens: number; reportCount: number;
+    mix: Record<string, { read: number }>; orch: FamilyKinds; sub: FamilyKinds; sinceCompact: number; subSmall: number; subOpus: number;
+}
+export type DayStats = Stats & { date: string; sessions: number };
+export type SessionStats = Stats & { session: string; date: string };
+/** A table row: one cell of text per TABLE_HEADER column. */
+export type TableRow = string[];
+export type MetricGetter = (row: TableRow) => number;
+export interface MetricOptions { cost?: boolean; fmt?: string; worse?: string; target?: [string, number, string]; trend?: boolean }
+export type Metric = [string, MetricGetter, MetricOptions?];
+export interface Comparison {
+    name: string; today: number; median7: number; baseline: number; vs7: number; vsBase: number; fmt: string; cost: boolean;
+    limit: number; dir: string | undefined; trend: boolean; status: string; regression: boolean;
+}
+
+/** A parsed JSON value as an object, or null when it is not one. */
+const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' ? (v as Record<string, unknown>) : null);
 const TABLE_HEADER = [
     'Date', 'Sessions', 'Turns', 'Prompts', 'Wakes (notif/handback)', 'Output', 'Cache write',
     'Cache read', 'Fresh', 'Read/turn', 'Subagents', 'Sub turns', 'Sub tokens by model', 'Avg report',
@@ -57,12 +98,15 @@ const TABLE_HEADER = [
 ];
 
 // --- the only function allowed to look at a parsed transcript line ----------
-export function pick(o) {
-    const msg = o.message && typeof o.message === 'object' ? o.message : {};
-    const u = msg.usage && typeof msg.usage === 'object' ? msg.usage : null;
-    const num = (v) => (Number.isFinite(v) ? v : 0);
+export function pick(parsed: unknown): Picked {
+    // A null line throws here, as before, and scanFile skips it.
+    const o = parsed as Record<string, unknown>;
+    const msg = obj(o.message) ?? {};
+    const u = obj(msg.usage);
+    const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
     // The 5m/1h split of cache writes: two numeric fields of `cache_creation`, absent on older transcripts.
-    const cc = u && u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : {};
+    const cc = obj(u?.cache_creation) ?? {};
+    const origin = obj(o.origin);
     return {
         type: typeof o.type === 'string' ? o.type : '',
         subtype: typeof o.subtype === 'string' ? o.subtype : '',
@@ -70,8 +114,8 @@ export function pick(o) {
         ts: typeof o.timestamp === 'string' ? o.timestamp : '',
         id: typeof msg.id === 'string' ? msg.id : '',
         model: typeof msg.model === 'string' ? msg.model : '',
-        originKind: o.origin && typeof o.origin.kind === 'string' ? o.origin.kind : '',
-        handback: Boolean(o.origin && o.origin.handback !== undefined),
+        originKind: typeof origin?.kind === 'string' ? origin.kind : '',
+        handback: Boolean(origin && origin.handback !== undefined),
         // Compaction markers are two metadata flags, never the summary text: the system line with subtype
         // `compact_boundary`, and the `isCompactSummary` boolean on the user line that carries the summary.
         compact: (o.type === 'system' && o.subtype === 'compact_boundary') || o.isCompactSummary === true,
@@ -87,9 +131,9 @@ export function pick(o) {
 }
 
 // --- CLI ---------------------------------------------------------------------
-function main(argv) {
-    const flag = (n) => argv.includes(`--${n}`);
-    const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
+function main(argv: string[]): void {
+    const flag = (n: string): boolean => argv.includes(`--${n}`);
+    const arg = (n: string, d: string): string => { const i = argv.indexOf(`--${n}`); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
     const projectsDir = arg('projects-dir', CLAUDE_PROJECTS_DIR);
     const vault = arg('vault', VAULT_ROOT);
     const project = arg('project', CONTAINER_PROJECT);
@@ -115,21 +159,21 @@ function main(argv) {
         console.error('Vault path is not set. Set VAULT_ROOT or pass --vault <path>.');
         process.exit(1);
     }
-    let rows = tablePath ? readTable(tablePath) : new Map();
+    let rows: Map<string, TableRow> = tablePath ? readTable(tablePath) : new Map();
     if (flag('write')) {
         const which = flag('all') ? [...days.keys()] : [date];
-        for (const d of which) if (days.has(d)) rows.set(d, toRow(days.get(d)));
+        for (const d of which) if (days.has(d)) rows.set(d, toRow(days.get(d) as DayStats));
         writeTable(tablePath, rows);
         console.log(`\nwrote ${which.filter((d) => days.has(d)).length} row(s) to ${tablePath}`);
     }
-    if (days.has(date)) rows = new Map(rows).set(date, toRow(days.get(date)));
+    if (days.has(date)) rows = new Map(rows).set(date, toRow(days.get(date) as DayStats));
     if (flag('compare')) printCompare(date, rows, baselineUntil);
     else if (!flag('json') && days.has(date)) printCost(date, rows, baselineUntil);
 }
 
 // --- collection ----------------------------------------------------------------
 /** Session transcripts directly in `dir` (empty when it does not exist). */
-function sessionFiles(dir) {
+function sessionFiles(dir: string): string[] {
     return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.jsonl')) : [];
 }
 
@@ -137,15 +181,15 @@ function sessionFiles(dir) {
  * A warning when `dir` holds no sessions, else ''. Unset `projects_dir` falls back to the transcript directory of the
  * process's working directory (local-config.ts), which is empty or missing when the script runs from anywhere else.
  */
-export function emptyDirWarning(dir) {
+export function emptyDirWarning(dir: string): string {
     if (sessionFiles(dir).length) return '';
     return `token-metrics: no sessions in ${dir}${existsSync(dir) ? '' : ' (directory does not exist)'}. Set projects_dir in local-config (or MAESTRO_PROJECTS_DIR, or --projects-dir); unset, it defaults to the transcript directory of the current working directory.`;
 }
 
-export function collect(projectsDir) {
-    const days = new Map();
-    const sessions = [];
-    const curve = new Map();
+export function collect(projectsDir: string): { days: Map<string, DayStats>; sessions: SessionStats[]; curve: Map<number, { n: number; read: number }> } {
+    const days = new Map<string, DayStats>();
+    const sessions: SessionStats[] = [];
+    const curve = new Map<number, { n: number; read: number }>();
     const top = sessionFiles(projectsDir);
     for (const f of top) {
         const sid = basename(f, '.jsonl');
@@ -162,8 +206,8 @@ export function collect(projectsDir) {
             const c = curve.get(b) || { n: 0, read: 0 };
             c.n += 1; c.read += t.read; curve.set(b, c);
         });
-        const byDate = new Map();
-        const bucket = (d) => { if (!byDate.has(d)) byDate.set(d, emptyStats()); return byDate.get(d); };
+        const byDate = new Map<string, Stats>();
+        const bucket = (d: string): Stats => { if (!byDate.has(d)) byDate.set(d, emptyStats()); return byDate.get(d) as Stats; };
         for (const t of main.turns) addTurn(bucket(t.date), t);
         for (const e of main.events) addEvent(bucket(e.date), e);
         for (const r of main.reports) { const s = bucket(r.date); s.reportTokens += r.tokens; s.reportCount += 1; }
@@ -195,7 +239,7 @@ export function collect(projectsDir) {
 }
 
 /** The most recently modified session in `dir`: { session, turns, readPerTurn }, or null when there is none. */
-export function currentSession(dir) {
+export function currentSession(dir: string): { session: string; turns: number; readPerTurn: number } | null {
     const newest = sessionFiles(dir)
         .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
         .sort((a, b) => b.t - a.t)[0];
@@ -210,31 +254,32 @@ export function currentSession(dir) {
  * `**Session:** 86 turns (48% of 180 roll) · 129k read/turn`. At 100% of either threshold it ends with `roll now`.
  * With no session on disk it says so rather than vanishing, so a misconfigured projects_dir is visible.
  */
-export function sessionLine(dir, rollTurns = ROLL_TURNS, rollRead = ROLL_READ_PER_TURN) {
+export function sessionLine(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN): string {
     let s;
-    try { s = currentSession(dir); } catch (e) { return `**Session:** unavailable (${e.code || e.message.split('\n')[0]} reading ${dir})`; }
+    try { s = currentSession(dir); } catch (e) { const err = e as NodeJS.ErrnoException; return `**Session:** unavailable (${err.code || err.message.split('\n')[0]} reading ${dir})`; }
     if (!s) return `**Session:** unavailable (no sessions in ${dir}; set projects_dir)`;
     const roll = s.turns >= rollTurns || s.readPerTurn >= rollRead;
     return `**Session:** ${s.turns} turns (${Math.floor((s.turns / rollTurns) * 100)}% of ${rollTurns} roll) · ${Math.floor(s.readPerTurn / 1000)}k read/turn${roll ? ' · roll now' : ''}`;
 }
 
-function scanFile(path) {
-    const turns = [];
-    const events = [];
-    const reports = [];
-    const seen = new Map();
-    let last = null;
-    let pending = null;
+function scanFile(path: string): ScanResult {
+    const turns: Turn[] = [];
+    const events: TurnEvent[] = [];
+    const reports: { date: string; tokens: number }[] = [];
+    const seen = new Map<string, Turn>();
+    let last = null as Turn | null;
+    let pending = null as { date: string; n: number } | null;
     let since = 0;
     for (const line of readFileSync(path, 'utf8').split('\n')) {
         if (!line) continue;
-        let rec;
+        let rec: Picked;
         try { rec = pick(JSON.parse(line)); } catch { continue; }
         if (rec.compact) { pending = null; last = null; since = 0; continue; }
         if (rec.type === 'assistant' && rec.usage && rec.id) {
-            if (seen.has(rec.id)) { Object.assign(seen.get(rec.id), rec.usage); continue; }
+            const dup = seen.get(rec.id);
+            if (dup) { Object.assign(dup, rec.usage); continue; }
             since += 1;
-            const t = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage };
+            const t: Turn = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage };
             seen.set(rec.id, t);
             if (last) {
                 const ctxBefore = last.fresh + last.write + last.read;
@@ -242,7 +287,7 @@ function scanFile(path) {
             }
             turns.push(t);
             if (pending && last) {
-                const delta = t.growth;
+                const delta = t.growth as number;
                 if (delta > 0) for (let k = 0; k < pending.n; k += 1) reports.push({ date: pending.date, tokens: delta / pending.n });
             }
             pending = null;
@@ -259,65 +304,66 @@ function scanFile(path) {
     return { turns, events, reports };
 }
 
-function agentType(metaPath) {
+function agentType(metaPath: string): string {
     try { const m = JSON.parse(readFileSync(metaPath, 'utf8')); return typeof m.agentType === 'string' ? m.agentType : 'unknown'; } catch { return 'unknown'; }
 }
 
-const emptyStats = () => ({
+const emptyStats = (): Stats => ({
     turns: 0, prompts: 0, wakesNotif: 0, wakesHandback: 0, peerMsgs: 0,
     out: 0, write: 0, read: 0, fresh: 0,
     subagents: 0, subTurns: 0, subWakes: 0, subByModel: {}, subGrowth: 0, subGrowthN: 0, reportTokens: 0, reportCount: 0,
     mix: {}, orch: {}, sub: {}, sinceCompact: 0, subSmall: 0, subOpus: 0,
 });
-function addTurn(s, t) {
+function addTurn(s: Stats, t: Turn): void {
     s.turns += 1; s.out += t.out; s.write += t.write; s.read += t.read; s.fresh += t.fresh;
     s.sinceCompact = Math.max(s.sinceCompact, t.since);
     addMix(s, t, 'orch');
 }
-const zeroKinds = () => ({ fresh: 0, w5: 0, w1: 0, read: 0, out: 0 });
-const addKinds = (a, b) => { for (const k of Object.keys(a)) a[k] += b[k]; };
+const zeroKinds = (): Kinds => ({ fresh: 0, w5: 0, w1: 0, read: 0, out: 0 });
+const addKinds = (a: Kinds, b: Kinds): void => { for (const k of Object.keys(a) as (keyof Kinds)[]) a[k] += b[k]; };
 /** A turn's tokens by price kind. A write is 5m unless usage split it into 5m and 1h. */
-export function kindsOf(t) {
+export function kindsOf(t: Usage): Kinds {
     const split = t.write5m + t.write1h > 0;
     return { fresh: t.fresh, w5: split ? t.write5m : t.write, w1: split ? t.write1h : 0, read: t.read, out: t.out };
 }
 /** Per model family, cache-read tokens (the token mix) and tokens by price kind for `who`: `orch` (orchestrator) or `sub` (subagents). */
-function addMix(s, t, who) {
+function addMix(s: Stats, t: Usage & { model: string }, who: 'orch' | 'sub'): void {
     const f = family(t.model);
     const m = s.mix[f] || (s.mix[f] = { read: 0 });
     m.read += t.read;
     addKinds(s[who][f] || (s[who][f] = zeroKinds()), kindsOf(t));
 }
-function addEvent(s, e) {
+function addEvent(s: Stats, e: TurnEvent): void {
     if (e.kind === 'human') s.prompts += 1;
     else if (e.kind === 'task-notification') s.wakesNotif += 1;
     else if (e.kind === 'handback') s.wakesHandback += 1;
     else if (e.kind === 'peer') s.peerMsgs += 1;
 }
-function merge(a, b) {
-    for (const [k, v] of Object.entries(b)) {
-        if (k === 'subByModel') for (const [m, n] of Object.entries(v)) a.subByModel[m] = (a.subByModel[m] || 0) + n;
-        else if (k === 'mix') for (const [m, x] of Object.entries(v)) { const c = a.mix[m] || (a.mix[m] = { read: 0 }); c.read += x.read; }
-        else if (k === 'orch' || k === 'sub') for (const [m, x] of Object.entries(v)) addKinds(a[k][m] || (a[k][m] = zeroKinds()), x);
-        else if (k === 'sinceCompact') a[k] = Math.max(a[k] || 0, v);
-        else if (typeof v === 'number') a[k] = (a[k] || 0) + v;
+type NumericKey = { [K in keyof Stats]: Stats[K] extends number ? K : never }[keyof Stats];
+function merge(a: Stats, b: Stats): void {
+    for (const k of Object.keys(b) as (keyof Stats)[]) {
+        if (k === 'subByModel') for (const [m, n] of Object.entries(b.subByModel)) a.subByModel[m] = (a.subByModel[m] || 0) + n;
+        else if (k === 'mix') for (const [m, x] of Object.entries(b.mix)) { const c = a.mix[m] || (a.mix[m] = { read: 0 }); c.read += x.read; }
+        else if (k === 'orch' || k === 'sub') for (const [m, x] of Object.entries(b[k])) addKinds(a[k][m] || (a[k][m] = zeroKinds()), x);
+        else if (k === 'sinceCompact') a[k] = Math.max(a[k] || 0, b[k]);
+        else if (typeof b[k] === 'number') { const nk = k as NumericKey; a[nk] = (a[nk] || 0) + b[nk]; }
     }
 }
 /** A subagent that finished in fewer turns than this is "small": cheaper done inline than dispatched. */
 export const SMALL_AGENT_TURNS = 10;
-export function family(model) {
+export function family(model: string | undefined): string {
     const m = /(opus|sonnet|haiku|fable)/i.exec(model || '');
     return m ? m[1].toLowerCase() : 'other';
 }
-export function localDate(iso) {
+export function localDate(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return 'unknown';
-    const p = (n) => String(n).padStart(2, '0');
+    const p = (n: number): string => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 // --- formatting ------------------------------------------------------------------
-export function compact(n) {
+export function compact(n: number): string {
     if (!Number.isFinite(n)) return '-';
     const a = Math.abs(n);
     if (a >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
@@ -325,24 +371,24 @@ export function compact(n) {
     if (a >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
     return String(Math.round(n));
 }
-export function uncompact(s) {
+export function uncompact(s: unknown): number {
     const m = /^(-?[\d.]+)([kMB]?)/.exec(String(s).trim());
     if (!m) return NaN;
     return Number(m[1]) * ({ k: 1e3, M: 1e6, B: 1e9 }[m[2]] || 1);
 }
-const avgReport = (s) => (s.reportCount ? s.reportTokens / s.reportCount : NaN);
-const readPerTurn = (s) => (s.turns ? s.read / s.turns : NaN);
-const subGrowth = (s) => (s.subGrowthN ? s.subGrowth / s.subGrowthN : NaN);
-const byModel = (s) => Object.entries(s.subByModel).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${compact(n)}`).join(' · ') || '-';
+const avgReport = (s: Stats): number => (s.reportCount ? s.reportTokens / s.reportCount : NaN);
+const readPerTurn = (s: Stats): number => (s.turns ? s.read / s.turns : NaN);
+const subGrowth = (s: Stats): number => (s.subGrowthN ? s.subGrowth / s.subGrowthN : NaN);
+const byModel = (s: Stats): string => Object.entries(s.subByModel).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${compact(n)}`).join(' · ') || '-';
 
 /** A mix cell: `opus 1200000 · sonnet 300000`, families with nothing left out; `-` when empty. Read back by parseMix. */
-export function mixCell(mix, key) {
+export function mixCell(mix: Record<string, Record<string, number>> | undefined, key: string): string {
     // Whole numbers, not compact(): PASS/MISS is scored from these cells, and 1-decimal k/M rounding can flip a verdict near a target.
     return Object.entries(mix || {}).filter(([, v]) => v[key] > 0).sort((a, b) => b[1][key] - a[1][key]).map(([m, v]) => `${m} ${Math.round(v[key])}`).join(' · ') || '-';
 }
 /** The family totals back out of a mix cell: { opus: 1.2e6, sonnet: 3e5 }. */
-export function parseMix(text) {
-    const out = {};
+export function parseMix(text: unknown): Record<string, number> {
+    const out: Record<string, number> = {};
     for (const m of String(text || '').matchAll(/([a-z]+) (\d[\d.]*[kMB]?)/g)) out[m[1]] = uncompact(m[2]);
     return out;
 }
@@ -351,13 +397,13 @@ export function parseMix(text) {
  * A kinds cell: `opus 1/2/3/4/5 · sonnet ...`, each family's tokens as fresh/write-5m/write-1h/read/output in whole numbers;
  * `-` when empty. Read back by parseKinds, so a pruned day can still be priced.
  */
-export function kindsCell(byFamily) {
-    const total = (k) => k.fresh + k.w5 + k.w1 + k.read + k.out;
+export function kindsCell(byFamily: FamilyKinds | undefined): string {
+    const total = (k: Kinds): number => k.fresh + k.w5 + k.w1 + k.read + k.out;
     return Object.entries(byFamily || {}).filter(([, k]) => total(k) > 0).sort((a, b) => total(b[1]) - total(a[1]))
         .map(([f, k]) => `${f} ${[k.fresh, k.w5, k.w1, k.read, k.out].map(Math.round).join('/')}`).join(' · ') || '-';
 }
-export function parseKinds(text) {
-    const out = {};
+export function parseKinds(text: unknown): FamilyKinds {
+    const out: FamilyKinds = {};
     for (const m of String(text || '').matchAll(/([a-z]+) (\d+)\/(\d+)\/(\d+)\/(\d+)\/(\d+)/g)) {
         out[m[1]] = { fresh: Number(m[2]), w5: Number(m[3]), w1: Number(m[4]), read: Number(m[5]), out: Number(m[6]) };
     }
@@ -366,36 +412,36 @@ export function parseKinds(text) {
 
 // --- pricing ---------------------------------------------------------------------
 /** Prices apply to opus, sonnet and haiku by name; any other family (fable included) takes the optional `other` row. */
-const priceKey = (f) => (FAMILIES.includes(f) ? f : 'other');
+const priceKey = (f: string): string => (FAMILIES.includes(f) ? f : 'other');
 /** Dollars for `k` tokens at `p` (dollars per MTok), split into the four report categories. */
-export function dollars(k, p) {
+export function dollars(k: Kinds, p: ModelPrice): Dollars {
     const d = { read: (k.read * p.cache_read) / 1e6, write: (k.w5 * p.cache_write_5m + k.w1 * p.cache_write_1h) / 1e6, output: (k.out * p.output) / 1e6, input: (k.fresh * p.input) / 1e6 };
     return { ...d, total: d.read + d.write + d.output + d.input };
 }
 /** Dollars per family for { family: kinds }; a family with no price row (an `other` model with no `other` price) is left out. */
-export function priceFamilies(byFamily, prices) {
-    return Object.fromEntries(Object.entries(byFamily || {}).filter(([f]) => prices && prices[priceKey(f)]).map(([f, k]) => [f, dollars(k, prices[priceKey(f)])]));
+export function priceFamilies(byFamily: FamilyKinds | undefined, prices: Prices): Record<string, Dollars> {
+    return Object.fromEntries(Object.entries(byFamily || {}).filter(([f]) => prices && prices[priceKey(f)]).map(([f, k]) => [f, dollars(k, (prices as Record<string, ModelPrice>)[priceKey(f)] as ModelPrice)]));
 }
 /**
  * What `byFamily` ({ family: kinds }) would cost with every priced token on Sonnet: { actual, onSonnet } in dollars.
  * The same tokens repriced, so it ignores any difference in how many tokens another model would need or how good its work is.
  */
-export function sonnetWhatIf(byFamily, prices) {
+export function sonnetWhatIf(byFamily: FamilyKinds | undefined, prices: Record<string, ModelPrice>): { actual: number; onSonnet: number } {
     const priced = Object.entries(byFamily || {}).filter(([f]) => prices[priceKey(f)]);
     return {
         actual: priced.reduce((n, [f, k]) => n + dollars(k, prices[priceKey(f)]).total, 0),
         onSonnet: priced.reduce((n, [, k]) => n + dollars(k, prices.sonnet).total, 0),
     };
 }
-const sumDollars = (list) => list.reduce((a, d) => ({ read: a.read + d.read, write: a.write + d.write, output: a.output + d.output, input: a.input + d.input, total: a.total + d.total }), { read: 0, write: 0, output: 0, input: 0, total: 0 });
+const sumDollars = (list: Dollars[]): Dollars => list.reduce((a, d) => ({ read: a.read + d.read, write: a.write + d.write, output: a.output + d.output, input: a.input + d.input, total: a.total + d.total }), { read: 0, write: 0, output: 0, input: 0, total: 0 });
 /** Each family's share of the dollars in `byFamily` (priceFamilies output), as fractions; NaN when there are none. */
-export function pricedShares(byFamily) {
+export function pricedShares(byFamily: Record<string, Dollars>): Record<string, number> {
     const total = Object.values(byFamily).reduce((n, d) => n + d.total, 0);
     return Object.fromEntries(FAMILIES.map((f) => [f, total > 0 ? (byFamily[f] ? byFamily[f].total : 0) / total : NaN]));
 }
-const joinKinds = (a, b) => { const out = {}; for (const m of [a, b]) for (const [f, k] of Object.entries(m)) addKinds(out[f] || (out[f] = zeroKinds()), k); return out; };
+const joinKinds = (a: FamilyKinds, b: FamilyKinds): FamilyKinds => { const out: FamilyKinds = {}; for (const m of [a, b]) for (const [f, k] of Object.entries(m)) addKinds(out[f] || (out[f] = zeroKinds()), k); return out; };
 
-export function toRow(s) {
+export function toRow(s: DayStats): TableRow {
     return [
         s.date, s.sessions, s.turns, s.prompts, `${s.wakesNotif + s.wakesHandback} (${s.wakesNotif}/${s.wakesHandback})`,
         compact(s.out), compact(s.write), compact(s.read), compact(s.fresh), compact(readPerTurn(s)),
@@ -404,7 +450,7 @@ export function toRow(s) {
     ].map(String);
 }
 
-function printDay(date, s) {
+function printDay(date: string, s: DayStats | undefined): void {
     if (!s) { console.log(`${date}: no orchestrator turns on disk.`); return; }
     console.log(`Day ${date}: ${s.sessions} session(s), ${s.turns} turns, ${s.prompts} prompts`);
     console.log(`  tokens   out ${compact(s.out)} · cache write ${compact(s.write)} · cache read ${compact(s.read)} · fresh ${compact(s.fresh)} · read/turn ${compact(readPerTurn(s))}`);
@@ -412,14 +458,14 @@ function printDay(date, s) {
     console.log(`  subagents ${s.subagents} · ${s.subTurns} turns · ${s.subWakes} background wake-ups inside subagents · ${byModel(s)}`);
     console.log(`  subagent context growth ≈ ${compact(subGrowth(s))} tokens/turn (tool results + hooks)`);
     console.log(`  avg report ≈ ${compact(avgReport(s))} tokens over ${s.reportCount} handback(s)`);
-    console.log(`  model mix (cache read) ${mixLine(shares(readMix(s.mix), null))}`);
+    console.log(`  model mix (cache read) ${mixLine(shares(readMix(s.mix)))}`);
     printPriced(s, MODEL_PRICES);
 }
-const readMix = (mix) => Object.fromEntries(Object.entries(mix).map(([f, v]) => [f, v.read]));
-const usd = (n) => `$${n.toFixed(2)}`;
-const categories = (d) => `read ${usd(d.read)} · write ${usd(d.write)} · output ${usd(d.output)} · input ${usd(d.input)}`;
+const readMix = (mix: Stats['mix']): Record<string, number> => Object.fromEntries(Object.entries(mix).map(([f, v]) => [f, v.read]));
+const usd = (n: number): string => `$${n.toFixed(2)}`;
+const categories = (d: Dollars): string => `read ${usd(d.read)} · write ${usd(d.write)} · output ${usd(d.output)} · input ${usd(d.input)}`;
 /** The estimated-dollars block of the day summary: orchestrator and subagents, by model and by category, then the priced mix. */
-function printPriced(s, prices) {
+function printPriced(s: Stats, prices: Prices): void {
     if (!prices) { console.log('  est. cost              prices unset (model_prices): token mix only'); return; }
     const parts = { orchestrator: priceFamilies(s.orch, prices), subagents: priceFamilies(s.sub, prices) };
     for (const [who, fams] of Object.entries(parts)) {
@@ -434,15 +480,15 @@ function printPriced(s, prices) {
     const all = priceFamilies(joinKinds(s.orch, s.sub), prices);
     console.log(`  model mix (priced)     ${mixLine(pricedShares(all))}`);
 }
-const mixLine = (sh) => FAMILIES.map((f) => `${f} ${fmtValue(sh[f], 'pct')}`).join(' · ');
-function printSessions(list) {
+const mixLine = (sh: Record<string, number>): string => FAMILIES.map((f) => `${f} ${fmtValue(sh[f], 'pct')}`).join(' · ');
+function printSessions(list: SessionStats[]): void {
     if (!list.length) return;
     console.log('\nSession   Turns  Prompts  Wakes  Read/turn  Cache read  Subagents  Max since compact');
     for (const s of list.sort((a, b) => b.read - a.read)) {
         console.log(`${s.session}  ${String(s.turns).padStart(5)}  ${String(s.prompts).padStart(7)}  ${String(s.wakesNotif + s.wakesHandback).padStart(5)}  ${compact(readPerTurn(s)).padStart(9)}  ${compact(s.read).padStart(10)}  ${String(s.subagents).padStart(9)}  ${String(s.sinceCompact).padStart(17)}`);
     }
 }
-function printCurve(curve) {
+function printCurve(curve: Map<number, { n: number; read: number }>): void {
     console.log('Turn index  Turns  Avg cache-read/turn   (orchestrator sessions, all days)');
     for (const [b, c] of [...curve].sort((x, y) => x[0] - y[0])) {
         console.log(`${String(b).padStart(5)}-${String(b + 99).padEnd(5)} ${String(c.n).padStart(6)}  ${compact(c.read / c.n).padStart(8)}`);
@@ -450,8 +496,8 @@ function printCurve(curve) {
 }
 
 // --- the vault table ---------------------------------------------------------------
-export function readTable(path) {
-    const rows = new Map();
+export function readTable(path: string): Map<string, TableRow> {
+    const rows = new Map<string, TableRow>();
     if (!existsSync(path)) return rows;
     for (const line of readFileSync(path, 'utf8').split('\n')) {
         const m = /^\|\s*(\d{4}-\d{2}-\d{2})\s*\|/.exec(line);
@@ -459,13 +505,13 @@ export function readTable(path) {
     }
     return rows;
 }
-export function writeTable(path, rows) {
+export function writeTable(path: string, rows: Map<string, TableRow>): void {
     mkdirSync(join(path, '..'), { recursive: true });
     const intro = [
         '---', 'tags: [maestro, tokens, metrics]', '---', '',
         '# Token metrics, one row per day',
         '',
-        'Generated by `the-maestro/scripts/token-metrics.mjs --write`. Rerunning a day replaces its row; edit anything above the table freely, the table itself is regenerated.',
+        'Generated by `the-maestro/scripts/token-metrics.ts --write`. Rerunning a day replaces its row; edit anything above the table freely, the table itself is regenerated.',
         '',
         'Turns are API responses deduplicated by message id. Wakes are orchestrator turns started by a task notification or a subagent handback. Avg report is the approximate context growth per handback. Loop and experiments: [[token-usage-strategies#Self-correcting loop]].',
         '',
@@ -487,25 +533,25 @@ export function writeTable(path, rows) {
 /**
  * Share of each family in `mix` ({ family: amount }), as fractions of everything in it. NaN for every family when it is empty.
  */
-export function shares(mix) {
+export function shares(mix: Record<string, number>): Record<string, number> {
     const total = Object.values(mix).reduce((n, v) => n + v, 0);
     return Object.fromEntries(FAMILIES.map((f) => [f, total > 0 ? (mix[f] || 0) / total : NaN]));
 }
 
 // Key metrics, read back from table cells so pruned days still compare.
-const cell = (i) => (r) => uncompact(r[i]);
-const ratio = (i, j) => (r) => { const d = uncompact(r[j]); return d ? uncompact(r[i]) / d : NaN; };
-const share = (col, fam) => (r) => shares(parseMix(r[col]))[fam];
+const cell = (i: number): MetricGetter => (r) => uncompact(r[i]);
+const ratio = (i: number, j: number): MetricGetter => (r) => { const d = uncompact(r[j]); return d ? uncompact(r[i]) / d : NaN; };
+const share = (col: number, fam: string): MetricGetter => (r) => shares(parseMix(r[col]))[fam];
 // Dollar getters price a row's token cells with today's prices. Orchestrator cell 16, subagent cell 21 (a day with subagents but no cell is pre-column).
-const rowKinds = (r) => ({ orch: parseKinds(r[16]), sub: parseKinds(r[21]) });
-const rowUsd = (who, prices) => (r) => {
+const rowKinds = (r: TableRow): { orch: FamilyKinds; sub: FamilyKinds } => ({ orch: parseKinds(r[16]), sub: parseKinds(r[21]) });
+const rowUsd = (who: 'orch' | 'sub', prices: Prices): MetricGetter => (r) => {
     const k = rowKinds(r)[who];
     if (!Object.keys(k).length && (who === 'orch' || uncompact(r[10]) > 0)) return NaN;
     return sumDollars(Object.values(priceFamilies(k, prices))).total;
 };
-const pricedShare = (fam, prices) => (r) => pricedShares(priceFamilies(joinKinds(...Object.values(rowKinds(r))), prices))[fam];
-const smallRate = (r) => { const n = uncompact(r[10]); return n ? uncompact(r[18]) / n : NaN; };
-const CORE_METRICS = [
+const pricedShare = (fam: string, prices: Prices): MetricGetter => (r) => pricedShares(priceFamilies(joinKinds(rowKinds(r).orch, rowKinds(r).sub), prices))[fam];
+const smallRate: MetricGetter = (r) => { const n = uncompact(r[10]); return n ? uncompact(r[18]) / n : NaN; };
+const CORE_METRICS: Metric[] = [
     ['Turns', cell(2)], ['Wakes', cell(4)], ['Output', cell(5)], ['Cache read', cell(7)],
     ['Read/turn', cell(9), { cost: true, target: ['read_per_turn_max', 1, 'max'] }], ['Read/prompt', ratio(7, 3)], ['Read/subagent', ratio(7, 10)],
     ['Avg report', cell(13)], ['Sub growth', cell(14)],
@@ -516,28 +562,30 @@ const CORE_METRICS = [
  * Dollar metrics exist only when `prices` is set. Columns are the table's: 4 wakes, 15 read by model, 16 orchestrator tokens by model,
  * 17 max turns since compact, 18 small agents, 19 Opus subagents, 20 Opus sub tokens, 21 subagent tokens by model.
  */
-export function metricList(prices = MODEL_PRICES) {
+export function metricList(prices: Prices = MODEL_PRICES): Metric[] {
     const pct = { cost: true, fmt: 'pct' };
-    return [
+    const priced: Metric[] = prices ? [
+        ['Opus share (priced)', pricedShare('opus', prices), { ...pct, target: ['opus_priced_share_max', 0.01, 'max'] }],
+        ['Sonnet share (priced)', pricedShare('sonnet', prices), { ...pct, worse: 'none' }],
+        ['Haiku share (priced)', pricedShare('haiku', prices), { ...pct, worse: 'none' }],
+        ['Est. $ orchestrator', rowUsd('orch', prices), { cost: true, fmt: 'usd' }],
+        ['Est. $ subagents', rowUsd('sub', prices), { cost: true, fmt: 'usd' }],
+    ] : [];
+    const list: Metric[] = [
         ...CORE_METRICS,
         ['Opus share (read)', share(15, 'opus'), { ...pct, target: ['opus_share_max', 0.01, 'max'] }],
         ['Sonnet share (read)', share(15, 'sonnet'), { ...pct, worse: 'none' }],
         ['Haiku share (read)', share(15, 'haiku'), { ...pct, worse: 'down', target: ['haiku_share_min', 0.01, 'min'] }],
-        ...(prices ? [
-            ['Opus share (priced)', pricedShare('opus', prices), { ...pct, target: ['opus_priced_share_max', 0.01, 'max'] }],
-            ['Sonnet share (priced)', pricedShare('sonnet', prices), { ...pct, worse: 'none' }],
-            ['Haiku share (priced)', pricedShare('haiku', prices), { ...pct, worse: 'none' }],
-            ['Est. $ orchestrator', rowUsd('orch', prices), { cost: true, fmt: 'usd' }],
-            ['Est. $ subagents', rowUsd('sub', prices), { cost: true, fmt: 'usd' }],
-        ] : []),
+        ...priced,
         ['Wakes/prompt', ratio(4, 3), { cost: true, fmt: 'ratio', target: ['wakes_per_prompt_max', 1, 'max'] }],
         ['Max turns/compact', cell(17), { cost: true, target: ['turns_since_compact_max', 1, 'max'] }],
         ['Small-agent rate', smallRate, { cost: true, fmt: 'pct', trend: true }],
         ['Opus subagents', cell(19), { cost: true, worse: 'none' }],
         ['Opus sub tokens', cell(20), { cost: true, worse: 'none' }],
     ];
+    return list;
 }
-export function median(xs) {
+export function median(xs: number[]): number {
     const v = xs.filter(Number.isFinite).sort((a, b) => a - b);
     if (!v.length) return NaN;
     const m = Math.floor(v.length / 2);
@@ -547,8 +595,8 @@ export function median(xs) {
  * Each metric for `date` against the 7 rows before it and the baseline rows. `opts.targets` and `opts.prices` default to the config.
  * `status` is PASS or MISS against a target, '-' when there is no target or no number today.
  */
-export function compare(date, rows, baselineUntil, opts = {}) {
-    const targets = opts.targets || COST_TARGETS;
+export function compare(date: string, rows: Map<string, TableRow>, baselineUntil: string, opts: { targets?: Record<string, number>; prices?: Prices } = {}): Comparison[] {
+    const targets: Record<string, number> = opts.targets || COST_TARGETS;
     const all = [...rows].sort((a, b) => a[0].localeCompare(b[0]));
     const today = rows.get(date);
     const prior7 = all.filter(([d]) => d < date).slice(-7).map(([, r]) => r);
@@ -557,9 +605,9 @@ export function compare(date, rows, baselineUntil, opts = {}) {
         const t = today ? val(today) : NaN;
         const m7 = median(prior7.map(val));
         const b = median(base.map(val));
-        const pct = (x) => (Number.isFinite(x) && x ? (t - x) / x : NaN);
-        const [key, scale, dir] = o.target || [];
-        const limit = key && Number.isFinite(targets[key]) ? targets[key] * scale : NaN;
+        const pct = (x: number): number => (Number.isFinite(x) && x ? (t - x) / x : NaN);
+        const [key, scale, dir]: [string?, number?, string?] = o.target || [];
+        const limit = key && Number.isFinite(targets[key]) ? (targets[key] as number) * (scale as number) : NaN;
         const worse = o.worse || 'up';
         const status = !Number.isFinite(limit) || !Number.isFinite(t) ? '-' : (dir === 'max' ? t <= limit : t >= limit) ? 'PASS' : 'MISS';
         return {
@@ -569,17 +617,17 @@ export function compare(date, rows, baselineUntil, opts = {}) {
         };
     });
 }
-export function fmtValue(n, fmt = 'n') {
+export function fmtValue(n: number, fmt = 'n'): string {
     if (!Number.isFinite(n)) return '-';
     if (fmt === 'pct') return `${Math.round(n * 100)}%`;
     if (fmt === 'ratio') return n.toFixed(2);
     if (fmt === 'usd') return usd(n);
     return compact(n);
 }
-const fmtPct = (p) => (Number.isFinite(p) ? `${p >= 0 ? '+' : ''}${Math.round(p * 100)}%` : '-');
-const targetText = (c) => (c.trend ? 'lower is better' : Number.isFinite(c.limit) ? `${c.dir === 'max' ? '<=' : '>='}${fmtValue(c.limit, c.fmt)}` : '-');
+const fmtPct = (p: number): string => (Number.isFinite(p) ? `${p >= 0 ? '+' : ''}${Math.round(p * 100)}%` : '-');
+const targetText = (c: Comparison): string => (c.trend ? 'lower is better' : Number.isFinite(c.limit) ? `${c.dir === 'max' ? '<=' : '>='}${fmtValue(c.limit, c.fmt)}` : '-');
 
-function printMetrics(list) {
+function printMetrics(list: Comparison[]): void {
     console.log('Metric                 Today     7d med    vs 7d   Baseline  vs base  Target           Status');
     for (const c of list) {
         console.log(`${c.name.padEnd(21)} ${fmtValue(c.today, c.fmt).padStart(8)} ${fmtValue(c.median7, c.fmt).padStart(9)} ${fmtPct(c.vs7).padStart(7)} ${fmtValue(c.baseline, c.fmt).padStart(9)} ${fmtPct(c.vsBase).padStart(7)}  ${targetText(c).padEnd(15)}  ${c.status}${c.regression ? '  REGRESSION >20%' : ''}`);
@@ -587,12 +635,12 @@ function printMetrics(list) {
     if (!MODEL_PRICES) console.log('Model prices are unset: only the token mix is shown. Set model_prices (dollars per MTok per family; the README lists the current Anthropic prices).');
     console.log('Opus subagents: each should be design, decision or review work.');
 }
-function printCompare(date, rows, baselineUntil) {
+function printCompare(date: string, rows: Map<string, TableRow>, baselineUntil: string): void {
     console.log(`\nCompare ${date} · 7-day median of prior rows · baseline = median of days <= ${baselineUntil}`);
     printMetrics(compare(date, rows, baselineUntil));
 }
 /** The day summary's cost block: the cost metrics only, same columns as --compare. */
-function printCost(date, rows, baselineUntil) {
+function printCost(date: string, rows: Map<string, TableRow>, baselineUntil: string): void {
     console.log(`\nCost targets ${date} · 7-day median of prior rows · baseline = median of days <= ${baselineUntil}`);
     printMetrics(compare(date, rows, baselineUntil).filter((c) => c.cost));
 }

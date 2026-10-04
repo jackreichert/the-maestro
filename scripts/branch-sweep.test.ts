@@ -1,4 +1,4 @@
-// Run: node --test scripts/branch-sweep.test.mjs
+// Run: node --test scripts/branch-sweep.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -8,16 +8,23 @@ import { join } from 'node:path';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const SCRIPT = new URL('./branch-sweep.mjs', import.meta.url).pathname;
-const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.mjs');
+const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
+import type { CmdResult, ExcludedItem, Git, GhJson, ListedItem, PrInfo, SweepContext } from './branch-sweep.ts';
+const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.ts');
 
 const ME = 'me@example.com';
-const sh = (repo, ...args) => {
+type World = ReturnType<typeof world>;
+/** A value a test expects to be present (a find() that must hit). */
+function must<T>(v: T | undefined, label = 'value'): T {
+    assert.ok(v !== undefined, label);
+    return v;
+}
+const sh = (repo: string, ...args: string[]): string => {
     const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
     assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
 };
-const commit = (repo, file, text, email = ME) => {
+const commit = (repo: string, file: string, text: string, email = ME): void => {
     writeFileSync(join(repo, file), text);
     sh(repo, 'add', file);
     sh(repo, '-c', `user.email=${email}`, '-c', 'user.name=T', 'commit', '-q', '-m', `edit ${file}`);
@@ -39,22 +46,22 @@ function world(name = 'proj') {
     return { root, container: join(root, 'box'), repo, origin, name };
 }
 /** Pushes a branch with one commit of its own, then returns to main. */
-function feature(w, branch, { email = ME, file = `${branch.replace(/\W/g, '_')}.txt` } = {}) {
+function feature(w: World, branch: string, { email = ME, file = `${branch.replace(/\W/g, '_')}.txt` }: { email?: string; file?: string } = {}): void {
     sh(w.repo, 'checkout', '-q', '-b', branch, 'main');
     commit(w.repo, file, `${branch}\n`, email);
     sh(w.repo, 'push', '-q', '-u', 'origin', branch);
     sh(w.repo, 'checkout', '-q', 'main');
 }
-const mergeInto = (w, target, branch, squash = false) => {
+const mergeInto = (w: World, target: string, branch: string, squash = false): void => {
     sh(w.repo, 'checkout', '-q', target);
     if (squash) { sh(w.repo, 'merge', '--squash', branch); sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'squash'); }
     else sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'merge', '-q', '--no-ff', '-m', 'merge', branch);
     sh(w.repo, 'push', '-q', 'origin', target);
     sh(w.repo, 'checkout', '-q', 'main');
 };
-const ctxFor = (over = {}) => defaultContext({ emails: [ME], twin: [], idleMinutes: 0, claims: new Map(), gh: () => null, ghLogin: 'me-login', ...over });
-const names = (r, kind) => r.items.filter((i) => i.kind === kind).map((i) => i.name);
-const remoteHas = (w, branch) => sh(w.repo, 'ls-remote', '--heads', 'origin', branch) !== '';
+const ctxFor = (over: Partial<SweepContext> = {}) => defaultContext({ emails: [ME], twin: [], idleMinutes: 0, claims: new Map(), gh: () => null, ghLogin: 'me-login', ...over });
+const names = (r: { items: ListedItem[] }, kind: string): string[] => r.items.filter((i) => i.kind === kind).map((i) => i.name);
+const remoteHas = (w: World, branch: string): boolean => sh(w.repo, 'ls-remote', '--heads', 'origin', branch) !== '';
 
 test('merged into develop and staging qualifies in a twin-flow repo', () => {
     const w = world(); feature(w, 'feat/a');
@@ -105,22 +112,22 @@ test('a branch with a foreign author is never listed', () => {
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), []);
 });
 
-const pr = (number, base, head, oid, body = '') => ({ number, baseRefName: base, headRefName: head, headRefOid: oid, url: `https://example.com/pull/${number}`, body, mergedAt: daysAgo(1), author: { login: 'me-login' } });
-const tipOf = (w, b) => sh(w.repo, 'rev-parse', `origin/${b}`);
+const pr = (number: number, base: string, head: string, oid: string, body = ''): PrInfo => ({ number, baseRefName: base, headRefName: head, headRefOid: oid, url: `https://example.com/pull/${number}`, body, mergedAt: daysAgo(1), author: { login: 'me-login' } });
+const tipOf = (w: World, b: string): string => sh(w.repo, 'rev-parse', `origin/${b}`);
 /** Branches x and its twin merged into develop and staging respectively, as separate branches (squash, so ancestry is no evidence). */
-function twins(w, x, twin, { xTarget = 'develop', twinTarget = 'staging' } = {}) {
+function twins(w: World, x: string, twin: string, { xTarget = 'develop', twinTarget = 'staging' } = {}): void {
     feature(w, x); feature(w, twin);
     mergeInto(w, xTarget, x, true); mergeInto(w, twinTarget, twin, true);
 }
-const kept = (w, prs, over = {}) => names(scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: searchGh(prs), ...over })), 'remote-branch').sort();
+const kept = (w: World, prs: PrInfo[], over: Partial<SweepContext> = {}) => names(scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: searchGh(prs), ...over })), 'remote-branch').sort();
 
 test('twin flow: x merged into develop and x-staging into staging qualify each other, with the tip bound', () => {
     const w = world(); twins(w, 'fix/x', 'fix/x-staging');
     const prs = [pr(1, 'develop', 'fix/x', tipOf(w, 'fix/x')), pr(2, 'staging', 'fix/x-staging', tipOf(w, 'fix/x-staging'))];
     assert.deepEqual(kept(w, prs), ['fix/x', 'fix/x-staging']);
     const r = scanRepo(w.repo, ctxFor({ twin: ['proj'], gh: searchGh(prs) }));
-    assert.match(r.items.find((i) => i.name === 'fix/x').why, /develop \(PR #1\) and staging \(twin PR #2 \(fix\/x-staging\)\)/);
-    assert.deepEqual(r.items.find((i) => i.name === 'fix/x').prs, ['https://example.com/pull/1', 'https://example.com/pull/2']);
+    assert.match(must(r.items.find((i) => i.name === 'fix/x')).why, /develop \(PR #1\) and staging \(twin PR #2 \(fix\/x-staging\)\)/);
+    assert.deepEqual(must(r.items.find((i) => i.name === 'fix/x')).prs, ['https://example.com/pull/1', 'https://example.com/pull/2']);
     assert.deepEqual(kept(w, [pr(1, 'develop', 'fix/x', '0'.repeat(40)), prs[1]]), [], 'x moved on since PR 1, so x is out, and x-staging has no twin whose branch still sits at its PR head');
 });
 
@@ -164,8 +171,8 @@ test('a clean worktree on a merged branch qualifies; a dirty one is kept and rep
     writeFileSync(join(w.root, 'feat-loose', 'scratch.txt'), 'x\n');
     const r = scanRepo(w.repo, ctxFor());
     assert.deepEqual(names(r, 'worktree').map((p) => p.split('/').pop()), ['feat-clean']);
-    assert.match(r.excluded.find((e) => e.name.endsWith('feat-dirty')).reason, /uncommitted changes/);
-    assert.match(r.excluded.find((e) => e.name.endsWith('feat-loose')).reason, /1 untracked files/);
+    assert.match(must(r.excluded.find((e: ExcludedItem) => e.name.endsWith('feat-dirty'))).reason, /uncommitted changes/);
+    assert.match(must(r.excluded.find((e) => e.name.endsWith('feat-loose'))).reason, /1 untracked files/);
 });
 
 test('a worktree a skill directory symlinks to (or into) is kept as a live skill', () => {
@@ -248,7 +255,7 @@ test('a branch with no commits of its own never qualifies, unless a merged PR na
     sh(w.repo, 'push', '-q', 'origin', 'origin/develop:refs/heads/feat/empty');
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), []);
     const tip = sh(w.repo, 'rev-parse', 'origin/develop');
-    const pr = (over) => () => [{ number: 3, headRefName: 'feat/empty', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/3', body: '', author: { login: 'me-login' }, ...over }];
+    const pr = (over: Partial<PrInfo>) => () => [{ number: 3, headRefName: 'feat/empty', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/3', body: '', author: { login: 'me-login' }, ...over }];
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({}) })), 'remote-branch'), ['feat/empty']);
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({ headRefName: 'feat/other' }) })), 'remote-branch'), []);
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ gh: pr({ headRefOid: '0'.repeat(40) }) })), 'remote-branch'), []);
@@ -264,7 +271,7 @@ test('a worktree cut with -b x origin/develop is not "gone" and never qualifies'
 
 test('git and gh errors fail closed: the item is left out and the reason is noted', () => {
     const w = world(); feature(w, 'feat/sq'); mergeInto(w, 'develop', 'feat/sq', true); feature(w, 'feat/ok'); mergeInto(w, 'develop', 'feat/ok');
-    const failing = (verb) => (repo) => Object.assign((...a) => {
+    const failing = (verb: string) => (repo: string): Git => Object.assign((...a: string[]): CmdResult => {
         const r = spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
         const bad = a.includes(verb);
         return { ok: !bad && r.status === 0, status: bad ? 128 : r.status, out: (r.stdout || '').trim(), err: bad ? 'boom' : (r.stderr || '').trim() };
@@ -299,7 +306,7 @@ test('apply deletes a qualifying branch and worktree, and re-checks before delet
     const wt = join(w.root, 'wt'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/wt');
     const ctx = ctxFor();
     const listed = scanRepo(w.repo, ctx).items;
-    const id = (n, kind = 'remote-branch') => listed.find((i) => i.kind === kind && i.name.endsWith(n)).id;
+    const id = (n: string, kind = 'remote-branch') => must(listed.find((i) => i.kind === kind && i.name.endsWith(n))).id;
     sh(w.repo, 'checkout', '-q', 'feat/grew'); commit(w.repo, 'more.txt', 'late\n'); sh(w.repo, 'push', '-q', 'origin', 'feat/grew'); sh(w.repo, 'checkout', '-q', 'main');
     const res = apply([id('feat/ok'), id('feat/grew'), id('/wt', 'worktree')], w.container, ctx);
     assert.deepEqual(res.map((r) => r.done), [true, false, true], JSON.stringify(res));
@@ -327,7 +334,7 @@ test('a remote delete carries a lease on the listed tip: a push after the listin
     const w = world(); feature(w, 'feat/raced'); feature(w, 'feat/calm');
     for (const b of ['feat/raced', 'feat/calm']) mergeInto(w, 'develop', b);
     const items = scanRepo(w.repo, ctxFor()).items;
-    const raced = items.find((i) => i.name === 'feat/raced'); const calm = items.find((i) => i.name === 'feat/calm');
+    const raced = must(items.find((i) => i.name === 'feat/raced')); const calm = must(items.find((i) => i.name === 'feat/calm'));
     assert.equal(raced.tip, sh(w.repo, 'rev-parse', 'refs/remotes/origin/feat/raced'), 'the listed tip is the remote tip');
     sh(w.repo, 'checkout', '-q', 'feat/raced'); commit(w.repo, 'late.txt', 'late\n'); sh(w.repo, 'push', '-q', 'origin', 'feat/raced'); sh(w.repo, 'checkout', '-q', 'main');
     // The re-scan in apply() would already refuse this; call the delete directly to exercise the lease itself.
@@ -347,25 +354,25 @@ test('CLI: lists read-only as JSON through MAESTRO_GH, and --apply needs ids', (
     const env = { PATH: process.env.PATH, HOME: w.root, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GIT_EMAILS: ME, MAESTRO_GH: '/nonexistent/gh', MAESTRO_SWEEP_IDLE_MINUTES: '1' };
     const r = spawnSync(process.execPath, [SCRIPT, '--container', w.container, '--json'], { encoding: 'utf8', env });
     assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(JSON.parse(r.stdout).items.map((i) => i.name), ['feat/cli']);
+    assert.deepEqual((JSON.parse(r.stdout) as { items: { name: string }[] }).items.map((i) => i.name), ['feat/cli']);
     assert.equal(remoteHas(w, 'feat/cli'), true);
     assert.equal(spawnSync(process.execPath, [SCRIPT, '--container', w.container, '--apply'], { encoding: 'utf8', env }).status, 2);
 });
 
 /** A gh stub over `all` ({ number, mergedAt: 'YYYY-MM-DD', ...pr fields }) that honours `merged:A..B` and caps a page at `cap`, as GitHub search does. */
-const searchGh = (all, cap = 1000, calls = []) => (_repo, args) => {
+const searchGh = (all: PrInfo[], cap = 1000, calls: string[][] = []): GhJson => (_repo, args) => {
     calls.push(args);
     const [a, b] = args[args.indexOf('--search') + 1].replace('merged:', '').split('..');
-    return all.filter((p) => p.mergedAt >= a && p.mergedAt <= b).slice(0, cap);
+    return all.filter((p) => (p.mergedAt as string) >= a && (p.mergedAt as string) <= b).slice(0, cap);
 };
-const daysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+const daysAgo = (n: number): string => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
 
 test('merged PRs are read by date window, so a busy repo is not cut off at one page', () => {
     const w = world(); feature(w, 'feat/old'); mergeInto(w, 'develop', 'feat/old', true);
     const tip = sh(w.repo, 'rev-parse', 'origin/feat/old');
     const filler = Array.from({ length: 1500 }, (_, i) => ({ number: 1000 + i, mergedAt: daysAgo(i % 2 ? 30 : 31), headRefName: `x/${i}`, baseRefName: 'develop', headRefOid: 'f'.repeat(40), url: 'u', body: '' }));
     const mine = { number: 5, mergedAt: daysAgo(31), headRefName: 'feat/old', baseRefName: 'develop', headRefOid: tip, url: 'https://example.com/pull/5', body: '' };
-    const calls = [];
+    const calls: string[][] = [];
     // the stub lists filler first and caps each page, so a single capped query would never reach PR #5
     const r = scanRepo(w.repo, ctxFor({ gh: searchGh([...filler, mine], 1000, calls) }));
     assert.deepEqual(names(r, 'remote-branch'), ['feat/old']);
@@ -416,11 +423,11 @@ test('--explain prints each rule\'s verdict and agrees with the scan, and writes
 
 const COLLEAGUE = 'colleague@example.com';
 /** Commits to an existing pushed branch as `email`, then returns to main. */
-const addTo = (w, branch, file, email = ME) => {
+const addTo = (w: World, branch: string, file: string, email = ME): void => {
     sh(w.repo, 'checkout', '-q', branch); commit(w.repo, file, `${file}\n`, email);
     sh(w.repo, 'push', '-q', 'origin', branch); sh(w.repo, 'checkout', '-q', 'main');
 };
-const listed = (w, over = {}) => names(scanRepo(w.repo, ctxFor(over)), 'remote-branch');
+const listed = (w: World, over: Partial<SweepContext> = {}) => names(scanRepo(w.repo, ctxFor(over)), 'remote-branch');
 
 test('ownership counts every round a branch was merged: a colleague commit from an earlier merge stays foreign', () => {
     const w = world();
@@ -519,15 +526,15 @@ test('a protected release branch counts as mainline, so a branch cut from it is 
 });
 
 test('branchGlob: * stays inside a segment, ** crosses, everything else is literal', () => {
-    const m = (g, b) => branchGlob(g).test(b);
+    const m = (g: string, b: string) => branchGlob(g).test(b);
     assert.deepEqual([m('release/*', 'release/1.0'), m('release/*', 'release/a/b'), m('release/**', 'release/a/b'), m('main', 'feat/main'), m('a.b', 'axb'), m('*', 'a/b')], [true, false, true, false, false, false]);
 });
 
 // ── sweepWorktrees: what `journal.mjs roll` runs ────────────────────────────
 
-const sweep = (w, over = {}, opts = {}) => sweepWorktrees(w.container, ctxFor({ gh: () => [], ...over }), opts);
-const keptReason = (r, path) => r.kept.find((k) => k.path === path)?.reason;
-const worktreeList = (w) => sh(w.repo, 'worktree', 'list', '--porcelain');
+const sweep = (w: World, over: Partial<SweepContext> = {}, opts: Parameters<typeof sweepWorktrees>[2] = {}) => sweepWorktrees(w.container, ctxFor({ gh: () => [], ...over }), opts);
+const keptReason = (r: { kept: { path: string; reason: string }[] }, path: string): string => must(r.kept.find((k) => k.path === path), `kept ${path}`).reason;
+const worktreeList = (w: World) => sh(w.repo, 'worktree', 'list', '--porcelain');
 
 test('sweepWorktrees removes a clean merged worktree, keeps its branch, and a second run is a no-op', () => {
     const w = world(); feature(w, 'feat/done'); mergeInto(w, 'develop', 'feat/done'); mergeInto(w, 'staging', 'feat/done');

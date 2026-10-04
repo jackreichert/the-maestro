@@ -545,7 +545,7 @@ test('handoff scaffolds the five parts from the ledger for one stream only', () 
     assert.match(s3, /Paths: scripts\/foo\.mjs:12/);
     assert.match(section(text, 4), /\[question\] ship on Friday\?/);
     assert.match(section(text, 5), /Author: one concrete first step/);
-    assert.match(text, /^## Cleanup candidates\n\n_Run `node scripts\/branch-sweep\.mjs`/m);
+    assert.match(text, /^## Cleanup candidates\n\n_Run `node scripts\/branch-sweep\.ts`/m);
 });
 
 test('handoff --all covers every stream, tags each item with its stream, and writes a draft named all', () => {

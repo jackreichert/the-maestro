@@ -2,9 +2,9 @@
 /**
  * BRANCH SWEEP: lists worktrees and remote branches that can be deleted, for the user to approve in a batch.
  *
- *   node scripts/branch-sweep.mjs [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]
- *   node scripts/branch-sweep.mjs --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]
- *   node scripts/branch-sweep.mjs --apply-worktrees [--dry-run] [--container <dir>] [--repo <name>]
+ *   node scripts/branch-sweep.ts [--container <dir>] [--repo <name>] [--json] [--no-fetch] [--pr-days <n>] [--explain <branch>]
+ *   node scripts/branch-sweep.ts --apply --ids <repo:hash,...> [--container <dir>] [--repo <name>]
+ *   node scripts/branch-sweep.ts --apply-worktrees [--dry-run] [--container <dir>] [--repo <name>]
  *
  * Read-only by default (it runs `git fetch --prune origin` and nothing else that writes). `--apply` deletes only the
  * listed ids, re-scanning each repo first and refusing anything that no longer qualifies. Deleting is
@@ -39,37 +39,77 @@ import {
   GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, GH_LOGIN, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
 
-const run = (cmd, args, opts = {}) => {
+/** What `run` reports for one command: success, exit status, and trimmed stdout and stderr. */
+export interface CmdResult { ok: boolean; status: number | null; out: string; err: string }
+/** A git call rooted at one repo: `g('rev-parse', 'HEAD')`. */
+export type Git = ((...args: string[]) => CmdResult) & { repo: string };
+/** A merged PR as `gh pr list --json PR_FIELDS` returns it; gh's JSON is not validated, so this is only as right as PR_FIELDS. */
+export interface PrInfo {
+  number: number; baseRefName: string; headRefName: string; headRefOid: string; url: string;
+  body?: string; mergedAt?: string; author?: { login?: string };
+}
+/** Runs `gh <args>` in a repo and returns parsed JSON, or null on any failure. Tests inject their own. */
+export type GhJson = (repo: string, args: string[]) => unknown;
+/** A claim file under Claims/<repo>.lock. */
+export interface Claim { time?: string; pid?: number; host?: string; desk?: string }
+/** Everything a scan reads besides the repo itself: settings, claims, the gh runner, and caches. */
+export interface SweepContext {
+  emails: string[]; protectedNames: string[]; twin: string[]; targets: Record<string, string[]>; idleMinutes: number; prDays: number;
+  protectDirs: string[]; disposableIgnored: string[]; claims: Map<string, Claim>; gh: GhJson; ghLogin: string; fetch: boolean;
+  claimsDir?: string; gitFor?: (repo: string) => Git; worktreesOnly?: boolean; prCache?: Map<string, PrInfo[]>;
+}
+interface Scan { ctx: SweepContext; protectedRefs: string[]; mainline: Set<string> }
+export interface Evidence { how: string; url?: string }
+export interface MergedEvidence { state: 'ok' | 'review' | 'no'; per: (Evidence & { target: string })[]; weak: string[]; missing: string[] }
+interface Commit { sha: string; email: string }
+interface Worktree { path: string; head: string | undefined; branch: string | undefined; detached: boolean; locked: boolean; prunable: boolean }
+interface Live { paths: string[]; error?: string }
+/** A listed candidate: a remote branch or a worktree the user may approve for deletion. */
+export interface ListedItem { id: string; repo: string; kind: 'remote-branch' | 'worktree'; name: string; why: string; prs: string[]; tip?: string; head?: string; detached?: boolean }
+export type ExcludedItem = Omit<ListedItem, 'why' | 'prs'> & { reason: string };
+export interface RepoScan { repo: string; items: ListedItem[]; review: ListedItem[]; excluded: ExcludedItem[]; notes: string[]; fetchFailed?: boolean }
+export interface ApplyResult { id: string; done: boolean; message: string }
+export interface WorktreeSweep {
+  removed: { repo: string; path: string; why: string }[]; pruned: { repo: string; path: string }[];
+  kept: { repo: string; path: string; reason: string }[]; notes: string[]; skipped: string[];
+}
+type Failure = Error & { kind?: string };
+/** A rule: a named check and the reason text for when it fails. `RA` is the argument of `reason`, which is the check's own unless stated. */
+interface Rule<A extends unknown[], V, RA extends unknown[] = A> { name: string; check: (...args: A) => V; reason: (...args: RA) => string }
+
+const errorOf = (e: unknown): Failure => (e instanceof Error ? e : new Error(String(e)));
+
+const run = (cmd: string, args: string[], opts: Record<string, unknown> = {}): CmdResult => {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
   return { ok: r.status === 0, status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 // --no-optional-locks: a scan must not refresh the index, or it would reset the idle clock it reads.
-const gitIn = (repo) => Object.assign((...a) => run('git', ['--no-optional-locks', '-C', repo, ...a]), { repo });
+const gitIn = (repo: string): Git => Object.assign((...a: string[]) => run('git', ['--no-optional-locks', '-C', repo, ...a]), { repo });
 
 /** `gh <args>` as parsed JSON, or null when gh is missing, unauthenticated or fails. The default for ctx.gh. */
-export function ghJson(repo, args) {
+export function ghJson(repo: string, args: string[]): unknown {
   const r = run(process.env.MAESTRO_GH || 'gh', args, { cwd: repo });
   try { return r.ok ? JSON.parse(r.out) : null; } catch { return null; }
 }
 
 /** Item id: bound to the branch tip, so an id from one listing cannot delete a branch that has moved on since. */
-const idOf = (repo, kind, name, tip) => `${repo}:${createHash('sha1').update(`${repo}\0${kind}\0${name}\0${tip}`).digest('hex').slice(0, 8)}`;
+const idOf = (repo: string, kind: string, name: string, tip: string): string => `${repo}:${createHash('sha1').update(`${repo}\0${kind}\0${name}\0${tip}`).digest('hex').slice(0, 8)}`;
 
 /** Live claims (Claims/<repo>.lock under the ledger root), as Map repo -> claim. Stale ones (dead pid here, or over 12h) do not count. */
-export function liveClaims(dir) {
-  const out = new Map();
+export function liveClaims(dir: string | undefined): Map<string, Claim> {
+  const out = new Map<string, Claim>();
   if (!dir || !existsSync(dir)) return out;
   for (const n of readdirSync(dir).filter((f) => f.endsWith('.lock'))) {
-    let c; try { c = JSON.parse(readFileSync(join(dir, n), 'utf8')); } catch { c = {}; }
+    let c: Claim; try { c = JSON.parse(readFileSync(join(dir, n), 'utf8')) as Claim; } catch { c = {}; }
     const age = c.time ? (Date.now() - Date.parse(c.time)) / 36e5 : Infinity;
     let dead = false;
-    if (c.pid && c.host === hostname()) { try { process.kill(c.pid, 0); } catch (e) { dead = e.code !== 'EPERM'; } }
+    if (c.pid && c.host === hostname()) { try { process.kill(c.pid, 0); } catch (e) { dead = (e as NodeJS.ErrnoException).code !== 'EPERM'; } }
     if (!dead && age <= 12) out.set(n.slice(0, -5), c);
   }
   return out;
 }
 
-export function defaultContext(over = {}) {
+export function defaultContext(over: Partial<SweepContext> = {}): SweepContext {
   const claimsDir = over.claimsDir ?? process.env.MAESTRO_CLAIMS_DIR ?? ((LEDGER_ROOT || VAULT_ROOT) && join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONTAINER_PROJECT, 'Claims'));
   return {
     emails: GIT_EMAILS, protectedNames: PROTECTED_BRANCHES, twin: TWIN_FLOW_REPOS, targets: SWEEP_MERGE_TARGETS,
@@ -78,8 +118,8 @@ export function defaultContext(over = {}) {
 }
 
 /** Merge targets for a repo: explicit entry, else develop + staging in twin-flow repos, else develop. Falls back to the origin default branch for a non-twin repo with no develop. */
-function targetsFor(g, name, ctx) {
-  const exists = (b) => g('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).ok;
+function targetsFor(g: Git, name: string, ctx: SweepContext): { targets?: string[]; error?: string } {
+  const exists = (b: string): boolean => g('rev-parse', '--verify', '-q', `refs/remotes/origin/${b}`).ok;
   const wanted = ctx.targets[name] || (ctx.twin.includes(name) ? ['develop', 'staging'] : ['develop']);
   const missing = wanted.filter((b) => !exists(b));
   if (!missing.length) return { targets: wanted };
@@ -88,31 +128,32 @@ function targetsFor(g, name, ctx) {
   return { error: `merge target ${missing.join(', ')} not on origin` };
 }
 
-const rule = (name, check, reason) => ({ name, check, reason });
-const firstFailure = (rules, c) => rules.find((r) => !r.check(c));
+const rule = <A extends unknown[], V, RA extends unknown[] = A>(name: string, check: (...args: A) => V, reason: (...args: RA) => string): Rule<A, V, RA> => ({ name, check, reason });
+const firstFailure = <C, V>(rules: Rule<[C], V>[], c: C): Rule<[C], V> | undefined => rules.find((r) => !r.check(c));
 
 /** A git or gh call that failed. The item it was judging does not qualify; `kind` says which tool, so gh outages are noted once. */
 class SweepError extends Error {
-  constructor(message, kind = 'git') { super(message); this.kind = kind; }
+  kind: string;
+  constructor(message: string, kind = 'git') { super(message); this.kind = kind; }
 }
 /** stdout of a git call that must succeed; any failure throws. */
-function must(g, ...args) {
+function must(g: Git, ...args: string[]): string {
   const r = g(...args);
   if (!r.ok) throw new SweepError(`git ${args.slice(0, 2).join(' ')} failed: ${r.err || `exit ${r.status}`}`);
   return r.out;
 }
 /** `merge-base --is-ancestor`: exit 0 is yes, 1 is no, anything else is an error. */
-function isAncestor(g, a, b) {
+function isAncestor(g: Git, a: string, b: string): boolean {
   const r = g('merge-base', '--is-ancestor', a, b);
   if (r.status !== 0 && r.status !== 1) throw new SweepError(`git merge-base --is-ancestor failed: ${r.err || `exit ${r.status}`}`);
   return r.status === 0;
 }
 
 /** Commits on the first-parent line of every protected ref: the mainline, which no branch owns. */
-const mainlineOf = (g, protectedRefs) => new Set(protectedRefs.flatMap((p) => must(g, 'rev-list', '--first-parent', p).split('\n').filter(Boolean)));
+const mainlineOf = (g: Git, protectedRefs: string[]): Set<string> => new Set(protectedRefs.flatMap((p) => must(g, 'rev-list', '--first-parent', p).split('\n').filter(Boolean)));
 
 /** The origin refs (as `origin/<name>`) that contain `commit`, in one call. Full ref names are listed, so an ambiguous short name cannot misreport. */
-const containing = (g, commit) => new Set(must(g, 'for-each-ref', '--contains', commit, '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean).map((f) => f.replace(/^refs\/remotes\//, '')));
+const containing = (g: Git, commit: string): Set<string> => new Set(must(g, 'for-each-ref', '--contains', commit, '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean).map((f) => f.replace(/^refs\/remotes\//, '')));
 
 /**
  * For each protected ref in `tips` that already contains `ref`: the mainline commit just before the OLDEST first-parent merge that brought `ref` in (a merge, not
@@ -122,15 +163,15 @@ const containing = (g, commit) => new Set(must(g, 'for-each-ref', '--contains', 
  * One git call: every commit the tips have and `ref` lacks is listed with its parents, so a parent that is NOT listed
  * is reachable from `ref`.
  */
-function forkPoints(g, ref, tips) {
+function forkPoints(g: Git, ref: string, tips: string[]): string[] {
   if (!tips.length) return [];
-  const parents = new Map(must(g, 'rev-list', '--parents', `^${ref}`, ...tips).split('\n').filter(Boolean).map((l) => { const [sha, ...ps] = l.split(' '); return [sha, ps]; }));
+  const parents = new Map<string, string[]>(must(g, 'rev-list', '--parents', `^${ref}`, ...tips).split('\n').filter(Boolean).map((l) => { const [sha, ...ps] = l.split(' '); return [sha, ps]; }));
   const forks = must(g, 'rev-parse', ...tips).split('\n').map((tip) => {
-    const line = []; // the tip's first-parent line down to where `ref` is reachable, newest first
-    for (let c = tip; parents.has(c); c = parents.get(c)[0]) line.push(c);
-    return line.reverse().map((c) => parents.get(c)).find(([, ...others]) => others.some((o) => !parents.has(o)))?.[0];
+    const line: string[] = []; // the tip's first-parent line down to where `ref` is reachable, newest first
+    for (let c = tip; parents.has(c); c = (parents.get(c) as string[])[0] as string) line.push(c);
+    return line.reverse().map((c) => parents.get(c) as string[]).find(([, ...others]) => others.some((o) => !parents.has(o)))?.[0];
   });
-  return [...new Set(forks.filter(Boolean))];
+  return [...new Set(forks.filter((f): f is string => Boolean(f)))];
 }
 
 /**
@@ -141,7 +182,7 @@ function forkPoints(g, ref, tips) {
  * subtracted against all of them) and mainline. A squash or rebase merge leaves the branch's commits all here; a
  * --no-ff merge keeps them here too, which is what lets a merged branch be judged by who wrote it.
  */
-function ownCommits(g, ref, scan) {
+function ownCommits(g: Git, ref: string, scan: Scan): Commit[] {
   const { protectedRefs, mainline } = scan;
   const has = containing(g, ref);
   const outside = protectedRefs.filter((p) => !has.has(p));
@@ -150,8 +191,10 @@ function ownCommits(g, ref, scan) {
   return log.split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([sha]) => !mainline.has(sha)).map(([sha, email]) => ({ sha, email }));
 }
 
+interface OwnCtx { emails: string[]; ghLogin: string; own: Commit[]; exactPrs: () => PrInfo[] }
+
 /** Ownership rules. A branch is the user's only when all pass; no commit of its own is never enough by itself. */
-const OWNERSHIP_RULES = [
+const OWNERSHIP_RULES: Rule<[OwnCtx], boolean>[] = [
   rule('emails configured', (c) => c.emails.length > 0, () => 'no author emails (git_emails or user.email)'),
   rule('has commits of its own, or an exact merged PR the user opened', (c) => c.own.length > 0 || c.exactPrs().some((p) => c.ghLogin && p.author?.login === c.ghLogin),
     () => 'no commits of its own and no merged PR with this head opened by the user (gh_login)'),
@@ -160,25 +203,25 @@ const OWNERSHIP_RULES = [
 ];
 
 /** The user's author emails: the configured list, else the repo's own user.email. */
-const emailsFor = (g, ctx) => (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
+const emailsFor = (g: Git, ctx: SweepContext): string[] => (ctx.emails.length ? ctx.emails : [g('config', 'user.email').out]).filter(Boolean);
 
-function isMine(g, ref, branch, tip, scan) {
+function isMine(g: Git, ref: string, branch: string, tip: string, scan: Scan): { ok: boolean; reason?: string } {
   const { ctx } = scan;
   const emails = emailsFor(g, ctx);
-  const c = { emails, ghLogin: ctx.ghLogin, own: ownCommits(g, ref, scan), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
+  const c: OwnCtx = { emails, ghLogin: ctx.ghLogin, own: ownCommits(g, ref, scan), exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
   const failed = firstFailure(OWNERSHIP_RULES, c);
   return failed ? { ok: false, reason: failed.reason(c) } : { ok: true };
 }
 
 const PR_FIELDS = 'number,baseRefName,headRefName,headRefOid,url,body,mergedAt,author';
 const PR_PAGE = 1000; // gh search returns at most this many per query; a full page means the window may hold more
-const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+const day = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 /** Merged PRs whose merge date falls in [from, to] (UTC days). A full page splits the window in two, so nothing is cut off. */
-function mergedWindow(repo, ctx, from, to) {
+function mergedWindow(repo: string, ctx: SweepContext, from: number, to: number): PrInfo[] {
   const prs = ctx.gh(repo, ['pr', 'list', '--state', 'merged', '--search', `merged:${day(from)}..${day(to)}`, '--limit', String(PR_PAGE), '--json', PR_FIELDS]);
   if (!Array.isArray(prs)) throw new SweepError('gh pr list failed: PR evidence unavailable', 'gh');
-  if (prs.length < PR_PAGE || day(from) === day(to)) return prs;
+  if (prs.length < PR_PAGE || day(from) === day(to)) return prs as PrInfo[];
   const mid = from + Math.floor((to - from) / 864e5 / 2) * 864e5;
   return [...mergedWindow(repo, ctx, from, mid), ...mergedWindow(repo, ctx, mid + 864e5, to)];
 }
@@ -188,31 +231,35 @@ function mergedWindow(repo, ctx, from, to) {
  * (a plain `gh pr list --limit` is capped and sorted by creation, so it silently drops merged PRs). An older PR just
  * reads as not merged. A failed call throws.
  */
-function mergedPrs(repo, ctx) {
+function mergedPrs(repo: string, ctx: SweepContext): PrInfo[] {
   ctx.prCache ??= new Map();
   if (!ctx.prCache.has(repo)) {
     const end = Date.parse(day(Date.now())); const start = end - (ctx.prDays ?? 180) * 864e5;
-    const byNumber = new Map();
+    const byNumber = new Map<number, PrInfo>();
     for (let from = start; from <= end; from += 14 * 864e5) {
       for (const p of mergedWindow(repo, ctx, from, Math.min(from + 13 * 864e5, end))) byNumber.set(p.number, p);
     }
     ctx.prCache.set(repo, [...byNumber.values()]);
   }
-  return ctx.prCache.get(repo);
+  return ctx.prCache.get(repo) as PrInfo[];
 }
 
 /** Merged PRs whose head ref is `name` and whose head commit is exactly `tip`. */
-const exactPrs = (repo, name, tip, ctx) => mergedPrs(repo, ctx).filter((p) => p.headRefName === name && p.headRefOid === tip);
+const exactPrs = (repo: string, name: string, tip: string, ctx: SweepContext): PrInfo[] => mergedPrs(repo, ctx).filter((p) => p.headRefName === name && p.headRefOid === tip);
 
 /** A twin branch name differs only by a `-staging` / `-develop` suffix: `x` and `x-staging`, `x` and `x-develop`, `x-develop` and `x-staging`. */
-const stem = (b) => b.replace(/-(staging|develop)$/, '');
-const prNumbers = (body) => new Set([...(body || '').matchAll(/(?:#|\/pull\/)(\d+)/g)].map((m) => Number(m[1])));
+const stem = (b: string): string => b.replace(/-(staging|develop)$/, '');
+const prNumbers = (body: string | undefined): Set<number> => new Set([...(body || '').matchAll(/(?:#|\/pull\/)(\d+)/g)].map((m) => Number(m[1])));
 
 /** Epoch ms of a PR's mergedAt, NaN when absent, so every comparison against it is false. */
-const mergedAtMs = (q) => Date.parse(q.mergedAt ?? '');
+const mergedAtMs = (q: PrInfo): number => Date.parse(q.mergedAt ?? '');
+
+interface MergeCtx {
+  g: Git; ref: string; name: string; tip: string; ctx: SweepContext; targets: string[]; emails: string[]; scan: Scan; exact: () => PrInfo[];
+}
 
 /** Twin PR rules: `check` gets (c, q, own) for a candidate merged PR `q` into the twin target; all must pass. */
-const TWIN_RULES = [
+const TWIN_RULES: Rule<[MergeCtx, PrInfo, PrInfo[]], boolean>[] = [
   rule('merged after the branch\'s own PR', (c, q, own) => own.some((p) => mergedAtMs(q) >= mergedAtMs(p)), () => 'merged before the branch\'s own PR'),
   rule('twin head commit is readable', (c, q) => c.g('cat-file', '-e', `${q.headRefOid}^{commit}`).ok, () => 'twin head commit not in this repo'),
   rule('twin branch tip matches the PR', (c, q) => {
@@ -232,24 +279,24 @@ const TWIN_RULES = [
  * merged on or after that PR, head commit by the user alone, and its branch (if still on origin) still at the PR's head.
  * The twin's own branch is judged separately, on this same rule. Only merged PRs are ever listed, so state is merged.
  */
-function twinPr(c, target) {
+function twinPr(c: MergeCtx, target: string): PrInfo | null {
   const own = c.exact().filter((p) => p.baseRefName !== target && c.targets.includes(p.baseRefName));
   if (!own.length) return null;
-  const linked = (q) => own.some((p) => prNumbers(q.body).has(p.number) && prNumbers(p.body).has(q.number));
+  const linked = (q: PrInfo): boolean => own.some((p) => prNumbers(q.body).has(p.number) && prNumbers(p.body).has(q.number));
   return mergedPrs(c.g.repo, c.ctx)
     .filter((q) => q.baseRefName === target && q.headRefName !== c.name && (stem(q.headRefName) === stem(c.name) || linked(q)))
     .find((q) => TWIN_RULES.every((r) => r.check(c, q, own))) || null;
 }
 
 /** Evidence that the branch is merged into one target; the first rule that returns evidence wins. `check` gets (c, target). */
-const TARGET_RULES = [
+const TARGET_RULES: Rule<[MergeCtx, string], Evidence | false | null | undefined, [Evidence]>[] = [
   rule('ancestry', (c, t) => isAncestor(c.g, c.ref, `origin/${t}`) && { how: 'ancestry' }, (ev) => ev.how),
   rule('own merged PR', (c, t) => { const pr = c.exact().find((p) => p.baseRefName === t); return pr && { how: `PR #${pr.number}`, url: pr.url }; }, (ev) => ev.how),
   rule('twin PR', (c, t) => { const pr = twinPr(c, t); return pr && { how: `twin PR #${pr.number} (${pr.headRefName})`, url: pr.url }; }, (ev) => ev.how),
 ];
 
 /** Every commit has a patch-equivalent in the target. Alone this is weak: a revert of a squash merge still matches. */
-function cherryEquivalent(g, target, ref) {
+function cherryEquivalent(g: Git, target: string, ref: string): boolean {
   const lines = must(g, 'cherry', target, ref).split('\n').filter(Boolean);
   return lines.length > 0 && !lines.some((l) => l.startsWith('+'));
 }
@@ -258,12 +305,12 @@ function cherryEquivalent(g, target, ref) {
  * Is `ref` (branch `name`, at `tip`) merged into every target? state 'ok' (every target has ancestry or PR
  * evidence), 'review' (the rest only patch-equivalent), or 'no'. Throws on a failed git or gh call.
  */
-function mergedEvidence(g, ref, name, tip, targets, scan) {
+function mergedEvidence(g: Git, ref: string, name: string, tip: string, targets: string[], scan: Scan): MergedEvidence {
   const { ctx } = scan;
-  const c = { g, ref, name, tip, ctx, targets, emails: emailsFor(g, ctx), scan, exact: () => exactPrs(g.repo, name, tip, ctx) };
-  const per = []; const weak = []; const missing = [];
+  const c: MergeCtx = { g, ref, name, tip, ctx, targets, emails: emailsFor(g, ctx), scan, exact: () => exactPrs(g.repo, name, tip, ctx) };
+  const per: MergedEvidence['per'] = []; const weak: string[] = []; const missing: string[] = [];
   for (const t of targets) {
-    let hit = null;
+    let hit: Evidence | false | null | undefined = null;
     for (const r of TARGET_RULES) { hit = r.check(c, t); if (hit) break; }
     if (hit) per.push({ target: t, ...hit });
     else if (cherryEquivalent(g, `origin/${t}`, ref)) weak.push(t);
@@ -272,28 +319,29 @@ function mergedEvidence(g, ref, name, tip, targets, scan) {
   return { state: missing.length ? 'no' : weak.length ? 'review' : 'ok', per, weak, missing };
 }
 
-const why = (ev) => `merged into ${[...ev.per.map((p) => `${p.target} (${p.how})`), ...ev.weak.map((t) => `${t} (patch-equivalent only)`)].join(' and ')}`;
-const links = (ev) => ev.per.filter((p) => p.url).map((p) => p.url);
+const why = (ev: MergedEvidence): string => `merged into ${[...ev.per.map((p) => `${p.target} (${p.how})`), ...ev.weak.map((t) => `${t} (patch-equivalent only)`)].join(' and ')}`;
+const links = (ev: MergedEvidence): string[] => ev.per.filter((p) => p.url).map((p) => p.url as string);
 
 /** Linked worktrees of a repo: [{ path, head, branch, detached, locked, prunable }]; the main worktree and bare entries are left out. Throws if git cannot list them. */
-function worktrees(g) {
+function worktrees(g: Git): Worktree[] {
   const blocks = must(g, 'worktree', 'list', '--porcelain').split('\n\n').slice(1);
-  return blocks.map((b) => {
-    const f = (k) => b.split('\n').find((l) => l === k || l.startsWith(`${k} `));
+  return blocks.map((b): Omit<Worktree, 'path'> & { path: string | undefined } => {
+    const f = (k: string): string | undefined => b.split('\n').find((l) => l === k || l.startsWith(`${k} `));
     return { path: f('worktree')?.slice(9), head: f('HEAD')?.slice(5), branch: f('branch')?.replace('branch refs/heads/', ''), detached: !!f('detached'), locked: !!f('locked'), prunable: !!f('prunable') };
-  }).filter((w) => w.path && (w.branch || w.detached));
+  }).filter((w): w is Worktree => Boolean(w.path && (w.branch || w.detached)));
 }
 
-const expandHome = (p) => (p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p);
+const expandHome = (p: string): string => (p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p);
 
 /** Real targets of the symlinks in the skill dirs: the checkouts live skills are loaded from. Throws if a dir cannot be read. */
-function liveSkillTargets(repoPath, ctx) {
+function liveSkillTargets(repoPath: string, ctx: SweepContext): string[] {
   const dirs = [join(homedir(), '.claude', 'skills'), join(dirname(repoPath), '.claude', 'skills'), ...(ctx.protectDirs || []).map(expandHome)];
   return dirs.flatMap((d) => {
     let entries;
     try { entries = readdirSync(d, { withFileTypes: true }); } catch (e) {
-      if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return [];
-      throw new Error(`cannot read skill dir ${d} (${e.code})`);
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return [];
+      throw new Error(`cannot read skill dir ${d} (${code})`);
     }
     return entries.filter((e) => e.isSymbolicLink()).flatMap((e) => {
       try { return [realpathSync(join(d, e.name))]; } catch { return []; } // a dangling link points at nothing a worktree could be
@@ -302,11 +350,16 @@ function liveSkillTargets(repoPath, ctx) {
 }
 
 /** Worktree rules, in order: the first that fails keeps the worktree. `check` gets { g, w, repoName, ctx, live, status }. */
-const WORKTREE_RULES = [
+interface WorktreeCtx {
+  g: Git; w: Worktree; repoName: string; ctx: SweepContext; live: Live; statusError: string; real: string;
+  tracked: string[]; untracked: string[]; keptIgnored: string[]; idle: number;
+}
+
+const WORKTREE_RULES: Rule<[WorktreeCtx], boolean>[] = [
   rule('not locked', (c) => !c.w.locked, () => 'locked'),
   rule('directory present', (c) => !c.w.prunable && existsSync(c.w.path), () => 'directory missing: run git worktree prune'),
-  rule('no live claim', (c) => !c.ctx.claims.get(c.repoName), (c) => `repo claimed by ${c.ctx.claims.get(c.repoName).desk || 'a desk'}`),
-  rule('skill dirs readable', (c) => !c.live.error, (c) => c.live.error),
+  rule('no live claim', (c) => !c.ctx.claims.get(c.repoName), (c) => `repo claimed by ${c.ctx.claims.get(c.repoName)?.desk || 'a desk'}`),
+  rule('skill dirs readable', (c) => !c.live.error, (c) => c.live.error as string),
   rule('not a live skill', (c) => !c.live.paths.some((t) => t === c.real || t.startsWith(c.real + sep)), () => 'a skill directory symlinks into it: live skill'),
   rule('status readable', (c) => !c.statusError, (c) => `cannot read status: ${c.statusError}`),
   rule('no uncommitted changes', (c) => c.tracked.length === 0, (c) => `uncommitted changes (${c.tracked.length} files)`),
@@ -316,15 +369,15 @@ const WORKTREE_RULES = [
   rule('idle', (c) => c.idle >= c.ctx.idleMinutes, (c) => `modified ${Math.round(c.idle)} min ago (idle window ${c.ctx.idleMinutes})`),
 ];
 
-function worktreeBlocker(g, w, repoName, ctx, live) {
+function worktreeBlocker(g: Git, w: Worktree, repoName: string, ctx: SweepContext, live: Live): string | null {
   const wg = existsSync(w.path) ? gitIn(w.path) : null;
-  const status = wg ? wg('status', '--porcelain', '--untracked-files=all', '--ignored=matching') : { ok: true, out: '' };
+  const status: CmdResult = wg ? wg('status', '--porcelain', '--untracked-files=all', '--ignored=matching') : { ok: true, status: 0, out: '', err: '' };
   const lines = status.out.split('\n').filter(Boolean);
   const disposable = new Set(ctx.disposableIgnored || []);
   const ignored = lines.filter((l) => l.startsWith('!!')).map((l) => l.slice(3));
   const gitDir = wg ? wg('rev-parse', '--absolute-git-dir').out : '';
   const stamps = wg ? [w.path, `${gitDir}/HEAD`, `${gitDir}/index`, `${gitDir}/logs/HEAD`].filter(existsSync).map((p) => statSync(p).mtimeMs) : [];
-  const c = {
+  const c: WorktreeCtx = {
     g, w, repoName, ctx, live, statusError: status.ok ? '' : status.err || 'git status failed', real: wg ? realpathSync(w.path) : w.path,
     tracked: lines.filter((l) => !l.startsWith('??') && !l.startsWith('!!')), untracked: lines.filter((l) => l.startsWith('??')),
     keptIgnored: ignored.filter((p) => !p.split('/').some((seg) => disposable.has(seg))),
@@ -335,21 +388,21 @@ function worktreeBlocker(g, w, repoName, ctx, live) {
 }
 
 /** Branch names compared as git resolves them: a `refs/heads/` or `origin/` prefix does not make `develop` a different branch. */
-const bare = (b) => b.replace(/^(refs\/heads\/|refs\/remotes\/|origin\/)+/, '');
+const bare = (b: string): string => b.replace(/^(refs\/heads\/|refs\/remotes\/|origin\/)+/, '');
 
-const escapeRe = (t) => t.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+const escapeRe = (t: string): string => t.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 /** A branch glob as a RegExp over the whole name: `*` stays inside one path segment, `**` crosses them, anything else is literal. */
-export const branchGlob = (glob) => new RegExp(`^${glob.split('**').map((part) => part.split('*').map(escapeRe).join('[^/]*')).join('.*')}$`);
+export const branchGlob = (glob: string): RegExp => new RegExp(`^${glob.split('**').map((part) => part.split('*').map(escapeRe).join('[^/]*')).join('.*')}$`);
 
 /**
  * What counts as protected in one repo: the configured patterns (globs), the merge targets and the default branch.
  * { isProtected(branch), protectedRefs: the origin refs that match (as `origin/<name>`), refs: every origin ref }.
  * Throws if git cannot list the refs.
  */
-function protection(g, ctx, targets) {
+function protection(g: Git, ctx: SweepContext, targets: string[]): { isProtected: (b: string) => boolean; refs: string[]; protectedRefs: string[] } {
   const head = g('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
   const matchers = [...ctx.protectedNames, ...targets, head].filter(Boolean).map(branchGlob);
-  const isProtected = (b) => matchers.some((re) => re.test(b) || re.test(bare(b)));
+  const isProtected = (b: string): boolean => matchers.some((re) => re.test(b) || re.test(bare(b)));
   const refs = must(g, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin').split('\n').filter(Boolean);
   const names = refs.map((f) => f.slice('refs/remotes/origin/'.length)).filter((b) => b !== 'HEAD');
   const protectedRefs = names.filter(isProtected).map((b) => `origin/${b}`);
@@ -357,41 +410,43 @@ function protection(g, ctx, targets) {
 }
 
 /** One branch judged: { tip, mine, reason, ev, error }. Evidence is only sought for a branch that is the user's. */
-function assess(g, ref, branch, targets, scan) {
-  const a = { tip: null, mine: false, reason: '', ev: null, error: null };
+interface Assessment { tip: string | null; mine: boolean; reason: string; ev: MergedEvidence | null; error: Failure | null }
+function assess(g: Git, ref: string, branch: string, targets: string[], scan: Scan): Assessment {
+  const a: Assessment = { tip: null, mine: false, reason: '', ev: null, error: null };
   try {
     a.tip = must(g, 'rev-parse', ref);
     const own = isMine(g, ref, branch, a.tip, scan);
     a.mine = own.ok; a.reason = own.reason || '';
-  } catch (e) { a.error = e; return a; }
+  } catch (e) { a.error = errorOf(e); return a; }
   if (!a.mine) return a;
-  try { a.ev = mergedEvidence(g, ref, branch, a.tip, targets, scan); } catch (e) { a.error = e; }
+  try { a.ev = mergedEvidence(g, ref, branch, a.tip as string, targets, scan); } catch (e) { a.error = errorOf(e); }
   return a;
 }
 
 /** Records why an item was skipped: a git error names the item, a gh outage is noted once per repo. */
-function noteError(res, e, label) {
+function noteError(res: RepoScan, e: Failure, label: string): void {
   const msg = e.kind === 'gh' ? `${e.message}; branches needing it were skipped` : `${label} skipped: ${e.message}`;
   if (!res.notes.includes(msg)) res.notes.push(msg);
 }
 
 /** Scans one repo: { repo, items: qualifying, review: cherry-only, excluded: worktrees that fail a check, notes }. */
-export function scanRepo(repoPath, ctx) {
+export function scanRepo(repoPath: string, ctx: SweepContext): RepoScan {
   const name = basename(repoPath);
   const g = (ctx.gitFor || gitIn)(repoPath);
-  const res = { repo: name, items: [], review: [], excluded: [], notes: [] };
+  const res: RepoScan = { repo: name, items: [], review: [], excluded: [], notes: [] };
   if (!g('remote', 'get-url', 'origin').ok) { res.notes.push('no origin remote'); return res; }
   if (ctx.fetch && !g('fetch', '--prune', 'origin').ok) { res.notes.push('git fetch failed; using the refs already here'); res.fetchFailed = true; }
-  const { targets, error } = targetsFor(g, name, ctx);
+  const { targets: found, error } = targetsFor(g, name, ctx);
   if (error) { res.notes.push(error); return res; }
-  let live; try { live = { paths: liveSkillTargets(repoPath, ctx) }; } catch (e) { live = { paths: [], error: e.message }; }
-  let scan; let refs; let wts; let isProtected;
+  const targets = found as string[];
+  let live: Live; try { live = { paths: liveSkillTargets(repoPath, ctx) }; } catch (e) { live = { paths: [], error: errorOf(e).message }; }
+  let scan: Scan; let refs: string[]; let wts: Worktree[]; let isProtected: (b: string) => boolean;
   try {
     const prot = protection(g, ctx, targets);
     ({ isProtected, refs } = prot);
     scan = { ctx, protectedRefs: prot.protectedRefs, mainline: mainlineOf(g, prot.protectedRefs) };
     wts = worktrees(g);
-  } catch (e) { res.notes.push(`scan stopped: ${e.message}`); return res; }
+  } catch (e) { res.notes.push(`scan stopped: ${errorOf(e).message}`); return res; }
 
   for (const full of ctx.worktreesOnly ? [] : refs) {
     const branch = full.slice('refs/remotes/origin/'.length);
@@ -399,21 +454,21 @@ export function scanRepo(repoPath, ctx) {
     const a = assess(g, full, branch, targets, scan);
     if (a.error) { noteError(res, a.error, `branch ${branch}`); continue; }
     if (!a.ev || a.ev.state === 'no') continue;
-    (a.ev.state === 'ok' ? res.items : res.review).push({ id: idOf(name, 'remote-branch', branch, a.tip), repo: name, kind: 'remote-branch', name: branch, tip: a.tip, why: why(a.ev), prs: links(a.ev) });
+    (a.ev.state === 'ok' ? res.items : res.review).push({ id: idOf(name, 'remote-branch', branch, a.tip as string), repo: name, kind: 'remote-branch', name: branch, tip: a.tip as string, why: why(a.ev), prs: links(a.ev) });
   }
   for (const w of wts) {
     if (w.detached) scanDetached({ g, w, name, scan, live, res });
-    else if (!isProtected(w.branch)) scanWorktree({ g, w, name, targets, scan, live, res });
+    else if (!isProtected(w.branch as string)) scanWorktree({ g, w, name, targets, scan, live, res });
   }
   return res;
 }
 
 /** Why a worktree whose branch is not merged stays: the branch's state first, then anything uncommitted or in use. */
-function unmergedReason(g, w, name, scan, live, a, ahead) {
+function unmergedReason(g: Git, w: Worktree, name: string, scan: Scan, live: Live, a: Assessment, ahead: number | null): string {
   const own = !a.mine ? `branch ${w.branch} is not yours (${a.reason})`
     : ahead === null ? `branch ${w.branch} is not merged and git could not count what is unpushed`
       : ahead > 0 ? `branch ${w.branch} has ${ahead} unpushed commit(s)`
-        : `branch ${w.branch} is pushed but not merged into ${a.ev.missing.join(', ')}`;
+        : `branch ${w.branch} is pushed but not merged into ${(a.ev as MergedEvidence).missing.join(', ')}`;
   const blocker = worktreeBlocker(g, w, name, scan.ctx, live);
   return blocker ? `${own}; ${blocker}` : own;
 }
@@ -422,28 +477,28 @@ function unmergedReason(g, w, name, scan, live, a, ahead) {
  * One detached worktree. It qualifies when HEAD is reachable from some origin ref (so nothing is lost with it) and it
  * passes every worktree rule; no branch exists to judge, and no merge evidence is needed.
  */
-function scanDetached({ g, w, name, scan, live, res }) {
-  const base = { id: idOf(name, 'worktree', w.path, w.head || 'unknown'), repo: name, kind: 'worktree', name: w.path, head: w.head, detached: true };
+function scanDetached({ g, w, name, scan, live, res }: { g: Git; w: Worktree; name: string; scan: Scan; live: Live; res: RepoScan }): void {
+  const base = { id: idOf(name, 'worktree', w.path, w.head || 'unknown'), repo: name, kind: 'worktree' as const, name: w.path, head: w.head, detached: true };
   const short = (w.head || '').slice(0, 9);
   const ahead = w.head ? unpushedCount(g, w.head) : null;
   const reason = ahead === null ? `detached HEAD ${short}: git could not count what is not on origin`
     : ahead > 0 ? `detached HEAD ${short} holds ${ahead} commit(s) not on any origin ref` : '';
   const blocker = reason ? null : worktreeBlocker(g, w, name, scan.ctx, live);
-  if (reason || blocker) { res.excluded.push({ ...base, reason: reason || blocker }); return; }
+  if (reason || blocker) { res.excluded.push({ ...base, reason: reason || (blocker as string) }); return; }
   res.items.push({ ...base, why: `detached at ${short}, reachable from origin`, prs: [] });
 }
 
 /** Commits of `ref` that no origin ref contains, or null when git cannot count them. */
-function unpushedCount(g, ref) {
+function unpushedCount(g: Git, ref: string): number | null {
   const r = g('rev-list', '--count', ref, '--not', '--remotes=origin');
   return r.ok && /^\d+$/.test(r.out) ? Number(r.out) : null;
 }
 
 /** One linked worktree: qualifies on its branch (or a deleted upstream with nothing unpushed), then must pass every worktree rule. */
-function scanWorktree({ g, w, name, targets, scan, live, res }) {
+function scanWorktree({ g, w, name, targets, scan, live, res }: { g: Git; w: Worktree; name: string; targets: string[]; scan: Scan; live: Live; res: RepoScan }): void {
   const ref = `refs/heads/${w.branch}`;
-  const a = assess(g, ref, w.branch, targets, scan);
-  const base = { id: idOf(name, 'worktree', w.path, a.tip || 'unknown'), repo: name, kind: 'worktree', name: w.path, head: w.head };
+  const a = assess(g, ref, w.branch as string, targets, scan);
+  const base = { id: idOf(name, 'worktree', w.path, a.tip || 'unknown'), repo: name, kind: 'worktree' as const, name: w.path, head: w.head };
   // Gone means the branch tracks its own name on origin and that ref was deleted; `-b x origin/develop` tracks develop.
   const gone = g('config', `branch.${w.branch}.remote`).out === 'origin' && g('config', `branch.${w.branch}.merge`).out === ref
     && !g('rev-parse', '--verify', '-q', `refs/remotes/origin/${w.branch}`).ok;
@@ -463,50 +518,56 @@ function scanWorktree({ g, w, name, targets, scan, live, res }) {
   }
   const blocker = worktreeBlocker(g, w, name, scan.ctx, live);
   if (blocker) { res.excluded.push({ ...base, reason: blocker }); return; }
-  if (state === 'ok') res.items.push({ ...base, why: `branch ${w.branch}: ${why(a.ev)}`, prs: links(a.ev) });
+  if (state === 'ok') res.items.push({ ...base, why: `branch ${w.branch}: ${why(a.ev as MergedEvidence)}`, prs: links(a.ev as MergedEvidence) });
   else if (goneClean) res.items.push({ ...base, why: `branch ${w.branch} deleted on origin, nothing unpushed`, prs: [] });
-  else if (state === 'review') res.review.push({ ...base, why: `branch ${w.branch}: ${why(a.ev)}`, prs: links(a.ev) });
+  else if (state === 'review') res.review.push({ ...base, why: `branch ${w.branch}: ${why(a.ev as MergedEvidence)}`, prs: links(a.ev as MergedEvidence) });
 }
 
 /** Runs a rule list's checks one by one and prints each verdict; a thrown git or gh error prints as the verdict. */
-const verdict = (label, r, ...args) => {
-  try { const v = r.check(...args); return `  ${v ? 'PASS' : 'FAIL'} ${label}${v && v.how ? `: ${v.how}` : ''}${!v && r.reason && args.length === 1 ? ` (${r.reason(...args)})` : ''}`; } catch (e) { return `  ERROR ${label}: ${e.message}`; }
+const verdict = <A extends unknown[], V extends boolean | Evidence | null | undefined, RA extends unknown[]>(label: string, r: Rule<A, V, RA>, ...args: A): string => {
+  try {
+    const v = r.check(...args);
+    const how = v && typeof v === 'object' ? v.how : '';
+    // reason takes the check's own arguments, except for TARGET_RULES, whose reason is never reached: it only runs with exactly one.
+    return `  ${v ? 'PASS' : 'FAIL'} ${label}${how ? `: ${how}` : ''}${!v && args.length === 1 ? ` (${r.reason(...(args as unknown as RA))})` : ''}`;
+  } catch (e) { return `  ERROR ${label}: ${errorOf(e).message}`; }
 };
 
 /** Per-rule verdicts for one remote branch, for --explain: ownership, then every target rule, then the overall result. Read-only. */
-export function explain(repoPath, ctx, branch) {
+export function explain(repoPath: string, ctx: SweepContext, branch: string): string[] {
   const g = (ctx.gitFor || gitIn)(repoPath);
   const out = [`${basename(repoPath)} ${branch}`];
   if (ctx.fetch && !g('fetch', '--prune', 'origin').ok) out.push('  note: git fetch failed; using the refs already here');
   const ref = `refs/remotes/origin/${branch}`;
   if (!g('rev-parse', '--verify', '-q', ref).ok) return [...out, '  not on origin'];
-  const { targets, error } = targetsFor(g, basename(repoPath), ctx);
+  const { targets: found, error } = targetsFor(g, basename(repoPath), ctx);
   if (error) return [...out, `  ${error}`];
+  const targets = found as string[];
   let prot;
-  try { prot = protection(g, ctx, targets); } catch (e) { return [...out, `  ERROR ${e.message}`]; }
+  try { prot = protection(g, ctx, targets); } catch (e) { return [...out, `  ERROR ${errorOf(e).message}`]; }
   if (prot.isProtected(branch)) return [...out, '  FAIL protected branch'];
   try {
     const tip = must(g, 'rev-parse', ref);
     const emails = emailsFor(g, ctx);
     const scan = { ctx, protectedRefs: prot.protectedRefs, mainline: mainlineOf(g, prot.protectedRefs) };
     const own = ownCommits(g, ref, scan);
-    const c = { emails, ghLogin: ctx.ghLogin, own, exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
+    const c: OwnCtx = { emails, ghLogin: ctx.ghLogin, own, exactPrs: () => exactPrs(g.repo, branch, tip, ctx) };
     out.push(`  tip ${tip.slice(0, 9)}, ${own.length} own commits, targets ${targets.join('+')}, PR look-back ${ctx.prDays ?? 180} days, ${mergedPrs(g.repo, ctx).length} merged PRs read`);
     out.push(`  exact PRs (head ${branch} at tip): ${c.exactPrs().map((p) => `#${p.number}->${p.baseRefName}`).join(', ') || 'none'}`);
     out.push('ownership:', ...OWNERSHIP_RULES.map((r) => verdict(r.name, r, c)));
-    const tc = { g, ref, name: branch, tip, ctx, targets, emails, scan, exact: c.exactPrs };
+    const tc: MergeCtx = { g, ref, name: branch, tip, ctx, targets, emails, scan, exact: c.exactPrs };
     for (const t of targets) {
       out.push(`target ${t}:`, ...TARGET_RULES.map((r) => verdict(r.name, r, tc, t)));
-      try { out.push(`  ${cherryEquivalent(g, `origin/${t}`, ref) ? 'PASS' : 'FAIL'} patch-equivalent (review only)`); } catch (e) { out.push(`  ERROR cherry: ${e.message}`); }
+      try { out.push(`  ${cherryEquivalent(g, `origin/${t}`, ref) ? 'PASS' : 'FAIL'} patch-equivalent (review only)`); } catch (e) { out.push(`  ERROR cherry: ${errorOf(e).message}`); }
     }
     const a = assess(g, ref, branch, targets, scan);
-    out.push(`result: ${a.error ? `skipped (${a.error.message})` : !a.mine ? `not mine (${a.reason})` : a.ev.state === 'ok' ? `CANDIDATE, ${why(a.ev)}` : a.ev.state === 'review' ? 'REVIEW' : `not merged into ${a.ev.missing.join(', ')}`}`);
-  } catch (e) { out.push(`  ERROR ${e.message}`); }
+    out.push(`result: ${a.error ? `skipped (${a.error.message})` : !a.mine ? `not mine (${a.reason})` : (a.ev as MergedEvidence).state === 'ok' ? `CANDIDATE, ${why(a.ev as MergedEvidence)}` : (a.ev as MergedEvidence).state === 'review' ? 'REVIEW' : `not merged into ${(a.ev as MergedEvidence).missing.join(', ')}`}`);
+  } catch (e) { out.push(`  ERROR ${errorOf(e).message}`); }
   return out;
 }
 
 /** Git repos directly under the container (linked worktrees, whose .git is a file, are reached through their main repo). */
-export function findRepos(container, only) {
+export function findRepos(container: string, only?: string | null): string[] {
   return readdirSync(container, { withFileTypes: true })
     .filter((d) => d.isDirectory() && !d.name.startsWith('.') && (!only || d.name === only))
     .map((d) => join(container, d.name)).filter((p) => statSync(join(p, '.git'), { throwIfNoEntry: false })?.isDirectory());
@@ -516,33 +577,35 @@ export function findRepos(container, only) {
  * Deletes a remote branch only if origin still has it at `item.tip` (the tip the id was bound to): a push that landed after
  * the listing makes git refuse the delete (a stale-info lease), and that is reported for this branch alone.
  */
-export function deleteRemoteBranch(path, item, id) {
+export function deleteRemoteBranch(path: string, item: { name: string; kind: string; tip?: string }, id: string): ApplyResult {
+  const tip = item.tip as string;
   const ref = `refs/heads/${item.name}`;
-  const r = run('git', ['-C', path, 'push', `--force-with-lease=${ref}:${item.tip}`, 'origin', `:${ref}`]);
+  const r = run('git', ['-C', path, 'push', `--force-with-lease=${ref}:${tip}`, 'origin', `:${ref}`]);
   if (r.ok) return { id, done: true, message: `deleted ${item.kind} ${item.name}` };
   // Classify by asking origin, not by parsing git's (localized) message: a deleted and a moved branch both read "stale info".
   const now = run('git', ['-C', path, 'ls-remote', 'origin', ref]);
   if (!now.ok) return { id, done: false, message: `failed: ${r.err}` };
   const sha = now.out.split(/\s+/)[0];
   if (!sha) return { id, done: true, message: `${item.kind} ${item.name} was already gone from origin` };
-  if (sha !== item.tip) return { id, done: false, message: `refused: ${item.name} moved on origin since it was listed (now ${sha.slice(0, 9)}, listed ${item.tip.slice(0, 9)})` };
+  if (sha !== tip) return { id, done: false, message: `refused: ${item.name} moved on origin since it was listed (now ${sha.slice(0, 9)}, listed ${tip.slice(0, 9)})` };
   return { id, done: false, message: `failed: ${r.err}` };
 }
 
 /** Deletes the listed ids after re-scanning; returns [{ id, done, message }]. Anything no longer qualifying is refused. */
-export function apply(ids, container, ctx, only) {
-  const scans = new Map();
+export function apply(ids: string[], container: string, ctx: SweepContext, only?: string | null): ApplyResult[] {
+  const scans = new Map<string, RepoScan>();
   return ids.map((id) => {
     const repo = id.slice(0, id.lastIndexOf(':'));
     if (only && repo !== only) return { id, done: false, message: `not in --repo ${only}` };
     const path = join(container, repo);
     if (!findRepos(container, repo).length) return { id, done: false, message: `no repo ${repo} in the container` };
     if (!scans.has(repo)) scans.set(repo, scanRepo(path, { ...ctx, fetch: true }));
-    if (scans.get(repo).fetchFailed) return { id, done: false, message: 'refused: git fetch failed, so the refs may be stale' };
-    const item = scans.get(repo).items.find((i) => i.id === id);
-    if (!item && scans.get(repo).review.some((i) => i.id === id)) return { id, done: false, message: 'refused: patch-equivalent only (no merged PR or ancestry); needs a human look' };
+    const scanned = scans.get(repo) as RepoScan;
+    if (scanned.fetchFailed) return { id, done: false, message: 'refused: git fetch failed, so the refs may be stale' };
+    const item = scanned.items.find((i) => i.id === id);
+    if (!item && scanned.review.some((i) => i.id === id)) return { id, done: false, message: 'refused: patch-equivalent only (no merged PR or ancestry); needs a human look' };
     if (!item) {
-      const ex = scans.get(repo).excluded.find((i) => i.id === id);
+      const ex = scanned.excluded.find((i) => i.id === id);
       return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ' (or its tip moved since it was listed)'}` };
     }
     if (item.kind === 'remote-branch') return deleteRemoteBranch(path, item, id);
@@ -555,9 +618,9 @@ export function apply(ids, container, ctx, only) {
  * what the scan saw cannot have gone stale: HEAD must still be the scanned commit, nothing may be modified, untracked or ignored-but-worth-keeping,
  * and a detached HEAD must still be on origin (once removed, its commits would survive only in the reflog).
  */
-export function removeWorktree(path, item, id = item.id, disposableIgnored = SWEEP_DISPOSABLE_IGNORED) {
+export function removeWorktree(path: string, item: { id: string; name: string; kind: string; head?: string; detached?: boolean }, id: string = item.id, disposableIgnored: string[] = SWEEP_DISPOSABLE_IGNORED): ApplyResult {
   const wg = gitIn(item.name);
-  const refuse = (m) => ({ id, done: false, message: `refused: ${item.name} ${m}` });
+  const refuse = (m: string): ApplyResult => ({ id, done: false, message: `refused: ${item.name} ${m}` });
   const head = wg('rev-parse', 'HEAD');
   if (!head.ok || head.out !== item.head) return refuse('moved since it was scanned');
   // --untracked-files=all overrides a repo's status.showUntrackedFiles=no, which `git worktree remove` would otherwise honour too.
@@ -572,8 +635,9 @@ export function removeWorktree(path, item, id = item.id, disposableIgnored = SWE
 }
 
 /** `git worktree prune` for the entries whose directory is missing (locked ones stay); returns the paths dropped. Dry runs only list them. */
-function pruneMissing(path, dryRun) {
-  const gone = worktrees(gitIn(path)).filter((w) => w.prunable && !w.locked).map((w) => w.path);
+function pruneMissing(path: string, dryRun: boolean): string[] {
+  const gone = worktrees(gitIn(path)).filter((w) => w.prunable && !w.locked)
+    .map((w) => w.path);
   if (!gone.length || dryRun) return gone;
   const r = run('git', ['-C', path, 'worktree', 'prune']);
   if (!r.ok) throw new SweepError(`git worktree prune failed: ${r.err}`);
@@ -582,7 +646,7 @@ function pruneMissing(path, dryRun) {
 }
 
 /** True when the repo has a linked worktree (the main one does not count). A repo git cannot list is not skipped: the scan reports why. */
-function hasLinkedWorktree(path) {
+function hasLinkedWorktree(path: string): boolean {
   try { return worktrees(gitIn(path)).length > 0; } catch { return true; }
 }
 
@@ -594,17 +658,17 @@ function hasLinkedWorktree(path) {
  * With `dryRun` it only reports what it would do. With `budgetSeconds`, a repo that would start after that many seconds is
  * not touched and is listed in `skipped` (the check is at repo boundaries, so one repo may run past the budget).
  */
-export function sweepWorktrees(container, ctx, { only, dryRun = false, budgetSeconds = 0, clock = Date.now } = {}) {
-  const out = { removed: [], pruned: [], kept: [], notes: [], skipped: [] };
+export function sweepWorktrees(container: string, ctx: SweepContext, { only, dryRun = false, budgetSeconds = 0, clock = Date.now }: { only?: string | null; dryRun?: boolean; budgetSeconds?: number; clock?: () => number } = {}): WorktreeSweep {
+  const out: WorktreeSweep = { removed: [], pruned: [], kept: [], notes: [], skipped: [] };
   const started = clock();
   for (const path of findRepos(container, only)) {
     const repo = basename(path);
     if (budgetSeconds > 0 && clock() - started > budgetSeconds * 1000) { out.skipped.push(repo); continue; }
-    try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${e.message}`); }
+    try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${errorOf(e).message}`); }
     if (!hasLinkedWorktree(path)) continue; // nothing to remove here: no fetch, no scan
     const scan = scanRepo(path, { ...ctx, fetch: true, worktreesOnly: true });
     out.notes.push(...scan.notes.map((n) => `${repo}: ${n}`));
-    const keep = (i, reason) => out.kept.push({ repo, path: i.name, reason });
+    const keep = (i: { name: string }, reason: string): void => { out.kept.push({ repo, path: i.name, reason }); };
     const dropped = new Set(out.pruned.filter((x) => x.repo === repo).map((x) => x.path)); // a dry run still sees these
     scan.excluded.filter((e) => !dropped.has(e.name)).forEach((e) => keep(e, e.reason));
     scan.review.forEach((r) => keep(r, 'patch-equivalent only (no merged PR or ancestry); needs a human look'));
@@ -620,17 +684,17 @@ export function sweepWorktrees(container, ctx, { only, dryRun = false, budgetSec
 }
 
 /** Reason text to a short label, first match wins; work that is in use (claimed, dirty, a live skill) is named before the branch's merge state. */
-const REASON_LABELS = [
+const REASON_LABELS: [RegExp, string][] = [
   [/locked/, 'locked'], [/claimed by/, 'repo claimed'], [/live skill/, 'live skill'], [/uncommitted changes/, 'uncommitted changes'],
   [/untracked files/, 'untracked files'], [/ignored files kept/, 'non-disposable ignored files'], [/modified \d+ min ago/, 'not idle yet'],
   [/not yours/, 'branch not yours'], [/unpushed|not on any origin ref|not pushed or merged|could not count/, 'unpushed or unverifiable commits'],
   [/not merged/, 'branch not merged'], [/patch-equivalent/, 'needs a human look'], [/fetch failed/, 'fetch failed'], [/^refused/, 'refused at removal'],
 ];
-const reasonLabel = (reason) => REASON_LABELS.find(([re]) => re.test(reason))?.[1] || 'other';
+const reasonLabel = (reason: string): string => REASON_LABELS.find(([re]) => re.test(reason))?.[1] || 'other';
 
 /** Kept worktrees as `label: count` lines, biggest first. */
-function keptCounts(kept) {
-  const counts = new Map();
+function keptCounts(kept: { reason: string }[]): { label: string; count: number }[] {
+  const counts = new Map<string, number>();
   for (const k of kept) { const l = reasonLabel(k.reason); counts.set(l, (counts.get(l) || 0) + 1); }
   return [...counts].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([l, n]) => ({ label: l, count: n }));
 }
@@ -640,7 +704,7 @@ export { keptCounts };
  * Printable lines for a sweepWorktrees result: what went, what stayed, then a count. Kept worktrees print as counts by
  * reason (a big tree keeps hundreds); `verbose` lists each one with its full reason instead.
  */
-export function worktreeSweepLines(r, dryRun = false, { verbose = false } = {}) {
+export function worktreeSweepLines(r: Omit<WorktreeSweep, 'skipped'> & { skipped?: string[] }, dryRun = false, { verbose = false }: { verbose?: boolean } = {}): string[] {
   const verb = dryRun ? 'would remove' : 'removed';
   const kept = verbose
     ? r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`)
@@ -650,21 +714,21 @@ export function worktreeSweepLines(r, dryRun = false, { verbose = false } = {}) 
     ...r.pruned.map((x) => `${(dryRun ? 'would prune' : 'pruned').padEnd(12)} ${x.path}  (${x.repo}; directory missing)`),
     ...kept,
     ...r.notes.map((n) => `note         ${n}`),
-    ...(r.skipped?.length ? [`sweep budget reached: skipped ${r.skipped.length} repo(s): ${r.skipped.join(', ')}. Re-run with branch-sweep.mjs --apply-worktrees --repo <name>.`] : []),
+    ...(r.skipped?.length ? [`sweep budget reached: skipped ${r.skipped.length} repo(s): ${r.skipped.join(', ')}. Re-run with branch-sweep.ts --apply-worktrees --repo <name>.`] : []),
     `worktrees: ${r.removed.length} ${dryRun ? 'to remove' : 'removed'}, ${r.pruned.length} ${dryRun ? 'to prune' : 'pruned'}, ${r.kept.length} kept.${!verbose && r.kept.length ? ' (--verbose lists them)' : ''}`,
   ];
 }
 
-function table(rows) {
+function table(rows: ListedItem[]): string {
   const head = ['id', 'repo', 'kind', 'name', 'why', 'prs'];
   const body = rows.map((r) => [r.id, r.repo, r.kind, r.name, r.why, r.prs.join(' ')]);
   const w = head.map((h, i) => Math.max(h.length, ...body.map((b) => b[i].length)));
   return [head, ...body].map((r) => r.map((c, i) => c.padEnd(w[i])).join(' | ').trimEnd()).join('\n');
 }
 
-function main() {
+function main(): void {
   const argv = process.argv.slice(2);
-  const val = (n) => { const i = argv.indexOf(`--${n}`); return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
+  const val = (n: string): string | null => { const i = argv.indexOf(`--${n}`); return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
   const container = resolve(val('container') || process.cwd());
   const only = val('repo');
   const ctx = defaultContext({ fetch: !argv.includes('--no-fetch'), claimsDir: val('claims-dir') ?? undefined, idleMinutes: val('idle-minutes') ? Number(val('idle-minutes')) : undefined, ...(val('pr-days') ? { prDays: Number(val('pr-days')) } : {}) });

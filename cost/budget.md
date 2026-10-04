@@ -63,7 +63,7 @@ Notes:
 
 The [standing brief block](../reference/brief.md#standing-brief-block--paste-once-into-every-brief)
 carries several rules whose purpose is specifically cost, not correctness or safety. Why each one
-is in the block (measured 2026-09-25, `scripts/token-metrics.mjs`):
+is in the block (measured 2026-09-25, `scripts/token-metrics.ts`):
 
 - **Foreground waits.** Every background completion inside an agent can wake the orchestrator for a
   full-context turn — about 400k cache-read tokens each at today's context size. One rehearsal
@@ -83,16 +83,16 @@ summarise it.
 ## Session hygiene
 
 Every orchestrator turn re-reads the whole session, so per-turn cost climbs with session length.
-Measured across all sessions to 2026-09-25 (`token-metrics.mjs --curve`): average cache-read per
+Measured across all sessions to 2026-09-25 (`token-metrics.ts --curve`): average cache-read per
 turn is about 160k in a session's first 100 turns, 350k in turns 100–199, and 500k+ from turn 200.
 
 **Roll to a fresh session** at end of day, or earlier once the current session passes **~200
-turns** (roughly 25–30 prompts) or its read/turn tops **~400k**. `token-metrics.mjs` prints both
+turns** (roughly 25–30 prompts) or its read/turn tops **~400k**. `token-metrics.ts` prints both
 per session; check it at EOD and whenever the session has run long. Tell the user and let them start
 the new session — you cannot do it yourself.
 
 **Nudge before the threshold, not after it.** Added at the user's request, 2026-09-29. Run
-`node scripts/token-metrics.mjs | grep <session-id-prefix>` whenever you relay an agent's result,
+`node scripts/token-metrics.ts | grep <session-id-prefix>` whenever you relay an agent's result,
 and at least every ~20 turns in between. Once the session reaches **~180 turns**, or its read/turn
 tops **~350k**, tell the user it's time to roll up and refresh: give the turn count and the
 read/turn, and offer to write the handoff and run `roll`. That leaves room to finish the handoff
