@@ -15,8 +15,6 @@ export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | '
     dryRun: boolean;
 }
 type Streamed = { stream?: string };
-/** A retro's stream key: undefined only for the reserved `none` stream, which is never archived. */
-const streamName = (s: string | undefined): string => s as string;
 /** The ledger folded into the lists the board shows; the `*On` functions answer for one day. */
 export interface Groups {
     items: LedgerItem[];
@@ -182,7 +180,7 @@ export function render(ctx: BoardContext, quiet = false, includeArchived = false
     const retros = archivedRetros(ctx);
     if (retros.size) {
         out.push('## Archived streams', '');
-        for (const s of retros.keys()) out.push(`- [[${streamPageLink(streamName(s))}]]`);
+        for (const s of retros.keys()) out.push(`- [[${streamPageLink(s)}]]`);
         out.push('');
     }
 
@@ -202,13 +200,18 @@ export function render(ctx: BoardContext, quiet = false, includeArchived = false
 
 export const streamPageLink = (s: string): string => `Streams/${slug(s)}`;
 
-/** stream -> retro path (or '') for each stream whose latest event is an archive. */
-export function archivedRetros(ctx: BoardContext): Map<string | undefined, string> {
+/**
+ * stream -> retro path (or '') for each stream whose latest event is an archive. An archive or unarchive row whose
+ * stream maps to undefined is the reserved `none` ("no stream"): there is nothing to archive, so the row is skipped.
+ */
+export function archivedRetros(ctx: BoardContext): Map<string, string> {
     const { readLedger, mapStream } = ctx;
-    const out = new Map<string | undefined, string>();
+    const out = new Map<string, string>();
     for (const e of readLedger()) {
-        if (e.kind === 'archive' && e.stream) out.set(mapStream(e.stream), String(e.retro || ''));
-        if (e.kind === 'unarchive' && e.stream) out.delete(mapStream(e.stream));
+        const stream = e.stream ? mapStream(e.stream) : undefined;
+        if (stream === undefined) continue;
+        if (e.kind === 'archive') out.set(stream, String(e.retro || ''));
+        if (e.kind === 'unarchive') out.delete(stream);
     }
     return out;
 }
@@ -218,7 +221,7 @@ export function archivedRetros(ctx: BoardContext): Map<string | undefined, strin
  * lists as active, so a quiet stream reads "none" instead of going stale; archived streams get a page that
  * only points at the retro. Returns how many pages were written.
  */
-export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: LedgerItem[], retros: Map<string | undefined, string>, d: string): number {
+export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: LedgerItem[], retros: Map<string, string>, d: string): number {
     const { loadRegistry, dir } = ctx;
     const reg = loadRegistry();
     const registered = Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k);
@@ -245,7 +248,7 @@ export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: Ledger
     }
     for (const [s, retro] of retros) {
         const link = retro ? `Retro: [[${retro.split('/').slice(-1)[0].replace(/\.md$/, '')}]] (${retro})` : 'Retro: (path not recorded)';
-        writeFileSync(join(streamsDir, `${slug(streamName(s))}.md`), head(streamName(s), ['This stream is **archived**. Its items are hidden from the board; `journal.ts unarchive` brings them back.', '', link, '']).join('\n'));
+        writeFileSync(join(streamsDir, `${slug(s)}.md`), head(s, ['This stream is **archived**. Its items are hidden from the board; `journal.ts unarchive` brings them back.', '', link, '']).join('\n'));
     }
     return names.length + retros.size;
 }
