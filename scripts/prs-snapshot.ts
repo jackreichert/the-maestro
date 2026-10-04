@@ -42,24 +42,52 @@ import { fileURLToPath } from 'node:url';
 import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
 import { searchAllPages } from './lib/gh-search.ts';
 
+/** A review as the snapshot keeps it (the latest one per reviewer). */
+export interface SnapshotReview { author: string | undefined; state: string; submittedAt: string }
+export interface SnapshotThread { id: string; isResolved: boolean; isOutdated: boolean; author: string | undefined }
+/** One open PR, flattened from the search node (see toSnapshotPr). */
+export interface SnapshotPr {
+    key: string; repo: string; number: number; title: string; url: string; isDraft: boolean;
+    headRefName: string; baseRefName: string; updatedAt: string; reviewDecision: string; mergeable: string;
+    threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
+}
+export interface Snapshot { takenAt?: string; prs: SnapshotPr[] }
+
+/** The fields QUERY selects. gh's JSON is not validated against this; it is only as right as the query. */
+interface SearchNodePr {
+    number: number; title: string; isDraft: boolean; url: string; headRefName: string; baseRefName: string; updatedAt: string;
+    reviewDecision: string | null; mergeable: string | null; repository: { nameWithOwner: string };
+    reviewRequests: { nodes: { requestedReviewer?: { login?: string; name?: string } | null }[] };
+    latestReviews: { nodes: { author?: { login?: string } | null; state: string; submittedAt: string }[] };
+    reviewThreads: { pageInfo?: { hasNextPage?: boolean }; nodes: { id: string; isResolved: boolean; isOutdated: boolean; comments: { nodes: { author?: { login?: string } | null }[] } }[] };
+    comments: { totalCount: number };
+}
+
+/** The pure diff: actionable lines, and a count of everything bot-authored. */
+export interface SnapshotDiff { changes: string[]; botEvents: number }
+/** How a `gh` call is made: the real spawn, or a test stub. */
+export type GhRun = (args: string[]) => { status: number | null; stdout: unknown };
+
 // Keep the bot list in one place: a literal suffix every GitHub App login
 // carries, plus the two reviewer accounts we see that don't.
 const BOTS = {
     suffix: '[bot]',
     logins: ['copilot-pull-request-reviewer', 'aikido-pr-checks'],
 };
-const isBot = (login) => !login || login.endsWith(BOTS.suffix) || BOTS.logins.includes(login);
+const isBot = (login: string | undefined): boolean => !login || login.endsWith(BOTS.suffix) || BOTS.logins.includes(login);
 
 const HUMAN_REVIEW_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED']);
 
 const argv = process.argv.slice(2);
 const cmd = ['diff', 'ready'].includes(argv[0]) ? argv[0] : 'snapshot';
 const positional = argv.slice(cmd === 'snapshot' ? 0 : 1).filter((a) => !a.startsWith('--'));
-function arg(name, fallback = null) {
+function arg(name: string): string | null;
+function arg(name: string, fallback: string): string;
+function arg(name: string, fallback: string | null = null): string | null {
     const i = argv.indexOf(`--${name}`);
     return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
 }
-const has = (name) => argv.includes(`--${name}`);
+const has = (name: string): boolean => argv.includes(`--${name}`);
 
 // The same query reference/prs.md documents, extended with the two fields the
 // human-readable board's --jq ignores but a diff needs for stable identity:
@@ -96,7 +124,7 @@ const QUERY = `query($after: String) {
 }`;
 
 // Flatten one search node into the snapshot shape (key and the fields diffSnapshots reads).
-const toSnapshotPr = (n) => ({
+const toSnapshotPr = (n: SearchNodePr): SnapshotPr => ({
     key: `${n.repository.nameWithOwner}#${n.number}`,
     repo: n.repository.nameWithOwner,
     number: n.number,
@@ -115,14 +143,14 @@ const toSnapshotPr = (n) => ({
     commentTotal: n.comments.totalCount,
 });
 
-function fetchLive() {
+function fetchLive(): Snapshot {
     // Every page: a single 50-result page made PRs past the 50th look "no longer open".
-    return { takenAt: new Date().toISOString(), prs: searchAllPages(QUERY).map(toSnapshotPr) };
+    return { takenAt: new Date().toISOString(), prs: searchAllPages<SearchNodePr>(QUERY).map(toSnapshotPr) };
 }
 
-function loadSnapshot(path) {
+function loadSnapshot(path: string): Snapshot | null {
     if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(readFileSync(path, 'utf8')) as Snapshot;
 }
 
 /**
@@ -131,10 +159,10 @@ function loadSnapshot(path) {
  * actionable lines prs.md#mid-day-updates asks for; everything bot-authored
  * folds into the single `botEvents` count instead of being itemised.
  */
-function diffSnapshots(prev, curr) {
-    const prevByKey = new Map((prev?.prs || []).map((p) => [p.key, p]));
+function diffSnapshots(prev: Snapshot | null, curr: Snapshot): SnapshotDiff {
+    const prevByKey = new Map<string, SnapshotPr>((prev?.prs || []).map((p) => [p.key, p]));
     const currKeys = new Set(curr.prs.map((p) => p.key));
-    const changes = [];
+    const changes: string[] = [];
     let botEvents = 0;
 
     for (const p of curr.prs) {
@@ -186,8 +214,8 @@ const RELEASE_BRANCH = 'staging';
  * review threads (and all threads read), GitHub says MERGEABLE, and, in a twin-flow repo, a release-candidate PR has no open
  * integration twin (same repo and head branch, another base). A conflict or open thread never reads as ready.
  */
-export function readiness(pr, all = [], twinRepos = TWIN_FLOW_REPOS) {
-    const reasons = [];
+export function readiness(pr: SnapshotPr, all: SnapshotPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS): { ready: boolean; reasons: string[] } {
+    const reasons: string[] = [];
     if (pr.isDraft) reasons.push('draft');
     if (pr.reviewDecision !== 'APPROVED') reasons.push(`not approved (${pr.reviewDecision})`);
     const open = (pr.threads || []).filter((t) => !t.isResolved).length;
@@ -203,7 +231,7 @@ export function readiness(pr, all = [], twinRepos = TWIN_FLOW_REPOS) {
 }
 
 /** Lines for the ready bucket, and for every approved PR that is not ready with its reasons (so none vanishes). */
-export function readyLines(snapshot, twinRepos = TWIN_FLOW_REPOS) {
+export function readyLines(snapshot: Snapshot, twinRepos: string[] = TWIN_FLOW_REPOS): string[] {
     const rows = snapshot.prs.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos) }));
     const ready = rows.filter((r) => r.ready);
     const held = rows.filter((r) => !r.ready && r.p.reviewDecision === 'APPROVED');
@@ -213,8 +241,8 @@ export function readyLines(snapshot, twinRepos = TWIN_FLOW_REPOS) {
     ];
 }
 
-const defaultRun = (args) => spawnSync('gh', args, { encoding: 'utf8' });
-const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const defaultRun: GhRun = (args) => spawnSync('gh', args, { encoding: 'utf8' });
+const pause = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
 /**
  * After a PR merged, its open siblings in the same repos have a new base, so the `mergeable` the board query returned may be
@@ -222,7 +250,7 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
  * set to UNKNOWN, then re-asked through `gh pr view` until two answers in a row agree and are known (4 tries at most). A lookup
  * that fails or never settles leaves it UNKNOWN, which readiness() does not call ready.
  */
-export function requerySiblings(prev, curr, { run = defaultRun, wait = pause } = {}) {
+export function requerySiblings(prev: Snapshot | null, curr: Snapshot, { run = defaultRun, wait = pause }: { run?: GhRun; wait?: (ms: number) => void } = {}): string[] {
     const open = new Set(curr.prs.map((p) => p.key));
     const mergedRepos = new Set((prev?.prs || []).filter((p) => !open.has(p.key)).map((p) => p.repo));
     for (const p of curr.prs.filter((x) => mergedRepos.has(x.repo))) {
@@ -240,7 +268,7 @@ export function requerySiblings(prev, curr, { run = defaultRun, wait = pause } =
     return [...mergedRepos];
 }
 
-function printDiff({ changes, botEvents }) {
+function printDiff({ changes, botEvents }: SnapshotDiff): void {
     if (!changes.length && !botEvents) {
         console.log('No actionable changes since last snapshot.');
         return;
@@ -256,7 +284,7 @@ function printDiff({ changes, botEvents }) {
     }
 }
 
-function cmdSnapshot() {
+function cmdSnapshot(): void {
     const vault = arg('vault', LEDGER_ROOT || VAULT_ROOT);
     if (!vault) {
         console.error('Pass --vault <path> (the ledger root), or set LEDGER_ROOT (or VAULT_ROOT).');
@@ -286,22 +314,22 @@ function cmdSnapshot() {
     }
 }
 
-function cmdDiffFiles() {
+function cmdDiffFiles(): void {
     const [oldPath, newPath] = positional;
     if (!oldPath || !newPath) {
         console.error('Usage: prs-snapshot.ts diff <old-snapshot.json> <new-snapshot.json>');
         process.exit(1);
     }
-    const prev = JSON.parse(readFileSync(oldPath, 'utf8'));
-    const curr = JSON.parse(readFileSync(newPath, 'utf8'));
+    const prev = JSON.parse(readFileSync(oldPath, 'utf8')) as Snapshot;
+    const curr = JSON.parse(readFileSync(newPath, 'utf8')) as Snapshot;
     printDiff(diffSnapshots(prev, curr));
 }
 
-function cmdReadyFile() {
+function cmdReadyFile(): void {
     if (!positional[0]) { console.error('Usage: prs-snapshot.ts ready <snapshot.json>'); process.exit(1); }
-    const snapshot = JSON.parse(readFileSync(positional[0], 'utf8'));
+    const snapshot = JSON.parse(readFileSync(positional[0], 'utf8')) as Snapshot;
     const ageMin = snapshot.takenAt ? Math.round((Date.now() - Date.parse(snapshot.takenAt)) / 6e4) : null;
-    console.log(`Snapshot taken ${snapshot.takenAt || 'at an unknown time'}${ageMin > 60 ? ` (${ageMin} minutes ago: STALE)` : ''}. Not a merge gate: run \`prs-snapshot.ts --ready\` for a live answer.`);
+    console.log(`Snapshot taken ${snapshot.takenAt || 'at an unknown time'}${ageMin !== null && ageMin > 60 ? ` (${ageMin} minutes ago: STALE)` : ''}. Not a merge gate: run \`prs-snapshot.ts --ready\` for a live answer.`);
     readyLines(snapshot).forEach((l) => console.log(l));
 }
 
