@@ -8,7 +8,7 @@
  *
  * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
  * A type may export `retired(watch, ctx)` to delete its per-watch files when the watch retires or is removed.
- * Each tick runs every live watch's type checker (scripts/event-types/<type>.mjs), compares the new state with
+ * Each tick runs every live watch's type checker (scripts/event-types/<type>.ts), compares the new state with
  * the stored one, and records an event only when the type's diff() reports one. Events go to a digest file;
  * `run` prints the digest and exits 10 as soon as one is actionable, so the caller (a cheap model) wakes the
  * orchestrator only then. Watches retire when their type says they are done or they pass `expires`.
