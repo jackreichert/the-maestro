@@ -80,7 +80,8 @@ export function collectApprovals(entries: LedgerRow[], { since, until }: Window)
     for (const e of entries) {
         if (e.id && !e.annotates && e.kind === 'decision' && !e.pending && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
     }
-    for (const list of Object.values(out) as { date?: string }[][]) list.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const byDate = (a: { date?: string }, b: { date?: string }): number => String(a.date).localeCompare(String(b.date));
+    out.standing.sort(byDate); out.oneOff.sort(byDate); out.untagged.sort(byDate);
     return out;
 }
 
