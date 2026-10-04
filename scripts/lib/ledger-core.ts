@@ -31,6 +31,23 @@ export interface LedgerRow {
     defers?: string;
     until?: string;
     pending?: boolean;
+    /** The text, date (YYYY-MM-DD) and timestamp every row written by journal carries. */
+    text?: string;
+    date?: string;
+    ts?: string;
+    repo?: string;
+    ticket?: string;
+    /** A paste block's name, a gate (`date:YYYY-MM-DD` or free text), and an approval (`standing` or `one-off`) with its scope. */
+    paste?: string;
+    gate?: string;
+    approval?: string;
+    scope?: string;
+    /** Files a record points at, and the row an `approval-tag` approves. */
+    refs?: string[];
+    approves?: string;
+    why?: string;
+    /** Tracker keys a note records as moved. */
+    transitioned?: string[];
     [field: string]: unknown;
 }
 
@@ -88,6 +105,21 @@ export function readRegistry(path: string, onMalformed?: () => void): Registry |
         if (onMalformed) onMalformed();
         return null;
     }
+}
+
+/**
+ * Parses ledger.jsonl text into rows, skipping blank lines. A line that is not JSON is dropped and reported through
+ * `onMalformed(n)`, where n counts the non-blank lines from 1. The JSON is not checked against LedgerRow: rows carry
+ * whatever the writer put there, and the fold reads only the fields it names.
+ */
+export function parseLedger(text: string, onMalformed?: (n: number) => void): LedgerRow[] {
+    return text
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l, i) => {
+            try { return JSON.parse(l) as LedgerRow | null; } catch { onMalformed?.(i + 1); return null; }
+        })
+        .filter((row): row is LedgerRow => Boolean(row));
 }
 
 /** Canonical name for a canonical name, alias or case variant; null when the registry does not know it. */
