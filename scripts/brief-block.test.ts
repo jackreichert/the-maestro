@@ -1,4 +1,4 @@
-// Run: node --test scripts/brief-block.test.mjs
+// Run: node --test scripts/brief-block.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -9,9 +9,9 @@ import { join, isAbsolute, dirname } from 'node:path';
 // Hermetic: never read the user's config file (see local-config.ts). The import comes after this
 // line because local-config.ts reads its files when it is first loaded.
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { extractBlock, parseSlotValues, fillBlock, shelfLine, ownedReposLine, SLOTS } = await import('./brief-block.mjs');
+const { extractBlock, parseSlotValues, fillBlock, shelfLine, ownedReposLine, SLOTS } = await import('./brief-block.ts');
 
-const SCRIPT = new URL('./brief-block.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./brief-block.ts', import.meta.url).pathname;
 const BRIEF = new URL('../reference/brief.md', import.meta.url).pathname;
 const VALUES = [
     '## Standing brief block, filled',
@@ -22,7 +22,7 @@ const VALUES = [
 ].join('\n');
 
 /** Runs the CLI with one throwaway config file as the only config source. */
-function run(configText) {
+function run(configText: string) {
     const dir = mkdtempSync(join(tmpdir(), 'bb-'));
     const file = join(dir, 'config.md');
     writeFileSync(file, configText);
@@ -72,16 +72,16 @@ test('CLI exits 1 when no config holds any value', () => {
 
 test('the shipped block tells workers to run the PR size gate before opening a PR', () => {
     const block = extractBlock(readFileSync(BRIEF, 'utf8'));
-    assert.match(block, /Open every PR with `node <maestro scripts dir>\/pr-open\.mjs --repo \. --base <base> --title "\.\.\." --body-file BODY\.md`, never a bare `gh pr create`/);
+    assert.match(block, /Open every PR with `node <maestro scripts dir>\/pr-open\.ts --repo \. --base <base> --title "\.\.\." --body-file BODY\.md`, never a bare `gh pr create`/);
     assert.match(block, /If it refuses, stop and report a split plan instead of opening\./);
     assert.ok(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems.length === 0, 'the new line adds no unfilled slot');
 });
 
-test('the filled block names an absolute, existing path to pr-open.mjs, and no <skill> placeholder', () => {
+test('the filled block names an absolute, existing path to pr-open.ts, and no <skill> placeholder', () => {
     const r = run(VALUES);
     assert.equal(r.status, 0, r.stderr);
-    const m = r.stdout.match(/`node (\/[^ `]+\/pr-open\.mjs) --repo/);
-    assert.ok(m, 'an absolute path precedes pr-open.mjs');
+    const m = r.stdout.match(/`node (\/[^ `]+\/pr-open\.ts) --repo/);
+    assert.ok(m, 'an absolute path precedes pr-open.ts');
     assert.ok(existsSync(m[1]), m[1]);
     assert.ok(isAbsolute(m[1]));
     assert.doesNotMatch(r.stdout, /<skill>|<maestro scripts dir>/);
@@ -93,16 +93,16 @@ test('invoked through a symlinked scripts dir, the filled block keeps the symlin
     symlinkSync(dirname(SCRIPT), link);
     const config = join(dir, 'config.md');
     writeFileSync(config, VALUES);
-    const r = spawnSync(process.execPath, [join(link, 'brief-block.mjs')], {
+    const r = spawnSync(process.execPath, [join(link, 'brief-block.ts')], {
         encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, MAESTRO_LOCAL_CONFIG: config },
     });
     assert.equal(r.status, 0, r.stderr);
-    assert.ok(r.stdout.includes(`${link}/pr-open.mjs`), r.stdout);
-    assert.ok(!r.stdout.includes(`${dirname(SCRIPT)}/pr-open.mjs`));
+    assert.ok(r.stdout.includes(`${link}/pr-open.ts`), r.stdout);
+    assert.ok(!r.stdout.includes(`${dirname(SCRIPT)}/pr-open.ts`));
 });
 
-test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.mjs', async () => {
-    const { scriptsDir } = await import('./brief-block.mjs');
+test('scriptsDir falls back to the real dir when the invoked dir has no pr-open.ts', async () => {
+    const { scriptsDir } = await import('./brief-block.ts');
     const real = dirname(SCRIPT);
     assert.equal(scriptsDir(join(tmpdir(), 'elsewhere', 'x.mjs'), real), real);
     assert.equal(scriptsDir(undefined, real), real);

@@ -1,24 +1,25 @@
-// Run: node --test scripts/pr-size.test.mjs
+// Run: node --test scripts/pr-size.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import type { Assessment } from './pr-size.ts';
 
-const SCRIPT = new URL('./pr-size.mjs', import.meta.url).pathname;
-const { globToRegExp, parseNumstat, makeClassifier } = await import('./pr-size.mjs');
+const SCRIPT = new URL('./pr-size.ts', import.meta.url).pathname;
+const { globToRegExp, parseNumstat, makeClassifier } = await import('./pr-size.ts');
 
-const git = (repo, ...args) => {
+const git = (repo: string, ...args: string[]): string => {
     const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout;
 };
-const lines = (n, tag = 'x') => Array.from({ length: n }, (_, i) => `${tag}${i}`).join('\n') + '\n';
-const put = (repo, path, text) => { mkdirSync(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), text); };
+const lines = (n: number, tag = 'x'): string => Array.from({ length: n }, (_, i) => `${tag}${i}`).join('\n') + '\n';
+const put = (repo: string, path: string, text: string): void => { mkdirSync(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), text); };
 
 /** A repo with one base commit on `main` holding `base` files, then a feature branch with `change(repo)` committed. */
-function repoWith(base, change) {
+function repoWith(base: Record<string, string>, change: (repo: string) => void): string {
     const repo = mkdtempSync(join(tmpdir(), 'pr-size-'));
     git(repo, 'init', '-q', '-b', 'main');
     git(repo, 'config', 'user.email', 'test@example.com');
@@ -36,13 +37,17 @@ function repoWith(base, change) {
 }
 
 /** Runs the CLI hermetically (no user config file); returns { code, out, json }. */
-function check(repo, env = {}, extra = []) {
+function check(repo: string, env: Record<string, string> = {}, extra: string[] = []) {
     const r = spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', ...extra], {
         encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
-const checkJson = (repo, env) => { const r = check(repo, env, ['--json']); return { status: r.code, ...JSON.parse(r.out) }; };
+const checkJson = (repo: string, env?: Record<string, string>) => {
+    const r = check(repo, env, ['--json']);
+    const parsed: Assessment = JSON.parse(r.out);
+    return { status: r.code, ...parsed };
+};
 
 test('under budget passes and prints the summary', () => {
     const repo = repoWith({}, (r) => { put(r, 'src/a.py', lines(10)); put(r, 'src/b.py', lines(10)); });
@@ -172,7 +177,7 @@ test('globToRegExp and parseNumstat basics', () => {
 
 test('default classifier: directory names never move a code file out of the code bucket', () => {
     const classify = makeClassifier();
-    const bucket = (path) => classify({ path, renamed: false, added: 5, deleted: 0 });
+    const bucket = (path: string) => classify({ path, renamed: false, added: 5, deleted: 0 });
     for (const p of [
         'src/docs/render.ts', 'lib/docs/index.ts', 'src/vendor/billing.ts', 'src/test_helpers.py',
         'src/fixtures/loader.ts', 'src/attestation.ts', 'vite.config.ts', 'src/generated/client.ts', 'lib/dist/x.js',
@@ -224,7 +229,7 @@ test('a stale local base with an updated origin base is measured against origin/
 });
 
 test('resolveBase falls back to the local ref when there is no origin, and a failed fetch is not fatal', async () => {
-    const { resolveBase } = await import('./pr-size.mjs');
+    const { resolveBase } = await import('./pr-size.ts');
     const repo = repoWith({}, (r) => put(r, 'src/seed.py', lines(1)));
     assert.equal(resolveBase(repo, 'main'), 'main');
     git(repo, 'remote', 'add', 'origin', join(repo, 'does-not-exist'));

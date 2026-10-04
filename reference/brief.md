@@ -25,7 +25,7 @@ Paste this block verbatim, once, at the end of the brief. Do not restate any of 
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
 paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it.
 
-Print it with its slots filled by `node scripts/brief-block.mjs`. It exits non-zero, printing
+Print it with its slots filled by `node scripts/brief-block.ts`. It exits non-zero, printing
 nothing, if a slot has no value, so never paste a block you wrote by hand.
 
 ```text
@@ -33,7 +33,7 @@ Standing rules (hard limits):
 - Git: before any write run `git log --format='%ae' $(git merge-base <base> HEAD)..HEAD | sort -u`, where <base> is the branch this one was cut from; write only if every author is <user git emails>. Commits a back-merge brought in from main/staging/develop don't count (check with `git log --no-merges --format='%ae' HEAD --not origin/main origin/staging origin/develop`); if unsure, treat the branch as protected and ask. Never write main/staging/develop or anyone else's branch. Fast-forward pushes only: no rebase, merge, reset, cherry-pick or force-push.
 - Stage by explicit path. Never `git add -A` or `git add .`.
 - Commits: Conventional Commits, lowercase code scope, tracker key at the end, e.g. `fix(scheduler): cap retry count <tracker key example>`. No AI attribution (no Co-Authored-By, no "Generated with"). Never bypass hooks (no --no-verify).
-- PRs: drafts only, `--assignee @me`. On review threads, resolve only bot threads; never resolve a human's. Don't push a branch until its name carries the tracker key; rename first. Open every PR with `node <maestro scripts dir>/pr-open.mjs --repo . --base <base> --title "..." --body-file BODY.md`, never a bare `gh pr create`; it runs the size gate and forces draft and `--assignee @me`. If it refuses, stop and report a split plan instead of opening.
+- PRs: drafts only, `--assignee @me`. On review threads, resolve only bot threads; never resolve a human's. Don't push a branch until its name carries the tracker key; rename first. Open every PR with `node <maestro scripts dir>/pr-open.ts --repo . --base <base> --title "..." --body-file BODY.md`, never a bare `gh pr create`; it runs the size gate and forces draft and `--assignee @me`. If it refuses, stop and report a split plan instead of opening.
 - External writes (Jira issues/comments/transitions, GitHub comments/reviews/replies, Slack): do them yourself, only when this brief authorizes them, or not at all. Never hand one to a sub-agent or fork.
 - Never read .env* or ssm-*.json. Secrets: name the key, never the value.
 - PHI: counts and ids only. No names, DOBs, addresses, MRNs, or contact details, anywhere.
@@ -44,7 +44,7 @@ Standing rules (hard limits):
 
 ### Scripts shelf line — appended when `scripts_dir` is set
 
-`brief-block.mjs` appends this line after the standing block when the install sets `scripts_dir` ([local-config](local-config.md)), with `<scripts_dir>` filled. With `scripts_dir` unset nothing is appended.
+`brief-block.ts` appends this line after the standing block when the install sets `scripts_dir` ([local-config](local-config.md)), with `<scripts_dir>` filled. With `scripts_dir` unset nothing is appended.
 
 ```text
 - Scripts: before writing a script, check <scripts_dir>/README.md for an existing helper. Put one-offs in <scripts_dir>/scratch/ (never /tmp) with a 3-line header: purpose; date + ledger id; inputs as env var names. No secrets and no outputs in that folder. Prod-check scripts take identifiers (locations, jobs, sensors) from a known-good sibling script or the real UI or URL, never from assumption; when a lookup matches nothing they print what does exist and exit non-zero; a fixture you wrote yourself does not validate names.
@@ -52,7 +52,7 @@ Standing rules (hard limits):
 
 ### Agent-owned repos line — appended when `agent_owned_repos` is set
 
-`brief-block.mjs` appends this line when the install lists `agent_owned_repos` ([local-config](local-config.md)), with `<agent_owned_repos>` filled. It is the only exception to the protected-branch stop, and only for the listed paths. With the setting empty nothing is appended.
+`brief-block.ts` appends this line when the install lists `agent_owned_repos` ([local-config](local-config.md)), with `<agent_owned_repos>` filled. It is the only exception to the protected-branch stop, and only for the listed paths. With the setting empty nothing is appended.
 
 ```text
 - Agent-owned repos (<agent_owned_repos>): the protected-branch stop does not apply in these repos only; you may commit directly to the default branch there. Conventional Commits, staging by explicit path and no AI attribution still apply, and so do the no rebase, reset and force-push rules.

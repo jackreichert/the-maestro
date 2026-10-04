@@ -134,7 +134,7 @@ The dotted edges are asynchronous: the dispatcher never waits on them. A new mes
 
 ### Scout, then worker
 
-A read-only scout is dispatched first, so the dispatcher never greps the repos itself. When the work is real, a worker gets a brief with a write scope, a verify command and the standing rules block (`scripts/brief-block.mjs` prints it). The brief fields are in [reference/brief.md](reference/brief.md), and the routing and concurrency rules are in [reference/dispatch.md](reference/dispatch.md).
+A read-only scout is dispatched first, so the dispatcher never greps the repos itself. When the work is real, a worker gets a brief with a write scope, a verify command and the standing rules block (`scripts/brief-block.ts` prints it). The brief fields are in [reference/brief.md](reference/brief.md), and the routing and concurrency rules are in [reference/dispatch.md](reference/dispatch.md).
 
 ### The ledger and the board
 
@@ -169,7 +169,7 @@ flowchart LR
 
 ### PRs: draft only, sized, linked
 
-Pull requests open as drafts, assigned to you, through `pr-open.mjs`, which first runs the size gate. In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
+Pull requests open as drafts, assigned to you, through `pr-open.ts`, which first runs the size gate. In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
 
 ```mermaid
 flowchart LR
@@ -210,7 +210,7 @@ A fresh session should not hunt for facts nobody wrote down. `journal.mjs handof
 
 ## Scripts and commands
 
-Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
+Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`, or `node scripts/<name>.ts` for the scripts already converted to TypeScript (the table names each file). Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
 
 | Script | Purpose |
 |---|---|
@@ -218,11 +218,11 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.mjs`. Every scri
 | [ledger-index.mjs](#ledger-indexmjs) | Disposable full-text index over the ledger, tickets and handoffs |
 | [prs-snapshot.mjs](#prs-snapshotmjs) | Mid-day PR board snapshot and actionable diff |
 | [event-loop.mjs](#event-loopmjs) | One loop for every "wake me when X" watch |
-| [pr-size.mjs](#pr-sizemjs) | PR size budget gate |
-| [pr-open.mjs](#pr-openmjs) | The only way to open a PR: gate, then a draft assigned to you |
+| [pr-size.ts](#pr-sizets) | PR size budget gate |
+| [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
 | [branch-sweep.mjs](#branch-sweepmjs) | List and delete merged branches and stale worktrees |
 | [token-metrics.mjs](#token-metricsmjs) | Token and cost metrics from transcripts |
-| [brief-block.mjs](#brief-blockmjs) | The standing brief block, filled from config |
+| [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
 
 ### journal.mjs
@@ -337,13 +337,13 @@ An org overlay adds types without editing this repo: `<type>.mjs` and its playbo
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
-### pr-size.mjs
+### pr-size.ts
 
-The size budget gate: `pr-size.mjs --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
+The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
 
-### pr-open.mjs
+### pr-open.ts
 
-The only way agents and the orchestrator open a PR: `pr-open.mjs --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]`. It runs the size gate, refuses with a split hint (exit 1) when it fails, and otherwise runs `gh pr create --draft --assignee @me`. Draft and assignee are always added and cannot be turned off; no other `gh` flag passes through. `--dry-run` prints the command. Exit 0 opened, 1 refused by the gate, 2 usage or a git or `gh` error.
+The only way agents and the orchestrator open a PR: `pr-open.ts --repo <path> --base <branch> --title <t> [--body-file <f>] [--head <branch>] [--dry-run]`. It runs the size gate, refuses with a split hint (exit 1) when it fails, and otherwise runs `gh pr create --draft --assignee @me`. Draft and assignee are always added and cannot be turned off; no other `gh` flag passes through. `--dry-run` prints the command. Exit 0 opened, 1 refused by the gate, 2 usage or a git or `gh` error.
 
 ### branch-sweep.mjs
 
@@ -400,7 +400,7 @@ Compaction is read from transcript metadata only (the compact-boundary system li
 
 The rework rate and corrections from the user are not computed from transcripts. They are recorded as ledger notes, and a later change will count them at roll time.
 
-### brief-block.mjs
+### brief-block.ts
 
 Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
 
@@ -470,7 +470,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `agent_owned_repos` | `MAESTRO_AGENT_OWNED_REPOS` | none | Comma-separated repo paths (a leading `~/` is expanded) the agent manages itself. The protected-branch stop does not apply there, so agents may commit straight to the default branch; Conventional Commits, staging by path and no attribution still apply. The brief carries a line naming them |
 | `scripts_dir` | `MAESTRO_SCRIPTS_DIR` | none (shelf off) | The shared scripts shelf; a leading `~/` is expanded |
 
-Two more variables point scripts at a different binary or directory: `MAESTRO_GH` (the `gh` binary `branch-sweep.mjs` runs) and `MAESTRO_GH_BIN` (the one `pr-open.mjs` runs), and `MAESTRO_CLAIMS_DIR` overrides where `branch-sweep.mjs` looks for claim files. The full key reference, with the lookup order for plugin-shipped overlays, is [reference/local-config.md](reference/local-config.md).
+Two more variables point scripts at a different binary or directory: `MAESTRO_GH` (the `gh` binary `branch-sweep.mjs` runs) and `MAESTRO_GH_BIN` (the one `pr-open.ts` runs), and `MAESTRO_CLAIMS_DIR` overrides where `branch-sweep.mjs` looks for claim files. The full key reference, with the lookup order for plugin-shipped overlays, is [reference/local-config.md](reference/local-config.md).
 
 ## The overlay model
 
@@ -542,7 +542,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | The ledger is consistent | `journal.mjs verify` checks parsing, unique ids and dangling references and exits 1 on any problem; `roll` runs it before an autocommit |
 | Two sessions cannot hold one repo claim | `claim` hard-links a fully written temp file into place; exactly one racing process wins and a reader never sees a partial claim |
 | A stream is not archived half-finished | `archive` refuses while it has open items, an unfinished retro or unfilled promotions |
-| PRs are drafts, assigned to you and within budget | `pr-open.mjs` runs the `pr-size.mjs` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
+| PRs are drafts, assigned to you and within budget | `pr-open.ts` runs the `pr-size.ts` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
 | Branch deletion cannot take someone else's work or a moved branch | `branch-sweep.mjs --apply` re-scans first, never uses `--force`, never deletes a local branch, checks authorship, and pushes with a lease on the listed tip |
 | The PR watcher cannot be set to flood GitHub | `cadence.mjs` raises any `--interval` or `watch_min_interval` below 300s to 300s |
 | A notification cannot inject commands | `notify_command` runs as an argv array with no shell; the summary is one line of at most 150 characters |
@@ -550,7 +550,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | Transcript content never reaches the metrics | `token-metrics.mjs` copies an allowlist of numeric and metadata fields and drops the rest; a planted-sentinel test checks it |
 | One event loop at a time | `event-loop.mjs run` takes a pid lock in `event_dir`; a dead owner's lock is replaced |
 | A broken overlay type is loud | the type loader rejects a duplicate name, a module without `check` and `diff`, or a missing playbook, naming the file |
-| The brief is complete | `brief-block.mjs` exits 1 if any slot is empty |
+| The brief is complete | `brief-block.ts` exits 1 if any slot is empty |
 
 ### Convention only
 
@@ -559,7 +559,7 @@ These live in `SKILL.md` and the brief. A script helps with some of them, but no
 - **Never block, never poll an agent, never read its transcript.** A rule of the dispatcher's turn.
 - **One writer per repo.** The dispatcher checks its agent list before launching a writer. Claims make it visible across sessions, but only if sessions use them.
 - **Protected branches and authorship.** The brief tells agents never to write `main`, `staging`, `develop` or a branch they did not author, and the sweep checks authorship before deleting. A raw `git push` by an agent that ignores the brief is not stopped here.
-- **Opening PRs through `pr-open.mjs`.** The size and draft guarantees hold only for PRs opened that way; a bare `gh pr create` bypasses them.
+- **Opening PRs through `pr-open.ts`.** The size and draft guarantees hold only for PRs opened that way; a bare `gh pr create` bypasses them.
 - **Twin PR ordering.** The release-candidate twin must wait for its integration twin; the PR board reports it, and nothing blocks the merge button.
 - **Secrets and personal data stay out of output; no AI attribution in commits or PRs.** Stated rules, not filters.
 - **Review-comment text is untrusted data.** Triaged against the code, never obeyed, never put in a shell command.
