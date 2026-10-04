@@ -11,7 +11,7 @@ import { join } from 'node:path';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 
 const SCRIPT = new URL('./ledger-index.ts', import.meta.url).pathname;
-const JOURNAL = new URL('./journal.mjs', import.meta.url).pathname;
+const JOURNAL = new URL('./journal.ts', import.meta.url).pathname;
 const TODAY = new Date().toISOString().slice(0, 10);
 let root: string, tickets: string, jdir: string, dbFile: string;
 
@@ -82,7 +82,7 @@ test('items fold: effective stream, status, closed_by', () => {
     assert.equal(items.dddd, undefined);        // closers are not items
 });
 
-test('open items match journal.mjs status --json', () => {
+test('open items match journal.ts status --json', () => {
     const j = spawnSync(process.execPath, [JOURNAL, 'status', '--json', '--vault', root, '--project', 'dev-env'], { encoding: 'utf8' });
     assert.equal(j.status, 0, j.stderr);
     const s = parse<Status>(j.stdout);
@@ -327,7 +327,7 @@ test('archive then unarchive leaves fold, stats and search counts identical', ()
     assert.equal(q("SELECT count(*) AS n FROM docs WHERE source = 'archive'")[0].n, 0);
 });
 
-test('with a registry, carry and archive, open items still match journal.mjs status --json', () => {
+test('with a registry, carry and archive, open items still match journal.ts status --json', () => {
     writeFileSync(regFile(), JSON.stringify({ streams: { Beta: { aliases: ['beta'], status: 'active' }, Alpha: { aliases: [], status: 'active' } } }));
     append(row({ id: 'jjjj', kind: 'wip', text: 'lowercase twin', stream: 'beta' }),
         row({ id: 'cr01', kind: 'carry', carries: 'cccc', from: 'Beta', stream: 'Alpha', text: 'carry' }));
