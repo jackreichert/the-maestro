@@ -107,6 +107,8 @@ import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN } from './local-config.ts';
 import { scratchReport } from './lib/scratch.ts';
+import { parseArgs } from './lib/journal/args.mjs';
+import { openStore } from './lib/journal/store.mjs';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
@@ -127,17 +129,7 @@ const APPROVABLE_KINDS = new Set(['decision', 'resolved', 'question']);
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all', '--update-context', '--pending']);
-function isFlagValue(a) {
-    const i = argv.indexOf(a);
-    return i > 0 && argv[i - 1].startsWith('--') && !BOOL_FLAGS.has(argv[i - 1]);
-}
-const positional = argv.slice(1).filter((a) => !a.startsWith('--') && !isFlagValue(a));
-function arg(name, fallback = null) {
-    const i = argv.indexOf(`--${name}`);
-    return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
-}
-const has = (name) => argv.includes(`--${name}`);
+const { arg, has, positional } = parseArgs(argv);
 
 const dryRun = has('dry-run');
 const asJson = has('json');
@@ -151,72 +143,11 @@ if (!project) {
     console.error('Pass --project <container-folder-name>. There is no default.');
     process.exit(1);
 }
-const dir = join(vault, 'Projects', project, 'Journal');
-const ledgerPath = join(dir, 'ledger.jsonl');
-
+const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = openStore({ vault, project, dryRun });
 const today = () => new Date().toISOString().slice(0, 10);
-/**
- * A roll is recorded in the ledger with a timestamp, not inferred from the
- * archive file existing. Work finished AFTER a roll still shows in CURRENT.md,
- * so rolling at 5pm does not hide the evening's work.
- */
-function rollPoint(entries, d) {
-    const marks = entries.filter((e) => e.kind === 'rolled' && e.date === d);
-    return marks.length ? marks[marks.length - 1].ts : null;
-}
 const now = () => new Date().toISOString();
 
-function ensureDir() {
-    if (!dryRun) mkdirSync(dir, { recursive: true });
-}
-
-function readLedger() {
-    if (!existsSync(ledgerPath)) return [];
-    return readFileSync(ledgerPath, 'utf8')
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l, i) => {
-            try { return JSON.parse(l); } catch { console.error(`  skipped malformed line ${i + 1}`); return null; }
-        })
-        .filter(Boolean);
-}
-
-function append(entry) {
-    ensureDir();
-    if (dryRun) { console.log('[dry-run]', JSON.stringify(entry)); return entry; }
-    appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
-    return entry;
-}
-
-/** Append several rows in one write, so a batch is either all there or (on a crash) a prefix of whole lines. */
-function appendMany(entries) {
-    ensureDir();
-    if (dryRun) { entries.forEach((e) => console.log('[dry-run]', JSON.stringify(e))); return entries; }
-    if (entries.length) appendFileSync(ledgerPath, entries.map((e) => JSON.stringify(e) + '\n').join(''));
-    return entries;
-}
-
 // ── stream registry ─────────────────────────────────────────────────────────
-
-const registryPath = join(vault, 'Projects', project, 'streams.json');
-let registryCache;
-
-/** The stream registry (see readRegistry in lib/ledger-core.ts), read once per run. */
-function loadRegistry() {
-    if (registryCache === undefined) registryCache = readRegistry(registryPath, () => console.error('  streams.json is malformed; ignoring the registry'));
-    return registryCache;
-}
-
-function saveRegistry(reg) {
-    mkdirSync(dirname(registryPath), { recursive: true });
-    const tmp = `${registryPath}.tmp-${process.pid}`;
-    const out = {};
-    if (reg.hasStreams || Object.keys(reg.streams).length) out.streams = reg.streams;
-    if (reg.models) out.models = reg.models;
-    writeFileSync(tmp, JSON.stringify(out, null, 2) + '\n');
-    renameSync(tmp, registryPath);
-    registryCache = reg;
-}
 
 /** Read-time mapping through the loaded registry. */
 const mapStream = (s) => mapStreamWith(loadRegistry(), s);
@@ -283,16 +214,6 @@ function normaliseStream(raw) {
 function streamOrNone(raw) {
     const s = normaliseStream(raw);
     return s === 'none' ? undefined : s || undefined;
-}
-
-/** Short, collision-checked, human-typeable id. */
-function newId(existing) {
-    const taken = new Set(existing.map((e) => e.id));
-    for (let n = 0; ; n++) {
-        const id = Math.random().toString(36).slice(2, 6);
-        if (!taken.has(id) && !/^\d+$/.test(id)) return id;
-        if (n > 500) return `${Date.now()}`.slice(-6);
-    }
 }
 
 const fold = (entries) => foldWith(entries, loadRegistry());
