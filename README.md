@@ -60,7 +60,7 @@ mkdir -p ~/.agents/skills && ln -s ~/.claude/skills/the-maestro ~/.agents/skills
 # 2. Tell the scripts where the ledger lives (a real folder you choose; there is no default and no guessing).
 export VAULT_ROOT="/absolute/path/to/your/vault"
 
-# 3. Smoke test. --project is the name of your container folder and is always required.
+# 3. Smoke test. --project is the name of your container folder and is required unless your config sets `project`.
 node ~/.claude/skills/the-maestro/scripts/journal.ts status --project my-workspace
 ```
 
@@ -227,7 +227,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 
 ### journal.ts
 
-The ledger tool. `--project <name>` is required on every command; there is no default project. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. The root is `--vault`, then `LEDGER_ROOT`, then `VAULT_ROOT`. Every new row needs `--model "<name>"` and `--used "skill:x,tool:y"` (`--tokens` and `--harness` are optional).
+The ledger tool. `--project <name>` is required on every command unless the `project` config setting (or `MAESTRO_PROJECT`) names one; an explicit flag wins and there is no built-in default. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. The root is `--vault`, then `LEDGER_ROOT`, then `VAULT_ROOT`. Every new row needs `--model "<name>"` and `--used "skill:x,tool:y"` (`--tokens` and `--harness` are optional).
 
 ```bash
 J=~/.claude/skills/the-maestro/scripts/journal.ts
@@ -428,7 +428,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `overlay` | `MAESTRO_OVERLAY` | none | Org overlay skill name: `<skill>` or `<plugin>:<skill>` |
 | `gh_org` | `MAESTRO_GH_ORG` | none (no org filter) | GitHub org the PR board is scoped to |
 | `gh_login` | `MAESTRO_GH_LOGIN` | the `gh`-authenticated user | Your GitHub login |
-| `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths; `journal.ts` still requires `--project` |
+| `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths. `journal.ts` uses it when `--project` is omitted; with neither set it refuses |
 | `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<working directory with separators as dashes>` | Claude Code transcript directory read by `token-metrics.ts` |
 | `ledger_root` | `LEDGER_ROOT` | none | Where `Journal/` lives; falls back to `vault_root` |
 | `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
