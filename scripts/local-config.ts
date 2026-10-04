@@ -86,11 +86,14 @@ export const GH_LOGIN = pick('MAESTRO_GH_LOGIN', 'gh_login');
 export const CONTAINER_PROJECT = pick('MAESTRO_PROJECT', 'project') || 'dev-env';
 
 /**
- * Claude Code's transcript directory for the container, read by token-metrics.ts. Claude Code
- * names it after the working directory with every path separator turned into a dash.
+ * Claude Code's transcript directory for the container, read by token-metrics.ts. Claude Code names it after the
+ * session's working directory with every path separator turned into a dash. Unset, the directory is the one for
+ * `container_root` when that is set (the orchestrator runs there), else for the working directory of the script,
+ * which is the wrong folder whenever the script runs from somewhere else.
  */
 export const CLAUDE_PROJECTS_DIR =
-  pick('MAESTRO_PROJECTS_DIR', 'projects_dir') || join(homedir(), '.claude', 'projects', process.cwd().replace(/[\\/]/g, '-'));
+  pick('MAESTRO_PROJECTS_DIR', 'projects_dir')
+  || join(homedir(), '.claude', 'projects', (pick('MAESTRO_CONTAINER_ROOT', 'container_root').trim().replace(/^~(?=\/)/, homedir()) || process.cwd()).replace(/[\\/]/g, '-'));
 
 /** Where the ledger's Journal/ lives. Empty means "not set": the scripts ask for --vault. */
 export const LEDGER_ROOT = pick('LEDGER_ROOT', 'ledger_root');
