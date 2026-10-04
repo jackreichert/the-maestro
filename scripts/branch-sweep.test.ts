@@ -71,6 +71,20 @@ test('merged into develop and staging qualifies in a twin-flow repo', () => {
     assert.match(r.items[0].why, /develop \(ancestry\) and staging \(ancestry\)/);
 });
 
+test('a second remote with its own HEAD ref is never scanned as a branch', () => {
+    const w = world(); feature(w, 'feat/a');
+    mergeInto(w, 'develop', 'feat/a');
+    const second = join(w.root, 'second.git');
+    sh(w.root, 'clone', '-q', '--bare', w.origin, second);
+    sh(w.repo, 'remote', 'add', 'second', second);
+    sh(w.repo, 'fetch', '-q', 'second');
+    sh(w.repo, 'remote', 'set-head', 'second', '-a');
+    assert.match(sh(w.repo, 'for-each-ref', '--format=%(refname)', 'refs/remotes/second'), /refs\/remotes\/second\/HEAD/);   // the ref exists
+    const r = scanRepo(w.repo, ctxFor());
+    assert.deepEqual(names(r, 'remote-branch'), ['feat/a']);
+    assert.deepEqual(r.notes, []);
+});
+
 test('merged into develop only does not qualify in a twin-flow repo, but does elsewhere', () => {
     const w = world(); feature(w, 'feat/a'); mergeInto(w, 'develop', 'feat/a');
     assert.deepEqual(names(scanRepo(w.repo, ctxFor({ twin: ['proj'] })), 'remote-branch'), []);

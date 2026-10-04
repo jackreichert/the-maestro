@@ -52,9 +52,9 @@ export interface SnapshotPr {
     threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
 }
 export interface Snapshot { takenAt?: string; prs: SnapshotPr[] }
-/** A PR as an older snapshot file may hold it: readiness and the sibling re-query tolerate a missing mergeable, threads or threadsComplete. */
 /** A PR in the older snapshot being diffed against: it may predate the reviews and threads fields. */
 export type PrevPr = Omit<SnapshotPr, 'reviews' | 'threads'> & Partial<Pick<SnapshotPr, 'reviews' | 'threads'>>;
+/** A PR as an older snapshot file may hold it: readiness and the sibling re-query tolerate a missing mergeable, threads or threadsComplete. */
 export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'> & Partial<Pick<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'>>;
 
 /** The fields QUERY selects. gh's JSON is not validated against this; it is only as right as the query. */

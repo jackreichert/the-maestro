@@ -2,9 +2,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
 import type { Comparison } from './token-metrics.ts';
@@ -419,3 +419,19 @@ test('a mix cell keeps whole-number precision, so a share just over the target i
     assert.equal(c.status, 'MISS');
 });
 
+
+test('the entry guard reaches main() through a symlink and through a path with a space', () => {
+    const links = mkdtempSync(join(tmpdir(), 'tm-links-'));
+    const spaced = join(links, 'with space');
+    mkdirSync(spaced);
+    symlinkSync(SCRIPT, join(spaced, 'token metrics.ts'));
+    const viaDirLink = join(links, 'scripts dir');
+    symlinkSync(dirname(SCRIPT), viaDirLink);
+    for (const entry of [join(spaced, 'token metrics.ts'), join(viaDirLink, 'token-metrics.ts')]) {
+        const r = spawnSync(process.execPath, [entry, '--json', '--projects-dir', projects, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', TZ: 'UTC' },
+        });
+        assert.equal(r.status, 0, r.stderr);
+        assert.deepEqual(JSON.parse(r.stdout), { day: null, sessions: [] }, entry);
+    }
+});
