@@ -57,7 +57,8 @@ export function gateReport(ctx: PrimeContext) {
 /**
  * The session-start view: at most 40 lines, however long the ledger is. Today's streams, then Needs Jack, paste blocks,
  * gated and in-flight items in that order. When it does not fit, each section gives up lines evenly and says how many it hid.
- * Reads only the ledger (no gh, no network), so it is safe to run from a hook.
+ * Reads the ledger and appends nothing; the only network step is the skill's own update check (a git fetch capped at 15s, set
+ * `notices` from it), so a hook running it needs a timeout above that.
  */
 export const PRIME_MAX_LINES = 40;
 
