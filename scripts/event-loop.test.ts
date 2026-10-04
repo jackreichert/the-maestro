@@ -1,18 +1,18 @@
-// Run: node --test scripts/event-loop.test.mjs
+// Run: node --test scripts/event-loop.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { EXIT, formatDigest, pace, tick } from './event-loop.mjs';
+import { EXIT, formatDigest, pace, tick } from './event-loop.ts';
 import * as inbox from './event-types/inbox.ts';
 import * as prChecks from './event-types/pr-checks.ts';
 import * as reminder from './event-types/reminder.ts';
 import { notifyChoice } from './lib/notify.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
 
-const SCRIPT = new URL('./event-loop.mjs', import.meta.url).pathname;
+const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
 const NOON = Date.parse('2026-10-01T12:00:00Z');
 const NIGHT = Date.parse('2026-10-01T22:00:00Z');

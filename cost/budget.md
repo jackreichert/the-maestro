@@ -145,7 +145,7 @@ moved the floor from 120s to 300s, and set the quiet-day baseline at 600–900s.
 ## One event loop instead of N watchers
 
 Every ad-hoc watcher (a PR poller, a run watcher, a queue drain) wakes the orchestrator on its own
-schedule, and each wake re-reads the whole session. `scripts/event-loop.mjs` replaces them with one
+schedule, and each wake re-reads the whole session. `scripts/event-loop.ts` replaces them with one
 loop over a registry of watches: a type's `diff()` decides what is a change worth waking for, the
 cadence is the same `lib/cadence.ts` (300s floor, quiet hours), and a cheap runner following
 [playbooks/event-loop.md](../playbooks/event-loop.md) wakes the orchestrator only on an actionable event.

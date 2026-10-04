@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * event-loop.mjs: one loop for every "wake me when X happens" watch, so a session never runs N ad-hoc watchers.
+ * event-loop.ts: one loop for every "wake me when X happens" watch, so a session never runs N ad-hoc watchers.
  *
- *   event-loop.mjs add --id <id> --type <type> --target <t> [--done-when <rule>] [--report <text>] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
- *   event-loop.mjs list [--json] | remove <id> | digest [--peek]
- *   event-loop.mjs run [--once] [--interval N]
+ *   event-loop.ts add --id <id> --type <type> --target <t> [--done-when <rule>] [--report <text>] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
+ *   event-loop.ts list [--json] | remove <id> | digest [--peek]
+ *   event-loop.ts run [--once] [--interval N]
  *
  * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
  * A type may export `retired(watch, ctx)` to delete its per-watch files when the watch retires or is removed.
