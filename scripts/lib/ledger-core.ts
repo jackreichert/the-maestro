@@ -107,17 +107,20 @@ export function readRegistry(path: string, onMalformed?: () => void): Registry |
     }
 }
 
+/** The non-blank lines of ledger text, each with its 1-based line number in the file, so every reader reports the same N. */
+export function ledgerLines(text: string): { line: number; text: string }[] {
+    return text.split('\n').flatMap((l, i) => (l.trim() ? [{ line: i + 1, text: l }] : []));
+}
+
 /**
  * Parses ledger.jsonl text into rows, skipping blank lines. A line that is not JSON is dropped and reported through
- * `onMalformed(n)`, where n counts the non-blank lines from 1. The JSON is not checked against LedgerRow: rows carry
- * whatever the writer put there, and the fold reads only the fields it names.
+ * `onMalformed(n)`, where n is the line number in the file (blank lines count), matching `verify`. The JSON is not
+ * checked against LedgerRow: rows carry whatever the writer put there, and the fold reads only the fields it names.
  */
 export function parseLedger(text: string, onMalformed?: (n: number) => void): LedgerRow[] {
-    return text
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l, i) => {
-            try { return JSON.parse(l) as LedgerRow | null; } catch { onMalformed?.(i + 1); return null; }
+    return ledgerLines(text)
+        .map(({ line, text: l }) => {
+            try { return JSON.parse(l) as LedgerRow | null; } catch { onMalformed?.(line); return null; }
         })
         .filter((row): row is LedgerRow => Boolean(row));
 }
