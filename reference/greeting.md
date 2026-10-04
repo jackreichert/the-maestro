@@ -81,8 +81,8 @@ End every morning greeting (after the board, before the poem and status footer) 
 
 - Propose **two to four** priorities, most important first. Draw them from the board: go-live or other deadlines, blocked items you could unblock, decisions awaiting the user that hold up work, open PRs close to merging, and anything the previous day's handoff flagged. One line each, with the reason and the first concrete step.
 - Then ask directly: *"Any priorities of your own for today, or changes to these?"* Ask only this; don't start work on the proposals until the user answers or tells you to go.
-- **Once the user confirms, each priority becomes a ledger stream.** Tag existing items with `journal.mjs tag <id> --stream <Name>`, and pass `--stream <Name>` to every new `start`/`ask`/`log` for it (see [ledger.md#workstreams-tags](ledger.md#workstreams-tags)). Use short, capitalised stream names, e.g. `Onboarding`, `Security`, and stay consistent: a lowercase variant splits the count.
-- **The status footer then shows one `Ledger (<Name>)` line per active stream**, plus `Ledger (other)` for the rest, printed by `journal.mjs status --footer` (counted from the same fold as `status --json`), never written from memory.
+- **Once the user confirms, each priority becomes a ledger stream.** Tag existing items with `journal.ts tag <id> --stream <Name>`, and pass `--stream <Name>` to every new `start`/`ask`/`log` for it (see [ledger.md#workstreams-tags](ledger.md#workstreams-tags)). Use short, capitalised stream names, e.g. `Onboarding`, `Security`, and stay consistent: a lowercase variant splits the count.
+- **The status footer then shows one `Ledger (<Name>)` line per active stream**, plus `Ledger (other)` for the rest, printed by `journal.ts status --footer` (counted from the same fold as `status --json`), never written from memory.
 - A priority that carries over from yesterday keeps its stream; don't create a second one. Clear a stream with `--stream none` when its push is over, and drop its footer line.
 
 ## How the "awaiting you" list is formatted
@@ -174,4 +174,4 @@ do not invent work to fill the silence.
 - Burying the board under the answer to whatever else the greeting carried.
 - Leaving the standup update out of the morning board, or building it from today's still-empty
   ledger instead of the previous working day's.
-- Pasting raw `journal.mjs status` output instead of summarising it and naming what actually matters.
+- Pasting raw `journal.ts status` output instead of summarising it and naming what actually matters.

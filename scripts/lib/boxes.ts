@@ -14,7 +14,8 @@
 /** The fields of a ledger row that box classification reads. */
 export interface BoxItem { kind?: string; text?: string; ticket?: string; paste?: string; pending?: boolean; date?: string }
 
-export type Approval = 'standing' | 'one-off' | undefined;
+/** An item's effective approval: 'standing' or 'one-off' when valid. Read back from the ledger as text, so any string can arrive. */
+export type Approval = string | undefined;
 
 export type Gate =
     | { type: 'gh:pr'; repo: string; number: number }

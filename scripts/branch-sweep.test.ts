@@ -530,7 +530,7 @@ test('branchGlob: * stays inside a segment, ** crosses, everything else is liter
     assert.deepEqual([m('release/*', 'release/1.0'), m('release/*', 'release/a/b'), m('release/**', 'release/a/b'), m('main', 'feat/main'), m('a.b', 'axb'), m('*', 'a/b')], [true, false, true, false, false, false]);
 });
 
-// ── sweepWorktrees: what `journal.mjs roll` runs ────────────────────────────
+// ── sweepWorktrees: what `journal.ts roll` runs ────────────────────────────
 
 const sweep = (w: World, over: Partial<SweepContext> = {}, opts: Parameters<typeof sweepWorktrees>[2] = {}) => sweepWorktrees(w.container, ctxFor({ gh: () => [], ...over }), opts);
 const keptReason = (r: { kept: { path: string; reason: string }[] }, path: string): string => must(r.kept.find((k) => k.path === path), `kept ${path}`).reason;
