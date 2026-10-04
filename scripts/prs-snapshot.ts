@@ -17,17 +17,17 @@
  * journal.mjs there is no --project flag — the container's own project name
  * (CONTAINER_PROJECT in local-config.ts) is the only one that makes sense here.
  *
- *   prs-snapshot.mjs [--diff] [--dry-run] --vault <path>
+ *   prs-snapshot.ts [--diff] [--dry-run] --vault <path>
  *       Fetch the live board via `gh api graphql`. With --diff, compare it
  *       against the stored snapshot first and print the actionable changes.
  *       Either way (unless --dry-run), overwrite the snapshot with the fresh
  *       fetch, so the next run diffs against this one.
  *       Root precedence: --vault, then $LEDGER_ROOT, then $VAULT_ROOT.
  *
- *   prs-snapshot.mjs [--diff] [--ready] ...   --ready adds the readiness report: PRs that are ready to merge, and approved ones that are not, with why
- *   prs-snapshot.mjs ready <snapshot.json>   the readiness report for a snapshot on disk (no network; it says how old the file is and is not a merge gate)
+ *   prs-snapshot.ts [--diff] [--ready] ...   --ready adds the readiness report: PRs that are ready to merge, and approved ones that are not, with why
+ *   prs-snapshot.ts ready <snapshot.json>   the readiness report for a snapshot on disk (no network; it says how old the file is and is not a merge gate)
  *
- *   prs-snapshot.mjs diff <old-snapshot.json> <new-snapshot.json>
+ *   prs-snapshot.ts diff <old-snapshot.json> <new-snapshot.json>
  *       Pure diff of two snapshot files already on disk. No network call, no
  *       write. This is what the test file exercises.
  *
@@ -289,7 +289,7 @@ function cmdSnapshot() {
 function cmdDiffFiles() {
     const [oldPath, newPath] = positional;
     if (!oldPath || !newPath) {
-        console.error('Usage: prs-snapshot.mjs diff <old-snapshot.json> <new-snapshot.json>');
+        console.error('Usage: prs-snapshot.ts diff <old-snapshot.json> <new-snapshot.json>');
         process.exit(1);
     }
     const prev = JSON.parse(readFileSync(oldPath, 'utf8'));
@@ -298,10 +298,10 @@ function cmdDiffFiles() {
 }
 
 function cmdReadyFile() {
-    if (!positional[0]) { console.error('Usage: prs-snapshot.mjs ready <snapshot.json>'); process.exit(1); }
+    if (!positional[0]) { console.error('Usage: prs-snapshot.ts ready <snapshot.json>'); process.exit(1); }
     const snapshot = JSON.parse(readFileSync(positional[0], 'utf8'));
     const ageMin = snapshot.takenAt ? Math.round((Date.now() - Date.parse(snapshot.takenAt)) / 6e4) : null;
-    console.log(`Snapshot taken ${snapshot.takenAt || 'at an unknown time'}${ageMin > 60 ? ` (${ageMin} minutes ago: STALE)` : ''}. Not a merge gate: run \`prs-snapshot.mjs --ready\` for a live answer.`);
+    console.log(`Snapshot taken ${snapshot.takenAt || 'at an unknown time'}${ageMin > 60 ? ` (${ageMin} minutes ago: STALE)` : ''}. Not a merge gate: run \`prs-snapshot.ts --ready\` for a live answer.`);
     readyLines(snapshot).forEach((l) => console.log(l));
 }
 

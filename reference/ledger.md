@@ -34,7 +34,7 @@ Why, and the token-saving tests this feeds: `Projects/<container-name>/Research/
 
 Storage is `$LEDGER_ROOT/Projects/{container-name}/Journal/` — a root of its own, separate from the
 Obsidian vault, so the day-to-day ledger doesn't clutter vault search. `journal.mjs` and
-`prs-snapshot.mjs` resolve the root as `--vault`, then `$LEDGER_ROOT`, then `$VAULT_ROOT` (so an
+`prs-snapshot.ts` resolve the root as `--vault`, then `$LEDGER_ROOT`, then `$VAULT_ROOT` (so an
 unset `LEDGER_ROOT` still works against the old single-root layout). Everything else — tickets,
 `CONTEXT.md`, `DECISIONS.md`, `Plans/`, `Research/`, `Reviews/` — stays under `$VAULT_ROOT`. Pass
 `--project` as the container folder's name; there is no default. `ledger.jsonl` is append-only and
@@ -314,7 +314,7 @@ the end of the standup.
 
 ### PR pass
 
-Run `node scripts/prs-snapshot.mjs --diff --vault "$LEDGER_ROOT"`
+Run `node scripts/prs-snapshot.ts --diff --vault "$LEDGER_ROOT"`
 ([reference/prs.md#mid-day-updates](prs.md#mid-day-updates)) for the mechanical first pass — it
 diffs against whatever the mid-day check last saved and prints only actionable changes — then run
 the full query in [reference/prs.md](prs.md) and diff it against the morning board for anything the
