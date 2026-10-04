@@ -111,6 +111,9 @@ import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.mjs';
+import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.mjs';
+import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.mjs';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
@@ -149,6 +152,17 @@ if (!project) {
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = openStore({ vault, project, dryRun });
 const today = () => new Date().toISOString().slice(0, 10);
 const now = () => new Date().toISOString();
+
+// Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
+const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
+const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
+const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg });
+const triageReport = (d, since) => triageReportIn(triageCtx(), d, since);
+const verifyLedger = () => verifyLedgerIn(verifyCtx());
+const autoCommitLedger = (d) => autoCommitLedgerIn(verifyCtx(), d);
+const primeLines = () => primeLinesIn(primeCtx());
+const gateReport = () => gateReportIn(primeCtx());
+const pendingTransitions = (since) => pendingTransitionsIn(primeCtx(), since);
 
 // ── stream registry ─────────────────────────────────────────────────────────
 
@@ -620,81 +634,6 @@ function rollArchive(d) {
 
 
 /**
- * Every item triage looks at, boxed: open items of any age, plus decisions and notes dated since..d that nothing
- * has closed. Each carries `ref` (the first --ref that is an existing file, else null) and `stale`.
- */
-function triageItems(d, since) {
-    const entries = readLedger();
-    const folded = fold(entries);
-    const approvals = approvalMap(entries);
-    const deferred = activeDeferrals(entries, today());
-    const inScope = (i) => isOpen(i) || (!i.closedBy && ['decision', 'note'].includes(i.kind) && i.date >= since && i.date <= d);
-    return folded.items.filter((i) => !folded.hidden.has(i.id) && inScope(i)).map((i) => {
-        const box = classify(i, approvals.get(i.id));
-        const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
-        const until = deferred.get(i.id);
-        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d) };
-    });
-}
-
-/**
- * The triage report as data. `blockers` are what `roll --strict` refuses on: a rule or approval with no ref file
- * to point at (not yet promoted), and an incidental finding with no ticket. Stale items are warnings only.
- */
-function triageReport(d, since = d) {
-    const items = triageItems(d, since);
-    const byBox = {};
-    for (const i of items) (byBox[i.box] ||= []).push(i);
-    const blockers = [
-        ...items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).map((i) => ({ id: i.id, box: i.box, why: 'not promoted: no --ref that is an existing file' })),
-        ...items.filter((i) => i.box === BOX.FINDING).map((i) => ({ id: i.id, box: i.box, why: 'finding with no ticket' })),
-    ];
-    const stale = items.filter((i) => i.stale).map((i) => ({ id: i.id, box: i.box, ageDays: i.ageDays }));
-    const applicable = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => i.id);
-    const pending = pendingTransitions(defaultPendingSince());
-    return { date: d, since, items, byBox, blockers, stale, applicable, pendingTransitions: pending, checklist: triageChecklist(items, blockers, pending) };
-}
-
-/** The don't-miss checklist: [x]/[ ] where the ledger can tell, "(by hand)" where only the session can. */
-function triageChecklist(items, blockers, pending = []) {
-    const n = (box) => items.filter((i) => i.box === box);
-    const unpromoted = blockers.filter((b) => RECORD_BOXES.includes(b.box)).length;
-    const toClose = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).length;
-    const short = n(BOX.NEEDS_JACK).filter((i) => String(i.text).trim().length < 25).length;
-    const unfiled = n(BOX.PASTE).filter((i) => !i.paste).length;
-    const mark = (ok) => (ok ? '[x]' : '[ ]');
-    return [
-        `${mark(!unpromoted && !toClose)} Every rule or approval stated today has a memory file and a HOW-WE-WORK line (by hand), and its ledger row is closed${unpromoted ? ` (${unpromoted} with no ref file)` : ''}${toClose ? ` (${toClose} ready: run \`triage --apply\`)` : ''}`,
-        `${mark(!n(BOX.FINDING).length)} Every "could not be filed", "follow-up", "next session" note is a ticket or an open item${n(BOX.FINDING).length ? ` (${n(BOX.FINDING).length} without one)` : ''}. Check the handoff draft by hand too.`,
-        `${mark(!short)} Every Needs-Jack item reads as a standalone question with options, not a bare id${short ? ` (${short} too short to stand alone)` : ''}`,
-        `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
-        `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
-        `${mark(!pending.length)} Every done item with a tracker key has a recorded transition${pending.length ? ` (${pending.length} pending: ${pending.map((r) => r.key).join(', ')}; run \`tickets --pending\`)` : ''}`,
-        '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
-        '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.ts; by hand if you wrote it yourself)',
-    ];
-}
-
-function triageLines(t) {
-    const out = [`Triage — ${t.date} (open items, plus decisions and notes since ${t.since})`];
-    for (const box of Object.keys(t.byBox).map(Number).sort((a, b) => a - b)) {
-        const list = t.byBox[box];
-        if (box === BOX.NOISE) { out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`); continue; }
-        out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`);
-        for (const i of list) {
-            const tail = [RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.deferredUntil ? `deferred until ${i.deferredUntil}` : null, i.gate ? `gate ${i.gate}` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
-            out.push(`  ${i.id}  ${clip(i.text, 110)}${tail.length ? `  [${tail.join('; ')}]` : ''}`);
-        }
-    }
-    if (!t.items.length) out.push('\n  (nothing to box)');
-    out.push('', `Blockers (roll --strict refuses): ${t.blockers.length}`);
-    t.blockers.forEach((b) => out.push(`  ${b.id}  box ${b.box}: ${b.why}`));
-    out.push(`Stale: ${t.stale.length}${t.stale.length ? ` (${t.stale.map((s) => `${s.id} ${s.ageDays}d`).join(', ')})` : ''}`);
-    out.push('', "Don't-miss checklist", ...t.checklist.map((l) => `  ${l}`));
-    return out;
-}
-
-/**
  * `triage [--date D] [--since D] [--json]` is read-only. `--apply` appends a `resolved` row ("recorded → <ref>") for
  * each rule or approval (boxes 1 to 3) whose ref is an existing file, and nothing else; it never closes an item
  * with no resolvable ref. Closed items fall out of scope, so a second run appends nothing.
@@ -743,40 +682,6 @@ function triageBeforeRoll(d) {
 
 // ── verify and the ledger backup commit ─────────────────────────────────────
 
-/** Integrity problems in the raw ledger file: unparseable lines, duplicate ids, references to ids that do not exist. */
-function verifyLedger() {
-    const problems = [];
-    const text = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8') : '';
-    const rows = [];
-    text.split('\n').forEach((l, n) => {
-        if (!l.trim()) return;
-        try {
-            const row = JSON.parse(l);
-            if (row === null || typeof row !== 'object' || Array.isArray(row)) throw new Error('not an object');
-            rows.push({ row, line: n + 1 });
-        } catch {
-            problems.push({ line: n + 1, problem: 'line does not parse as a JSON object' });
-        }
-    });
-    const seen = new Map();
-    for (const { row, line } of rows) {
-        if (row.id === undefined) continue;
-        if (seen.has(row.id)) problems.push({ line, id: row.id, problem: `duplicate id (first on line ${seen.get(row.id)})` });
-        else seen.set(row.id, line);
-    }
-    const missing = (line, row, field, id) => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
-    for (const { row, line } of rows) {
-        if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
-        if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
-        const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
-        if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
-        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers']) missing(line, row, field, row[field]);
-        if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
-    }
-    problems.sort((a, b) => a.line - b.line);
-    return { rows: rows.length, problems };
-}
-
 function cmdVerify() {
     const { rows, problems } = verifyLedger();
     if (asJson) console.log(JSON.stringify({ ledger: ledgerPath, rows, problems }, null, 2));
@@ -786,37 +691,6 @@ function cmdVerify() {
         if (problems.length > 50) console.log(`  ... and ${problems.length - 50} more`);
     }
     if (problems.length) process.exit(1);
-}
-
-/**
- * The optional backup after a roll: only when ledger_git_autocommit is on and the ledger root is itself a
- * git repo. Runs verify first and refuses to commit a ledger that fails it. Stages explicit paths
- * (`git add -- <path>...`), never -A, and commits just those paths. Returns false when it should have
- * committed and could not.
- */
-function autoCommitLedger(d) {
-    if (!LEDGER_GIT_AUTOCOMMIT || dryRun) return true;
-    const git = (...a) => spawnSync('git', ['-C', vault, ...a], { encoding: 'utf8' });
-    const top = git('rev-parse', '--show-toplevel');
-    if (top.status !== 0 || realpathSync(top.stdout.trim()) !== realpathSync(vault)) {
-        console.error(`ledger_git_autocommit is on but ${vault} is not a git repository root; not committing.`);
-        return true;
-    }
-    const { problems } = verifyLedger();
-    if (problems.length) {
-        console.error(`Not committing: verify found ${problems.length} problem(s). Run \`journal.mjs verify\`.`);
-        return false;
-    }
-    const st = git('status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all');
-    if (st.status !== 0) { console.error(`git status failed: ${st.stderr.trim()}`); return false; }
-    const paths = st.stdout.split('\0').filter(Boolean).map((e) => e.slice(3));
-    if (!paths.length) { console.log('ledger git: nothing to commit.'); return true; }
-    const add = git('add', '--', ...paths);
-    if (add.status !== 0) { console.error(`git add failed: ${add.stderr.trim()}`); return false; }
-    const commit = git('commit', '-m', `chore(ledger): roll ${d}`, '--', ...paths);
-    if (commit.status !== 0) { console.error(`git commit failed: ${(commit.stderr || commit.stdout).trim()}`); return false; }
-    console.log(`ledger git: committed ${paths.length} path(s) as "chore(ledger): roll ${d}".`);
-    return true;
 }
 
 /** Annotate one existing entry (an item or a closing row) without rewriting the JSONL. */
@@ -1708,103 +1582,12 @@ function refreshBoard() {
     if (!readFileSync(current, 'utf8').includes(`updated: ${today()}`)) render(true);
 }
 
-/** gh's view of a PR as { state, mergedAt }, or null when gh is missing, fails or answers with something unreadable. */
-function ghPrState(repo, number) {
-    const r = tryRun('gh', ['pr', 'view', String(number), '--repo', repo, '--json', 'state,mergedAt']);
-    if (!r.ok) return null;
-    try { const j = JSON.parse(r.out); return j && typeof j.state === 'string' ? j : null; } catch { return null; }
-}
-
-/** A ticket's status through the derived index; null when there is no tickets vault or no answer. */
-function ticketStatusOf(id) {
-    if (!(arg('tickets-vault') || VAULT_ROOT)) return null;
-    return ticketStatuses([id])?.get(id)?.status ?? null;
-}
-
-/**
- * Open blocked items that carry a gate, each with where the gate stands. Read-only: it reports, it never promotes
- * or closes an item. gh gates honour resume_gh (off means "unknown", not a gh call).
- */
-function gateReport() {
-    const lookups = { pr: (repo, n) => (RESUME_GH ? ghPrState(repo, n) : null), ticket: ticketStatusOf };
-    return groups().blocked.filter((i) => i.gate).map((i) => ({ item: i, ...gateStatus(i.gate, today(), lookups) }));
-}
-
-/**
- * The session-start view: at most 40 lines, however long the ledger is. Today's streams, then Needs Jack, paste blocks,
- * gated and in-flight items in that order. When it does not fit, each section gives up lines evenly and says how many it hid.
- * Reads only the ledger (no gh, no network), so it is safe to run from a hook.
- */
-const PRIME_MAX_LINES = 40;
-
-function primeLines() {
-    const g = groups();
-    const approvals = approvalMap(readLedger());
-    const asks = g.awaiting.filter((i) => classify(i, approvals.get(i.id)) !== BOX.PASTE);
-    const paste = [...g.paste, ...g.awaiting.filter((i) => classify(i, approvals.get(i.id)) === BOX.PASTE)];
-    const label = (i) => `${i.id} ${clip(i.text, 90)}${i.paste ? ` [block: ${clip(i.paste, 120)}]` : ''}${i.gate ? ` [gate: ${clip(i.gate, 80)}]` : ''}${i.stream ? ` (${clip(i.stream, 40)})` : ''}`;
-    const sections = [
-        { title: 'Needs Jack', items: asks },
-        { title: 'Paste blocks for Jack', items: paste },
-        { title: 'Blocked / gated', items: g.blocked },
-        { title: 'In flight', items: g.inflight },
-    ].filter((sec) => sec.items.length).map((sec) => ({ ...sec, lines: sec.items.map(label) }));
-    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste);
-    const pending = pendingTransitions(defaultPendingSince());
-    const head = [clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
-        ...(pending.length ? [clip(`Pending tracker transitions (${pending.length}): ${pending.map((r) => r.key).join(', ')}. \`journal.mjs tickets --pending\``, 200)] : [])];
-    const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.mjs status\` and \`triage\` have the rest.`] : ['`journal.mjs status` has the rest.'];
-    if (!sections.length) return [...head, '(nothing open)', ...foot];
-    // Whatever the content, the cap holds: the budget below counts lines, and this guard backs it up.
-    const capped = (lines) => (lines.length <= PRIME_MAX_LINES ? lines : [...lines.slice(0, PRIME_MAX_LINES - foot.length), ...foot]);
-
-    // Round-robin the line budget so a long section cannot starve the others; a trimmed section ends in "+N more".
-    let budget = PRIME_MAX_LINES - head.length - foot.length - sections.length;
-    const shown = sections.map(() => 0);
-    for (let progressed = true; budget > 0 && progressed;) {
-        progressed = false;
-        sections.forEach((sec, k) => { if (budget > 0 && shown[k] < sec.lines.length) { shown[k]++; budget--; progressed = true; } });
-    }
-    const body = sections.flatMap((sec, k) => {
-        const hidden = sec.lines.length - shown[k];
-        const keep = hidden ? Math.max(0, shown[k] - 1) : shown[k];
-        return [`${sec.title} (${sec.lines.length})`, ...sec.lines.slice(0, keep).map((l) => `  ${l}`), ...(hidden ? [`  … +${hidden} more`] : [])];
-    });
-    return capped([...head, ...body, ...foot]);
-}
-
 function cmdPrime() {
     refreshBoard();
     primeLines().forEach((l) => console.log(l));
 }
 
 // ── pending tracker transitions ─────────────────────────────────────────────
-
-const PENDING_WINDOW_DAYS = 14;
-
-/** Distinct tracker keys (tracker_key_pattern) in the given texts. */
-const trackerKeys = (...texts) => [...new Set(texts.flatMap((t) => String(t || '').match(new RegExp(TRACKER_KEY_PATTERN, 'g')) || []))];
-
-/**
- * Done items finished on or after `since` that carry a tracker key (in the ticket field, the text, or the closing row)
- * whose transition nobody recorded. A transition is recorded by any ledger row with `transitioned: [KEY, ...]`
- * (`journal.mjs log "moved AH-1 to In Staging" --transitioned AH-1`), at any date. One row per key: [{ key, id, text, doneOn }].
- */
-function pendingTransitions(since) {
-    const entries = readLedger();
-    const recorded = new Set(entries.flatMap((e) => e.transitioned || []));
-    const rows = [];
-    for (const i of fold(entries).items) {
-        const doneOn = i.closedBy?.date || i.date;
-        if (i.state !== 'done' || doneOn < since) continue;
-        for (const key of trackerKeys(i.ticket, i.text, i.closedBy?.ticket, i.closedBy?.text)) {
-            if (!recorded.has(key) && !rows.some((r) => r.key === key)) rows.push({ key, id: i.id, text: i.text, doneOn });
-        }
-    }
-    return rows;
-}
-
-const defaultPendingSince = () => new Date(Date.now() - PENDING_WINDOW_DAYS * 864e5).toISOString().slice(0, 10);
 
 function cmdTickets() {
     if (!has('pending')) die('Usage: journal.mjs tickets --pending [--since YYYY-MM-DD] [--json]');
