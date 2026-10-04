@@ -15,7 +15,7 @@ import { userPath, overlayPath, AGENT_OWNED_REPOS, SCRIPTS_SHELF_DIR } from './l
 
 /** The scripts dir as invoked (absolute, symlinks kept), so a symlinked install stays valid when the
  *  checkout behind it moves. Falls back to the real path unless the invoked dir holds pr-open.ts. */
-export function scriptsDir(argv1 = process.argv[1], realDir = dirname(fileURLToPath(import.meta.url))) {
+export function scriptsDir(argv1: string | undefined = process.argv[1], realDir: string = dirname(fileURLToPath(import.meta.url))): string {
   const invoked = argv1 ? dirname(resolve(argv1)) : '';
   return invoked && existsSync(resolve(invoked, 'pr-open.ts')) ? invoked : resolve(realDir);
 }
@@ -25,39 +25,39 @@ export const SLOTS = ['<user git emails>', '<tracker key example>', '<maestro sc
 const LITERALS = new Set(['<base>', '<check>']);
 
 /** The standing block: the first ```text fence under its heading in brief.md. */
-export function extractBlock(markdown) {
+export function extractBlock(markdown: string): string {
   const after = markdown.split(/^### Standing brief block.*$/m)[1] || '';
   return (after.match(/^```text\n([\s\S]*?)^```/m) || [])[1] || '';
 }
 
 /** The scripts shelf line (first ```text fence under its heading) with `<scripts_dir>` filled; empty without a dir. */
-export function shelfLine(markdown, shelfDir) {
+export function shelfLine(markdown: string, shelfDir: string): string {
   const after = markdown.split(/^### Scripts shelf line.*$/m)[1] || '';
   const line = (after.match(/^```text\n([\s\S]*?)^```/m) || [])[1] || '';
   return shelfDir && line ? line.split('<scripts_dir>').join(shelfDir) : '';
 }
 
 /** The agent-owned repos line (first ```text fence under its heading) with `<agent_owned_repos>` filled; empty when none are configured. */
-export function ownedReposLine(markdown, repos) {
+export function ownedReposLine(markdown: string, repos: string[]): string {
   const after = markdown.split(/^### Agent-owned repos line.*$/m)[1] || '';
   const line = (after.match(/^```text\n([\s\S]*?)^```/m) || [])[1] || '';
   return repos.length && line ? line.split('<agent_owned_repos>').join(repos.join(', ')) : '';
 }
 
 /** Reads { '<slot>': value } from the "Standing brief block, filled" section of a config file. */
-export function parseSlotValues(markdown) {
+export function parseSlotValues(markdown: string): Record<string, string> {
   const section = (markdown.split(/^#+ Standing brief block, filled.*$/m)[1] || '').split(/^#+ /m)[0];
-  const out = {};
+  const out: Record<string, string> = {};
   for (const line of section.split('\n')) {
     const m = line.match(/^\s*[-*]\s+`(<[^`>]+>)`\s*(?:→|->)\s*(.+?)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^`(.*)`$/, '$1');
+    if (m) out[m[1]!] = m[2]!.replace(/^`(.*)`$/, '$1');
   }
   return out;
 }
 
 /** Fills the slots; returns { text, problems }. A slot is problematic if unset or still `<…>` afterwards.
  *  `<maestro scripts dir>` is not configured: it is this script's own directory, so workers get a runnable path. */
-export function fillBlock(block, values) {
+export function fillBlock(block: string, values: Record<string, string>): { text: string; problems: string[] } {
   values = { '<maestro scripts dir>': SCRIPTS_DIR, ...values };
   let text = block;
   for (const slot of SLOTS) if (values[slot]) text = text.split(slot).join(values[slot]);
@@ -65,12 +65,12 @@ export function fillBlock(block, values) {
   return { text, problems: [...new Set(left)] };
 }
 
-function main() {
+function main(): void {
   const briefPath = fileURLToPath(new URL('../reference/brief.md', import.meta.url));
   const markdown = readFileSync(briefPath, 'utf8');
   const block = extractBlock(markdown);
   if (!block) { console.error('brief-block: standing block not found in reference/brief.md'); process.exit(1); }
-  const values = {};
+  const values: Record<string, string> = {};
   // Overlay first, then the user file, so the user file wins, as everywhere else in local-config.
   for (const file of [overlayPath, userPath]) {
     if (file && existsSync(file)) Object.assign(values, parseSlotValues(readFileSync(file, 'utf8')));
