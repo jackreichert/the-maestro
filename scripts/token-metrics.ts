@@ -44,8 +44,9 @@
  * - Targets (`cost_targets`) turn the cost metrics into PASS/MISS in the day summary and --compare.
  * - Fresh = input_tokens (uncached). Context = fresh + cache write + cache read.
  */
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSync, realpathSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ModelPrice } from './local-config.ts';
 import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 
@@ -645,4 +646,6 @@ function printCost(date: string, rows: Map<string, TableRow>, baselineUntil: str
     printMetrics(compare(date, rows, baselineUntil).filter((c) => c.cost));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main(process.argv.slice(2));
+const isMain = (): boolean => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
+
+if (process.argv[1] && isMain()) main(process.argv.slice(2));
