@@ -22,7 +22,7 @@ const VALUES = [
 ].join('\n');
 
 /** Runs the CLI with one throwaway config file as the only config source. */
-function run(configText) {
+function run(configText: string) {
     const dir = mkdtempSync(join(tmpdir(), 'bb-'));
     const file = join(dir, 'config.md');
     writeFileSync(file, configText);
