@@ -570,7 +570,7 @@ export function metricList(prices: Prices = MODEL_PRICES): Metric[] {
         ['Haiku share (priced)', pricedShare('haiku', prices), { ...pct, worse: 'none' }],
         ['Est. $ orchestrator', rowUsd('orch', prices), { cost: true, fmt: 'usd' }],
         ['Est. $ subagents', rowUsd('sub', prices), { cost: true, fmt: 'usd' }],
-        ] : [];
+    ] : [];
     const list: Metric[] = [
         ...CORE_METRICS,
         ['Opus share (read)', share(15, 'opus'), { ...pct, target: ['opus_share_max', 0.01, 'max'] }],
