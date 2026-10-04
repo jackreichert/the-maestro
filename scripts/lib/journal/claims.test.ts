@@ -35,6 +35,18 @@ test('readClaim returns null for a missing or unreadable file', () => {
     assert.equal(existsSync(claimPath(claimsDir, 'junk')), true);
 });
 
+test('readClaim treats a lock file holding a bare number, array, string or null as unreadable, and it reads as stale', () => {
+    const claimsDir = dir();
+    for (const body of ['42', '[1,2]', '"held"', 'null']) {
+        acquireClaimLock(claimsDir, 'odd', {});
+        writeFileSync(claimPath(claimsDir, 'odd'), body);
+        const claim = readClaim(claimsDir, 'odd');
+        assert.equal(claim, null, body);
+        assert.equal(describeClaim(claim), 'an unreadable claim');
+        assert.equal(claimStaleness(claim, 12).stale, true);
+    }
+});
+
 test('claimStaleness judges a dead pid on this host, then age, and describeClaim names the holder', () => {
     const fresh = new Date().toISOString();
     assert.equal(pidAlive(process.pid), true);

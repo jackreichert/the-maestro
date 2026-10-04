@@ -9,9 +9,13 @@ export const claimPath = (claimsDir: string, repo: string): string => join(claim
 /** A plain repo name (letters, digits, . _ -); anything else is a usage error through `die`. */
 export const validRepo = (die: (message: string) => never, r: string | undefined): string => (r && /^[\w.-]+$/.test(r) && r !== '.' && r !== '..' ? r : die('Give a plain repo name (letters, digits, . _ -).'));
 
+/** The claim in a repo's lock file, or null when the file is missing, not JSON, or not a JSON object (a bare number or array is not a claim). */
 export function readClaim(claimsDir: string, repo: string): ClaimFile | null {
-    // The file's JSON is returned as read, whatever its shape; the callers read fields with ?. and fall back.
-    try { const claim: ClaimFile = JSON.parse(readFileSync(claimPath(claimsDir, repo), 'utf8')); return claim; } catch { return null; }
+    let parsed: unknown;
+    try { parsed = JSON.parse(readFileSync(claimPath(claimsDir, repo), 'utf8')); } catch { return null; }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    // A JSON object; its fields are not checked, and the callers read them with ?. and fall back.
+    return parsed as ClaimFile;
 }
 
 export function pidAlive(pid: number): boolean {
