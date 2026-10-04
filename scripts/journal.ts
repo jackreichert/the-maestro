@@ -9,7 +9,7 @@
  * vault on 2026-09-26 so the day-to-day ledger stays out of Obsidian search;
  * falls back to $VAULT_ROOT if LEDGER_ROOT is unset, for anyone still on the
  * old single-root layout).
- * --project is required. There is no default project name.
+ * --project is required unless the local config sets `project` (or MAESTRO_PROJECT); an explicit --project wins. There is no built-in default.
  *
  *   ledger.jsonl     append-only source of truth, one JSON object per line
  *   CURRENT.md       GENERATED view of what is open + done today
@@ -105,7 +105,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, UPDATE_CHECK, AUTO_PULL } from './local-config.ts';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL } from './local-config.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
@@ -152,9 +152,9 @@ if (!vault) {
     console.error('Ledger root is not set. Ask where the ledger lives, then set LEDGER_ROOT (or VAULT_ROOT), or pass --vault <path>.');
     process.exit(1);
 }
-const projectArg = arg('project');
+const projectArg = arg('project') || CONFIGURED_PROJECT;
 if (!projectArg) {
-    console.error('Pass --project <container-folder-name>. There is no default.');
+    console.error('Pass --project <container-folder-name>, or set `project` in the local config (MAESTRO_PROJECT). There is no built-in default.');
     process.exit(1);
 }
 const project: string = projectArg;

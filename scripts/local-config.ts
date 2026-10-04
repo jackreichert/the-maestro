@@ -82,8 +82,11 @@ export const GH_ORG = pick('MAESTRO_GH_ORG', 'gh_org');
 /** Your GitHub login. Unset means "whoever `gh` is authenticated as". */
 export const GH_LOGIN = pick('MAESTRO_GH_LOGIN', 'gh_login');
 
+/** The `project` setting as configured (environment, user file or overlay), empty when none sets it. journal.ts uses this as its `--project` default. */
+export const CONFIGURED_PROJECT = pick('MAESTRO_PROJECT', 'project');
+
 /** The container directory's project name, used for ledger paths (Projects/<name>/Journal/). */
-export const CONTAINER_PROJECT = pick('MAESTRO_PROJECT', 'project') || 'dev-env';
+export const CONTAINER_PROJECT = CONFIGURED_PROJECT || 'dev-env';
 
 /**
  * Claude Code's transcript directory for the container, read by token-metrics.ts. Claude Code names it after the
