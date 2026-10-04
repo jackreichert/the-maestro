@@ -2,7 +2,7 @@
 /**
  * PR SIZE: the budget gate run before a draft PR is opened (reference/git.md, "PR size budget").
  *
- *   node scripts/pr-size.mjs --repo <path> --base <ref> [--head <ref>] [--json]
+ *   node scripts/pr-size.ts --repo <path> --base <ref> [--head <ref>] [--json]
  *
  * Reads `git diff --numstat -M -z <base>...<head>` (head defaults to HEAD), sorts each changed file
  * into code, test, config, docs or mechanical, and checks the code against two limits, whichever is
@@ -29,7 +29,25 @@ import {
  * test, migration, mechanical or code (see makeClassifier). Mechanical directories are anchored at the
  * repo root or a package root, so `src/vendor/x.ts` stays code.
  */
-export const DEFAULT_GLOBS = {
+export type Bucket = 'code' | 'test' | 'config' | 'docs' | 'mechanical';
+/** Path globs per category; the classifier's overrides use the same shape, each optional. */
+export type Globs = Record<Exclude<Bucket, 'code'>, string[]>;
+/** One changed file from `git diff --numstat -M -z`. `from` is set only for renames. */
+export interface ChangedFile { path: string; from?: string; renamed: boolean; added: number; deleted: number }
+export type Classify = (file: ChangedFile) => Bucket;
+export interface Assessment {
+  verdict: 'PASS' | 'FAIL';
+  failures: string[];
+  limits: { maxFiles: number; maxLines: number };
+  code: { files: number; lines: number; paths: string[] };
+  tests: { files: number; lines: number };
+  config: { files: number; lines: number };
+  docs: { files: number; lines: number };
+  mechanical: { files: number; paths: string[] };
+}
+interface Options { repo: string; base: string; head: string; json: boolean }
+
+export const DEFAULT_GLOBS: Globs = {
   mechanical: [
     'uv.lock', 'package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock', 'Pipfile.lock',
     'Cargo.lock', 'Gemfile.lock', 'composer.lock', 'go.sum', '*.lock', '*.tgz', '*.tar.gz', '*.min.js', '*.min.css',
@@ -56,7 +74,7 @@ export const DEFAULT_GLOBS = {
 export const CODE_EXT = /\.(?:[cm]?[jt]sx?|py|go|rb|java|kt|kts|rs|sql|sh|bash|zsh|c|cc|cpp|h|hpp|cs|php|swift|scala|ex|exs|lua|pl|dart|vue|svelte)$/i;
 
 /** Turns a path glob into a RegExp: `**` crosses directories, `*` and `?` stay inside one. A glob with no slash matches any basename. */
-export function globToRegExp(glob) {
+export function globToRegExp(glob: string): RegExp {
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
@@ -69,14 +87,14 @@ export function globToRegExp(glob) {
   return new RegExp(`^${glob.includes('/') ? '' : '(?:.*/)?'}${re}$`);
 }
 
-const matcher = (globs) => { const res = globs.map(globToRegExp); return (p) => res.some((r) => r.test(p)); };
+const matcher = (globs: string[]) => { const res = globs.map(globToRegExp); return (p: string) => res.some((r) => r.test(p)); };
 
 /** Migrations are code however they are named: anything under a migrations directory, and .sql files there. */
-export const isMigration = (p) => /(^|\/)migrations?\//.test(p);
+export const isMigration = (p: string) => /(^|\/)migrations?\//.test(p);
 
 /** Builds classify(file) from the configured globs, falling back to DEFAULT_GLOBS per category. */
-export function makeClassifier(overrides = {}) {
-  const pick = (k, configured) => matcher(configured?.length ? configured : DEFAULT_GLOBS[k]);
+export function makeClassifier(overrides: Partial<Globs> = {}): Classify {
+  const pick = (k: keyof Globs, configured: string[] | undefined) => matcher(configured?.length ? configured : DEFAULT_GLOBS[k]);
   const isMechanical = pick('mechanical', overrides.mechanical);
   const isTest = pick('test', overrides.test);
   const isConfig = pick('config', overrides.config);
@@ -94,28 +112,28 @@ export function makeClassifier(overrides = {}) {
 }
 
 /** Parses `git diff --numstat -M -z` output into [{ path, from, renamed, added, deleted }]. Binary files count 0 lines. */
-export function parseNumstat(out) {
+export function parseNumstat(out: string): ChangedFile[] {
   const parts = out.split('\0');
-  const files = [];
+  const files: ChangedFile[] = [];
   for (let i = 0; i < parts.length; i++) {
-    const m = parts[i].match(/^(\d+|-)\t(\d+|-)\t(.*)$/s);
+    const m = parts[i]!.match(/^(\d+|-)\t(\d+|-)\t(.*)$/s);
     if (!m) continue;
     const [, a, d, rest] = m;
     const nums = { added: a === '-' ? 0 : Number(a), deleted: d === '-' ? 0 : Number(d) };
-    if (rest === '') { files.push({ ...nums, from: parts[i + 1], path: parts[i + 2], renamed: true }); i += 2; }
+    if (rest === '') { files.push({ ...nums, from: parts[i + 1]!, path: parts[i + 2]!, renamed: true }); i += 2; }
     else files.push({ ...nums, path: rest, renamed: false });
   }
   return files;
 }
 
 /** Classifies files and applies the budget. Pure: returns the summary object the CLI prints. */
-export function assess(files, { maxFiles, maxLines, classify }) {
-  const buckets = { code: [], test: [], config: [], docs: [], mechanical: [] };
+export function assess(files: ChangedFile[], { maxFiles, maxLines, classify }: { maxFiles: number; maxLines: number; classify: Classify }): Assessment {
+  const buckets: Record<Bucket, ChangedFile[]> = { code: [], test: [], config: [], docs: [], mechanical: [] };
   for (const f of files) buckets[classify(f)].push(f);
-  const sum = (list) => list.reduce((n, f) => n + f.added + f.deleted, 0);
+  const sum = (list: ChangedFile[]) => list.reduce((n, f) => n + f.added + f.deleted, 0);
   const codeFiles = buckets.code.length;
   const codeLines = sum(buckets.code);
-  const failures = [];
+  const failures: string[] = [];
   if (codeFiles > maxFiles) failures.push(`over budget: ${codeFiles} code files (max ${maxFiles})`);
   if (codeLines > maxLines) failures.push(`over budget: ${codeLines} code lines (max ${maxLines})`);
   if (codeFiles > 0 && buckets.mechanical.length > 0) failures.push('mechanical changes go in their own PR');
@@ -132,32 +150,32 @@ export function assess(files, { maxFiles, maxLines, classify }) {
 }
 
 /** `origin/<base>` when it exists (after a quiet fetch that may fail harmlessly), else `base` as given. */
-export function resolveBase(repo, base) {
-  const git = (...a) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+export function resolveBase(repo: string, base: string): string {
+  const git = (...a: string[]) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   try { git('fetch', '--quiet', 'origin', base); } catch { /* a failed fetch is not fatal */ }
   const remote = `origin/${base}`;
   return git('rev-parse', '--verify', '--quiet', `${remote}^{commit}`).status === 0 ? remote : base;
 }
 
-function usage(msg) {
+function usage(msg?: string): never {
   if (msg) console.error(`pr-size: ${msg}`);
-  console.error('usage: node scripts/pr-size.mjs --repo <path> --base <ref> [--head <ref>] [--json]');
+  console.error('usage: node scripts/pr-size.ts --repo <path> --base <ref> [--head <ref>] [--json]');
   process.exit(2);
 }
 
-function parseArgs(argv) {
-  const o = { repo: '', base: '', head: 'HEAD', json: false };
+function parseArgs(argv: string[]): Options {
+  const o: Options = { repo: '', base: '', head: 'HEAD', json: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') o.json = true;
-    else if (a === '--repo' || a === '--base' || a === '--head') o[a.slice(2)] = argv[++i] ?? '';
+    else if (a === '--repo' || a === '--base' || a === '--head') o[a === '--repo' ? 'repo' : a === '--base' ? 'base' : 'head'] = argv[++i] ?? '';
     else usage(`unknown argument ${a}`);
   }
   if (!o.repo || !o.base) usage('--repo and --base are required');
   return o;
 }
 
-function render(r) {
+function render(r: Assessment): string {
   const lines = [
     `code:       ${r.code.files} files, ${r.code.lines} lines (limit ${r.limits.maxFiles} files, ${r.limits.maxLines} lines)`,
     `tests:      ${r.tests.files} files, ${r.tests.lines} lines (not counted)`,
