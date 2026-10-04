@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import type { LedgerRow } from '../ledger-core.ts';
+import { ledgerLines, type LedgerRow } from '../ledger-core.ts';
 
 /** What verify and the backup commit read from the run. The sets are the values `--approval` accepts and the kinds an approval can point at. */
 export interface VerifyContext {
@@ -20,15 +20,14 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
     const problems: Problem[] = [];
     const text = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8') : '';
     const rows: { row: LedgerRow; line: number }[] = [];
-    text.split('\n').forEach((l, n) => {
-        if (!l.trim()) return;
+    ledgerLines(text).forEach(({ line, text: l }) => {
         try {
             const parsed: unknown = JSON.parse(l);
             if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
             // A JSON object; rows carry whatever the writer put there, which is what verify checks.
-            rows.push({ row: parsed as LedgerRow, line: n + 1 });
+            rows.push({ row: parsed as LedgerRow, line });
         } catch {
-            problems.push({ line: n + 1, problem: 'line does not parse as a JSON object' });
+            problems.push({ line, problem: 'line does not parse as a JSON object' });
         }
     });
     const seen = new Map<unknown, number>();
