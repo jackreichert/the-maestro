@@ -52,6 +52,8 @@ export interface SnapshotPr {
     threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
 }
 export interface Snapshot { takenAt?: string; prs: SnapshotPr[] }
+/** A PR as an older snapshot file may hold it: readiness and the sibling re-query tolerate a missing mergeable, threads or threadsComplete. */
+export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'> & Partial<Pick<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'>>;
 
 /** The fields QUERY selects. gh's JSON is not validated against this; it is only as right as the query. */
 interface SearchNodePr {
@@ -214,7 +216,7 @@ const RELEASE_BRANCH = 'staging';
  * review threads (and all threads read), GitHub says MERGEABLE, and, in a twin-flow repo, a release-candidate PR has no open
  * integration twin (same repo and head branch, another base). A conflict or open thread never reads as ready.
  */
-export function readiness(pr: SnapshotPr, all: SnapshotPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS): { ready: boolean; reasons: string[] } {
+export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS): { ready: boolean; reasons: string[] } {
     const reasons: string[] = [];
     if (pr.isDraft) reasons.push('draft');
     if (pr.reviewDecision !== 'APPROVED') reasons.push(`not approved (${pr.reviewDecision})`);
@@ -231,7 +233,7 @@ export function readiness(pr: SnapshotPr, all: SnapshotPr[] = [], twinRepos: str
 }
 
 /** Lines for the ready bucket, and for every approved PR that is not ready with its reasons (so none vanishes). */
-export function readyLines(snapshot: Snapshot, twinRepos: string[] = TWIN_FLOW_REPOS): string[] {
+export function readyLines(snapshot: { prs: StoredPr[] }, twinRepos: string[] = TWIN_FLOW_REPOS): string[] {
     const rows = snapshot.prs.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos) }));
     const ready = rows.filter((r) => r.ready);
     const held = rows.filter((r) => !r.ready && r.p.reviewDecision === 'APPROVED');
@@ -250,7 +252,7 @@ const pause = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArra
  * set to UNKNOWN, then re-asked through `gh pr view` until two answers in a row agree and are known (4 tries at most). A lookup
  * that fails or never settles leaves it UNKNOWN, which readiness() does not call ready.
  */
-export function requerySiblings(prev: Snapshot | null, curr: Snapshot, { run = defaultRun, wait = pause }: { run?: GhRun; wait?: (ms: number) => void } = {}): string[] {
+export function requerySiblings(prev: { prs: StoredPr[] } | null, curr: { prs: StoredPr[] }, { run = defaultRun, wait = pause }: { run?: GhRun; wait?: (ms: number) => void } = {}): string[] {
     const open = new Set(curr.prs.map((p) => p.key));
     const mergedRepos = new Set((prev?.prs || []).filter((p) => !open.has(p.key)).map((p) => p.repo));
     for (const p of curr.prs.filter((x) => mergedRepos.has(x.repo))) {
