@@ -19,22 +19,45 @@
  * then $VAULT_ROOT (no default; tickets are skipped when unset). `search` rebuilds first if a source changed.
  */
 import { DatabaseSync } from 'node:sqlite';
+import type { SQLInputValue, SQLOutputValue } from 'node:sqlite';
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { isOpen, readRegistry, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
+import type { LedgerRow } from './lib/ledger-core.ts';
+
+/** A flat result row: node:sqlite hands back column name to value. */
+type SqlRow = Record<string, SQLOutputValue>;
+/** What a named query returns: the JSON shape and the plain-text rendering. */
+interface QueryResult { data: unknown; text: string }
+interface Ticket {
+    id: string; title: string; status: string | null; type: string | null; priority: string | null; labels: string | null;
+    reviewed: string | null; external: string | null; path: string; body: string;
+}
+interface Handoff { file: string; section: number; heading: string; body: string }
+interface Hit { source: string; ref: string; title: string; snippet: string; score: number }
+type StreamCount = { stream: string; open: number; done: number; dropped: number; total: number; flag?: string };
+
+/** The message of a caught value; `catch` binds `unknown`. */
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+/** The retro path an archive row carries (a free-form field on the row). */
+const retroOf = (e: LedgerRow): string | undefined => e.retro as string | undefined;
+/** A row field as text, empty when unset. */
+const str = (v: unknown): string => (v || '') as string;
 
 const SCHEMA_VERSION = '2';
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 const VALUE_FLAGS = new Set(['--vault', '--tickets-vault', '--project', '--source', '--stream', '--limit', '--since', '--status', '--type', '--sql']);
-const arg = (name, fallback = null) => {
+function arg(name: string): string | null;
+function arg(name: string, fallback: string): string;
+function arg(name: string, fallback: string | null = null): string | null {
     const i = argv.indexOf(`--${name}`);
     return i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
-};
-const has = (name) => argv.includes(`--${name}`);
+}
+const has = (name: string): boolean => argv.includes(`--${name}`);
 const positional = argv.slice(1).filter((a, i, all) => !a.startsWith('--') && !VALUE_FLAGS.has(all[i - 1]));
-const fail = (msg) => { console.error(msg); process.exit(1); };
+function fail(msg: string): never { console.error(msg); process.exit(1); }
 
 const ledgerRoot = arg('vault', LEDGER_ROOT || VAULT_ROOT);
 const ticketsRoot = arg('tickets-vault', VAULT_ROOT);
@@ -47,7 +70,7 @@ const withArchived = has('include-archived');
 const indexDir = join(ledgerRoot, 'Projects', project, 'Index');
 const dbPath = join(indexDir, 'maestro.sqlite');
 
-function requireFts5() {
+function requireFts5(): void {
     const db = new DatabaseSync(':memory:');
     try { db.exec('CREATE VIRTUAL TABLE t USING fts5(x)'); } catch {
         fail('This Node build of node:sqlite has no FTS5 support. Use a Node build whose SQLite includes FTS5.');
@@ -56,20 +79,20 @@ function requireFts5() {
 
 // ── sources ─────────────────────────────────────────────────────────────────
 
-function readLedgerRows() {
+function readLedgerRows(): LedgerRow[] {
     if (!existsSync(ledgerPath)) return [];
     return readFileSync(ledgerPath, 'utf8').split('\n').filter((l) => l.trim()).map((l) => {
-        try { return JSON.parse(l); } catch { return null; }
-    }).filter(Boolean);
+        try { return JSON.parse(l) as LedgerRow; } catch { return null; }
+    }).filter((row): row is LedgerRow => row !== null);
 }
 
 const registry = readRegistry(registryPath);
-const mapStream = (s) => mapStreamWith(registry, s);
-const fold = (entries) => foldWith(entries, registry).items;
+const mapStream = (s: string | undefined): string | undefined => mapStreamWith(registry, s);
+const fold = (entries: LedgerRow[]) => foldWith(entries, registry).items;
 
 /** Latest archive event per stream, unless a later unarchive cancelled it. Same archive rule as fold() in lib/ledger-core.ts. */
-function archiveState(entries) {
-    const byStream = new Map();
+function archiveState(entries: LedgerRow[]): { events: Map<string | undefined, LedgerRow>; hidden: Set<string> } {
+    const byStream = new Map<string | undefined, LedgerRow>();
     for (const e of entries) {
         if (e.kind === 'archive' && e.stream) byStream.set(mapStream(e.stream), e);
         if (e.kind === 'unarchive' && e.stream) byStream.delete(mapStream(e.stream));
@@ -77,12 +100,12 @@ function archiveState(entries) {
     return { events: byStream, hidden: new Set([...byStream.values()].flatMap((e) => e.ids || [])) };
 }
 
-function walkTickets() {
-    const out = [];
+function walkTickets(): string[] {
+    const out: string[] = [];
     if (!ticketsRoot) return out;
     const projects = join(ticketsRoot, 'Projects');
     if (!existsSync(projects)) return out;
-    const visit = (d) => {
+    const visit = (d: string): void => {
         for (const ent of readdirSync(d, { withFileTypes: true })) {
             const p = join(d, ent.name);
             if (ent.isDirectory()) visit(p);
@@ -97,9 +120,9 @@ function walkTickets() {
 }
 
 /** Flat `key: value` frontmatter; values may be JSON (arrays, quoted strings) or bare scalars. */
-function parseTicket(path) {
+function parseTicket(path: string): Ticket {
     const raw = readFileSync(path, 'utf8');
-    const fm = {};
+    const fm: Record<string, unknown> = {};
     let body = raw;
     const m = raw.match(/^---\n([\s\S]*?)\n---\n?/);
     if (m) {
@@ -107,23 +130,24 @@ function parseTicket(path) {
         for (const line of m[1].split('\n')) {
             const kv = line.match(/^([\w-]+):\s*(.*)$/);
             if (!kv) continue;
-            let v = kv[2].trim();
-            try { v = JSON.parse(v); } catch { /* keep bare scalar */ }
+            const bare = kv[2].trim();
+            let v: unknown = bare;
+            try { v = JSON.parse(bare); } catch { /* keep bare scalar */ }
             fm[kv[1]] = v;
         }
     }
-    const asText = (v) => (v === undefined || v === null ? null : Array.isArray(v) ? v.join(',') : String(v));
+    const asText = (v: unknown): string | null => (v === undefined || v === null ? null : Array.isArray(v) ? v.join(',') : String(v));
     return {
-        id: asText(fm.id) || path.split('/').pop().replace(/\.md$/, ''),
+        id: asText(fm.id) || (path.split('/').pop() ?? '').replace(/\.md$/, ''),
         title: asText(fm.title) || '', status: asText(fm.status), type: asText(fm.type),
         priority: asText(fm.priority), labels: asText(fm.labels), reviewed: asText(fm.reviewed),
         external: asText(fm.external), path, body,
     };
 }
 
-function readHandoffs() {
+function readHandoffs(): Handoff[] {
     if (!existsSync(journalDir)) return [];
-    const out = [];
+    const out: Handoff[] = [];
     for (const f of readdirSync(journalDir).filter((n) => /^HANDOFF-.*\.md$/.test(n)).sort()) {
         const parts = readFileSync(join(journalDir, f), 'utf8').split(/^## /m);
         parts.slice(1).forEach((sec, idx) => {
@@ -137,7 +161,7 @@ function readHandoffs() {
 
 /** Cheap change detector: size+mtime of ledger and handoffs, count+max mtime of ticket files. */
 function fingerprint() {
-    const st = (p) => (existsSync(p) ? statSync(p) : null);
+    const st = (p: string) => (existsSync(p) ? statSync(p) : null);
     const l = st(ledgerPath);
     const handoffs = existsSync(journalDir)
         ? readdirSync(journalDir).filter((n) => /^HANDOFF-.*\.md$/.test(n)).sort().map((n) => {
@@ -147,8 +171,9 @@ function fingerprint() {
     const tf = walkTickets();
     const r = st(registryPath);
     const retros = [...archiveState(readLedgerRows()).events.values()].map((e) => {
-        const rs = e.retro ? st(e.retro) : null;
-        return [e.retro || null, rs ? rs.size : null, rs ? rs.mtimeMs : null];
+        const retro = retroOf(e);
+        const rs = retro ? st(retro) : null;
+        return [retro || null, rs ? rs.size : null, rs ? rs.mtimeMs : null];
     });
     return {
         ledger: l ? { size: l.size, mtime: l.mtimeMs } : null,
@@ -161,7 +186,7 @@ function fingerprint() {
 
 // ── build ───────────────────────────────────────────────────────────────────
 
-function rebuild() {
+function rebuild(): { counts: Record<string, number>; ms: number } {
     const t0 = Date.now();
     mkdirSync(indexDir, { recursive: true });
     const tmp = join(indexDir, `maestro.sqlite.tmp-${process.pid}`);
@@ -169,11 +194,11 @@ function rebuild() {
     const fp = fingerprint();
     const rows = readLedgerRows();
     const items = fold(rows);
-    const streamOf = new Map(items.map((i) => [i.id, i.stream]));
+    const streamOf = new Map<string | undefined, string | undefined>(items.map((i) => [i.id, i.stream]));
     const { events: archivedEvents, hidden } = archiveState(rows);
     const archivedStreams = new Set(archivedEvents.keys());
     // A row is hidden when its item is, or (for facts) when its stream is archived.
-    const rowHidden = (r) => (r.kind === 'fact' ? archivedStreams.has(mapStream(r.stream)) : hidden.has(r.closes || r.tags || r.carries || r.annotates || r.id));
+    const rowHidden = (r: LedgerRow): boolean => (r.kind === 'fact' ? archivedStreams.has(mapStream(r.stream)) : hidden.has(r.closes || r.tags || r.carries || r.annotates || r.id || ''));
     const tickets = walkTickets().map(parseTicket);
     const handoffs = readHandoffs();
 
@@ -192,13 +217,13 @@ function rebuild() {
             CREATE VIRTUAL TABLE docs USING fts5(source, ref, title, body, stream UNINDEXED, archived UNINDEXED, tokenize='unicode61');
         `);
         db.exec('BEGIN');
-        const ins = (sql) => db.prepare(sql);
+        const ins = (sql: string) => db.prepare(sql);
         const insRow = ins('INSERT INTO rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
         const insItem = ins('INSERT OR REPLACE INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
         const insTicket = ins('INSERT OR REPLACE INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?)');
         const insHand = ins('INSERT INTO handoffs VALUES (?,?,?,?)');
         const insDoc = ins('INSERT INTO docs (source, ref, title, body, stream, archived) VALUES (?,?,?,?,?,?)');
-        const s = (v) => (v === undefined || v === null ? null : Array.isArray(v) ? v.join(',') : String(v));
+        const s = (v: unknown): string | null => (v === undefined || v === null ? null : Array.isArray(v) ? v.join(',') : String(v));
 
         rows.forEach((r, n) => {
             const hide = rowHidden(r) ? 1 : 0;
@@ -206,12 +231,13 @@ function rebuild() {
                 s(mapStream(r.stream)), s(r.closes), s(r.tags), s(r.annotates), JSON.stringify(r), s(r.carries), hide);
             const stream = r.closes ? streamOf.get(r.closes) : r.tags ? streamOf.get(r.tags) : r.carries ? streamOf.get(r.carries)
                 : streamOf.get(r.id) ?? mapStream(r.stream);
-            insDoc.run('ledger', s(r.id) || `row-${n + 1}`, `${r.kind || ''} ${(r.text || '').slice(0, 80)}`.trim(),
+            insDoc.run('ledger', s(r.id) || `row-${n + 1}`, `${r.kind || ''} ${str(r.text).slice(0, 80)}`.trim(),
                 [r.text, r.repo, r.ticket, r.closes && `closes ${r.closes}`].filter(Boolean).join(' '), s(stream), String(hide));
         });
         for (const i of items) {
-            insItem.run(i.id, i.kind, i.state, isOpen(i) ? 1 : 0, s(i.stream), s(i.date), s(i.ts), s(i.text),
-                s(i.repo), s(i.ticket), i.closedBy ? s(i.closedBy.id) : null, i.closedBy ? s(i.closedBy.ts) : null, hidden.has(i.id) ? 1 : 0);
+            // Unset id, kind or state reach the driver as undefined, as before; the cast only widens the argument type.
+            insItem.run(...([i.id, i.kind, i.state, isOpen(i) ? 1 : 0, s(i.stream), s(i.date), s(i.ts), s(i.text),
+                s(i.repo), s(i.ticket), i.closedBy ? s(i.closedBy.id) : null, i.closedBy ? s(i.closedBy.ts) : null, hidden.has(i.id ?? '') ? 1 : 0] as SQLInputValue[]));
         }
         for (const t of tickets) {
             insTicket.run(t.id, t.title, t.status, t.type, t.priority, t.labels, t.reviewed, t.external, t.path, t.body);
@@ -223,10 +249,11 @@ function rebuild() {
         }
         // One pointer per archived stream: the retro's summary, so a default search still finds the epic.
         for (const [stream, e] of archivedEvents) {
-            const retro = e.retro && existsSync(e.retro) ? readFileSync(e.retro, 'utf8') : '';
+            const retroPath = retroOf(e);
+            const retro = retroPath && existsSync(retroPath) ? readFileSync(retroPath, 'utf8') : '';
             const summary = (retro.split(/^## Summary\s*$/m)[1] || '').split(/^## /m)[0].trim();
-            insDoc.run('archive', stream, `archived stream ${stream}`,
-                [`archived ${e.date || ''}`, e.retro && `retro: ${e.retro}`, summary || e.text].filter(Boolean).join('\n'), stream, '0');
+            insDoc.run('archive', stream as string, `archived stream ${stream}`,
+                [`archived ${e.date || ''}`, retroPath && `retro: ${retroPath}`, summary || e.text].filter(Boolean).join('\n'), stream as string, '0');
         }
         const meta = db.prepare('INSERT INTO meta VALUES (?, ?)');
         meta.run('schema_version', SCHEMA_VERSION);
@@ -244,34 +271,34 @@ function rebuild() {
     return { counts: counts(), ms: Date.now() - t0 };
 }
 
-function counts() {
+function counts(): Record<string, number> {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-        const out = {};
+        const out: Record<string, number> = {};
         for (const t of ['rows', 'items', 'tickets', 'handoffs', 'docs', 'meta']) {
-            out[t] = db.prepare(`SELECT count(*) AS n FROM ${t}`).get().n;
+            out[t] = (db.prepare(`SELECT count(*) AS n FROM ${t}`).get() as { n: number }).n;
         }
         return out;
     } finally { db.close(); }
 }
 
-function isStale() {
+function isStale(): boolean {
     if (!existsSync(dbPath)) return true;
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-        const get = (k) => db.prepare('SELECT value FROM meta WHERE key = ?').get(k)?.value;
+        const get = (k: string) => (db.prepare('SELECT value FROM meta WHERE key = ?').get(k) as { value: string } | undefined)?.value;
         return get('schema_version') !== SCHEMA_VERSION || get('fingerprint') !== JSON.stringify(fingerprint());
     } catch { return true; } finally { db.close(); }
 }
 
 // ── commands ────────────────────────────────────────────────────────────────
 
-function cmdIndex() {
+function cmdIndex(): void {
     const { counts: c, ms } = rebuild();
     console.log(Object.entries(c).map(([k, v]) => `${k}=${v}`).join(' ') + `  (${ms} ms)`);
 }
 
-function cmdSearch() {
+function cmdSearch(): void {
     const query = positional.join(' ').trim();
     if (!query) fail('Usage: ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]');
     const source = arg('source');
@@ -281,24 +308,25 @@ function cmdSearch() {
     if (isStale()) rebuild();
 
     const where = ['docs MATCH ?'];
-    const params = [query];
+    const params: SQLInputValue[] = [query];
     if (source) { where.push('source = ?'); params.push(source); }
-    if (arg('stream')) { where.push('stream = ?'); params.push(mapStream(arg('stream'))); }
+    const streamArg = arg('stream');
+    if (streamArg) { where.push('stream = ?'); params.push(mapStream(streamArg) as string); }
     if (!withArchived) where.push("archived = '0'");
     const db = new DatabaseSync(dbPath, { readOnly: true });
-    const run = (match) => db.prepare(`SELECT source, ref, title, snippet(docs, 3, '[', ']', '…', 14) AS snippet, bm25(docs) AS score
-        FROM docs WHERE ${where.join(' AND ')} ORDER BY bm25(docs) LIMIT ${limit}`).all(match, ...params.slice(1));
+    const run = (match: string): Hit[] => db.prepare(`SELECT source, ref, title, snippet(docs, 3, '[', ']', '…', 14) AS snippet, bm25(docs) AS score
+        FROM docs WHERE ${where.join(' AND ')} ORDER BY bm25(docs) LIMIT ${limit}`).all(match, ...params.slice(1)) as unknown as Hit[];
     // Bare ids such as KEY-1234 or my_db are FTS5 syntax errors; retry with those tokens quoted.
     const quoted = query.replace(/"[^"]*"|\S+/g, (t) => (t.startsWith('"') || /^\w+\*?$/.test(t) || /^(AND|OR|NOT)$/.test(t) ? t : `"${t.replace(/"/g, '')}"`));
-    let hits;
+    let hits: Hit[];
     try {
         try { hits = run(query); } catch (e) {
             if (quoted === query) throw e;
             hits = run(quoted);
         }
     } catch (e) {
-        if (/fts5|syntax|no such column|unterminated|malformed/i.test(e.message)) {
-            fail(`Could not parse search query: ${e.message}\nTry plain words, "quoted phrases", prefix*, AND/OR/NOT.`);
+        if (/fts5|syntax|no such column|unterminated|malformed/i.test(errorMessage(e))) {
+            fail(`Could not parse search query: ${errorMessage(e)}\nTry plain words, "quoted phrases", prefix*, AND/OR/NOT.`);
         }
         throw e;
     } finally { db.close(); }
@@ -308,14 +336,14 @@ function cmdSearch() {
     for (const h of hits) console.log(`${h.ref}  [${h.source}]  ${h.title}\n    ${h.snippet.replace(/\s+/g, ' ')}`);
 }
 
-function cmdStats() {
+function cmdStats(): void {
     if (isStale()) rebuild();
     const c = counts();
     const db = new DatabaseSync(dbPath, { readOnly: true });
-    let streams;
+    let streams: { stream: string; open: number }[];
     try {
         streams = db.prepare(`SELECT coalesce(stream, '(none)') AS stream, count(*) AS open FROM items
-            WHERE is_open = 1 ${withArchived ? '' : 'AND archived = 0'} GROUP BY 1 ORDER BY 2 DESC, 1`).all();
+            WHERE is_open = 1 ${withArchived ? '' : 'AND archived = 0'} GROUP BY 1 ORDER BY 2 DESC, 1`).all() as unknown as { stream: string; open: number }[];
     } finally { db.close(); }
     const openTotal = streams.reduce((n, r) => n + r.open, 0);
     if (has('json')) { console.log(JSON.stringify({ counts: c, open: openTotal, streams }, null, 2)); return; }
@@ -340,34 +368,35 @@ Named queries (each rebuilds the index first if a source changed):
 Tables: rows, items, tickets, handoffs, docs, meta.
 Every query hides archived streams unless --include-archived; --sql is raw (see the archived columns).`;
 
-const clip = (v, n) => {
+const clip = (v: unknown, n: number): string => {
     const t = String(v ?? '').replace(/\s+/g, ' ').trim();
     return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 
 /** Aligned plain-text table; long cells are clipped to maxCell characters. */
-function table(rows, cols = rows.length ? Object.keys(rows[0]) : [], maxCell = 100) {
+function table(rows: Record<string, unknown>[], cols: string[] = rows.length ? Object.keys(rows[0]) : [], maxCell = 100): string {
     if (!rows.length) return '(no rows)';
-    const cell = (r, c) => clip(r[c] ?? '', maxCell);
+    const cell = (r: Record<string, unknown>, c: string): string => clip(r[c] ?? '', maxCell);
     const w = cols.map((c) => Math.max(c.length, ...rows.map((r) => cell(r, c).length)));
-    const line = (vals) => vals.map((v, i) => String(v).padEnd(w[i])).join('  ').trimEnd();
+    const line = (vals: unknown[]): string => vals.map((v, i) => String(v).padEnd(w[i])).join('  ').trimEnd();
     return [line(cols), line(w.map((n) => '-'.repeat(n))), ...rows.map((r) => line(cols.map((c) => cell(r, c))))].join('\n');
 }
 
-const projectOf = (path) => path.match(/Projects\/([^/]+)\/Tickets\//)?.[1] ?? '(unknown)';
-const tally = (rows, key) => Object.entries(rows.reduce((m, r) => ((m[r[key] ?? '(none)'] = (m[r[key] ?? '(none)'] || 0) + 1), m), {}))
-    .map(([k, count]) => ({ [key]: k, count })).sort((a, b) => b.count - a.count || a[key].localeCompare(b[key]));
+const projectOf = (path: string): string => path.match(/Projects\/([^/]+)\/Tickets\//)?.[1] ?? '(unknown)';
+const tally = (rows: Record<string, unknown>[], key: string): { count: number; [field: string]: string | number }[] => Object.entries(rows.reduce<Record<string, number>>((m, r) => ((m[String(r[key] ?? '(none)')] = (m[String(r[key] ?? '(none)')] || 0) + 1), m), {}))
+    .map(([k, count]) => ({ [key]: k, count })).sort((a, b) => b.count - a.count || String(a[key]).localeCompare(String(b[key])));
 
 /** True when a ticket's `external` is `key` or `<tracker>-key`; the tracker prefix is one word, so `123` never matches `jira-PROJ-123`. */
-function externalMatches(external, key) {
+function externalMatches(external: SQLOutputValue, key: string): boolean {
     if (!external) return false;
-    const ext = external.trim();
+    const ext = String(external).trim();
     return ext === key || new RegExp(`^[A-Za-z][A-Za-z0-9_]*-${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).test(ext);
 }
 
-const QUERIES = {
+const QUERIES: Record<string, (db: DatabaseSync) => QueryResult> = {
     open(db) {
-        const stream = arg('stream') && mapStream(arg('stream'));
+        const streamArg = arg('stream');
+        const stream = streamArg && mapStream(streamArg);
         const rows = db.prepare(`SELECT id, coalesce(stream, '(none)') AS stream, kind, date, text, repo FROM items
             WHERE is_open = 1 ${withArchived ? '' : 'AND archived = 0'} ${stream ? 'AND stream = ?' : ''} ORDER BY ts DESC, id`).all(...(stream ? [stream] : []))
             .map((r) => ({ ...r, text: clip(r.text, 100) }));
@@ -395,7 +424,7 @@ const QUERIES = {
         const rows = db.prepare(`SELECT id, date, kind, status, text, repo FROM items
             WHERE (stream IS NULL OR stream = '') ${withArchived ? '' : 'AND archived = 0'} ${since ? 'AND date >= ?' : ''} ORDER BY date DESC, ts DESC`).all(...(since ? [since] : []))
             .map((r) => ({ ...r, text: clip(r.text, 100) }));
-        const byDate = tally(rows, 'date').sort((a, b) => b.date.localeCompare(a.date));
+        const byDate = tally(rows, 'date').sort((a, b) => String(b.date).localeCompare(String(a.date)));
         return {
             data: { total: rows.length, by_date: byDate, items: rows },
             text: `untagged items: ${rows.length}\n${table(byDate)}\n\n${table(rows, ['id', 'date', 'kind', 'status', 'text', 'repo'])}`,
@@ -404,11 +433,11 @@ const QUERIES = {
     'stream-counts'(db) {
         const rows = db.prepare(`SELECT coalesce(stream, '(none)') AS stream, sum(is_open) AS open,
             sum(status = 'done') AS done, sum(status = 'dropped') AS dropped, count(*) AS total
-            FROM items ${withArchived ? '' : 'WHERE archived = 0'} GROUP BY 1 ORDER BY 5 DESC, 1`).all();
-        const spellings = new Map();
+            FROM items ${withArchived ? '' : 'WHERE archived = 0'} GROUP BY 1 ORDER BY 5 DESC, 1`).all() as unknown as StreamCount[];
+        const spellings = new Map<string, string[]>();
         for (const r of rows) spellings.set(r.stream.toLowerCase(), [...(spellings.get(r.stream.toLowerCase()) || []), r.stream]);
         for (const r of rows) {
-            const twins = spellings.get(r.stream.toLowerCase());
+            const twins = spellings.get(r.stream.toLowerCase()) ?? [];
             r.flag = twins.length > 1 ? `CASE SPLIT: ${twins.join(' / ')}` : '';
         }
         return { data: { streams: rows }, text: table(rows, ['stream', 'open', 'done', 'dropped', 'total', 'flag'], 60) };
@@ -424,10 +453,12 @@ const QUERIES = {
     },
     tickets(db) {
         const all = db.prepare('SELECT id, title, status, type, priority, path FROM tickets').all()
-            .map((t) => ({ ...t, project: projectOf(t.path) }));
+            .map((t): SqlRow & { project: string } => ({ ...t, project: projectOf(String(t.path)) }));
         const filters = ['project', 'status', 'type'].filter((f) => arg(f));
         const rows = all.filter((t) => filters.every((f) => t[f] === arg(f)));
-        const data = { total: rows.length, by_project: tally(rows, 'project'), by_type: tally(rows, 'type'), by_status: tally(rows, 'status') };
+        const data: { total: number; by_project: ReturnType<typeof tally>; by_type: ReturnType<typeof tally>; by_status: ReturnType<typeof tally>; tickets?: Record<string, unknown>[] } = {
+            total: rows.length, by_project: tally(rows, 'project'), by_type: tally(rows, 'type'), by_status: tally(rows, 'status'),
+        };
         let text = `tickets: ${rows.length}${filters.length ? ` (${filters.map((f) => `${f}=${arg(f)}`).join(', ')})` : ''}\n\nby project\n${table(data.by_project)}\n\nby type\n${table(data.by_type)}\n\nby status\n${table(data.by_status)}`;
         if (filters.length) {
             data.tickets = rows.map((t) => ({ id: t.id, project: t.project, type: t.type, status: t.status, title: t.title }));
@@ -437,19 +468,19 @@ const QUERIES = {
     },
 };
 
-function runSql(db, sql) {
+function runSql(db: DatabaseSync, sql: string): QueryResult {
     try {
         const rows = db.prepare(sql).all();
         return { data: rows, text: table(rows) };
     } catch (e) {
-        if (/readonly|read-only|attempt to write/i.test(e.message)) {
-            fail(`query --sql is read-only: write statements (INSERT/UPDATE/DELETE/DROP...) are not allowed. (${e.message})`);
+        if (/readonly|read-only|attempt to write/i.test(errorMessage(e))) {
+            fail(`query --sql is read-only: write statements (INSERT/UPDATE/DELETE/DROP...) are not allowed. (${errorMessage(e)})`);
         }
-        fail(`SQL error: ${e.message}`);
+        fail(`SQL error: ${errorMessage(e)}`);
     }
 }
 
-function cmdQuery() {
+function cmdQuery(): void {
     const name = positional[0];
     const sql = arg('sql');
     if (has('help') || (!name && !has('sql'))) { console.log(QUERY_HELP); return; }
@@ -476,5 +507,5 @@ try {
             process.exit(cmd ? 1 : 0);
     }
 } catch (e) {
-    fail(`ledger-index failed: ${e.message}`);
+    fail(`ledger-index failed: ${errorMessage(e)}`);
 }
