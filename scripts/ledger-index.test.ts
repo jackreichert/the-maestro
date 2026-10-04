@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, existsSy
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fold as foldLedger, parseLedger } from './lib/ledger-core.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -290,6 +291,15 @@ test('archive and unarchive rows for the reserved none stream are skipped by the
     assert.equal(q("SELECT count(*) AS n FROM docs WHERE source = 'archive'")[0].n, 0);
     assert.equal(q("SELECT archived FROM items WHERE id = 'bbbb'")[0].archived, 0);
     assert.equal(q("SELECT count(*) AS n FROM rows WHERE kind IN ('archive', 'unarchive')")[0].n, 3);
+});
+
+test('fold (the board) and the index both keep an item visible when a none-stream archive row lists it', () => {
+    append(row({ id: 'ar2n', kind: 'archive', stream: 'none', ids: ['bbbb'], text: 'archived stream none (1 items)' }));
+    const folded = foldLedger(parseLedger(readFileSync(join(jdir, 'ledger.jsonl'), 'utf8')), null);
+    assert.equal(folded.hidden.has('bbbb'), false);
+    assert.equal(folded.archivedStreams.size, 0);
+    assert.equal(run('index').code, 0);
+    assert.equal(q("SELECT archived FROM items WHERE id = 'bbbb'")[0].archived, 0);
 });
 
 test('archived items are hidden by default and shown with --include-archived', () => {
