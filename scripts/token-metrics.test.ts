@@ -231,6 +231,14 @@ test('sessionLine reports the newest session against the thresholds', () => {
     assert.equal(sessionLine(dir, 4, 200000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn · roll now');
 });
 
+test('sessionLine counts turns and read/turn since the last compact, not the whole transcript', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-compact-'));
+    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
+    writeFileSync(join(dir, 's.jsonl'), `${[line('a', 900000), line('b', 900000), line('c', 900000), boundary, line('d', 100000), line('e', 300000)].join('\n')}\n`);
+    assert.equal(sessionLine(dir, 4, 350000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn');
+});
+
 test('sessionLine grades the advice: roll soon from the warn percent, roll now from the roll percent, either metric', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-grade-'));
     const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });

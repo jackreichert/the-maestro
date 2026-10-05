@@ -489,7 +489,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `resume_gh` | `MAESTRO_RESUME_GH` | on | `off`, `false`, `no` or `0` stops `resume` from calling `gh` |
 | `ledger_git_autocommit` | `MAESTRO_LEDGER_GIT_AUTOCOMMIT` | off | `on`, `true`, `yes` or `1`: `roll` commits the ledger root after a clean `verify` |
 | `approvals_review_day` | `MAESTRO_APPROVALS_REVIEW_DAY` | `friday` | Weekday the greeting brings the approvals digest; a non-weekday falls back to the default |
-| `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns that count as 100% on the status footer's Session line |
+| `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns since the last compact that count as 100% on the status footer's Session line |
 | `roll_read_per_turn` | `MAESTRO_ROLL_READ_PER_TURN` | 350000 | Mean cache-read tokens per turn that count as 100% (a plain number) |
 | `roll_warn_pct` | `MAESTRO_ROLL_WARN_PCT` | 85 | Percent of either limit at which the Session line says "roll soon" (integer 1..100, below `roll_at_pct`) |
 | `roll_at_pct` | `MAESTRO_ROLL_AT_PCT` | 90 | Percent of either limit at which it says "roll now". An invalid value, or a pair with warn at or above roll, falls back to 85/90 |
