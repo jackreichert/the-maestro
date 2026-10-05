@@ -130,6 +130,16 @@ test('a failed GitHub read still writes the page from the cached PRs, under a wa
   assert.equal(JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8')).fetched_at, '2026-10-05T14:31:00.000Z', 'a failed read leaves the cache as it was');
 });
 
+test('cachedPrsOnly renders the cached PRs under their own fetch time, with no GitHub read and no warning', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')], { now: () => new Date('2026-10-05T14:31:00Z') }));
+  const r = generate(opts(d, { cachedPrsOnly: true }), deps([], { fetchPrs: () => { throw new Error('gh must not be called'); } }));
+  assert.match(r.page, /\[#12 → develop\]/);
+  assert.doesNotMatch(r.page, /Warning: GitHub/);
+  assert.equal(r.prFailure, undefined);
+  assert.equal(JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8')).fetched_at, '2026-10-05T14:31:00.000Z', 'the cache keeps its fetch time');
+});
+
 test('with no cache, a failed GitHub read says the PR tables are empty because they could not be read', () => {
   const d = dir();
   const page = generate(opts(d), deps([], { fetchPrs: ghDown })).page;

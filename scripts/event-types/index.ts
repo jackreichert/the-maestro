@@ -21,6 +21,7 @@ import * as prChecks from './pr-checks.ts';
 import * as prMerged from './pr-merged.ts';
 import * as prWatch from './pr-watch.ts';
 import * as reminder from './reminder.ts';
+import * as statusRefresh from './status-refresh.ts';
 import * as statusWatch from './status-watch.ts';
 import type { EventType } from '../lib/types.ts';
 
@@ -30,7 +31,7 @@ export type TypeRegistry = Record<string, EventType>;
 /** Old type names that still resolve, so watches registered under them keep working. pr-review became pr-watch. */
 export const ALIASES: Record<string, string> = { 'pr-review': 'pr-watch' };
 
-const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'status-watch': statusWatch };
+const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'status-refresh': statusRefresh, 'status-watch': statusWatch };
 export const BUILTIN_TYPES: TypeRegistry = { ...TYPES, ...Object.fromEntries(Object.entries(ALIASES).flatMap(([old, current]) => (TYPES[current] ? [[old, TYPES[current]]] : []))) };
 
 const OPTIONAL_HOOKS = ['done', 'retired', 'validate', 'defaultTtlMs'];

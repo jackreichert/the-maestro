@@ -338,10 +338,29 @@ The page, top to bottom: a freshness line with both times (`Updated 3:05 pm ET Â
 | `ticket-map.json` | Optional `{ "<ticket>": ["<ask id>"] }`, linking asks to ticket notes and, through the asks, PRs that name the ticket to a stream |
 | `stream-overrides.json` | Optional `{ "repo#N": "<Stream>" }`, placing a PR in a stream the repo map does not |
 | `.now.lock` | Present only while a rebuild runs: the holder's pid and start time. Stale locks are taken over automatically; do not edit |
+| `.now-dirty-prs` | Touched by `pr-watch` and `pr-merged` when they report something; `status-refresh` reads its time to refresh the PR tables. Safe to delete |
 | `.now-prs.json` | The last open-PR set GitHub returned, with its fetch time. Written after every good read, used when a read fails. Safe to delete |
 | `.now-seen.md`, `.now-seen.json` | The status watcher's baseline and the hash of the generator's last output. Do not edit |
 
 Nothing install-specific is built in. The status directory is `status_dir`, else `<vault_root>/Projects/<project>/Status`; the stream order is `status_streams`, a PR's stream comes from the ledger first (board items that name a tracker key in the PR's title or branch, directly or through `ticket-map.json`, or whose refs name the PR as `<repo>#N` or `gh:pr:<repo>#N`; the stream with most such items wins), then `stream-overrides.json`, then `status_repo_streams`, then `other`; tracker keys link through `tracker_url_base`, ticket notes through `obsidian_vault` and `ticket_note_path`.
+
+**Keeping it current.** Register a `status-refresh` watch and the page regenerates by itself: once the ledger has been quiet for 15 s after a write (never more than 60 s late), after a PR event, and at least every 10 minutes. GitHub is read only when the PR data is dirty or over 5 minutes old, never in quiet hours, and nothing is written within 60 s of your own edit of the page.
+
+```mermaid
+flowchart LR
+    L[Ledger write] --> S[signature changes]
+    P[pr-watch / pr-merged event] --> D[.now-dirty-prs touched]
+    S --> W{settled 15 s,<br>or 60 s since the first change}
+    D --> W
+    I[10 min idle tick] --> E
+    W --> E{your edit under 60 s old?}
+    E -->|yes| X[wait, retry next check]
+    E -->|no| Q{quiet hours, or PR data<br>clean and under 5 min old?}
+    Q -->|yes| C[cached PRs]
+    Q -->|no| H[GitHub read]
+    C --> N[NOW.md]
+    H --> N
+```
 
 **Answering from the page.** Under an ask you can write `> answer: <text>`, tick its `- [x]` box, or edit the priorities list. Regenerating keeps any such edit that the `status-watch` event type has not reported yet (an answer whose ask left the board moves under `## Unprocessed answers`), and if you save while a regeneration is writing, it reads the page again rather than overwrite you.
 
@@ -383,7 +402,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | 2 | Usage or configuration error, a malformed watch, a broken overlay type, or another loop holds the lock | Read the stderr line; never delete the lock |
 | other | The process crashed or was killed | Read stderr, then relaunch (a dead owner's lock is taken over) |
 
-**Types.** Built in: `pr-checks`, `pr-merged`, `pr-watch`, `gh-run`, `inbox`, `reminder` and `status-watch` (the status page's inline answers, target = the status directory, one watch, never notifies; see [playbooks/event-types/status-watch.md](playbooks/event-types/status-watch.md)). A type is a script (`scripts/event-types/<type>.ts` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.ts`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
+**Types.** Built in: `pr-checks`, `pr-merged`, `pr-watch`, `gh-run`, `inbox`, `reminder`, `status-watch` (the status page's inline answers, target = the status directory, one watch, never notifies; see [playbooks/event-types/status-watch.md](playbooks/event-types/status-watch.md)) and `status-refresh` (regenerates the status page on its own, with no model: after a ledger write or a PR event, and at least every 10 minutes; target = the status directory, one watch, its refreshes never wake the orchestrator; see [playbooks/event-types/status-refresh.md](playbooks/event-types/status-refresh.md)). A type is a script (`scripts/event-types/<type>.ts` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.ts`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
 
 | Type | Target | Reports |
 |---|---|---|
@@ -396,7 +415,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 
 An org overlay adds types without editing this repo: `<type>.mjs` and its playbook `<type>.md` in the overlay's `event-types/` folder. A duplicate name, a module without `check` and `diff` functions, or a missing playbook stops the loop with an error naming the file.
 
-**Cadence.** Each type declares a default interval, and `add --interval S` overrides it for one watch. The loop checks only the watches that are due and sleeps until the earliest. Defaults: `inbox` 60s, `pr-checks` 180s, `pr-watch` 600s, `pr-merged` 240s, `gh-run` 120s, `reminder` 30s. Floors are enforced where the interval is computed (`scripts/lib/cadence.ts`): 120s for network types so GitHub is not flooded, 30s for local ones. A lower `--interval` or setting is raised to the floor, and a setting can only raise it (`watch_network_floor`, `watch_local_floor`; `watch_type_intervals` changes a type's default). The adaptive back-off still stretches intervals when nothing has happened for an hour or two. `pr-watch` declares its own 300s floor, which `watch_min_interval` can raise, and with `watch_quiet_hours_mode: slow` it keeps polling at 1800s in quiet hours.
+**Cadence.** Each type declares a default interval, and `add --interval S` overrides it for one watch. The loop checks only the watches that are due and sleeps until the earliest. Defaults: `inbox` 60s, `pr-checks` 180s, `pr-watch` 600s, `pr-merged` 240s, `gh-run` 120s, `reminder` 30s, `status-watch` 60s, `status-refresh` 30s. Floors are enforced where the interval is computed (`scripts/lib/cadence.ts`): 120s for network types so GitHub is not flooded, 30s for local ones. A lower `--interval` or setting is raised to the floor, and a setting can only raise it (`watch_network_floor`, `watch_local_floor`; `watch_type_intervals` changes a type's default). The adaptive back-off still stretches intervals when nothing has happened for an hour or two. `pr-watch` declares its own 300s floor, which `watch_min_interval` can raise, and with `watch_quiet_hours_mode: slow` it keeps polling at 1800s in quiet hours.
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
