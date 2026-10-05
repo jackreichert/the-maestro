@@ -28,9 +28,9 @@ const check = (dir: string) => statusWatch.check(dir);
 const events = (dir: string): string[] => statusWatch.diff(null, check(dir)).map((e) => e.summary);
 /** Plays the user: types into the file as Obsidian would. */
 const userEdits = (dir: string, from: string, to: string): void => {
-  const text = readFileSync(join(dir, 'NOW.md'), 'utf8');
+  const text = readFileSync(join(dir, 'The-Podium.md'), 'utf8');
   assert.ok(text.includes(from), `page has ${from}`);
-  writeFileSync(join(dir, 'NOW.md'), text.replace(from, to));
+  writeFileSync(join(dir, 'The-Podium.md'), text.replace(from, to));
 };
 const answer = (dir: string, id: string, text: string): void => userEdits(dir, `\`${id}\`\n  > answer: `, `\`${id}\`\n  > answer: ${text}`);
 const setup = (): string => { awaiting = awaiting.slice(0, 2); const dir = mkdtempSync(join(tmpdir(), 'sw-')); writePriorities(dir, '2026-10-05', [{ text: 'First' }, { text: 'Second' }]); regenerate(dir); return dir; };
@@ -70,7 +70,7 @@ test('regenerating before the watcher looks keeps the answer, and it still fires
   answer(dir, 'ab12', 'keep me');
   userEdits(dir, '- [ ] `cd34`', '- [x] `cd34`');
   regenerate(dir);
-  const page = readFileSync(join(dir, 'NOW.md'), 'utf8');
+  const page = readFileSync(join(dir, 'The-Podium.md'), 'utf8');
   assert.match(page, /`ab12`\n {2}> answer: keep me\n/);
   assert.match(page, /- \[x\] `cd34`/);
   assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: keep me', 'ask cd34 (decision: Which option?) ticked']);
@@ -83,7 +83,7 @@ test('after the watcher has reported, the next regeneration clears the answer an
   answer(dir, 'ab12', 'done');
   assert.equal(events(dir).length, 1);
   regenerate(dir);
-  assert.doesNotMatch(readFileSync(join(dir, 'NOW.md'), 'utf8'), /answer: done/);
+  assert.doesNotMatch(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /answer: done/);
   assert.deepEqual(events(dir), []);
   answer(dir, 'ab12', 'done');
   assert.equal(events(dir).length, 1);
@@ -95,10 +95,10 @@ test('an answer for an ask that has left the board survives regeneration under U
   answer(dir, 'cd34', 'late');
   awaiting = awaiting.filter((a) => a.id !== 'cd34');
   regenerate(dir);
-  assert.match(readFileSync(join(dir, 'NOW.md'), 'utf8'), /## Unprocessed answers\n\n- \[ \] `cd34` \(no longer on the board\)\n {2}> answer: late/);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /## Unprocessed answers\n\n- \[ \] `cd34` \(no longer on the board\)\n {2}> answer: late/);
   assert.deepEqual(events(dir), ['ask cd34 answered: late']);
   regenerate(dir);
-  assert.doesNotMatch(readFileSync(join(dir, 'NOW.md'), 'utf8'), /Unprocessed answers/);
+  assert.doesNotMatch(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /Unprocessed answers/);
 });
 
 test('an inline priorities edit fires once and survives regeneration until reported; the next regeneration uses priorities.md again', () => {
@@ -106,10 +106,10 @@ test('an inline priorities edit fires once and survives regeneration until repor
   events(dir);
   userEdits(dir, '2. Second', '2. Mine instead');
   regenerate(dir);
-  assert.match(readFileSync(join(dir, 'NOW.md'), 'utf8'), /2\. Mine instead/);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /2\. Mine instead/);
   assert.deepEqual(events(dir), ['priorities edited inline: 1) First; 2) Mine instead']);
   regenerate(dir);
-  assert.match(readFileSync(join(dir, 'NOW.md'), 'utf8'), /2\. Second/, 'priorities.md is the source again once the edit was reported');
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /2\. Second/, 'priorities.md is the source again once the edit was reported');
   assert.deepEqual(events(dir), []);
 });
 
@@ -121,7 +121,7 @@ test('answers typed before the watcher ever ran are reported on its first check'
   assert.equal(existsSync(join(dir, '.now-seen.md')), true);
 });
 
-test('a missing NOW.md is quiet, not an error', () => {
+test('a missing The-Podium.md is quiet, not an error', () => {
   assert.deepEqual(events(mkdtempSync(join(tmpdir(), 'sw-empty-'))), []);
 });
 
@@ -145,15 +145,15 @@ test('an edit saved while the generator is writing is not overwritten: it reads 
   let landed = false;
   const racing: GenerateDeps = { ...deps(), beforeWrite: () => { if (!landed) { landed = true; answer(dir, 'ab12', 'saved mid-write'); } } };
   generate({ statusDir: dir, dryRun: false, snapshot: false, command: 'status-page', config: CONFIG }, racing);
-  assert.match(readFileSync(join(dir, 'NOW.md'), 'utf8'), /`ab12`\n {2}> answer: saved mid-write\n/);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`\n {2}> answer: saved mid-write\n/);
   assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: saved mid-write']);
 });
 
 test('the generator gives up, writing nothing, if the page keeps changing under it', () => {
   const dir = setup();
-  const before = readFileSync(join(dir, 'NOW.md'), 'utf8');
+  const before = readFileSync(join(dir, 'The-Podium.md'), 'utf8');
   let n = 0;
-  const racing: GenerateDeps = { ...deps(), beforeWrite: () => writeFileSync(join(dir, 'NOW.md'), `${before}\nedit ${++n}\n`) };
+  const racing: GenerateDeps = { ...deps(), beforeWrite: () => writeFileSync(join(dir, 'The-Podium.md'), `${before}\nedit ${++n}\n`) };
   assert.throws(() => generate({ statusDir: dir, dryRun: false, snapshot: false, command: 'status-page', config: CONFIG }, racing), /kept changing/);
-  assert.equal(readFileSync(join(dir, 'NOW.md'), 'utf8'), `${before}\nedit 3\n`, 'the last thing on disk is the user\'s');
+  assert.equal(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), `${before}\nedit 3\n`, 'the last thing on disk is the user\'s');
 });

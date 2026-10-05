@@ -16,7 +16,7 @@ import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
 import { readPrCache, writePrCache } from './prcache.ts';
 import { acquireLock, processAlive } from './lock.ts';
-import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
+import { PODIUM_FILE, readPodium, writePointer, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
 
 /** A pull request as the GraphQL search returns it. */
 export interface RawPr {
@@ -139,6 +139,7 @@ function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
     if (readPodium(statusDir) !== current) continue;
     const written = [join(statusDir, PODIUM_FILE)];
     writeAtomic(written[0] as string, page);
+    writePointer(statusDir, opts.command, current);
     const kept = edits.priorities ? seenPriorities : extractFields(page).priorities;
     writeSeenMeta(statusDir, { generated_sha: sha(page), carried: countUnprocessed(edits), priorities_seen: kept });
     if (opts.snapshot) { written.push(join(statusDir, `${rendered.date}.md`)); writeAtomic(written[1] as string, page); }

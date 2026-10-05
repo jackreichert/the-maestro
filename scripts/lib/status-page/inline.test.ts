@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
 
 const PAGE = [
-  '# Status now', '', "## Today's priorities", '', '1. Ship it _[Alpha: awaiting 1 · in flight 0 · open PRs 2]_', '2. Second', '',
+  '# The Podium', '', "## Today's priorities", '', '1. Ship it _[Alpha: awaiting 1 · in flight 0 · open PRs 2]_', '2. Second', '',
   '## Needs you (2)', '', '### Alpha (2)', '', '| Id | Decision |', '|---|---|', '| `ab12` | Merge it? |', '| `cd34` | Pick one |', '',
   '- [ ] `ab12` [#1](https://example.test/1)', '  > answer: ', '- [ ] `cd34`', '  > answer: ', '',
   '## PR board', '', 'text', '',

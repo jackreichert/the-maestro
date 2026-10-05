@@ -39,7 +39,7 @@
  *   journal.ts usage [--open]                counts of model and used marks across items
  *   journal.ts status [--full]               what is open + done today, with usage marks
  *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
- * (with a status page configured, --footer ends with `**Status page:** <uri>`)
+ * (with the Podium configured, --footer ends with `**Podium:** <uri>`)
  *   journal.ts standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.ts roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
@@ -72,7 +72,7 @@
  *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
  *   journal.ts resume                        the verify-on-resume checklist, running the parts a script can run
- *   journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the status page (NOW.md in the status dir): priorities, needs-you list, PR board per stream, in flight, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
+ *   journal.ts podium [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the Podium (The-Podium.md in the status dir; NOW.md stays as a pointer; `status-page` is an alias): priorities, needs-you list, PR board per stream, in flight, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
  *
@@ -1339,7 +1339,7 @@ function cmdPrime() {
 
 // ── status page ─────────────────────────────────────────────────────────────
 
-/** `status-page [--dry-run] [--snapshot] [--status-dir <dir>]`: scripts/status-page.ts, given this run's ledger root and project. */
+/** `podium` (alias `status-page`) `[--dry-run] [--snapshot] [--status-dir <dir>]`: scripts/status-page.ts, given this run's ledger root and project. */
 function cmdStatusPage() {
     const forward = ['dry-run', 'snapshot'].filter(has).map((f) => `--${f}`);
     const dirFlag = arg('status-dir');
@@ -1417,6 +1417,7 @@ switch (cmd) {
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
     case 'priorities': cmdPriorities(); break;
+    case 'podium':
     case 'status-page': cmdStatusPage(); break;
     default:
         console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('/**')[1]

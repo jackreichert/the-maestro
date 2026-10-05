@@ -145,7 +145,7 @@ test('a check that cannot read the page reports information and retries, never t
 test('the loop never exits 10 because of a refresh: a regeneration produces no actionable event', () => {
   const dir = mkdtempSync(join(tmpdir(), 'sr-'));
   const target = mkdtempSync(join(tmpdir(), 'sr-status-'));
-  writeFileSync(join(target, 'NOW.md'), 'page\n');
+  writeFileSync(join(target, 'The-Podium.md'), 'page\n');
   let ran = 0;
   const io: RefreshIo = { ...rig().io, ledgerSig: () => String(Math.floor(ran / 1)), regenerate: () => { ran++; return undefined; }, pageAt: () => 0 };
   const types = { ...BUILTIN_TYPES, 'status-refresh': { ...refresh, check: (t: string, c: Parameters<typeof refresh.check>[1]) => refresh.check(t, c, io) } };
