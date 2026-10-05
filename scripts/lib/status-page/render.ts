@@ -59,10 +59,16 @@ const CELL_MAX = 60;
 // ── small helpers ───────────────────────────────────────────────────────────
 
 const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || '-';
+/** `s` without URLs, squashed to one line; over `max` it is cut at a word boundary (never mid-word) and ends in `...`. */
 const oneLine = (s: string, max: number): string => {
   const t = s.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
-  return t.length > max ? `${t.slice(0, max - 3).trimEnd()}...` : t;
+  if (t.length <= max) return t;
+  const room = t.slice(0, max - 3);
+  const atWord = t[max - 3] === ' ' ? room : room.slice(0, room.lastIndexOf(' '));
+  return `${(atWord || room).trimEnd()}...`;
 };
+/** The text with URLs dropped and whitespace squashed, never clipped. */
+const plain = (s: string): string => s.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
 const daysBetween = (a: string, b: string): number => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 
 /** The date, an ISO timestamp with offset and a human label of `d` in the zone `tz` (the system zone when empty). */
@@ -245,25 +251,30 @@ export function splitAsk(text: string): { needed: string; context: string } {
   return q === -1 ? { needed: clean, context: '' } : { needed: clean.slice(0, q + 1), context: clean.slice(q + 1).trim() };
 }
 
-/** One table of every ask, tagged with its stream, then under it one reply line per ask with its links and a `> answer:` stub. */
+/**
+ * Every ask, grouped under its stream's heading, one list item each: the ledger id, the full decision, its context, the
+ * links, and the age when old. The `> answer:` stub is the line directly under the item (inline.ts reads it back by
+ * that shape), so the reply sits with the ask. Text is never clipped: the full ask stays readable.
+ */
 function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<string, string>, streams: string[], today: string): string[] {
   const out = [`## Needs attention now (${asks.length})`, ''];
   if (!asks.length) return [...out, 'Nothing awaiting.', ''];
   const askStream = (a: Item): string => (streams.includes(a.stream ?? '') ? a.stream! : OTHER);
-  const ordered = streams.flatMap((s) => asks.filter((a) => askStream(a) === s));
-  out.push('| Id | Stream | Context | Ticket | Needed from you |', '|---|---|---|---|---|');
-  const replies: string[] = [];
-  for (const a of ordered) {
-    const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
-    const { needed, context } = splitAsk(a.text);
-    const age = daysBetween(a.date, today);
-    const tl = [oneLine(context, 110), age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ');
-    const ticket = [...(refs.note ? [refs.note] : []), ...refs.tracker.slice(0, 2)].map(mdLink).join(' · ');
-    out.push(`| \`${a.id}\` | ${askStream(a)} | ${cell(tl)} | ${ticket || '-'} | ${cell(oneLine(needed, 130))} |`);
-    const links = [...refs.prs, ...refs.tracker, ...(refs.note ? [refs.note] : [])].filter((r) => r.url).map(mdLink);
-    replies.push(`- [ ] \`${a.id}\`${links.length ? ` ${links.join(' · ')}` : ''}`, '  > answer: ');
+  for (const stream of streams) {
+    const mine = asks.filter((a) => askStream(a) === stream);
+    if (!mine.length) continue;
+    out.push(`### ${stream} (${mine.length})`, '');
+    for (const a of mine) {
+      const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
+      const { needed, context } = splitAsk(a.text);
+      const age = daysBetween(a.date, today);
+      const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
+      const text = [needed ? `**${needed}**` : '', plain(context)].filter(Boolean).join(' ');
+      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
+    }
+    out.push('');
   }
-  return [...out, '', ...replies, ''];
+  return out;
 }
 
 // ── priorities ──────────────────────────────────────────────────────────────

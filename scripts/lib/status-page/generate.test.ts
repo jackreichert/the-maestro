@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generate, loadPrs } from './generate.ts';
+import { extractFields } from './inline.ts';
 import type { GenerateDeps, RawPr } from './generate.ts';
 import { writePriorities } from './priorities.ts';
 import { readPodium } from './seen.ts';
@@ -44,7 +45,7 @@ test('loadPrs picks a stream from an override, then the repo map, then other', (
   assert.equal(prs[0]?.unresolved, 1);
 });
 
-test('writes The-Podium.md with the freshness line, then the priorities, then one asks table with links and an answer stub under it', () => {
+test('writes The-Podium.md with the freshness line, then the priorities, then the asks grouped by stream, each with links and an answer stub under it', () => {
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'Get widgets out', stream: 'Alpha' }, { text: 'Unmapped goal' }]);
   const r = generate(opts(d), deps([raw(12, 'acme-widgets')]));
@@ -55,10 +56,8 @@ test('writes The-Podium.md with the freshness line, then the priorities, then on
   assert.match(lines[lines.indexOf('# The Podium') + 2] ?? '', /^Updated 11:00 am ET · PR data 11:00 am ET \(2026-10-05\)\./);
   assert.equal(lines[lines.indexOf('# The Podium') + 4], "## Today's priorities");
   assert.match(page, /1\. Get widgets out _\[Alpha: awaiting 1 · in flight 1 · open PRs 1\]_\n2\. Unmapped goal\n/);
-  assert.match(page, /\| `bb22` \| Alpha \| See FAKE-12 \| \[proj-7\]\(obsidian:[^)]*\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) \| Merge widgets #12 now\? \|/, 'stream, context, clickable tickets, the decision');
-  assert.match(page, /- \[ \] `bb22` \[#12 → develop\]\(https:\/\/example\.test\/acme-widgets\/pull\/12\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) · \[proj-7\]\(obsidian:\/\/open\?vault=Vault&file=Projects%2Fproj%2FTickets%2Fproj-7\)\n  > answer: \n/);
-  assert.match(page, /\| `cc33` \| Gamma \| _10 days old_ \|/, 'a stream only the ledger knows is still tagged');
-  assert.match(page, /old question \\\| with a pipe/, 'a pipe in text does not break the table');
+  assert.match(page, /### Alpha \(1\)\n\n- \[ \] `bb22` \*\*Merge widgets #12 now\?\*\* See FAKE-12 \(\[proj-7\]\(obsidian:[^)]*\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) · \[#12 → develop\]\(https:\/\/example\.test\/acme-widgets\/pull\/12\)\)\n  > answer: \n/, 'under its stream: id, the full decision, context, clickable tickets and PR, then the answer stub');
+  assert.match(page, /### Gamma \(1\)\n\n- \[ \] `cc33` \*\*old question \| with a pipe\*\* _10 days old_\n  > answer: \n/, 'a stream only the ledger knows still gets its heading, old asks say so');
 });
 
 test('priorities missing or from another day render the banner, never yesterday\'s list', () => {
@@ -93,8 +92,8 @@ test('ticket-map.json and stream-overrides.json beside the page are read; invali
   writeFileSync(join(d, 'ticket-map.json'), JSON.stringify({ 'proj-9': ['cc33'] }));
   writeFileSync(join(d, 'stream-overrides.json'), JSON.stringify({ 'gadgets#2': 'Alpha' }));
   const page = generate(opts(d, { dryRun: true }), deps([raw(2, 'gadgets')])).page;
-  assert.match(page, /\| `cc33` \| .* \| \[proj-9\]\(obsidian:[^)]*\) \|/);
-  assert.match(page, /### Alpha \(1\)\n\n\| Ticket/);
+  assert.match(page, /- \[ \] `cc33` [^\n]*\[proj-9\]\(obsidian:[^)]*\)/);
+  assert.match(page, /### Alpha \(1\)\n\n\| Ticket/, 'the PR table under the override');
   writeFileSync(join(d, 'stream-overrides.json'), '{nope');
   assert.throws(() => generate(opts(d), deps([])), /stream-overrides\.json is not valid JSON/);
   assert.equal(existsSync(join(d, 'The-Podium.md')), false);
@@ -249,7 +248,7 @@ test('sections come in the order priorities, working on now, queued, needs atten
     footer: { ledger: [{ name: 'Alpha', done: 0, inflight: 1, queued: 1, awaiting: 1, paste: 0, blocked: 0 }], session: { available: false, unavailable: 'no sessions' } } } };
   const page = generate(opts(dir(), { dryRun: true }), deps([raw(12, 'acme-widgets')], { journal: (sub) => b[sub] })).page;
   const heads = page.split('\n').filter((l) => /^#{1,3} /.test(l));
-  assert.deepEqual(heads.map((h) => h.replace(/ \(\d+\)$/, '')), ['# The Podium', "## Today's priorities", '## Working on now', '## Queued', '## Needs attention now', '## Open PRs', '### Alpha', '## Other status and findings', '### In flight', '### Blocked', '### Recent done', '### Deferred', '## Status']);
+  assert.deepEqual(heads.map((h) => h.replace(/ \(\d+\)$/, '')), ['# The Podium', "## Today's priorities", '## Working on now', '## Queued', '## Needs attention now', '### Alpha', '### Gamma', '## Open PRs', '### Alpha', '## Other status and findings', '### In flight', '### Blocked', '### Recent done', '### Deferred', '## Status']);
   assert.match(page, /\| Alpha \| `aa11` \| building a thing \| - \| - \| 2 h \(since 9:00 am ET\) \|\n/);
   assert.match(page, /\| Alpha \| 0 \| 1 \| 1 \| 1 \| 0 \| 0 \|\n/);
   assert.match(page, /- `aa11` building a thing \[Alpha\] · 2 h\n/);
@@ -395,4 +394,28 @@ test('a clean full-page NOW.md rebuilt beside the Podium (by an old loop) become
   writeFileSync(join(d, 'NOW.md'), typed);
   generate(opts(d), deps([]));
   assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), typed);
+});
+
+test('a long ask is shown whole, never clipped, and its answer survives regeneration', () => {
+  const d = dir();
+  const long = `Decide ${'which of the many open items to take first and why '.repeat(6)}for FAKE-1111, FAKE-2222, FAKE-3333, FAKE-4444, FAKE-5555, FAKE-6666?`;
+  const withLong = { ...board, status: { ...board.status, awaiting: [{ id: 'ee55', date: '2026-10-05', text: `${long} Context after the question.`, stream: 'Alpha' }] } };
+  const mk = (): GenerateDeps => deps([], { journal: (sub) => withLong[sub] });
+  const page = generate(opts(d), mk()).page;
+  assert.ok(page.includes(`**${long}**`), 'the whole decision is on the page');
+  assert.doesNotMatch(page.split('## Open PRs')[0] as string, /\.\.\./, 'nothing in the asks is clipped');
+  assert.match(page, /\[FAKE-6666\]\(https:\/\/tracker\.test\/browse\/FAKE-6666\)/, 'every tracker key links, not just two');
+  writeFileSync(join(d, 'The-Podium.md'), page.replace(/(`ee55`[^\n]*)\n  > answer: /, '$1\n  > answer: take the first'));
+  const again = generate(opts(d), mk()).page;
+  assert.match(again, /`ee55`[^\n]*\n {2}> answer: take the first\n/, 'the typed answer is carried onto the long ask');
+  assert.deepEqual(extractFields(again).answers, { ee55: 'take the first' });
+});
+
+test('text clipped elsewhere on the page ends at a word boundary, never mid-word', () => {
+  const d = dir();
+  const text = `${'alphabetical '.repeat(12)}tail`;
+  const withLong = { ...board, status: { ...board.status, inflight: [{ id: 'ff66', date: '2026-10-05', text, stream: 'Alpha' }] } };
+  const page = generate(opts(d, { dryRun: true }), deps([], { journal: (sub) => withLong[sub] })).page;
+  const row = page.split('\n').find((l) => l.includes('`ff66`')) as string;
+  assert.match(row, /alphabetical\.\.\. \|/, 'cut after a whole word');
 });
