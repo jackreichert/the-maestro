@@ -38,7 +38,7 @@ export function writeAtomic(path: string, body: string): void {
 export const isPointer = (text: string): boolean => text.includes(POINTER_MARK);
 
 /** The old NOW.md when it is a real page (not the pointer note), else null. */
-const readLegacyPage = (dir: string): string | null => {
+export const readLegacyPage = (dir: string): string | null => {
   const text = readOrNull(join(dir, LEGACY_FILE));
   return text !== null && !isPointer(text) ? text : null;
 };
@@ -54,12 +54,12 @@ export const pointerNote = (command: string): string => [
 
 /**
  * Leaves the pointer note at NOW.md. A legacy page is replaced only if it is still the `migrated` text the caller just carried into the Podium;
- * anything else in NOW.md (an edit saved in the meantime) is left alone, so nothing the user wrote is overwritten.
+ * anything else in NOW.md (an edit saved in the meantime) is left alone unless `orphanIsClean` (it holds no edit the watcher has not reported, e.g. an old loop rebuilt it), so nothing the user wrote is overwritten.
  */
-export function writePointer(dir: string, command: string, migrated: string | null): void {
+export function writePointer(dir: string, command: string, migrated: string | null, orphanIsClean = false): void {
   const path = join(dir, LEGACY_FILE);
   const existing = readOrNull(path);
-  if (existing !== null && !isPointer(existing) && existing !== migrated) return;
+  if (existing !== null && !isPointer(existing) && existing !== migrated && !orphanIsClean) return;
   if (existing === pointerNote(command)) return;
   writeAtomic(path, pointerNote(command));
 }

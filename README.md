@@ -264,7 +264,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `rule "<text>" --ref <file>` | Record a decision already made. Refuses unless every `--ref` is an existing file; never shows as open |
 | `log ... --kind blocked --gate <gate>` | Name what a blocked item waits for: `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. `resume` reports whether it cleared |
 | `defer <id> --until YYYY-MM-DD` | Hide an open item from the board until that date |
-| `status` | Open items and done today. `--json` also carries a `footer` object (the per-stream footer counts and the session figures) for the Podium. `--full`, `--footer` (the reply-footer Ledger lines and a Session line, then `**Status page:** <uri>` when a status page is configured) |
+| `status` | Open items and done today. `--json` also carries a `footer` object (the per-stream footer counts and the session figures) for the Podium. `--full`, `--footer` (the reply-footer Ledger lines and a Session line, then `**Podium:** <uri>` when a status page is configured) |
 | `autopull on\|off` | Write `auto_pull` into the user config file (`MAESTRO_LOCAL_CONFIG` honoured): edits or adds the line in the `maestro-config` block, keeps everything else, idempotent. Needs no ledger |
 | `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch. Once a status directory exists it also prints `Priorities not set for today — orchestrator will ask` when today's priorities are missing or out of date, and the orchestrator asks you |
 | `standup [--date D]` | End-of-day summary for pasting |

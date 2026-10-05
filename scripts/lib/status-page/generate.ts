@@ -1,7 +1,7 @@
 /**
  * Regenerates the status page: reads the board, the open PRs and the files beside the page, renders it, writes it.
  * Every outside read comes in through `deps`, so tests run it with no ledger, no gh and no clock.
- * Writes `<statusDir>/NOW.md` (and `<statusDir>/YYYY-MM-DD.md` with `snapshot`) and the watcher's `.now-seen.json`, each through a temp file and a rename.
+ * Writes `<statusDir>/The-Podium.md` (and leaves a pointer note at NOW.md) (and `<statusDir>/YYYY-MM-DD.md` with `snapshot`) and the watcher's `.now-seen.json`, each through a temp file and a rename.
  * Edits the user typed into the page that the status watcher has not reported yet are copied into the new page (see inline.ts).
  * Only one rebuild runs at a time (lock.ts). Exit paths that fail before the write leave the old page as it was: a partial page is never written.
  */
@@ -11,12 +11,12 @@ import { renderPage } from './render.ts';
 import type { BoardStatus, PageConfig, Pr, PrData, Triage } from './render.ts';
 import { prStream } from './streams.ts';
 import type { StreamEvidence } from './streams.ts';
-import { carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
+import { PRIORITIES_HEADING, carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
 import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
 import { readPrCache, writePrCache } from './prcache.ts';
 import { acquireLock, processAlive } from './lock.ts';
-import { PODIUM_FILE, readPodium, writePointer, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
+import { PODIUM_FILE, readLegacyPage, readPodium, writePointer, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
 
 /** A pull request as the GraphQL search returns it. */
 export interface RawPr {
@@ -108,6 +108,21 @@ function pendingEdits(statusDir: string, current: string | null): { edits: Unpro
   return { edits: unprocessed(extractFields(current), baseline, meta ? meta.priorities_seen : undefined), seenPriorities };
 }
 
+/**
+ * A real-page NOW.md beside the Podium (an old event loop rebuilt it, or it was saved mid-migration). Clean when it carries no edit the watcher
+ * has not reported: then it can safely become the pointer again. With unreported edits it is left alone and a warning is printed, never overwritten.
+ */
+function orphanIsClean(statusDir: string): boolean {
+  const legacy = readLegacyPage(statusDir);
+  if (legacy === null || !legacy.includes(PRIORITIES_HEADING)) return false; // only a generated page is ever replaced, never the user's own notes
+  const baselineText = readSeenPage(statusDir);
+  const meta = readSeenMeta(statusDir);
+  const edits = unprocessed(extractFields(legacy), baselineText === null ? null : extractFields(baselineText), meta ? meta.priorities_seen : undefined);
+  if (countUnprocessed(edits) === 0) return true;
+  console.error('podium: NOW.md holds answers or ticks that were not migrated; copy them into The-Podium.md (NOW.md is only a pointer now)');
+  return false;
+}
+
 /** Builds the page and, unless `dryRun`, writes it, holding `.now.lock` so two rebuilds never run at once. Throws before writing anything if a read fails. */
 export function generate(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
   if (opts.dryRun) return build(opts, deps);
@@ -139,7 +154,7 @@ function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
     if (readPodium(statusDir) !== current) continue;
     const written = [join(statusDir, PODIUM_FILE)];
     writeAtomic(written[0] as string, page);
-    writePointer(statusDir, opts.command, current);
+    writePointer(statusDir, opts.command, current, orphanIsClean(statusDir));
     const kept = edits.priorities ? seenPriorities : extractFields(page).priorities;
     writeSeenMeta(statusDir, { generated_sha: sha(page), carried: countUnprocessed(edits), priorities_seen: kept });
     if (opts.snapshot) { written.push(join(statusDir, `${rendered.date}.md`)); writeAtomic(written[1] as string, page); }
