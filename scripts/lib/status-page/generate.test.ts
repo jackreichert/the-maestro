@@ -239,14 +239,17 @@ test('develop and staging twins share a row, by title and by ticket key; a missi
   assert.match(rows[2] ?? '', /\[#30 → develop\].* \| none \|/);
 });
 
-test('sections come in the order priorities, needs attention, open PRs, other status, and the bottom lists carry ages and done times', () => {
+test('sections come in the order priorities, working on now, needs attention, open PRs, other status, status, and the bottom lists carry ages and done times', () => {
   const b = { ...board, status: { ...board.status,
     inflight: [{ id: 'aa11', date: '2026-10-05', ts: '2026-10-05T13:00:00Z', text: 'building a thing', stream: 'Alpha' }],
     blocked: [{ id: 'ee55', date: '2026-10-05', ts: '2026-10-05T14:30:00Z', text: 'waiting on a vendor' }],
-    done: [{ id: 'dd44', date: '2026-10-05', ts: '2026-10-05T14:00:00Z', text: 'shipped' }] } };
+    done: [{ id: 'dd44', date: '2026-10-05', ts: '2026-10-05T14:00:00Z', text: 'shipped' }],
+    footer: { ledger: [{ name: 'Alpha', done: 0, inflight: 1, awaiting: 1, paste: 0, blocked: 0 }], session: { available: false, unavailable: 'no sessions' } } } };
   const page = generate(opts(dir(), { dryRun: true }), deps([raw(12, 'acme-widgets')], { journal: (sub) => b[sub] })).page;
   const heads = page.split('\n').filter((l) => /^#{1,3} /.test(l));
-  assert.deepEqual(heads.map((h) => h.replace(/ \(\d+\)$/, '')), ['# Status now', "## Today's priorities", '## Needs attention now', '## Open PRs', '### Alpha', '## Other status and findings', '### In flight', '### Blocked', '### Recent done', '### Deferred']);
+  assert.deepEqual(heads.map((h) => h.replace(/ \(\d+\)$/, '')), ['# Status now', "## Today's priorities", '## Working on now', '## Needs attention now', '## Open PRs', '### Alpha', '## Other status and findings', '### In flight', '### Blocked', '### Recent done', '### Deferred', '## Status']);
+  assert.match(page, /\| Alpha \| `aa11` \| building a thing \| - \| - \| 2 h \(since 9:00 am ET\) \|\n/);
+  assert.match(page, /\| Alpha \| 0 \| 1 \| 1 \| 0 \| 0 \|\n/);
   assert.match(page, /- `aa11` building a thing \[Alpha\] · 2 h\n/);
   assert.match(page, /- `ee55` waiting on a vendor \(gate: none recorded\) · 30 min\n/);
   assert.match(page, /- `dd44` shipped · 10:00 am ET\n/);
