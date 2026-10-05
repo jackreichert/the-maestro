@@ -382,3 +382,16 @@ test('a dry run migrates nothing and writes no pointer', () => {
   assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), '# old\n');
   assert.equal(existsSync(join(d, 'The-Podium.md')), false);
 });
+
+test('a clean full-page NOW.md rebuilt beside the Podium (by an old loop) becomes the pointer again; one with unreported edits is left alone', () => {
+  const d = dir();
+  generate(opts(d), deps([]));
+  const page = readFileSync(join(d, 'The-Podium.md'), 'utf8');
+  writeFileSync(join(d, 'NOW.md'), page);
+  generate(opts(d), deps([]));
+  assert.match(readFileSync(join(d, 'NOW.md'), 'utf8'), /\[\[The-Podium\]\]/);
+  const typed = page.replace('> answer: ', '> answer: typed in the old place');
+  writeFileSync(join(d, 'NOW.md'), typed);
+  generate(opts(d), deps([]));
+  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), typed);
+});
