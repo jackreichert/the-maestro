@@ -16,7 +16,7 @@ import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
 import { readPrCache, writePrCache } from './prcache.ts';
 import { acquireLock, processAlive } from './lock.ts';
-import { NOW_FILE, readNow, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
+import { PODIUM_FILE, readNow, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
 
 /** A pull request as the GraphQL search returns it. */
 export interface RawPr {
@@ -137,12 +137,12 @@ function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
     mkdirSync(statusDir, { recursive: true });
     deps.beforeWrite?.();
     if (readNow(statusDir) !== current) continue;
-    const written = [join(statusDir, NOW_FILE)];
+    const written = [join(statusDir, PODIUM_FILE)];
     writeAtomic(written[0] as string, page);
     const kept = edits.priorities ? seenPriorities : extractFields(page).priorities;
     writeSeenMeta(statusDir, { generated_sha: sha(page), carried: countUnprocessed(edits), priorities_seen: kept });
     if (opts.snapshot) { written.push(join(statusDir, `${rendered.date}.md`)); writeAtomic(written[1] as string, page); }
     return { page, written, prFailure: prData.failure };
   }
-  throw new Error(`${join(statusDir, NOW_FILE)} kept changing while it was being regenerated; run again`);
+  throw new Error(`${join(statusDir, PODIUM_FILE)} kept changing while it was being regenerated; run again`);
 }
