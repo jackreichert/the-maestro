@@ -419,6 +419,22 @@ An org overlay adds types without editing this repo: `<type>.mjs` and its playbo
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
+### notion-watch (tagged Notion pages)
+
+Keep a vault note in step with a Notion page without spending model tokens. The work is split in two: the separate `notion-sync` skill pulls pages (`notion-pull`: page, child pages and child databases to markdown, secrets scrubbed, `notion_page_id` / `notion_tag` / `notion_last_edited` / `notion_hash` frontmatter) and records each tag in a registry file; the `notion-watch` event type here watches that registry. The event type is a thin shim over `scripts/lib/tag-watch.ts`, a shared engine for tagged-source watchers (state, rate-limit backoff, failure counting, event wording) that only needs a source to supply `probe` and `refresh`; the shim loads the skill's adapter on first use, so the skill must be installed beside this repo, under `~/dev-env/skills/` or `~/.claude/skills/`, or at `NOTION_SYNC_DIR`.
+
+```mermaid
+flowchart LR
+  T[notion-watch tick, every 15 min] --> G[one GET per tagged page: last_edited_time]
+  G -->|unchanged| Q[silent, zero tokens]
+  G -->|moved| P[notion-pull re-renders the note]
+  P --> D[diff file beside the note, registry updated]
+  D --> E[one line: NOTION-CHANGED tag note diff summary]
+  E --> M[the model reads the diff file only]
+```
+
+Register one watch per registry: `node scripts/event-loop.ts add --id notion --type notion-watch --target <registry.json> --report "<what to tell the orchestrator>"` (15 minute default, 72 hour lifetime). Tag a page with `with-env NOTION_API_KEY -- node <notion-sync>/scripts/notion-pull.ts <page-url-or-id> --tag <name> --out <note.md> --registry <registry.json>` (`--adopt` to take over a note that exists but was not pulled from Notion). The key reaches the scripts only through the `with-env` helper (or an already-set `NOTION_API_KEY`); nothing opens an env file, and Notion access is read-only (GET and the database-query POST, enforced in the one transport and covered by a test). What each digest line means, and what to do, is in [playbooks/event-types/notion-watch.md](playbooks/event-types/notion-watch.md).
+
 ### pr-size.ts
 
 The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
