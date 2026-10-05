@@ -325,17 +325,17 @@ Mid-day PR snapshot and diff, stored under the ledger root.
 
 The always-current status page, one Markdown note (`NOW.md`) in the status directory, built for reading in Obsidian or any Markdown viewer. Run it as `node scripts/journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]` (`status-page.ts` is the script behind it). It reads `journal.ts status --json` and `triage --json`, a GitHub search of your open PRs (retried three times on a gateway error) and the files beside the page, then writes the page through a temp file and a rename. A failed ledger or GitHub read exits non-zero and leaves the old page alone.
 
-The page, top to bottom: **Today's priorities** (from `priorities.md`, each with its stream's awaiting, in-flight and open-PR counts when it names a stream; otherwise the line `Priorities not set for today — orchestrator will ask`), needs attention now, **Needs you** (a short-cell table per stream, then under it one reply line per ask with its links and a `> answer:` stub), the PR board per stream with a stack diagram, in flight, blocked, deferred and done today.
+The page, top to bottom: a freshness line (`Updated 3:05 pm ET`); **Today's priorities** (from `priorities.md`, each with its stream's awaiting, in-flight and open-PR counts when it names a stream; otherwise the line `Priorities not set for today — orchestrator will ask`); **Needs attention now**, one table with a row per ask (its stream, a tl;dr of the context, a clickable ticket link, and the decision needed from you, one decision per row), then under it one reply line per ask with its links and a `> answer:` stub; **Open PRs**, one table per stream that has any (ticket, develop PR with its base, staging twin with its base or `none`, tl;dr) with a stack diagram; and **Other status and findings** at the bottom (in-flight work with its age, blocked items, recent done, deferred).
 
 | File in the status directory | Role |
 |---|---|
 | `NOW.md` | The page. Regenerated; safe to edit in the places listed below |
 | `priorities.md` | `date: YYYY-MM-DD`, then one priority per line (`- text` or `- text \| Stream`). A file dated another day counts as not set. Written by `journal.ts priorities set` |
-| `ticket-map.json` | Optional `{ "<ticket>": ["<ask id>"] }`, linking asks to ticket notes |
+| `ticket-map.json` | Optional `{ "<ticket>": ["<ask id>"] }`, linking asks to ticket notes and, through the asks, PRs that name the ticket to a stream |
 | `stream-overrides.json` | Optional `{ "repo#N": "<Stream>" }`, placing a PR in a stream the repo map does not |
 | `.now-seen.md`, `.now-seen.json` | The status watcher's baseline and the hash of the generator's last output. Do not edit |
 
-Nothing install-specific is built in. The status directory is `status_dir`, else `<vault_root>/Projects/<project>/Status`; the stream order is `status_streams`, a PR's stream comes from `stream-overrides.json`, then `status_repo_streams`, then `other`; tracker keys link through `tracker_url_base`, ticket notes through `obsidian_vault` and `ticket_note_path`.
+Nothing install-specific is built in. The status directory is `status_dir`, else `<vault_root>/Projects/<project>/Status`; the stream order is `status_streams`, a PR's stream comes from the ledger first (board items that name a tracker key in the PR's title or branch, directly or through `ticket-map.json`, or whose refs name the PR as `<repo>#N` or `gh:pr:<repo>#N`; the stream with most such items wins), then `stream-overrides.json`, then `status_repo_streams`, then `other`; tracker keys link through `tracker_url_base`, ticket notes through `obsidian_vault` and `ticket_note_path`.
 
 **Answering from the page.** Under an ask you can write `> answer: <text>`, tick its `- [x]` box, or edit the priorities list. Regenerating keeps any such edit that the `status-watch` event type has not reported yet (an answer whose ask left the board moves under `## Unprocessed answers`), and if you save while a regeneration is writing, it reads the page again rather than overwrite you.
 
