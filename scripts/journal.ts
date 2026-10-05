@@ -105,7 +105,8 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL } from './local-config.ts';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, userPath } from './local-config.ts';
+import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
@@ -144,6 +145,18 @@ const argv = process.argv.slice(2);
 const cmd = argv[0];
 
 const { arg, has, positional } = parseArgs(argv);
+
+// `autopull on|off` writes the user config file and needs no ledger, so it runs before the ledger root is required.
+if (cmd === 'autopull') {
+    try {
+        const value = positional[0] ?? '';
+        console.log(`autopull  ${value.toLowerCase()}  ${setAutoPull(userPath, value)}  ${userPath}`);
+    } catch (e) {
+        console.error(`${e instanceof Error ? e.message : String(e)} Usage: journal.ts autopull on|off`);
+        process.exit(1);
+    }
+    process.exit(0);
+}
 
 const dryRun = has('dry-run');
 const asJson = has('json');
