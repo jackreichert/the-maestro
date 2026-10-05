@@ -18,6 +18,8 @@ node $J standup --date <previous working day>
 
 `prime` opens with the skill's update check: if its first line says the-maestro is behind, ahead, diverged or dirty (or that `auto_pull` just fast-forwarded it), pass that line on in the greeting in one short sentence, and say nothing when there is no such line.
 
+If `prime` also prints `auto_pull is not set`, the skill has never been told whether to keep itself current. Ask the user once, with AskUserQuestion (options: turn on, leave off), and apply the answer with `node $J autopull on` or `node $J autopull off`. The ask is the user's decision: never run `autopull on` unasked, and do not repeat the line to them as a notice. Either answer ends the line for good (it is written to the user config file), so if the user dismisses the question without choosing, leave the setting alone and ask again next session. `autopull` needs no ledger, so it works before `LEDGER_ROOT` is set.
+
 **Greet first.** A real greeting, not just "Hey" bolted onto a status dump. One or two
 sentences: match the time of day if they used it, and make it briefly uplifting — glad to see them,
 a nod that the day is still ours to move, something human before the inventory. Warm, not a pep
