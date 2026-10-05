@@ -1,10 +1,10 @@
 /**
  * The generator lock, `<statusDir>/.now.lock`: two page rebuilds never run at once. The holder's pid and the time it took
  * the lock are written to it. A second run waits for it to go, up to `timeoutMs`, then gives up with an error.
- * A lock is stale, and taken over, when its holder is gone or it is older than `staleMs` (a crashed run must not block the page for good).
+ * A lock is stale, and taken over, when its holder is gone, or when it is older than `staleMs`, which is set far above the slowest run (three gh tries and two ledger reads, each with a 2 minute limit) and only guards against a dead holder's pid being reused. A live holder is never evicted sooner: a slow GitHub must not let a second rebuild in.
  * Every outside thing (clock, sleep, "is this pid alive") is a parameter, so tests run it with no real waiting.
  */
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const LOCK_FILE = '.now.lock';
@@ -17,7 +17,7 @@ export interface LockEnv {
   pid: number;
 }
 export interface LockTiming { timeoutMs: number; staleMs: number; pollMs: number }
-export const LOCK_TIMING: LockTiming = { timeoutMs: 10_000, staleMs: 120_000, pollMs: 250 };
+export const LOCK_TIMING: LockTiming = { timeoutMs: 10_000, staleMs: 30 * 60_000, pollMs: 250 };
 
 interface Holder { pid: number; at: number }
 
@@ -47,11 +47,19 @@ function tryCreate(path: string, body: string): boolean {
   }
 }
 
-/** Moves a stale lock out of the way. The rename only succeeds for one of two racing takers; the other finds the file gone. */
+/**
+ * Moves a stale lock out of the way. The check and the rename are two steps, so after the rename the file moved aside is read again:
+ * if it is not the stale lock that was seen, a racing run had already replaced it, and it is linked back (link fails if the path is taken again).
+ */
 function evict(path: string, seen: string, env: LockEnv): boolean {
   if (readHolder(path)?.raw !== seen) return false;
   const aside = `${path}.stale-${env.pid}`;
   try { renameSync(path, aside); } catch { return false; }
+  if (readHolder(aside)?.raw !== seen) {
+    try { linkSync(aside, path); } catch { /* the path is taken again; that holder owns it */ }
+    rmSync(aside, { force: true });
+    return false;
+  }
   rmSync(aside, { force: true });
   return true;
 }
