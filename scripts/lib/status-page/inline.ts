@@ -26,7 +26,14 @@ const ANSWER = new RegExp(`^\\s*>\\s*answer(?:\\s+\`?(${ID})\`?)?\\s*:\\s?(.*)$`
 const QUOTE = /^\s*>\s?(.*)$/;
 const LIST_ITEM = /^\s*(?:[-*]|\d+[.)])\s+(\S.*?)\s*$/;
 /** The per-stream counts the generator appends to a priority: not the user's words, so never compared. */
-const COUNTS = /\s+_\[[^\]]*\]_\s*$/;
+const COUNTS = /\s+_\[(?:([^:\]]+):)?[^\]]*\]_\s*$/;
+
+/** A priority line as the user would set it: the words, plus ` | Stream` when the generator's counts suffix names one (so a reorder keeps the mapping). */
+function priorityText(raw: string): string {
+  const stream = raw.match(COUNTS)?.[1]?.trim();
+  const text = squash(raw.replace(COUNTS, ''));
+  return stream ? `${text} | ${stream}` : text;
+}
 
 const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
@@ -60,7 +67,7 @@ export function extractFields(page: string): InlineFields {
     if (id && text) fields.answers[id] = text;
   }
   const block = prioritiesBlock(lines);
-  if (block) fields.priorities = lines.slice(block.start, block.end).flatMap((l) => (LIST_ITEM.test(l) ? [squash((l.match(LIST_ITEM)?.[1] ?? '').replace(COUNTS, ''))] : []));
+  if (block) fields.priorities = lines.slice(block.start, block.end).flatMap((l) => (LIST_ITEM.test(l) ? [priorityText(l.match(LIST_ITEM)?.[1] ?? '')] : []));
   return fields;
 }
 

@@ -148,3 +148,9 @@ test('--dry-run shows the carried edit but writes neither the page nor the watch
   assert.match(generate(opts(d, { dryRun: true }), deps([])).page, /answer: typed/);
   assert.equal(readFileSync(join(d, '.now-seen.json'), 'utf8'), before);
 });
+
+test('the priorities section states the date of the list it shows', () => {
+  const d = dir();
+  writePriorities(d, '2026-10-05', [{ text: 'First' }]);
+  assert.match(generate(opts(d, { dryRun: true }), deps([])).page, /## Today's priorities\n\n1\. First\nSet for 2026-10-05\.\n/);
+});
