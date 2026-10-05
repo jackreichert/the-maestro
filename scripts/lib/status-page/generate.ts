@@ -40,7 +40,8 @@ export interface GenerateDeps {
   beforeWrite?(): void;
 }
 
-export interface GenerateOptions { statusDir: string; dryRun: boolean; snapshot: boolean; command: string; config: PageConfig }
+/** `cachedPrsOnly` renders the last cached PR set without a GitHub read (quiet hours, or PR data still fresh). */
+export interface GenerateOptions { statusDir: string; dryRun: boolean; snapshot: boolean; command: string; config: PageConfig; cachedPrsOnly?: boolean }
 /** `prFailure` is why the GitHub read failed when the page was built from the cache (or without PRs); absent when it succeeded. */
 export interface GenerateResult { page: string; written: string[]; prFailure?: string }
 
@@ -81,7 +82,11 @@ const firstLine = (e: unknown): string => (e instanceof Error ? e.message : Stri
  * Open PRs from GitHub, remembered in the cache. When the read fails, the last cached set with its fetch time (or none)
  * and the reason; the caller still writes the page. A dry run reads the cache but never writes it.
  */
-function readPrs(statusDir: string, deps: GenerateDeps, dryRun: boolean): { raw: RawPr[]; data: PrData } {
+function readPrs(statusDir: string, deps: GenerateDeps, dryRun: boolean, cachedOnly: boolean): { raw: RawPr[]; data: PrData } {
+  if (cachedOnly) {
+    const cached = readPrCache(statusDir);
+    return { raw: cached?.prs ?? [], data: { fetchedAt: cached?.fetchedAt ?? null } };
+  }
   try {
     const raw = settle(deps);
     const fetchedAt = deps.now();
@@ -117,7 +122,7 @@ function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
   const status = deps.journal('status') as BoardStatus;
   const triage = deps.journal('triage') as Triage;
   const items = [...status.inflight, ...status.blocked, ...status.awaiting, ...status.done];
-  const { raw, data: prData } = readPrs(statusDir, deps, opts.dryRun);
+  const { raw, data: prData } = readPrs(statusDir, deps, opts.dryRun, !!opts.cachedPrsOnly);
   const prs = loadPrs(raw, { items, ticketMap, overrides, repoStreams: config.repoStreams, keyPattern: config.trackerKeyPattern });
   const now = deps.now();
   const priorities = readPriorities(statusDir, localDate(now, config.tz));
