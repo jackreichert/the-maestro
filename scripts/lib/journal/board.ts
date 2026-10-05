@@ -71,24 +71,31 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
     };
 }
 
+/** One reply-footer Ledger line as numbers: `name` is the stream (`other` for items with none), or null for the single plain line. */
+export interface FooterRow { name: string | null; done: number; inflight: number; awaiting: number; paste: number; blocked: number }
+
 /**
- * The reply-footer Ledger lines: one per active stream (canonical registry names), then `other` for
- * items with no stream. With no streams at all it is the single plain `Ledger` line.
+ * The counts behind the reply-footer Ledger lines: one row per active stream (canonical registry names), then `other` for
+ * items with no stream. With no streams at all it is the single plain row. The footer text and the status page both read this.
  */
-export function footerLines(g: Pick<Groups, 'inflight' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): string[] {
+export function footerRows(g: Pick<Groups, 'inflight' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): FooterRow[] {
     const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, done);
-    const fmtLine = (name: string | null, pick: (i: LedgerItem) => boolean): string => {
+    const row = (name: string | null, pick: (i: LedgerItem) => boolean): FooterRow => {
         const n = (arr: LedgerItem[]): number => arr.filter(pick).length;
-        const blocked = n(g.blocked);
-        const paste = n(g.paste);
-        return `**Ledger${name ? ` (${name})` : ''}:** ${n(done)} done today · ${n(g.inflight)} in flight · ${n(g.awaiting)} awaiting you${paste ? ` · ${paste} to run` : ''}${blocked ? ` · ${blocked} blocked` : ''}`;
+        return { name, done: n(done), inflight: n(g.inflight), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked) };
     };
-    if (!streams.length) return [fmtLine(null, () => true)];
-    const lines = streams.map((s) => fmtLine(s, (i) => i.stream === s));
+    if (!streams.length) return [row(null, () => true)];
+    const rows = streams.map((s) => row(s, (i) => i.stream === s));
     const otherCount = [g.inflight, g.blocked, g.awaiting, g.paste, done].reduce((a, arr) => a + noStream(arr).length, 0);
-    if (otherCount) lines.push(fmtLine('other', (i) => !i.stream));
-    return lines;
+    if (otherCount) rows.push(row('other', (i) => !i.stream));
+    return rows;
 }
+
+const footerLine = (r: FooterRow): string =>
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today · ${r.inflight} in flight · ${r.awaiting} awaiting you${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+
+/** The reply-footer Ledger lines, one per `footerRows` row. */
+export const footerLines = (g: Pick<Groups, 'inflight' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): string[] => footerRows(g, done).map(footerLine);
 
 export function standupText(ctx: BoardContext, d: string): string {
     const { has } = ctx;

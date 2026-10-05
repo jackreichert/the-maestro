@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
+import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
 import type { Comparison } from './token-metrics.ts';
 
@@ -229,6 +229,16 @@ test('sessionLine reports the newest session against the thresholds', () => {
     assert.equal(sessionLine(dir, 4, 350000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn');
     assert.equal(sessionLine(dir, 2, 350000), '**Session:** 2 turns (100% of 2 roll) · 200k read/turn · roll now');
     assert.equal(sessionLine(dir, 4, 200000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn · roll now');
+});
+
+test('sessionStatus gives the numbers sessionLine prints', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
+    assert.deepEqual(sessionStatus(dir), { available: false, unavailable: `no sessions in ${dir}; set projects_dir` });
+    const u = (read: number) => ({ input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 });
+    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: u(read) } });
+    writeFileSync(join(dir, 's2.jsonl'), `${line('a', 100000)}\n${line('b', 300000)}\n`);
+    assert.deepEqual(sessionStatus(dir, 4, 350000), { available: true, turns: 2, pct: 50, rollTurns: 4, readK: 200, advice: '' });
+    assert.deepEqual(sessionStatus(dir, 2, 350000), { available: true, turns: 2, pct: 100, rollTurns: 2, readK: 200, advice: 'roll now' });
 });
 
 test('sessionLine counts turns and read/turn since the last compact, not the whole transcript', () => {

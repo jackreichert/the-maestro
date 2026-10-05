@@ -485,6 +485,24 @@ test('status --footer ends with the Session line for the newest session, and say
     assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
+test('status --json carries the footer numbers, and they match what status --footer prints', () => {
+    seedRegistry();
+    const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
+    run('done', a, ...MARK);
+    run('ask', 'which way?', '--stream', 'Maestro', ...MARK);
+    run('log', 'stuck on x', '--kind', 'blocked', '--stream', 'Maestro', ...MARK);
+    run('start', 'loose end', ...MARK);
+    const f = parse<{ footer: { ledger: unknown; session: unknown } }>(run('status', '--json').out).footer;
+    assert.deepEqual(f.ledger, [
+        { name: 'Maestro', done: 0, inflight: 0, awaiting: 1, paste: 0, blocked: 1 },
+        { name: 'Launch', done: 1, inflight: 0, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'other', done: 0, inflight: 1, awaiting: 0, paste: 0, blocked: 0 },
+    ]);
+    assert.deepEqual(f.session, { available: false, unavailable: `no sessions in ${projects}; set projects_dir` });
+    const text = run('status', '--footer').out.trim().split('\n');
+    assert.equal(text[0], '**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked');
+});
+
 test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
     run('start', 'plain', ...MARK);
     const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
