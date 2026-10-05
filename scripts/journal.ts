@@ -75,7 +75,7 @@
  *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
  *   journal.ts resume                        the verify-on-resume checklist, running the parts a script can run
- *   journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the status page (NOW.md in the status dir): priorities, needs-you list, PR board per stream, in flight, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
+ *   journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the status page (NOW.md in the status dir): priorities, needs-you list, PR board per stream, in flight, queued, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
  *
