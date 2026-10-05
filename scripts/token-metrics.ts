@@ -48,6 +48,8 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSy
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ModelPrice } from './local-config.ts';
+import { sessionText } from './lib/session-text.ts';
+import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
@@ -254,11 +256,6 @@ export function currentSession(dir: string): { session: string; turns: number; r
     return { session: basename(newest.f, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0 };
 }
 
-/** The numbers behind the Session line; `unavailable` is why there are none. `advice` is `roll soon`, `roll now` or empty. */
-export type SessionStatus =
-    | { available: true; turns: number; pct: number; rollTurns: number; readK: number; advice: '' | 'roll soon' | 'roll now' }
-    | { available: false; unavailable: string };
-
 /** The current session measured against the roll thresholds (see `sessionLine` for the rules). */
 export function sessionStatus(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT): SessionStatus {
     let s;
@@ -269,10 +266,6 @@ export function sessionStatus(dir: string, rollTurns: number = ROLL_TURNS, rollR
     const advice = reached(rollPct) ? 'roll now' : reached(warnPct) ? 'roll soon' : '';
     return { available: true, turns: s.turns, pct: Math.floor((s.turns / rollTurns) * 100), rollTurns, readK: Math.floor(s.readPerTurn / 1000), advice };
 }
-
-/** The Session line text for a `SessionStatus`. */
-export const sessionText = (s: SessionStatus): string =>
-    (s.available ? `**Session:** ${s.turns} turns (${s.pct}% of ${s.rollTurns} roll) · ${s.readK}k read/turn${s.advice ? ` · ${s.advice}` : ''}` : `**Session:** unavailable (${s.unavailable})`);
 
 /**
  * The status-footer Session line for the current session, e.g.
