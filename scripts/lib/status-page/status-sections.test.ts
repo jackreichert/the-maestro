@@ -15,21 +15,21 @@ import type { BoardStatus, PageConfig, PageInput } from './render.ts';
 const TODAY = '2026-10-05';
 const NOW = new Date('2026-10-05T15:00:00Z');
 const CONFIG: PageConfig = {
-  streams: ['Rivendell', 'Narnia'], repoStreams: {}, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/',
+  streams: ['Example Pilot', 'Example Rollout'], repoStreams: {}, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/',
   ticketNotePath: 'Projects/{prefix}/Tickets/{id}', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'America/New_York',
 };
 const row = (id: string, kind: string, text: string, over: Partial<LedgerRow> = {}): LedgerRow =>
   ({ id, kind, ts: `${TODAY}T13:00:00Z`, date: TODAY, text, ...over }) as LedgerRow;
 const rows: LedgerRow[] = [
-  row('aa11', 'wip', 'wire the partner api FAKE-1', { stream: 'Rivendell', model: 'Model A', ts: `${TODAY}T11:00:00Z` }),
-  row('aa12', 'wip', 'second rivendell job', { stream: 'Rivendell', model: 'Model B' }),
-  row('bb21', 'wip', 'direct integration', { stream: 'Narnia', model: 'Model A', ts: `${TODAY}T14:30:00Z` }),
+  row('aa11', 'wip', 'wire the partner api FAKE-1', { stream: 'Example Pilot', model: 'Model A', ts: `${TODAY}T11:00:00Z` }),
+  row('aa12', 'wip', 'second example pilot job', { stream: 'Example Pilot', model: 'Model B' }),
+  row('bb21', 'wip', 'direct integration', { stream: 'Example Rollout', model: 'Model A', ts: `${TODAY}T14:30:00Z` }),
   row('cc31', 'wip', 'loose job'),
-  row('dd41', 'question', 'which path?', { stream: 'Narnia' }),
-  row('ee51', 'blocked', 'waiting on a vendor', { stream: 'Rivendell' }),
-  row('ff61', 'question', 'run this', { stream: 'Narnia', paste: '/tmp/fake.sh' }),
-  row('gg71', 'wip', 'shipped thing', { stream: 'Narnia' }),
-  row('hh81', 'done', 'shipped', { closes: 'gg71', stream: 'Narnia' }),
+  row('dd41', 'question', 'which path?', { stream: 'Example Rollout' }),
+  row('ee51', 'blocked', 'waiting on a vendor', { stream: 'Example Pilot' }),
+  row('ff61', 'question', 'run this', { stream: 'Example Rollout', paste: '/tmp/fake.sh' }),
+  row('gg71', 'wip', 'shipped thing', { stream: 'Example Rollout' }),
+  row('hh81', 'done', 'shipped', { closes: 'gg71', stream: 'Example Rollout' }),
 ];
 
 /** Board groups over the in-memory rows, the way `journal.ts status` builds them. */
@@ -68,8 +68,8 @@ test('the Status table carries exactly the numbers status --footer prints, one r
     return [m[1], m[2], m[3], m[4], m[5] ?? '0', m[6] ?? '0'];
   });
   assert.deepEqual(rowsOnPage, fromFooter);
-  assert.deepEqual(rowsOnPage.map((r) => r[0]), ['Rivendell', 'Narnia', 'other'], 'Rivendell and Narnia stay separate streams');
-  assert.deepEqual(rowsOnPage.find((r) => r[0] === 'Narnia'), ['Narnia', '1', '1', '1', '1', '0']);
+  assert.deepEqual(rowsOnPage.map((r) => r[0]), ['Example Pilot', 'Example Rollout', 'other'], 'Example Pilot and Example Rollout stay separate streams');
+  assert.deepEqual(rowsOnPage.find((r) => r[0] === 'Example Rollout'), ['Example Rollout', '1', '1', '1', '1', '0']);
 });
 
 test('the Status section ends with the agents line and the session line formatted as the footer formats it', () => {
@@ -89,7 +89,7 @@ test('Working on now sits directly under the priorities, grouped by stream, with
   assert.ok(pri !== -1 && work > pri);
   assert.ok(!lines.slice(pri + 1, work).some((l) => /^## /.test(l)), 'no section between the priorities and Working on now');
   const t = section(p, '## Working on now (4)').filter((l) => l.startsWith('| ')).slice(1).map(cells);
-  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Rivendell', '`aa11`'], ['Rivendell', '`aa12`'], ['Narnia', '`bb21`'], ['other', '`cc31`']]);
+  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Example Pilot', '`aa11`'], ['Example Pilot', '`aa12`'], ['Example Rollout', '`bb21`'], ['other', '`cc31`']]);
   assert.equal(t[0]?.[3], '[FAKE-1](https://tracker.test/browse/FAKE-1)');
   assert.equal(t[0]?.[4], 'Model A');
   assert.equal(t[0]?.[5], '4 h (since 7:00 am ET)');
