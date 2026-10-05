@@ -23,7 +23,7 @@ import { nextInterval } from '../lib/cadence.ts';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, WATCH_QUIET_HOURS, WATCH_QUIET_WEEKENDS, WATCH_TZ } from '../local-config.ts';
 import { prsDirtyAt } from '../lib/status-page/dirty.ts';
 import { readPrCache } from '../lib/status-page/prcache.ts';
-import { PODIUM_FILE, readNow, readSeenMeta, sha } from '../lib/status-page/seen.ts';
+import { PODIUM_FILE, readPodium, readSeenMeta, sha } from '../lib/status-page/seen.ts';
 import { regenerate } from '../status-page.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
@@ -79,7 +79,7 @@ export const realIo: RefreshIo = {
   },
   prsDirtyAt,
   userEditAt: (dir) => {
-    const page = readNow(dir);
+    const page = readPodium(dir);
     const meta = readSeenMeta(dir);
     if (page === null || (meta !== null && meta.generated_sha === sha(page))) return null;
     return pageMtime(dir);

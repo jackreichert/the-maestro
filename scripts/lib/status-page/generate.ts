@@ -16,7 +16,7 @@ import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
 import { readPrCache, writePrCache } from './prcache.ts';
 import { acquireLock, processAlive } from './lock.ts';
-import { PODIUM_FILE, readNow, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
+import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
 
 /** A pull request as the GraphQL search returns it. */
 export interface RawPr {
@@ -130,13 +130,13 @@ function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
   // The page on disk may hold an answer the watcher has not reported. Carry it forward, and if the user saves another
   // edit while this runs, start over from what they saved: the write below only happens against the page we read.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const current = readNow(statusDir);
+    const current = readPodium(statusDir);
     const { edits, seenPriorities } = pendingEdits(statusDir, current);
     const page = current === null ? rendered.page : carryInline(rendered.page, edits, current);
     if (opts.dryRun) return { page, written: [], prFailure: prData.failure };
     mkdirSync(statusDir, { recursive: true });
     deps.beforeWrite?.();
-    if (readNow(statusDir) !== current) continue;
+    if (readPodium(statusDir) !== current) continue;
     const written = [join(statusDir, PODIUM_FILE)];
     writeAtomic(written[0] as string, page);
     const kept = edits.priorities ? seenPriorities : extractFields(page).priorities;
