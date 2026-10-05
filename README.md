@@ -438,8 +438,10 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `resume_gh` | `MAESTRO_RESUME_GH` | on | `off`, `false`, `no` or `0` stops `resume` from calling `gh` |
 | `ledger_git_autocommit` | `MAESTRO_LEDGER_GIT_AUTOCOMMIT` | off | `on`, `true`, `yes` or `1`: `roll` commits the ledger root after a clean `verify` |
 | `approvals_review_day` | `MAESTRO_APPROVALS_REVIEW_DAY` | `friday` | Weekday the greeting brings the approvals digest; a non-weekday falls back to the default |
-| `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns at which the status footer says "roll now" |
-| `roll_read_per_turn` | `MAESTRO_ROLL_READ_PER_TURN` | 350000 | Mean cache-read tokens per turn at which it says "roll now" (a plain number) |
+| `roll_turns` | `MAESTRO_ROLL_TURNS` | 180 | Turns that count as 100% on the status footer's Session line |
+| `roll_read_per_turn` | `MAESTRO_ROLL_READ_PER_TURN` | 350000 | Mean cache-read tokens per turn that count as 100% (a plain number) |
+| `roll_warn_pct` | `MAESTRO_ROLL_WARN_PCT` | 85 | Percent of either limit at which the Session line says "roll soon" (integer 1..100, below `roll_at_pct`) |
+| `roll_at_pct` | `MAESTRO_ROLL_AT_PCT` | 90 | Percent of either limit at which it says "roll now". An invalid value, or a pair with warn at or above roll, falls back to 85/90 |
 | `cost_targets` | `MAESTRO_COST_TARGETS` | `opus_share_max=40, haiku_share_min=15, opus_priced_share_max=50, wakes_per_prompt_max=0.5, read_per_turn_max=200000, turns_since_compact_max=150` | Targets `token-metrics.ts` scores against, as `key=value` pairs; any subset overrides those keys. Shares are percent. `opus_priced_share_max` (default 50) scores the Opus share of estimated dollars |
 | `model_prices` | `MAESTRO_MODEL_PRICES` | none | Dollars per million tokens by model family, as `;`-separated groups: `opus: input=4, cache_write_5m=5, cache_write_1h=8, cache_read=0.2, output=20; sonnet: ...; haiku: ...`. Each family needs `input`, `cache_write_5m`, `cache_read` and `output`; `cache_write_1h` falls back to the 5m price. Needs opus, sonnet and haiku, else it counts as unset; `other` is optional. No prices are built in; the current list is under token-metrics.ts below, with a paste-ready block |
 | `watch_min_interval` | `MAESTRO_WATCH_MIN_INTERVAL` | 300 | PR watcher: fastest poll in seconds; never below 300 |
@@ -576,7 +578,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 - **Foreground waits inside agents.** A background completion wakes the orchestrator for a full-context turn. A blocking loop inside the agent costs one tool call and the orchestrator nothing.
 - **Capped reports and lean tool output.** A report stays in context for the rest of the session and is re-read on every later turn, so detail goes in a file the orchestrator opens only if it needs it.
 - **One loop, one wake per event.** The event loop, including its `pr-watch` type, costs no tokens between checks, and its adaptive pace (slower when quiet, off overnight) keeps polling from becoming wake-ups.
-- **Session hygiene.** Per-turn cost climbs with session length. The status footer's Session line says "roll now" at `roll_turns` (180) or `roll_read_per_turn` (350000), and `journal.ts handoff` plus `resume` make a fresh session cheap to start.
+- **Session hygiene.** Per-turn cost climbs with session length. The status footer's Session line says "roll soon" at 85% and "roll now" at 90% of `roll_turns` (180) or `roll_read_per_turn` (350000). On "roll soon" the orchestrator finishes in-flight relays and starts no long new chains; on "roll now" it runs the roll itself and reminds you on every reply to compact, which only you can do. Rolls are layerable: `journal.ts handoff --delta` writes a small suffixed handoff (`HANDOFF-<date>b-...`) holding only what changed since the previous one, and `resume` plus `prime` make a fresh session cheap to start.
 - **Measured, not guessed.** `token-metrics.ts` reads transcripts for numbers only. An end-of-day loop compares the day with a 7-day median, flags any metric more than about 20% worse, and treats each cost habit as an experiment to adopt or revert. See [cost/loop.md](cost/loop.md).
 
 ## Testing

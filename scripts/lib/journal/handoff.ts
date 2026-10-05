@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { keptCounts } from '../../branch-sweep.ts';
 import { sessionLine } from '../../token-metrics.ts';
@@ -49,6 +49,7 @@ export function cleanupWorktreeLines(kept: KeptWorktree[], summary: WorktreeSwee
 
 /** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
 export function handoffText(ctx: HandoffContext, stream: string | null, since: string, keptWorktrees: KeptWorktree[] = [], { learn = '', next = '', sweep = null, verbose = false }: { learn?: string; next?: string; sweep?: WorktreeSweep | null; verbose?: boolean } = {}): string {
+    const generatedAt = new Date().toISOString(); // taken before the ledger is read, so a row appended mid-run is in the next delta
     const { fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR } = ctx;
     const items = fold(readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const d = today();
@@ -75,7 +76,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
     const one = (kind: string): string[] => arts.filter((a) => a.kind === kind).map((a) => a.v);
 
     return [
-        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `since: ${since}`, 'type: handoff', '---', '',
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `generated_at: ${generatedAt}`, `since: ${since}`, 'type: handoff', '---', '',
         `# ${stream ?? 'All streams'} handoff, ${d}`, '',
         '> Scaffolded by `journal.ts handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.ts resume`, and calls `ListAgents` itself.', '',
         '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
@@ -106,6 +107,61 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
         '_Run `node scripts/branch-sweep.ts` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
         ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
         'Then run `journal.ts resume` and verify: ledger status, open PRs, running loops, and `ListAgents`.', '',
+    ].join('\n');
+}
+
+const SUFFIXES = 'bcdefghijklmnopqrstuvwxyz';
+
+/**
+ * The handoffs already written for `date` and `slug` in `dir`: `HANDOFF-<date>-<slug>.md`, then `HANDOFF-<date>b-<slug>.md`,
+ * `...c-...`. `prev` is the newest one (null when there is none), `next` is the name the next roll writes.
+ */
+export function handoffSeries(dir: string, date: string, slug: string): { prev: string | null; next: string | null } {
+    const names = existsSync(dir) ? readdirSync(dir) : [];
+    let prev: string | null = null;
+    for (const suffix of ['', ...SUFFIXES]) {
+        const name = `HANDOFF-${date}${suffix}-${slug}.md`;
+        if (!names.includes(name)) break;
+        prev = name;
+    }
+    if (prev === null) return { prev, next: `HANDOFF-${date}-${slug}.md` };
+    const at = prev.slice(`HANDOFF-${date}`.length, -`-${slug}.md`.length);
+    const letter = SUFFIXES[at ? SUFFIXES.indexOf(at) + 1 : 0];
+    return { prev, next: letter ? `HANDOFF-${date}${letter}-${slug}.md` : null };
+}
+
+/** The `generated_at` marker a handoff (full or delta) carries in its frontmatter, or null. */
+export function handoffMarker(file: string): string | null {
+    return readFileSync(file, 'utf8').match(/^generated_at: (\S+)$/m)?.[1] ?? null;
+}
+
+/**
+ * A second (third, ...) roll in one session: only what the ledger gained after `marker` (the previous handoff's
+ * `generated_at`), so a late roll costs a fraction of the first. Open items already carried by the previous handoff are
+ * not repeated; `prime` and the full handoff still show the whole board.
+ */
+export function handoffDeltaText(ctx: HandoffContext, stream: string | null, marker: string, prevName: string): string {
+    const generatedAt = new Date().toISOString();
+    const items = ctx.fold(ctx.readLedger()).items.filter((i) => stream === null || i.stream === stream);
+    const after = (ts: string | undefined): boolean => ts !== undefined && ts > marker;
+    const isAsk = (i: LedgerItem): boolean => i.kind === 'question' || i.kind === 'decision';
+    const opened = items.filter((i) => after(i.ts) && !isAsk(i) && i.state !== 'done');
+    const completed = items.filter((i) => i.state === 'done' && (after(i.closedBy?.ts) || (!i.closedBy && after(i.ts))));
+    const asks = items.filter((i) => after(i.ts) && isAsk(i) && isOpen(i));
+    const prs = artifactsOf([...opened, ...completed, ...asks]).filter((a) => a.kind === 'pr').map((a) => a.v);
+    const meta = (i: LedgerItem): string => [stream === null && i.stream && `stream: ${i.stream}`, i.repo, i.ticket && `[[${i.ticket}]]`].filter(Boolean).join(' · ');
+    const line = (i: LedgerItem, tag: string): string => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
+    const list = (rows: string[]): string[] => (rows.length ? rows : ['_none_']);
+    return [
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${ctx.today()}`, `generated_at: ${generatedAt}`, `delta_of: ${prevName.replace(/\.md$/, '')}`, `since_ts: ${marker}`, 'type: handoff-delta', '---', '',
+        `# ${stream ?? 'All streams'} handoff delta, ${ctx.today()}`, '',
+        `> Only what changed since [[${prevName.replace(/\.md$/, '')}]] (${marker}). Read that first; this does not repeat it. It lists new items, completions and new open asks only; an older ask resolved since is not shown.`, '',
+        '## Session metrics', '', sessionLine(ctx.claudeProjectsDir), '',
+        '## New or still-open items since the previous roll', '', ...list(opened.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight'))), '',
+        '## Completed since the previous roll', '', ...list(completed.map((i) => line(i, 'done'))), '',
+        '## New asks', '', ...list(asks.map((i) => line(i, i.kind))), '',
+        '## PRs mentioned', '', prs.length ? prs.join(', ') : '_none_', '',
+        'Work logged after this roll lands in the ledger as usual; the next roll or `journal.ts prime` picks it up.', '',
     ].join('\n');
 }
 

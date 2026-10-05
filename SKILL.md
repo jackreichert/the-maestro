@@ -79,13 +79,17 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 ```
 
 `journal.ts status --footer` prints the Ledger lines, one per active stream when streams are in use,
-then the Session line for the current session (the newest transcript in `projects_dir`; at 100% of
-the roll thresholds it ends `· roll now`)
+then the Session line for the current session (the newest transcript in `projects_dir`; at 85% of
+a roll threshold it ends `· roll soon`, at 90% `· roll now`)
 ([reference/ledger.md#the-footer-lines](reference/ledger.md#the-footer-lines)).
 
 Say "none running" when nothing is live; that's still information. When relaying an agent's result,
-the Session line carries the turn count and read/turn; nudge the user to roll up when it says
-`roll now` (~180 turns, [cost/budget.md#session-hygiene](cost/budget.md#session-hygiene)). Full formatting rules (more
+the Session line carries the turn count and read/turn. **`roll soon`:** finish in-flight relays,
+start no new long dispatch chains, and say so in one line. **`roll now`:** run the roll yourself,
+unasked (`journal.ts triage`, then `roll`, then `handoff --all --delta`), then open EVERY reply
+with one line asking Jack to compact (`/compact` or a fresh session; only he can) until the Session
+line drops below `roll soon`. Log work done after the roll as usual
+([cost/budget.md#session-hygiene](cost/budget.md#session-hygiene)). Full formatting rules (more
 than two agents, killed/failed states, elapsed time): `reference/dispatch.md#status-footer`.
 
 ## Managing running agents
