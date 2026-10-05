@@ -15,8 +15,8 @@ test('a tracker key in the title maps to the stream of the board items that name
   assert.equal(prStream(pr(2, 'fix: other thing', { headRefName: 'feat/FAKE-7-x' }), e), 'Alpha', 'a key in the branch counts');
 });
 
-test('the key is matched as a whole token, and case-insensitively', () => {
-  const e = ev({ items: [item('a1', 'FAKE-77 is something else', 'Alpha'), item('a2', 'fake-7 lower case', 'Beta')] });
+test('the key is matched as a whole token, case-insensitively, and inside a branch name', () => {
+  const e = ev({ items: [item('a1', 'FAKE-77 is something else, as is XFAKE-7', 'Alpha'), item('a2', 'push fix/fake-7-remove-thing now', 'Beta')] });
   assert.equal(prStream(pr(1, 'fix: FAKE-7'), e), 'Beta');
 });
 
