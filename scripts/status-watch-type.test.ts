@@ -20,7 +20,7 @@ let awaiting = [
   { id: 'cd34', date: '2026-10-05', text: 'Which option?', stream: 'Alpha' },
 ];
 const deps = (): GenerateDeps => ({
-  journal: (sub) => (sub === 'status' ? { inflight: [], blocked: [], done: [], awaiting } : { items: [] }),
+  journal: (sub) => (sub === 'status' ? { inflight: [], queued: [], blocked: [], done: [], awaiting } : { items: [] }),
   fetchPrs: () => [], sleep: () => {}, now: () => NOW,
 });
 const regenerate = (dir: string): string => generate({ statusDir: dir, dryRun: false, snapshot: false, command: 'status-page', config: CONFIG }, deps()).page;
