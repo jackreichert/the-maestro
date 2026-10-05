@@ -231,6 +231,33 @@ test('sessionLine reports the newest session against the thresholds', () => {
     assert.equal(sessionLine(dir, 4, 200000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn · roll now');
 });
 
+test('sessionLine grades the advice: roll soon from the warn percent, roll now from the roll percent, either metric', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-grade-'));
+    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    const turnsLine = (turns: number, read: number, rollTurns: number, rollRead: number, warn?: number, at?: number) => {
+        writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: turns }, (_, i) => line(`m${i}`, read)).join('\n')}\n`);
+        return sessionLine(dir, rollTurns, rollRead, warn, at).replace(/^.* read\/turn/, '');
+    };
+    // Turns metric, roll_turns 100 and a read cap far out of reach: boundaries 84/85/89/90/100 and past it.
+    for (const [turns, want] of [[84, ''], [85, ' · roll soon'], [89, ' · roll soon'], [90, ' · roll now'], [100, ' · roll now'], [120, ' · roll now']] as const) {
+        assert.equal(turnsLine(turns, 1, 100, 1e9), want, `${turns} of 100 turns`);
+    }
+    // Read metric, roll_read 1000 and a turn cap far out of reach.
+    for (const [read, want] of [[840, ''], [850, ' · roll soon'], [899, ' · roll soon'], [900, ' · roll now'], [1000, ' · roll now']] as const) {
+        assert.equal(turnsLine(2, read, 1e6, 1000), want, `${read} of 1000 read/turn`);
+    }
+    assert.equal(turnsLine(153, 1, 180, 1e9), ' · roll soon', '85% of the default 180 is exactly 153 turns');
+    assert.equal(turnsLine(152, 1, 180, 1e9), '');
+    assert.equal(turnsLine(162, 1, 180, 1e9), ' · roll now', '90% of 180 is 162');
+    // Either metric trips it; the stronger level wins.
+    assert.equal(turnsLine(95, 860, 100, 1000), ' · roll now', 'turns at roll level beats read at warn level');
+    assert.equal(turnsLine(86, 950, 100, 1000), ' · roll now', 'read at roll level beats turns at warn level');
+    // Custom percents; the displayed percent stays the share of the full roll_turns.
+    assert.equal(turnsLine(50, 1, 100, 1e9, 50, 60), ' · roll soon');
+    assert.equal(turnsLine(60, 1, 100, 1e9, 50, 60), ' · roll now');
+    assert.match(sessionLine(dir, 100, 1e9, 50, 60), /^\*\*Session:\*\* 60 turns \(60% of 100 roll\)/);
+});
+
 test('sessionLine degrades to unavailable instead of throwing when the directory cannot be read', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'tm-file-')), 'not-a-dir');
     writeFileSync(file, '');
@@ -241,9 +268,9 @@ test('sessionLine truncates so the rendered numbers never claim a threshold the 
     const dir = mkdtempSync(join(tmpdir(), 'tm-trunc-'));
     const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
     writeFileSync(join(dir, 's.jsonl'), `${line('a', 349500)}\n`);
-    assert.equal(sessionLine(dir, 1000, 350000), '**Session:** 1 turns (0% of 1000 roll) · 349k read/turn');
+    assert.equal(sessionLine(dir, 1000, 350000, 100, 100), '**Session:** 1 turns (0% of 1000 roll) · 349k read/turn');
     writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: 399 }, (_, i) => line(`m${i}`, 1)).join('\n')}\n`);
-    assert.match(sessionLine(dir, 400, 350000), /\(99% of 400 roll\)(?! · roll now)/);
+    assert.match(sessionLine(dir, 400, 350000, 100, 100), /\(99% of 400 roll\)(?! · roll now)/);
 });
 
 // A table row as toRow writes it: 22 cells, with the cost columns filled from the arguments.

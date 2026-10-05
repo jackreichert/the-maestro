@@ -86,19 +86,36 @@ Every orchestrator turn re-reads the whole session, so per-turn cost climbs with
 Measured across all sessions to 2026-09-25 (`token-metrics.ts --curve`): average cache-read per
 turn is about 160k in a session's first 100 turns, 350k in turns 100–199, and 500k+ from turn 200.
 
-**Roll to a fresh session** at end of day, or earlier once the current session passes **~200
-turns** (roughly 25–30 prompts) or its read/turn tops **~400k**. `token-metrics.ts` prints both
-per session; check it at EOD and whenever the session has run long. Tell the user and let them start
-the new session — you cannot do it yourself.
+**Roll to a fresh session** at end of day, or earlier once the Session line says so. `token-metrics.ts`
+and `journal.ts status --footer` measure two things against two limits: turns against `roll_turns`
+(default 180) and mean cache-read per turn against `roll_read_per_turn` (default 350000). Either one
+reaching a percentage of its limit trips the level: **`roll soon` at `roll_warn_pct` (default 85)**
+and **`roll now` at `roll_at_pct` (default 90)**. You cannot start the fresh session yourself;
+only Jack can compact or open one.
 
-**Nudge before the threshold, not after it.** Added at the user's request, 2026-09-29. Run
-`node scripts/token-metrics.ts | grep <session-id-prefix>` whenever you relay an agent's result,
-and at least every ~20 turns in between. Once the session reaches **~180 turns**, or its read/turn
-tops **~350k**, tell the user it's time to roll up and refresh: give the turn count and the
-read/turn, and offer to write the handoff and run `roll`. That leaves room to finish the handoff
-before the 200 mark. Nudge once, then again at 200 if they haven't rolled, and after that only at
-EOD. When the user asks for the nudge, log it with `journal.ts log` so the request survives a
-context compaction.
+**What each level means (added at the user's request, 2026-10-05).** Check the Session line
+whenever you relay an agent's result.
+
+- **`roll soon`:** finish the relays already in flight, begin no new long dispatch chains, and say so
+  in one line.
+- **`roll now`:** run the roll yourself, without being asked: `journal.ts triage`, then `roll`,
+  then `handoff --all --delta` (with `--learn`, `--next`, `--update-context` on the first one), and
+  the worktree and branch sweep the roll already does. From then on open EVERY reply with a
+  one-line reminder for Jack to compact (`/compact` or a fresh session) until the Session line is
+  back under the warn level. Log the request once with `journal.ts log` so it survives a compaction.
+
+**The roll is layerable.** Jack may not compact until well past `roll now`, so a roll can be run
+again and again, each costing less than the last:
+
+1. `roll` is idempotent: it regenerates the day's archive from the ledger and appends one `rolled`
+   row, so running it twice loses nothing.
+2. `handoff --delta` reads the newest `HANDOFF-<date>[b,c,...]-<stream>.md` and its
+   `generated_at` marker. If there is none it writes the full handoff; otherwise it writes the next
+   suffix (`HANDOFF-<date>b-<stream>.md`, then `c`...) holding only what the ledger gained after
+   that marker: new items, completed items, new asks and the PRs they mention. A late roll costs a
+   fraction of the first. The first one stays untouched; the delta names it in `delta_of`.
+3. After a roll, keep logging work to the ledger as usual. The next roll, or the fresh session's
+   `journal.ts prime`, picks it up; nothing waits for a compaction.
 
 The handoff is what the fresh session reads, and it has five fixed headings, the ones
 `journal.ts handoff --stream <name>` scaffolds: **Tasks with status**; **Learnings, including what

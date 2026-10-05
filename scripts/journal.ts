@@ -67,7 +67,7 @@
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.ts backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
- *   journal.ts handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--force] [--container <dir>] [--no-worktree-sweep]   scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
+ *   journal.ts handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--delta] [--force] [--container <dir>] [--no-worktree-sweep]   (--delta: when today's handoff exists, write HANDOFF-<date>b-<stream>.md etc. with only what changed since its generated_at) scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
  *   journal.ts resume                        the verify-on-resume checklist, running the parts a script can run
@@ -119,7 +119,7 @@ import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransiti
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
-import { yesterday, handoffText as handoffTextIn, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
+import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
@@ -1179,7 +1179,20 @@ function cmdHandoff() {
     const { items } = fold(readLedger());
     const stream = has('all') ? null : existingStream(arg('stream'), items);
     const since = arg('since', yesterday());
-    const path = arg('out') || join(dir, `HANDOFF-${today()}-${stream === null ? 'all' : slug(stream)}.md`);
+    const streamSlug = stream === null ? 'all' : slug(stream);
+    const series = has('delta') && !arg('out') ? handoffSeries(dir, today(), streamSlug) : null;
+    if (series && series.prev && !series.next) die(`--delta: handoff suffixes b..z for ${today()} are used up; start a fresh session.`);
+    const path = arg('out') || join(dir, series?.next ?? `HANDOFF-${today()}-${streamSlug}.md`);
+    const marker = series?.prev ? handoffMarker(join(dir, series.prev)) : null;
+    if (series?.prev && !marker) die(`--delta: ${series.prev} has no generated_at marker (written by an older version); run a full handoff with --force instead.`);
+    if (series?.prev && marker) {
+        if (arg('learn') || arg('next') || has('update-context')) die('--delta writes only the changes; --learn, --next and --update-context belong on the first (full) handoff of the day.');
+        const body = handoffDeltaText(handoffCtx(), stream, marker, series.prev);
+        if (dryRun) { console.log(body); return; }
+        writeFileSync(path, body);
+        console.log(`wrote ${path} (delta since ${marker})`);
+        return;
+    }
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
     const sweep = runWorktreeSweep(true);
     const body = handoffText(stream, since, sweep?.kept, { learn: oneLineArg('learn'), next: oneLineArg('next'), sweep, verbose: has('verbose') });

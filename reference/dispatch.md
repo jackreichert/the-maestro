@@ -457,7 +457,7 @@ overlay's `event-types/`), not a new watcher. Log the runner like any other agen
 
 ## Session hygiene
 
-When to roll to a fresh session, the measured cost curve behind the ~200-turn threshold, and what
+When to roll to a fresh session, the measured cost curve behind the roll thresholds, and what
 the handoff needs to contain, are cost material now:
 [cost/budget.md#session-hygiene](../cost/budget.md#session-hygiene). Read it before a session runs
 long, and at EOD.

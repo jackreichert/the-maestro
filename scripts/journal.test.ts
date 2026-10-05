@@ -479,6 +479,10 @@ test('status --footer ends with the Session line for the newest session, and say
     assert.equal(line(), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn');
     assert.equal(line({ MAESTRO_ROLL_TURNS: '4' }), '**Session:** 4 turns (100% of 4 roll) · 100k read/turn · roll now');
     assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '100000' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll now');
+    assert.equal(line({ MAESTRO_ROLL_TURNS: '5' }), '**Session:** 4 turns (80% of 5 roll) · 100k read/turn');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll soon', '100k is 87% of 115k');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 85/90 defaults apply');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
 test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
@@ -592,6 +596,42 @@ test('handoff scaffolds the five parts from the ledger for one stream only', () 
     assert.match(section(text, 4), /\[question\] ship on Friday\?/);
     assert.match(section(text, 5), /Author: one concrete first step/);
     assert.match(text, /^## Cleanup candidates\n\n_Run `node scripts\/branch-sweep\.ts`/m);
+});
+
+test('handoff --delta: first roll is the full handoff; later rolls write b, c with only what changed since the previous marker', () => {
+    const { wip } = seedHandoff();
+    const day = new Date().toISOString().slice(0, 10);
+    const file = (suffix: string) => join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${day}${suffix}-Launch.md`);
+    assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
+    const first = readFileSync(file(''), 'utf8');
+    assert.match(first, /^generated_at: \d{4}-/m, 'a full handoff carries the marker');
+    assert.match(first, /^type: handoff$/m);
+    // Work after the first roll: one new item, one completion, one ask. Ledger timestamps are ISO ms, so wait a tick.
+    const until = Date.now() + 5; while (Date.now() < until) { /* spin past the marker ms */ }
+    const late = idOf(run('start', 'late work after the roll, PR #456', '--stream', 'Launch', ...MARK).out);
+    run('done', wip, ...MARK);
+    run('log', 'direct done after the roll', '--kind', 'done', '--stream', 'Launch', ...MARK);
+    const asked = run('ask', 'merge order after the roll?', '--stream', 'Launch', ...MARK);
+    assert.equal(asked.code, 0, asked.err);
+    assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
+    const second = readFileSync(file('b'), 'utf8');
+    assert.match(second, /^type: handoff-delta$/m);
+    assert.match(second, new RegExp(`^delta_of: HANDOFF-${day}-Launch$`, 'm'));
+    assert.match(second, new RegExp(`\`${late}\` \\[in flight\\] late work after the roll`));
+    assert.match(second, new RegExp(`Completed since the previous roll\\n\\n- \`${wip}\` \\[done\\] port the fix`));
+    assert.match(second, /Completed since the previous roll[\s\S]*direct done after the roll/);
+    assert.match(second, /merge order after the roll\?/);
+    assert.match(second, /PRs mentioned\n\n#456/);
+    assert.doesNotMatch(second, /wire the flag|ship on Friday/, 'nothing from before the marker is repeated');
+    assert.equal(readFileSync(file(''), 'utf8'), first, 'the first handoff is left alone');
+    assert.equal(run('handoff', '--stream', 'launch', '--delta', '--next', 'x').code, 1, 'flags a delta would drop are refused');
+    // A third roll with nothing new is a delta of the delta: empty sections, suffix c.
+    assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
+    const third = readFileSync(file('c'), 'utf8');
+    assert.match(third, new RegExp(`^delta_of: HANDOFF-${day}b-Launch$`, 'm'));
+    assert.doesNotMatch(third, /late work after the roll/);
+    // Without --delta the existing refusal to overwrite stands.
+    assert.equal(run('handoff', '--stream', 'launch').code, 1);
 });
 
 test('handoff --all covers every stream, tags each item with its stream, and writes a draft named all', () => {

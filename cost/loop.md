@@ -57,7 +57,7 @@ loop with a concrete regression and a concrete fix, not just a rule restated:
   instead of the standard cadence — see [budget.md#pr-watcher-cadence](budget.md#pr-watcher-cadence)
   for the resulting rule.
 - Read/turn ran **+13%**, traced to a session that reached 316 turns without being rolled — past
-  the ~200-turn threshold in [budget.md#session-hygiene](budget.md#session-hygiene).
+  the roll thresholds in [budget.md#session-hygiene](budget.md#session-hygiene).
 - Proposed adjustment, folded into the standing habits rather than left as a one-off: batch
   bot-thread review rounds per repo (one pass handles every open bot thread in a repo) instead of
   dispatching a fresh agent per wake-up — see
