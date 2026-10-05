@@ -150,7 +150,8 @@ const { arg, has, positional } = parseArgs(argv);
 if (cmd === 'autopull') {
     try {
         const value = positional[0] ?? '';
-        console.log(`autopull  ${value.toLowerCase()}  ${setAutoPull(userPath, value)}  ${userPath}`);
+        console.log(`autopull  ${value.trim().toLowerCase()}  ${setAutoPull(userPath, value)}  ${userPath}`);
+        if (process.env.MAESTRO_AUTO_PULL !== undefined) console.error('Note: MAESTRO_AUTO_PULL is set in the environment and overrides the config file.');
     } catch (e) {
         console.error(`${e instanceof Error ? e.message : String(e)} Usage: journal.ts autopull on|off`);
         process.exit(1);

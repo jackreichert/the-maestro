@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setConfigValue, setAutoPull } from './config-write.ts';
@@ -78,4 +78,28 @@ test('journal.ts autopull writes MAESTRO_LOCAL_CONFIG without needing a ledger, 
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /Usage: journal.ts autopull on\|off/);
   assert.equal(run().status, 1);
+});
+
+test('CRLF files keep their line endings and a comment glued to the value is kept; no duplicate line appears', () => {
+  const crlf = '```maestro-config\r\nauto_pull: off # note\r\nproject: x\r\n```\r\n';
+  assert.equal(setConfigValue(crlf, 'auto_pull', 'on'), '```maestro-config\r\nauto_pull: on # note\r\nproject: x\r\n```\r\n');
+  assert.equal(setConfigValue('```maestro-config\nauto_pull: on#x\n```\n', 'auto_pull', 'off'), '```maestro-config\nauto_pull: off#x\n```\n');
+  assert.equal(setConfigValue(setConfigValue(crlf, 'auto_pull', 'on'), 'auto_pull', 'on'), setConfigValue(crlf, 'auto_pull', 'on'));
+});
+
+test('only the first fence is edited, matching the reader', () => {
+  const two = '```maestro-config\nproject: a\n```\n\n```maestro-config\nproject: b\n```\n';
+  const out = setConfigValue(two, 'auto_pull', 'on');
+  assert.equal(out.match(/auto_pull/g)?.length, 1);
+  assert.ok(out.indexOf('auto_pull') < out.indexOf('project: b'));
+});
+
+test('setAutoPull writes through a symlinked config, leaving the link in place', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cfgw-'));
+  const real = join(dir, 'real.md'), link = join(dir, 'config.md');
+  writeFileSync(real, '```maestro-config\nproject: x\n```\n');
+  symlinkSync(real, link);
+  assert.equal(setAutoPull(link, 'on'), 'changed');
+  assert.ok(lstatSync(link).isSymbolicLink());
+  assert.equal(parseConfig(readFileSync(real, 'utf8')).auto_pull, 'on');
 });

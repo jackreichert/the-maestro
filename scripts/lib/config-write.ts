@@ -6,7 +6,7 @@
  * comment and the prose around the block are untouched, and applying the same edit twice changes nothing.
  * `setAutoPull` is the file-level wrapper behind `journal.ts autopull on|off`.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, chmodSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const FENCE = /^```maestro-config[^\n]*\n([\s\S]*?)^```/m;
@@ -21,13 +21,15 @@ export function setConfigValue(text: string, key: string, value: string): string
     return `${text}${gap}\`\`\`maestro-config\n${line}\n\`\`\`\n`;
   }
   const body = m[1] ?? '';
-  const keyed = new RegExp(`^(\\s*)${key}\\s*:[^\\n#]*?(\\s+#.*)?$`);
+  const keyed = new RegExp(`^(\\s*)${key}\\s*:[^#]*?(\\s*#.*)?$`);
   let found = false;
-  const lines = body.split('\n').map((l) => {
+  const lines = body.split('\n').map((raw) => {
+    const cr = raw.endsWith('\r') ? '\r' : '';
+    const l = cr ? raw.slice(0, -1) : raw;
     const k = keyed.exec(l);
-    if (!k) return l;
+    if (!k) return raw;
     found = true;
-    return `${k[1] ?? ''}${line}${k[2] ?? ''}`;
+    return `${k[1] ?? ''}${line}${k[2] ?? ''}${cr}`;
   });
   const next = found ? lines.join('\n') : `${body}${body === '' || body.endsWith('\n') ? '' : '\n'}${line}\n`;
   const start = m.index + m[0].indexOf('\n') + 1;
@@ -40,12 +42,14 @@ export function setAutoPull(path: string, value: string): 'created' | 'changed' 
   if (v !== 'on' && v !== 'off') throw new Error(`auto_pull must be "on" or "off", got "${value}".`);
   if (!path) throw new Error('The user config file is disabled (MAESTRO_LOCAL_CONFIG is empty); nothing to write.');
   const existed = existsSync(path);
+  if (existed) path = realpathSync(path);   // write through a symlinked (dotfile-managed) config, not over the link
   const before = existed ? readFileSync(path, 'utf8') : NEW_FILE;
   const after = setConfigValue(before, 'auto_pull', v);
   if (existed && after === before) return 'unchanged';
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, after);
+  if (existed) chmodSync(tmp, statSync(path).mode & 0o777);
   renameSync(tmp, path);
   return existed ? 'changed' : 'created';
 }
