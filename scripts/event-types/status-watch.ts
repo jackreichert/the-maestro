@@ -36,12 +36,13 @@ export function validate(target: string): void {
   if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-watch target must be the status directory (the folder holding ${NOW_FILE}), got "${target}"`);
 }
 
-/** Ask id to the first cell of its table row (the decision text), to say what an answer was about. */
+/** Ask id to the last cell of its table row (the decision needed from the user), to say what an answer was about. */
 function decisions(page: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const line of page.split('\n')) {
-    const m = line.match(/^\| `([a-z0-9]{4,6})` \| (.*?) \|/);
-    if (m) out.set(m[1] as string, (m[2] as string).replace(/\\\|/g, '|'));
+    const m = line.match(/^\| `([a-z0-9]{4,6})` \|(.*)\|\s*$/);
+    const cells = (m?.[2] ?? '').split(/(?<!\\)\|/);
+    if (m) out.set(m[1] as string, (cells[cells.length - 1] ?? '').replace(/\\\|/g, '|').trim());
   }
   return out;
 }
