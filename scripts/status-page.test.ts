@@ -40,14 +40,14 @@ test('journal.ts status-page reads the ledger and gh, writes NOW.md, and --dry-r
   assert.equal(readdirSync(statusDir).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).length, 1, 'snapshot written');
 });
 
-test('a gh failure exits 1 with a message and writes no page', () => {
+test('a gh failure still writes the page, with a warning that no PR data is cached', () => {
   const { statusDir, env } = setup();
   const broken = spawnSync(process.execPath, [JOURNAL, 'status-page', '--vault', mkdtempSync(join(tmpdir(), 'sp-l-')), '--project', 'proj', '--status-dir', statusDir], {
     encoding: 'utf8', cwd, env: { ...env, PATH: '/nonexistent-dir' },
   });
-  assert.equal(broken.status, 1);
-  assert.match(broken.stderr, /status-page: /);
-  assert.equal(existsSync(join(statusDir, 'NOW.md')), false);
+  assert.equal(broken.status, 0, broken.stderr);
+  assert.match(broken.stderr, /status-page: GitHub read failed/);
+  assert.match(readFileSync(join(statusDir, 'NOW.md'), 'utf8'), /\*\*Warning: GitHub could not be read .*No earlier PR data is cached/);
 });
 
 test('status --footer ends with the status page URI only when one is configured', () => {

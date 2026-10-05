@@ -99,13 +99,64 @@ test('ticket-map.json and stream-overrides.json beside the page are read; invali
   assert.equal(existsSync(join(d, 'NOW.md')), false);
 });
 
-test('a failed ledger or GitHub read throws and leaves the previous page untouched', () => {
+test('a failed ledger read throws and leaves the previous page untouched', () => {
   const d = dir();
   generate(opts(d), deps([]));
   const before = readFileSync(join(d, 'NOW.md'), 'utf8');
-  assert.throws(() => generate(opts(d), deps([], { fetchPrs: () => { throw new Error('gh down'); } })), /gh down/);
   assert.throws(() => generate(opts(d), deps([], { journal: () => { throw new Error('ledger down'); } })), /ledger down/);
   assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), before);
+});
+
+const ghDown = (): RawPr[] => { throw new Error('gh read failed after 3 tries: HTTP 502\nsecond line'); };
+
+test('a good GitHub read is cached with its fetch time in .now-prs.json', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')]));
+  const cache = JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8'));
+  assert.equal(cache.fetched_at, NOW.toISOString());
+  assert.equal(cache.prs[0].number, 12);
+  generate(opts(dir(), { dryRun: true }), deps([raw(1, 'acme-widgets')]));
+  assert.equal(existsSync(join(d, '.now-prs.json')), true);
+});
+
+test('a failed GitHub read still writes the page from the cached PRs, under a warning that names the cache time', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')], { now: () => new Date('2026-10-05T14:31:00Z') }));
+  const r = generate(opts(d), deps([], { fetchPrs: ghDown }));
+  assert.match(r.page, /\*\*Warning: GitHub could not be read \(gh read failed after 3 tries: HTTP 502\)\. The PR tables below are from the last good read at 10:31 am ET and may be out of date\.\*\*/);
+  assert.doesNotMatch(r.page, /second line/);
+  assert.match(r.page, /\[#12 → develop\]/, 'the cached PR is still in the tables');
+  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), r.page, 'the page was written');
+  assert.equal(JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8')).fetched_at, '2026-10-05T14:31:00.000Z', 'a failed read leaves the cache as it was');
+});
+
+test('with no cache, a failed GitHub read says the PR tables are empty because they could not be read', () => {
+  const d = dir();
+  const page = generate(opts(d), deps([], { fetchPrs: ghDown })).page;
+  assert.match(page, /No earlier PR data is cached, so the PR tables below are empty because they could not be read, not because nothing is open\./);
+  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  assert.equal(existsSync(join(d, '.now-prs.json')), false);
+});
+
+test('a cache from an earlier day names its date; a damaged cache counts as no cache', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')], { now: () => new Date('2026-10-04T14:31:00Z') }));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /last good read at 2026-10-04 10:31 am ET/);
+  writeFileSync(join(d, '.now-prs.json'), JSON.stringify({ fetched_at: '2026-10-05T14:31:00Z', prs: [{ number: 3 }] }));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /No earlier PR data is cached/);
+  writeFileSync(join(d, '.now-prs.json'), '{nope');
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /No earlier PR data is cached/);
+});
+
+test('the inline answer, tick and priorities round trip survives a GitHub failure', () => {
+  const d = dir();
+  writePriorities(d, '2026-10-05', [{ text: 'First' }]);
+  generate(opts(d), deps([raw(12, 'acme-widgets')]));
+  const page = readFileSync(join(d, 'NOW.md'), 'utf8').replace('> answer: ', '> answer: ship it').replace('- [ ] `bb22`', '- [x] `bb22`');
+  writeFileSync(join(d, 'NOW.md'), page);
+  const after = generate(opts(d), deps([], { fetchPrs: ghDown })).page;
+  assert.match(after, /> answer: ship it/);
+  assert.match(after, /- \[x\] `bb22`/);
 });
 
 test('UNKNOWN mergeable states are read once more after a pause', () => {

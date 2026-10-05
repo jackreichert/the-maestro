@@ -12,7 +12,8 @@
  * Reads `journal.ts status --json` and `triage --json`, a GitHub search of your open PRs (retried 3 times on a gateway
  * error) and, beside the page, ticket-map.json ({ "<ticket>": ["<ask id>"] }), stream-overrides.json ({ "repo#N": "Stream" })
  * and priorities.md. Streams, tracker URLs, vault name and the repo-to-stream map come from local-config.ts.
- * Exits non-zero, writing nothing, if the ledger or GitHub cannot be read.
+ * Exits non-zero, writing nothing, if the ledger cannot be read. If GitHub cannot be read, the page is still written
+ * from the last cached PR data (.now-prs.json) under a warning, and a note goes to stderr.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
@@ -71,6 +72,7 @@ function main(argv: string[]): number {
   const command = 'journal.ts status-page';
   const r = generate({ statusDir, dryRun: !!v['dry-run'], snapshot: !!v.snapshot, command, config }, deps);
   if (v['dry-run']) process.stdout.write(r.page); else console.log(`status-page: wrote ${r.written.join(' and ')}`);
+  if (r.prFailure) console.error(`status-page: GitHub read failed (${r.prFailure}); the page carries a warning and uses the last cached PR data`);
   return 0;
 }
 
