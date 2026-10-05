@@ -645,6 +645,15 @@ test('handoff carries queued items tagged queued, apart from in flight, and the 
     assert.match(delta, new RegExp(`\`${running}\` \\[queued\\] running job`));
 });
 
+test('triage marks a queued item as not started and keeps it out of the running-agent check; a queued-only stream gets a page', () => {
+    run('start', 'running', ...MARK);
+    const q = idOf(run('queue', 'to do later', '--stream', 'Solo', '--new-stream', ...MARK).out);
+    const t = run('triage');
+    assert.match(t.out, new RegExp(`${q} {2}to do later {2}\\[queued: not started\\]`));
+    assert.match(t.out, /1 queued to-do\(s\) in box 7 have not started/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Solo.md')), true);
+});
+
 // ── model-name registry ─────────────────────────────────────────────────────
 
 const ledgerFile = () => join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');

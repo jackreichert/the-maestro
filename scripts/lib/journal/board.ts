@@ -240,7 +240,7 @@ export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: Ledger
     const { loadRegistry, dir } = ctx;
     const reg = loadRegistry();
     const registered = Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k);
-    const names = [...new Set([...activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, g.deferred, doneToday), ...registered])].filter((s) => !retros.has(s));
+    const names = [...new Set([...activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, g.deferred, doneToday), ...registered])].filter((s) => !retros.has(s));
     if (!names.length && !retros.size) return 0;
     const streamsDir = join(dir, 'Streams');
     mkdirSync(streamsDir, { recursive: true });
