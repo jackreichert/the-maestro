@@ -9,6 +9,8 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderPage } from './render.ts';
 import type { BoardStatus, PageConfig, Pr, Triage } from './render.ts';
+import { prStream } from './streams.ts';
+import type { StreamEvidence } from './streams.ts';
 import { carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
 import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
@@ -43,11 +45,11 @@ export function readJson<T>(path: string): T {
   try { return JSON.parse(readFileSync(path, 'utf8')) as T; } catch { throw new Error(`${path} is not valid JSON`); }
 }
 
-/** Open PRs with their stream: an override `repo#N` (or `owner/repo#N`), else the repo's stream, else `other`. */
-export function loadPrs(raw: RawPr[], overrides: Record<string, string>, repoStreams: Record<string, string>): Pr[] {
+/** Open PRs with their stream (see streams.ts for the order the evidence is weighed in). */
+export function loadPrs(raw: RawPr[], evidence: StreamEvidence): Pr[] {
   return raw.map((n): Pr => {
     const [owner = '', short = ''] = n.repository.nameWithOwner.split('/');
-    const stream = overrides[`${short}#${n.number}`] ?? overrides[`${n.repository.nameWithOwner}#${n.number}`] ?? repoStreams[short] ?? 'other';
+    const stream = prStream({ number: n.number, title: n.title, headRefName: n.headRefName, short, nameWithOwner: n.repository.nameWithOwner }, evidence);
     return {
       number: n.number, title: n.title, url: n.url, isDraft: n.isDraft, baseRefName: n.baseRefName, headRefName: n.headRefName,
       mergeable: n.mergeable, mergeStateStatus: n.mergeStateStatus, reviewDecision: n.reviewDecision,
@@ -84,7 +86,8 @@ export function generate(opts: GenerateOptions, deps: GenerateDeps): GenerateRes
   const ticketMap = readJson<Record<string, string[]>>(join(statusDir, 'ticket-map.json'));
   const status = deps.journal('status') as BoardStatus;
   const triage = deps.journal('triage') as Triage;
-  const prs = loadPrs(settle(deps), overrides, config.repoStreams);
+  const items = [...status.inflight, ...status.blocked, ...status.awaiting, ...status.done];
+  const prs = loadPrs(settle(deps), { items, ticketMap, overrides, repoStreams: config.repoStreams, keyPattern: config.trackerKeyPattern });
   const now = deps.now();
   const priorities = readPriorities(statusDir, localDate(now, config.tz));
   const rendered = renderPage({ now, status, triage, prs, ticketMap, priorities, config, command: opts.command });

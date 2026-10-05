@@ -7,7 +7,7 @@ import { obsidianUri, ticketNotePath } from './links.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
 
-export interface Item { id: string; date: string; text: string; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string }
+export interface Item { id: string; date: string; ts?: string; text: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string }
 export interface Pr {
   number: number; title: string; url: string; isDraft: boolean; baseRefName: string; headRefName: string;
   mergeable: string; mergeStateStatus: string; reviewDecision: string | null;
