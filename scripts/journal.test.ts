@@ -479,6 +479,10 @@ test('status --footer ends with the Session line for the newest session, and say
     assert.equal(line(), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn');
     assert.equal(line({ MAESTRO_ROLL_TURNS: '4' }), '**Session:** 4 turns (100% of 4 roll) · 100k read/turn · roll now');
     assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '100000' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll now');
+    assert.equal(line({ MAESTRO_ROLL_TURNS: '5' }), '**Session:** 4 turns (80% of 5 roll) · 100k read/turn');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll soon', '100k is 87% of 115k');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 85/90 defaults apply');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
 test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
