@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fold, mapStreamWith } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 import { parseArgs } from './args.ts';
-import { activeStreams, archivedRetros, footerLines, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
+import { activeStreams, archivedRetros, footerLines, footerRows, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
 import type { BoardContext } from './board.ts';
 
 const TODAY = '2026-10-03';
@@ -64,6 +64,15 @@ test('footerLines gives one line per stream and an other line', () => {
         '**Ledger (Beta):** 0 done today · 0 in flight · 1 awaiting you',
         '**Ledger (Alpha):** 1 done today · 0 in flight · 0 awaiting you',
         '**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you',
+    ]);
+});
+
+test('footerRows holds the numbers footerLines prints', () => {
+    const g = groups(ctxFor());
+    assert.deepEqual(footerRows(g, g.doneOn(TODAY)), [
+        { name: 'Beta', done: 0, inflight: 0, awaiting: 1, paste: 0, blocked: 0 },
+        { name: 'Alpha', done: 1, inflight: 0, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'other', done: 0, inflight: 1, awaiting: 0, paste: 0, blocked: 0 },
     ]);
 });
 
