@@ -9,6 +9,9 @@
  *   --snapshot        also write YYYY-MM-DD.md (today's file, overwritten by later runs)
  *   --status-dir DIR  where the page and its files live (default: status_dir, else <vault_root>/Projects/<project>/Status)
  *
+ * The page has Working on now (in-flight items by stream) under the priorities and a Status table (the reply footer's numbers
+ * from `status --json`'s `footer`) at the bottom; neither is an answer area.
+ *
  * Reads `journal.ts status --json` and `triage --json`, a GitHub search of your open PRs (retried 3 times on a gateway
  * error) and, beside the page, ticket-map.json ({ "<ticket>": ["<ask id>"] }), stream-overrides.json ({ "repo#N": "Stream" })
  * and priorities.md. Streams, tracker URLs, vault name and the repo-to-stream map come from local-config.ts.
