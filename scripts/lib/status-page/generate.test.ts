@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/status-page/generate.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generate, loadPrs } from './generate.ts';
@@ -51,7 +51,7 @@ test('writes NOW.md with the freshness line, then the priorities, then one asks 
   const page = readFileSync(join(d, 'NOW.md'), 'utf8');
   assert.equal(page, r.page);
   const lines = page.split('\n');
-  assert.match(lines[lines.indexOf('# Status now') + 2] ?? '', /^Updated 11:00 am ET \(2026-10-05\)\./);
+  assert.match(lines[lines.indexOf('# Status now') + 2] ?? '', /^Updated 11:00 am ET · PR data 11:00 am ET \(2026-10-05\)\./);
   assert.equal(lines[lines.indexOf('# Status now') + 4], "## Today's priorities");
   assert.match(page, /1\. Get widgets out _\[Alpha: awaiting 1 · in flight 1 · open PRs 1\]_\n2\. Unmapped goal\n/);
   assert.match(page, /\| `bb22` \| Alpha \| See FAKE-12 \| \[proj-7\]\(obsidian:[^)]*\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) \| Merge widgets #12 now\? \|/, 'stream, context, clickable tickets, the decision');
@@ -99,13 +99,64 @@ test('ticket-map.json and stream-overrides.json beside the page are read; invali
   assert.equal(existsSync(join(d, 'NOW.md')), false);
 });
 
-test('a failed ledger or GitHub read throws and leaves the previous page untouched', () => {
+test('a failed ledger read throws and leaves the previous page untouched', () => {
   const d = dir();
   generate(opts(d), deps([]));
   const before = readFileSync(join(d, 'NOW.md'), 'utf8');
-  assert.throws(() => generate(opts(d), deps([], { fetchPrs: () => { throw new Error('gh down'); } })), /gh down/);
   assert.throws(() => generate(opts(d), deps([], { journal: () => { throw new Error('ledger down'); } })), /ledger down/);
   assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), before);
+});
+
+const ghDown = (): RawPr[] => { throw new Error('gh read failed after 3 tries: HTTP 502\nsecond line'); };
+
+test('a good GitHub read is cached with its fetch time in .now-prs.json', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')]));
+  const cache = JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8'));
+  assert.equal(cache.fetched_at, NOW.toISOString());
+  assert.equal(cache.prs[0].number, 12);
+  generate(opts(dir(), { dryRun: true }), deps([raw(1, 'acme-widgets')]));
+  assert.equal(existsSync(join(d, '.now-prs.json')), true);
+});
+
+test('a failed GitHub read still writes the page from the cached PRs, under a warning that names the cache time', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')], { now: () => new Date('2026-10-05T14:31:00Z') }));
+  const r = generate(opts(d), deps([], { fetchPrs: ghDown }));
+  assert.match(r.page, /\*\*Warning: GitHub could not be read \(gh read failed after 3 tries: HTTP 502\)\. The PR tables below are from the last good read at 10:31 am ET and may be out of date\.\*\*/);
+  assert.doesNotMatch(r.page, /second line/);
+  assert.match(r.page, /\[#12 → develop\]/, 'the cached PR is still in the tables');
+  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), r.page, 'the page was written');
+  assert.equal(JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8')).fetched_at, '2026-10-05T14:31:00.000Z', 'a failed read leaves the cache as it was');
+});
+
+test('with no cache, a failed GitHub read says the PR tables are empty because they could not be read', () => {
+  const d = dir();
+  const page = generate(opts(d), deps([], { fetchPrs: ghDown })).page;
+  assert.match(page, /No earlier PR data is cached, so the PR tables below are empty because they could not be read, not because nothing is open\./);
+  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  assert.equal(existsSync(join(d, '.now-prs.json')), false);
+});
+
+test('a cache from an earlier day names its date; a damaged cache counts as no cache', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')], { now: () => new Date('2026-10-04T14:31:00Z') }));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /last good read at 2026-10-04 10:31 am ET/);
+  writeFileSync(join(d, '.now-prs.json'), JSON.stringify({ fetched_at: '2026-10-05T14:31:00Z', prs: [{ number: 3 }] }));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /No earlier PR data is cached/);
+  writeFileSync(join(d, '.now-prs.json'), '{nope');
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /No earlier PR data is cached/);
+});
+
+test('the inline answer and tick survive a GitHub failure', () => {
+  const d = dir();
+  writePriorities(d, '2026-10-05', [{ text: 'First' }]);
+  generate(opts(d), deps([raw(12, 'acme-widgets')]));
+  const page = readFileSync(join(d, 'NOW.md'), 'utf8').replace('> answer: ', '> answer: ship it').replace('- [ ] `bb22`', '- [x] `bb22`');
+  writeFileSync(join(d, 'NOW.md'), page);
+  const after = generate(opts(d), deps([], { fetchPrs: ghDown })).page;
+  assert.match(after, /> answer: ship it/);
+  assert.match(after, /- \[x\] `bb22`/);
 });
 
 test('UNKNOWN mergeable states are read once more after a pause', () => {
@@ -189,4 +240,89 @@ test('sections come in the order priorities, needs attention, open PRs, other st
   assert.match(page, /- `aa11` building a thing \[Alpha\] · 2 h\n/);
   assert.match(page, /- `ee55` waiting on a vendor \(gate: none recorded\) · 30 min\n/);
   assert.match(page, /- `dd44` shipped · 10:00 am ET\n/);
+});
+
+/** A clock that only moves when the code sleeps, so lock waits take no real time. */
+const fakeClock = (startMs: number) => {
+  let t = startMs;
+  return { now: () => new Date(t), sleep: (ms: number) => { t += ms; }, at: () => t };
+};
+const lockPath = (d: string): string => join(d, '.now.lock');
+
+test('a rebuild holds .now.lock while it runs and removes it after, even when it fails', () => {
+  const d = dir();
+  let during = false;
+  generate(opts(d), deps([], { journal: (sub) => { during = existsSync(lockPath(d)); return board[sub]; } }));
+  assert.equal(during, true);
+  assert.equal(existsSync(lockPath(d)), false);
+  assert.throws(() => generate(opts(d), deps([], { journal: () => { throw new Error('ledger read failed'); } })), /ledger read failed/);
+  assert.equal(existsSync(lockPath(d)), false, 'a failed run still releases the lock');
+});
+
+test('a second rebuild waits for a live holder, then runs once the lock is released', () => {
+  const d = dir();
+  const clock = fakeClock(NOW.getTime());
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: clock.at() }));
+  let sleeps = 0;
+  const r = generate(opts(d), deps([], { now: clock.now, pidAlive: () => true, sleep: (ms) => { clock.sleep(ms); if (++sleeps === 3) rmSync(lockPath(d)); } }));
+  assert.equal(sleeps, 3);
+  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  assert.equal(r.written.length, 1);
+});
+
+test('a rebuild gives up with "already running" when a live holder keeps the lock past the timeout, and writes nothing', () => {
+  const d = dir();
+  const clock = fakeClock(NOW.getTime());
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: clock.at() }));
+  assert.throws(() => generate(opts(d), deps([], { now: clock.now, sleep: clock.sleep, pidAlive: () => true })), /already running \(pid 4242/);
+  assert.equal(existsSync(join(d, 'NOW.md')), false);
+  assert.equal(readFileSync(lockPath(d), 'utf8').includes('4242'), true, 'the holder\'s lock is left alone');
+});
+
+test('a lock whose holder is gone, or that is older than 30 minutes, is taken over', () => {
+  for (const [label, holder, alive] of [['dead holder', { pid: 4242, at: NOW.getTime() }, false], ['old lock', { pid: 4242, at: NOW.getTime() - 31 * 60_000 }, true]] as const) {
+    const d = dir();
+    writeFileSync(lockPath(d), JSON.stringify(holder));
+    const clock = fakeClock(NOW.getTime());
+    let sleeps = 0;
+    generate(opts(d), deps([], { now: clock.now, sleep: (ms) => { sleeps++; clock.sleep(ms); }, pidAlive: () => alive }));
+    assert.equal(sleeps, 0, `${label}: no waiting`);
+    assert.equal(existsSync(join(d, 'NOW.md')), true, label);
+    assert.equal(existsSync(lockPath(d)), false, label);
+  }
+});
+
+test('a live holder keeps its lock for as long as a slow GitHub run can take (29 minutes old is not stale)', () => {
+  const d = dir();
+  const clock = fakeClock(NOW.getTime());
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: clock.at() - 29 * 60_000 }));
+  assert.throws(() => generate(opts(d), deps([], { now: clock.now, sleep: clock.sleep, pidAlive: () => true })), /already running/);
+});
+
+test('a cache whose nested nodes are damaged counts as no cache', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')]));
+  const cache = JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8'));
+  cache.prs[0].commits.nodes = [{}];
+  writeFileSync(join(d, '.now-prs.json'), JSON.stringify(cache));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /No earlier PR data is cached/);
+});
+
+test('an unreadable lock file counts as stale; --dry-run neither takes nor waits for the lock', () => {
+  const d = dir();
+  writeFileSync(lockPath(d), 'not json');
+  generate(opts(d), deps([]));
+  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: NOW.getTime() }));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { pidAlive: () => true })).page, /# Status now/);
+});
+
+test('the freshness line carries the page time and the PR-data time in ET, and they differ when the PRs come from the cache', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')], { now: () => new Date('2026-10-05T18:31:00Z') }));
+  const later = generate(opts(d), deps([], { fetchPrs: ghDown, now: () => new Date('2026-10-05T18:34:00Z') })).page;
+  assert.match(later, /^Updated 2:34 pm ET · PR data 2:31 pm ET \(2026-10-05\)\. Regenerated by/m);
+  const fresh = generate(opts(d, { dryRun: true }), deps([], { now: () => new Date('2026-10-05T18:40:00Z') })).page;
+  assert.match(fresh, /^Updated 2:40 pm ET · PR data 2:40 pm ET /m);
+  assert.match(generate(opts(dir(), { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /^Updated 11:00 am ET · PR data unavailable \(2026-10-05\)\./m);
 });

@@ -28,4 +28,6 @@ After handling, run `node scripts/journal.ts status-page` so the answered rows l
 
 The generator copies an edit the watcher has not reported yet into the page it writes, so regenerating never erases it. The watcher moves its baseline (`.now-seen.md`) to the page as soon as it has reported, and recognises the generator's own output by hash (`.now-seen.json`), so a regeneration never produces an event. Do not edit either file.
 
+If `status-page` stops with "a status page refresh is already running", another rebuild holds `.now.lock`: wait a moment and run it again (a lock left by a crashed run is taken over on its own). If it prints "GitHub read failed", the page was still written from the cached PR data under a warning; the answered rows have left it all the same.
+
 An answer for an ask that has since left the board is kept under `## Unprocessed answers` at the foot of the page until it is reported.
