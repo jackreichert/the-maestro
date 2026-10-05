@@ -32,7 +32,13 @@ const userEdits = (dir: string, from: string, to: string): void => {
   assert.ok(text.includes(from), `page has ${from}`);
   writeFileSync(join(dir, 'The-Podium.md'), text.replace(from, to));
 };
-const answer = (dir: string, id: string, text: string): void => userEdits(dir, `\`${id}\`\n  > answer: `, `\`${id}\`\n  > answer: ${text}`);
+/** Types into the `> answer:` stub under the ask line of `id` (the ask line carries its text and links, so match to the line end). */
+const answer = (dir: string, id: string, text: string): void => {
+  const page = readFileSync(join(dir, 'The-Podium.md'), 'utf8');
+  const re = new RegExp(`(\\\`${id}\\\`[^\\n]*)\\n  > answer: `);
+  assert.match(page, re, `page has the ${id} stub`);
+  writeFileSync(join(dir, 'The-Podium.md'), page.replace(re, `$1\n  > answer: ${text}`));
+};
 const setup = (): string => { awaiting = awaiting.slice(0, 2); const dir = mkdtempSync(join(tmpdir(), 'sw-')); writePriorities(dir, '2026-10-05', [{ text: 'First' }, { text: 'Second' }]); regenerate(dir); return dir; };
 
 test('regenerating the page never fires an event, however often, and with the ledger changing underneath', () => {
@@ -71,7 +77,7 @@ test('regenerating before the watcher looks keeps the answer, and it still fires
   userEdits(dir, '- [ ] `cd34`', '- [x] `cd34`');
   regenerate(dir);
   const page = readFileSync(join(dir, 'The-Podium.md'), 'utf8');
-  assert.match(page, /`ab12`\n {2}> answer: keep me\n/);
+  assert.match(page, /`ab12`[^\n]*\n {2}> answer: keep me\n/);
   assert.match(page, /- \[x\] `cd34`/);
   assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: keep me', 'ask cd34 (decision: Which option?) ticked']);
   assert.deepEqual(events(dir), []);
@@ -145,7 +151,7 @@ test('an edit saved while the generator is writing is not overwritten: it reads 
   let landed = false;
   const racing: GenerateDeps = { ...deps(), beforeWrite: () => { if (!landed) { landed = true; answer(dir, 'ab12', 'saved mid-write'); } } };
   generate({ statusDir: dir, dryRun: false, snapshot: false, command: 'status-page', config: CONFIG }, racing);
-  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`\n {2}> answer: saved mid-write\n/);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: saved mid-write\n/);
   assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: saved mid-write']);
 });
 
