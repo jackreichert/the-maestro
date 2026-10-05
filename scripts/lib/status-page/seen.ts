@@ -32,7 +32,7 @@ export function writeAtomic(path: string, body: string): void {
 }
 
 /** The current page, or null before the first run. */
-export const readNow = (dir: string): string | null => readOrNull(join(dir, PODIUM_FILE));
+export const readPodium = (dir: string): string | null => readOrNull(join(dir, PODIUM_FILE));
 
 /** The baseline page, or null when the watcher has not seen one. */
 export const readSeenPage = (dir: string): string | null => readOrNull(join(dir, SEEN_PAGE));

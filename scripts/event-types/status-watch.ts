@@ -15,7 +15,7 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { extractFields, unprocessed } from '../lib/status-page/inline.ts';
-import { PODIUM_FILE, readNow, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
+import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
 import type { Unprocessed } from '../lib/status-page/inline.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
@@ -63,7 +63,7 @@ export function describe(u: Unprocessed, page: string): string[] {
 }
 
 export function check(target: string, _ctx?: Pick<CheckContext, 'now'>): StatusWatchState {
-  const page = readNow(target);
+  const page = readPodium(target);
   if (page === null) return { sha: '', fresh: [] };
   const hash = sha(page);
   const baselineText = readSeenPage(target);
