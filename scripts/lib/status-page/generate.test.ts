@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { generate, loadPrs } from './generate.ts';
 import type { GenerateDeps, RawPr } from './generate.ts';
 import { writePriorities } from './priorities.ts';
+import { readPodium } from './seen.ts';
 import type { PageConfig } from './render.ts';
 
 const NOW = new Date('2026-10-05T15:00:00Z');
@@ -43,16 +44,16 @@ test('loadPrs picks a stream from an override, then the repo map, then other', (
   assert.equal(prs[0]?.unresolved, 1);
 });
 
-test('writes NOW.md with the freshness line, then the priorities, then one asks table with links and an answer stub under it', () => {
+test('writes The-Podium.md with the freshness line, then the priorities, then one asks table with links and an answer stub under it', () => {
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'Get widgets out', stream: 'Alpha' }, { text: 'Unmapped goal' }]);
   const r = generate(opts(d), deps([raw(12, 'acme-widgets')]));
-  assert.deepEqual(r.written, [join(d, 'NOW.md')]);
-  const page = readFileSync(join(d, 'NOW.md'), 'utf8');
+  assert.deepEqual(r.written, [join(d, 'The-Podium.md')]);
+  const page = readFileSync(join(d, 'The-Podium.md'), 'utf8');
   assert.equal(page, r.page);
   const lines = page.split('\n');
-  assert.match(lines[lines.indexOf('# Status now') + 2] ?? '', /^Updated 11:00 am ET · PR data 11:00 am ET \(2026-10-05\)\./);
-  assert.equal(lines[lines.indexOf('# Status now') + 4], "## Today's priorities");
+  assert.match(lines[lines.indexOf('# The Podium') + 2] ?? '', /^Updated 11:00 am ET · PR data 11:00 am ET \(2026-10-05\)\./);
+  assert.equal(lines[lines.indexOf('# The Podium') + 4], "## Today's priorities");
   assert.match(page, /1\. Get widgets out _\[Alpha: awaiting 1 · in flight 1 · open PRs 1\]_\n2\. Unmapped goal\n/);
   assert.match(page, /\| `bb22` \| Alpha \| See FAKE-12 \| \[proj-7\]\(obsidian:[^)]*\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) \| Merge widgets #12 now\? \|/, 'stream, context, clickable tickets, the decision');
   assert.match(page, /- \[ \] `bb22` \[#12 → develop\]\(https:\/\/example\.test\/acme-widgets\/pull\/12\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) · \[proj-7\]\(obsidian:\/\/open\?vault=Vault&file=Projects%2Fproj%2FTickets%2Fproj-7\)\n  > answer: \n/);
@@ -81,9 +82,9 @@ test('--dry-run writes nothing; --snapshot adds the dated copy', () => {
   const d = dir();
   const dry = generate(opts(d, { dryRun: true }), deps([]));
   assert.deepEqual(dry.written, []);
-  assert.equal(existsSync(join(d, 'NOW.md')), false);
+  assert.equal(existsSync(join(d, 'The-Podium.md')), false);
   const snap = generate(opts(d, { snapshot: true }), deps([]));
-  assert.deepEqual(snap.written, [join(d, 'NOW.md'), join(d, '2026-10-05.md')]);
+  assert.deepEqual(snap.written, [join(d, 'The-Podium.md'), join(d, '2026-10-05.md')]);
   assert.equal(readFileSync(join(d, '2026-10-05.md'), 'utf8'), snap.page);
 });
 
@@ -96,15 +97,15 @@ test('ticket-map.json and stream-overrides.json beside the page are read; invali
   assert.match(page, /### Alpha \(1\)\n\n\| Ticket/);
   writeFileSync(join(d, 'stream-overrides.json'), '{nope');
   assert.throws(() => generate(opts(d), deps([])), /stream-overrides\.json is not valid JSON/);
-  assert.equal(existsSync(join(d, 'NOW.md')), false);
+  assert.equal(existsSync(join(d, 'The-Podium.md')), false);
 });
 
 test('a failed ledger read throws and leaves the previous page untouched', () => {
   const d = dir();
   generate(opts(d), deps([]));
-  const before = readFileSync(join(d, 'NOW.md'), 'utf8');
+  const before = readFileSync(join(d, 'The-Podium.md'), 'utf8');
   assert.throws(() => generate(opts(d), deps([], { journal: () => { throw new Error('ledger down'); } })), /ledger down/);
-  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), before);
+  assert.equal(readFileSync(join(d, 'The-Podium.md'), 'utf8'), before);
 });
 
 const ghDown = (): RawPr[] => { throw new Error('gh read failed after 3 tries: HTTP 502\nsecond line'); };
@@ -126,7 +127,7 @@ test('a failed GitHub read still writes the page from the cached PRs, under a wa
   assert.match(r.page, /\*\*Warning: GitHub could not be read \(gh read failed after 3 tries: HTTP 502\)\. The PR tables below are from the last good read at 10:31 am ET and may be out of date\.\*\*/);
   assert.doesNotMatch(r.page, /second line/);
   assert.match(r.page, /\[#12 → develop\]/, 'the cached PR is still in the tables');
-  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), r.page, 'the page was written');
+  assert.equal(readFileSync(join(d, 'The-Podium.md'), 'utf8'), r.page, 'the page was written');
   assert.equal(JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8')).fetched_at, '2026-10-05T14:31:00.000Z', 'a failed read leaves the cache as it was');
 });
 
@@ -144,7 +145,7 @@ test('with no cache, a failed GitHub read says the PR tables are empty because t
   const d = dir();
   const page = generate(opts(d), deps([], { fetchPrs: ghDown })).page;
   assert.match(page, /No earlier PR data is cached, so the PR tables below are empty because they could not be read, not because nothing is open\./);
-  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  assert.equal(existsSync(join(d, 'The-Podium.md')), true);
   assert.equal(existsSync(join(d, '.now-prs.json')), false);
 });
 
@@ -162,8 +163,8 @@ test('the inline answer and tick survive a GitHub failure', () => {
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'First' }]);
   generate(opts(d), deps([raw(12, 'acme-widgets')]));
-  const page = readFileSync(join(d, 'NOW.md'), 'utf8').replace('> answer: ', '> answer: ship it').replace('- [ ] `bb22`', '- [x] `bb22`');
-  writeFileSync(join(d, 'NOW.md'), page);
+  const page = readFileSync(join(d, 'The-Podium.md'), 'utf8').replace('> answer: ', '> answer: ship it').replace('- [ ] `bb22`', '- [x] `bb22`');
+  writeFileSync(join(d, 'The-Podium.md'), page);
   const after = generate(opts(d), deps([], { fetchPrs: ghDown })).page;
   assert.match(after, /> answer: ship it/);
   assert.match(after, /- \[x\] `bb22`/);
@@ -190,8 +191,8 @@ test('regenerating keeps an answer, a tick and a priorities edit the watcher has
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'First' }, { text: 'Second' }]);
   generate(opts(d), deps([]));
-  const typed = readFileSync(join(d, 'NOW.md'), 'utf8').replace(/(`bb22`[^\n]*)\n  > answer: /, '$1\n  > answer: go ahead').replace('- [ ] `cc33`', '- [x] `cc33`').replace('2. Second', '2. Mine');
-  writeFileSync(join(d, 'NOW.md'), typed);
+  const typed = readFileSync(join(d, 'The-Podium.md'), 'utf8').replace(/(`bb22`[^\n]*)\n  > answer: /, '$1\n  > answer: go ahead').replace('- [ ] `cc33`', '- [x] `cc33`').replace('2. Second', '2. Mine');
+  writeFileSync(join(d, 'The-Podium.md'), typed);
   const again = generate(opts(d), deps([])).page;
   assert.match(again, /`bb22`[^\n]*\n {2}> answer: go ahead\n/);
   assert.match(again, /- \[x\] `cc33`/);
@@ -204,7 +205,7 @@ test('regenerating keeps an answer, a tick and a priorities edit the watcher has
 test('--dry-run shows the carried edit but writes neither the page nor the watcher files', () => {
   const d = dir();
   generate(opts(d), deps([]));
-  writeFileSync(join(d, 'NOW.md'), readFileSync(join(d, 'NOW.md'), 'utf8').replace(/(`bb22`[^\n]*)\n  > answer: /, '$1\n  > answer: typed'));
+  writeFileSync(join(d, 'The-Podium.md'), readFileSync(join(d, 'The-Podium.md'), 'utf8').replace(/(`bb22`[^\n]*)\n  > answer: /, '$1\n  > answer: typed'));
   const before = readFileSync(join(d, '.now-seen.json'), 'utf8');
   assert.match(generate(opts(d, { dryRun: true }), deps([])).page, /answer: typed/);
   assert.equal(readFileSync(join(d, '.now-seen.json'), 'utf8'), before);
@@ -248,7 +249,7 @@ test('sections come in the order priorities, working on now, queued, needs atten
     footer: { ledger: [{ name: 'Alpha', done: 0, inflight: 1, queued: 1, awaiting: 1, paste: 0, blocked: 0 }], session: { available: false, unavailable: 'no sessions' } } } };
   const page = generate(opts(dir(), { dryRun: true }), deps([raw(12, 'acme-widgets')], { journal: (sub) => b[sub] })).page;
   const heads = page.split('\n').filter((l) => /^#{1,3} /.test(l));
-  assert.deepEqual(heads.map((h) => h.replace(/ \(\d+\)$/, '')), ['# Status now', "## Today's priorities", '## Working on now', '## Queued', '## Needs attention now', '## Open PRs', '### Alpha', '## Other status and findings', '### In flight', '### Blocked', '### Recent done', '### Deferred', '## Status']);
+  assert.deepEqual(heads.map((h) => h.replace(/ \(\d+\)$/, '')), ['# The Podium', "## Today's priorities", '## Working on now', '## Queued', '## Needs attention now', '## Open PRs', '### Alpha', '## Other status and findings', '### In flight', '### Blocked', '### Recent done', '### Deferred', '## Status']);
   assert.match(page, /\| Alpha \| `aa11` \| building a thing \| - \| - \| 2 h \(since 9:00 am ET\) \|\n/);
   assert.match(page, /\| Alpha \| 0 \| 1 \| 1 \| 1 \| 0 \| 0 \|\n/);
   assert.match(page, /- `aa11` building a thing \[Alpha\] · 2 h\n/);
@@ -280,7 +281,7 @@ test('a second rebuild waits for a live holder, then runs once the lock is relea
   let sleeps = 0;
   const r = generate(opts(d), deps([], { now: clock.now, pidAlive: () => true, sleep: (ms) => { clock.sleep(ms); if (++sleeps === 3) rmSync(lockPath(d)); } }));
   assert.equal(sleeps, 3);
-  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  assert.equal(existsSync(join(d, 'The-Podium.md')), true);
   assert.equal(r.written.length, 1);
 });
 
@@ -289,7 +290,7 @@ test('a rebuild gives up with "already running" when a live holder keeps the loc
   const clock = fakeClock(NOW.getTime());
   writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: clock.at() }));
   assert.throws(() => generate(opts(d), deps([], { now: clock.now, sleep: clock.sleep, pidAlive: () => true })), /already running \(pid 4242/);
-  assert.equal(existsSync(join(d, 'NOW.md')), false);
+  assert.equal(existsSync(join(d, 'The-Podium.md')), false);
   assert.equal(readFileSync(lockPath(d), 'utf8').includes('4242'), true, 'the holder\'s lock is left alone');
 });
 
@@ -301,7 +302,7 @@ test('a lock whose holder is gone, or that is older than 30 minutes, is taken ov
     let sleeps = 0;
     generate(opts(d), deps([], { now: clock.now, sleep: (ms) => { sleeps++; clock.sleep(ms); }, pidAlive: () => alive }));
     assert.equal(sleeps, 0, `${label}: no waiting`);
-    assert.equal(existsSync(join(d, 'NOW.md')), true, label);
+    assert.equal(existsSync(join(d, 'The-Podium.md')), true, label);
     assert.equal(existsSync(lockPath(d)), false, label);
   }
 });
@@ -326,9 +327,9 @@ test('an unreadable lock file counts as stale; --dry-run neither takes nor waits
   const d = dir();
   writeFileSync(lockPath(d), 'not json');
   generate(opts(d), deps([]));
-  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  assert.equal(existsSync(join(d, 'The-Podium.md')), true);
   writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: NOW.getTime() }));
-  assert.match(generate(opts(d, { dryRun: true }), deps([], { pidAlive: () => true })).page, /# Status now/);
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { pidAlive: () => true })).page, /# The Podium/);
 });
 
 test('the freshness line carries the page time and the PR-data time in ET, and they differ when the PRs come from the cache', () => {
@@ -339,4 +340,59 @@ test('the freshness line carries the page time and the PR-data time in ET, and t
   const fresh = generate(opts(d, { dryRun: true }), deps([], { now: () => new Date('2026-10-05T18:40:00Z') })).page;
   assert.match(fresh, /^Updated 2:40 pm ET · PR data 2:40 pm ET /m);
   assert.match(generate(opts(dir(), { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /^Updated 11:00 am ET · PR data unavailable \(2026-10-05\)\./m);
+});
+
+test('the first run leaves NOW.md as a pointer note to The-Podium, and later runs keep it a pointer', () => {
+  const d = dir();
+  generate(opts(d), deps([]));
+  const pointer = readFileSync(join(d, 'NOW.md'), 'utf8');
+  assert.match(pointer, /\[\[The-Podium\]\]/);
+  assert.doesNotMatch(pointer, /## Today's priorities|> answer:/);
+  generate(opts(d), deps([]));
+  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), pointer);
+  assert.match(readFileSync(join(d, 'The-Podium.md'), 'utf8'), /^# The Podium$/m);
+});
+
+test('a legacy NOW.md page with an unreported answer and tick migrates into The-Podium.md, then becomes the pointer', () => {
+  const d = dir();
+  generate(opts(d), deps([]));
+  const legacy = readFileSync(join(d, 'The-Podium.md'), 'utf8').replace('> answer: ', '> answer: from the old page').replace('- [ ] `bb22`', '- [x] `bb22`');
+  rmSync(join(d, 'The-Podium.md'));
+  writeFileSync(join(d, 'NOW.md'), legacy);
+  const r = generate(opts(d), deps([]));
+  assert.deepEqual(r.written, [join(d, 'The-Podium.md')]);
+  assert.match(r.page, /> answer: from the old page/);
+  assert.match(r.page, /- \[x\] `bb22`/);
+  assert.match(readFileSync(join(d, 'The-Podium.md'), 'utf8'), /> answer: from the old page/);
+  assert.match(readFileSync(join(d, 'NOW.md'), 'utf8'), /\[\[The-Podium\]\]/);
+});
+
+test('a pointer note is never read as a page, and a NOW.md edited beside an existing Podium is left alone', () => {
+  const d = dir();
+  generate(opts(d), deps([]));
+  assert.equal(readPodium(d), readFileSync(join(d, 'The-Podium.md'), 'utf8'));
+  writeFileSync(join(d, 'NOW.md'), 'my own notes\n');
+  generate(opts(d), deps([]));
+  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), 'my own notes\n');
+});
+
+test('a dry run migrates nothing and writes no pointer', () => {
+  const d = dir();
+  writeFileSync(join(d, 'NOW.md'), '# old\n');
+  generate(opts(d, { dryRun: true }), deps([]));
+  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), '# old\n');
+  assert.equal(existsSync(join(d, 'The-Podium.md')), false);
+});
+
+test('a clean full-page NOW.md rebuilt beside the Podium (by an old loop) becomes the pointer again; one with unreported edits is left alone', () => {
+  const d = dir();
+  generate(opts(d), deps([]));
+  const page = readFileSync(join(d, 'The-Podium.md'), 'utf8');
+  writeFileSync(join(d, 'NOW.md'), page);
+  generate(opts(d), deps([]));
+  assert.match(readFileSync(join(d, 'NOW.md'), 'utf8'), /\[\[The-Podium\]\]/);
+  const typed = page.replace('> answer: ', '> answer: typed in the old place');
+  writeFileSync(join(d, 'NOW.md'), typed);
+  generate(opts(d), deps([]));
+  assert.equal(readFileSync(join(d, 'NOW.md'), 'utf8'), typed);
 });

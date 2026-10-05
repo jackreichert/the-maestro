@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * status-page.ts: regenerate the always-current status page (NOW.md) from the ledger and GitHub.
+ * status-page.ts: regenerate the Podium, the always-current status page (The-Podium.md) from the ledger and GitHub.
  * Normally run as `journal.ts status-page`, which passes the ledger root and project through.
  *
  *   status-page.ts [--dry-run] [--snapshot] [--status-dir <dir>] [--vault <ledger root>] [--project <name>]
@@ -68,7 +68,7 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
     streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
     ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
   };
-  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts status-page', config }, deps);
+  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config }, deps);
 }
 
 function main(argv: string[]): number {

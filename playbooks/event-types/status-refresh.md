@@ -1,6 +1,6 @@
 # Event type: status-refresh
 
-Regenerates the status page (`NOW.md`) inside the event loop, with no model and no orchestrator turn. Script: [scripts/event-types/status-refresh.ts](../../scripts/event-types/status-refresh.ts). Target is the status directory, the folder holding `NOW.md` (the `status_dir` setting, else `<vault_root>/Projects/<project>/Status`).
+Regenerates the Podium (`The-Podium.md`) inside the event loop, with no model and no orchestrator turn. Script: [scripts/event-types/status-refresh.ts](../../scripts/event-types/status-refresh.ts). Target is the status directory, the folder holding `The-Podium.md` (the `status_dir` setting, else `<vault_root>/Projects/<project>/Status`).
 
 Register: `node scripts/event-loop.ts add --id status-refresh --type status-refresh --target <status dir> --ttl-hours 72`. One watch only. It never sends a notification and a refresh never ends `event-loop.ts run` with exit 10: its events are never actionable and a check never throws. The one exception is the loop's own expiry notice (below).
 
@@ -16,7 +16,7 @@ The GitHub read runs only when the PR data is dirty or more than 5 minutes old; 
 
 ## Never over your own edit
 
-While `NOW.md` holds an edit the status watcher has not adopted yet and that was saved under 60 s ago, nothing is written. The refresh stays pending and runs once the window has passed.
+While `The-Podium.md` holds an edit the status watcher has not adopted yet and that was saved under 60 s ago, nothing is written. The refresh stays pending and runs once the window has passed.
 
 ## What the loop reports
 
