@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import { keptCounts } from '../../branch-sweep.ts';
 import { sessionLine } from '../../token-metrics.ts';
 import { BOX, classify, isStale, daysBetween } from '../boxes.ts';
-import { isOpen } from '../ledger-core.ts';
+import { isOpen, isQueued } from '../ledger-core.ts';
 import { approvalMap } from './approvals.ts';
 import { clip, itemText } from './format.ts';
 import { LEARNING, TICKET_ID } from './retro.ts';
@@ -82,7 +82,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
         '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
         '## 1. Tasks with status', '',
         ...(open.length || doneRecently.length ? [
-            ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight')),
+            ...open.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : isQueued(i) ? 'queued' : 'in flight')),
             ...doneRecently.map((i) => line(i, `done ${doneDay(i)}`)),
         ] : ['_none_']), '',
         ...(undatedDone.length ? ['### Undated', '', 'Done, but neither `date` nor `ts` is set, so `since` cannot place them:', '', ...undatedDone.map((i) => line(i, 'done, undated')), ''] : []),
@@ -145,7 +145,8 @@ export function handoffDeltaText(ctx: HandoffContext, stream: string | null, mar
     const items = ctx.fold(ctx.readLedger()).items.filter((i) => stream === null || i.stream === stream);
     const after = (ts: string | undefined): boolean => ts !== undefined && ts > marker;
     const isAsk = (i: LedgerItem): boolean => i.kind === 'question' || i.kind === 'decision';
-    const opened = items.filter((i) => after(i.ts) && !isAsk(i) && i.state !== 'done');
+    // An open item that moved between queued and in flight since the marker is reported again, so the delta shows its new state.
+    const opened = items.filter((i) => (after(i.ts) || (isOpen(i) && after(i.stateTs))) && !isAsk(i) && i.state !== 'done');
     const completed = items.filter((i) => i.state === 'done' && (after(i.closedBy?.ts) || (!i.closedBy && after(i.ts))));
     const asks = items.filter((i) => after(i.ts) && isAsk(i) && isOpen(i));
     const prs = artifactsOf([...opened, ...completed, ...asks]).filter((a) => a.kind === 'pr').map((a) => a.v);
@@ -157,7 +158,7 @@ export function handoffDeltaText(ctx: HandoffContext, stream: string | null, mar
         `# ${stream ?? 'All streams'} handoff delta, ${ctx.today()}`, '',
         `> Only what changed since [[${prevName.replace(/\.md$/, '')}]] (${marker}). Read that first; this does not repeat it. It lists new items, completions and new open asks only; an older ask resolved since is not shown.`, '',
         '## Session metrics', '', sessionLine(ctx.claudeProjectsDir), '',
-        '## New or still-open items since the previous roll', '', ...list(opened.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : 'in flight'))), '',
+        '## New or still-open items since the previous roll', '', ...list(opened.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : isQueued(i) ? 'queued' : 'in flight'))), '',
         '## Completed since the previous roll', '', ...list(completed.map((i) => line(i, 'done'))), '',
         '## New asks', '', ...list(asks.map((i) => line(i, i.kind))), '',
         '## PRs mentioned', '', prs.length ? prs.join(', ') : '_none_', '',

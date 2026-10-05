@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { activeDeferrals, isOpen } from '../ledger-core.ts';
+import { activeDeferrals, isOpen, isQueued, isInFlight } from '../ledger-core.ts';
 import type { LedgerItem, LedgerRow, fold as foldRows } from '../ledger-core.ts';
 import type { Args } from './args.ts';
 import type { Store } from './store.ts';
@@ -19,7 +19,10 @@ type Streamed = { stream?: string };
 export interface Groups {
     items: LedgerItem[];
     deferred: (LedgerItem & { deferredUntil: string | undefined })[];
+    /** Open wip items that are running now. */
     inflight: LedgerItem[];
+    /** Open wip items that are queued: to-dos not started. Never counted in `inflight`. */
+    queued: LedgerItem[];
     blocked: LedgerItem[];
     awaiting: LedgerItem[];
     paste: LedgerItem[];
@@ -53,7 +56,8 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
     return {
         items,
         deferred: items.filter((i) => isOpen(i) && deferred.has(idOf(i))).map((i) => ({ ...i, deferredUntil: deferred.get(idOf(i)) })),
-        inflight: open.filter((i) => i.kind === 'wip'),
+        inflight: open.filter(isInFlight),
+        queued: open.filter(isQueued),
         blocked: open.filter((i) => i.kind === 'blocked'),
         awaiting: open.filter((i) => (i.kind === 'question' || i.kind === 'decision') && !i.paste),
         paste: open.filter((i) => i.kind === 'question' && i.paste),
@@ -72,30 +76,30 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
 }
 
 /** One reply-footer Ledger line as numbers: `name` is the stream (`other` for items with none), or null for the single plain line. */
-export interface FooterRow { name: string | null; done: number; inflight: number; awaiting: number; paste: number; blocked: number }
+export interface FooterRow { name: string | null; done: number; inflight: number; queued: number; awaiting: number; paste: number; blocked: number }
 
 /**
  * The counts behind the reply-footer Ledger lines: one row per active stream (canonical registry names), then `other` for
  * items with no stream. With no streams at all it is the single plain row. The footer text and the status page both read this.
  */
-export function footerRows(g: Pick<Groups, 'inflight' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): FooterRow[] {
-    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, done);
+export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): FooterRow[] {
+    const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     const row = (name: string | null, pick: (i: LedgerItem) => boolean): FooterRow => {
         const n = (arr: LedgerItem[]): number => arr.filter(pick).length;
-        return { name, done: n(done), inflight: n(g.inflight), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked) };
+        return { name, done: n(done), inflight: n(g.inflight), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked) };
     };
     if (!streams.length) return [row(null, () => true)];
     const rows = streams.map((s) => row(s, (i) => i.stream === s));
-    const otherCount = [g.inflight, g.blocked, g.awaiting, g.paste, done].reduce((a, arr) => a + noStream(arr).length, 0);
+    const otherCount = [g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done].reduce((a, arr) => a + noStream(arr).length, 0);
     if (otherCount) rows.push(row('other', (i) => !i.stream));
     return rows;
 }
 
 const footerLine = (r: FooterRow): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today · ${r.inflight} in flight · ${r.awaiting} awaiting you${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today · ${r.inflight} in flight${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
 
 /** The reply-footer Ledger lines, one per `footerRows` row. */
-export const footerLines = (g: Pick<Groups, 'inflight' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): string[] => footerRows(g, done).map(footerLine);
+export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): string[] => footerRows(g, done).map(footerLine);
 
 export function standupText(ctx: BoardContext, d: string): string {
     const { has } = ctx;
@@ -113,10 +117,11 @@ export function standupText(ctx: BoardContext, d: string): string {
         out.push('');
     };
 
-    for (const s of activeStreams(done, g.inflight, g.blocked, g.awaiting, g.paste)) {
+    for (const s of activeStreams(done, g.inflight, g.queued, g.blocked, g.awaiting, g.paste)) {
         out.push(`# ${streamTitle(s)}`, '');
         section('Shipped', inStream(done, s), '_Nothing closed._');
         section('In flight', inStream(g.inflight, s), '_Nothing running._');
+        if (inStream(g.queued, s).length) section('Queued', inStream(g.queued, s), '');
         section('Blocked', inStream(g.blocked, s), '_Nothing blocked._');
         section('Awaiting you', inStream(g.awaiting, s), '_No open questions._');
         if (inStream(g.paste, s).length) section('Paste blocks for you', inStream(g.paste, s), '');
@@ -124,6 +129,7 @@ export function standupText(ctx: BoardContext, d: string): string {
     }
     section('Shipped', noStream(done), '_Nothing closed._');
     section('In flight', noStream(g.inflight), '_Nothing running._');
+    if (noStream(g.queued).length) section('Queued', noStream(g.queued), '');
     section('Blocked', noStream(g.blocked), '_Nothing blocked._');
     section('Awaiting you', noStream(g.awaiting), '_No open questions._');
     if (noStream(g.paste).length) section('Paste blocks for you', noStream(g.paste), '');
@@ -168,9 +174,10 @@ export function render(ctx: BoardContext, quiet = false, includeArchived = false
     };
 
     const doneToday = g.doneOn(d, { sinceRoll: true });
-    for (const s of activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, doneToday)) {
+    for (const s of activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, doneToday)) {
         out.push(`# ${streamTitle(s)}`, '', `Stream page: [[${streamPageLink(s)}]]`, '');
         section('In flight', inStream(g.inflight, s));
+        if (inStream(g.queued, s).length) section('Queued', inStream(g.queued, s));
         section('Blocked', inStream(g.blocked, s));
         section('Awaiting you', inStream(g.awaiting, s));
         if (inStream(g.paste, s).length) section('Paste blocks for you', inStream(g.paste, s));
@@ -178,6 +185,7 @@ export function render(ctx: BoardContext, quiet = false, includeArchived = false
         out.push('# Everything else', '');
     }
     section('In flight', noStream(g.inflight));
+    if (noStream(g.queued).length) section('Queued', noStream(g.queued));
     section('Blocked', noStream(g.blocked));
     section('Awaiting you', noStream(g.awaiting));
     if (noStream(g.paste).length) section('Paste blocks for you', noStream(g.paste));
@@ -232,7 +240,7 @@ export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: Ledger
     const { loadRegistry, dir } = ctx;
     const reg = loadRegistry();
     const registered = Object.entries(reg?.streams || {}).filter(([, m]) => m?.status !== 'archived').map(([k]) => k);
-    const names = [...new Set([...activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, g.deferred, doneToday), ...registered])].filter((s) => !retros.has(s));
+    const names = [...new Set([...activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, g.deferred, doneToday), ...registered])].filter((s) => !retros.has(s));
     if (!names.length && !retros.size) return 0;
     const streamsDir = join(dir, 'Streams');
     mkdirSync(streamsDir, { recursive: true });
@@ -247,6 +255,7 @@ export function writeStreamPages(ctx: BoardContext, g: Groups, doneToday: Ledger
             out.push('');
         };
         section('In flight', inStream(g.inflight, s));
+        if (inStream(g.queued, s).length) section('Queued', inStream(g.queued, s));
         section('Blocked', inStream(g.blocked, s));
         section('Awaiting you', inStream(g.awaiting, s));
         if (inStream(g.paste, s).length) section('Paste blocks for you', inStream(g.paste, s));

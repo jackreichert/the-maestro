@@ -10,7 +10,7 @@ import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
 import type { FooterRow } from '../journal/board.ts';
 
-export interface Item { id: string; date: string; ts?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string }
+export interface Item { id: string; date: string; ts?: string; stateTs?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string }
 export interface Pr {
   number: number; title: string; url: string; isDraft: boolean; baseRefName: string; headRefName: string;
   mergeable: string; mergeStateStatus: string; reviewDecision: string | null;
@@ -19,7 +19,7 @@ export interface Pr {
 /** The numbers `journal.ts status --footer` prints, as `status --json` carries them: one row per stream, and the session. */
 export interface FooterData { ledger: FooterRow[]; session: SessionStatus }
 /** `journal.ts status --json`, the part the page reads. */
-export interface BoardStatus { inflight: Item[]; blocked: Item[]; awaiting: Item[]; done: Item[]; footer?: FooterData }
+export interface BoardStatus { inflight: Item[]; queued: Item[]; blocked: Item[]; awaiting: Item[]; done: Item[]; footer?: FooterData }
 /** `journal.ts triage --json`, the part the page reads. */
 export interface Triage { items: (Item & { gate?: string; deferredUntil?: string })[] }
 
@@ -290,8 +290,9 @@ function workingSection(cfg: PageConfig, inflight: Item[], tickets: Map<string, 
   if (!inflight.length) return [...out, 'Nothing in flight.', ''];
   const streamOf = (i: Item): string => (streams.includes(i.stream ?? '') ? i.stream! : OTHER);
   const running = (i: Item): string => {
-    const age = ageLabel(i.ts, now);
-    return age ? `${age} (since ${prDataLabel(new Date(i.ts as string), now, cfg.tz)})` : 'age unknown';
+    const since = i.stateTs ?? i.ts;   // a promoted item runs from its start, not from when it was queued
+    const age = ageLabel(since, now);
+    return age ? `${age} (since ${prDataLabel(new Date(since as string), now, cfg.tz)})` : 'age unknown';
   };
   out.push('| Stream | Id | Working on | Ticket | Model | Running |', '|---|---|---|---|---|---|');
   for (const i of streams.flatMap((s) => inflight.filter((x) => streamOf(x) === s))) {
@@ -302,14 +303,30 @@ function workingSection(cfg: PageConfig, inflight: Item[], tickets: Map<string, 
   return [...out, ''];
 }
 
+// ── queued ──────────────────────────────────────────────────────────────────
+
+/** One table of the queued ledger items (to-dos not started), grouped by stream: id, what, ticket and how long each has waited. Read-only: nothing here is an answer area. */
+function queuedSection(cfg: PageConfig, queued: Item[], tickets: Map<string, string>, streams: string[], now: Date): string[] {
+  const out = [`## Queued (${queued.length})`, ''];
+  if (!queued.length) return [...out, 'Nothing queued.', ''];
+  const streamOf = (i: Item): string => (streams.includes(i.stream ?? '') ? i.stream! : OTHER);
+  out.push('| Stream | Id | What | Ticket | Queued for |', '|---|---|---|---|---|');
+  for (const i of streams.flatMap((s) => queued.filter((x) => streamOf(x) === s))) {
+    const note = i.ticket || tickets.get(i.id);
+    const refs = [...(note ? [ticketNoteRef(cfg, note)] : []), ...keysIn(cfg, i.text).slice(0, 2).map((k) => trackerRef(cfg, k))].map(mdLink).join(' · ');
+    out.push(`| ${cell(streamOf(i))} | \`${i.id}\` | ${cell(oneLine(i.text, 110))} | ${refs || '-'} | ${cell(ageLabel(i.stateTs ?? i.ts, now) || 'age unknown')} |`);
+  }
+  return [...out, ''];
+}
+
 // ── status (the chat footer, unrolled) ──────────────────────────────────────
 
 /** The reply footer's numbers as a table, one row per stream, then the agents and session lines. Formatted from the data `status --json` carries, never recounted. */
 function statusSection(footer: FooterData | undefined, inflight: Item[]): string[] {
   const out = ['## Status', ''];
   if (!footer) return [...out, '**Footer data unavailable:** `journal.ts status --json` carried no `footer`.', ''];
-  out.push('| Stream | Done today | In flight | Awaiting you | To run | Blocked |', '|---|---|---|---|---|---|');
-  for (const r of footer.ledger) out.push(`| ${cell(r.name ?? 'all')} | ${r.done} | ${r.inflight} | ${r.awaiting} | ${r.paste} | ${r.blocked} |`);
+  out.push('| Stream | Done today | In flight | Queued | Awaiting you | To run | Blocked |', '|---|---|---|---|---|---|---|');
+  for (const r of footer.ledger) out.push(`| ${cell(r.name ?? 'all')} | ${r.done} | ${r.inflight} | ${r.queued} | ${r.awaiting} | ${r.paste} | ${r.blocked} |`);
   return [...out, '',
     `**Agents:** ${inflight.length} in flight on the ledger (the live agent roster is shown in each reply's footer)`, '',
     sessionText(footer.session), ''];
@@ -329,7 +346,7 @@ export function renderPage(input: PageInput): { page: string; date: string } {
   const blocked: Item[] = status.blocked.map((b) => ({ ...b, gate: meta.get(b.id)?.gate }));
   const deferred = triage.items.filter((i) => i.deferredUntil);
   const prPriorityStreams = priorities.state === 'ok' ? priorities.items.map((p) => p.stream) : [];
-  const streams = streamOrder(cfg, [...asks.map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...prs.map((p) => p.stream), ...prPriorityStreams]);
+  const streams = streamOrder(cfg, [...asks.map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...prPriorityStreams]);
   const t = zonedParts(now, cfg.tz);
   const age = (i: Item): string => ageLabel(i.ts, now);
   const withAge = (i: Item, extra: string): string => `${li(i)}${extra} · ${age(i) || 'age unknown'}`;
@@ -343,6 +360,7 @@ export function renderPage(input: PageInput): { page: string; date: string } {
     ...prWarning(prData, now, cfg.tz),
     ...prioritiesSection(cfg, priorities, asks, status.inflight, prs, streams),
     ...workingSection(cfg, status.inflight, tickets, streams, now),
+    ...queuedSection(cfg, status.queued, tickets, streams, now),
     ...asksSection(cfg, asks, prs, tickets, streams, t.date),
     ...prSection(cfg, prs, streams),
     '## Other status and findings', '',

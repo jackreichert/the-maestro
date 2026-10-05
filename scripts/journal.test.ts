@@ -24,7 +24,7 @@ interface Out {
 }
 /** The JSON documents the commands print; each test reads the part it needs. */
 interface Doc {
-    inflight: Out[]; blocked: Out[]; awaiting: Out[]; paste: Out[]; done: Out[]; streams: Out[]; claims: Out[]; models: Out[];
+    inflight: Out[]; queued: Out[]; blocked: Out[]; awaiting: Out[]; paste: Out[]; done: Out[]; streams: Out[]; claims: Out[]; models: Out[];
     standing: Out[]; oneOff: Out[]; untagged: Out[]; byStream: Out[]; pending: Out[]; blockers: Out[]; pendingTransitions: Out[];
     byBox: Record<string, Out[] | undefined>; problems: Out[]; model: Record<string, number>; [field: string]: unknown;
 }
@@ -494,9 +494,9 @@ test('status --json carries the footer numbers, and they match what status --foo
     run('start', 'loose end', ...MARK);
     const f = parse<{ footer: { ledger: unknown; session: unknown } }>(run('status', '--json').out).footer;
     assert.deepEqual(f.ledger, [
-        { name: 'Maestro', done: 0, inflight: 0, awaiting: 1, paste: 0, blocked: 1 },
-        { name: 'Launch', done: 1, inflight: 0, awaiting: 0, paste: 0, blocked: 0 },
-        { name: 'other', done: 0, inflight: 1, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'Maestro', done: 0, inflight: 0, queued: 0, awaiting: 1, paste: 0, blocked: 1 },
+        { name: 'Launch', done: 1, inflight: 0, queued: 0, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'other', done: 0, inflight: 1, queued: 0, awaiting: 0, paste: 0, blocked: 0 },
     ]);
     assert.deepEqual(f.session, { available: false, unavailable: `no sessions in ${projects}; set projects_dir` });
     const text = run('status', '--footer').out.trim().split('\n');
@@ -508,6 +508,150 @@ test('status --footer with no streams is the single plain Ledger line, and appen
     const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
     assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Ledger:** 0 done today · 1 in flight · 0 awaiting you', sessionNone()]);
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
+
+// ── queued state ────────────────────────────────────────────────────────────
+
+test('queue "<text>" writes a wip row marked queued with stream and marks, and start <id> promotes it with a promote row', () => {
+    seedRegistry();
+    const q = run('queue', 'later job', '--stream', 'launch', ...MARK);
+    assert.equal(q.code, 0, q.err);
+    assert.match(q.out, /^queued {2}\w{4} {2}later job/);
+    const id = idOf(q.out);
+    const row = must(ledger().find((e) => e.id === id));
+    assert.deepEqual([row.kind, row.queued, row.stream, row.model], ['wip', true, 'Launch', 'Test Model']);
+
+    const s = run('start', id, ...MARK);
+    assert.equal(s.code, 0, s.err);
+    assert.match(s.out, /promoted from queued/);
+    const promote = must(ledger().find((e) => e.kind === 'promote'));
+    assert.equal(promote.promotes, id);
+    assert.equal(ledger().filter((e) => e.kind === 'wip').length, 1, 'promoting opens no new item');
+    assert.equal(run('verify').code, 0);
+});
+
+test('queue <id> moves an in-flight item to queued, keeps its history, and is idempotent', () => {
+    const id = idOf(run('start', 'running job', ...MARK).out);
+    const first = run('queue', id, ...MARK);
+    assert.equal(first.code, 0, first.err);
+    const rows = ledger();
+    assert.equal(must(rows.find((e) => e.kind === 'queue')).queues, id);
+    assert.equal(must(rows.find((e) => e.id === id)).queued, undefined, 'the original row is not rewritten');
+    const again = run('queue', id, ...MARK);
+    assert.equal(again.code, 0);
+    assert.match(again.out, /already queued/);
+    assert.equal(ledger().length, rows.length, 'a second queue writes nothing');
+    assert.equal(run('start', id, ...MARK).code, 0);
+    const startAgain = run('start', id, ...MARK);
+    assert.match(startAgain.out, /already in flight/);
+    assert.equal(ledger().filter((e) => e.kind === 'promote').length, 1);
+});
+
+test('queue refuses a closed or non-wip item, an unknown id-shaped token, and --kind; --text queues such a word', () => {
+    const done = idOf(run('start', 'finished', ...MARK).out);
+    run('done', done, ...MARK);
+    const ask = idOf(run('ask', 'which way?', ...MARK).out);
+    const before = ledger().length;
+    assert.equal(run('queue', done, ...MARK).code, 1);
+    assert.equal(run('queue', ask, ...MARK).code, 1);
+    const typo = run('queue', 'zz99', ...MARK);
+    assert.equal(typo.code, 1);
+    assert.match(typo.err, /No item with id zz99/);
+    assert.equal(run('queue', 'a thing', '--kind', 'note', ...MARK).code, 1);
+    assert.equal(run('start', done, ...MARK).code, 1, 'a closed item is not restarted by id');
+    assert.equal(ledger().length, before);
+    assert.equal(run('queue', '--text', 'zz99', ...MARK).code, 0);
+    assert.equal(run('queue', 'docs', ...MARK).code, 0, 'a plain word is text');
+});
+
+test('verify flags a queue or promote row whose target does not exist', () => {
+    run('queue', 'real', ...MARK);
+    writeFileSync(ledgerFile(), `${readFileSync(ledgerFile(), 'utf8')}${JSON.stringify({ id: 'qq01', kind: 'queue', queues: 'nope', text: 'x' })}\n${JSON.stringify({ id: 'qq02', kind: 'promote', promotes: 'gone', text: 'x' })}\n`);
+    const r = parse<Doc>(run('verify', '--json').out);
+    assert.equal(r.problems.length, 2);
+    assert.equal(run('verify').code, 1);
+});
+
+test('a queued item is never flagged stale by triage, an in-flight one a day old is', () => {
+    const queued = idOf(run('queue', 'to do someday', '--allow-unmarked').out);
+    const running = idOf(run('start', 'running', ...MARK).out);
+    const rows = readFileSync(ledgerFile(), 'utf8').split('\n').filter(Boolean).map((l) => parse<Out>(l));
+    writeFileSync(ledgerFile(), `${rows.map((r) => JSON.stringify({ ...r, date: '2020-01-01' })).join('\n')}\n`);
+    const t = parse<Doc>(run('triage', '--json').out);
+    const items = Object.values(t.byBox).flat().filter(Boolean) as Out[];
+    assert.equal(must(items.find((i) => i.id === queued)).stale, false);
+    assert.equal(must(items.find((i) => i.id === running)).stale, true);
+});
+
+test('status separates queued from in flight: --json, --footer and the plain text agree, and the to-run meaning is unchanged', () => {
+    seedRegistry();
+    run('start', 'running now', '--stream', 'launch', ...MARK);
+    const parked = idOf(run('start', 'parked later', '--stream', 'launch', ...MARK).out);
+    run('queue', parked, ...MARK);
+    run('queue', 'never started', '--stream', 'maestro', ...MARK);
+    run('queue', 'loose to-do', ...MARK);
+    run('ask', 'run this', '--paste', ledgerFile(), '--stream', 'launch', ...MARK);
+    const j = parse<Doc>(run('status', '--json').out);
+    assert.deepEqual(j.inflight.map((i) => i.text), ['running now']);
+    assert.deepEqual(j.queued.map((i) => i.text).sort(), ['loose to-do', 'never started', 'parked later']);
+    assert.deepEqual(j.paste.map((i) => i.text), ['run this']);
+    const footer = parse<{ footer: { ledger: { name: string; inflight: number; queued: number; paste: number }[] } }>(run('status', '--json').out).footer.ledger;
+    assert.deepEqual(footer.map((r) => [r.name, r.inflight, r.queued, r.paste]), [['Launch', 1, 1, 1], ['Maestro', 0, 1, 0], ['other', 0, 1, 0]]);
+    assert.deepEqual(run('status', '--footer').out.trim().split('\n').slice(0, 3), [
+        '**Ledger (Launch):** 0 done today · 1 in flight · 1 queued · 0 awaiting you · 1 to run',
+        '**Ledger (Maestro):** 0 done today · 0 in flight · 1 queued · 0 awaiting you',
+        '**Ledger (other):** 0 done today · 0 in flight · 1 queued · 0 awaiting you',
+    ]);
+    const text = run('status').out;
+    assert.match(text, /In flight\n {2}`\w+` running now/);
+    assert.match(text, /Queued\n {2}`\w+` parked later/);
+    assert.match(text, /1 in flight · 3 queued · 0 awaiting you · 1 to run/);
+    run('start', parked, ...MARK);
+    assert.deepEqual(parse<Doc>(run('status', '--json').out).inflight.map((i) => i.text).sort(), ['parked later', 'running now']);
+});
+
+test('roll keeps queued items open, archives only finished work, and says how many are queued', () => {
+    const done = idOf(run('start', 'finished', ...MARK).out);
+    run('done', done, ...MARK);
+    const later = idOf(run('queue', 'later job', '--stream', 'Launch', ...MARK).out);
+    const parked = idOf(run('start', 'parked job', ...MARK).out);
+    run('queue', parked, ...MARK);
+    const r = run('roll');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /kept open: 0 in flight, 2 queued, 0 awaiting you/);
+    assert.deepEqual(parse<Doc>(run('status', '--json').out).queued.map((i) => i.id).sort(), [later, parked].sort());
+    const archive = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `${new Date().toISOString().slice(0, 10)}.md`), 'utf8');
+    assert.match(archive, /## Queued[^]*later job/, 'the dated note shows what was queued');
+    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
+    assert.equal(run('roll').code, 0, 'a second roll changes nothing about the queue');
+    assert.equal(parse<Doc>(run('status', '--json').out).queued.length, 2);
+});
+
+test('handoff carries queued items tagged queued, apart from in flight, and the delta reports one that moved', () => {
+    seedRegistry();
+    const running = idOf(run('start', 'running job', '--stream', 'Launch', ...MARK).out);
+    const later = idOf(run('queue', 'later job', '--stream', 'Launch', ...MARK).out);
+    assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
+    const day = new Date().toISOString().slice(0, 10);
+    const full = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${day}-Launch.md`), 'utf8');
+    assert.match(full, new RegExp(`\`${running}\` \\[in flight\\] running job`));
+    assert.match(full, new RegExp(`\`${later}\` \\[queued\\] later job`));
+    const until = Date.now() + 5; while (Date.now() < until) { /* spin past the marker ms */ }
+    run('start', later, ...MARK);
+    run('queue', running, ...MARK);
+    assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
+    const delta = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${day}b-Launch.md`), 'utf8');
+    assert.match(delta, new RegExp(`\`${later}\` \\[in flight\\] later job`));
+    assert.match(delta, new RegExp(`\`${running}\` \\[queued\\] running job`));
+});
+
+test('triage marks a queued item as not started and keeps it out of the running-agent check; a queued-only stream gets a page', () => {
+    run('start', 'running', ...MARK);
+    const q = idOf(run('queue', 'to do later', '--stream', 'Solo', '--new-stream', ...MARK).out);
+    const t = run('triage');
+    assert.match(t.out, new RegExp(`${q} {2}to do later {2}\\[queued: not started\\]`));
+    assert.match(t.out, /1 queued to-do\(s\) in box 7 have not started/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Solo.md')), true);
 });
 
 // ── model-name registry ─────────────────────────────────────────────────────
