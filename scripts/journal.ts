@@ -1185,6 +1185,7 @@ function cmdHandoff() {
     const marker = series?.prev ? handoffMarker(join(dir, series.prev)) : null;
     if (series?.prev && !marker) die(`--delta: ${series.prev} has no generated_at marker (written by an older version); run a full handoff with --force instead.`);
     if (series?.prev && marker) {
+        if (arg('learn') || arg('next') || has('update-context')) die('--delta writes only the changes; --learn, --next and --update-context belong on the first (full) handoff of the day.');
         const body = handoffDeltaText(handoffCtx(), stream, marker, series.prev);
         if (dryRun) { console.log(body); return; }
         writeFileSync(path, body);
