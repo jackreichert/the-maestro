@@ -21,6 +21,9 @@
  *
  *   journal.ts log "<text>" --model "<name>" --used "skill:x,tool:y" [--kind note]
  *   journal.ts start "<text>" --model "<name>" --used "skill:x,tool:y" [--repo x]
+ *   journal.ts queue "<text>" --stream S --model "<name>" --used "skill:x,tool:y"   a to-do not started yet: shown as Queued, not In flight
+ *   journal.ts queue <id> --model "<name>" --used "skill:x,tool:y"   move an open in-flight item to queued (a row is appended; its history stays)
+ *   journal.ts start <id> --model "<name>" --used "skill:x,tool:y"   when <id> is a queued item: promote it to in flight (start "<text>" still opens a new item)
  *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
@@ -131,7 +134,7 @@ import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
-import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
+import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 
@@ -392,11 +395,12 @@ function transitionedFlag(): string[] | undefined {
     return keys;
 }
 
-function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
+function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false } = {}) {
     const text = arg('text') || positional.join(' ');
-    if (!text) { console.error(`Needs text: journal.ts ${rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
+    if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
+    if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const refs = rule ? ruleRefs() : refsFromArgs();
     const paste = ask ? pasteFile(kind) : undefined;
@@ -414,6 +418,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
         stream: streamOrNone(arg('stream')),
         refs,
         pending: ask && kind === 'decision' ? true : undefined,
+        queued: queued ? true : undefined,
         box: paste ? 'paste' : undefined,
         paste,
         gate,
@@ -423,8 +428,50 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
     };
     append(entry);
     if (!dryRun) render(true);
-    console.log(`${entry.kind}  ${entry.id}  ${entry.text}`);
+    console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
     return entry;
+}
+
+/** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
+function itemNamedByArg(items: LedgerItem[]): LedgerItem | undefined {
+    const token = positional.length === 1 && !arg('text') ? positional[0] : undefined;
+    return token ? items.find((i) => i.id === token) : undefined;
+}
+
+/**
+ * `queue "<text>"` opens an item already queued; `queue <id>` moves an open in-flight item to queued by appending a
+ * `queue` row, so its history stays. Idempotent: an item that is already queued is reported and nothing is written.
+ */
+function cmdQueue(): void {
+    const entries = readLedger();
+    const target = itemNamedByArg(fold(entries).items);
+    if (!target) {
+        const token = positional[0] ?? '';
+        // A typo'd id would otherwise become a queued item named after it. A real 4-character word can go in with --text.
+        if (positional.length === 1 && !arg('text') && /^(?=.*\d)[a-z0-9]{4}$/.test(token)) die(`No item with id ${token}. To queue that as text, pass it as --text "${token}".`);
+        cmdLog('wip', { queued: true });
+        return;
+    }
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not an in-flight item; only an open in-flight item can be queued.`);
+    if (isQueued(target)) { console.log(`queued  ${target.id}  ${target.text}  (already queued)`); return; }
+    append({ id: newId(entries), ts: now(), date: today(), kind: 'queue', queues: target.id, text: `queue ${target.text}`, ...usageFromArgs() });
+    if (!dryRun) render(true);
+    console.log(`queued  ${target.id}  ${target.text}`);
+}
+
+/**
+ * `start "<text>"` opens a new in-flight item; `start <id>` for a queued item promotes it by appending a `promote` row.
+ * Idempotent: an item already in flight is reported and nothing is written.
+ */
+function cmdStart(): void {
+    const entries = readLedger();
+    const target = itemNamedByArg(fold(entries).items);
+    if (!target || target.kind !== 'wip') { cmdLog('wip'); return; }
+    if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
+    if (!isQueued(target)) { console.log(`wip  ${target.id}  ${target.text}  (already in flight)`); return; }
+    append({ id: newId(entries), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() });
+    if (!dryRun) render(true);
+    console.log(`wip  ${target.id}  ${target.text}  (promoted from queued)`);
 }
 
 /** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
@@ -1380,7 +1427,8 @@ function cmdTickets() {
 
 switch (cmd) {
     case 'log': cmdLog('note'); break;
-    case 'start': cmdLog('wip'); break;
+    case 'start': cmdStart(); break;
+    case 'queue': cmdQueue(); break;
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
     case 'note': cmdLog('note'); break;
