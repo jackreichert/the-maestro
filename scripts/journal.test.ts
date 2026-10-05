@@ -610,6 +610,41 @@ test('status separates queued from in flight: --json, --footer and the plain tex
     assert.deepEqual(parse<Doc>(run('status', '--json').out).inflight.map((i) => i.text).sort(), ['parked later', 'running now']);
 });
 
+test('roll keeps queued items open, archives only finished work, and says how many are queued', () => {
+    const done = idOf(run('start', 'finished', ...MARK).out);
+    run('done', done, ...MARK);
+    const later = idOf(run('queue', 'later job', '--stream', 'Launch', ...MARK).out);
+    const parked = idOf(run('start', 'parked job', ...MARK).out);
+    run('queue', parked, ...MARK);
+    const r = run('roll');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /kept open: 0 in flight, 2 queued, 0 awaiting you/);
+    assert.deepEqual(parse<Doc>(run('status', '--json').out).queued.map((i) => i.id).sort(), [later, parked].sort());
+    const archive = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `${new Date().toISOString().slice(0, 10)}.md`), 'utf8');
+    assert.match(archive, /## Queued[^]*later job/, 'the dated note shows what was queued');
+    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
+    assert.equal(run('roll').code, 0, 'a second roll changes nothing about the queue');
+    assert.equal(parse<Doc>(run('status', '--json').out).queued.length, 2);
+});
+
+test('handoff carries queued items tagged queued, apart from in flight, and the delta reports one that moved', () => {
+    seedRegistry();
+    const running = idOf(run('start', 'running job', '--stream', 'Launch', ...MARK).out);
+    const later = idOf(run('queue', 'later job', '--stream', 'Launch', ...MARK).out);
+    assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
+    const day = new Date().toISOString().slice(0, 10);
+    const full = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${day}-Launch.md`), 'utf8');
+    assert.match(full, new RegExp(`\`${running}\` \\[in flight\\] running job`));
+    assert.match(full, new RegExp(`\`${later}\` \\[queued\\] later job`));
+    const until = Date.now() + 5; while (Date.now() < until) { /* spin past the marker ms */ }
+    run('start', later, ...MARK);
+    run('queue', running, ...MARK);
+    assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
+    const delta = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `HANDOFF-${day}b-Launch.md`), 'utf8');
+    assert.match(delta, new RegExp(`\`${later}\` \\[in flight\\] later job`));
+    assert.match(delta, new RegExp(`\`${running}\` \\[queued\\] running job`));
+});
+
 // ── model-name registry ─────────────────────────────────────────────────────
 
 const ledgerFile = () => join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
