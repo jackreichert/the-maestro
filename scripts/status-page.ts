@@ -54,9 +54,9 @@ function journalJson(sub: string, ledger: string, project: string): unknown {
   return JSON.parse(r.stdout);
 }
 
-export interface RegenerateOptions { project: string; ledger: string; statusDir: string; dryRun: boolean; snapshot: boolean }
+export interface RegenerateOptions { project: string; ledger: string; statusDir: string; dryRun: boolean; snapshot: boolean; cachedPrsOnly: boolean }
 
-/** One page rebuild with the real ledger, GitHub and clock. Throws if the ledger cannot be read or no directory is set. */
+/** One page rebuild with the real ledger, GitHub and clock. `cachedPrsOnly` skips the GitHub read and renders the last cached PR set. Throws if the ledger cannot be read or no directory is set. */
 export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!o.statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
@@ -65,7 +65,7 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
     streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
     ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
   };
-  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, command: 'journal.ts status-page', config }, deps);
+  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts status-page', config }, deps);
 }
 
 function main(argv: string[]): number {
@@ -76,7 +76,7 @@ function main(argv: string[]): number {
   const project = v.project || CONFIGURED_PROJECT || CONTAINER_PROJECT;
   const ledger = v.vault || LEDGER_ROOT || VAULT_ROOT;
   const statusDir = v['status-dir'] || statusDirFor(project);
-  const r = regenerate({ project, ledger, statusDir, dryRun: !!v['dry-run'], snapshot: !!v.snapshot });
+  const r = regenerate({ project, ledger, statusDir, dryRun: !!v['dry-run'], snapshot: !!v.snapshot, cachedPrsOnly: false });
   if (v['dry-run']) process.stdout.write(r.page); else console.log(`status-page: wrote ${r.written.join(' and ')}`);
   if (r.prFailure) console.error(`status-page: GitHub read failed (${r.prFailure}); the page carries a warning and uses the last cached PR data`);
   return 0;
