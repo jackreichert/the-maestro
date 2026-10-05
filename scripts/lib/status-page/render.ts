@@ -68,6 +68,21 @@ export function zonedParts(d: Date, tz: string): { date: string; iso: string; hu
   return { date, iso: `${date}T${hm}:${p.second}${off}`, human: `${date} ${hm} ${abbr}`.trim() };
 }
 
+/** `3:05 pm ET`: the clock time of `d` in `tz`, with the US zones' standard and daylight names folded to ET, CT, MT, PT. */
+export function clockLabel(d: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz || undefined, hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' }).formatToParts(d);
+  const get = (type: string): string => parts.find((x) => x.type === type)?.value ?? '';
+  return `${get('hour')}:${get('minute')} ${get('dayPeriod').toLowerCase()} ${get('timeZoneName').replace(/^([ECMP])[SD]T$/, '$1T')}`.trim();
+}
+
+/** How long ago `iso` was, as `12 min`, `3 h` or `5 d`; empty when `iso` is missing or unreadable. */
+export function ageLabel(iso: string | undefined, now: Date): string {
+  const ms = iso ? now.getTime() - Date.parse(iso) : NaN;
+  if (!Number.isFinite(ms)) return '';
+  const min = Math.max(0, Math.round(ms / 60_000));
+  return min < 60 ? `${min} min` : min < 2880 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`;
+}
+
 const keysIn = (cfg: PageConfig, s: string): string[] => [...new Set(s.replace(/\bCVE-\d+/g, '').match(new RegExp(cfg.trackerKeyPattern, 'g')) ?? [])];
 
 interface Ref { label: string; url?: string }
@@ -110,33 +125,53 @@ function prState(p: Pr): string {
 
 interface Row { dev?: Pr; stg?: Pr }
 
-function pairTwins(prs: Pr[]): Row[] {
+/** Develop and staging PRs of one change: the same title or branch, else the only leftover pair in a repo sharing a tracker key. */
+function pairTwins(cfg: PageConfig, prs: Pr[]): Row[] {
   const stg = prs.filter((p) => p.baseRefName === 'staging');
   const rest = prs.filter((p) => p.baseRefName !== 'staging');
-  const used = new Set<Pr>();
-  const rows: Row[] = [];
+  const twin = new Map<Pr, Pr>();
   for (const d of rest) {
-    const t = stg.find((s) => !used.has(s) && s.repo === d.repo && (titleKey(s) === titleKey(d) || branchKey(s) === branchKey(d)));
-    if (t) used.add(t);
-    rows.push({ dev: d, stg: t });
+    const t = stg.find((s) => ![...twin.values()].includes(s) && s.repo === d.repo && (titleKey(s) === titleKey(d) || branchKey(s) === branchKey(d)));
+    if (t) twin.set(d, t);
   }
-  for (const s of stg) if (!used.has(s)) rows.push({ stg: s });
-  return rows.sort((a, b) => ((a.dev ?? a.stg)!.number) - ((b.dev ?? b.stg)!.number));
+  const keyOf = (p: Pr): string => `${p.repo}|${keysIn(cfg, `${p.title} ${p.headRefName}`)[0] ?? p.number}`;
+  const withKey = (list: Pr[], k: string): Pr[] => list.filter((p) => keyOf(p) === k);
+  const freeDev = rest.filter((d) => !twin.has(d));
+  const freeStg = stg.filter((s) => ![...twin.values()].includes(s));
+  for (const d of freeDev) {
+    const [only, ...more] = withKey(freeStg, keyOf(d));
+    if (only && !more.length && withKey(freeDev, keyOf(d)).length === 1) twin.set(d, only);
+  }
+  const used = new Set(twin.values());
+  const rows: Row[] = [...rest.map((d) => ({ dev: d, stg: twin.get(d) })), ...stg.filter((s) => !used.has(s)).map((s) => ({ stg: s }))];
+  return rows.sort((x, y) => ((x.dev ?? x.stg)!.number) - ((y.dev ?? y.stg)!.number));
 }
 
-function prBoard(cfg: PageConfig, prs: Pr[], stream: string, multiRepo: boolean): string[] {
-  const mine = prs.filter((p) => p.stream === stream);
-  if (!mine.length) return [`### ${stream}`, '', 'No open PRs.', ''];
-  const out = [`### ${stream}`, '', '| Ticket | Develop PR | Twin (staging) PR | TL;DR | State |', '|---|---|---|---|---|'];
-  for (const r of pairTwins(mine)) {
-    const lead = (r.dev ?? r.stg)!;
-    const key = keysIn(cfg, `${lead.title} ${lead.headRefName}`)[0];
-    const tl = oneLine(lead.title.replace(typePrefix, '').replace(twinSuffix, ''), 70);
-    const state = r.dev && r.stg ? `dev: ${prState(r.dev)}<br>stg: ${prState(r.stg)}` : prState(lead);
-    const prCell = (p?: Pr): string => (p ? mdLink(prRef(p, prs, multiRepo)) : '-');
-    out.push(`| ${key ? mdLink(trackerRef(cfg, key)) : '-'} | ${prCell(r.dev)} | ${prCell(r.stg)} | ${cell(tl)} | ${state} |`);
+/** What needs a look on a PR: conflicts, failing CI, open threads, requested changes. Empty when nothing does. */
+function prFlags(p: Pr): string {
+  return [p.mergeable === 'CONFLICTING' ? '**CONFLICTING**' : '', p.ci === 'FAILURE' || p.ci === 'ERROR' ? '**CI FAIL**' : '',
+    p.unresolved ? `**${p.unresolved} thr**` : '', p.reviewDecision === 'CHANGES_REQUESTED' ? '**changes requested**' : ''].filter(Boolean).join(' ');
+}
+
+/** One table per stream: ticket | develop PR (base) | staging twin (base, or none) | tl;dr. Streams with no open PR get no table. */
+function prSection(cfg: PageConfig, prs: Pr[], streams: string[]): string[] {
+  const tot = (f: (p: Pr) => boolean): number => prs.filter(f).length;
+  const out = [`## Open PRs (${prs.length})`, '',
+    `${tot((p) => p.isDraft)} draft, ${tot((p) => p.mergeable === 'CONFLICTING')} conflicting, ${tot((p) => p.unresolved > 0)} with unresolved threads, ${tot((p) => p.ci === 'FAILURE' || p.ci === 'ERROR')} failing CI.`, ''];
+  for (const stream of streams) {
+    const mine = prs.filter((p) => p.stream === stream);
+    if (!mine.length) continue;
+    const multiRepo = new Set(mine.map((p) => p.repo)).size > 1;
+    out.push(`### ${stream} (${mine.length})`, '', '| Ticket | Develop PR (base) | Staging twin (base) | TL;DR |', '|---|---|---|---|');
+    for (const r of pairTwins(cfg, mine)) {
+      const lead = (r.dev ?? r.stg)!;
+      const key = keysIn(cfg, `${lead.title} ${lead.headRefName}`)[0];
+      const prCell = (p: Pr | undefined, none: string): string => (p ? [mdLink(prRef(p, prs, multiRepo)), prFlags(p)].filter(Boolean).join(' ') : none);
+      out.push(`| ${key ? mdLink(trackerRef(cfg, key)) : '-'} | ${prCell(r.dev, '-')} | ${prCell(r.stg, 'none')} | ${cell(oneLine(lead.title.replace(typePrefix, '').replace(twinSuffix, ''), 70))} |`);
+    }
+    out.push('');
   }
-  return [...out, ''];
+  return [...out, ...stackDiagram(prs)];
 }
 
 function stackDiagram(prs: Pr[]): string[] {
@@ -178,25 +213,32 @@ function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | undefined
   return { prs: refs, tracker: keysIn(cfg, a.text).map((k) => trackerRef(cfg, k)), note: ticket ? ticketNoteRef(cfg, ticket) : undefined };
 }
 
-/** One row per ask with short cells, then one reply line per ask under the table: the links (which are long) and an answer stub. */
-function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<string, string>, streams: string[]): string[] {
-  const out = [`## Needs you (${asks.length})`, ''];
-  for (const s of streams) {
-    const mine = asks.filter((a) => (streams.includes(a.stream ?? '') ? a.stream : OTHER) === s);
-    out.push(`### ${s} (${mine.length})`, '');
-    if (!mine.length) { out.push('Nothing awaiting.', ''); continue; }
-    out.push('| Id | Decision | Ticket | PR (base) |', '|---|---|---|---|');
-    const replies: string[] = [];
-    for (const a of mine) {
-      const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
-      const shownPrs = refs.prs.slice(0, 3).map((r) => r.label).join('; ') + (refs.prs.length > 3 ? ` +${refs.prs.length - 3}` : '');
-      out.push(`| \`${a.id}\` | ${cell(oneLine(a.text, CELL_MAX))} | ${refs.note?.label ?? refs.tracker[0]?.label ?? '-'} | ${shownPrs || '-'} |`);
-      const links = [...refs.prs, ...refs.tracker, ...(refs.note ? [refs.note] : [])].filter((r) => r.url).map(mdLink);
-      replies.push(`- [ ] \`${a.id}\`${links.length ? ` ${links.join(' · ')}` : ''}`, '  > answer: ');
-    }
-    out.push('', ...replies, '');
+/** The decision an ask puts to the user (up to its first question mark) and the context after it. */
+export function splitAsk(text: string): { needed: string; context: string } {
+  const clean = text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  const q = clean.indexOf('?');
+  return q === -1 ? { needed: clean, context: '' } : { needed: clean.slice(0, q + 1), context: clean.slice(q + 1).trim() };
+}
+
+/** One table of every ask, tagged with its stream, then under it one reply line per ask with its links and a `> answer:` stub. */
+function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<string, string>, streams: string[], today: string): string[] {
+  const out = [`## Needs attention now (${asks.length})`, ''];
+  if (!asks.length) return [...out, 'Nothing awaiting.', ''];
+  const askStream = (a: Item): string => (streams.includes(a.stream ?? '') ? a.stream! : OTHER);
+  const ordered = streams.flatMap((s) => asks.filter((a) => askStream(a) === s));
+  out.push('| Id | Stream | Context | Ticket | Needed from you |', '|---|---|---|---|---|');
+  const replies: string[] = [];
+  for (const a of ordered) {
+    const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
+    const { needed, context } = splitAsk(a.text);
+    const age = daysBetween(a.date, today);
+    const tl = [oneLine(context, 110), age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ');
+    const ticket = [...(refs.note ? [refs.note] : []), ...refs.tracker.slice(0, 2)].map(mdLink).join(' · ');
+    out.push(`| \`${a.id}\` | ${askStream(a)} | ${cell(tl)} | ${ticket || '-'} | ${cell(oneLine(needed, 130))} |`);
+    const links = [...refs.prs, ...refs.tracker, ...(refs.note ? [refs.note] : [])].filter((r) => r.url).map(mdLink);
+    replies.push(`- [ ] \`${a.id}\`${links.length ? ` ${links.join(' · ')}` : ''}`, '  > answer: ');
   }
-  return out;
+  return [...out, '', ...replies, ''];
 }
 
 // ── priorities ──────────────────────────────────────────────────────────────
@@ -219,23 +261,6 @@ function prioritiesSection(cfg: PageConfig, state: PrioritiesState, asks: Item[]
 
 const li = (a: Item): string => `- \`${a.id}\` ${oneLine(a.text, 200)}`;
 
-function attention(cfg: PageConfig, prs: Pr[], asks: Item[], today: string): string[] {
-  const lines: string[] = [];
-  for (const p of prs) {
-    const flags = [
-      p.mergeable === 'CONFLICTING' ? 'CONFLICTING' : '',
-      p.unresolved ? `${p.unresolved} unresolved threads` : '',
-      p.ci === 'FAILURE' || p.ci === 'ERROR' ? 'CI failing' : '',
-    ].filter(Boolean);
-    if (flags.length) lines.push(`- ${mdLink(prRef(p, prs, true))} ${flags.join(', ')}: ${oneLine(p.title.replace(typePrefix, ''), 60)}`);
-  }
-  for (const a of asks) {
-    const age = daysBetween(a.date, today);
-    if (age > 3) lines.push(`- ask \`${a.id}\` is ${age} days old: ${oneLine(a.text, 90)}`);
-  }
-  return ['## Needs attention now', '', ...(lines.length ? lines : ['Nothing needs attention.']), ''];
-}
-
 /** The whole page. */
 export function renderPage(input: PageInput): { page: string; date: string } {
   const { now, status, triage, prs, ticketMap, priorities, config: cfg, command } = input;
@@ -248,28 +273,23 @@ export function renderPage(input: PageInput): { page: string; date: string } {
   const prPriorityStreams = priorities.state === 'ok' ? priorities.items.map((p) => p.stream) : [];
   const streams = streamOrder(cfg, [...asks.map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...prs.map((p) => p.stream), ...prPriorityStreams]);
   const t = zonedParts(now, cfg.tz);
-  const askStream = (a: Item): string => (streams.includes(a.stream ?? '') ? a.stream! : OTHER);
-  const counts = streams.map((s) => `${s} ${asks.filter((a) => askStream(a) === s).length}`).join(', ');
-  const tot = (f: (p: Pr) => boolean): number => prs.filter(f).length;
-  const multiRepo = (s: string): boolean => new Set(prs.filter((p) => p.stream === s).map((p) => p.repo)).size > 1;
+  const age = (i: Item): string => ageLabel(i.ts, now);
+  const withAge = (i: Item, extra: string): string => `${li(i)}${extra} · ${age(i) || 'age unknown'}`;
+  const doneAt = (i: Item): string => (i.ts && Number.isFinite(Date.parse(i.ts)) ? ` · ${clockLabel(new Date(i.ts), cfg.tz)}` : '');
+  const section = (title: string, rows: string[]): string[] => [`### ${title} (${rows.length})`, '', ...(rows.length ? rows : ['None.']), ''];
 
   const page = [
     '---', 'type: status', `updated: ${t.iso}`, '---', '',
     '# Status now', '',
+    `Updated ${clockLabel(now, cfg.tz)} (${t.date}). Regenerated by \`${command}\`.`, '',
     ...prioritiesSection(cfg, priorities, asks, status.inflight, prs, streams),
-    `Generated ${t.human}. Regenerated by \`${command}\`.`, '',
-    `Awaiting you: ${asks.length} (${counts}). Open PRs: ${prs.length} (${tot((p) => p.isDraft)} draft, ${tot((p) => p.mergeable === 'CONFLICTING')} conflicting, ${tot((p) => p.unresolved > 0)} with unresolved threads, ${tot((p) => p.ci === 'FAILURE' || p.ci === 'ERROR')} failing CI).`, '',
-    ...attention(cfg, prs, asks, t.date),
-    ...asksSection(cfg, asks, prs, tickets, streams),
-    '## PR board', '',
-    ...streams.flatMap((s) => prBoard(cfg, prs, s, multiRepo(s))),
-    ...stackDiagram(prs),
-    `## In flight (${status.inflight.length})`, '', ...(status.inflight.length ? status.inflight.map((i) => `${li(i)} [${i.stream ?? OTHER}]`) : ['None.']), '',
-    `## Blocked (${blocked.length})`, '', ...(blocked.length ? blocked.map((b) => `${li(b)} (gate: ${b.gate ?? 'none recorded'})`) : ['None.']), '',
-    `## Deferred (${deferred.length})`, '', ...(deferred.length ? deferred.map((d) => `${li(d)} (until ${d.deferredUntil})`) : ['None.']), '',
-    `## Done today (${status.done.length})`, '', ...(status.done.length ? status.done.map(li) : ['None.']), '',
-    '---', '',
-    'Agents are not listed (they are session state).', '',
+    ...asksSection(cfg, asks, prs, tickets, streams, t.date),
+    ...prSection(cfg, prs, streams),
+    '## Other status and findings', '',
+    ...section('In flight', status.inflight.map((i) => withAge(i, ` [${i.stream ?? OTHER}]`))),
+    ...section('Blocked', blocked.map((b) => withAge(b, ` (gate: ${b.gate ?? 'none recorded'})`))),
+    ...section('Recent done', status.done.map((d) => `${li(d)}${doneAt(d)}`)),
+    ...section('Deferred', deferred.map((d) => `${li(d)} (until ${d.deferredUntil})`)),
   ].join('\n');
   return { page, date: t.date };
 }
