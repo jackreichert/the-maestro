@@ -47,3 +47,7 @@ test('with no ledger evidence: override, then repo map, then other', () => {
 test('CVE ids are not tickets', () => {
   assert.deepEqual(prKeys(pr(1, 'fix: CVE-2026-1234 in dep FAKE-4'), KEY), ['FAKE-4']);
 });
+
+test('a lower-case fragment of a branch name is not a tracker key', () => {
+  assert.deepEqual(prKeys(pr(1, 'fix: bom', { headRefName: 'fix/utf-8-bom' }), KEY), []);
+});
