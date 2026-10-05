@@ -12,8 +12,9 @@ import { spawnSync } from 'node:child_process';
 export type GitRun = (args: string[], timeoutMs?: number) => { status: number | null; stdout: string };
 
 export type UpdateState = 'current' | 'behind' | 'ahead' | 'diverged' | 'dirty' | 'pulled' | 'unchecked';
-export interface UpdateReport { state: UpdateState; behind: number; ahead: number; dirty: boolean; upstream: string; line: string }
-export interface UpdateOptions { repo: string; autoPull: boolean; name?: string; git?: GitRun; fetchTimeoutMs?: number }
+export interface UpdateReport { state: UpdateState; behind: number; ahead: number; dirty: boolean; upstream: string; line: string; nudge: string }
+type Compared = Omit<UpdateReport, 'nudge'>;
+export interface UpdateOptions { repo: string; autoPull: boolean; autoPullSet?: boolean; name?: string; git?: GitRun; fetchTimeoutMs?: number }
 
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -23,10 +24,24 @@ export const gitIn = (repo: string): GitRun => (args, timeoutMs = 10_000) => {
   return { status: r.status, stdout: r.stdout ?? '' };
 };
 
-const silent = (upstream = ''): UpdateReport => ({ state: 'unchecked', behind: 0, ahead: 0, dirty: false, upstream, line: '' });
+const silent = (upstream = ''): Compared => ({ state: 'unchecked', behind: 0, ahead: 0, dirty: false, upstream, line: '' });
 
-/** Fetches and reports. Not a git checkout, a detached HEAD or a branch with no upstream are silent: nothing to compare. */
+/** The one-line ask shown while auto_pull has never been answered (neither on nor off). */
+export const autoPullNudge = (name: string): string =>
+  `${name}: auto_pull is not set. To keep this checkout current, set "auto_pull: on" in ~/.config/the-maestro/config.md (or MAESTRO_AUTO_PULL=on). It only fast-forwards a clean, purely-behind checkout; it never merges, rebases or resets. Set "auto_pull: off" to silence this.`;
+
+/**
+ * Fetches and reports. Not a git checkout, a detached HEAD or a branch with no upstream are silent: nothing to compare.
+ * With `autoPullSet: false` (auto_pull never answered) a checkout that has an upstream also carries the `nudge` line;
+ * the default `true` means no nudge.
+ */
 export function checkForUpdate(opts: UpdateOptions): UpdateReport {
+  const report = compare(opts);
+  const nudge = report.upstream && opts.autoPullSet === false ? autoPullNudge(opts.name ?? 'the-maestro') : '';
+  return { ...report, nudge };
+}
+
+function compare(opts: UpdateOptions): Compared {
   const git = opts.git ?? gitIn(opts.repo);
   const name = opts.name ?? 'the-maestro';
   const upstream = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);

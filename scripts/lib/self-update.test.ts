@@ -101,3 +101,31 @@ test('the only git commands run are read-only ones, fetch, and merge --ff-only',
   assert.ok(verbs.includes('merge --ff-only @{u}'));
   for (const v of verbs) assert.doesNotMatch(v, /^(rebase|reset|checkout|pull|merge(?! --ff-only))/);
 });
+
+const NUDGE = /^the-maestro: auto_pull is not set\. To keep this checkout current, set "auto_pull: on" in ~\/\.config\/the-maestro\/config\.md \(or MAESTRO_AUTO_PULL=on\)\. It only fast-forwards a clean, purely-behind checkout; it never merges, rebases or resets\. Set "auto_pull: off" to silence this\.$/;
+
+test('an unanswered auto_pull adds the nudge beside the update line, current or not; answered (on or off) or unspecified adds none', () => {
+  const w = world();
+  assert.match(checkForUpdate({ repo: w.skill, autoPull: false, autoPullSet: false }).nudge, NUDGE);
+  assert.equal(checkForUpdate({ repo: w.skill, autoPull: false, autoPullSet: false }).line, '', 'the update line is independent of the nudge');
+  w.publish('b.txt', '2');
+  const behind = checkForUpdate({ repo: w.skill, autoPull: false, autoPullSet: false });
+  assert.match(behind.line, /1 commit\(s\) behind/);
+  assert.match(behind.nudge, NUDGE);
+  assert.equal(checkForUpdate({ repo: w.skill, autoPull: false, autoPullSet: true }).nudge, '', 'off, once chosen, is silent');
+  assert.equal(checkForUpdate({ repo: w.skill, autoPull: true, autoPullSet: true }).nudge, '');
+  assert.equal(checkForUpdate({ repo: w.skill, autoPull: false }).nudge, '', 'callers that do not pass autoPullSet get no nudge');
+});
+
+test('the nudge is silent where the update check is: not a repository, no upstream; it still shows when the fetch fails', () => {
+  const w = world();
+  const ask = { autoPull: false, autoPullSet: false };
+  assert.equal(checkForUpdate({ repo: mkdtempSync(join(tmpdir(), 'selfupd-plain-')), ...ask }).nudge, '');
+  sh(w.skill, 'checkout', '-q', '-b', 'topic');
+  assert.equal(checkForUpdate({ repo: w.skill, ...ask }).nudge, '');
+  sh(w.skill, 'checkout', '-q', 'main');
+  rmSync(w.origin, { recursive: true });
+  const r = checkForUpdate({ repo: w.skill, ...ask });
+  assert.match(r.line, /could not fetch/);
+  assert.match(r.nudge, NUDGE);
+});

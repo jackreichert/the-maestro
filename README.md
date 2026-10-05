@@ -35,6 +35,7 @@ flowchart LR
 ## Contents
 
 - [Quick start](#quick-start)
+- [Updating](#updating)
 - [Concepts](#concepts)
 - [Scripts and commands](#scripts-and-commands)
 - [Configuration](#configuration)
@@ -81,6 +82,24 @@ node $J status --project my-workspace
 Every new ledger entry needs `--model` and `--used`, so the record says which model did the work with what. Unknown history is `unrecorded`, unmeasured tokens are `unmeasured`; do not invent either.
 
 Optional next steps: install xenophon against the same `VAULT_ROOT` for tickets, write a config file ([Configuration](#configuration)), and set `ledger_root` if you want the day-to-day ledger outside your vault so it stays out of vault search.
+
+## Updating
+
+At the start of a session `journal.ts prime` fetches this skill's own checkout and says so in one line when it is behind, ahead, diverged or dirty; it is silent when the checkout is current, is not a git repository or has no upstream branch. `update_check: off` (or `--no-update-check`) skips the fetch.
+
+Keeping the checkout current is opt-in. Until you answer, `prime` adds one more line each session: `auto_pull is not set`. Your agent asks you once and records the answer; you can also do it yourself:
+
+```bash
+node ~/.claude/skills/the-maestro/scripts/journal.ts autopull on    # or: off
+```
+
+That writes this line into the `maestro-config` block of `~/.config/the-maestro/config.md` (creating the file if needed, leaving every other line alone), or set `MAESTRO_AUTO_PULL=on` in the environment:
+
+```
+auto_pull: on
+```
+
+With `auto_pull: on`, `prime` runs `git merge --ff-only` and nothing else, and only when the checkout is clean and purely behind its upstream. It never merges, rebases or resets, and a dirty, ahead or diverged checkout is only reported. `auto_pull: off` keeps today's behaviour (report, never pull) and silences the extra line.
 
 ## Concepts
 
@@ -245,6 +264,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `log ... --kind blocked --gate <gate>` | Name what a blocked item waits for: `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. `resume` reports whether it cleared |
 | `defer <id> --until YYYY-MM-DD` | Hide an open item from the board until that date |
 | `status` | Open items and done today. `--full`, `--footer` (the reply-footer Ledger lines and a Session line) |
+| `autopull on\|off` | Write `auto_pull` into the user config file (`MAESTRO_LOCAL_CONFIG` honoured): edits or adds the line in the `maestro-config` block, keeps everything else, idempotent. Needs no ledger |
 | `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch |
 | `standup [--date D]` | End-of-day summary for pasting |
 | `triage` | Box every open item, flag the stale, unpromoted and unticketed. `--date`, `--since`, `--apply` (closes recorded rules), `--json` |
@@ -434,7 +454,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
 | `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.ts resume` checks |
 | `update_check` | `MAESTRO_UPDATE_CHECK` | on | `off`, `false`, `no` or `0` stops `prime` from fetching the skill's own repo and reporting when it is behind, ahead, diverged or dirty. A checkout that is not a git repository, is on a detached HEAD or has no upstream is never reported |
-| `auto_pull` | `MAESTRO_AUTO_PULL` | off | `on`, `true`, `yes` or `1`: when `prime` finds the skill's checkout clean and purely behind its upstream, it runs `git merge --ff-only` and says so. Nothing else is ever run (no merge, rebase or reset), and a dirty, ahead or diverged checkout is only reported |
+| `auto_pull` | `MAESTRO_AUTO_PULL` | off (unset until answered) | `on`, `true`, `yes` or `1`: when `prime` finds the skill's checkout clean and purely behind its upstream, it runs `git merge --ff-only` and says so. Nothing else is ever run (no merge, rebase or reset), and a dirty, ahead or diverged checkout is only reported. While neither `on` nor `off` (or `false`, `no`, `0`) is set anywhere, `prime` adds a line asking you to choose; `journal.ts autopull on\|off` answers it |
 | `resume_gh` | `MAESTRO_RESUME_GH` | on | `off`, `false`, `no` or `0` stops `resume` from calling `gh` |
 | `ledger_git_autocommit` | `MAESTRO_LEDGER_GIT_AUTOCOMMIT` | off | `on`, `true`, `yes` or `1`: `roll` commits the ledger root after a clean `verify` |
 | `approvals_review_day` | `MAESTRO_APPROVALS_REVIEW_DAY` | `friday` | Weekday the greeting brings the approvals digest; a non-weekday falls back to the default |
