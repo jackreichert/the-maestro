@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+/**
+ * status-page.ts: regenerate the always-current status page (NOW.md) from the ledger and GitHub.
+ * Normally run as `journal.ts status-page`, which passes the ledger root and project through.
+ *
+ *   status-page.ts [--dry-run] [--snapshot] [--status-dir <dir>] [--vault <ledger root>] [--project <name>]
+ *
+ *   --dry-run         print the page to stdout; write nothing
+ *   --snapshot        also write YYYY-MM-DD.md (today's file, overwritten by later runs)
+ *   --status-dir DIR  where the page and its files live (default: status_dir, else <vault_root>/Projects/<project>/Status)
+ *
+ * Reads `journal.ts status --json` and `triage --json`, a GitHub search of your open PRs (retried 3 times on a gateway
+ * error) and, beside the page, ticket-map.json ({ "<ticket>": ["<ask id>"] }), stream-overrides.json ({ "repo#N": "Stream" })
+ * and priorities.md. Streams, tracker URLs, vault name and the repo-to-stream map come from local-config.ts.
+ * Exits non-zero, writing nothing, if the ledger or GitHub cannot be read.
+ */
+import { execFileSync, spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
+import { generate } from './lib/status-page/generate.ts';
+import type { GenerateDeps, RawPr } from './lib/status-page/generate.ts';
+
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+
+const PR_QUERY = `query{search(query:"${PR_SEARCH} archived:false",type:ISSUE,first:100){issueCount nodes{... on PullRequest{
+number title url isDraft baseRefName headRefName mergeable mergeStateStatus reviewDecision repository{nameWithOwner}
+reviewThreads(first:100){nodes{isResolved}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`;
+
+const sleep = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+/** The first line of a caught value's message. */
+const firstLine = (e: unknown): string => (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? '';
+
+function fetchPrs(): RawPr[] {
+  let last = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) sleep(3000);
+    try {
+      const out = execFileSync('gh', ['api', 'graphql', '-f', `query=${PR_QUERY}`], { encoding: 'utf8', maxBuffer: 64 << 20, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
+      return (JSON.parse(out).data.search.nodes as RawPr[]).filter((n) => n && n.number);
+    } catch (e) { last = firstLine(e); }
+  }
+  throw new Error(`gh read failed after 3 tries: ${last}`);
+}
+
+/** `journal.ts <sub> --json` run as a child so the page sees exactly what `status` and `triage` print. */
+function journalJson(sub: string, ledger: string, project: string): unknown {
+  const r = spawnSync(process.execPath, [`${HERE}journal.ts`, sub, '--json', '--vault', ledger, '--project', project],
+    { encoding: 'utf8', maxBuffer: 64 << 20, timeout: 120_000 });
+  if (r.status !== 0) throw new Error(`ledger read failed (journal.ts ${sub}): ${(r.stderr || r.stdout).split('\n')[0]}`);
+  return JSON.parse(r.stdout);
+}
+
+function main(argv: string[]): number {
+  const { values: v } = parseArgs({ args: argv, options: {
+    'dry-run': { type: 'boolean' }, snapshot: { type: 'boolean' }, 'status-dir': { type: 'string' }, vault: { type: 'string' }, project: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+  } });
+  if (v.help) { console.log('Usage: status-page.ts [--dry-run] [--snapshot] [--status-dir <dir>] [--vault <ledger root>] [--project <name>]'); return 0; }
+  const project = v.project || CONFIGURED_PROJECT || CONTAINER_PROJECT;
+  const ledger = v.vault || LEDGER_ROOT || VAULT_ROOT;
+  const statusDir = v['status-dir'] || statusDirFor(project);
+  if (!ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
+  if (!statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
+  const deps: GenerateDeps = { journal: (sub) => journalJson(sub, ledger, project), fetchPrs, sleep, now: () => new Date() };
+  const config = {
+    streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
+    ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
+  };
+  const command = 'journal.ts status-page';
+  const r = generate({ statusDir, dryRun: !!v['dry-run'], snapshot: !!v.snapshot, command, config }, deps);
+  if (v['dry-run']) process.stdout.write(r.page); else console.log(`status-page: wrote ${r.written.join(' and ')}`);
+  return 0;
+}
+
+const isMain = (): boolean => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isMain()) {
+  try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error(`status-page: ${firstLine(e)}`); process.exitCode = 1; }
+}

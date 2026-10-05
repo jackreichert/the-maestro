@@ -321,3 +321,18 @@ test('projects_dir: unset follows container_root, not the working directory; an 
     assert.equal(viaTilde, viaRoot, 'a leading ~/ is expanded');
     assert.equal(show({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_PROJECTS_DIR: '/explicit/dir' }, elsewhere).CLAUDE_PROJECTS_DIR, '/explicit/dir');
 });
+
+test('status page settings: unset means nothing hardcoded; the file and the environment set them', () => {
+    const none = show();
+    assert.equal(none.STATUS_DIR, '(unset)');
+    assert.equal(none.STATUS_STREAMS, '(unset)');
+    assert.equal(none.TRACKER_URL_BASE, '(unset)');
+    assert.equal(none.TICKET_NOTE_PATH, 'Projects/{prefix}/Tickets/{id}');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('vault_root: /v/MyVault\nstatus_streams: Alpha, Beta\nstatus_repo_streams: api=Alpha, web=Beta\nobsidian_vault: Named'));
+    const v = show();
+    assert.equal(v.STATUS_STREAMS, 'Alpha, Beta');
+    assert.equal(v.STATUS_REPO_STREAMS, 'api=Alpha, web=Beta');
+    assert.equal(v.OBSIDIAN_VAULT, 'Named');
+    assert.equal(show({ MAESTRO_OBSIDIAN_VAULT: '' }).OBSIDIAN_VAULT, 'MyVault', 'falls back to the vault_root folder name');
+    assert.equal(show({ MAESTRO_STATUS_DIR: '/s' }).STATUS_DIR, '/s');
+});
