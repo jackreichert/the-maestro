@@ -3,7 +3,7 @@
  * Every outside read comes in through `deps`, so tests run it with no ledger, no gh and no clock.
  * Writes `<statusDir>/NOW.md` (and `<statusDir>/YYYY-MM-DD.md` with `snapshot`) and the watcher's `.now-seen.json`, each through a temp file and a rename.
  * Edits the user typed into the page that the status watcher has not reported yet are copied into the new page (see inline.ts).
- * Exit paths that fail before the write leave the old page as it was: a partial page is never written.
+ * Only one rebuild runs at a time (lock.ts). Exit paths that fail before the write leave the old page as it was: a partial page is never written.
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,6 +14,7 @@ import type { StreamEvidence } from './streams.ts';
 import { carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
 import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
+import { acquireLock, processAlive } from './lock.ts';
 import { NOW_FILE, readNow, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
 
 /** A pull request as the GraphQL search returns it. */
@@ -32,6 +33,8 @@ export interface GenerateDeps {
   fetchPrs(): RawPr[];
   sleep(ms: number): void;
   now(): Date;
+  /** Whether a process exists, for stale-lock recovery (default: ask the OS). */
+  pidAlive?(pid: number): boolean;
   /** Called after the page on disk is read and before it is rewritten: the window in which a user's save can land. Tests use it to land one. */
   beforeWrite?(): void;
 }
@@ -79,8 +82,14 @@ function pendingEdits(statusDir: string, current: string | null): { edits: Unpro
   return { edits: unprocessed(extractFields(current), baseline, meta ? meta.priorities_seen : undefined), seenPriorities };
 }
 
-/** Builds the page and, unless `dryRun`, writes it. Throws before writing anything if a read fails. */
+/** Builds the page and, unless `dryRun`, writes it, holding `.now.lock` so two rebuilds never run at once. Throws before writing anything if a read fails. */
 export function generate(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
+  if (opts.dryRun) return build(opts, deps);
+  const release = acquireLock(opts.statusDir, { nowMs: () => deps.now().getTime(), sleep: deps.sleep, pidAlive: deps.pidAlive ?? processAlive, pid: process.pid });
+  try { return build(opts, deps); } finally { release(); }
+}
+
+function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
   const { statusDir, config } = opts;
   const overrides = readJson<Record<string, string>>(join(statusDir, 'stream-overrides.json'));
   const ticketMap = readJson<Record<string, string[]>>(join(statusDir, 'ticket-map.json'));

@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/status-page/generate.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generate, loadPrs } from './generate.ts';
@@ -189,4 +189,63 @@ test('sections come in the order priorities, needs attention, open PRs, other st
   assert.match(page, /- `aa11` building a thing \[Alpha\] · 2 h\n/);
   assert.match(page, /- `ee55` waiting on a vendor \(gate: none recorded\) · 30 min\n/);
   assert.match(page, /- `dd44` shipped · 10:00 am ET\n/);
+});
+
+/** A clock that only moves when the code sleeps, so lock waits take no real time. */
+const fakeClock = (startMs: number) => {
+  let t = startMs;
+  return { now: () => new Date(t), sleep: (ms: number) => { t += ms; }, at: () => t };
+};
+const lockPath = (d: string): string => join(d, '.now.lock');
+
+test('a rebuild holds .now.lock while it runs and removes it after, even when it fails', () => {
+  const d = dir();
+  let during = false;
+  generate(opts(d), deps([], { journal: (sub) => { during = existsSync(lockPath(d)); return board[sub]; } }));
+  assert.equal(during, true);
+  assert.equal(existsSync(lockPath(d)), false);
+  assert.throws(() => generate(opts(d), deps([], { journal: () => { throw new Error('ledger read failed'); } })), /ledger read failed/);
+  assert.equal(existsSync(lockPath(d)), false, 'a failed run still releases the lock');
+});
+
+test('a second rebuild waits for a live holder, then runs once the lock is released', () => {
+  const d = dir();
+  const clock = fakeClock(NOW.getTime());
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: clock.at() }));
+  let sleeps = 0;
+  const r = generate(opts(d), deps([], { now: clock.now, pidAlive: () => true, sleep: (ms) => { clock.sleep(ms); if (++sleeps === 3) rmSync(lockPath(d)); } }));
+  assert.equal(sleeps, 3);
+  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  assert.equal(r.written.length, 1);
+});
+
+test('a rebuild gives up with "already running" when a live holder keeps the lock past the timeout, and writes nothing', () => {
+  const d = dir();
+  const clock = fakeClock(NOW.getTime());
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: clock.at() }));
+  assert.throws(() => generate(opts(d), deps([], { now: clock.now, sleep: clock.sleep, pidAlive: () => true })), /already running \(pid 4242/);
+  assert.equal(existsSync(join(d, 'NOW.md')), false);
+  assert.equal(readFileSync(lockPath(d), 'utf8').includes('4242'), true, 'the holder\'s lock is left alone');
+});
+
+test('a lock whose holder is gone, or that is older than 2 minutes, is taken over', () => {
+  for (const [label, holder, alive] of [['dead holder', { pid: 4242, at: NOW.getTime() }, false], ['old lock', { pid: 4242, at: NOW.getTime() - 121_000 }, true]] as const) {
+    const d = dir();
+    writeFileSync(lockPath(d), JSON.stringify(holder));
+    const clock = fakeClock(NOW.getTime());
+    let sleeps = 0;
+    generate(opts(d), deps([], { now: clock.now, sleep: (ms) => { sleeps++; clock.sleep(ms); }, pidAlive: () => alive }));
+    assert.equal(sleeps, 0, `${label}: no waiting`);
+    assert.equal(existsSync(join(d, 'NOW.md')), true, label);
+    assert.equal(existsSync(lockPath(d)), false, label);
+  }
+});
+
+test('an unreadable lock file counts as stale; --dry-run neither takes nor waits for the lock', () => {
+  const d = dir();
+  writeFileSync(lockPath(d), 'not json');
+  generate(opts(d), deps([]));
+  assert.equal(existsSync(join(d, 'NOW.md')), true);
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: NOW.getTime() }));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { pidAlive: () => true })).page, /# Status now/);
 });
