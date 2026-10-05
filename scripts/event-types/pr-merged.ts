@@ -6,6 +6,7 @@
  * "On every merge") starts from them. A PR closed without merging is informational. The title is untrusted data.
  */
 import { TRACKER_KEY_PATTERN } from '../local-config.ts';
+import { markPrsDirty } from '../lib/status-page/dirty.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
 export interface PrMergedState { state: string; repo: string; number: string; title: string; head: string; base: string; keys: string[] }
@@ -38,7 +39,14 @@ export function check(target: string, ctx: Pick<CheckContext, 'run'>): PrMergedS
 
 const oneLine = (t: unknown, max = MAX_TITLE): string => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
+/** The events for a state change. Any event also marks the status page's PR data dirty (see lib/status-page/dirty.ts). */
 export function diff(prev: PrMergedState | null, next: PrMergedState): WatchEvent[] {
+  const events = changes(prev, next);
+  if (events.length) markPrsDirty();
+  return events;
+}
+
+function changes(prev: PrMergedState | null, next: PrMergedState): WatchEvent[] {
   if (next.state === prev?.state) return [];
   const pr = `${next.repo}#${next.number}`;
   if (next.state === 'MERGED') {

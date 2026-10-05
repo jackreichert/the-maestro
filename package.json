@@ -7,7 +7,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'scripts/**/*.test.ts'"
+    "test": "MAESTRO_STATUS_DIR=\"$(mktemp -d)\" node --test 'scripts/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",

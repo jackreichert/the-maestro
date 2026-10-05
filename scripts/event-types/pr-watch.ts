@@ -20,6 +20,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH } from '../local-config.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
+import { markPrsDirty } from '../lib/status-page/dirty.ts';
 import type { CheckContext, Watch, WatchEvent } from '../lib/types.ts';
 
 /** pr-watch never reads the clock, so a check needs everything the loop passes except `now`. */
@@ -248,10 +249,17 @@ function changesBetween(prev: Board, next: Board): string[] {
 }
 
 /**
+ * Any event also touches the status page's PR-dirty marker (lib/status-page/dirty.ts), so the page's PR tables refresh.
  * diff(null, next) is the first check: nothing "changed", but standing conditions not yet told about are worth waking for
  * (none at all after a baseline). A prev without a board is the pre-loop shape: next.carried then holds the snapshot adopted from its file.
  */
 export function diff(prev: unknown, next: PrWatchState): WatchEvent[] {
+  const events = changes(prev, next);
+  if (events.length) markPrsDirty();
+  return events;
+}
+
+function changes(prev: unknown, next: PrWatchState): WatchEvent[] {
   const base: Partial<Snapshot> | undefined = hasBoard(prev) ? prev : next.carried;
   if (next.silent && !base) return [];
   const before = base?.board ?? next.board;
