@@ -236,6 +236,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [journal.ts](#journalts) | The ledger: log, board, standup, streams, claims, handoff, roll |
 | [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets and handoffs |
 | [prs-snapshot.ts](#prs-snapshotts) | Mid-day PR board snapshot and actionable diff |
+| [status-page.ts](#status-pagets) | The always-current status page, with today's priorities and inline answers |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
@@ -263,9 +264,9 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `rule "<text>" --ref <file>` | Record a decision already made. Refuses unless every `--ref` is an existing file; never shows as open |
 | `log ... --kind blocked --gate <gate>` | Name what a blocked item waits for: `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. `resume` reports whether it cleared |
 | `defer <id> --until YYYY-MM-DD` | Hide an open item from the board until that date |
-| `status` | Open items and done today. `--full`, `--footer` (the reply-footer Ledger lines and a Session line) |
+| `status` | Open items and done today. `--full`, `--footer` (the reply-footer Ledger lines and a Session line, then `**Status page:** <uri>` when a status page is configured) |
 | `autopull on\|off` | Write `auto_pull` into the user config file (`MAESTRO_LOCAL_CONFIG` honoured): edits or adds the line in the `maestro-config` block, keeps everything else, idempotent. Needs no ledger |
-| `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch |
+| `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch. Once a status directory exists it also prints `Priorities not set for today — orchestrator will ask` when today's priorities are missing or out of date, and the orchestrator asks you |
 | `standup [--date D]` | End-of-day summary for pasting |
 | `triage` | Box every open item, flag the stale, unpromoted and unticketed. `--date`, `--since`, `--apply` (closes recorded rules), `--json` |
 | `roll` | Archive finished work to a dated note, keep open items; also removes stale worktrees, but only inside the configured `container_root` (it refuses and the roll goes on when none is set or you are outside it). Archives and commits first, then sweeps; kept worktrees print as counts by reason. `--strict` refuses on triage blockers, `--fast` skips the sweep and scratch review, `--verbose` lists every kept worktree, `--container`, `--no-worktree-sweep`, `--dry-run` |
@@ -287,6 +288,8 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `backfill` | Propose a stream for untagged items; read-only by default. `--dry-run`, `--samples`, `--out`, `--apply --min-confidence high\|medium\|low` |
 | `handoff --stream <name>` or `--all` | Scaffold the five-part handoff, for one stream or generated across every stream (`--out`, `--since`, `--force`, `--container`). It fills Session metrics from `token-metrics.ts`; `--learn "<text>"` and `--next "<text>"` fill sections 2 and 5; `--all` summarises the sweep as counts by reason (`--verbose` lists them); `--update-context [--context-file <path>]` points the project `CONTEXT.md` at the new note with a `Latest handoff:` line |
 | `resume` | The verify-on-resume checklist: ledger status, `gh pr list`, `pgrep` for each loop pattern, gate checks |
+| `status-page` | Regenerate the status page (see [status-page.ts](#status-pagets)). `--snapshot`, `--dry-run`, `--status-dir` |
+| `priorities set "<text>" ...`, `priorities show` | Write or read today's priorities (`<status dir>/priorities.md`); `"<text> \| <Stream>"` maps one to a stream. `--date`, `--status-dir`, `--json` |
 
 Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed rules for each command are in [reference/ledger.md](reference/ledger.md).
 
@@ -318,6 +321,34 @@ Mid-day PR snapshot and diff, stored under the ledger root.
 - `prs-snapshot.ts --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo until two known answers agree (a stale cached MERGEABLE is not trusted). `prs-snapshot.ts ready <snapshot.json>` prints it for a file, offline, with the file's age (it is not a merge gate).
 - `prs-snapshot.ts diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
 
+### status-page.ts
+
+The always-current status page, one Markdown note (`NOW.md`) in the status directory, built for reading in Obsidian or any Markdown viewer. Run it as `node scripts/journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]` (`status-page.ts` is the script behind it). It reads `journal.ts status --json` and `triage --json`, a GitHub search of your open PRs (retried three times on a gateway error) and the files beside the page, then writes the page through a temp file and a rename. A failed ledger or GitHub read exits non-zero and leaves the old page alone.
+
+The page, top to bottom: **Today's priorities** (from `priorities.md`, each with its stream's awaiting, in-flight and open-PR counts when it names a stream; otherwise the line `Priorities not set for today — orchestrator will ask`), needs attention now, **Needs you** (a short-cell table per stream, then under it one reply line per ask with its links and a `> answer:` stub), the PR board per stream with a stack diagram, in flight, blocked, deferred and done today.
+
+| File in the status directory | Role |
+|---|---|
+| `NOW.md` | The page. Regenerated; safe to edit in the places listed below |
+| `priorities.md` | `date: YYYY-MM-DD`, then one priority per line (`- text` or `- text \| Stream`). A file dated another day counts as not set. Written by `journal.ts priorities set` |
+| `ticket-map.json` | Optional `{ "<ticket>": ["<ask id>"] }`, linking asks to ticket notes |
+| `stream-overrides.json` | Optional `{ "repo#N": "<Stream>" }`, placing a PR in a stream the repo map does not |
+| `.now-seen.md`, `.now-seen.json` | The status watcher's baseline and the hash of the generator's last output. Do not edit |
+
+Nothing install-specific is built in. The status directory is `status_dir`, else `<vault_root>/Projects/<project>/Status`; the stream order is `status_streams`, a PR's stream comes from `stream-overrides.json`, then `status_repo_streams`, then `other`; tracker keys link through `tracker_url_base`, ticket notes through `obsidian_vault` and `ticket_note_path`.
+
+**Answering from the page.** Under an ask you can write `> answer: <text>`, tick its `- [x]` box, or edit the priorities list. Regenerating keeps any such edit that the `status-watch` event type has not reported yet (an answer whose ask left the board moves under `## Unprocessed answers`), and if you save while a regeneration is writing, it reads the page again rather than overwrite you.
+
+```mermaid
+flowchart LR
+    G[status-page generator] --> N[NOW.md]
+    N --> J[You edit it inline]
+    J --> W[status-watch event type]
+    W --> E[actionable event: ask id and text]
+    E --> O[Orchestrator resolves the ask or updates the priorities]
+    O --> G
+```
+
 ### event-loop.ts
 
 One loop for every "wake me when X happens". The orchestrator appends a **watch** (`type`, `target`, an optional `done_when`, and a `report` note saying what it wants back) to an append-only registry; `run` checks them all and records an event only when the type's `diff()` says something changed.
@@ -340,7 +371,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | 2 | Usage or configuration error, a malformed watch, a broken overlay type, or another loop holds the lock | Read the stderr line; never delete the lock |
 | other | The process crashed or was killed | Read stderr, then relaunch (a dead owner's lock is taken over) |
 
-**Types.** A type is a script (`scripts/event-types/<type>.ts` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.ts`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
+**Types.** Built in: `pr-checks`, `pr-merged`, `pr-watch`, `gh-run`, `inbox`, `reminder` and `status-watch` (the status page's inline answers, target = the status directory, one watch, never notifies; see [playbooks/event-types/status-watch.md](playbooks/event-types/status-watch.md)). A type is a script (`scripts/event-types/<type>.ts` exporting `check(target, ctx)` and `diff(prev, next)`, optionally `done` and `retired`), a playbook (`playbooks/event-types/<type>.md`) and one line in `scripts/event-types/index.ts`. `check` also receives the watch and the state it returned last time (`ctx.watch`, `ctx.prev`).
 
 | Type | Target | Reports |
 |---|---|---|
@@ -492,6 +523,13 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `sweep_disposable_ignored` | `MAESTRO_SWEEP_DISPOSABLE_IGNORED` | `node_modules, .venv, dist, __pycache__` | Ignored paths that do not keep a worktree; any other ignored file does |
 | `container_root` | `MAESTRO_CONTAINER_ROOT` | none (sweep refuses) | The container directory `roll` and `handoff` may sweep for stale worktrees; a leading `~/` is expanded. Unset, or run from outside it, the sweep prints a refusal and does nothing |
 | `agent_owned_repos` | `MAESTRO_AGENT_OWNED_REPOS` | none | Comma-separated repo paths (a leading `~/` is expanded) the agent manages itself. The protected-branch stop does not apply there, so agents may commit straight to the default branch; Conventional Commits, staging by path and no attribution still apply. The brief carries a line naming them |
+| `status_dir` | `MAESTRO_STATUS_DIR` | `<vault_root>/Projects/<project>/Status` | Where `NOW.md`, `priorities.md` and their companions live. Setting it (inside `vault_root`) also turns on the `**Status page:**` footer line |
+| `status_page_uri` | `MAESTRO_STATUS_PAGE_URI` | derived from `status_dir`, `vault_root` and `obsidian_vault` | A full URI for the page (`obsidian://...` or a URL); wins over the derived one and is what the footer prints |
+| `obsidian_vault` | `MAESTRO_OBSIDIAN_VAULT` | the folder name of `vault_root` | The Obsidian vault name used in links |
+| `status_streams` | `MAESTRO_STATUS_STREAMS` | none | Comma-separated stream names in the order the page lists them; streams found in the ledger and the repo map are added after, `other` last |
+| `status_repo_streams` | `MAESTRO_STATUS_REPO_STREAMS` | none | `repo=Stream, other-repo=Stream`: the stream of a PR in that repo (short name) |
+| `tracker_url_base` | `MAESTRO_TRACKER_URL_BASE` | none (keys are plain text) | Browse URL prefix for tracker keys, ending in `/` |
+| `ticket_note_path` | `MAESTRO_TICKET_NOTE_PATH` | `Projects/{prefix}/Tickets/{id}` | Vault-relative note path of a ticket, with `{id}` and `{prefix}` (the id minus its trailing number) |
 | `scripts_dir` | `MAESTRO_SCRIPTS_DIR` | none (shelf off) | The shared scripts shelf; a leading `~/` is expanded |
 
 Two more variables point scripts at a different binary or directory: `MAESTRO_GH` (the `gh` binary `branch-sweep.ts` runs) and `MAESTRO_GH_BIN` (the one `pr-open.ts` runs), and `MAESTRO_CLAIMS_DIR` overrides where `branch-sweep.ts` looks for claim files. The full key reference, with the lookup order for plugin-shipped overlays, is [reference/local-config.md](reference/local-config.md).
