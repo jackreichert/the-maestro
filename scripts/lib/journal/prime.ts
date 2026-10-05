@@ -77,7 +77,7 @@ export function primeLines(ctx: PrimeContext): string[] {
     ].filter((sec) => sec.items.length).map((sec) => ({ ...sec, lines: sec.items.map(label) }));
     const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste);
     const pending = pendingTransitions(ctx, defaultPendingSince());
-    const head = [...(ctx.notices ?? []).map((n) => clip(n, 200)), clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
+    const head = [...(ctx.notices ?? []).map((n) => clip(n, 320)), clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
         ...(pending.length ? [clip(`Pending tracker transitions (${pending.length}): ${pending.map((r) => r.key).join(', ')}. \`journal.ts tickets --pending\``, 200)] : [])];
     const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.ts status\` and \`triage\` have the rest.`] : ['`journal.ts status` has the rest.'];
     if (!sections.length) return [...head, '(nothing open)', ...foot];

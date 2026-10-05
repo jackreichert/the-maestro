@@ -286,6 +286,30 @@ test('update_check is on and auto_pull is off by default; the file and the envir
     assert.deepEqual([e.UPDATE_CHECK, e.AUTO_PULL], ['on', 'off']);
 });
 
+test('auto_pull set-ness is separate from its value: unset and off both read off, only a recognised word counts as set', () => {
+    const cfg = join(home, '.config', 'the-maestro', 'config.md');
+    const read = (env: Record<string, string> = {}) => { const r = show(env); return [r.AUTO_PULL, r.AUTO_PULL_SET]; };
+    assert.deepEqual(read(), ['off', 'no']);
+    assert.deepEqual(read({ MAESTRO_AUTO_PULL: 'on' }), ['on', 'yes']);
+    assert.deepEqual(read({ MAESTRO_AUTO_PULL: 'off' }), ['off', 'yes']);
+    assert.deepEqual(read({ MAESTRO_AUTO_PULL: 'maybe' }), ['off', 'no']);
+    assert.deepEqual(read({ MAESTRO_AUTO_PULL: '' }), ['off', 'no']);
+    write(cfg, block('auto_pull: on'));
+    assert.deepEqual(read(), ['on', 'yes']);
+    write(cfg, block('auto_pull: off   # decided'));
+    assert.deepEqual(read(), ['off', 'yes']);
+    assert.deepEqual(read({ MAESTRO_AUTO_PULL: 'on' }), ['on', 'yes']);
+    write(cfg, block('auto_pull:\n# auto_pull: on'));
+    assert.deepEqual(read(), ['off', 'no']);
+});
+
+test('auto_pull set in the overlay config counts as set', () => {
+    const skills = join(home, '.claude', 'skills');
+    write(join(skills, 'acme-overlay', 'config.md'), block('auto_pull: off'));
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('overlay: acme-overlay'));
+    assert.deepEqual([show().AUTO_PULL, show().AUTO_PULL_SET], ['off', 'yes']);
+});
+
 test('projects_dir: unset follows container_root, not the working directory; an explicit value wins', () => {
     const elsewhere = mkdtempSync(join(tmpdir(), 'lc-elsewhere-'));
     const fromCwd = show({}, elsewhere).CLAUDE_PROJECTS_DIR ?? '';
