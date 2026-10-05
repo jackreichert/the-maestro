@@ -37,12 +37,13 @@ const opts = (statusDir: string, over = {}) => ({ statusDir, dryRun: false, snap
 const dir = (): string => mkdtempSync(join(tmpdir(), 'sp-'));
 
 test('loadPrs picks a stream from an override, then the repo map, then other', () => {
-  const prs = loadPrs([raw(1, 'acme-widgets'), raw(2, 'gadgets'), raw(3, 'unmapped'), raw(4, 'unmapped')], { 'unmapped#4': 'Alpha', 'gadgets#2': 'Gamma' }, CONFIG.repoStreams);
+  const ev = { items: [], ticketMap: {}, overrides: { 'unmapped#4': 'Alpha', 'gadgets#2': 'Gamma' }, repoStreams: CONFIG.repoStreams, keyPattern: CONFIG.trackerKeyPattern };
+  const prs = loadPrs([raw(1, 'acme-widgets'), raw(2, 'gadgets'), raw(3, 'unmapped'), raw(4, 'unmapped')], ev);
   assert.deepEqual(prs.map((p) => p.stream), ['Alpha', 'Gamma', 'other', 'Alpha']);
   assert.equal(prs[0]?.unresolved, 1);
 });
 
-test('writes NOW.md with the priorities block first, short ask cells, and links and an answer stub under the table', () => {
+test('writes NOW.md with the freshness line, then the priorities, then one asks table with links and an answer stub under it', () => {
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'Get widgets out', stream: 'Alpha' }, { text: 'Unmapped goal' }]);
   const r = generate(opts(d), deps([raw(12, 'acme-widgets')]));
@@ -50,13 +51,12 @@ test('writes NOW.md with the priorities block first, short ask cells, and links 
   const page = readFileSync(join(d, 'NOW.md'), 'utf8');
   assert.equal(page, r.page);
   const lines = page.split('\n');
-  assert.equal(lines[lines.indexOf('# Status now') + 2], "## Today's priorities");
+  assert.match(lines[lines.indexOf('# Status now') + 2] ?? '', /^Updated 11:00 am ET \(2026-10-05\)\./);
+  assert.equal(lines[lines.indexOf('# Status now') + 4], "## Today's priorities");
   assert.match(page, /1\. Get widgets out _\[Alpha: awaiting 1 · in flight 1 · open PRs 1\]_\n2\. Unmapped goal\n/);
-  assert.match(page, /\| `bb22` \| Merge widgets #12 now\? See FAKE-12 \| proj-7 \| #12 → develop \|/, 'cells are short text, no URLs');
-  assert.doesNotMatch(page.split('## PR board')[0] ?? '', /\| .*https?:\/\//, 'no URL inside an ask table row');
+  assert.match(page, /\| `bb22` \| Alpha \| See FAKE-12 \| \[proj-7\]\(obsidian:[^)]*\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) \| Merge widgets #12 now\? \|/, 'stream, context, clickable tickets, the decision');
   assert.match(page, /- \[ \] `bb22` \[#12 → develop\]\(https:\/\/example\.test\/acme-widgets\/pull\/12\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) · \[proj-7\]\(obsidian:\/\/open\?vault=Vault&file=Projects%2Fproj%2FTickets%2Fproj-7\)\n  > answer: \n/);
-  assert.match(page, /ask `cc33` is 10 days old/);
-  assert.match(page, /### Gamma \(1\)/, 'a stream only the ledger knows still gets a section');
+  assert.match(page, /\| `cc33` \| Gamma \| _10 days old_ \|/, 'a stream only the ledger knows is still tagged');
   assert.match(page, /old question \\\| with a pipe/, 'a pipe in text does not break the table');
 });
 
@@ -92,8 +92,8 @@ test('ticket-map.json and stream-overrides.json beside the page are read; invali
   writeFileSync(join(d, 'ticket-map.json'), JSON.stringify({ 'proj-9': ['cc33'] }));
   writeFileSync(join(d, 'stream-overrides.json'), JSON.stringify({ 'gadgets#2': 'Alpha' }));
   const page = generate(opts(d, { dryRun: true }), deps([raw(2, 'gadgets')])).page;
-  assert.match(page, /\| `cc33` \| .* \| proj-9 \|/);
-  assert.match(page, /### Alpha\n\n\| Ticket/);
+  assert.match(page, /\| `cc33` \| .* \| \[proj-9\]\(obsidian:[^)]*\) \|/);
+  assert.match(page, /### Alpha \(1\)\n\n\| Ticket/);
   writeFileSync(join(d, 'stream-overrides.json'), '{nope');
   assert.throws(() => generate(opts(d), deps([])), /stream-overrides\.json is not valid JSON/);
   assert.equal(existsSync(join(d, 'NOW.md')), false);
@@ -121,7 +121,7 @@ test('nothing in the page names an install: no org, vault or tracker unless the 
   const bare: PageConfig = { streams: [], repoStreams: {}, vaultName: '', trackerUrlBase: '', ticketNotePath: 'T/{id}', trackerKeyPattern: CONFIG.trackerKeyPattern, tz: 'UTC' };
   const page = generate(opts(dir(), { dryRun: true, config: bare }), deps([raw(5, 'whatever')])).page;
   assert.doesNotMatch(page, /obsidian:\/\/|tracker\.test|atlassian/);
-  assert.match(page, /### other/);
+  assert.match(page, /### other \(1\)/);
   assert.match(page, /\| FAKE-5 \|/, 'a key with no tracker URL is plain text');
 });
 
@@ -153,4 +153,40 @@ test('the priorities section states the date of the list it shows', () => {
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'First' }]);
   assert.match(generate(opts(d, { dryRun: true }), deps([])).page, /## Today's priorities\n\n1\. First\nSet for 2026-10-05\.\n/);
+});
+
+test('open PRs land under their stream by ticket key, one table per stream, empty streams get none', () => {
+  const page = generate(opts(dir(), { dryRun: true }), deps([raw(12, 'gadgets'), raw(40, 'unmapped', { title: 'chore: no key here', headRefName: 'chore/x' })])).page;
+  assert.match(page, /### Alpha \(1\)\n\n\| Ticket \| Develop PR \(base\) \| Staging twin \(base\) \| TL;DR \|/, 'FAKE-12 is named by an Alpha ask, so a gadgets PR is Alpha');
+  assert.match(page, /### other \(1\)/);
+  assert.doesNotMatch(page, /### Gamma \(\d+\)\n\n\| Ticket/, 'no PRs, no table');
+  assert.doesNotMatch(page, /No open PRs/);
+});
+
+test('develop and staging twins share a row, by title and by ticket key; a missing twin reads none', () => {
+  const prs = [
+    raw(10, 'acme-widgets', { title: 'feat: add thing FAKE-1', headRefName: 'feat/FAKE-1' }),
+    raw(11, 'acme-widgets', { title: 'feat: add thing FAKE-1 (staging)', baseRefName: 'staging', headRefName: 'feat/FAKE-1-staging' }),
+    raw(20, 'acme-widgets', { title: 'fix: reworded FAKE-2', headRefName: 'fix/a' }),
+    raw(21, 'acme-widgets', { title: 'fix: another wording FAKE-2', baseRefName: 'staging', headRefName: 'fix/b' }),
+    raw(30, 'acme-widgets', { title: 'fix: lonely FAKE-3', headRefName: 'fix/c' }),
+  ];
+  const rows = generate(opts(dir(), { dryRun: true }), deps(prs)).page.split('\n').filter((l) => /^\| \[FAKE-[123]\]/.test(l));
+  assert.equal(rows.length, 3);
+  assert.match(rows[0] ?? '', /\[#10 → develop\].*\| \[#11 → staging\]/);
+  assert.match(rows[1] ?? '', /\[#20 → develop\].*\| \[#21 → staging\]/);
+  assert.match(rows[2] ?? '', /\[#30 → develop\].* \| none \|/);
+});
+
+test('sections come in the order priorities, needs attention, open PRs, other status, and the bottom lists carry ages and done times', () => {
+  const b = { ...board, status: { ...board.status,
+    inflight: [{ id: 'aa11', date: '2026-10-05', ts: '2026-10-05T13:00:00Z', text: 'building a thing', stream: 'Alpha' }],
+    blocked: [{ id: 'ee55', date: '2026-10-05', ts: '2026-10-05T14:30:00Z', text: 'waiting on a vendor' }],
+    done: [{ id: 'dd44', date: '2026-10-05', ts: '2026-10-05T14:00:00Z', text: 'shipped' }] } };
+  const page = generate(opts(dir(), { dryRun: true }), deps([raw(12, 'acme-widgets')], { journal: (sub) => b[sub] })).page;
+  const heads = page.split('\n').filter((l) => /^#{1,3} /.test(l));
+  assert.deepEqual(heads.map((h) => h.replace(/ \(\d+\)$/, '')), ['# Status now', "## Today's priorities", '## Needs attention now', '## Open PRs', '### Alpha', '## Other status and findings', '### In flight', '### Blocked', '### Recent done', '### Deferred']);
+  assert.match(page, /- `aa11` building a thing \[Alpha\] · 2 h\n/);
+  assert.match(page, /- `ee55` waiting on a vendor \(gate: none recorded\) · 30 min\n/);
+  assert.match(page, /- `dd44` shipped · 10:00 am ET\n/);
 });

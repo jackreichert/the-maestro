@@ -68,7 +68,7 @@ agent_owned_repos: ~/tools, ~/notes  # repos the agent manages itself: the prote
 status_dir: /path/to/vault/Projects/<project>/Status # status page, priorities.md and companions; default <vault_root>/Projects/<project>/Status
 obsidian_vault: MyVault # vault name in Obsidian links; default the folder name of vault_root
 status_streams: Alpha, Beta # stream order on the status page
-status_repo_streams: api=Alpha, web=Beta # repo (short name) to stream for the PR board
+status_repo_streams: api=Alpha, web=Beta # repo (short name) to stream for the PR tables; last resort after ledger evidence and stream-overrides.json
 tracker_url_base: https://tracker.example.com/browse/ # tracker key links; omit for plain text
 scripts_dir: /path/to/scripts # shared scripts shelf: README.md index, scratch/, helpers/; a leading ~/ is expanded; omit to turn the shelf protocol off
 ```
