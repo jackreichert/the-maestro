@@ -32,7 +32,7 @@ ledger_root: /path/to/ledger
 vault_root: /path/to/vault
 loop_patterns: loop_a, loop_b  # pgrep -f patterns `journal.ts resume` checks; omit for none
 update_check: on               # off stops `prime` fetching this skill's own repo to report behind/ahead/diverged/dirty; default on
-auto_pull: off                 # on: `prime` fast-forwards a clean, purely-behind skill checkout (merge --ff-only only); default off
+auto_pull: off                 # on: `prime` fast-forwards a clean, purely-behind skill checkout (merge --ff-only only); off: never, and silences the ask; unset (the default) behaves as off but `prime` asks you to choose each session
 resume_gh: on                  # off skips `gh pr list` in `resume`; default on
 ledger_git_autocommit: on      # on: `roll` commits the ledger root (if it is a git repo) after a clean `verify`; default off
 approvals_review_day: friday   # weekday the morning greeting brings the approvals digest; default friday
@@ -100,7 +100,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Ticket skill | dispatch.md |
 | Whether `roll` commits the ledger root (`ledger_git_autocommit`) | `journal.ts roll` |
 | Weekday of the weekly approvals review (`approvals_review_day`, default Friday) | greeting.md, `journal.ts approvals` |
-| Whether `prime` checks this skill's repo for updates (`update_check`) and fast-forwards it (`auto_pull`) | `journal.ts prime`, greeting.md |
+| Whether `prime` checks this skill's repo for updates (`update_check`) and fast-forwards it (`auto_pull`; unset is not off: `on`/`true`/`yes`/`1` and `off`/`false`/`no`/`0` count as answered in the environment, user file or overlay, anything else leaves it unset and `prime` asks; write it with `journal.ts autopull on\|off`) | `journal.ts prime`, `autopull`, greeting.md |
 | Loop process patterns (`loop_patterns`) and whether `resume` calls `gh` (`resume_gh`) | `journal.ts resume` |
 | Event loop: `event_dir`, `notify_command` (no default recipient: unset means no notifications; only watches added with `--notify` use it), `inbox_command`, `watch_network_floor`, `watch_local_floor`, `watch_type_intervals` | `event-loop.ts`, `scripts/event-types/inbox.ts` |
 | PR watcher cadence (the event loop reads `watch_max_interval` as its back-off cap, plus the quiet-hours keys): `watch_min_interval`, `watch_max_interval`, `watch_quiet_hours`, `watch_quiet_hours_mode`, `watch_quiet_weekends`, `watch_tz` | `scripts/event-loop.ts` via `scripts/lib/cadence.ts` |
