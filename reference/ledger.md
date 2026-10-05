@@ -167,7 +167,7 @@ node $J unarchive Launch "${M[@]}"
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
-The Session line comes from `token-metrics.ts`: the most recently modified transcript in `projects_dir`, its turn count against `roll_turns` (default 180) and its mean cache-read per turn. At 100% of `roll_turns` or at `roll_read_per_turn` (default 350000) it ends `· roll now`. With no transcript in that directory it prints `**Session:** unavailable (...)` and does not vanish. An unset `projects_dir` follows `container_root` when that is set, else the transcript directory of the working directory the script runs from, which is usually not the orchestrator's; `token-metrics.ts` warns on stderr when the directory it resolved has no sessions.
+The Session line comes from `token-metrics.ts`: the most recently modified transcript in `projects_dir`, its turn count against `roll_turns` (default 180) and its mean cache-read per turn. The shown percent is of the full `roll_turns`. When either metric (turns against `roll_turns`, or mean read per turn against `roll_read_per_turn`, default 350000) reaches `roll_warn_pct` (default 85) of its limit the line ends `· roll soon`; at `roll_at_pct` (default 90) it ends `· roll now` instead. What the orchestrator does at each level is in [cost/budget.md#session-hygiene](../cost/budget.md#session-hygiene). With no transcript in that directory it prints `**Session:** unavailable (...)` and does not vanish. An unset `projects_dir` follows `container_root` when that is set, else the transcript directory of the working directory the script runs from, which is usually not the orchestrator's; `token-metrics.ts` warns on stderr when the directory it resolved has no sessions.
 
 ## Per-stream views
 
@@ -211,7 +211,7 @@ node $J backfill --apply --min-confidence high "${M[@]}"          # append tag r
 At the end of a piece of work, before `roll`, scaffold the handoff for the stream; at the start of a fresh session, run `resume`.
 
 ```bash
-node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--force]
+node $J handoff --stream Launch [--out <path>] [--since YYYY-MM-DD] [--delta] [--force]
 node $J resume
 ```
 
@@ -221,6 +221,8 @@ merged branches behind unreviewed. `handoff` itself fills **Cleanup candidates**
 picks the directory, default the current one; `--no-worktree-sweep` skips it).
 
 `handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, a blocked one with its gate, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (generated from boxes 4 and 5: **Needs Jack**, every open question and pending decision except paste asks, then **Paste blocks for Jack** with each block file; stale ones are marked); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.ts`. Edit it, then set `status:` past `draft`.
+
+**Repeat rolls: `--delta`.** Every handoff carries a `generated_at` marker. `handoff --delta` (stream or `--all`) looks for today's newest `HANDOFF-<date>[b..z]-<stream>.md`: with none it writes the full handoff; with one it writes the next suffix (`HANDOFF-<date>b-<stream>.md`) with only what the ledger gained after that marker (new items, completed items, new asks, PRs mentioned), skips the worktree sweep, and names its predecessor in `delta_of`. It refuses a previous handoff with no marker (use a full one with `--force`) and stops after `z`. `roll` is unchanged and idempotent: it regenerates the day's archive whole.
 
 For an end-of-session handoff run it once over everything: `handoff --all --learn "<what was ruled out>" --next "<the first step>" --update-context`. `--all` covers every stream and tags each item with its stream; `--learn` and `--next` fill sections 2 and 5 (one line each); a **Session metrics** section carries the newest session's turns and read per turn from `token-metrics.ts` (or says why none was found); with `--all` the dry-run sweep is summarised as counts by reason (`--verbose` lists each worktree); `--update-context` points the project `CONTEXT.md` (`--context-file <path>` to name another) at the new note with one `Latest handoff: [[note]] (date)` line, replacing the previous one. It is still a draft: read it before you set `status:`.
 
