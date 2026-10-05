@@ -12,7 +12,7 @@
  */
 
 /** The fields of a ledger row that box classification reads. */
-export interface BoxItem { kind?: string; text?: string; ticket?: string; paste?: string; pending?: boolean; date?: string }
+export interface BoxItem { kind?: string; text?: string; ticket?: string; paste?: string; pending?: boolean; date?: string; queued?: boolean }
 
 /** An item's effective approval: 'standing' or 'one-off' when valid. Read back from the ledger as text, so any string can arrive. */
 export type Approval = string | undefined;
@@ -90,6 +90,7 @@ export function classify(item: BoxItem, approval?: Approval): number {
 export const STALE_AFTER_DAYS: Record<number, number> = { [BOX.NEEDS_JACK]: 2, [BOX.PASTE]: 2, [BOX.INFLIGHT]: 1 };
 
 export const isStale = (box: number, item: BoxItem, today: string): boolean => {
+    if (item.queued) return false;   // a queued to-do has not started, so it cannot have run too long
     const limit = STALE_AFTER_DAYS[box];
     return limit !== undefined && daysBetween(item.date, today) > limit;
 };

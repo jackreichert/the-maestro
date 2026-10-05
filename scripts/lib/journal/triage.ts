@@ -11,7 +11,7 @@ export interface TriageContext extends PendingContext { today: () => string; res
 /** One boxed item. */
 export interface TriageItem {
     id?: string; kind?: string; box: number; date?: string; text?: string; stream?: string; ticket?: string; paste?: string; gate?: string;
-    deferredUntil: string | undefined; ref: string | null; ageDays: number; stale: boolean;
+    deferredUntil: string | undefined; queued?: true; ref: string | null; ageDays: number; stale: boolean;
 }
 export interface Blocker { id?: string; box: number; why: string }
 export interface TriageReport {
@@ -34,7 +34,7 @@ export function triageItems(ctx: TriageContext, d: string, since: string): Triag
         const box = classify(i, approvals.get(i.id ?? ''));
         const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
         const until = deferred.get(i.id ?? '');
-        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d) };
+        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ...(i.queued ? { queued: true as const } : {}), ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d) };
     });
 }
 
@@ -71,7 +71,7 @@ export function triageChecklist(items: TriageItem[], blockers: Blocker[], pendin
         `${mark(!unfiled)} Paste blocks are listed separately, each with a file link${unfiled ? ` (${unfiled} with no block file; re-ask with --paste)` : ''}`,
         `${mark(!n(BOX.GATED).filter((i) => !i.gate).length)} Every gated item names its gate (--gate)${n(BOX.GATED).filter((i) => !i.gate).length ? ` (${n(BOX.GATED).filter((i) => !i.gate).length} without one)` : ''}`,
         `${mark(!pending.length)} Every done item with a tracker key has a recorded transition${pending.length ? ` (${pending.length} pending: ${pending.map((r) => r.key).join(', ')}; run \`tickets --pending\`)` : ''}`,
-        '[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)',
+        `[ ] Every in-flight item matches a running agent or a worktree: ListAgents, branch-sweep (by hand)${n(BOX.INFLIGHT).some((i) => i.queued) ? `; ${n(BOX.INFLIGHT).filter((i) => i.queued).length} queued to-do(s) in box 7 have not started, so skip them` : ''}`,
         '[ ] Session turn count and read/turn are in the handoff (`handoff` fills them from token-metrics.ts; by hand if you wrote it yourself)',
     ];
 }
@@ -83,7 +83,7 @@ export function triageLines(t: TriageReport): string[] {
         if (box === BOX.NOISE) { out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`); continue; }
         out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`);
         for (const i of list) {
-            const tail = [RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.deferredUntil ? `deferred until ${i.deferredUntil}` : null, i.gate ? `gate ${i.gate}` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
+            const tail = [i.queued ? 'queued: not started' : null, RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.deferredUntil ? `deferred until ${i.deferredUntil}` : null, i.gate ? `gate ${i.gate}` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
             out.push(`  ${i.id}  ${clip(i.text, 110)}${tail.length ? `  [${tail.join('; ')}]` : ''}`);
         }
     }

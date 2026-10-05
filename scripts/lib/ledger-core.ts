@@ -25,6 +25,11 @@ export interface LedgerRow {
     tags?: string;
     /** Id of the item a `carry` row re-homes to `stream`. */
     carries?: string;
+    /** Id of the item a `queue` row moves to queued, and the one a `promote` row moves back to in flight. */
+    queues?: string;
+    promotes?: string;
+    /** On a `wip` row: written as queued (a to-do not yet started). On a folded item: true only while it is queued, absent when it is in flight. */
+    queued?: boolean;
     /** Item ids an `archive` row hides. */
     ids?: string[];
     /** Item id a `defer` row hides until `until` (YYYY-MM-DD). */
@@ -52,7 +57,12 @@ export interface LedgerRow {
 }
 
 /** A folded item: the row that opened it, its stream mapped through the registry, and the row that closed it. */
-export type LedgerItem = LedgerRow & { closedBy: LedgerRow | null; state: string | undefined };
+export type LedgerItem = LedgerRow & {
+    closedBy: LedgerRow | null;
+    state: string | undefined;
+    /** When the item last moved between queued and in flight (the `queue` or `promote` row); absent if it never moved. */
+    stateTs?: string;
+};
 
 export interface StreamMeta { aliases?: unknown[]; status?: string }
 export interface Registry {
@@ -74,7 +84,12 @@ export const OPEN_KINDS = ['wip', 'blocked', 'question'];
 export const isPendingDecision = (i: LedgerRow): boolean => i.kind === 'decision' && i.pending === true;
 export const isOpen = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => !i.closedBy && ((i.kind !== undefined && OPEN_KINDS.includes(i.kind)) || isPendingDecision(i));
 // Rows that are events about items, not items themselves.
-export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer'];
+export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote'];
+
+/** An open `wip` item that is queued (a to-do not yet started), as opposed to in flight. The fold sets `queued`. */
+export const isQueued = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => i.kind === 'wip' && i.queued === true && isOpen(i);
+/** An open `wip` item that is genuinely running. */
+export const isInFlight = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => i.kind === 'wip' && i.queued !== true && isOpen(i);
 
 /**
  * id -> until (YYYY-MM-DD) for every item a `defer` row hides on `today`: the latest defer row per item wins,
@@ -184,7 +199,8 @@ export function withStamp<E extends LedgerRow>(entry: E, stamped: Map<string, Us
 
 /**
  * Fold the append-only log into current state. Later entries referencing an earlier id (via `closes`)
- * supersede it; `tag` and `carry` rows re-home an item; `stamp` rows amend its usage marks.
+ * supersede it; `tag` and `carry` rows re-home an item; `stamp` rows amend its usage marks; `queue` and `promote`
+ * rows move a `wip` item between queued and in flight (the latest wins, and a row can be written already queued).
  * `reg` is the stream registry (or null): streams are mapped through it as the items are built.
  */
 export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefined) {
@@ -199,7 +215,10 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
     const closed = new Map<string, LedgerRow>();
     const streams = new Map<string, string | undefined>();
     const archivedBy = new Map<string, string[]>();
+    const moves = new Map<string, { queued: boolean; ts: string | undefined }>();
     for (const e of entries) {
+        if (e.kind === 'queue' && e.queues) moves.set(e.queues, { queued: true, ts: e.ts });
+        if (e.kind === 'promote' && e.promotes) moves.set(e.promotes, { queued: false, ts: e.ts });
         if (e.closes) closed.set(e.closes, mapModel(withStamp(e, stamped)));
         if (e.kind === 'tag' && e.tags) streams.set(e.tags, e.stream || undefined);
         if (e.kind === 'carry' && e.carries) streams.set(e.carries, e.stream || undefined);
@@ -214,7 +233,12 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
         const base = mapModel(withStamp(e, stamped));
         const close = closed.get(e.id) || null;
         const stream = mapStream(streams.has(e.id) ? streams.get(e.id) : base.stream);
-        items.push({ ...base, stream, closedBy: close, state: close ? close.kind : base.kind });
+        const move = moves.get(e.id);
+        const queued = move ? move.queued : base.queued === true;
+        const item: LedgerItem = { ...base, stream, closedBy: close, state: close ? close.kind : base.kind };
+        if (queued) item.queued = true; else delete item.queued;
+        if (move?.ts) item.stateTs = move.ts;
+        items.push(item);
     }
     // Ids hidden by the latest archive event of each still-archived stream.
     const hidden = new Set([...archivedBy.values()].flat());
