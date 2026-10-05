@@ -239,20 +239,25 @@ export function collect(projectsDir: string): { days: Map<string, DayStats>; ses
     return { days: new Map([...days].sort()), sessions, curve };
 }
 
-/** The most recently modified session in `dir`: { session, turns, readPerTurn }, or null when there is none. */
+/**
+ * The most recently modified session in `dir`: { session, turns, readPerTurn }, or null when there is none. Both figures cover only
+ * the run since the last compaction marker (the turns from the last one with since === 1 onward), not the whole transcript.
+ */
 export function currentSession(dir: string): { session: string; turns: number; readPerTurn: number } | null {
     const newest = sessionFiles(dir)
         .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
         .sort((a, b) => b.t - a.t)[0];
     if (!newest) return null;
-    const { turns } = scanFile(join(dir, newest.f));
+    const all = scanFile(join(dir, newest.f)).turns;
+    const turns = all.slice(Math.max(0, all.findLastIndex((t) => t.since === 1)));
     const read = turns.reduce((n, t) => n + t.read, 0);
     return { session: basename(newest.f, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0 };
 }
 
 /**
  * The status-footer Session line for the current session, e.g.
- * `**Session:** 86 turns (48% of 180 roll) · 129k read/turn`. The shown percent is of the full roll_turns. At `warnPct` of either
+ * `**Session:** 86 turns (48% of 180 roll) · 129k read/turn`. The turn count and read/turn mean are since the last compact, not the
+ * whole transcript. The shown percent is of the full roll_turns. At `warnPct` of either
  * metric (turns vs rollTurns, mean read/turn vs rollRead) it ends with `roll soon`; at `rollPct` of either, `roll now` instead.
  * With no session on disk it says so rather than vanishing, so a misconfigured projects_dir is visible.
  */
