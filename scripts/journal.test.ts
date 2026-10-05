@@ -610,6 +610,7 @@ test('handoff --delta: first roll is the full handoff; later rolls write b, c wi
     const until = Date.now() + 5; while (Date.now() < until) { /* spin past the marker ms */ }
     const late = idOf(run('start', 'late work after the roll, PR #456', '--stream', 'Launch', ...MARK).out);
     run('done', wip, ...MARK);
+    run('log', 'direct done after the roll', '--kind', 'done', '--stream', 'Launch', ...MARK);
     const asked = run('ask', 'merge order after the roll?', '--stream', 'Launch', ...MARK);
     assert.equal(asked.code, 0, asked.err);
     assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
@@ -618,10 +619,12 @@ test('handoff --delta: first roll is the full handoff; later rolls write b, c wi
     assert.match(second, new RegExp(`^delta_of: HANDOFF-${day}-Launch$`, 'm'));
     assert.match(second, new RegExp(`\`${late}\` \\[in flight\\] late work after the roll`));
     assert.match(second, new RegExp(`Completed since the previous roll\\n\\n- \`${wip}\` \\[done\\] port the fix`));
+    assert.match(second, /Completed since the previous roll[\s\S]*direct done after the roll/);
     assert.match(second, /merge order after the roll\?/);
     assert.match(second, /PRs mentioned\n\n#456/);
     assert.doesNotMatch(second, /wire the flag|ship on Friday/, 'nothing from before the marker is repeated');
     assert.equal(readFileSync(file(''), 'utf8'), first, 'the first handoff is left alone');
+    assert.equal(run('handoff', '--stream', 'launch', '--delta', '--next', 'x').code, 1, 'flags a delta would drop are refused');
     // A third roll with nothing new is a delta of the delta: empty sections, suffix c.
     assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
     const third = readFileSync(file('c'), 'utf8');
