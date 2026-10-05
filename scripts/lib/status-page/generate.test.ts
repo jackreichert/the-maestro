@@ -129,10 +129,10 @@ test('regenerating keeps an answer, a tick and a priorities edit the watcher has
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'First' }, { text: 'Second' }]);
   generate(opts(d), deps([]));
-  const typed = readFileSync(join(d, 'NOW.md'), 'utf8').replace('`bb22`\n  > answer: ', '`bb22`\n  > answer: go ahead').replace('- [ ] `cc33`', '- [x] `cc33`').replace('2. Second', '2. Mine');
+  const typed = readFileSync(join(d, 'NOW.md'), 'utf8').replace(/(`bb22`[^\n]*)\n  > answer: /, '$1\n  > answer: go ahead').replace('- [ ] `cc33`', '- [x] `cc33`').replace('2. Second', '2. Mine');
   writeFileSync(join(d, 'NOW.md'), typed);
   const again = generate(opts(d), deps([])).page;
-  assert.match(again, /`bb22`\n {2}> answer: go ahead\n/);
+  assert.match(again, /`bb22`[^\n]*\n {2}> answer: go ahead\n/);
   assert.match(again, /- \[x\] `cc33`/);
   assert.match(again, /2\. Mine/);
   const meta = JSON.parse(readFileSync(join(d, '.now-seen.json'), 'utf8'));
@@ -143,7 +143,7 @@ test('regenerating keeps an answer, a tick and a priorities edit the watcher has
 test('--dry-run shows the carried edit but writes neither the page nor the watcher files', () => {
   const d = dir();
   generate(opts(d), deps([]));
-  writeFileSync(join(d, 'NOW.md'), readFileSync(join(d, 'NOW.md'), 'utf8').replace('`bb22`\n  > answer: ', '`bb22`\n  > answer: typed'));
+  writeFileSync(join(d, 'NOW.md'), readFileSync(join(d, 'NOW.md'), 'utf8').replace(/(`bb22`[^\n]*)\n  > answer: /, '$1\n  > answer: typed'));
   const before = readFileSync(join(d, '.now-seen.json'), 'utf8');
   assert.match(generate(opts(d, { dryRun: true }), deps([])).page, /answer: typed/);
   assert.equal(readFileSync(join(d, '.now-seen.json'), 'utf8'), before);
