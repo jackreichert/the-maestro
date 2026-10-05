@@ -297,7 +297,7 @@ function workingSection(cfg: PageConfig, inflight: Item[], tickets: Map<string, 
   for (const i of streams.flatMap((s) => inflight.filter((x) => streamOf(x) === s))) {
     const note = i.ticket || tickets.get(i.id);
     const refs = [...(note ? [ticketNoteRef(cfg, note)] : []), ...keysIn(cfg, i.text).slice(0, 2).map((k) => trackerRef(cfg, k))].map(mdLink).join(' · ');
-    out.push(`| ${streamOf(i)} | \`${i.id}\` | ${cell(oneLine(i.text, 110))} | ${refs || '-'} | ${cell(i.model ?? '')} | ${cell(running(i))} |`);
+    out.push(`| ${cell(streamOf(i))} | \`${i.id}\` | ${cell(oneLine(i.text, 110))} | ${refs || '-'} | ${cell(i.model ?? '')} | ${cell(running(i))} |`);
   }
   return [...out, ''];
 }
