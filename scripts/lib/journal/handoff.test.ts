@@ -27,7 +27,7 @@ test('artifactsOf lists PRs, tickets, refs and paths once each', () => {
 
 test('handoffText scaffolds the five sections for one stream, with the stream filter and the author prompts', () => {
     const text = handoffText(ctx, 'Alpha', '2026-10-02', [], {});
-    assert.match(text, /^---\nstatus: draft\nstream: Alpha\ngenerated: 2026-10-03\nsince: 2026-10-02\ntype: handoff\n---\n/);
+    assert.match(text, /^---\nstatus: draft\nstream: Alpha\ngenerated: 2026-10-03\ngenerated_at: \d{4}-\d\d-\d\dT[\d:.]+Z\nsince: 2026-10-02\ntype: handoff\n---\n/);
     assert.match(text, /\*\*Session:\*\* unavailable \(no sessions in /);
     assert.match(text, /- `aaaa` \[in flight\] build the widget/);
     assert.match(text, /- `bbbb` \[blocked\] wait for review — gate: date:2099-01-01/);
