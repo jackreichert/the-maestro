@@ -21,9 +21,12 @@ function isRawPr(v: unknown): v is RawPr {
   const repo = v.repository;
   const threads = v.reviewThreads;
   const commits = v.commits;
-  return typeof v.number === 'number' && typeof v.title === 'string' && typeof v.url === 'string' && typeof v.headRefName === 'string'
+  const str = (k: string): boolean => typeof v[k] === 'string';
+  return typeof v.number === 'number' && typeof v.isDraft === 'boolean' && ['title', 'url', 'headRefName', 'baseRefName', 'mergeable', 'mergeStateStatus'].every(str)
+    && (v.reviewDecision === null || typeof v.reviewDecision === 'string')
     && isObject(repo) && typeof repo.nameWithOwner === 'string'
-    && isObject(threads) && Array.isArray(threads.nodes) && isObject(commits) && Array.isArray(commits.nodes);
+    && isObject(threads) && Array.isArray(threads.nodes) && threads.nodes.every((n) => isObject(n) && typeof n.isResolved === 'boolean')
+    && isObject(commits) && Array.isArray(commits.nodes) && commits.nodes.every((n) => isObject(n) && isObject(n.commit));
 }
 
 /** The cached PRs and fetch time; null when there is no cache or it is unreadable. */

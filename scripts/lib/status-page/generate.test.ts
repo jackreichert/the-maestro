@@ -148,7 +148,7 @@ test('a cache from an earlier day names its date; a damaged cache counts as no c
   assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /No earlier PR data is cached/);
 });
 
-test('the inline answer, tick and priorities round trip survives a GitHub failure', () => {
+test('the inline answer and tick survive a GitHub failure', () => {
   const d = dir();
   writePriorities(d, '2026-10-05', [{ text: 'First' }]);
   generate(opts(d), deps([raw(12, 'acme-widgets')]));
@@ -279,8 +279,8 @@ test('a rebuild gives up with "already running" when a live holder keeps the loc
   assert.equal(readFileSync(lockPath(d), 'utf8').includes('4242'), true, 'the holder\'s lock is left alone');
 });
 
-test('a lock whose holder is gone, or that is older than 2 minutes, is taken over', () => {
-  for (const [label, holder, alive] of [['dead holder', { pid: 4242, at: NOW.getTime() }, false], ['old lock', { pid: 4242, at: NOW.getTime() - 121_000 }, true]] as const) {
+test('a lock whose holder is gone, or that is older than 30 minutes, is taken over', () => {
+  for (const [label, holder, alive] of [['dead holder', { pid: 4242, at: NOW.getTime() }, false], ['old lock', { pid: 4242, at: NOW.getTime() - 31 * 60_000 }, true]] as const) {
     const d = dir();
     writeFileSync(lockPath(d), JSON.stringify(holder));
     const clock = fakeClock(NOW.getTime());
@@ -290,6 +290,22 @@ test('a lock whose holder is gone, or that is older than 2 minutes, is taken ove
     assert.equal(existsSync(join(d, 'NOW.md')), true, label);
     assert.equal(existsSync(lockPath(d)), false, label);
   }
+});
+
+test('a live holder keeps its lock for as long as a slow GitHub run can take (29 minutes old is not stale)', () => {
+  const d = dir();
+  const clock = fakeClock(NOW.getTime());
+  writeFileSync(lockPath(d), JSON.stringify({ pid: 4242, at: clock.at() - 29 * 60_000 }));
+  assert.throws(() => generate(opts(d), deps([], { now: clock.now, sleep: clock.sleep, pidAlive: () => true })), /already running/);
+});
+
+test('a cache whose nested nodes are damaged counts as no cache', () => {
+  const d = dir();
+  generate(opts(d), deps([raw(12, 'acme-widgets')]));
+  const cache = JSON.parse(readFileSync(join(d, '.now-prs.json'), 'utf8'));
+  cache.prs[0].commits.nodes = [{}];
+  writeFileSync(join(d, '.now-prs.json'), JSON.stringify(cache));
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { fetchPrs: ghDown })).page, /No earlier PR data is cached/);
 });
 
 test('an unreadable lock file counts as stale; --dry-run neither takes nor waits for the lock', () => {
