@@ -124,3 +124,27 @@ test('nothing in the page names an install: no org, vault or tracker unless the 
   assert.match(page, /### other/);
   assert.match(page, /\| FAKE-5 \|/, 'a key with no tracker URL is plain text');
 });
+
+test('regenerating keeps an answer, a tick and a priorities edit the watcher has not reported, and records the generator\'s own hash', () => {
+  const d = dir();
+  writePriorities(d, '2026-10-05', [{ text: 'First' }, { text: 'Second' }]);
+  generate(opts(d), deps([]));
+  const typed = readFileSync(join(d, 'NOW.md'), 'utf8').replace('`bb22`\n  > answer: ', '`bb22`\n  > answer: go ahead').replace('- [ ] `cc33`', '- [x] `cc33`').replace('2. Second', '2. Mine');
+  writeFileSync(join(d, 'NOW.md'), typed);
+  const again = generate(opts(d), deps([])).page;
+  assert.match(again, /`bb22`\n {2}> answer: go ahead\n/);
+  assert.match(again, /- \[x\] `cc33`/);
+  assert.match(again, /2\. Mine/);
+  const meta = JSON.parse(readFileSync(join(d, '.now-seen.json'), 'utf8'));
+  assert.equal(meta.carried, 3);
+  assert.deepEqual(meta.priorities_seen, ['First', 'Second'], 'the carried priorities edit does not become the "last rendered" list');
+});
+
+test('--dry-run shows the carried edit but writes neither the page nor the watcher files', () => {
+  const d = dir();
+  generate(opts(d), deps([]));
+  writeFileSync(join(d, 'NOW.md'), readFileSync(join(d, 'NOW.md'), 'utf8').replace('`bb22`\n  > answer: ', '`bb22`\n  > answer: typed'));
+  const before = readFileSync(join(d, '.now-seen.json'), 'utf8');
+  assert.match(generate(opts(d, { dryRun: true }), deps([])).page, /answer: typed/);
+  assert.equal(readFileSync(join(d, '.now-seen.json'), 'utf8'), before);
+});
