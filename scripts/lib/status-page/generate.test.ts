@@ -37,7 +37,8 @@ const opts = (statusDir: string, over = {}) => ({ statusDir, dryRun: false, snap
 const dir = (): string => mkdtempSync(join(tmpdir(), 'sp-'));
 
 test('loadPrs picks a stream from an override, then the repo map, then other', () => {
-  const prs = loadPrs([raw(1, 'acme-widgets'), raw(2, 'gadgets'), raw(3, 'unmapped'), raw(4, 'unmapped')], { 'unmapped#4': 'Alpha', 'gadgets#2': 'Gamma' }, CONFIG.repoStreams);
+  const ev = { items: [], ticketMap: {}, overrides: { 'unmapped#4': 'Alpha', 'gadgets#2': 'Gamma' }, repoStreams: CONFIG.repoStreams, keyPattern: CONFIG.trackerKeyPattern };
+  const prs = loadPrs([raw(1, 'acme-widgets'), raw(2, 'gadgets'), raw(3, 'unmapped'), raw(4, 'unmapped')], ev);
   assert.deepEqual(prs.map((p) => p.stream), ['Alpha', 'Gamma', 'other', 'Alpha']);
   assert.equal(prs[0]?.unresolved, 1);
 });
