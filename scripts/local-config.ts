@@ -9,7 +9,7 @@
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Reads the `maestro-config` fenced block of a markdown file into { key: value }. */
@@ -323,6 +323,34 @@ export const AGENT_OWNED_REPOS = globList('MAESTRO_AGENT_OWNED_REPOS', 'agent_ow
 
 export const CONTAINER_ROOT = ((v: string) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_CONTAINER_ROOT', 'container_root').trim());
 
+/** Expands a leading `~/`. */
+const expandHome = (v: string): string => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v);
+
+/** The status page directory as configured (`status_dir`); empty when unset. Set means `journal.ts status --footer` may link the page. */
+export const STATUS_DIR_SETTING = expandHome(pick('MAESTRO_STATUS_DIR', 'status_dir').trim());
+
+/** Where NOW.md, priorities.md, ticket-map.json and stream-overrides.json live. Default `<vault_root>/Projects/<project>/Status`; empty when neither is set. */
+export const statusDirFor = (project: string): string => STATUS_DIR_SETTING || (VAULT_ROOT ? join(VAULT_ROOT, 'Projects', project, 'Status') : '');
+
+/** The Obsidian vault name used in links. Default: the folder name of vault_root. */
+export const OBSIDIAN_VAULT = pick('MAESTRO_OBSIDIAN_VAULT', 'obsidian_vault').trim() || (VAULT_ROOT ? basename(VAULT_ROOT) : '');
+
+/** A full URI for the status page (`obsidian://...` or a URL); wins over the one derived from status_dir. */
+export const STATUS_PAGE_URI_SETTING = pick('MAESTRO_STATUS_PAGE_URI', 'status_page_uri').trim();
+
+/** Stream names in the order the status page lists them; streams found in the ledger or the repo map are added after. `other` is always last. */
+export const STATUS_STREAMS = globList('MAESTRO_STATUS_STREAMS', 'status_streams');
+
+/** `repo=Stream, other-repo=Stream`: which stream a PR in that repo (short name) belongs to on the status page. */
+export const STATUS_REPO_STREAMS: Record<string, string> = Object.fromEntries(globList('MAESTRO_STATUS_REPO_STREAMS', 'status_repo_streams')
+  .map((e) => e.split('=').map((x) => x.trim())).filter(([r, s]) => r && s) as [string, string][]);
+
+/** Browse URL prefix for tracker keys (`https://tracker.example.com/browse/`). Empty: keys render as plain text. */
+export const TRACKER_URL_BASE = pick('MAESTRO_TRACKER_URL_BASE', 'tracker_url_base').trim();
+
+/** Vault-relative note path of a ticket, `{id}` and `{prefix}` (the id without its trailing number) substituted. */
+export const TICKET_NOTE_PATH = pick('MAESTRO_TICKET_NOTE_PATH', 'ticket_note_path').trim() || 'Projects/{prefix}/Tickets/{id}';
+
 /** The PR search string every PR script shares. */
 export const PR_SEARCH = `is:pr is:open author:@me${GH_ORG ? ` org:${GH_ORG}` : ''}`;
 
@@ -332,7 +360,7 @@ if (process.argv[1] && isMain()) {
   console.log(`user_file:    ${userPath || '(disabled)'}${userPath && existsSync(userPath) ? '' : ' (not found)'}`);
   console.log(`overlay:      ${OVERLAY || '(none)'}`);
   console.log(`overlay_file: ${overlayPath || '(none found)'}`);
-  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS: Object.entries(COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '), MODEL_PRICES: MODEL_PRICES ? Object.entries(MODEL_PRICES).map(([f, p]) => `${f}(${PRICE_FIELDS.map((k) => `${k}=${p[k]}`).join(' ')})`).join('; ') : '', LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', UPDATE_CHECK: UPDATE_CHECK ? 'on' : 'off', AUTO_PULL: AUTO_PULL ? 'on' : 'off', AUTO_PULL_SET: AUTO_PULL_SET ? 'yes' : 'no', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', '), COPILOT_ORGS: COPILOT_ORGS.join(', '), GIT_EMAILS: GIT_EMAILS.join(', '), PROTECTED_BRANCHES: PROTECTED_BRANCHES.join(', '), SWEEP_MERGE_TARGETS: Object.entries(SWEEP_MERGE_TARGETS).map(([r, t]) => `${r}=${t.join('|')}`).join(', '), SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, SWEEP_PROTECT_SYMLINK_DIRS: SWEEP_PROTECT_SYMLINK_DIRS.join(', '), SWEEP_DISPOSABLE_IGNORED: SWEEP_DISPOSABLE_IGNORED.join(', '), APPROVALS_REVIEW_DAY, WATCH_MIN_INTERVAL, WATCH_MAX_INTERVAL, WATCH_NETWORK_FLOOR, WATCH_LOCAL_FLOOR, WATCH_TYPE_INTERVALS: Object.entries(WATCH_TYPE_INTERVALS).map(([t, n]) => `${t}=${n}`).join(', '), WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE, WATCH_QUIET_WEEKENDS: WATCH_QUIET_WEEKENDS ? 'on' : 'off', WATCH_TZ, EVENT_DIR, NOTIFY_COMMAND: NOTIFY_COMMAND.length ? '(set)' : '', INBOX_COMMAND: INBOX_COMMAND.length ? '(set)' : '', SCRIPTS_DIR: SCRIPTS_SHELF_DIR, AGENT_OWNED_REPOS: AGENT_OWNED_REPOS.join(', '), CONTAINER_ROOT })) {
+  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS: Object.entries(COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '), MODEL_PRICES: MODEL_PRICES ? Object.entries(MODEL_PRICES).map(([f, p]) => `${f}(${PRICE_FIELDS.map((k) => `${k}=${p[k]}`).join(' ')})`).join('; ') : '', LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', UPDATE_CHECK: UPDATE_CHECK ? 'on' : 'off', AUTO_PULL: AUTO_PULL ? 'on' : 'off', AUTO_PULL_SET: AUTO_PULL_SET ? 'yes' : 'no', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', '), COPILOT_ORGS: COPILOT_ORGS.join(', '), GIT_EMAILS: GIT_EMAILS.join(', '), PROTECTED_BRANCHES: PROTECTED_BRANCHES.join(', '), SWEEP_MERGE_TARGETS: Object.entries(SWEEP_MERGE_TARGETS).map(([r, t]) => `${r}=${t.join('|')}`).join(', '), SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, SWEEP_PROTECT_SYMLINK_DIRS: SWEEP_PROTECT_SYMLINK_DIRS.join(', '), SWEEP_DISPOSABLE_IGNORED: SWEEP_DISPOSABLE_IGNORED.join(', '), APPROVALS_REVIEW_DAY, WATCH_MIN_INTERVAL, WATCH_MAX_INTERVAL, WATCH_NETWORK_FLOOR, WATCH_LOCAL_FLOOR, WATCH_TYPE_INTERVALS: Object.entries(WATCH_TYPE_INTERVALS).map(([t, n]) => `${t}=${n}`).join(', '), WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE, WATCH_QUIET_WEEKENDS: WATCH_QUIET_WEEKENDS ? 'on' : 'off', WATCH_TZ, EVENT_DIR, NOTIFY_COMMAND: NOTIFY_COMMAND.length ? '(set)' : '', INBOX_COMMAND: INBOX_COMMAND.length ? '(set)' : '', SCRIPTS_DIR: SCRIPTS_SHELF_DIR, STATUS_DIR: STATUS_DIR_SETTING, OBSIDIAN_VAULT, STATUS_PAGE_URI: STATUS_PAGE_URI_SETTING, STATUS_STREAMS: STATUS_STREAMS.join(', '), STATUS_REPO_STREAMS: Object.entries(STATUS_REPO_STREAMS).map(([r, s]) => `${r}=${s}`).join(', '), TRACKER_URL_BASE, TICKET_NOTE_PATH, AGENT_OWNED_REPOS: AGENT_OWNED_REPOS.join(', '), CONTAINER_ROOT })) {
     console.log(`${k.padEnd(22)} ${v || '(unset)'}`);
   }
 }
