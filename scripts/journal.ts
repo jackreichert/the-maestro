@@ -117,7 +117,7 @@ import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
-import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, footerRows, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
@@ -127,7 +127,7 @@ import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/ba
 import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
-import { sessionLine } from './token-metrics.ts';
+import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
@@ -536,6 +536,7 @@ function cmdStatus() {
         console.log(JSON.stringify({
             date: d,
             inflight: g.inflight, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
+            footer: { ledger: footerRows(g, done), session: sessionStatus(CLAUDE_PROJECTS_DIR) },
         }, null, 2));
         return;
     }

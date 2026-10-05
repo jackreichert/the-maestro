@@ -48,6 +48,8 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSy
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ModelPrice } from './local-config.ts';
+import { sessionText } from './lib/session-text.ts';
+import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
@@ -254,6 +256,17 @@ export function currentSession(dir: string): { session: string; turns: number; r
     return { session: basename(newest.f, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0 };
 }
 
+/** The current session measured against the roll thresholds (see `sessionLine` for the rules). */
+export function sessionStatus(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT): SessionStatus {
+    let s;
+    try { s = currentSession(dir); } catch (e) { const err = e as NodeJS.ErrnoException; return { available: false, unavailable: `${err.code || err.message.split('\n')[0]} reading ${dir}` }; }
+    if (!s) return { available: false, unavailable: `no sessions in ${dir}; set projects_dir` };
+    // Cross-multiplied so 85% of 180 is exactly 153 turns, with no float division at the boundary.
+    const reached = (pct: number): boolean => s.turns * 100 >= pct * rollTurns || s.readPerTurn * 100 >= pct * rollRead;
+    const advice = reached(rollPct) ? 'roll now' : reached(warnPct) ? 'roll soon' : '';
+    return { available: true, turns: s.turns, pct: Math.floor((s.turns / rollTurns) * 100), rollTurns, readK: Math.floor(s.readPerTurn / 1000), advice };
+}
+
 /**
  * The status-footer Session line for the current session, e.g.
  * `**Session:** 86 turns (48% of 180 roll) · 129k read/turn`. The turn count and read/turn mean are since the last compact, not the
@@ -261,15 +274,7 @@ export function currentSession(dir: string): { session: string; turns: number; r
  * metric (turns vs rollTurns, mean read/turn vs rollRead) it ends with `roll soon`; at `rollPct` of either, `roll now` instead.
  * With no session on disk it says so rather than vanishing, so a misconfigured projects_dir is visible.
  */
-export function sessionLine(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT): string {
-    let s;
-    try { s = currentSession(dir); } catch (e) { const err = e as NodeJS.ErrnoException; return `**Session:** unavailable (${err.code || err.message.split('\n')[0]} reading ${dir})`; }
-    if (!s) return `**Session:** unavailable (no sessions in ${dir}; set projects_dir)`;
-    // Cross-multiplied so 85% of 180 is exactly 153 turns, with no float division at the boundary.
-    const reached = (pct: number): boolean => s.turns * 100 >= pct * rollTurns || s.readPerTurn * 100 >= pct * rollRead;
-    const advice = reached(rollPct) ? ' · roll now' : reached(warnPct) ? ' · roll soon' : '';
-    return `**Session:** ${s.turns} turns (${Math.floor((s.turns / rollTurns) * 100)}% of ${rollTurns} roll) · ${Math.floor(s.readPerTurn / 1000)}k read/turn${advice}`;
-}
+export const sessionLine = (...args: Parameters<typeof sessionStatus>): string => sessionText(sessionStatus(...args));
 
 function scanFile(path: string): ScanResult {
     const turns: Turn[] = [];
