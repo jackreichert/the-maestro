@@ -510,6 +510,79 @@ test('status --footer with no streams is the single plain Ledger line, and appen
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
 });
 
+// ── queued state ────────────────────────────────────────────────────────────
+
+test('queue "<text>" writes a wip row marked queued with stream and marks, and start <id> promotes it with a promote row', () => {
+    seedRegistry();
+    const q = run('queue', 'later job', '--stream', 'launch', ...MARK);
+    assert.equal(q.code, 0, q.err);
+    assert.match(q.out, /^queued {2}\w{4} {2}later job/);
+    const id = idOf(q.out);
+    const row = must(ledger().find((e) => e.id === id));
+    assert.deepEqual([row.kind, row.queued, row.stream, row.model], ['wip', true, 'Launch', 'Test Model']);
+
+    const s = run('start', id, ...MARK);
+    assert.equal(s.code, 0, s.err);
+    assert.match(s.out, /promoted from queued/);
+    const promote = must(ledger().find((e) => e.kind === 'promote'));
+    assert.equal(promote.promotes, id);
+    assert.equal(ledger().filter((e) => e.kind === 'wip').length, 1, 'promoting opens no new item');
+    assert.equal(run('verify').code, 0);
+});
+
+test('queue <id> moves an in-flight item to queued, keeps its history, and is idempotent', () => {
+    const id = idOf(run('start', 'running job', ...MARK).out);
+    const first = run('queue', id, ...MARK);
+    assert.equal(first.code, 0, first.err);
+    const rows = ledger();
+    assert.equal(must(rows.find((e) => e.kind === 'queue')).queues, id);
+    assert.equal(must(rows.find((e) => e.id === id)).queued, undefined, 'the original row is not rewritten');
+    const again = run('queue', id, ...MARK);
+    assert.equal(again.code, 0);
+    assert.match(again.out, /already queued/);
+    assert.equal(ledger().length, rows.length, 'a second queue writes nothing');
+    assert.equal(run('start', id, ...MARK).code, 0);
+    const startAgain = run('start', id, ...MARK);
+    assert.match(startAgain.out, /already in flight/);
+    assert.equal(ledger().filter((e) => e.kind === 'promote').length, 1);
+});
+
+test('queue refuses a closed or non-wip item, an unknown id-shaped token, and --kind; --text queues such a word', () => {
+    const done = idOf(run('start', 'finished', ...MARK).out);
+    run('done', done, ...MARK);
+    const ask = idOf(run('ask', 'which way?', ...MARK).out);
+    const before = ledger().length;
+    assert.equal(run('queue', done, ...MARK).code, 1);
+    assert.equal(run('queue', ask, ...MARK).code, 1);
+    const typo = run('queue', 'zz99', ...MARK);
+    assert.equal(typo.code, 1);
+    assert.match(typo.err, /No item with id zz99/);
+    assert.equal(run('queue', 'a thing', '--kind', 'note', ...MARK).code, 1);
+    assert.equal(run('start', done, ...MARK).code, 1, 'a closed item is not restarted by id');
+    assert.equal(ledger().length, before);
+    assert.equal(run('queue', '--text', 'zz99', ...MARK).code, 0);
+    assert.equal(run('queue', 'docs', ...MARK).code, 0, 'a plain word is text');
+});
+
+test('verify flags a queue or promote row whose target does not exist', () => {
+    run('queue', 'real', ...MARK);
+    writeFileSync(ledgerFile(), `${readFileSync(ledgerFile(), 'utf8')}${JSON.stringify({ id: 'qq01', kind: 'queue', queues: 'nope', text: 'x' })}\n${JSON.stringify({ id: 'qq02', kind: 'promote', promotes: 'gone', text: 'x' })}\n`);
+    const r = parse<Doc>(run('verify', '--json').out);
+    assert.equal(r.problems.length, 2);
+    assert.equal(run('verify').code, 1);
+});
+
+test('a queued item is never flagged stale by triage, an in-flight one a day old is', () => {
+    const queued = idOf(run('queue', 'to do someday', '--allow-unmarked').out);
+    const running = idOf(run('start', 'running', ...MARK).out);
+    const rows = readFileSync(ledgerFile(), 'utf8').split('\n').filter(Boolean).map((l) => parse<Out>(l));
+    writeFileSync(ledgerFile(), `${rows.map((r) => JSON.stringify({ ...r, date: '2020-01-01' })).join('\n')}\n`);
+    const t = parse<Doc>(run('triage', '--json').out);
+    const items = Object.values(t.byBox).flat().filter(Boolean) as Out[];
+    assert.equal(must(items.find((i) => i.id === queued)).stale, false);
+    assert.equal(must(items.find((i) => i.id === running)).stale, true);
+});
+
 // ── model-name registry ─────────────────────────────────────────────────────
 
 const ledgerFile = () => join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
