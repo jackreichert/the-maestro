@@ -329,7 +329,7 @@ const expandHome = (v: string): string => (v.startsWith('~/') ? join(homedir(), 
 /** The status page directory as configured (`status_dir`); empty when unset. Set means `journal.ts status --footer` may link the page. */
 export const STATUS_DIR_SETTING = expandHome(pick('MAESTRO_STATUS_DIR', 'status_dir').trim());
 
-/** Where NOW.md, priorities.md, ticket-map.json and stream-overrides.json live. Default `<vault_root>/Projects/<project>/Status`; empty when neither is set. */
+/** Where The-Podium.md, priorities.md, ticket-map.json and stream-overrides.json live. Default `<vault_root>/Projects/<project>/Status`; empty when neither is set. */
 export const statusDirFor = (project: string): string => STATUS_DIR_SETTING || (VAULT_ROOT ? join(VAULT_ROOT, 'Projects', project, 'Status') : '');
 
 /** The Obsidian vault name used in links. Default: the folder name of vault_root. */

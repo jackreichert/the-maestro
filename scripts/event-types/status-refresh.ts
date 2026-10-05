@@ -1,6 +1,6 @@
 /**
- * status-refresh: regenerates the status page (NOW.md) inside the event loop, with no model involved. Target is the status
- * directory (the one holding NOW.md). A check never throws and its events are never actionable, so a refresh cannot make the loop exit 10.
+ * status-refresh: regenerates the Podium (The-Podium.md) inside the event loop, with no model involved. Target is the status
+ * directory (the one holding The-Podium.md). A check never throws and its events are never actionable, so a refresh cannot make the loop exit 10.
  * (The loop's own notice that a watch outlived its TTL is the one exception; see the playbook.)
  *
  * A check regenerates when something has made the page dirty and the burst has settled, or when the page is old:
@@ -11,7 +11,7 @@
  * The GitHub read runs only when the PR data is dirty or more than 5 minutes old; otherwise the cached PR set is rendered
  * (.now-prs.json). In quiet hours it never runs: the page is rebuilt from the ledger and the cached PRs, and the PR data
  * stays dirty until the next waking-hours refresh.
- * Edit-quiet window: while NOW.md holds an edit the status watcher has not adopted and was saved under 60 s ago, nothing is
+ * Edit-quiet window: while The-Podium.md holds an edit the status watcher has not adopted and was saved under 60 s ago, nothing is
  * written; the refresh stays pending and runs once the window has passed. A regeneration that fails (ledger unreadable,
  * another rebuild holding .now.lock) is retried after 2 minutes and reported as a non-actionable event, once per new message.
  * State { sig, firstChange, lastChange, lastRun, markerSeen, prDirty, retryAt, error } is the whole memory; times are epoch ms.
@@ -23,7 +23,7 @@ import { nextInterval } from '../lib/cadence.ts';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, WATCH_QUIET_HOURS, WATCH_QUIET_WEEKENDS, WATCH_TZ } from '../local-config.ts';
 import { prsDirtyAt } from '../lib/status-page/dirty.ts';
 import { readPrCache } from '../lib/status-page/prcache.ts';
-import { PODIUM_FILE, readPodium, readSeenMeta, sha } from '../lib/status-page/seen.ts';
+import { LEGACY_FILE, PODIUM_FILE, readPodium, readSeenMeta, sha } from '../lib/status-page/seen.ts';
 import { regenerate } from '../status-page.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
@@ -69,7 +69,9 @@ export interface RefreshIo {
 
 const stamp = (path: string): string => { try { const s = statSync(path); return `${s.mtimeMs}:${s.size}`; } catch { return '-'; } };
 
-const pageMtime = (dir: string): number => { try { return statSync(join(dir, PODIUM_FILE)).mtimeMs; } catch { return 0; } };
+const mtime = (path: string): number => { try { return statSync(path).mtimeMs; } catch { return 0; } };
+/** The page's modification time; before the first Podium is written, the legacy NOW.md page that readPodium falls back to. */
+const pageMtime = (dir: string): number => mtime(join(dir, PODIUM_FILE)) || mtime(join(dir, LEGACY_FILE));
 
 export const realIo: RefreshIo = {
   ledgerSig: (statusDir) => {
