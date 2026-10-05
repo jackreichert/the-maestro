@@ -64,8 +64,9 @@ const oneLine = (s: string, max: number): string => {
   const t = s.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
   const room = t.slice(0, max - 3);
-  const atWord = t[max - 3] === ' ' ? room : room.slice(0, room.lastIndexOf(' '));
-  return `${(atWord || room).trimEnd()}...`;
+  const i = room.lastIndexOf(' ');
+  const atWord = t[max - 3] === ' ' ? room : (i > 0 ? room.slice(0, i) : room);
+  return `${atWord.trimEnd()}...`;
 };
 /** The text with URLs dropped and whitespace squashed, never clipped. */
 const plain = (s: string): string => s.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
@@ -244,6 +245,9 @@ function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | undefined
   return { prs: refs, tracker: keysIn(cfg, a.text).map((k) => trackerRef(cfg, k)), note: ticket ? ticketNoteRef(cfg, ticket) : undefined };
 }
 
+/** The text safe inside a `**...**` wrap: emphasis and code markers dropped, so the bold span ends where the page says it does. */
+const boldSafe = (s: string): string => s.replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim();
+
 /** The decision an ask puts to the user (up to its first question mark) and the context after it. */
 export function splitAsk(text: string): { needed: string; context: string } {
   const clean = text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
@@ -269,7 +273,7 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
       const { needed, context } = splitAsk(a.text);
       const age = daysBetween(a.date, today);
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
-      const text = [needed ? `**${needed}**` : '', plain(context)].filter(Boolean).join(' ');
+      const text = [boldSafe(needed) ? `**${boldSafe(needed)}**` : '', plain(context)].filter(Boolean).join(' ');
       out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
     }
     out.push('');

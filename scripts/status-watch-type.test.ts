@@ -163,3 +163,22 @@ test('the generator gives up, writing nothing, if the page keeps changing under 
   assert.throws(() => generate({ statusDir: dir, dryRun: false, snapshot: false, command: 'status-page', config: CONFIG }, racing), /kept changing/);
   assert.equal(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), `${before}\nedit 3\n`, 'the last thing on disk is the user\'s');
 });
+
+test('a decision with emphasis markers is reported whole, the same text the page shows', () => {
+  const dir = setup();
+  awaiting.push({ id: 'ef56', date: '2026-10-05', text: '*Merge **now**_ok_`x`*? tail', stream: 'Alpha' });
+  regenerate(dir);
+  events(dir);
+  answer(dir, 'ef56', 'yes');
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ef56` \*\*Merge nowokx\?\*\* tail/);
+  assert.deepEqual(events(dir), ['ask ef56 (decision: Merge nowokx?) answered: yes']);
+});
+
+test('an older table page (no ask lines) still gives the decision from the last cell of the row', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-old-'));
+  const old = (answerText: string): string => ['# The Podium', '', '| id | stream | needed |', '| --- | --- | --- |', '| `ab12` | Alpha | Merge it \\| now? |', `  > answer: ${answerText}`, ''].join('\n');
+  writeFileSync(join(dir, 'The-Podium.md'), old(''));
+  events(dir);
+  writeFileSync(join(dir, 'The-Podium.md'), old('go'));
+  assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it | now?) answered: go']);
+});
