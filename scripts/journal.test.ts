@@ -1949,3 +1949,27 @@ test('prime is silent about auto_pull when the skill is not a git checkout or it
     assert.equal(spawnSync('git', ['checkout', '-q', '-b', 'topic'], { cwd: skill }).status, 0);
     assert.doesNotMatch(primeIn(skill, unset), /auto_pull is not set/);
 });
+
+test('priorities set and show round-trip through the status dir, with a stream suffix', () => {
+    const sd = join(vault, 'Status');
+    assert.match(run('priorities', 'show', '--status-dir', sd).out, /Priorities not set for today — orchestrator will ask/);
+    const set = run('priorities', 'set', 'Ship the widget | Alpha', 'Second thing', '--status-dir', sd);
+    assert.equal(set.code, 0, set.err);
+    const shown = parse<{ state: string; items: { text: string; stream?: string }[] }>(run('priorities', 'show', '--json', '--status-dir', sd).out);
+    assert.equal(shown.state, 'ok');
+    assert.deepEqual(shown.items, [{ text: 'Ship the widget', stream: 'Alpha' }, { text: 'Second thing' }]);
+    assert.equal(run('priorities', 'set', '--status-dir', sd).code, 1, 'no priorities is refused');
+    assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
+});
+
+test('prime prints the not-set line when a status dir exists and today\'s priorities are missing or stale, and not otherwise', () => {
+    const sd = join(vault, 'Status');
+    const line = 'Priorities not set for today — orchestrator will ask';
+    assert.doesNotMatch(run('prime', '--status-dir', sd).out, /Priorities not set/, 'no status dir: not nagged');
+    mkdirSync(sd, { recursive: true });
+    assert.match(run('prime', '--status-dir', sd).out, new RegExp(line));
+    writeFileSync(join(sd, 'priorities.md'), 'date: 2001-01-01\n- old\n');
+    assert.match(run('prime', '--status-dir', sd).out, new RegExp(line), 'stale');
+    assert.equal(run('priorities', 'set', 'today thing', '--status-dir', sd).code, 0);
+    assert.doesNotMatch(run('prime', '--status-dir', sd).out, /Priorities not set/);
+});
