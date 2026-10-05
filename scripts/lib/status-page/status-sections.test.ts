@@ -28,6 +28,12 @@ const rows: LedgerRow[] = [
   row('dd41', 'question', 'which path?', { stream: 'Bayada' }),
   row('ee51', 'blocked', 'waiting on a vendor', { stream: 'Team Select' }),
   row('ff61', 'question', 'run this', { stream: 'Bayada', paste: '/tmp/fake.sh' }),
+  row('qq91', 'wip', 'later team select job FAKE-9', { stream: 'Team Select', queued: true, ts: `${TODAY}T12:00:00Z` }),
+  row('qq92', 'wip', 'later bayada job', { stream: 'Bayada', queued: true, ts: `${TODAY}T14:00:00Z` }),
+  row('qq93', 'wip', 'parked after starting', { stream: 'Team Select', ts: `${TODAY}T10:00:00Z` }),
+  row('qq94', 'queue', 'queue', { queues: 'qq93', ts: `${TODAY}T14:50:00Z` }),
+  row('qq95', 'wip', 'started from the queue', { stream: 'Bayada', queued: true, ts: `${TODAY}T09:00:00Z` }),
+  row('qq96', 'promote', 'start', { promotes: 'qq95', ts: `${TODAY}T14:00:00Z` }),
   row('gg71', 'wip', 'shipped thing', { stream: 'Bayada' }),
   row('hh81', 'done', 'shipped', { closes: 'gg71', stream: 'Bayada' }),
 ];
@@ -42,7 +48,7 @@ function board(): BoardStatus & { footerText: string[] } {
   const done = g.doneOn(TODAY, { sinceRoll: true });
   const session: SessionStatus = { available: true, turns: 86, pct: 47, rollTurns: 180, readK: 129, advice: 'roll soon' };
   return {
-    inflight: g.inflight, blocked: g.blocked, awaiting: g.awaiting, done,
+    inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, done,
     footer: { ledger: footerRows(g, done), session }, footerText: footerLines(g, done),
   } as BoardStatus & { footerText: string[] };
 }
@@ -63,19 +69,19 @@ test('the Status table carries exactly the numbers status --footer prints, one r
   const b = board();
   const rowsOnPage = section(page(b), '## Status').filter((l) => l.startsWith('| ')).slice(1).map(cells);
   const fromFooter = b.footerText.map((l) => {
-    const m = l.match(/^\*\*Ledger \((.+)\):\*\* (\d+) done today · (\d+) in flight · (\d+) awaiting you(?: · (\d+) to run)?(?: · (\d+) blocked)?$/);
+    const m = l.match(/^\*\*Ledger \((.+)\):\*\* (\d+) done today · (\d+) in flight(?: · (\d+) queued)? · (\d+) awaiting you(?: · (\d+) to run)?(?: · (\d+) blocked)?$/);
     assert.ok(m, l);
-    return [m[1], m[2], m[3], m[4], m[5] ?? '0', m[6] ?? '0'];
+    return [m[1], m[2], m[3], m[4] ?? '0', m[5], m[6] ?? '0', m[7] ?? '0'];
   });
   assert.deepEqual(rowsOnPage, fromFooter);
   assert.deepEqual(rowsOnPage.map((r) => r[0]), ['Team Select', 'Bayada', 'other'], 'Team Select and Bayada stay separate streams');
-  assert.deepEqual(rowsOnPage.find((r) => r[0] === 'Bayada'), ['Bayada', '1', '1', '1', '1', '0']);
+  assert.deepEqual(rowsOnPage.find((r) => r[0] === 'Bayada'), ['Bayada', '1', '2', '1', '1', '1', '0']);
 });
 
 test('the Status section ends with the agents line and the session line formatted as the footer formats it', () => {
   const b = board();
   const s = section(page(b), '## Status');
-  assert.ok(s.includes('**Agents:** 4 in flight on the ledger (the live agent roster is shown in each reply\'s footer)'));
+  assert.ok(s.includes('**Agents:** 5 in flight on the ledger (the live agent roster is shown in each reply\'s footer)'));
   assert.ok(s.includes(sessionText(b.footer!.session)));
   assert.ok(s.includes('**Session:** 86 turns (47% of 180 roll) · 129k read/turn · roll soon'));
   assert.equal(section(page(b), '## Status').length > 0 && page(b).trimEnd().split('\n').includes('## Status'), true);
@@ -85,26 +91,48 @@ test('Working on now sits directly under the priorities, grouped by stream, with
   const p = page(board());
   const lines = p.split('\n');
   const pri = lines.indexOf("## Today's priorities");
-  const work = lines.indexOf('## Working on now (4)');
+  const work = lines.indexOf('## Working on now (5)');
   assert.ok(pri !== -1 && work > pri);
   assert.ok(!lines.slice(pri + 1, work).some((l) => /^## /.test(l)), 'no section between the priorities and Working on now');
-  const t = section(p, '## Working on now (4)').filter((l) => l.startsWith('| ')).slice(1).map(cells);
-  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Team Select', '`aa11`'], ['Team Select', '`aa12`'], ['Bayada', '`bb21`'], ['other', '`cc31`']]);
+  const t = section(p, '## Working on now (5)').filter((l) => l.startsWith('| ')).slice(1).map(cells);
+  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Team Select', '`aa11`'], ['Team Select', '`aa12`'], ['Bayada', '`bb21`'], ['Bayada', '`qq95`'], ['other', '`cc31`']]);
   assert.equal(t[0]?.[3], '[FAKE-1](https://tracker.test/browse/FAKE-1)');
   assert.equal(t[0]?.[4], 'Model A');
   assert.equal(t[0]?.[5], '4 h (since 7:00 am ET)');
   assert.equal(t[2]?.[5], '30 min (since 10:30 am ET)');
+  assert.equal(t[3]?.[5], '1 h (since 10:00 am ET)', 'a promoted item runs from its start, not from when it was queued at 5:00 am ET');
+  assert.ok(!t.some((r) => /qq9[123]/.test(r[1] ?? '')), 'queued items are not working on now');
+});
+
+test('Queued sits right after Working on now, grouped by stream, with ticket link and age, and holds only queued items', () => {
+  const p = page(board());
+  const lines = p.split('\n');
+  assert.equal(lines.findIndex((l) => l.startsWith('## Queued (')), lines.findIndex((l, i) => i > lines.indexOf('## Working on now (5)') && /^## /.test(l)), 'the next section after Working on now');
+  const q = section(p, '## Queued (3)');
+  assert.ok(q.length > 0);
+  const t = q.filter((l) => l.startsWith('| ')).slice(1).map(cells);
+  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Team Select', '`qq91`'], ['Team Select', '`qq93`'], ['Bayada', '`qq92`']]);
+  assert.equal(t[0]?.[3], '[FAKE-9](https://tracker.test/browse/FAKE-9)');
+  assert.equal(t[0]?.[4], '3 h');
+  assert.equal(t[1]?.[4], '10 min', 'an item parked after it started waits from the moment it was queued');
+  assert.equal(t[2]?.[4], '1 h');
+});
+
+test('Queued says so when empty, and is not an answer area', () => {
+  assert.ok(section(page({ inflight: [], queued: [], blocked: [], awaiting: [], done: [] }), '## Queued (0)').includes('Nothing queued.'));
+  const p = page(board());
+  assert.deepEqual(Object.keys(extractFields(p).ticks), ['dd41'], 'a queued id is not a tick');
 });
 
 test('with nothing in flight and no footer data the sections say so instead of vanishing', () => {
-  const p = page({ inflight: [], blocked: [], awaiting: [], done: [] });
+  const p = page({ inflight: [], queued: [], blocked: [], awaiting: [], done: [] });
   assert.ok(section(p, '## Working on now (0)').includes('Nothing in flight.'));
   assert.match(p, /\*\*Footer data unavailable:\*\*/);
 });
 
 test('the new sections are not answer areas: no id, tick or answer is read from them', () => {
   const p = page(board());
-  const without = p.split('\n').filter((l) => !section(p, '## Working on now (4)').includes(l) && !section(p, '## Status').includes(l)).join('\n');
+  const without = p.split('\n').filter((l) => !section(p, '## Working on now (5)').includes(l) && !section(p, '## Status').includes(l)).join('\n');
   assert.deepEqual(extractFields(p), extractFields(without), 'the fields come only from the asks and the priorities');
   assert.deepEqual(Object.keys(extractFields(p).ticks), ['dd41'], 'the one ask on the board, not an in-flight id');
   const typed = p.replace('**Session:**', '> answer: nope\n**Session:**');

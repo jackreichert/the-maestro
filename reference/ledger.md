@@ -48,6 +48,7 @@ crashed session cannot lose entries.
 | Moment | Command |
 |---|---|
 | Starting non-trivial work, or dispatching an agent for it | `start` |
+| Work you intend to do but have not started (a to-do) | `queue` (see [Queued items](#queued-items)) |
 | That work lands, or the agent reports success | `done` |
 | You hit something you cannot proceed past | `log --kind blocked` |
 | A question only the user can answer | `ask` |
@@ -64,6 +65,32 @@ somewhere durable.
 **Do not log:** lookups, status checks, anything a ticket already owns in full. A ledger entry is a
 pointer to work; the ticket holds the detail. When both exist, pass `--ticket <id>` and let the link
 carry the weight.
+
+## Queued items
+
+An open item is **in flight** (someone is working on it now) or **queued** (a to-do that has not started). Without the second state every to-do reads as running work and the in-flight count means nothing.
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: queue "text"
+  [*] --> inflight: start "text"
+  queued --> inflight: start id
+  inflight --> queued: queue id
+  inflight --> done
+  queued --> done
+  inflight --> blocked
+  inflight --> awaiting
+```
+
+| Command | Effect |
+|---|---|
+| `queue "<text>" --stream S --model m --used n` | Open an item already queued (`--repo`, `--ticket`, `--stream` as for `start`) |
+| `queue <id>` | Move an open in-flight item to queued. Appends a `queue` row; the item's own row and history are untouched |
+| `start <id>` | Promote a queued item to in flight. Appends a `promote` row. `start "<text>"` still opens a new item |
+
+Both id forms are idempotent (an item already in the target state is reported and nothing is written) and refuse a closed item or one that is not an in-flight `wip` item. A single 4-character token that has a digit and matches no item is rejected as a probable mistyped id; pass `--text "<word>"` to queue it as text. `queue` and `promote` are event rows, not items; the latest one for an item wins, and `verify` checks that each points at an existing id.
+
+Queued items stay **open**: `done`, `drop`, `defer`, `tag`, `carry` and `archive`'s blocker check treat them like any open item, and `roll` leaves them on the board (its summary names the count). `status`, `CURRENT.md`, `standup` and `prime` list them under **Queued**, after In flight, and the handoff tags them `queued`. The triage box is still 7 (In flight), but a queued item is never stale, since it has not started. The `to run` count (paste blocks) is unrelated and unchanged.
 
 ## Rules are records, not asks
 
@@ -165,9 +192,9 @@ node $J unarchive Launch "${M[@]}"
 **Session:** 86 turns (48% of 180 roll) · 129k read/turn
 ```
 
-One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
+One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
-`status --json` carries the same figures as data under `footer` (`ledger`: one `{ name, done, inflight, awaiting, paste, blocked }` per line; `session`: the turns, percent, read per turn and advice), and the Podium's **Status** section is formatted from it, so the page and the footer never disagree.
+`status --json` carries the same figures as data under `footer` (`ledger`: one `{ name, done, inflight, queued, awaiting, paste, blocked }` per line; `session`: the turns, percent, read per turn and advice), and the Podium's **Status** section is formatted from it, so the page and the footer never disagree.
 
 The Session line comes from `token-metrics.ts`: the most recently modified transcript in `projects_dir`, its turn count against `roll_turns` (default 180) and its mean cache-read per turn. The shown percent is of the full `roll_turns`. When either metric (turns against `roll_turns`, or mean read per turn against `roll_read_per_turn`, default 350000) reaches `roll_warn_pct` (default 85) of its limit the line ends `· roll soon`; at `roll_at_pct` (default 90) it ends `· roll now` instead. What the orchestrator does at each level is in [cost/budget.md#session-hygiene](../cost/budget.md#session-hygiene). With no transcript in that directory it prints `**Session:** unavailable (...)` and does not vanish. An unset `projects_dir` follows `container_root` when that is set, else the transcript directory of the working directory the script runs from, which is usually not the orchestrator's; `token-metrics.ts` warns on stderr when the directory it resolved has no sessions.
 
@@ -251,7 +278,7 @@ Everything open falls into one of eleven boxes. `triage` sorts them and says wha
 | 4 | Needs Jack | a question (or `ask --kind decision`) that asks the user to choose or know something | carry; stale after 2 days |
 | 5 | Paste blocks | `ask --paste <file>`, or a question with run/paste/yourself/block wording and no `?` | carry in its own list with the file; stale after 2 days |
 | 6 | Blocked / gated | `blocked` | carry with the gate written out |
-| 7 | In flight | `wip` | carry; stale after 1 day: confirm alive (`ListAgents`, branch sweep) or drop |
+| 7 | In flight | `wip` (queued ones too, never stale) | carry; stale after 1 day: confirm alive (`ListAgents`, branch sweep) or drop |
 | 8 | Incidental findings | a note saying "could not be filed", "follow-up", "next session" or "TODO" with no ticket | file a ticket, then log a pointer |
 | 9 | Learnings | a note with learned, lesson, ruled out or cause | copy into the handoff and the repo's CONTEXT.md |
 | 10 | Done | `done`, `dropped` | `roll` archives |
@@ -282,7 +309,7 @@ node $J log "<what is blocked>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-M
 node $J defer <id> --until YYYY-MM-DD --model ... --used ...
 ```
 
-**`prime`** prints at most 40 lines, however much is open: the day's streams, then **Needs Jack**, **Paste blocks for Jack**, **Blocked / gated** and **In flight**. When they do not fit, the boxes share the lines evenly and each says how many it hid (`… +N more`). It reads only the ledger (no `gh`, no `--model`) and appends nothing, so it is safe in a SessionStart hook. The one network step is the update check: a `git fetch` of the skill's own repo (15 second cap), reported as a single line above the board when the checkout is behind, ahead, diverged or dirty and omitted when it is current; `--no-update-check` or `update_check: off` skips it, and `auto_pull: on` fast-forwards a clean, purely-behind checkout (`git merge --ff-only` only). While `auto_pull` is neither on nor off, a second line (`auto_pull is not set ...`) follows the update line each session; `journal.ts autopull on|off` answers it. The cap holds whatever the content: text is clipped to one line, and a final guard trims to 40. (Like `status`, it regenerates the derived `CURRENT.md` and stream pages once on the first read of a new day, but only when a `defer` row exists, so an expired deferral reappears there.) Run it at the start of a session and again right after a context compaction.
+**`prime`** prints at most 40 lines, however much is open: the day's streams, then **Needs Jack**, **Paste blocks for Jack**, **Blocked / gated**, **In flight** and **Queued**. When they do not fit, the boxes share the lines evenly and each says how many it hid (`… +N more`). It reads only the ledger (no `gh`, no `--model`) and appends nothing, so it is safe in a SessionStart hook. The one network step is the update check: a `git fetch` of the skill's own repo (15 second cap), reported as a single line above the board when the checkout is behind, ahead, diverged or dirty and omitted when it is current; `--no-update-check` or `update_check: off` skips it, and `auto_pull: on` fast-forwards a clean, purely-behind checkout (`git merge --ff-only` only). While `auto_pull` is neither on nor off, a second line (`auto_pull is not set ...`) follows the update line each session; `journal.ts autopull on|off` answers it. The cap holds whatever the content: text is clipped to one line, and a final guard trims to 40. (Like `status`, it regenerates the derived `CURRENT.md` and stream pages once on the first read of a new day, but only when a `defer` row exists, so an expired deferral reappears there.) Run it at the start of a session and again right after a context compaction.
 
 **Gates.** A blocked item can name what it waits for: `gh:pr:<repo>#N` (merged), `date:YYYY-MM-DD` (that day has arrived), or `ticket:<id>` (closed in the tickets vault). `--gate` is only valid on `--kind blocked`, and a malformed one exits 1 before anything is written. `resume` checks each gate in a **Gates** section and reports `waiting`, `CLEARED` or `UNKNOWN`. It is report-only: a cleared gate prints the `resolve` command to run, and nothing is closed or promoted for you. `UNKNOWN` means the lookup could not say (`gh` missing or failing, `resume_gh` off, a PR closed without merging, no tickets vault, ticket not in the index). A ticket gate reads the derived ticket index, which `ledger-index` rebuilds when stale: that is a derived file, never a ledger row. `gh` is called as `gh pr view <N> --repo <repo> --json state,mergedAt`.
 
@@ -291,7 +318,7 @@ node $J defer <id> --until YYYY-MM-DD --model ... --used ...
 ## Compression
 
 `roll` is the compressor. (It also removes stale worktrees, see [Roll removes stale worktrees](#roll-removes-stale-worktrees).) It writes the day's finished work to `Journal/YYYY-MM-DD.md`, leaves a
-`[[link]]` in `CURRENT.md`, and **keeps open items on the board** — in flight, blocked, and awaiting
+`[[link]]` in `CURRENT.md`, and **keeps open items on the board** — in flight, queued, blocked, and awaiting
 the user all survive the roll, because they are still true tomorrow.
 
 `roll` first runs `triage`. Plain `roll` prints the blockers as a warning and carries on; `roll --strict` prints them to stderr and exits 1 **before** archiving, sweeping worktrees or writing anything.
