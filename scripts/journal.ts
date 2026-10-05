@@ -39,6 +39,7 @@
  *   journal.ts usage [--open]                counts of model and used marks across items
  *   journal.ts status [--full]               what is open + done today, with usage marks
  *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
+ * (with a status page configured, --footer ends with `**Status page:** <uri>`)
  *   journal.ts standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.ts roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
@@ -71,6 +72,9 @@
  *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
  *   journal.ts resume                        the verify-on-resume checklist, running the parts a script can run
+ *   journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the status page (NOW.md in the status dir): priorities, needs-you list, PR board per stream, in flight, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
+ *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
+ *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
  * and the item is shown in its own section, e.g. "Launch", ahead of the rest.
@@ -105,7 +109,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath } from './local-config.ts';
+import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT } from './local-config.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
@@ -124,6 +128,8 @@ import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSerie
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine } from './token-metrics.ts';
+import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
+import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
@@ -514,6 +520,11 @@ function cmdApprovals() {
     console.log(`wrote ${path}  (${g.standing.length} standing, ${g.oneOff.length} one-off, ${g.untagged.length} untagged)`);
 }
 
+/** The status page URI when one is configured (status_page_uri, or status_dir inside vault_root); empty otherwise. */
+const configuredStatusPageUri = (): string => statusPageUri({
+    explicit: STATUS_PAGE_URI_SETTING, statusDir: arg('status-dir') || STATUS_DIR_SETTING, vaultRoot: VAULT_ROOT, vaultName: OBSIDIAN_VAULT,
+});
+
 function cmdStatus() {
     refreshBoard();
     const g = groups(has('include-archived'));
@@ -529,7 +540,7 @@ function cmdStatus() {
         return;
     }
 
-    if (has('footer')) { [...footerLines(g, done), sessionLine(CLAUDE_PROJECTS_DIR)].forEach((l) => console.log(l)); return; }
+    if (has('footer')) { [...footerLines(g, done), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
 
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
@@ -1309,9 +1320,46 @@ function updateNotices(): string[] {
     return [report.line, report.nudge].filter(Boolean);
 }
 
+/** The status directory: --status-dir, else the configured one, else <vault_root>/Projects/<project>/Status. Empty when none can be named. */
+const statusDir = (): string => arg('status-dir') || statusDirFor(project);
+const priorityDay = (): string => localDate(new Date(), WATCH_TZ);
+
+/** The not-set line for `prime`, only once a status directory exists (an install that never made a status page is not nagged). */
+function prioritiesNotice(): string[] {
+    const dirPath = statusDir();
+    if (!dirPath || !existsSync(dirPath)) return [];
+    return readPriorities(dirPath, priorityDay()).state === 'ok' ? [] : [PRIORITIES_UNSET_LINE];
+}
+
 function cmdPrime() {
     refreshBoard();
-    primeLinesIn({ ...primeCtx(), notices: updateNotices() }).forEach((l) => console.log(l));
+    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+}
+
+// ── status page ─────────────────────────────────────────────────────────────
+
+/** `status-page [--dry-run] [--snapshot] [--status-dir <dir>]`: scripts/status-page.ts, given this run's ledger root and project. */
+function cmdStatusPage() {
+    const forward = ['dry-run', 'snapshot'].filter(has).map((f) => `--${f}`);
+    const dirFlag = arg('status-dir');
+    const r = spawnSync(process.execPath, [join(SKILL_DIR, 'scripts', 'status-page.ts'), ...forward, ...(dirFlag ? ['--status-dir', dirFlag] : []), '--vault', vault, '--project', project], { stdio: 'inherit' });
+    process.exit(r.status ?? 1);
+}
+
+// ── priorities ──────────────────────────────────────────────────────────────
+
+function cmdPriorities() {
+    const [sub, ...words] = positional;
+    const dirPath = statusDir();
+    if (!dirPath) die('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
+    const day = arg('date', priorityDay());
+    if (sub === 'set') {
+        if (dryRun) { console.log('[dry-run]', JSON.stringify(words.map(parsePriority))); return; }
+        try { console.log(`wrote ${writePriorities(dirPath, day, words.map(parsePriority))}`); } catch (e) { die(errorMessage(e)); }
+    } else if (sub === 'show') {
+        const state = readPriorities(dirPath, day);
+        if (asJson) console.log(JSON.stringify(state, null, 2)); else showLines(state).forEach((l) => console.log(l));
+    } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show');
 }
 
 // ── pending tracker transitions ─────────────────────────────────────────────
@@ -1367,6 +1415,8 @@ switch (cmd) {
     case 'tickets': cmdTickets(); break;
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
+    case 'priorities': cmdPriorities(); break;
+    case 'status-page': cmdStatusPage(); break;
     default:
         console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('/**')[1]
             .split('\n').map((l) => l.replace(/^ \* ?/, '')).join('\n').trim());
