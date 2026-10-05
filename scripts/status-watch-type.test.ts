@@ -50,7 +50,7 @@ test('an answer fires once, with the ask id, the text and what it was about', ()
   const dir = setup();
   events(dir);
   answer(dir, 'ab12', 'yes, merge it');
-  assert.deepEqual(events(dir), ['ask ab12 answered: yes, merge it (decision: Merge it now?)']);
+  assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: yes, merge it']);
   assert.deepEqual(events(dir), [], 'the same edit is not reported twice');
 });
 
@@ -58,10 +58,10 @@ test('a ticked box fires, and answer plus tick on one ask make one event', () =>
   const dir = setup();
   events(dir);
   userEdits(dir, '- [ ] `cd34`', '- [x] `cd34`');
-  assert.deepEqual(events(dir), ['ask cd34 ticked (decision: Which option?)']);
+  assert.deepEqual(events(dir), ['ask cd34 (decision: Which option?) ticked']);
   answer(dir, 'ab12', 'ok');
   userEdits(dir, '- [ ] `ab12`', '- [x] `ab12`');
-  assert.deepEqual(events(dir), ['ask ab12 answered: ok, ticked (decision: Merge it now?)']);
+  assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: ok, ticked']);
 });
 
 test('regenerating before the watcher looks keeps the answer, and it still fires exactly once', () => {
@@ -73,7 +73,7 @@ test('regenerating before the watcher looks keeps the answer, and it still fires
   const page = readFileSync(join(dir, 'NOW.md'), 'utf8');
   assert.match(page, /`ab12`\n {2}> answer: keep me\n/);
   assert.match(page, /- \[x\] `cd34`/);
-  assert.deepEqual(events(dir), ['ask ab12 answered: keep me (decision: Merge it now?)', 'ask cd34 ticked (decision: Which option?)']);
+  assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: keep me', 'ask cd34 (decision: Which option?) ticked']);
   assert.deepEqual(events(dir), []);
 });
 
@@ -117,7 +117,7 @@ test('answers typed before the watcher ever ran are reported on its first check'
   const dir = setup();
   answer(dir, 'ab12', 'early');
   assert.equal(existsSync(join(dir, '.now-seen.md')), false);
-  assert.deepEqual(events(dir), ['ask ab12 answered: early (decision: Merge it now?)']);
+  assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: early']);
   assert.equal(existsSync(join(dir, '.now-seen.md')), true);
 });
 
@@ -134,7 +134,7 @@ test('the type is registered, refuses a target that is not a directory, and runs
   assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 }).events, []);
   answer(status, 'ab12', 'via loop');
   const r = tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 + 120_000 });
-  assert.deepEqual(r.events.map((e) => [e.watch, e.type, e.actionable, e.summary]), [['sw', 'status-watch', true, 'ask ab12 answered: via loop (decision: Merge it now?)']]);
+  assert.deepEqual(r.events.map((e) => [e.watch, e.type, e.actionable, e.summary]), [['sw', 'status-watch', true, 'ask ab12 (decision: Merge it now?) answered: via loop']]);
   regenerate(status);
   assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 + 240_000 }).events, []);
 });
@@ -146,7 +146,7 @@ test('an edit saved while the generator is writing is not overwritten: it reads 
   const racing: GenerateDeps = { ...deps(), beforeWrite: () => { if (!landed) { landed = true; answer(dir, 'ab12', 'saved mid-write'); } } };
   generate({ statusDir: dir, dryRun: false, snapshot: false, command: 'status-page', config: CONFIG }, racing);
   assert.match(readFileSync(join(dir, 'NOW.md'), 'utf8'), /`ab12`\n {2}> answer: saved mid-write\n/);
-  assert.deepEqual(events(dir), ['ask ab12 answered: saved mid-write (decision: Merge it now?)']);
+  assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: saved mid-write']);
 });
 
 test('the generator gives up, writing nothing, if the page keeps changing under it', () => {

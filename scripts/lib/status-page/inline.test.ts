@@ -12,7 +12,7 @@ const PAGE = [
 const edit = (page: string, from: string, to: string): string => { assert.ok(page.includes(from), from); return page.replace(from, to); };
 
 test('extractFields finds answers, ticks and priorities, and ignores empty stubs and the counts', () => {
-  assert.deepEqual(extractFields(PAGE), { answers: {}, ticks: { ab12: false, cd34: false }, priorities: ['Ship it', 'Second'] });
+  assert.deepEqual(extractFields(PAGE), { answers: {}, ticks: { ab12: false, cd34: false }, priorities: ['Ship it | Alpha', 'Second'] });
   const edited = edit(edit(PAGE, '`ab12` [#1](https://example.test/1)\n  > answer: ', '`ab12` [#1](https://example.test/1)\n  > answer: yes,\n  > and soon'), '- [ ] `cd34`', '- [x] `cd34`');
   const f = extractFields(edited);
   assert.deepEqual(f.answers, { ab12: 'yes, and soon' }, 'a quoted continuation joins the answer');
@@ -35,8 +35,8 @@ test('unprocessed reports new or changed answers, new ticks and changed prioriti
   const base = extractFields(PAGE);
   const cur = extractFields(edit(edit(PAGE, '2. Second', '2. Changed'), '`cd34`\n  > answer: ', '`cd34`\n  > answer: pick b'));
   const u = unprocessed(cur, base, base.priorities);
-  assert.deepEqual(u, { answers: { cd34: 'pick b' }, ticks: [], priorities: ['Ship it', 'Changed'] });
-  assert.deepEqual(unprocessed(cur, base, ['Ship it', 'Changed']).priorities, null, 'the list the generator last rendered is not an edit');
+  assert.deepEqual(u, { answers: { cd34: 'pick b' }, ticks: [], priorities: ['Ship it | Alpha', 'Changed'] });
+  assert.deepEqual(unprocessed(cur, base, ['Ship it | Alpha', 'Changed']).priorities, null, 'the list the generator last rendered is not an edit');
   assert.equal(countUnprocessed(unprocessed(base, base, base.priorities)), 0);
   assert.equal(unprocessed(cur, null, undefined).priorities, null, 'with no record of what was shown, no priorities edit is claimed');
   const same = unprocessed(cur, extractFields(edit(PAGE, '`cd34`\n  > answer: ', '`cd34`\n  > answer: pick b')), base.priorities);
@@ -51,7 +51,7 @@ test('carryInline writes answers into stubs, ticks onto boxes and the user\'s pr
   const f = extractFields(out);
   assert.deepEqual(f.answers, { ab12: 'do it' });
   assert.deepEqual(f.ticks, { ab12: false, cd34: true });
-  assert.deepEqual(f.priorities, ['Ship it', 'Mine']);
+  assert.deepEqual(f.priorities, ['Ship it | Alpha', 'Mine']);
   assert.doesNotMatch(out, /Generated (one|two)/, 'the generated list gave way to the user\'s');
 });
 
@@ -65,4 +65,9 @@ test('an answer for an ask that left the board is kept under Unprocessed answers
 
 test('carryInline with nothing to carry returns the page unchanged', () => {
   assert.equal(carryInline(PAGE, { answers: {}, ticks: [], priorities: null }, PAGE), PAGE);
+});
+
+test('a reordered priorities list keeps each stream mapping, so it can be set again unchanged', () => {
+  const page = "## Today's priorities\n\nSet for 2026-10-05.\n2. Fix Y _[Beta: awaiting 0 · in flight 0 · open PRs 1]_\n1. Ship X _[Alpha: awaiting 1 · in flight 0 · open PRs 2]_\n\n## Next\n";
+  assert.deepEqual(extractFields(page).priorities, ['Fix Y | Beta', 'Ship X | Alpha']);
 });

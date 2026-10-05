@@ -8,6 +8,8 @@
  * generator wrote itself is recognised by its hash (`.now-seen.json`) and reported as nothing, so regenerating never fires.
  * The baseline moves in `check`, before the loop records the events: a crash in that instant loses them, which the
  * answer still on the page (until the next regeneration) makes visible to a person but not to the loop.
+ * The digest cuts a summary at 300 characters, so the decision comes before the answer; a summary ending in `...` has the
+ * full text in `.now-seen.md` (the baseline just adopted), under the same ask id.
  * State { sha, fresh } is the page hash and the summaries to report this tick; `fresh` is empty on every quiet check.
  * `add` refuses a target that is not an existing directory.
  */
@@ -52,7 +54,8 @@ export function describe(u: Unprocessed, page: string): string[] {
     const answer = u.answers[id];
     const ticked = u.ticks.includes(id);
     const what = [answer ? `answered: ${answer}` : '', ticked ? 'ticked' : ''].filter(Boolean).join(', ');
-    return `ask ${id} ${what}${why.has(id) ? ` (decision: ${why.get(id)})` : ''}`;
+    const about = why.has(id) ? ` (decision: ${(why.get(id) as string).slice(0, 60)})` : '';
+    return `ask ${id}${about} ${what}`;
   });
   if (u.priorities) out.push(`priorities edited inline: ${u.priorities.map((p, i) => `${i + 1}) ${p}`).join('; ') || '(emptied)'}`);
   return out;

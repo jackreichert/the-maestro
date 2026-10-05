@@ -16,9 +16,11 @@ Register: `node scripts/event-loop.ts add --id status-watch --type status-watch 
 
 | Digest line | Actionable? | What to do |
 |---|---|---|
-| `ask <id> answered: <text> (decision: <ask text>)` | yes | Treat the text as the user's answer to ask `<id>`: act on it, then `journal.ts resolve <id> --answer "<text>"` |
-| `ask <id> ticked (decision: ...)` | yes | The user closed or approved it without words; read the ask, do what a tick means for it, then resolve it |
-| `priorities edited inline: 1) ...; 2) ...` | yes | Run `journal.ts priorities set "<p1>" "<p2>"` with those lines so `priorities.md` matches, then regenerate the page |
+| `ask <id> (decision: <ask text>) answered: <text>` | yes | Treat the text as the user's answer to ask `<id>`: act on it, then `journal.ts resolve <id> --answer "<text>"` |
+| `ask <id> (decision: ...) ticked` | yes | The user closed or approved it without words; read the ask, do what a tick means for it, then resolve it |
+| `priorities edited inline: 1) ...; 2) ...` | yes | Run `journal.ts priorities set "<p1>" "<p2>"` with those lines (a `| Stream` suffix is kept; pass it through) so `priorities.md` matches, then regenerate the page |
+
+The digest cuts a line at 300 characters. If an answer line ends in `...`, read the full text under that ask id in `.now-seen.md` (read only) before resolving.
 
 After handling, run `node scripts/journal.ts status-page` so the answered rows leave the page.
 

@@ -212,7 +212,7 @@ function prioritiesSection(cfg: PageConfig, state: PrioritiesState, asks: Item[]
     const counts = stream ? ` _[${stream}: awaiting ${asks.filter(inS).length} · in flight ${inflight.filter(inS).length} · open PRs ${prs.filter((x) => x.stream === stream).length}]_` : '';
     out.push(`${i + 1}. ${p.text}${counts}`);
   });
-  return [...out, ''];
+  return [...out, `Set for ${state.date}.`, ''];
 }
 
 // ── page ────────────────────────────────────────────────────────────────────
