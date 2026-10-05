@@ -46,7 +46,7 @@ function ledgerVotes(pr: PrIdentity, ev: StreamEvidence): (string | undefined)[]
   const refNames = [pr.short, pr.nameWithOwner].flatMap((r) => [`${r}#${pr.number}`, `gh:pr:${r}#${pr.number}`]);
   const votes: (string | undefined)[] = ev.items.filter((i) => (i.refs ?? []).some((r) => refNames.includes(r))).map((i) => i.stream);
   for (const key of prKeys(pr, ev.keyPattern)) {
-    const word = new RegExp(`(?<![A-Za-z0-9-])${escapeRe(key)}(?![A-Za-z0-9-])`, 'i');
+    const word = new RegExp(`(?<![A-Za-z0-9])${escapeRe(key)}(?!\\d)`, 'i');
     votes.push(...ev.items.filter((i) => word.test(`${i.text} ${(i.refs ?? []).join(' ')}`)).map((i) => i.stream));
     const mapped = Object.entries(ev.ticketMap).filter(([t]) => t.toUpperCase() === key).flatMap(([, ids]) => ids);
     votes.push(...mapped.map((id) => byId.get(id)?.stream));
