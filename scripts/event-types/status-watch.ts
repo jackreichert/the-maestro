@@ -15,7 +15,7 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { extractFields, unprocessed } from '../lib/status-page/inline.ts';
-import { NOW_FILE, readNow, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
+import { PODIUM_FILE, readNow, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
 import type { Unprocessed } from '../lib/status-page/inline.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
@@ -33,7 +33,7 @@ const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
 export const defaultTtlMs = (): number => THREE_DAYS_MS;
 
 export function validate(target: string): void {
-  if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-watch target must be the status directory (the folder holding ${NOW_FILE}), got "${target}"`);
+  if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-watch target must be the status directory (the folder holding ${PODIUM_FILE}), got "${target}"`);
 }
 
 /** Ask id to the last cell of its table row (the decision needed from the user), to say what an answer was about. */

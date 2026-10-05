@@ -23,7 +23,7 @@ import { nextInterval } from '../lib/cadence.ts';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, WATCH_QUIET_HOURS, WATCH_QUIET_WEEKENDS, WATCH_TZ } from '../local-config.ts';
 import { prsDirtyAt } from '../lib/status-page/dirty.ts';
 import { readPrCache } from '../lib/status-page/prcache.ts';
-import { NOW_FILE, readNow, readSeenMeta, sha } from '../lib/status-page/seen.ts';
+import { PODIUM_FILE, readNow, readSeenMeta, sha } from '../lib/status-page/seen.ts';
 import { regenerate } from '../status-page.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
@@ -48,7 +48,7 @@ const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
 export const defaultTtlMs = (): number => THREE_DAYS_MS;
 
 export function validate(target: string): void {
-  if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-refresh target must be the status directory (the folder holding ${NOW_FILE}), got "${target}"`);
+  if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-refresh target must be the status directory (the folder holding ${PODIUM_FILE}), got "${target}"`);
 }
 
 /** Everything the check reads from or does to the outside world; tests replace it. */
@@ -69,7 +69,7 @@ export interface RefreshIo {
 
 const stamp = (path: string): string => { try { const s = statSync(path); return `${s.mtimeMs}:${s.size}`; } catch { return '-'; } };
 
-const pageMtime = (dir: string): number => { try { return statSync(join(dir, NOW_FILE)).mtimeMs; } catch { return 0; } };
+const pageMtime = (dir: string): number => { try { return statSync(join(dir, PODIUM_FILE)).mtimeMs; } catch { return 0; } };
 
 export const realIo: RefreshIo = {
   ledgerSig: (statusDir) => {

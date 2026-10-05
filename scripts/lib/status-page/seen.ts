@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const NOW_FILE = 'NOW.md';
+export const PODIUM_FILE = 'NOW.md';
 export const SEEN_PAGE = '.now-seen.md';
 export const SEEN_META = '.now-seen.json';
 
@@ -32,7 +32,7 @@ export function writeAtomic(path: string, body: string): void {
 }
 
 /** The current page, or null before the first run. */
-export const readNow = (dir: string): string | null => readOrNull(join(dir, NOW_FILE));
+export const readNow = (dir: string): string | null => readOrNull(join(dir, PODIUM_FILE));
 
 /** The baseline page, or null when the watcher has not seen one. */
 export const readSeenPage = (dir: string): string | null => readOrNull(join(dir, SEEN_PAGE));
