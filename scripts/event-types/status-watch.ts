@@ -1,10 +1,10 @@
 /**
  * status-watch: wakes the orchestrator when the user edits the status page by hand. Target is the status directory
- * (the one holding NOW.md); see scripts/lib/status-page/inline.ts for what counts as an edit: an `> answer:` line under
+ * (the one holding The-Podium.md); see scripts/lib/status-page/inline.ts for what counts as an edit: an `> answer:` line under
  * an ask, a ticked `- [x]` box on an ask, or a changed priorities list.
  *
- * Each check compares NOW.md with the baseline beside it (`.now-seen.md`) and reports only what is new, one actionable
- * event per ask (answer and tick together) and one for the priorities, then adopts NOW.md as the new baseline. A page the
+ * Each check compares The-Podium.md with the baseline beside it (`.now-seen.md`) and reports only what is new, one actionable
+ * event per ask (answer and tick together) and one for the priorities, then adopts The-Podium.md as the new baseline. A page the
  * generator wrote itself is recognised by its hash (`.now-seen.json`) and reported as nothing, so regenerating never fires.
  * The baseline moves in `check`, before the loop records the events: a crash in that instant loses them, which the
  * answer still on the page (until the next regeneration) makes visible to a person but not to the loop.
@@ -15,7 +15,7 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { extractFields, unprocessed } from '../lib/status-page/inline.ts';
-import { NOW_FILE, readNow, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
+import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
 import type { Unprocessed } from '../lib/status-page/inline.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
@@ -33,7 +33,7 @@ const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
 export const defaultTtlMs = (): number => THREE_DAYS_MS;
 
 export function validate(target: string): void {
-  if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-watch target must be the status directory (the folder holding ${NOW_FILE}), got "${target}"`);
+  if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-watch target must be the status directory (the folder holding ${PODIUM_FILE}), got "${target}"`);
 }
 
 /** Ask id to the last cell of its table row (the decision needed from the user), to say what an answer was about. */
@@ -63,7 +63,7 @@ export function describe(u: Unprocessed, page: string): string[] {
 }
 
 export function check(target: string, _ctx?: Pick<CheckContext, 'now'>): StatusWatchState {
-  const page = readNow(target);
+  const page = readPodium(target);
   if (page === null) return { sha: '', fresh: [] };
   const hash = sha(page);
   const baselineText = readSeenPage(target);
