@@ -21,6 +21,9 @@
  *
  *   journal.ts log "<text>" --model "<name>" --used "skill:x,tool:y" [--kind note]
  *   journal.ts start "<text>" --model "<name>" --used "skill:x,tool:y" [--repo x]
+ *   journal.ts queue "<text>" --stream S --model "<name>" --used "skill:x,tool:y"   a to-do not started yet: shown as Queued, not In flight
+ *   journal.ts queue <id> --model "<name>" --used "skill:x,tool:y"   move an open in-flight item to queued (a row is appended; its history stays)
+ *   journal.ts start <id> --model "<name>" --used "skill:x,tool:y"   when <id> is a queued item: promote it to in flight (start "<text>" still opens a new item)
  *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
@@ -72,7 +75,7 @@
  *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
  *   journal.ts resume                        the verify-on-resume checklist, running the parts a script can run
- *   journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the status page (NOW.md in the status dir): priorities, needs-you list, PR board per stream, in flight, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
+ *   journal.ts status-page [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the status page (NOW.md in the status dir): priorities, needs-you list, PR board per stream, in flight, queued, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
  *
@@ -131,7 +134,7 @@ import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
-import { activeDeferrals, isOpen, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
+import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 
@@ -392,11 +395,12 @@ function transitionedFlag(): string[] | undefined {
     return keys;
 }
 
-function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
+function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false } = {}) {
     const text = arg('text') || positional.join(' ');
-    if (!text) { console.error(`Needs text: journal.ts ${rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
+    if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
+    if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const refs = rule ? ruleRefs() : refsFromArgs();
     const paste = ask ? pasteFile(kind) : undefined;
@@ -414,6 +418,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
         stream: streamOrNone(arg('stream')),
         refs,
         pending: ask && kind === 'decision' ? true : undefined,
+        queued: queued ? true : undefined,
         box: paste ? 'paste' : undefined,
         paste,
         gate,
@@ -423,8 +428,50 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false } = {}) {
     };
     append(entry);
     if (!dryRun) render(true);
-    console.log(`${entry.kind}  ${entry.id}  ${entry.text}`);
+    console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
     return entry;
+}
+
+/** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
+function itemNamedByArg(items: LedgerItem[]): LedgerItem | undefined {
+    const token = positional.length === 1 && !arg('text') ? positional[0] : undefined;
+    return token ? items.find((i) => i.id === token) : undefined;
+}
+
+/**
+ * `queue "<text>"` opens an item already queued; `queue <id>` moves an open in-flight item to queued by appending a
+ * `queue` row, so its history stays. Idempotent: an item that is already queued is reported and nothing is written.
+ */
+function cmdQueue(): void {
+    const entries = readLedger();
+    const target = itemNamedByArg(fold(entries).items);
+    if (!target) {
+        const token = positional[0] ?? '';
+        // A typo'd id would otherwise become a queued item named after it. A real 4-character word can go in with --text.
+        if (positional.length === 1 && !arg('text') && /^(?=.*\d)[a-z0-9]{4}$/.test(token)) die(`No item with id ${token}. To queue that as text, pass it as --text "${token}".`);
+        cmdLog('wip', { queued: true });
+        return;
+    }
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not an in-flight item; only an open in-flight item can be queued.`);
+    if (isQueued(target)) { console.log(`queued  ${target.id}  ${target.text}  (already queued)`); return; }
+    append({ id: newId(entries), ts: now(), date: today(), kind: 'queue', queues: target.id, text: `queue ${target.text}`, ...usageFromArgs() });
+    if (!dryRun) render(true);
+    console.log(`queued  ${target.id}  ${target.text}`);
+}
+
+/**
+ * `start "<text>"` opens a new in-flight item; `start <id>` for a queued item promotes it by appending a `promote` row.
+ * Idempotent: an item already in flight is reported and nothing is written.
+ */
+function cmdStart(): void {
+    const entries = readLedger();
+    const target = itemNamedByArg(fold(entries).items);
+    if (!target || target.kind !== 'wip') { cmdLog('wip'); return; }
+    if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
+    if (!isQueued(target)) { console.log(`wip  ${target.id}  ${target.text}  (already in flight)`); return; }
+    append({ id: newId(entries), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() });
+    if (!dryRun) render(true);
+    console.log(`wip  ${target.id}  ${target.text}  (promoted from queued)`);
 }
 
 /** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
@@ -535,7 +582,7 @@ function cmdStatus() {
     if (asJson) {
         console.log(JSON.stringify({
             date: d,
-            inflight: g.inflight, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
+            inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
             footer: { ledger: footerRows(g, done), session: sessionStatus(CLAUDE_PROJECTS_DIR) },
         }, null, 2));
         return;
@@ -549,28 +596,30 @@ function cmdStatus() {
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
     console.log(`Ledger — ${d}`);
-    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, done);
+    const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
         line('In flight', inStream(g.inflight, s));
+        line('Queued', inStream(g.queued, s));
         line('Blocked', inStream(g.blocked, s));
         line('Awaiting you', inStream(g.awaiting, s));
         line('Paste blocks for you', inStream(g.paste, s));
         line(`Done ${d}`, inStream(done, s));
     }
     // Without this heading the unstreamed sections read as part of the last stream.
-    if (streams.length && [g.inflight, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
+    if (streams.length && [g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
     line('In flight', noStream(g.inflight));
+    line('Queued', noStream(g.queued));
     line('Blocked', noStream(g.blocked));
     line('Awaiting you', noStream(g.awaiting));
     line('Paste blocks for you', noStream(g.paste));
     line(`Done ${d}`, noStream(done));
     if (rolledAt) console.log(`\n  (${g.doneOn(d).length - done.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
-    if (!g.inflight.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
+    if (!g.inflight.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
     }
-    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
+    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
 }
 
 function cmdStandup() {
@@ -670,7 +719,7 @@ function rollArchive(d: string): void {
     });
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
-    console.log(`kept open: ${g.inflight.length} in flight, ${g.awaiting.length} awaiting you${g.paste.length ? `, ${g.paste.length} paste block(s)` : ''}`);
+    console.log(`kept open: ${g.inflight.length} in flight${g.queued.length ? `, ${g.queued.length} queued` : ''}, ${g.awaiting.length} awaiting you${g.paste.length ? `, ${g.paste.length} paste block(s)` : ''}`);
     if (!autoCommitLedger(d)) process.exitCode = 1;
 }
 
@@ -1380,7 +1429,8 @@ function cmdTickets() {
 
 switch (cmd) {
     case 'log': cmdLog('note'); break;
-    case 'start': cmdLog('wip'); break;
+    case 'start': cmdStart(); break;
+    case 'queue': cmdQueue(); break;
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
     case 'note': cmdLog('note'); break;

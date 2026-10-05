@@ -64,3 +64,24 @@ test('primeLines puts the update notice first and still holds the cap on a long 
     assert.ok(lines.length <= 40, `${lines.length} lines`);
     assert.deepEqual(primeLines(ctxFor())[0]?.startsWith('Board'), true, 'no notice, no extra line');
 });
+
+test('primeLines lists Queued after In flight and keeps queued items out of In flight', () => {
+    const queuedRows: LedgerRow[] = [
+        ...rows,
+        { id: 'qqq1', kind: 'wip', queued: true, ts: `${TODAY}T07:00:00Z`, date: TODAY, text: 'later job', stream: 'Alpha' },
+        { id: 'qqq2', kind: 'queue', queues: 'aaaa', ts: `${TODAY}T11:00:00Z`, date: TODAY, text: 'queue' },
+        { id: 'qqq3', kind: 'wip', ts: `${TODAY}T07:30:00Z`, date: TODAY, text: 'running job' },
+    ];
+    const base = ctxFor();
+    const board: BoardContext = {
+        readLedger: () => queuedRows, fold: (entries) => fold(entries, null), today: () => TODAY,
+        rollPoint: () => null, has: parseArgs(['prime']).has, mapStream: (s) => mapStreamWith(null, s),
+        loadRegistry: () => null, ensureDir: () => {}, dir: '/nowhere', dryRun: false,
+    };
+    const lines = primeLines({ ...base, readLedger: board.readLedger, groups: (a) => groups(board, a) });
+    const at = (title: string): number => lines.findIndex((l) => l.startsWith(title));
+    assert.ok(at('Queued (2)') > at('In flight (1)'), 'Queued follows In flight');
+    assert.match(lines.slice(at('In flight (1)'), at('Queued (2)')).join('\n'), /qqq3 running job/);
+    assert.doesNotMatch(lines.slice(at('In flight (1)'), at('Queued (2)')).join('\n'), /aaaa|qqq1/);
+    assert.match(lines.slice(at('Queued (2)')).join('\n'), /aaaa build widget[^]*qqq1 later job/);
+});
