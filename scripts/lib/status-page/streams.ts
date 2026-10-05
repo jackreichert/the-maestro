@@ -27,11 +27,11 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Tracker keys in a PR's title and branch, upper-cased (CVE ids are not tickets). */
 export function prKeys(pr: PrIdentity, keyPattern: string): string[] {
-  const text = `${pr.title} ${pr.headRefName}`.replace(/\bCVE-\d+/gi, '');
-  return [...new Set((text.match(new RegExp(keyPattern, 'gi')) ?? []).map((k) => k.toUpperCase()))];
+  const text = `${pr.title} ${pr.headRefName}`.replace(/\bCVE-\d+/g, '');
+  return [...new Set((text.match(new RegExp(keyPattern, 'g')) ?? []).map((k) => k.toUpperCase()))];
 }
 
-/** The most-voted real stream; the first one to reach the top count wins a tie. Undefined when nobody voted. */
+/** The most-voted real stream; the earliest-counted stream wins a tie. Undefined when nobody voted. */
 function topStream(votes: (string | undefined)[]): string | undefined {
   const tally = new Map<string, number>();
   for (const v of votes) if (v && v !== 'none' && v !== OTHER) tally.set(v, (tally.get(v) ?? 0) + 1);
