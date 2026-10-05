@@ -582,7 +582,7 @@ function cmdStatus() {
     if (asJson) {
         console.log(JSON.stringify({
             date: d,
-            inflight: g.inflight, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
+            inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
             footer: { ledger: footerRows(g, done), session: sessionStatus(CLAUDE_PROJECTS_DIR) },
         }, null, 2));
         return;
@@ -596,28 +596,30 @@ function cmdStatus() {
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
     console.log(`Ledger — ${d}`);
-    const streams = activeStreams(g.inflight, g.blocked, g.awaiting, g.paste, done);
+    const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
         line('In flight', inStream(g.inflight, s));
+        line('Queued', inStream(g.queued, s));
         line('Blocked', inStream(g.blocked, s));
         line('Awaiting you', inStream(g.awaiting, s));
         line('Paste blocks for you', inStream(g.paste, s));
         line(`Done ${d}`, inStream(done, s));
     }
     // Without this heading the unstreamed sections read as part of the last stream.
-    if (streams.length && [g.inflight, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
+    if (streams.length && [g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
     line('In flight', noStream(g.inflight));
+    line('Queued', noStream(g.queued));
     line('Blocked', noStream(g.blocked));
     line('Awaiting you', noStream(g.awaiting));
     line('Paste blocks for you', noStream(g.paste));
     line(`Done ${d}`, noStream(done));
     if (rolledAt) console.log(`\n  (${g.doneOn(d).length - done.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
-    if (!g.inflight.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
+    if (!g.inflight.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
     }
-    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
+    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
 }
 
 function cmdStandup() {
@@ -717,7 +719,7 @@ function rollArchive(d: string): void {
     });
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
-    console.log(`kept open: ${g.inflight.length} in flight, ${g.awaiting.length} awaiting you${g.paste.length ? `, ${g.paste.length} paste block(s)` : ''}`);
+    console.log(`kept open: ${g.inflight.length} in flight${g.queued.length ? `, ${g.queued.length} queued` : ''}, ${g.awaiting.length} awaiting you${g.paste.length ? `, ${g.paste.length} paste block(s)` : ''}`);
     if (!autoCommitLedger(d)) process.exitCode = 1;
 }
 

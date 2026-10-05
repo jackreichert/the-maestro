@@ -24,7 +24,7 @@ interface Out {
 }
 /** The JSON documents the commands print; each test reads the part it needs. */
 interface Doc {
-    inflight: Out[]; blocked: Out[]; awaiting: Out[]; paste: Out[]; done: Out[]; streams: Out[]; claims: Out[]; models: Out[];
+    inflight: Out[]; queued: Out[]; blocked: Out[]; awaiting: Out[]; paste: Out[]; done: Out[]; streams: Out[]; claims: Out[]; models: Out[];
     standing: Out[]; oneOff: Out[]; untagged: Out[]; byStream: Out[]; pending: Out[]; blockers: Out[]; pendingTransitions: Out[];
     byBox: Record<string, Out[] | undefined>; problems: Out[]; model: Record<string, number>; [field: string]: unknown;
 }
@@ -494,9 +494,9 @@ test('status --json carries the footer numbers, and they match what status --foo
     run('start', 'loose end', ...MARK);
     const f = parse<{ footer: { ledger: unknown; session: unknown } }>(run('status', '--json').out).footer;
     assert.deepEqual(f.ledger, [
-        { name: 'Maestro', done: 0, inflight: 0, awaiting: 1, paste: 0, blocked: 1 },
-        { name: 'Launch', done: 1, inflight: 0, awaiting: 0, paste: 0, blocked: 0 },
-        { name: 'other', done: 0, inflight: 1, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'Maestro', done: 0, inflight: 0, queued: 0, awaiting: 1, paste: 0, blocked: 1 },
+        { name: 'Launch', done: 1, inflight: 0, queued: 0, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'other', done: 0, inflight: 1, queued: 0, awaiting: 0, paste: 0, blocked: 0 },
     ]);
     assert.deepEqual(f.session, { available: false, unavailable: `no sessions in ${projects}; set projects_dir` });
     const text = run('status', '--footer').out.trim().split('\n');
@@ -581,6 +581,33 @@ test('a queued item is never flagged stale by triage, an in-flight one a day old
     const items = Object.values(t.byBox).flat().filter(Boolean) as Out[];
     assert.equal(must(items.find((i) => i.id === queued)).stale, false);
     assert.equal(must(items.find((i) => i.id === running)).stale, true);
+});
+
+test('status separates queued from in flight: --json, --footer and the plain text agree, and the to-run meaning is unchanged', () => {
+    seedRegistry();
+    run('start', 'running now', '--stream', 'launch', ...MARK);
+    const parked = idOf(run('start', 'parked later', '--stream', 'launch', ...MARK).out);
+    run('queue', parked, ...MARK);
+    run('queue', 'never started', '--stream', 'maestro', ...MARK);
+    run('queue', 'loose to-do', ...MARK);
+    run('ask', 'run this', '--paste', ledgerFile(), '--stream', 'launch', ...MARK);
+    const j = parse<Doc>(run('status', '--json').out);
+    assert.deepEqual(j.inflight.map((i) => i.text), ['running now']);
+    assert.deepEqual(j.queued.map((i) => i.text).sort(), ['loose to-do', 'never started', 'parked later']);
+    assert.deepEqual(j.paste.map((i) => i.text), ['run this']);
+    const footer = parse<{ footer: { ledger: { name: string; inflight: number; queued: number; paste: number }[] } }>(run('status', '--json').out).footer.ledger;
+    assert.deepEqual(footer.map((r) => [r.name, r.inflight, r.queued, r.paste]), [['Launch', 1, 1, 1], ['Maestro', 0, 1, 0], ['other', 0, 1, 0]]);
+    assert.deepEqual(run('status', '--footer').out.trim().split('\n').slice(0, 3), [
+        '**Ledger (Launch):** 0 done today · 1 in flight · 1 queued · 0 awaiting you · 1 to run',
+        '**Ledger (Maestro):** 0 done today · 0 in flight · 1 queued · 0 awaiting you',
+        '**Ledger (other):** 0 done today · 0 in flight · 1 queued · 0 awaiting you',
+    ]);
+    const text = run('status').out;
+    assert.match(text, /In flight\n {2}`\w+` running now/);
+    assert.match(text, /Queued\n {2}`\w+` parked later/);
+    assert.match(text, /1 in flight · 3 queued · 0 awaiting you · 1 to run/);
+    run('start', parked, ...MARK);
+    assert.deepEqual(parse<Doc>(run('status', '--json').out).inflight.map((i) => i.text).sort(), ['parked later', 'running now']);
 });
 
 // ── model-name registry ─────────────────────────────────────────────────────

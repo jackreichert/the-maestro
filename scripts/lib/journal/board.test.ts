@@ -70,10 +70,53 @@ test('footerLines gives one line per stream and an other line', () => {
 test('footerRows holds the numbers footerLines prints', () => {
     const g = groups(ctxFor());
     assert.deepEqual(footerRows(g, g.doneOn(TODAY)), [
-        { name: 'Beta', done: 0, inflight: 0, awaiting: 1, paste: 0, blocked: 0 },
-        { name: 'Alpha', done: 1, inflight: 0, awaiting: 0, paste: 0, blocked: 0 },
-        { name: 'other', done: 0, inflight: 1, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'Beta', done: 0, inflight: 0, queued: 0, awaiting: 1, paste: 0, blocked: 0 },
+        { name: 'Alpha', done: 1, inflight: 0, queued: 0, awaiting: 0, paste: 0, blocked: 0 },
+        { name: 'other', done: 0, inflight: 1, queued: 0, awaiting: 0, paste: 0, blocked: 0 },
     ]);
+});
+
+/** The base rows plus: a queued Alpha to-do, an Alpha item queued after it started, and a queued item with no stream. */
+const withQueued = (): LedgerRow[] => [
+    ...rows,
+    { id: 'qqq1', kind: 'wip', queued: true, ts: `${TODAY}T08:00:00Z`, date: TODAY, text: 'later alpha', stream: 'Alpha' },
+    { id: 'qqq2', kind: 'wip', ts: `${TODAY}T08:01:00Z`, date: TODAY, text: 'started then parked', stream: 'Alpha' },
+    { id: 'qqq3', kind: 'queue', queues: 'qqq2', ts: `${TODAY}T08:02:00Z`, date: TODAY, text: 'queue' },
+    { id: 'qqq4', kind: 'wip', queued: true, ts: `${TODAY}T08:03:00Z`, date: TODAY, text: 'later loose' },
+];
+
+test('groups keeps queued items out of inflight and apart from every other list', () => {
+    const g = groups(ctxFor({ readLedger: withQueued }));
+    assert.deepEqual(g.inflight.map((i) => i.id), ['bbbb']);
+    assert.deepEqual(g.queued.map((i) => i.id), ['qqq1', 'qqq2', 'qqq4']);
+    assert.deepEqual(g.awaiting.map((i) => i.id), ['cccc']);
+});
+
+test('footer rows and lines add the queued count only where it is above zero, and a queued-only stream still gets a line', () => {
+    const g = groups(ctxFor({ readLedger: withQueued }));
+    assert.deepEqual(footerRows(g, g.doneOn(TODAY)).map((r) => [r.name, r.inflight, r.queued]), [['Alpha', 0, 2], ['Beta', 0, 0], ['other', 1, 1]]);
+    assert.deepEqual(footerLines(g, g.doneOn(TODAY)), [
+        '**Ledger (Alpha):** 1 done today · 0 in flight · 2 queued · 0 awaiting you',
+        '**Ledger (Beta):** 0 done today · 0 in flight · 1 awaiting you',
+        '**Ledger (other):** 0 done today · 1 in flight · 1 queued · 0 awaiting you',
+    ]);
+    const byId = (id: string): LedgerRow => withQueued().find((r) => r.id === id) as LedgerRow;
+    const streamed = groups(ctxFor({ readLedger: () => [byId('qqq1')] }));
+    assert.deepEqual(footerLines(streamed, []), ['**Ledger (Alpha):** 0 done today · 0 in flight · 1 queued · 0 awaiting you']);
+    const loose = groups(ctxFor({ readLedger: () => [byId('qqq4')] }));
+    assert.deepEqual(footerLines(loose, []), ['**Ledger:** 0 done today · 0 in flight · 1 queued · 0 awaiting you']);
+});
+
+test('standupText and render list Queued apart from In flight, and only when something is queued', () => {
+    const plain = ctxFor();
+    assert.doesNotMatch(standupText(plain, TODAY), /Queued/);
+    const ctx = ctxFor({ readLedger: withQueued });
+    const text = standupText(ctx, TODAY);
+    assert.match(text, /## Queued\n\n- later alpha\n- started then parked\n/);
+    assert.doesNotMatch(text.split('## Queued')[0].split('# Everything else')[0], /later alpha/);
+    render(ctx, true);
+    const current = readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8');
+    assert.match(current, /## In flight\n\n_none_\n\n## Queued\n\n- `qqq1` later alpha/);
 });
 
 test('standupText lists shipped work by stream and the notes', () => {
