@@ -1,7 +1,7 @@
 // Run: node --test scripts/ledger-core.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fold, isOpen, canonicalOf, mapStreamWith, parseLedger } from './lib/ledger-core.ts';
+import { fold, isOpen, isQueued, isInFlight, canonicalOf, mapStreamWith, parseLedger } from './lib/ledger-core.ts';
 
 const reg = { streams: { Launch: { aliases: ['launch-v2'], status: 'active' } } };
 
@@ -39,4 +39,37 @@ test('parseLedger skips blank lines, drops malformed ones, and numbers them by t
     assert.equal(rows[1]?.text, 'x');
     assert.deepEqual(seen, [3]);   // the real file line: the blank line counts
     assert.deepEqual(parseLedger(''), []);
+});
+
+test('fold: queue and promote rows move a wip item between queued and in flight; the latest wins', () => {
+    const rows = [
+        { id: 'aaaa', kind: 'wip', text: 'running', ts: 't1' },
+        { id: 'bbbb', kind: 'wip', text: 'born queued', queued: true, ts: 't2' },
+        { id: 'cccc', kind: 'queue', queues: 'aaaa', text: 'queue', ts: 't3' },
+        { id: 'dddd', kind: 'wip', text: 'queued then started', queued: true, ts: 't4' },
+        { id: 'eeee', kind: 'promote', promotes: 'dddd', text: 'promote', ts: 't5' },
+        { id: 'ffff', kind: 'wip', text: 'queued, started, queued again', ts: 't6' },
+        { id: 'gggg', kind: 'queue', queues: 'ffff', ts: 't7' },
+        { id: 'hhhh', kind: 'promote', promotes: 'ffff', ts: 't8' },
+        { id: 'iiii', kind: 'queue', queues: 'ffff', ts: 't9' },
+    ];
+    const copy = JSON.stringify(rows);
+    const byId = new Map(fold(rows, null).items.map((i) => [i.id, i]));
+    assert.deepEqual([...byId.keys()], ['aaaa', 'bbbb', 'dddd', 'ffff'], 'queue and promote rows are events, not items');
+    assert.deepEqual(['aaaa', 'bbbb', 'dddd', 'ffff'].map((id) => [isQueued(byId.get(id)!), isInFlight(byId.get(id)!)]), [[true, false], [true, false], [false, true], [true, false]]);
+    assert.equal(byId.get('aaaa')?.stateTs, 't3');
+    assert.equal(byId.get('dddd')?.stateTs, 't5');
+    assert.equal(byId.get('bbbb')?.stateTs, undefined);
+    assert.equal('queued' in byId.get('dddd')!, false, 'a promoted item carries no queued flag');
+    assert.equal(JSON.stringify(rows), copy);
+});
+
+test('fold: a closed item is neither queued nor in flight', () => {
+    const rows = [
+        { id: 'aaaa', kind: 'wip', queued: true, text: 'a' },
+        { id: 'bbbb', kind: 'done', closes: 'aaaa', text: 'a' },
+    ];
+    const [item] = fold(rows, null).items;
+    assert.equal(isQueued(item), false);
+    assert.equal(isInFlight(item), false);
 });
