@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1899,4 +1899,53 @@ test('--project defaults to the configured project; an explicit one wins; with n
     const none = go('', 'start', 'nothing');
     assert.equal(none.code, 1);
     assert.match(none.err, /Pass --project/);
+});
+
+/** A copy of the scripts inside a git checkout that has an upstream, so `prime` has a real skill repo to check. */
+function skillCheckout(): string {
+    const root = mkdtempSync(join(tmpdir(), 'journal-skill-'));
+    const git = (cwd: string, ...a: string[]) => {
+        const r = spawnSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=T', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...a], { cwd, encoding: 'utf8' });
+        assert.equal(r.status, 0, r.stderr);
+    };
+    const skill = join(root, 'skill');
+    git(root, 'init', '-q', '--bare', '-b', 'main', join(root, 'origin.git'));
+    git(root, 'clone', '-q', join(root, 'origin.git'), skill);
+    cpSync(new URL('.', import.meta.url).pathname, join(skill, 'scripts'), { recursive: true });
+    git(skill, 'add', 'scripts');
+    git(skill, 'commit', '-q', '-m', 'seed');
+    git(skill, 'push', '-q', '-u', 'origin', 'HEAD:main');
+    return skill;
+}
+
+function primeIn(skill: string, env: Record<string, string | undefined>): string {
+    const r = spawnSync(process.execPath, [join(skill, 'scripts', 'journal.ts'), 'prime', '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd,
+        env: Object.fromEntries(Object.entries({ ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'on', ...env }).filter(([, v]) => v !== undefined)),
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout;
+}
+
+test('prime asks once per session about an unset auto_pull, after the update line and before the board; on or off silences it', () => {
+    const skill = skillCheckout();
+    const nudge = /^the-maestro: auto_pull is not set\. .*Set "auto_pull: off" to silence this\.$/m;
+    const unset = primeIn(skill, { MAESTRO_AUTO_PULL: undefined });
+    assert.equal(unset.match(/auto_pull is not set/g)?.length, 1);
+    assert.match(unset, nudge);
+    assert.ok(unset.indexOf('auto_pull is not set') < unset.indexOf('Board '), 'above the board, like the update line');
+    assert.match(primeIn(skill, { MAESTRO_AUTO_PULL: undefined }), nudge, 'repeats until answered');
+    assert.doesNotMatch(primeIn(skill, { MAESTRO_AUTO_PULL: 'on' }), /auto_pull is not set/);
+    assert.doesNotMatch(primeIn(skill, { MAESTRO_AUTO_PULL: 'off' }), /auto_pull is not set/);
+    assert.doesNotMatch(primeIn(skill, { MAESTRO_AUTO_PULL: undefined, MAESTRO_UPDATE_CHECK: 'off' }), /auto_pull is not set/);
+});
+
+test('prime is silent about auto_pull when the skill is not a git checkout or its branch has no upstream', () => {
+    const plain = mkdtempSync(join(tmpdir(), 'journal-plain-'));
+    cpSync(new URL('.', import.meta.url).pathname, join(plain, 'scripts'), { recursive: true });
+    const unset = { MAESTRO_AUTO_PULL: undefined };
+    assert.doesNotMatch(primeIn(plain, unset), /auto_pull is not set/);
+    const skill = skillCheckout();
+    assert.equal(spawnSync('git', ['checkout', '-q', '-b', 'topic'], { cwd: skill }).status, 0);
+    assert.doesNotMatch(primeIn(skill, unset), /auto_pull is not set/);
 });

@@ -105,7 +105,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, userPath } from './local-config.ts';
+import { LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath } from './local-config.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
@@ -1301,11 +1301,11 @@ function refreshBoard() {
 /** This skill's checkout: the directory above scripts/. */
 const SKILL_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** The skill's own update line, or none: skipped for --no-update-check, update_check off and --dry-run. */
+/** The skill's own update line, then the auto_pull ask while that is unset; none at all when skipped for --no-update-check, update_check off and --dry-run. */
 function updateNotices(): string[] {
     if (has('no-update-check') || dryRun || !UPDATE_CHECK) return [];
-    const line = checkForUpdate({ repo: SKILL_DIR, autoPull: AUTO_PULL }).line;
-    return line ? [line] : [];
+    const report = checkForUpdate({ repo: SKILL_DIR, autoPull: AUTO_PULL, autoPullSet: AUTO_PULL_SET });
+    return [report.line, report.nudge].filter(Boolean);
 }
 
 function cmdPrime() {
