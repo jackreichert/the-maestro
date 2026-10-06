@@ -1,7 +1,10 @@
 // Run: node --test scripts/lib/status-page/note-links.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { linkNotePaths } from './links.ts';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { linkNotePaths, noteExistsIn, vaultRootFor } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
 import { renderPage } from './render.ts';
 import type { Item, PageConfig, PageInput } from './render.ts';
@@ -68,4 +71,27 @@ test('in-flight and queued cells link note paths and still escape pipes', () => 
 test('without a noteExists lookup the page links nothing', () => {
   const p = render(config(undefined), { awaiting: [item({ text: 'Which? Plans/2026-01-02-fake-questions.md' })] });
   assert.ok(!p.includes('2026-01-02-fake-questions)'));
+});
+
+test('noteExistsIn follows symlinks and refuses a target outside the vault, a directory, or a missing file', () => {
+  const base = mkdtempSync(join(tmpdir(), 'fake-vault-'));
+  try {
+    const root = join(base, 'vault');
+    mkdirSync(join(root, 'Plans', 'dir.md'), { recursive: true });
+    writeFileSync(join(root, 'Plans', 'ok.md'), 'x');
+    writeFileSync(join(base, 'outside.md'), 'x');
+    symlinkSync(join(base, 'outside.md'), join(root, 'Plans', 'link.md'));
+    const has = noteExistsIn(root);
+    assert.equal(has('Plans/ok.md'), true);
+    assert.equal(has('Plans/link.md'), false);
+    assert.equal(has('Plans/dir.md'), false);
+    assert.equal(has('Plans/none.md'), false);
+    assert.equal(noteExistsIn('')('Plans/ok.md'), false);
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+test('vaultRootFor prefers the configured root, else cuts the status dir at /Projects/<p>/Status', () => {
+  assert.equal(vaultRootFor('/v', '/x/Projects/p/Status'), '/v');
+  assert.equal(vaultRootFor('', '/x/Fake Vault/Projects/p/Status'), '/x/Fake Vault');
+  assert.equal(vaultRootFor('', '/elsewhere'), '');
 });

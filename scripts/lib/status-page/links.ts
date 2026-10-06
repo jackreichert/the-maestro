@@ -1,5 +1,6 @@
 /** Links the status page and the reply footer share: Obsidian URIs and tracker URLs. Pure; the settings are passed in. */
-import { relative, sep } from 'node:path';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { relative, resolve, sep } from 'node:path';
 import { PODIUM_FILE } from './seen.ts';
 
 /** `obsidian://open?vault=<vault>&file=<vault-relative path without .md>`. */
@@ -51,3 +52,18 @@ export function linkNotePaths(text: string, env: NoteLinkEnv | undefined, esc: (
   }
   return out + esc(text.slice(last));
 }
+
+/** The vault root: `configured` when set, else the part of the status directory before `/Projects/<project>/Status`; empty when neither says. */
+export const vaultRootFor = (configured: string, statusDir: string): string => configured || /^(.+)\/Projects\/[^/]+\/Status\/?$/.exec(statusDir)?.[1] || '';
+
+/** A lookup for whether `vaultPath` (vault-relative) is a regular file whose real path, symlinks followed, lies inside `root` and is not a secret file. Any filesystem error is "no". */
+export const noteExistsIn = (root: string) => (vaultPath: string): boolean => {
+  if (!root) return false;
+  try {
+    const full = resolve(root, vaultPath);
+    if (!existsSync(full)) return false;
+    const real = realpathSync(full);
+    const inside = real.startsWith(`${realpathSync(root)}${sep}`);
+    return inside && statSync(real).isFile() && !secretName(real.split(sep).join('/'));
+  } catch { return false; }
+};
