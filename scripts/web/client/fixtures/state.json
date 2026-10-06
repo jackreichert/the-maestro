@@ -13,9 +13,9 @@
     ]
   },
   "footer": [
-    { "stream": "acme-widgets", "asks": 2, "working": 1, "queued": 1, "blocked": 1, "done": 3 },
-    { "stream": "ops", "asks": 1, "working": 1, "queued": 0, "blocked": 0, "done": 2 },
-    { "stream": "other", "asks": 0, "working": 0, "queued": 1, "blocked": 0, "done": 1 }
+    { "stream": "acme-widgets", "asks": 2, "working": 1, "queued": 1, "blocked": 1, "done": 2 },
+    { "stream": "ops", "asks": 1, "working": 1, "queued": 0, "blocked": 0, "done": 1 },
+    { "stream": "other", "asks": 0, "working": 0, "queued": 1, "blocked": 0, "done": 0 }
   ],
   "prData": { "fetchedAt": "2026-10-06T14:00:00Z", "stale": false },
   "asks": [
@@ -56,7 +56,11 @@
   "blocked": [
     { "id": "bl01", "stream": "acme-widgets", "text": "Publish exporter v1", "gate": "FAKE-3 decision", "links": { "tracker": [], "prs": [] }, "since": "2026-10-03T10:00:00Z" }
   ],
-  "done": [],
+  "done": [
+    { "id": "dn01", "stream": "acme-widgets", "text": "Exporter CSV writer", "ticket": { "label": "FAKE-4", "url": "https://tracker.example.test/browse/FAKE-4" }, "links": { "tracker": [], "prs": [] }, "model": "sonnet", "since": "2026-10-06T09:10:00Z", "closedAt": "2026-10-06T11:42:00Z" },
+    { "id": "dn02", "stream": "acme-widgets", "text": "Fix the widget id rounding bug", "links": { "tracker": [], "prs": [] }, "since": "2026-10-05T15:00:00Z", "closedAt": "2026-10-06T13:15:00Z" },
+    { "id": "dn03", "stream": "ops", "text": "Rotate the sample staging key", "links": { "tracker": [], "prs": [] }, "model": "haiku", "since": "2026-10-06T12:30:00Z", "closedAt": "2026-10-06T12:58:00Z" }
+  ],
   "deferred": [],
   "prs": [
     {

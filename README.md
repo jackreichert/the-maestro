@@ -405,6 +405,15 @@ The page checks every payload against its contract and skips rows that do not fi
 
 What this slice does not have: a per-start token (any process on this machine can read `/api` by sending the right `Host`), answering asks from the page, and live updates. Those come with the write endpoints.
 
+#### Podium design system
+
+The page is laid out for a glance: a header whose cue line reads `3 need you · 1 blocked · 3 shipped today · 2 in flight`, then tabs, then Overview with the asks, blocked and shipped lists first (the cue line counts the open tab) (each item linked to its stream's tab) and priorities, in flight and per-stream counts beside them; charts and notes sit below. Status is always a word or symbol as well as a colour.
+
+- **Tokens.** Every size, space, radius, shadow, duration, easing and colour is a CSS custom property in `scripts/web/client/theme.css`, and components reference names only (custom properties inherit into the shadow roots). Type is the system font stack on a scale of about 1.2 (12, 13, 15, 18, 22 and 28 px), spacing is a 4 px scale, and colours are roles (`--surface-page`, `--text-secondary`, `--accent`, `--critical`, ...) with one accent. Chart series keep the validated categorical palette and are never used for status.
+- **Dark mode.** Follows `prefers-color-scheme`; the dark block redefines the same role names. `scripts/web/client/test/theme-contrast.test.ts` checks every text pair at 4.5:1 and the focus ring and control outlines at 3:1, in both modes, so a token edit cannot drop below WCAG AA.
+- **Reduced motion.** Movement only marks a state change (tab panel fade, tab underline, ask confirmation, skeleton shimmer); hover and press change colour, shadow and a 0.97 press scale. Under `prefers-reduced-motion: reduce` every duration token is 0 ms and the shimmer stops.
+- **States.** Loading draws a skeleton of the page, a failure shows what failed with a Reload button, empty sections say what empty means, and on sample data ask cards say they cannot be answered instead of showing a disabled form. The page loads once: its freshness pill turns into a stale warning 15 minutes after the data was generated. Done on an ask settles the card at once but says plainly that the answer was not saved (this page cannot write to the ledger yet) and offers to copy it.
+
 ### event-loop.ts
 
 One loop for every "wake me when X happens". The orchestrator appends a **watch** (`type`, `target`, an optional `done_when`, and a `report` note saying what it wants back) to an append-only registry; `run` checks them all and records an event only when the type's `diff()` says something changed.

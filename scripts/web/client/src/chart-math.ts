@@ -67,6 +67,19 @@ export function limitSeries(data: ChartData, limit = MAX_SERIES): ChartData {
   return { labels: data.labels, series: [...kept, { name: 'Other', values: other }] };
 }
 
+/**
+ * An SVG path for a bar from the baseline up to `top`: square at the baseline, the data end rounded by `r` (clamped to
+ * half the width and to the height). A zero or negative height gives an empty path.
+ */
+export function barPath(x: number, top: number, width: number, height: number, r: number): string {
+  if (!(height > 0) || !(width > 0)) return '';
+  const k = Math.max(0, Math.min(r, width / 2, height));
+  const f = (n: number): string => n.toFixed(1);
+  const bottom = top + height;
+  if (k === 0) return `M${f(x)} ${f(bottom)}V${f(top)}H${f(x + width)}V${f(bottom)}Z`;
+  return `M${f(x)} ${f(bottom)}V${f(top + k)}Q${f(x)} ${f(top)} ${f(x + k)} ${f(top)}H${f(x + width - k)}Q${f(x + width)} ${f(top)} ${f(x + width)} ${f(top + k)}V${f(bottom)}Z`;
+}
+
 /** An SVG path through points as straight segments; empty input gives an empty path. */
 export function linePath(points: [number, number][]): string {
   return points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');

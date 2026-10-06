@@ -1,33 +1,110 @@
 import './stream-board.ts';
 import './podium-chart.ts';
 import './md-fragment.ts';
-import { BASE_CSS, h, shadow } from './dom.ts';
+import { h, shadow, streamTag } from './dom.ts';
+import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
+import { cueParts, clockTime, freshness, longDate } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
 import type { ChartsData, PodiumState } from './types.ts';
 
-const CSS = `${BASE_CSS}
-  header { padding: 12px 16px 0; }
-  h1 { margin: 0; font-size: 1.4rem; }
-  .source { margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); }
-  [role=tablist] { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
-  [role=tab] { font: inherit; color: var(--text-primary); background: none; border: 1px solid transparent; border-bottom: 3px solid transparent; padding: 6px 12px; cursor: pointer; }
-  [role=tab][aria-selected=true] { font-weight: 700; border-bottom-color: var(--accent); background: var(--surface-2); }
-  [role=tabpanel] { padding: 16px; }
-  h2 { font-size: 1.1rem; margin: 16px 0 8px; }
-  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
-  table { border-collapse: collapse; font-size: 14px; }
-  th, td { border: 1px solid var(--border); padding: 4px 12px; text-align: right; }
-  th:first-child, td:first-child { text-align: left; }
-  .error { color: var(--bad); font-weight: 600; }
+const CSS = `${BOARD_CSS}
+  :host { --pad: var(--space-4); }
+  @media (min-width: 640px) { :host { --pad: var(--space-5); } }
+  @media (min-width: 1100px) { :host { --pad: var(--space-7); } }
+  .wrap { max-width: 1360px; margin: 0 auto; padding-inline: var(--pad); }
+
+  header { padding-block: var(--space-5) var(--space-4); }
+  .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+  .brand { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+  h1 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-bold); letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: var(--space-2); }
+  h1::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--accent); transform: rotate(45deg); }
+  .date { font-size: var(--text-sm); color: var(--text-secondary); }
+  .fresh {
+    display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-3); border-radius: var(--radius-pill);
+    background: var(--surface-1); box-shadow: var(--shadow-1); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--text-muted); }
+  .fresh.live .dot { border-color: var(--success); background: var(--success); }
+  .fresh.stale { background: var(--warning-soft); color: var(--warning); box-shadow: none; }
+  .fresh.stale .dot { display: none; }
+  .scope { margin: var(--space-5) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .blk { color: var(--critical); font-size: var(--text-sm); }
+  .source { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+
+  .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-size: var(--text-2xl); line-height: var(--leading-2xl); letter-spacing: -0.02em; }
+  .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
+  .cue .n { font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  .cue .zero, .cue .zero .n { color: var(--text-muted); font-weight: var(--weight-regular); }
+  .cue .tone-accent:not(.zero) .n { color: var(--accent); }
+  .cue .tone-critical:not(.zero) .n { color: var(--critical); }
+  .cue .tone-success:not(.zero) .n { color: var(--success); }
+  @media (max-width: 640px) { .cue { font-size: var(--text-xl); line-height: var(--leading-xl); gap: var(--space-1) var(--space-4); } }
+
+  .tabbar { position: sticky; top: 0; z-index: 2; background: var(--surface-page); border-bottom: 1px solid var(--border); }
+  [role=tablist] { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; padding-top: var(--space-2); }
+  [role=tablist]::-webkit-scrollbar { display: none; }
+  [role=tab] {
+    position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 40px;
+    padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: none; cursor: pointer;
+    font: inherit; font-size: var(--text-md); font-weight: var(--weight-medium); color: var(--text-secondary); white-space: nowrap;
+    transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+  }
+  @media (hover: hover) { [role=tab]:hover { color: var(--text-primary); background: var(--surface-2); } }
+  [role=tab]:focus-visible { outline-offset: -2px; }
+  [role=tab][aria-selected=true] { color: var(--text-primary); font-weight: var(--weight-semibold); }
+  [role=tab][aria-selected=true]::after { content: ''; position: absolute; left: var(--space-3); right: var(--space-3); bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+  .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
+
+  [role=tabpanel] { padding-block: var(--space-6) var(--space-8); }
+  [role=tabpanel]:focus-visible { outline-offset: 4px; }
+
+  ol.priorities { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); counter-reset: p; }
+  ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 1.5em minmax(0, 1fr); gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+  ol.priorities li::before { content: counter(p); color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
+  ol.priorities .tag { grid-column: 2; }
+
+  .table-wrap { overflow-x: auto; }
+  table.counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); line-height: var(--leading-sm); font-variant-numeric: tabular-nums; }
+  table.counts th, table.counts td { padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  table.counts thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: 1px solid var(--border); white-space: normal; vertical-align: bottom; }
+  table.counts th:first-child, table.counts td:first-child { text-align: left; padding-left: 0; }
+  table.counts th:last-child, table.counts td:last-child { padding-right: 0; }
+  table.counts tbody th { font-weight: var(--weight-medium); }
+  table.counts .z { color: var(--text-muted); }
+
+  .wide { margin-top: var(--space-7); display: grid; gap: var(--space-6); }
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: var(--space-4); }
+  .charts podium-chart { background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); padding: var(--space-4) var(--space-4) var(--space-3); }
+
+  [role=tabpanel] { animation: fade-in var(--dur-base) var(--ease-out); }
+  [role=tab][aria-selected=true]::after { animation: grow var(--dur-base) var(--ease-out); transform-origin: center; }
+  @keyframes fade-in { from { opacity: 0; } }
+  @keyframes grow { from { transform: scaleX(0.4); opacity: 0; } }
+
+  .sk { display: block; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--surface-2) 30%, var(--surface-1) 50%, var(--surface-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.6s linear infinite; }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  @media (prefers-reduced-motion: reduce) { .sk { animation: none; background: var(--surface-2); } }
+  .sk-head { padding-block: var(--space-5) var(--space-7); }
+  .sk-line { height: 12px; }
+  .sk-cue { height: 28px; width: min(560px, 90%); margin-top: var(--space-5); }
+  .sk-card { height: 148px; border-radius: var(--radius-md); }
+  .sk-stack { display: grid; gap: var(--space-4); }
+
+  .problem { max-width: 60ch; margin: var(--space-8) auto; padding: var(--space-6); background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
+  .problem h2 { margin: 0 0 var(--space-2); font-size: var(--text-lg); line-height: var(--leading-lg); }
+  .problem h2::before { content: '⊘'; color: var(--critical); margin-right: var(--space-2); }
+  .problem p { margin: 0 0 var(--space-4); color: var(--text-secondary); }
+  .problem .detail { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-primary); background: var(--surface-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 `;
 
-/** <podium-app>: stream tabs plus Overview. The active tab lives in the URL fragment. */
+/** <podium-app>: header with the cue line, stream tabs plus Overview. The active tab lives in the URL fragment. */
 export class PodiumApp extends HTMLElement {
   #root: ShadowRoot;
   #state: PodiumState | null = null;
@@ -35,7 +112,15 @@ export class PodiumApp extends HTMLElement {
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
   #dropped = 0;
   #active = OVERVIEW;
-  readonly #onHash = (): void => { this.#select(parseFragment(location.hash, this.#ids()), false); };
+  #tick: number | undefined;
+  // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
+  // tab so keyboard and screen reader users are not left on the destroyed link.
+  readonly #onHash = (): void => {
+    const id = parseFragment(location.hash, this.#ids());
+    if (id === this.#active) return;
+    this.#select(id, true);
+    window.scrollTo({ top: 0 });
+  };
 
   constructor() {
     super();
@@ -44,7 +129,7 @@ export class PodiumApp extends HTMLElement {
 
   connectedCallback(): void {
     window.addEventListener('hashchange', this.#onHash);
-    this.#root.replaceChildren(h('p', { role: 'status' }, 'Loading…'));
+    this.#root.replaceChildren(skeleton());
     Promise.all([loadState(), loadCharts()]).then(([s, c]) => {
       this.#state = s.data;
       this.#charts = c.data;
@@ -52,17 +137,26 @@ export class PodiumApp extends HTMLElement {
       this.#dropped = s.dropped + c.dropped;
       this.#active = parseFragment(location.hash, this.#ids());
       this.#safeRender();
+      // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
+      this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
     }).catch((e: unknown) => {
-      this.#root.replaceChildren(h('p', { class: 'error', role: 'alert' }, `Could not load the Podium: ${e instanceof Error ? e.message : 'unknown error'}`));
+      this.#root.replaceChildren(problem(`Can't reach the Podium server`, e, 'Start it with node scripts/journal.ts web (or npm run web:static for sample data), then reload.'));
     });
   }
 
-  disconnectedCallback(): void { window.removeEventListener('hashchange', this.#onHash); }
+  disconnectedCallback(): void {
+    window.removeEventListener('hashchange', this.#onHash);
+    window.clearInterval(this.#tick);
+  }
 
   #ids(): string[] { return tabIds(this.#state?.streams ?? []); }
 
   #select(id: string, focusTab: boolean): void {
-    if (id === this.#active && !focusTab) return;
+    // Re-selecting the open tab only moves focus: a re-render would throw away a half-typed answer or a confirmation.
+    if (id === this.#active) {
+      if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
+      return;
+    }
     this.#active = id;
     if (location.hash !== formatFragment(id)) history.replaceState(null, '', formatFragment(id));
     this.#safeRender();
@@ -74,7 +168,7 @@ export class PodiumApp extends HTMLElement {
     try {
       this.#render();
     } catch (e) {
-      this.#root.replaceChildren(h('p', { class: 'error', role: 'alert' }, `Could not draw the Podium: ${e instanceof Error ? e.message : 'unknown error'}`));
+      this.#root.replaceChildren(problem('The board could not be drawn', e, 'The data loaded but part of it could not be shown. Reload to try again; if it keeps failing, the detail below says where.'));
     }
   }
 
@@ -82,16 +176,20 @@ export class PodiumApp extends HTMLElement {
     const st = this.#state;
     if (!st) return;
     const ids = this.#ids();
-    const count = (id: string): number => st.asks.filter((a) => a.stream === id).length;
+    const count = <T extends { stream: string }>(xs: T[], id: string): number => (id === OVERVIEW ? xs.length : xs.filter((x) => x.stream === id).length);
     const tabs = ids.map((id) => {
       const on = id === this.#active;
-      const n = id === OVERVIEW ? st.asks.length : count(id);
+      const n = count(st.asks, id);
+      const blocked = count(st.blocked, id);
       const tab = h('button', {
-        type: 'button', role: 'tab', id: `tab-${id}`, 'aria-selected': String(on), 'aria-controls': 'panel',
+        type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === OVERVIEW ? 'Overview' : id, n > 0 ? ` (${n} awaiting)` : '');
+      }, id === OVERVIEW ? 'Overview' : id,
+      n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
+      blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
       tab.addEventListener('click', () => this.#select(id, true));
       tab.addEventListener('keydown', (e) => {
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;   // leave browser shortcuts such as Alt+Left alone
         const next = nextTab(e.key, ids, this.#active);
         if (next === null) return;
         e.preventDefault();
@@ -99,13 +197,49 @@ export class PodiumApp extends HTMLElement {
       });
       return tab;
     });
-    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': `tab-${this.#active}`, tabindex: '0' },
+    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
       this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active));
     this.#root.replaceChildren(
-      h('header', {}, h('h1', {}, 'Podium'),
-        h('p', { class: 'source', role: 'status' }, describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt))),
-      h('div', { role: 'tablist', 'aria-label': 'Streams' }, ...tabs),
-      panel);
+      this.#header(st),
+      h('div', { class: 'tabbar' }, h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs)),
+      h('main', {}, panel));
+  }
+
+  get #live(): boolean { return this.#sources.state === 'server' && this.#sources.charts === 'server'; }
+
+  #header(st: PodiumState): HTMLElement {
+    const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
+    // The cue line follows the tab, so its counts always match the panel below it; the scope line says which.
+    const stream = this.#active === OVERVIEW ? null : this.#active;
+    const pick = <T extends { stream: string }>(xs: T[]): T[] => (stream === null ? xs : xs.filter((x) => x.stream === stream));
+    const scope = stream === null ? 'All streams' : stream;
+    const cue = cueParts({ asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) })
+      .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
+    return h('header', { class: 'wrap' },
+      h('div', { class: 'top' },
+        h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, longDate(st.today))),
+        this.#freshness(st)),
+      note ? h('p', { class: 'source' }, note) : null,
+      h('p', { class: 'scope', id: 'scope' }, scope),
+      h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue));
+  }
+
+  /** The data-source pill: sample data, or live with its update time, flagged once the data is past STALE_MINUTES. */
+  #freshness(st: PodiumState): HTMLElement {
+    const updated = clockTime(st.generatedAt, st.tz);
+    const { age, stale } = freshness(st.generatedAt, Date.now());
+    const live = this.#live;
+    const text = !live ? `Sample data${updated ? ` · as of ${updated}` : ''}`
+      : stale ? `Stale · updated ${updated}${age ? `, ${age} ago` : ''}. Reload for current data.`
+        : `Live${updated ? ` · updated ${updated}` : ''}`;
+    return h('p', { class: `fresh${live ? (stale ? ' stale' : ' live') : ''}` },
+      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, text);
+  }
+
+  #updateFreshness(): void {
+    const st = this.#state;
+    const old = this.#root.querySelector('.fresh');
+    if (st && old) old.replaceWith(this.#freshness(st));
   }
 
   #board(st: PodiumState, stream: string): Node {
@@ -116,29 +250,44 @@ export class PodiumApp extends HTMLElement {
   }
 
   #overview(st: PodiumState): Node {
+    const ctx = { now: st.generatedAt, tz: st.tz, showStream: true };
     const pri = st.priorities;
-    const priorities = pri.state === 'ok'
-      ? h('ol', {}, ...pri.items.map((i) => h('li', {}, i.text, i.stream ? ` [${i.stream}]` : '')))
-      : h('p', {}, pri.state === 'stale' ? `Priorities are from ${pri.date}: stale.` : 'No priorities set for today.');
-    const footer = h('table', {}, h('caption', { class: 'vh' }, 'Counts per stream'),
-      h('thead', {}, h('tr', {}, ...['Stream', 'Awaiting', 'Working', 'Queued', 'Blocked', 'Done'].map((t) => h('th', { scope: 'col' }, t)))),
-      h('tbody', {}, ...st.footer.map((f) => h('tr', {}, h('th', { scope: 'row' }, f.stream),
-        ...[f.asks, f.working, f.queued, f.blocked, f.done].map((n) => h('td', {}, String(n)))))));
+    const priorities = pri.state === 'ok' && pri.items.length > 0
+      ? h('ol', { class: 'priorities', role: 'list' }, ...pri.items.map((i) => h('li', {}, h('span', {}, i.text), i.stream ? streamTag(i.stream) : null)))
+      : null;
+    const priEmpty = pri.state === 'stale' ? `Priorities are from ${longDate(pri.date) || pri.date}: set today's with journal.ts priorities set.` : 'No priorities set for today.';
     const frag = fragmentFor(st.fragments, OVERVIEW);
     const md = frag ? h('md-fragment') : null;
     if (md && frag) md.markdown = frag;
     return h('div', {},
-      h('h2', {}, `Today's priorities`), priorities,
-      h('h2', {}, 'Counts'), footer,
-      h('h2', {}, 'Charts'), this.#chartGrid(),
-      md ? h('h2', {}, 'Notes') : null, md);
+      h('div', { class: 'board' },
+        h('div', { class: 'col' },
+          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.' }, askCards(st.asks, this.#sources.state === 'server', true)),
+          section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(st.blocked, ctx)),
+          section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.' }, itemRows(st.done, ctx))),
+        h('div', { class: 'col' },
+          section({ title: `Today's priorities`, n: 0, glyph: '↑', tone: 'neutral', empty: priEmpty, quiet: true }, priorities),
+          section({ title: 'In flight', n: st.working.length, glyph: '◐', tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(st.working, ctx)),
+          section({ title: 'Streams', n: 0, glyph: '≡', tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
+      h('div', { class: 'wide' },
+        section({ title: 'Trends', n: 0, glyph: '▥', tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),
+        md ? section({ title: 'Notes', n: 0, glyph: '¶', tone: 'neutral', empty: '', quiet: true }, md) : null));
   }
 
-  #chartGrid(): Node {
+  #counts(st: PodiumState): Node | null {
+    if (st.footer.length === 0) return null;
+    const cell = (n: number): HTMLElement => h('td', { class: n === 0 ? 'z' : undefined }, String(n));
+    return h('div', { class: 'table-wrap' }, h('table', { class: 'counts' }, h('caption', { class: 'vh' }, 'Counts per stream'),
+      h('thead', {}, h('tr', {}, ...['Stream', 'Need you', 'Working', 'Queued', 'Blocked', 'Done'].map((t) => h('th', { scope: 'col' }, t)))),
+      h('tbody', {}, ...st.footer.map((f) => h('tr', {}, h('th', { scope: 'row' }, streamTag(f.stream)),
+        ...[f.asks, f.working, f.queued, f.blocked, f.done].map(cell))))));
+  }
+
+  #chartGrid(): Node | null {
     const c = this.#charts;
-    if (!c) return h('p', {}, 'No chart data.');
+    if (!c) return null;
     const mk = (kind: ChartKind, title: string, data: ChartData): HTMLElement => {
-      const el = h('podium-chart', { kind, title });
+      const el = h('podium-chart', { kind, label: title });
       el.data = data;
       return el;
     };
@@ -148,6 +297,39 @@ export class PodiumApp extends HTMLElement {
       mk('bar', 'Pull requests by CI state', prMixChart(c)),
       mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
   }
+}
+
+/** A DOM id for a tab: stream names are data and may hold spaces, which would split an IDREF list. */
+function tabDomId(id: string): string {
+  return `tab-${encodeURIComponent(id)}`;
+}
+
+/** The loading state: the page's own shape in placeholder blocks, announced once as loading. */
+function skeleton(): HTMLElement {
+  const line = (w: string): HTMLElement => {
+    const el = h('span', { class: 'sk sk-line', 'aria-hidden': 'true' });
+    el.style.width = w;
+    return el;
+  };
+  // The live region goes in empty and is filled a moment later, so screen readers announce it.
+  const said = h('span', { class: 'vh' });
+  setTimeout(() => { said.textContent = 'Loading the board'; }, 50);
+  return h('div', { class: 'wrap', role: 'status' },
+    said,
+    h('div', { class: 'sk-head' }, line('160px'), h('span', { class: 'sk sk-cue', 'aria-hidden': 'true' })),
+    h('div', { class: 'board', 'aria-hidden': 'true' },
+      h('div', { class: 'sk-stack' }, line('120px'), h('span', { class: 'sk sk-card' }), h('span', { class: 'sk sk-card' })),
+      h('div', { class: 'sk-stack' }, line('140px'), line('100%'), line('85%'), line('92%'))));
+}
+
+/** The error state: what failed, what to do, the detail, and a way to retry. */
+function problem(title: string, e: unknown, hint: string): HTMLElement {
+  const reload = h('button', { type: 'button', class: 'primary' }, 'Reload');
+  reload.addEventListener('click', () => location.reload());
+  return h('main', {}, h('h1', { class: 'vh' }, 'Podium'), h('div', { class: 'problem', role: 'alert' },
+    h('h2', {}, title), h('p', {}, hint),
+    h('p', { class: 'detail' }, e instanceof Error ? e.message : 'unknown error'),
+    reload));
 }
 
 customElements.define('podium-app', PodiumApp);
