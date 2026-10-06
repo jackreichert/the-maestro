@@ -100,7 +100,7 @@ export class AskCardElement extends HTMLElement {
         this.#showStream ? h('li', {}, streamTag(a.stream)) : null,
         h('li', {}, h('span', { class: 'id' }, h('span', { class: 'vh' }, 'Ask '), a.id)),
         h('li', { class: 'age' }, stale
-          ? h('span', { class: 'stale' }, h('span', { 'aria-hidden': 'true' }, '⚠︎'), `Waiting ${days}, over ${STALE_DAYS}`)
+          ? h('span', { class: 'stale' }, h('span', { 'aria-hidden': 'true' }, '⚠︎'), `Waiting ${days} · stale`)
           : `Waiting ${days}`)),
       heading,
       a.context ? h('p', { class: 'context' }, a.context) : null,

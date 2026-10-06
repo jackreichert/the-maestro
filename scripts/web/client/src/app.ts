@@ -78,7 +78,26 @@ const CSS = `${BOARD_CSS}
   .wide { margin-top: var(--space-7); display: grid; gap: var(--space-6); }
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: var(--space-4); }
   .charts podium-chart { background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); padding: var(--space-4) var(--space-4) var(--space-3); }
-  .error { color: var(--critical); font-weight: var(--weight-semibold); }
+
+  [role=tabpanel] { animation: fade-in var(--dur-base) var(--ease-out); }
+  [role=tab][aria-selected=true]::after { animation: grow var(--dur-base) var(--ease-out); transform-origin: center; }
+  @keyframes fade-in { from { opacity: 0; } }
+  @keyframes grow { from { transform: scaleX(0.4); opacity: 0; } }
+
+  .sk { display: block; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--surface-2) 30%, var(--surface-1) 50%, var(--surface-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.6s linear infinite; }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  @media (prefers-reduced-motion: reduce) { .sk { animation: none; background: var(--surface-2); } }
+  .sk-head { padding-block: var(--space-5) var(--space-7); }
+  .sk-line { height: 12px; }
+  .sk-cue { height: 28px; width: min(560px, 90%); margin-top: var(--space-5); }
+  .sk-card { height: 148px; border-radius: var(--radius-md); }
+  .sk-stack { display: grid; gap: var(--space-4); }
+
+  .problem { max-width: 60ch; margin: var(--space-8) auto; padding: var(--space-6); background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
+  .problem h2 { margin: 0 0 var(--space-2); font-size: var(--text-lg); line-height: var(--leading-lg); }
+  .problem h2::before { content: '⊘'; color: var(--critical); margin-right: var(--space-2); }
+  .problem p { margin: 0 0 var(--space-4); color: var(--text-secondary); }
+  .problem .detail { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-primary); background: var(--surface-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 `;
 
 /** <podium-app>: header with the cue line, stream tabs plus Overview. The active tab lives in the URL fragment. */
@@ -98,7 +117,7 @@ export class PodiumApp extends HTMLElement {
 
   connectedCallback(): void {
     window.addEventListener('hashchange', this.#onHash);
-    this.#root.replaceChildren(h('p', { role: 'status' }, 'Loading…'));
+    this.#root.replaceChildren(skeleton());
     Promise.all([loadState(), loadCharts()]).then(([s, c]) => {
       this.#state = s.data;
       this.#charts = c.data;
@@ -107,7 +126,7 @@ export class PodiumApp extends HTMLElement {
       this.#active = parseFragment(location.hash, this.#ids());
       this.#safeRender();
     }).catch((e: unknown) => {
-      this.#root.replaceChildren(h('p', { class: 'error', role: 'alert' }, `Could not load the Podium: ${e instanceof Error ? e.message : 'unknown error'}`));
+      this.#root.replaceChildren(problem('The board did not load', e, 'The page asks the Podium server first and falls back to its bundled sample data; neither answered. Check that the server is running, then reload.'));
     });
   }
 
@@ -128,7 +147,7 @@ export class PodiumApp extends HTMLElement {
     try {
       this.#render();
     } catch (e) {
-      this.#root.replaceChildren(h('p', { class: 'error', role: 'alert' }, `Could not draw the Podium: ${e instanceof Error ? e.message : 'unknown error'}`));
+      this.#root.replaceChildren(problem('The board could not be drawn', e, 'The data loaded but part of it could not be shown. Reload to try again; if it keeps failing, the detail below says where.'));
     }
   }
 
@@ -232,6 +251,31 @@ export class PodiumApp extends HTMLElement {
       mk('bar', 'Pull requests by CI state', prMixChart(c)),
       mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
   }
+}
+
+/** The loading state: the page's own shape in placeholder blocks, announced once as loading. */
+function skeleton(): HTMLElement {
+  const line = (w: string): HTMLElement => {
+    const el = h('span', { class: 'sk sk-line', 'aria-hidden': 'true' });
+    el.style.width = w;
+    return el;
+  };
+  return h('div', { class: 'wrap', role: 'status' },
+    h('span', { class: 'vh' }, 'Loading the board'),
+    h('div', { class: 'sk-head' }, line('160px'), h('span', { class: 'sk sk-cue', 'aria-hidden': 'true' })),
+    h('div', { class: 'board', 'aria-hidden': 'true' },
+      h('div', { class: 'sk-stack' }, line('120px'), h('span', { class: 'sk sk-card' }), h('span', { class: 'sk sk-card' })),
+      h('div', { class: 'sk-stack' }, line('140px'), line('100%'), line('85%'), line('92%'))));
+}
+
+/** The error state: what failed, what to do, the detail, and a way to retry. */
+function problem(title: string, e: unknown, hint: string): HTMLElement {
+  const reload = h('button', { type: 'button', class: 'primary' }, 'Reload');
+  reload.addEventListener('click', () => location.reload());
+  return h('main', {}, h('div', { class: 'problem', role: 'alert' },
+    h('h2', {}, title), h('p', {}, hint),
+    h('p', { class: 'detail' }, e instanceof Error ? e.message : 'unknown error'),
+    reload));
 }
 
 customElements.define('podium-app', PodiumApp);
