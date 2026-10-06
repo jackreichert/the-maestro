@@ -7,7 +7,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SECURITY_HEADERS, buildRoutes, createStaticServer } from './serve-static.ts';
+import { buildRoutes, createStaticServer } from './serve-static.ts';
+import { SECURITY_HEADERS } from '../lib/web/guard.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'serve-static-'));
 mkdirSync(join(dir, 'dist'));
