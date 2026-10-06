@@ -15,6 +15,9 @@ test('the bundled fixtures satisfy the contract guards the client applies at run
   assert.ok(isCharts(charts));
   assert.ok(!isState({ streams: [] }));
   assert.ok(!isState(null));
+  const { priorities: _p, ...noPriorities } = fixture('state.json') as Record<string, unknown>;
+  assert.ok(!isState(noPriorities), 'a state without priorities would throw at render time');
+  assert.ok(!isState({ ...(fixture('state.json') as object), working: undefined }));
   assert.ok(!isCharts('x'));
 });
 
