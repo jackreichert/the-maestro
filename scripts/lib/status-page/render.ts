@@ -65,7 +65,8 @@ const CELL_MAX = 60;
 
 /** Text safe in a table cell: whitespace squashed, and each character Markdown would read as markup (pipe, backslash, emphasis, code, brackets, angle brackets, strikethrough) backslash-escaped. */
 const cell = (s: string): string => s.replace(/[|\\*_`<>[\]~]/g, '\\$&').replace(/\s+/g, ' ').trim() || '-';
-const dropLinks = (s: string): string => s.replace(/https?:\/\/\S+/g, '');
+/** `s` without URLs (any `scheme://...`) and without any `obsidian:` target: the page's own obsidian links are built by `linkNotePaths` from existing vault paths, never carried in from ledger or GitHub text. */
+const dropLinks = (s: string): string => s.replace(/(?:[a-z][a-z0-9+.-]*:\/\/|obsidian:)\S*/gi, '');
 /** Ask text only: also drops bare `repo/pull/N` fragments left when a URL was shortened (askRefs links the PR back as `#N`); the punctuation after N stays. */
 const dropPullFragments = (s: string): string => dropLinks(s).replace(/\S*\/pulls?\/\d+(?!\d)/g, '');
 /** `s` without URLs, squashed to one line; over `max` it is cut at a word boundary (never mid-word) and ends in `...`. */
@@ -145,7 +146,7 @@ function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | un
 }
 /** Markdown-markup escapes only (no trim or squash), for the stretches between linked note paths. */
 const escCell = (s: string): string => s.replace(/[|\\*_`<>[\]~]/g, '\\$&');
-const escBold = (s: string): string => s.replace(/[\\*_`]/g, '\\$&');
+const escBold = (s: string): string => s.replace(/[\\*_`[\]<>]/g, '\\$&');
 
 /** An in-flight or queued item's text as a table cell: clipped to one line, with existing note paths linked. */
 const workText = (cfg: PageConfig, i: Item, ticket: string | undefined): string => {
@@ -282,8 +283,8 @@ export function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | un
   return { prs: refs, tracker: keysIn(cfg, a.text).map((k) => trackerRef(cfg, k)), note: ticket ? ticketNoteRef(cfg, ticket) : undefined };
 }
 
-/** The text safe inside a `**...**` wrap: each emphasis, code and escape character backslash-escaped, so the bold span ends where the page says it does and `snake_case` still reads as written. status-watch undoes the escapes. */
-const boldSafe = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/[\\*_`]/g, '\\$&');
+/** The text safe inside a `**...**` wrap: each emphasis, code, escape, bracket and angle-bracket character backslash-escaped, so the bold span ends where the page says it does and `snake_case` still reads as written. status-watch undoes the escapes. */
+const boldSafe = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/[\\*_`[\]<>]/g, '\\$&');
 
 /** The decision an ask puts to the user (up to its first question mark) and the context after it. */
 export function splitAsk(text: string): { needed: string; context: string } {
@@ -312,7 +313,7 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
       const age = daysBetween(a.date, today);
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
       const bold = linkNotePaths(needed, env, escBold);
-      const text = [boldSafe(needed) ? `**${bold}**` : '', linkNotePaths(plain(context), env, (x) => x)].filter(Boolean).join(' ');
+      const text = [boldSafe(needed) ? `**${bold}**` : '', linkNotePaths(plain(context), env, escLinkChars)].filter(Boolean).join(' ');
       out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
     }
     out.push('');
@@ -388,7 +389,9 @@ function statusSection(footer: FooterData | undefined, inflight: Item[]): string
 
 // ── page ────────────────────────────────────────────────────────────────────
 
-const li = (a: Item): string => `- \`${a.id}\` ${oneLine(a.text, 200)}`;
+/** Free text outside any wrap (ask context, the plain lists), so only what could open a link or autolink is escaped (backslash first-class, so `\[` cannot cancel the escape); everything else reads as typed. */
+const escLinkChars = (s: string): string => s.replace(/[\\[\]<>]/g, '\\$&');
+const li = (a: Item): string => `- \`${a.id}\` ${escLinkChars(oneLine(a.text, 200))}`;
 
 /** The whole page. */
 export function renderPage(input: PageInput): { page: string; date: string } {
@@ -419,7 +422,7 @@ export function renderPage(input: PageInput): { page: string; date: string } {
     ...prSection(cfg, prs, streams),
     '## Other status and findings', '',
     ...section('In flight', status.inflight.map((i) => withAge(i, ` [${i.stream ?? OTHER}]`))),
-    ...section('Blocked', blocked.map((b) => withAge(b, ` (gate: ${b.gate ?? 'none recorded'})`))),
+    ...section('Blocked', blocked.map((b) => withAge(b, ` (gate: ${b.gate ? escLinkChars(plain(b.gate)) : 'none recorded'})`))),
     ...section('Recent done', status.done.map((d) => `${li(d)}${doneAt(d)}`)),
     ...section('Deferred', deferred.map((d) => `${li(d)} (until ${d.deferredUntil})`)),
     ...statusSection(status.footer, status.inflight),
