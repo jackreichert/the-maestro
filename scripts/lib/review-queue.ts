@@ -42,15 +42,20 @@ export type QueueReading =
   | { ok: true; queue: ReviewQueue; source: 'live' | 'snapshot'; takenAt?: string; liveError?: string }
   | { ok: false; error: string };
 
+/** A fallback snapshot older than this is no answer: a stale count must not let new PR work through. */
+const MAX_FALLBACK_AGE_MS = 6 * 36e5;
+
 /**
  * The queue for the dispatch gate. A live read is preferred; a failed one falls back to the stored snapshot, and the reading says so,
- * so a stale count is never passed off as current. With neither, the answer is unknown (ok: false), never "empty".
+ * and one older than six hours (or undated) is refused, so a stale count is never passed off as current. With neither, the answer is unknown (ok: false), never "empty".
  */
-export function readQueue(src: QueueSources, cap: number): QueueReading {
+export function readQueue(src: QueueSources, cap: number, now: Date = new Date()): QueueReading {
   let liveError: string;
   try { return { ok: true, queue: reviewQueue(src.fetchLive().prs, cap), source: 'live' }; } catch (e) { liveError = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? ''; }
   const stored = src.readStored();
   if (!stored) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and there is no usable snapshot` };
+  const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
+  if (!(ageMs <= MAX_FALLBACK_AGE_MS)) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and the stored snapshot is ${stored.takenAt ? `from ${stored.takenAt}, over ${MAX_FALLBACK_AGE_MS / 36e5} hours old` : 'of unknown age'}` };
   return { ok: true, queue: reviewQueue(stored.prs, cap), source: 'snapshot', takenAt: stored.takenAt, liveError };
 }
 
@@ -64,7 +69,7 @@ export function queueText(r: QueueReading): string[] {
   return [`${reviewQueueLine(r.queue)} (${where})`, ...(r.queue.full ? ['Queue full: dispatch no new PR-producing work except fixes to PRs already open.'] : [])];
 }
 
-/** `5h`, `45m`: how old a snapshot is, for the board line; empty when it is under an hour old or its time is unknown (the board reads it without a network call, so only a stale one is flagged). */
+/** `5h`, `3d`: how old a snapshot is, for the board line; empty when it is under an hour old or its time is unknown (the board reads it without a network call, so only a stale one is flagged). */
 export function staleSuffix(takenAt: string | undefined, now: Date): string {
   const ms = takenAt ? now.getTime() - Date.parse(takenAt) : Number.NaN;
   if (!Number.isFinite(ms) || ms < 36e5) return '';

@@ -2156,7 +2156,8 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     assert.equal(full.code, 1);
     assert.match(full.out, /review queue: 4 of 4 \(full\) \(live\)[\s\S]*fixes to PRs already open/);
     assert.equal(gate(three, '--cap', '3').code, 1, '--cap overrides the configured cap');
-    assert.equal(gate(three, '--cap', '0').code, 1, 'a bad cap is refused');
+    assert.equal(gate(three, '--cap', '0').code, 2, 'a bad cap is refused as unanswerable, not as full');
+    assert.equal(gate(three, '--cap', '--json').code, 2, 'a cap flag with no value is refused');
     assert.equal(parse<{ ok: boolean; queue: { count: number } }>(gate(three, '--json').out).queue.count, 3);
     const broken = installGhStub({ pages: [[]], failOnPage: 0 });
     const unknown = gate(broken);
@@ -2165,9 +2166,12 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     const snap = join(vault, 'Projects', 'test-proj', 'Journal');
     mkdirSync(snap, { recursive: true });
     writeFileSync(join(snap, 'prs-snapshot.json'), JSON.stringify({ takenAt: '2026-01-01T00:00:00Z', prs: [open(1), open(2), open(3), open(4)] }));
+    assert.equal(gate(broken).code, 2, 'an old snapshot is not an answer');
+    const takenAt = new Date().toISOString();
+    writeFileSync(join(snap, 'prs-snapshot.json'), JSON.stringify({ takenAt, prs: [open(1), open(2), open(3), open(4)] }));
     const fallback = gate(broken);
     assert.equal(fallback.code, 1);
-    assert.match(fallback.out, /stored snapshot 2026-01-01T00:00:00Z; live read failed/);
+    assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
 });
 
 test('status and status --footer show the review queue from the stored snapshot, and stay as they were without one', () => {

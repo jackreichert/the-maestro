@@ -116,13 +116,13 @@ Reviewer attention is the limit, not agent capacity. Before dispatching any work
 node scripts/journal.ts review-queue
 ```
 
-It counts your open, non-draft PRs against `review_queue_cap` (default 4) and exits **0** with room, **1** when full, **2** when it cannot read the PRs (GitHub failed and there is no stored snapshot; treat that as full). When it exits 1 or 2:
+It counts your open, non-draft PRs against `review_queue_cap` (default 4) and exits **0** with room, **1** when full, **2** when it cannot answer (GitHub failed and the stored snapshot is missing or over six hours old, or `--cap` is bad; treat that as full). When it exits 1 or 2:
 
 - Dispatch **no new PR-producing work**: no new feature, refactor or follow-up branch. Say so in one line and queue the request (`journal.ts queue`) so it is not lost.
 - Fixes to PRs that are already open still go: review comments, conflicts, failing checks. So does read-only work (scouting, research, review) that opens no PR.
 - Use the freed attention to drive the oldest open PR to merge.
 
-The count is the same PR search the PR scripts share (open, authored by you, org-scoped), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` and the footer show `review queue: N of 4` from the stored snapshot; the gate itself reads GitHub live.
+The count is the same PR search the PR scripts share (open, authored by you, org-scoped), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` and the footer show `review queue: N of 4` from the stored snapshot, and the Podium from its own PR cache; the gate itself reads GitHub live, so on a stale board the gate is the authority.
 
 ## Two-stage dispatch
 

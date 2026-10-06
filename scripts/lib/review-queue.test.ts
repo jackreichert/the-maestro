@@ -45,6 +45,7 @@ test('readSnapshotPrs reads a snapshot and refuses a malformed one', () => {
 const live = (...drafts: boolean[]) => () => ({ prs: prs(...drafts) });
 const down = () => { throw new Error('gh api graphql failed: HTTP 502\nmore'); };
 const stored = (takenAt?: string) => () => ({ prs: prs(false, false, false, false), takenAt });
+const NOW = new Date('2026-01-01T01:00:00Z');
 
 test('readQueue prefers the live read and exits 0 with room', () => {
   const r = readQueue({ fetchLive: live(false, false), readStored: () => null }, 4);
@@ -60,7 +61,7 @@ test('readQueue exits 1 and names the rule when the queue is full', () => {
 });
 
 test('a failed live read falls back to the stored snapshot and says so', () => {
-  const r = readQueue({ fetchLive: down, readStored: stored('2026-01-01T00:00:00Z') }, 4);
+  const r = readQueue({ fetchLive: down, readStored: stored('2026-01-01T00:00:00Z') }, 4, NOW);
   assert.equal(r.ok && r.source, 'snapshot');
   assert.equal(queueExitCode(r), 1);
   assert.match(queueText(r)[0] as string, /stored snapshot 2026-01-01T00:00:00Z; live read failed: gh api graphql failed: HTTP 502\)$/);
@@ -93,4 +94,11 @@ test('staleSuffix is silent under an hour or with no usable time, and counts day
   assert.equal(staleSuffix(undefined, now), '');
   assert.equal(staleSuffix('garbage', now), '');
   assert.equal(staleSuffix('2026-10-03T12:00:00Z', now), ' (snapshot 3d old)');
+});
+
+test('a snapshot over six hours old, or undated, is refused as unknown rather than used', () => {
+  const old = readQueue({ fetchLive: down, readStored: stored('2025-12-31T00:00:00Z') }, 4, NOW);
+  assert.equal(queueExitCode(old), 2);
+  assert.match(queueText(old)[0] as string, /over 6 hours old/);
+  assert.equal(queueExitCode(readQueue({ fetchLive: down, readStored: stored(undefined) }, 4, NOW)), 2);
 });
