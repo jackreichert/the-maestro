@@ -170,8 +170,17 @@ test('a decision with emphasis markers is reported whole, the same text the page
   regenerate(dir);
   events(dir);
   answer(dir, 'ef56', 'yes');
-  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ef56` \*\*Merge nowokx\?\*\* tail/);
-  assert.deepEqual(events(dir), ['ask ef56 (decision: Merge nowokx?) answered: yes']);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ef56` \*\*\\\*Merge \\\*\\\*now\\\*\\\*\\_ok\\_\\`x\\`\\\*\?\*\* tail/);
+  assert.deepEqual(events(dir), ['ask ef56 (decision: *Merge **now**_ok_`x`*?) answered: yes']);
+});
+
+test('identifiers with underscores survive on the page and in the event, with no backslash leaking', () => {
+  const dir = setup();
+  awaiting.push({ id: 'ef57', date: '2026-10-05', text: 'Rename snake_case_name to `camel`?', stream: 'Alpha' });
+  regenerate(dir);
+  events(dir);
+  answer(dir, 'ef57', 'yes');
+  assert.deepEqual(events(dir), ['ask ef57 (decision: Rename snake_case_name to `camel`?) answered: yes']);
 });
 
 test('an older table page (no ask lines) still gives the decision from the last cell of the row', () => {

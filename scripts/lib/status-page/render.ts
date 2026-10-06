@@ -245,8 +245,8 @@ function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | undefined
   return { prs: refs, tracker: keysIn(cfg, a.text).map((k) => trackerRef(cfg, k)), note: ticket ? ticketNoteRef(cfg, ticket) : undefined };
 }
 
-/** The text safe inside a `**...**` wrap: emphasis and code markers dropped, so the bold span ends where the page says it does. */
-const boldSafe = (s: string): string => s.replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim();
+/** The text safe inside a `**...**` wrap: each emphasis, code and escape character backslash-escaped, so the bold span ends where the page says it does and `snake_case` still reads as written. status-watch undoes the escapes. */
+const boldSafe = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/[\\*_`]/g, '\\$&');
 
 /** The decision an ask puts to the user (up to its first question mark) and the context after it. */
 export function splitAsk(text: string): { needed: string; context: string } {
