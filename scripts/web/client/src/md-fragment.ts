@@ -2,14 +2,18 @@ import { BASE_CSS, h, shadow } from './dom.ts';
 import { renderMarkdown } from './markdown.ts';
 
 const CSS = `${BASE_CSS}
-  table { border-collapse: collapse; width: 100%; font-size: 14px; }
-  th, td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
-  th { background: var(--surface-2); }
-  code { background: var(--surface-2); padding: 0 4px; border-radius: 3px; }
-  pre { background: var(--surface-2); padding: 8px; overflow: auto; }
-  blockquote { margin: 4px 0 4px 8px; padding-left: 8px; border-left: 3px solid var(--border); color: var(--text-secondary); }
+  :host { font-size: var(--text-md); line-height: var(--leading-md); color: var(--text-primary); }
+  div > :first-child { margin-top: 0; }
+  p { margin: 0 0 var(--space-3); max-width: 75ch; }
+  table { border-collapse: collapse; width: 100%; font-size: var(--text-sm); line-height: var(--leading-sm); margin: 0 0 var(--space-4); }
+  th, td { border-bottom: 1px solid var(--border); padding: var(--space-2) var(--space-3) var(--space-2) 0; text-align: left; vertical-align: top; }
+  thead th { border-top: 1px solid var(--border); color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); }
+  code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.86em; }
+  pre { background: var(--surface-2); padding: var(--space-3); border-radius: var(--radius-sm); overflow: auto; }
+  blockquote { margin: var(--space-1) 0; padding: var(--space-1) var(--space-3); background: var(--surface-2); border-radius: var(--radius-sm); color: var(--text-secondary); }
   .nw { white-space: nowrap; }
-  ul, ol { padding-left: 24px; }
+  ul, ol { padding-left: var(--space-5); margin: 0 0 var(--space-3); }
+  li { margin: var(--space-1) 0; }
 `;
 
 /** <md-fragment>: shows Markdown for a section not yet converted to JSON. Set `.markdown`. */
