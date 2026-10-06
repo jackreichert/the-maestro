@@ -119,16 +119,16 @@ export function ageLabel(iso: string | undefined, now: Date): string {
   return min < 60 ? `${min} min` : min < 2880 ? `${Math.round(min / 60)} h` : `${Math.round(min / 1440)} d`;
 }
 
-const keysIn = (cfg: PageConfig, s: string): string[] => [...new Set(s.replace(/\bCVE-\d+/g, '').match(new RegExp(cfg.trackerKeyPattern, 'g')) ?? [])];
+export const keysIn = (cfg: PageConfig, s: string): string[] => [...new Set(s.replace(/\bCVE-\d+/g, '').match(new RegExp(cfg.trackerKeyPattern, 'g')) ?? [])];
 
 /** `nowrap` keeps an id such as `ABC-123` on one line: a narrow table column would otherwise break it at the hyphen. */
-interface Ref { label: string; url?: string; nowrap?: boolean }
+export interface Ref { label: string; url?: string; nowrap?: boolean }
 const mdLink = (r: Ref): string => {
   const text = r.url ? `[${r.label}](${r.url})` : r.label;
   return r.nowrap ? `<span style="white-space:nowrap">${text}</span>` : text;
 };
-const trackerRef = (cfg: PageConfig, key: string): Ref => (cfg.trackerUrlBase ? { label: key, url: `${cfg.trackerUrlBase}${key}`, nowrap: true } : { label: key, nowrap: true });
-const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
+export const trackerRef = (cfg: PageConfig, key: string): Ref => (cfg.trackerUrlBase ? { label: key, url: `${cfg.trackerUrlBase}${key}`, nowrap: true } : { label: key, nowrap: true });
+export const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
   (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, ticketNotePath(cfg.ticketNotePath, id)), nowrap: true } : { label: id, nowrap: true });
 
 /** Stream names in display order. */
@@ -145,7 +145,7 @@ const titleKey = (p: Pr): string => `${p.repo}|${p.title.replace(typePrefix, '')
 const branchKey = (p: Pr): string => `${p.repo}|${p.headRefName.replace(/-(develop|staging)$/, '')}`;
 
 /** The open PR whose head branch is this PR's base, if any (this PR is stacked on it). */
-function stackParent(p: Pr, all: Pr[]): Pr | undefined {
+export function stackParent(p: Pr, all: Pr[]): Pr | undefined {
   const c = all.filter((q) => q !== p && q.repo === p.repo && q.headRefName === p.baseRefName);
   return c.find((q) => q.baseRefName !== 'staging') ?? c[0];
 }
@@ -165,10 +165,10 @@ function prState(p: Pr): string {
   return [p.isDraft ? 'draft' : 'ready', ci, thr, merge, rev].filter(Boolean).join(', ');
 }
 
-interface Row { dev?: Pr; stg?: Pr }
+export interface Row { dev?: Pr; stg?: Pr }
 
 /** Develop and staging PRs of one change: the same title or branch, else the only leftover pair in a repo sharing a tracker key. */
-function pairTwins(cfg: PageConfig, prs: Pr[]): Row[] {
+export function pairTwins(cfg: PageConfig, prs: Pr[]): Row[] {
   const stg = prs.filter((p) => p.baseRefName === 'staging');
   const rest = prs.filter((p) => p.baseRefName !== 'staging');
   const twin = new Map<Pr, Pr>();
@@ -189,10 +189,15 @@ function pairTwins(cfg: PageConfig, prs: Pr[]): Row[] {
   return rows.sort((x, y) => ((x.dev ?? x.stg)!.number) - ((y.dev ?? y.stg)!.number));
 }
 
-/** What needs a look on a PR: conflicts, failing CI, open threads, requested changes. Empty when nothing does. */
+/** What needs a look on a PR, as plain names: conflicts, failing CI, open threads, requested changes. Empty when nothing does. */
+export function prFlagNames(p: Pr): string[] {
+  return [p.mergeable === 'CONFLICTING' ? 'CONFLICTING' : '', p.ci === 'FAILURE' || p.ci === 'ERROR' ? 'CI FAIL' : '',
+    p.unresolved ? `${p.unresolved} thr` : '', p.reviewDecision === 'CHANGES_REQUESTED' ? 'changes requested' : ''].filter(Boolean);
+}
+
+/** `prFlagNames` in bold Markdown, space-separated. */
 function prFlags(p: Pr): string {
-  return [p.mergeable === 'CONFLICTING' ? '**CONFLICTING**' : '', p.ci === 'FAILURE' || p.ci === 'ERROR' ? '**CI FAIL**' : '',
-    p.unresolved ? `**${p.unresolved} thr**` : '', p.reviewDecision === 'CHANGES_REQUESTED' ? '**changes requested**' : ''].filter(Boolean).join(' ');
+  return prFlagNames(p).map((f) => `**${f}**`).join(' ');
 }
 
 /** One table per stream: ticket | develop PR (base) | staging twin (base, or none) | tl;dr. Streams with no open PR get no table. */
@@ -241,7 +246,7 @@ function repoHints(cfg: PageConfig): Array<[RegExp, string]> {
 }
 
 /** The PRs, tracker keys and ticket note an ask refers to, as { label, url } references. */
-function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | undefined): { prs: Ref[]; tracker: Ref[]; note?: Ref } {
+export function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | undefined): { prs: Ref[]; tracker: Ref[]; note?: Ref } {
   const hint = repoHints(cfg).find(([re]) => re.test(a.text))?.[1];
   const streamRepo = Object.entries(cfg.repoStreams).find(([, s]) => s === a.stream)?.[0];
   const refs: Ref[] = [];

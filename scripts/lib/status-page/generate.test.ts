@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generate, loadPrs } from './generate.ts';
+import { gatherInputs, gatherInputsCached, generate, loadPrs } from './generate.ts';
+import { readPrCache, writePrCache } from './prcache.ts';
 import { extractFields } from './inline.ts';
 import type { GenerateDeps, RawPr } from './generate.ts';
 import { writePriorities } from './priorities.ts';
 import { readPodium } from './seen.ts';
-import type { PageConfig } from './render.ts';
+import { prFlagNames, renderPage } from './render.ts';
+import type { PageConfig, Pr } from './render.ts';
 
 const NOW = new Date('2026-10-05T15:00:00Z');
 const CONFIG: PageConfig = {
@@ -418,4 +420,36 @@ test('text clipped elsewhere on the page ends at a word boundary, never mid-word
   const page = generate(opts(d, { dryRun: true }), deps([], { journal: (sub) => withLong[sub] })).page;
   const row = page.split('\n').find((l) => l.includes('`ff66`')) as string;
   assert.match(row, /alphabetical\.\.\. \|/, 'cut after a whole word');
+});
+
+test('gatherInputs plus renderPage is exactly the page generate writes, so a second view of the board reads the same inputs', () => {
+  const d = dir();
+  writePriorities(d, '2026-10-05', [{ text: 'Get widgets out', stream: 'Alpha' }]);
+  const prs = [raw(12, 'acme-widgets'), raw(13, 'acme-widgets', { baseRefName: 'staging' })];
+  const o = opts(d, { dryRun: true });
+  const inputs = gatherInputs(o, deps(prs));
+  assert.equal(renderPage({ ...inputs, command: o.command }).page, generate(o, deps(prs)).page);
+  assert.equal(inputs.prs.length, 2);
+  assert.equal(inputs.priorities.state, 'ok');
+});
+
+test('prFlagNames lists what needs a look on a PR, in the order the Markdown flags show it', () => {
+  const pr = { mergeable: 'CONFLICTING', ci: 'ERROR', unresolved: 2, reviewDecision: 'CHANGES_REQUESTED' } as Pr;
+  assert.deepEqual(prFlagNames(pr), ['CONFLICTING', 'CI FAIL', '2 thr', 'changes requested']);
+  assert.deepEqual(prFlagNames({ mergeable: 'MERGEABLE', ci: 'SUCCESS', unresolved: 0, reviewDecision: null } as Pr), []);
+});
+
+test('gatherInputsCached reads the cached PRs and never calls GitHub, sleeps or writes the cache', () => {
+  const d = dir();
+  writePrCache(d, { fetchedAt: new Date('2026-10-05T14:55:00Z'), prs: [raw(12, 'acme-widgets')] });
+  const before = readFileSync(join(d, '.now-prs.json'), 'utf8');
+  const guarded = { journal: deps([]).journal, now: () => NOW };
+  const inputs = gatherInputsCached(d, CONFIG, guarded);
+  assert.deepEqual(inputs.prs.map((p) => p.number), [12]);
+  assert.equal(inputs.prData.fetchedAt?.toISOString(), '2026-10-05T14:55:00.000Z');
+  assert.equal(readFileSync(join(d, '.now-prs.json'), 'utf8'), before);
+  assert.equal(readPrCache(d)?.prs.length, 1);
+  const empty = dir();
+  assert.deepEqual(gatherInputsCached(empty, CONFIG, guarded).prs, []);
+  assert.equal(existsSync(join(empty, '.now-prs.json')), false);
 });

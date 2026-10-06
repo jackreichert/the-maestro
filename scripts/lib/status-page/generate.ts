@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderPage } from './render.ts';
-import type { BoardStatus, PageConfig, Pr, PrData, Triage } from './render.ts';
+import type { BoardStatus, PageConfig, PageInput, Pr, PrData, Triage } from './render.ts';
 import { prStream } from './streams.ts';
 import type { StreamEvidence } from './streams.ts';
 import { PRIORITIES_HEADING, carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
@@ -82,7 +82,7 @@ const firstLine = (e: unknown): string => (e instanceof Error ? e.message : Stri
  * Open PRs from GitHub, remembered in the cache. When the read fails, the last cached set with its fetch time (or none)
  * and the reason; the caller still writes the page. A dry run reads the cache but never writes it.
  */
-function readPrs(statusDir: string, deps: GenerateDeps, dryRun: boolean, cachedOnly: boolean): { raw: RawPr[]; data: PrData } {
+export function readPrs(statusDir: string, deps: GenerateDeps, dryRun: boolean, cachedOnly: boolean): { raw: RawPr[]; data: PrData } {
   if (cachedOnly) {
     const cached = readPrCache(statusDir);
     return { raw: cached?.prs ?? [], data: { fetchedAt: cached?.fetchedAt ?? null } };
@@ -130,7 +130,17 @@ export function generate(opts: GenerateOptions, deps: GenerateDeps): GenerateRes
   try { return build(opts, deps); } finally { release(); }
 }
 
-function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
+/** What `gatherInputs` reads and how: the files beside the page, whether to touch the PR cache, and the page settings. */
+export type GatherOptions = Pick<GenerateOptions, 'statusDir' | 'dryRun' | 'cachedPrsOnly' | 'config'>;
+/** The page's inputs before a command line is chosen: everything `renderPage` reads except `command`. */
+export type GatheredInputs = Omit<PageInput, 'command'>;
+
+/**
+ * Every outside read a page needs, in one place: the override and ticket maps, the board and triage, the open PRs and the priorities.
+ * For `generate()`: unless `cachedPrsOnly` it calls `deps.fetchPrs` (GitHub, with blocking `deps.sleep` retries) and, unless `dryRun`,
+ * writes the PR cache `.now-prs.json`. A view that must never do either calls `gatherInputsCached` instead.
+ */
+export function gatherInputs(opts: GatherOptions, deps: GenerateDeps): GatheredInputs {
   const { statusDir, config } = opts;
   const overrides = readJson<Record<string, string>>(join(statusDir, 'stream-overrides.json'));
   const ticketMap = readJson<Record<string, string[]>>(join(statusDir, 'ticket-map.json'));
@@ -141,14 +151,32 @@ function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
   const prs = loadPrs(raw, { items, ticketMap, overrides, repoStreams: config.repoStreams, keyPattern: config.trackerKeyPattern });
   const now = deps.now();
   const priorities = readPriorities(statusDir, localDate(now, config.tz));
-  const rendered = renderPage({ now, status, triage, prs, prData, ticketMap, priorities, config, command: opts.command });
+  return { now, status, triage, prs, prData, ticketMap, priorities, config };
+}
+
+/**
+ * The same inputs as `gatherInputs`, for a long-lived reader such as the web server. Reads only: the files beside the page
+ * (`stream-overrides.json`, `ticket-map.json`, `priorities.md`, the cached `.now-prs.json`) plus `deps.journal` and `deps.now`.
+ * Never calls `deps.fetchPrs` or `deps.sleep` and never writes the PR cache (the status-refresh watcher keeps it fresh).
+ */
+export function gatherInputsCached(statusDir: string, config: PageConfig, deps: Pick<GenerateDeps, 'journal' | 'now'>): GatheredInputs {
+  const refuse = (what: string) => (): never => { throw new Error(`gatherInputsCached never ${what}`); };
+  const noGithub: GenerateDeps = { ...deps, fetchPrs: refuse('reads GitHub'), sleep: refuse('sleeps') };
+  return gatherInputs({ statusDir, config, dryRun: true, cachedPrsOnly: true }, noGithub);
+}
+
+function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
+  const { statusDir } = opts;
+  const inputs = gatherInputs(opts, deps);
+  const prFailure = inputs.prData.failure;
+  const rendered = renderPage({ ...inputs, command: opts.command });
   // The page on disk may hold an answer the watcher has not reported. Carry it forward, and if the user saves another
   // edit while this runs, start over from what they saved: the write below only happens against the page we read.
   for (let attempt = 0; attempt < 3; attempt++) {
     const current = readPodium(statusDir);
     const { edits, seenPriorities } = pendingEdits(statusDir, current);
     const page = current === null ? rendered.page : carryInline(rendered.page, edits, current);
-    if (opts.dryRun) return { page, written: [], prFailure: prData.failure };
+    if (opts.dryRun) return { page, written: [], prFailure };
     mkdirSync(statusDir, { recursive: true });
     deps.beforeWrite?.();
     if (readPodium(statusDir) !== current) continue;
@@ -158,7 +186,7 @@ function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
     const kept = edits.priorities ? seenPriorities : extractFields(page).priorities;
     writeSeenMeta(statusDir, { generated_sha: sha(page), carried: countUnprocessed(edits), priorities_seen: kept });
     if (opts.snapshot) { written.push(join(statusDir, `${rendered.date}.md`)); writeAtomic(written[1] as string, page); }
-    return { page, written, prFailure: prData.failure };
+    return { page, written, prFailure };
   }
   throw new Error(`${join(statusDir, PODIUM_FILE)} kept changing while it was being regenerated; run again`);
 }

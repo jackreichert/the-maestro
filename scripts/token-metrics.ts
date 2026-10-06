@@ -48,6 +48,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, statSy
 import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ModelPrice } from './local-config.ts';
+import { family } from './lib/model-family.ts';
 import { sessionText } from './lib/session-text.ts';
 import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
@@ -365,10 +366,7 @@ function merge(a: Stats, b: Stats): void {
 }
 /** A subagent that finished in fewer turns than this is "small": cheaper done inline than dispatched. */
 export const SMALL_AGENT_TURNS = 10;
-export function family(model: string | undefined): string {
-    const m = /(opus|sonnet|haiku|fable)/i.exec(model || '');
-    return m ? m[1].toLowerCase() : 'other';
-}
+export { family };
 export function localDate(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return 'unknown';
