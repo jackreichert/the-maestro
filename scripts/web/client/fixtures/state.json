@@ -1,0 +1,83 @@
+{
+  "generatedAt": "2026-10-06T14:05:00Z",
+  "today": "2026-10-06",
+  "tz": "America/New_York",
+  "streams": ["acme-widgets", "ops", "other"],
+  "priorities": {
+    "state": "ok",
+    "date": "2026-10-06",
+    "items": [
+      { "text": "Ship the widget exporter", "stream": "acme-widgets" },
+      { "text": "Rotate the sample runbook", "stream": "ops" },
+      { "text": "Tidy the scratch shelf" }
+    ]
+  },
+  "footer": [
+    { "stream": "acme-widgets", "asks": 2, "working": 1, "queued": 1, "blocked": 1, "done": 3 },
+    { "stream": "ops", "asks": 1, "working": 1, "queued": 0, "blocked": 0, "done": 2 },
+    { "stream": "other", "asks": 0, "working": 0, "queued": 1, "blocked": 0, "done": 1 }
+  ],
+  "prData": { "fetchedAt": "2026-10-06T14:00:00Z", "stale": false },
+  "asks": [
+    {
+      "id": "ab12", "stream": "acme-widgets",
+      "needed": "Merge the exporter PR (#12) now?",
+      "context": "CI is green and Ada Quill approved. Merging unblocks FAKE-2.",
+      "ageDays": 1, "date": "2026-10-05", "ts": "2026-10-05T16:00:00Z",
+      "links": {
+        "note": { "label": "note", "url": "obsidian://open?vault=sample&file=FAKE-1" },
+        "tracker": [{ "label": "FAKE-1", "url": "https://tracker.example.test/browse/FAKE-1" }],
+        "prs": [{ "label": "#12", "url": "https://example.test/acme-widgets/pull/12" }]
+      }
+    },
+    {
+      "id": "cd34", "stream": "acme-widgets",
+      "needed": "Which export format should be the default: CSV or JSON?",
+      "context": "Bram Holloway prefers JSON, the sample customer asked for CSV.",
+      "ageDays": 5, "date": "2026-10-01", "ts": "2026-10-01T12:00:00Z",
+      "links": { "tracker": [{ "label": "FAKE-3" }], "prs": [] }
+    },
+    {
+      "id": "ef56", "stream": "ops",
+      "needed": "Approve the sample runbook change?",
+      "context": "",
+      "ageDays": 0, "date": "2026-10-06", "ts": "2026-10-06T13:00:00Z",
+      "links": { "tracker": [], "prs": [] }
+    }
+  ],
+  "working": [
+    { "id": "wk01", "stream": "acme-widgets", "text": "Export schema validation", "ticket": { "label": "FAKE-2", "url": "https://tracker.example.test/browse/FAKE-2" }, "links": { "tracker": [], "prs": [] }, "model": "sonnet", "since": "2026-10-06T12:00:00Z" },
+    { "id": "wk02", "stream": "ops", "text": "Runbook diff review", "links": { "tracker": [], "prs": [] }, "since": "2026-10-06T13:30:00Z" }
+  ],
+  "queued": [
+    { "id": "qu01", "stream": "acme-widgets", "text": "Write exporter docs", "links": { "tracker": [], "prs": [] }, "since": "2026-10-05T10:00:00Z" },
+    { "id": "qu02", "stream": "other", "text": "Reorganise the sample shelf", "links": { "tracker": [], "prs": [] }, "since": "2026-10-04T10:00:00Z" }
+  ],
+  "blocked": [
+    { "id": "bl01", "stream": "acme-widgets", "text": "Publish exporter v1", "gate": "FAKE-3 decision", "links": { "tracker": [], "prs": [] }, "since": "2026-10-03T10:00:00Z" }
+  ],
+  "done": [],
+  "deferred": [],
+  "prs": [
+    {
+      "repo": "acme/acme-widgets", "short": "acme-widgets", "number": 12, "title": "feat: widget exporter",
+      "url": "https://example.test/acme-widgets/pull/12", "stream": "acme-widgets", "base": "develop", "head": "feat/FAKE-1-exporter",
+      "isDraft": false, "ci": "SUCCESS", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "unresolved": 0, "review": "APPROVED", "flags": []
+    },
+    {
+      "repo": "acme/acme-widgets", "short": "acme-widgets", "number": 13, "title": "feat: widget exporter (staging twin)",
+      "url": "https://example.test/acme-widgets/pull/13", "stream": "acme-widgets", "base": "staging", "head": "feat/FAKE-1-exporter",
+      "isDraft": true, "ci": "FAILURE", "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY", "unresolved": 2, "review": "", "flags": [], "twinOf": 12
+    },
+    {
+      "repo": "acme/acme-ops", "short": "acme-ops", "number": 4, "title": "docs: runbook refresh",
+      "url": "https://example.test/acme-ops/pull/4", "stream": "ops", "base": "main", "head": "docs/FAKE-5-runbook",
+      "isDraft": false, "ci": "PENDING", "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "unresolved": 1, "review": "REVIEW_REQUIRED", "flags": []
+    }
+  ],
+  "seq": "fixture-1",
+  "fragments": {
+    "overview": "Sample **Markdown** section not yet converted.\n\n| Item | Where |\n| --- | --- |\n| exporter | <span style=\"white-space:nowrap\">[FAKE-1](https://tracker.example.test/browse/FAKE-1)</span> |\n| `runbook` | ops |\n\n- [ ] `ab12` Merge the exporter?\n  > answer: \n- [x] `zz99` Closed already\n",
+    "ops": "Handover note from Cleo Marsh: check the **runbook** before Friday."
+  }
+}
