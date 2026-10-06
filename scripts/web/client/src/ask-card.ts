@@ -38,6 +38,7 @@ export class AskCardElement extends HTMLElement {
 
   /** True while the page shows sample data: the card says so and Done cannot be pressed. */
   get locked(): boolean { return this.#locked; }
+  // The lock is only a disabled button and textarea: whatever handles `ask-resolve` must check its data source itself.
   set locked(v: boolean) { this.#locked = v; this.#render(); }
 
   #render(): void {
