@@ -7,6 +7,8 @@ import { linkNotePaths, obsidianUri, ticketNotePath } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
+import { reviewQueue } from '../review-queue.ts';
+import type { ReviewQueue } from '../review-queue.ts';
 import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
 import type { FooterRow } from '../journal/board.ts';
@@ -39,6 +41,8 @@ export interface PageConfig {
   project?: string;
   /** Whether a vault-relative `.md` path exists in the vault. Absent: note paths in text are not linked. */
   noteExists?: (vaultPath: string) => boolean;
+  /** The review queue cap (`review_queue_cap`). Absent: the page shows no review queue line. */
+  reviewQueueCap?: number;
 }
 
 /** Where the PR list came from: when GitHub was last read (null when never), and why the read just now failed, if it did. */
@@ -223,11 +227,15 @@ function prFlags(p: Pr): string {
   return prFlagNames(p).map((f) => `**${f}**`).join(' ');
 }
 
+/** `Review queue: 3 of 4 ...`: the non-draft PRs waiting on a review against the cap, and what a full queue means for dispatch. */
+const queueSentence = (q: ReviewQueue): string => `**Review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}**${q.full ? ': dispatch only fixes to PRs already open until it drops.' : ' non-draft PRs awaiting review.'}`;
+
 /** One table per stream: ticket | develop PR (base) | staging twin (base, or none) | tl;dr. Streams with no open PR get no table. */
 function prSection(cfg: PageConfig, prs: Pr[], streams: string[]): string[] {
   const tot = (f: (p: Pr) => boolean): number => prs.filter(f).length;
   const out = [`## Open PRs (${prs.length})`, '',
-    `${tot((p) => p.isDraft)} draft, ${tot((p) => p.mergeable === 'CONFLICTING')} conflicting, ${tot((p) => p.unresolved > 0)} with unresolved threads, ${tot((p) => p.ci === 'FAILURE' || p.ci === 'ERROR')} failing CI.`, ''];
+    `${tot((p) => p.isDraft)} draft, ${tot((p) => p.mergeable === 'CONFLICTING')} conflicting, ${tot((p) => p.unresolved > 0)} with unresolved threads, ${tot((p) => p.ci === 'FAILURE' || p.ci === 'ERROR')} failing CI.`, '',
+    ...(cfg.reviewQueueCap === undefined ? [] : [queueSentence(reviewQueue(prs, cfg.reviewQueueCap)), ''])];
   for (const stream of streams) {
     const mine = prs.filter((p) => p.stream === stream);
     if (!mine.length) continue;

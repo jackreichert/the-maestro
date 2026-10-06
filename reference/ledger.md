@@ -192,7 +192,7 @@ node $J unarchive Launch "${M[@]}"
 **Session:** 86 turns (48% of 180 roll) · 129k read/turn
 ```
 
-One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
+One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. After them, when a PR snapshot exists, comes `**Review queue:** N of 4` (open non-draft PRs against `review_queue_cap`; `(full)` at the cap, and a note when the snapshot is over an hour old), then the Session line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
 `status --json` carries the same figures as data under `footer` (`ledger`: one `{ name, done, inflight, queued, awaiting, paste, blocked }` per line; `session`: the turns, percent, read per turn and advice), and the Podium's **Status** section is formatted from it, so the page and the footer never disagree.
 

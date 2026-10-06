@@ -179,6 +179,15 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
     assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
 });
 
+test('review_queue_cap: default 4, file value, env wins, bad values fall back', () => {
+    assert.equal(show().REVIEW_QUEUE_CAP, '4');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('review_queue_cap: 6'));
+    assert.equal(show().REVIEW_QUEUE_CAP, '6');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_CAP: '2' }).REVIEW_QUEUE_CAP, '2');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_CAP: '0' }).REVIEW_QUEUE_CAP, '4');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_CAP: 'many' }).REVIEW_QUEUE_CAP, '4');
+});
+
 test('twin_flow_repos: empty by default, list from the file, environment wins', () => {
     assert.equal(show().TWIN_FLOW_REPOS, '(unset)');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('twin_flow_repos: repo_a, repo_b'));

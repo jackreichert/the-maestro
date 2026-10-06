@@ -5,6 +5,7 @@ import { spawnSync, spawn } from 'node:child_process';
 import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { installGhStub, prNode } from './lib/gh-stub.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -2134,4 +2135,60 @@ test('prime prints the not-set line when a status dir exists and today\'s priori
     assert.match(run('prime', '--status-dir', sd).out, new RegExp(line), 'stale');
     assert.equal(run('priorities', 'set', 'today thing', '--status-dir', sd).code, 0);
     assert.doesNotMatch(run('prime', '--status-dir', sd).out, /Priorities not set/);
+});
+
+// ── review queue gate (MAESTRO-90) ──────────────────────────────────────────
+
+test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed read falls back to the snapshot or exits 2', () => {
+    const gh = (nodes: unknown[]) => installGhStub({ pages: [nodes] });
+    const gate = (env: NodeJS.ProcessEnv, ...args: string[]) => {
+        const r = spawnSync(process.execPath, [SCRIPT, 'review-queue', ...args, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd, env: { ...env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const open = (n: number, isDraft = false) => prNode(n, { isDraft });
+    const three = gh([open(1), open(2), open(3), open(4, true)]);
+    const ok = gate(three);
+    assert.equal(ok.code, 0, ok.err);
+    assert.match(ok.out, /review queue: 3 of 4 \(live\)/);
+    const full = gate(gh([open(1), open(2), open(3), open(4), open(5, true)]));
+    assert.equal(full.code, 1);
+    assert.match(full.out, /review queue: 4 of 4 \(full\) \(live\)[\s\S]*fixes to PRs already open/);
+    assert.equal(gate(three, '--cap', '3').code, 1, '--cap overrides the configured cap');
+    assert.equal(gate(three, '--cap', '0').code, 2, 'a bad cap is refused as unanswerable, not as full');
+    assert.equal(gate(three, '--cap', '--json').code, 2, 'a cap flag with no value is refused');
+    assert.equal(parse<{ ok: boolean; queue: { count: number } }>(gate(three, '--json').out).queue.count, 3);
+    const broken = installGhStub({ pages: [[]], failOnPage: 0 });
+    const unknown = gate(broken);
+    assert.equal(unknown.code, 2, 'no live read and no snapshot is unknown, not empty');
+    assert.match(unknown.out, /Treat the queue as full/);
+    const snap = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(snap, { recursive: true });
+    writeFileSync(join(snap, 'prs-snapshot.json'), JSON.stringify({ takenAt: '2026-01-01T00:00:00Z', prs: [open(1), open(2), open(3), open(4)] }));
+    assert.equal(gate(broken).code, 2, 'an old snapshot is not an answer');
+    const takenAt = new Date().toISOString();
+    writeFileSync(join(snap, 'prs-snapshot.json'), JSON.stringify({ takenAt, prs: [open(1), open(2), open(3), open(4)] }));
+    const fallback = gate(broken);
+    assert.equal(fallback.code, 1);
+    assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
+});
+
+test('status and status --footer show the review queue from the stored snapshot, and stay as they were without one', () => {
+    const before = run('status');
+    assert.doesNotMatch(before.out, /review queue/);
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const snapshot = (takenAt: string, ...drafts: boolean[]) => writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt, prs: drafts.map((isDraft) => ({ isDraft })) }));
+    const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', ...env },
+    }).stdout;
+    snapshot(new Date().toISOString(), false, false, true);
+    assert.match(status([]), /\n {2}review queue: 2 of 4\n$/);
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 2 of 4\n\*\*Session:\*\*/m);
+    snapshot(new Date().toISOString(), false, false, false, false);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '4' }), /review queue: 4 of 4 \(full\)/);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '6' }), /review queue: 4 of 6\n/);
+    snapshot('2020-01-01T00:00:00Z', false);
+    assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
 });
