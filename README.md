@@ -442,6 +442,24 @@ An org overlay adds types without editing this repo: `<type>.mjs` and its playbo
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
+### loop-supervisor.ts (keep the loop alive without a session)
+
+A launchd LaunchAgent runs `loop-supervisor.ts`, which relaunches `event-loop.ts run` forever: on exit 10 it saves the digest to `<ledger root>/Projects/<project>/Journal/Digests/<UTC timestamp>.md` (first line `<!-- seen: false -->`) and relaunches at once; on exit 3 it sleeps until the stated quiet-hours end (at most 12h); on exit 0 or 2 it sleeps 300s (exit 2 is logged and the lock is left alone); any other code sleeps 30s. Digests are written only under the ledger root; with no ledger root the supervisor will not start.
+
+Install (the script only fills the plist and prints the commands; you run them):
+
+```bash
+# 1. Stop any in-session loop first (end its background `event-loop.ts run` task, or kill the pid the installer names).
+node scripts/install-loop-supervisor.ts          # writes ~/Library/LaunchAgents/com.jackreichert.the-maestro-loop.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jackreichert.the-maestro-loop.plist
+launchctl print gui/$(id -u)/com.jackreichert.the-maestro-loop     # check it is running
+launchctl bootout gui/$(id -u)/com.jackreichert.the-maestro-loop   # uninstall
+```
+
+The installer refuses while any loop holds the lock. Run it from the main checkout, not a worktree. The log is `<ledger root>/Projects/<project>/Journal/Supervisor/loop-supervisor.log`.
+
+With launchd holding the lock, a session cannot run the loop itself. It starts `node scripts/event-loop.ts digest-wait` in the background instead: it blocks until a saved digest is unseen, prints it, marks it seen and exits 10 (the same contract as `run`), so the session is woken as before. `--timeout-hours N` (default 6) exits 0 quietly. `node scripts/event-loop.ts digests [--mark-seen]` prints the unseen digests without waiting.
+
 ### notion-watch (tagged Notion pages)
 
 Keep a vault note in step with a Notion page without spending model tokens. The work is split in two: the separate `notion-sync` skill pulls pages (`notion-pull`: page, child pages and child databases to markdown, secrets scrubbed, `notion_page_id` / `notion_tag` / `notion_last_edited` / `notion_hash` frontmatter) and records each tag in a registry file; the `notion-watch` event type here watches that registry. The event type is a thin shim over `scripts/lib/tag-watch.ts`, a shared engine for tagged-source watchers (state, rate-limit backoff, failure counting, event wording) that only needs a source to supply `probe` and `refresh`; the shim loads the skill's adapter on first use, so the skill must be installed beside this repo, under `~/dev-env/skills/` or `~/.claude/skills/`, or at `NOTION_SYNC_DIR`.

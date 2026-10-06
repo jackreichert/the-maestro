@@ -1,0 +1,118 @@
+// Run: node --test scripts/loop-supervisor.test.ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DELAYS, quietSleepSeconds, secondsUntilClock, supervise } from './loop-supervisor.ts';
+import type { LoopResult } from './loop-supervisor.ts';
+import { digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
+import { commands, fillTemplate, LABEL } from './install-loop-supervisor.ts';
+
+const tempDir = () => mkdtempSync(join(tmpdir(), 'loop-supervisor-test-'));
+const SUPERVISOR = new URL('./loop-supervisor.ts', import.meta.url).pathname;
+const INSTALL = new URL('./install-loop-supervisor.ts', import.meta.url).pathname;
+const NOON = Date.parse('2026-10-01T12:00:00Z');
+
+/** Runs supervise over scripted results; returns what it slept, saved and logged. */
+async function drive(results: Partial<LoopResult>[]) {
+  const slept: number[] = [];
+  const saved: string[] = [];
+  const logs: string[] = [];
+  let launches = 0;
+  await supervise({
+    runLoop: async () => ({ code: 0, stdout: '', stderr: '', ...results[launches++] }),
+    sleep: async (s) => { slept.push(s); },
+    save: (d) => { saved.push(d); },
+    log: (l) => { logs.push(l); },
+    now: () => NOON,
+    maxRuns: results.length,
+  });
+  return { slept, saved, logs, launches };
+}
+
+test('exit 10 saves the digest and relaunches without sleeping', async () => {
+  const r = await drive([{ code: 10, stdout: 'ACTION a (t): x\n' }, { code: 10, stdout: 'ACTION b (t): y\n' }]);
+  assert.deepEqual(r.saved, ['ACTION a (t): x\n', 'ACTION b (t): y\n']);
+  assert.deepEqual(r.slept, []);
+  assert.equal(r.launches, 2);
+});
+
+test('exit 0 sleeps 300s, exit 2 logs the stderr line and sleeps 300s, other codes sleep 30s', async () => {
+  const r = await drive([{ code: 0 }, { code: 2, stderr: 'old\nevent-loop: another event loop is running (pid 7)\n' }, { code: 1, stderr: 'boom' }, { code: null, stderr: '' }]);
+  assert.deepEqual(r.slept, [DELAYS.idle, DELAYS.usage, DELAYS.crash, DELAYS.crash]);
+  assert.match(r.logs[0], /another event loop is running \(pid 7\)/);
+  assert.match(r.logs[1], /exited 1: boom/);
+  assert.deepEqual(r.saved, []);
+});
+
+test('exit 3 sleeps until the stated time; an unreadable time falls back to 300s with a log line', async () => {
+  const r = await drive([{ code: 3, stdout: 'QUIET-HOURS stop until 14:30 UTC\n' }, { code: 3, stdout: 'QUIET-HOURS stop until soon UTC\n' }]);
+  assert.deepEqual(r.slept, [2.5 * 3600, DELAYS.quietFallback]);
+  assert.equal(r.logs.length, 1);
+});
+
+test('quiet-hours parsing: next occurrence in the zone, wrap past midnight, 12h cap, junk refused', () => {
+  assert.equal(secondsUntilClock(NOON, '12:30', 'UTC'), 1800);
+  assert.equal(secondsUntilClock(NOON, '11:00', 'UTC'), 12 * 3600);
+  assert.equal(secondsUntilClock(NOON + 30000, '12:01', 'UTC'), 30);
+  assert.equal(secondsUntilClock(NOON, '07:00', 'America/New_York'), 12 * 3600);
+  assert.equal(secondsUntilClock(NOON, '25:00', 'UTC'), null);
+  assert.equal(secondsUntilClock(NOON, '10:00', 'Not/AZone'), null);
+  assert.equal(quietSleepSeconds('QUIET-HOURS stop until 13:00 America/New_York', NOON), 5 * 3600);
+  assert.equal(quietSleepSeconds('nothing here', NOON), null);
+});
+
+/** An executable fake loop that prints a digest and exits 10. */
+function fakeLoop(dir: string): string {
+  const bin = join(dir, 'fake-loop.sh');
+  writeFileSync(bin, '#!/bin/sh\necho "ACTION w1 (fake): changed"\nexit 10\n');
+  chmodSync(bin, 0o755);
+  return bin;
+}
+const envFor = (ledger: string, extra: Record<string, string> = {}) => ({ ...process.env, LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: join(ledger, 'Events'), ...extra });
+
+test('the real supervisor process saves the fake loop digest under the ledger root only', () => {
+  const ledger = tempDir();
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LOOP_BIN: fakeLoop(tempDir()), MAESTRO_SUPERVISOR_MAX_RUNS: '2' }) });
+  assert.equal(r.status, 0, r.stderr);
+  const dir = digestDir(ledger, 'proj');
+  assert.equal(unseenDigests(dir).length, 2);
+  assert.equal(digestBody(unseenDigests(dir)[0]), 'ACTION w1 (fake): changed');
+});
+
+test('the supervisor refuses to start without a ledger root and writes nothing', () => {
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: { ...envFor('x'), LEDGER_ROOT: '', MAESTRO_LOOP_BIN: fakeLoop(tempDir()), MAESTRO_SUPERVISOR_MAX_RUNS: '1' } });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no ledger root/);
+});
+
+test('install fills every placeholder, prints the launchctl commands, never runs them, and refuses while a loop holds the lock', () => {
+  const ledger = tempDir();
+  const out = join(tempDir(), 'x.plist');
+  const ok = spawnSync(process.execPath, [INSTALL, '--out', out], { encoding: 'utf8', env: envFor(ledger) });
+  assert.equal(ok.status, 0, ok.stderr);
+  const plist = readFileSync(out, 'utf8');
+  assert.equal(/\{\{/.test(plist), false);
+  assert.match(plist, /<key>KeepAlive<\/key>\s*<true\/>/);
+  assert.match(plist, /<integer>30<\/integer>/);
+  assert.match(ok.stdout, new RegExp(`launchctl bootstrap gui/\\d+ ${out}`));
+  assert.match(ok.stdout, new RegExp(`launchctl bootout gui/\\d+/${LABEL}`));
+  assert.match(ok.stdout, /launchctl print/);
+  const events = join(ledger, 'Events');
+  mkdirSync(events, { recursive: true });
+  writeFileSync(join(events, 'loop.lock'), String(process.pid));
+  const out2 = join(tempDir(), 'y.plist');
+  const refused = spawnSync(process.execPath, [INSTALL, '--out', out2], { encoding: 'utf8', env: envFor(ledger) });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, new RegExp(`pid ${process.pid}`));
+  assert.equal(existsSync(out2), false);
+  assert.equal(existsSync(join(events, 'loop.lock')), true);
+});
+
+test('fillTemplate escapes XML and rejects a placeholder without a value; commands carry the label', () => {
+  assert.equal(fillTemplate('<s>{{A}}</s>', { A: 'a&b<c' }), '<s>a&amp;b&lt;c</s>');
+  assert.throws(() => fillTemplate('{{A}}{{B}}', { A: '1' }), /\{\{B\}\}/);
+  assert.match(commands('/p.plist', 501).unload, new RegExp(`gui/501/${LABEL}$`));
+});

@@ -103,6 +103,14 @@ const alive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (err) { return errorCode(err) === 'EPERM'; }
 };
 
+/** The pid holding the loop lock in `dir`, or null when there is no lock or its owner is gone. Read-only: never removes the lock. */
+export function lockHolder(dir: string): number | null {
+  try {
+    const owner = Number(readFileSync(join(dir, 'loop.lock'), 'utf8'));
+    return owner > 0 && alive(owner) ? owner : null;
+  } catch { return null; }
+}
+
 const LOCK_GRACE_MS = 2000;
 const LOCK_ATTEMPTS = 5;
 
