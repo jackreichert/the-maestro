@@ -18,6 +18,8 @@ node scripts/event-loop.ts run
 | 3 | Quiet hours or a quiet weekend began (`QUIET-HOURS stop until <time>`); no `--notify-overnight` watch is live. | Report one line with the time. |
 | 2 | Usage or configuration error, or `another event loop is running`. | Report the stderr line. Do not retry or delete the lock. |
 
+If a launchd supervisor owns the lock, `run` exits 2 (`another event loop is running`). Start `node scripts/event-loop.ts digest-wait` in the background instead; it exits 10 with the saved digest (same handling as `run`), or 0 quietly after its timeout.
+
 For one quick look instead of a long wait, `node scripts/event-loop.ts run --once` does a single pass with the same exit codes.
 
 ## 2. Read the digest

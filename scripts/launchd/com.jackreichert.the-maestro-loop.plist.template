@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jackreichert.the-maestro-loop</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE}}</string>
+    <string>{{REPO}}/scripts/loop-supervisor.ts</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{REPO}}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{PATH}}</string>
+    <key>LEDGER_ROOT</key>
+    <string>{{LEDGER_ROOT}}</string>
+    <key>MAESTRO_PROJECT</key>
+    <string>{{PROJECT}}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>{{LOG}}</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG}}</string>
+</dict>
+</plist>

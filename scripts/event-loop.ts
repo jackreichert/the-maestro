@@ -5,6 +5,7 @@
  *   event-loop.ts add --id <id> --type <type> --target <t> [--done-when <rule>] [--report <text>] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
  *   event-loop.ts list [--json] | remove <id> | digest [--peek]
  *   event-loop.ts run [--once] [--interval N]
+ *   event-loop.ts digest-wait [--timeout-hours N] | digests [--unseen] [--mark-seen]
  *
  * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
  * A type may export `retired(watch, ctx)` to delete its per-watch files when the watch retires or is removed.
@@ -18,6 +19,9 @@
  * Only watches added with `--notify` (reminders by default, inbox never) are sent to `notify_command`.
  * Cadence is lib/cadence.ts (floors, back-off, quiet hours). Settings are in local-config.ts (event_dir, notify_command).
  *
+ * `digest-wait` blocks until the supervisor (loop-supervisor.ts) has saved an unseen digest, prints it, marks it seen and
+ * exits 10, so a session that cannot hold the loop lock is still woken; it exits 0 quietly at the timeout (default 6h).
+ *
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
 import { spawnSync } from 'node:child_process';
@@ -26,8 +30,9 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
-  WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ,
+  WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
+import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
 import type { TypeRegistry } from './event-types/index.ts';
@@ -199,7 +204,27 @@ async function run({ dir, types, once, pinned }: { dir: string; types: TypeRegis
   }
 }
 
+/** Prints the unseen digests. With `claim`, they are first claimed (so no other waiter takes them) and marked seen only after printing: at-least-once. Returns whether anything was printed. */
+function printUnseen(dir: string, claim: boolean): boolean {
+  const taken = claim ? claimDigests(dir) : unseenDigests(dir).map((f) => ({ text: digestBody(f), finish: () => {} }));
+  if (!taken.length) return false;
+  console.log(taken.map((t) => t.text).join('\n'));
+  taken.forEach((t) => t.finish());
+  return true;
+}
+
+/** Blocks until an unseen digest is claimed (printed, then marked seen, exit 10) or the timeout passes (exit 0, silent). A waiter that loses a claim keeps waiting. */
+async function digestWait(dir: string, timeoutMs: number, pollSeconds: number): Promise<number> {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    if (printUnseen(dir, true)) return EXIT.actionable;
+    if (Date.now() >= end) return EXIT.ok;
+    await sleep(Math.min(pollSeconds, Math.max(0.05, (end - Date.now()) / 1000)));
+  }
+}
+
 const OPTIONS = {
+  'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
   once: { type: 'boolean' }, interval: { type: 'string' },
@@ -246,7 +271,15 @@ async function main(argv: string[]): Promise<number> {
       const types = await loadConfiguredTypes();
       acquireLock(dir);
       return await run({ dir, types, once: v.once, pinned });
-    } else return usage('commands: add | list | remove <id> | digest | run [--once]');
+    } else if (cmd === 'digest-wait' || cmd === 'digests') {
+      if (!LEDGER_ROOT) return usage('saved digests live under the ledger root; set LEDGER_ROOT (or ledger_root in the config)');
+      const saved = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
+      if (cmd === 'digests') { if (!printUnseen(saved, Boolean(v['mark-seen']))) console.log('no unseen digests'); return EXIT.ok; }
+      const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
+      const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
+      if (!(hours > 0) || !(poll > 0)) return usage('--timeout-hours and --poll-seconds need positive numbers');
+      return await digestWait(saved, hours * 3600 * 1000, poll);
+    } else return usage('commands: add | list | remove <id> | digest | run [--once] | digest-wait | digests');
   } catch (err) {
     return usage(errorMessage(err));
   }
