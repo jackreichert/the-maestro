@@ -25,6 +25,7 @@ import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
 import { generate } from './lib/status-page/generate.ts';
 import type { GenerateDeps, GenerateResult, RawPr } from './lib/status-page/generate.ts';
+import type { PageConfig } from './lib/status-page/render.ts';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
@@ -57,6 +58,14 @@ function journalJson(sub: string, ledger: string, project: string): unknown {
   return JSON.parse(r.stdout);
 }
 
+/** The install's page settings from the local config; the Markdown page and the web server read the same ones. */
+export function pageConfig(): PageConfig {
+  return {
+    streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
+    ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
+  };
+}
+
 export interface RegenerateOptions { project: string; ledger: string; statusDir: string; dryRun: boolean; snapshot: boolean; cachedPrsOnly: boolean }
 
 /** One page rebuild with the real ledger, GitHub and clock. `cachedPrsOnly` skips the GitHub read and renders the last cached PR set. Throws if the ledger cannot be read or no directory is set. */
@@ -64,11 +73,7 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!o.statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
   const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), fetchPrs, sleep, now: () => new Date() };
-  const config = {
-    streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
-    ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
-  };
-  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config }, deps);
+  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig() }, deps);
 }
 
 function main(argv: string[]): number {
