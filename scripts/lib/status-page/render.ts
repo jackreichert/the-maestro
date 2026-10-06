@@ -58,10 +58,13 @@ const CELL_MAX = 60;
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
-const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || '-';
+/** Text safe in a table cell: whitespace squashed, and each character Markdown would read as markup (pipe, backslash, emphasis, code, brackets, angle brackets, strikethrough) backslash-escaped. */
+const cell = (s: string): string => s.replace(/[|\\*_`<>[\]~]/g, '\\$&').replace(/\s+/g, ' ').trim() || '-';
+/** Drops URLs and the bare `repo/pull/N` fragments left when a URL was shortened. */
+const dropLinks = (s: string): string => s.replace(/https?:\/\/\S+/g, '').replace(/\S*\/pulls?\/\d+\S*/g, '');
 /** `s` without URLs, squashed to one line; over `max` it is cut at a word boundary (never mid-word) and ends in `...`. */
 const oneLine = (s: string, max: number): string => {
-  const t = s.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  const t = dropLinks(s).replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
   const room = t.slice(0, max - 3);
   const i = room.lastIndexOf(' ');
@@ -69,7 +72,7 @@ const oneLine = (s: string, max: number): string => {
   return `${atWord.trimEnd()}...`;
 };
 /** The text with URLs dropped and whitespace squashed, never clipped. */
-const plain = (s: string): string => s.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+const plain = (s: string): string => dropLinks(s).replace(/\s+/g, ' ').trim();
 const daysBetween = (a: string, b: string): number => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
 
 /** The date, an ISO timestamp with offset and a human label of `d` in the zone `tz` (the system zone when empty). */
@@ -117,11 +120,15 @@ export function ageLabel(iso: string | undefined, now: Date): string {
 
 const keysIn = (cfg: PageConfig, s: string): string[] => [...new Set(s.replace(/\bCVE-\d+/g, '').match(new RegExp(cfg.trackerKeyPattern, 'g')) ?? [])];
 
-interface Ref { label: string; url?: string }
-const mdLink = (r: Ref): string => (r.url ? `[${r.label}](${r.url})` : r.label);
-const trackerRef = (cfg: PageConfig, key: string): Ref => (cfg.trackerUrlBase ? { label: key, url: `${cfg.trackerUrlBase}${key}` } : { label: key });
+/** `nowrap` keeps an id such as `ABC-123` on one line: a narrow table column would otherwise break it at the hyphen. */
+interface Ref { label: string; url?: string; nowrap?: boolean }
+const mdLink = (r: Ref): string => {
+  const text = r.url ? `[${r.label}](${r.url})` : r.label;
+  return r.nowrap ? `<span style="white-space:nowrap">${text}</span>` : text;
+};
+const trackerRef = (cfg: PageConfig, key: string): Ref => (cfg.trackerUrlBase ? { label: key, url: `${cfg.trackerUrlBase}${key}`, nowrap: true } : { label: key, nowrap: true });
 const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
-  (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, ticketNotePath(cfg.ticketNotePath, id)) } : { label: id });
+  (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, ticketNotePath(cfg.ticketNotePath, id)), nowrap: true } : { label: id, nowrap: true });
 
 /** Stream names in display order. */
 export function streamOrder(cfg: PageConfig, seen: (string | undefined)[]): string[] {
@@ -142,9 +149,11 @@ function stackParent(p: Pr, all: Pr[]): Pr | undefined {
   return c.find((q) => q.baseRefName !== 'staging') ?? c[0];
 }
 
-function prRef(p: Pr, all: Pr[], withRepo: boolean): Ref {
+/** A PR link as `#123`, with its base (`→ develop`, or `→ #120, stacked`) only where `withBase` is set: the Open PRs tables show the base, the asks do not. */
+function prRef(p: Pr, all: Pr[], withRepo: boolean, withBase = true): Ref {
   const parent = stackParent(p, all);
-  return { label: `${withRepo ? p.short : ''}#${p.number} → ${parent ? `#${parent.number}, stacked` : p.baseRefName}`, url: p.url };
+  const base = withBase ? ` → ${parent ? `#${parent.number}, stacked` : p.baseRefName}` : '';
+  return { label: `${withRepo ? p.short : ''}#${p.number}${base}`, url: p.url, nowrap: true };
 }
 
 function prState(p: Pr): string {
@@ -240,7 +249,7 @@ function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | undefined
     const all = prs.filter((p) => p.number === n);
     const pick = (repo?: string): Pr[] => (repo ? all.filter((p) => p.short === repo) : all);
     const m = [hint, streamRepo].map(pick).find((x) => x.length === 1) ?? (all.length === 1 && !hint ? all : []);
-    refs.push(m[0] ? prRef(m[0], prs, false) : { label: `#${n} (not open)` });
+    refs.push(m[0] ? prRef(m[0], prs, false, false) : { label: `#${n}` });
   }
   return { prs: refs, tracker: keysIn(cfg, a.text).map((k) => trackerRef(cfg, k)), note: ticket ? ticketNoteRef(cfg, ticket) : undefined };
 }
@@ -250,7 +259,7 @@ const boldSafe = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/[
 
 /** The decision an ask puts to the user (up to its first question mark) and the context after it. */
 export function splitAsk(text: string): { needed: string; context: string } {
-  const clean = text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  const clean = plain(text);
   const q = clean.indexOf('?');
   return q === -1 ? { needed: clean, context: '' } : { needed: clean.slice(0, q + 1), context: clean.slice(q + 1).trim() };
 }
