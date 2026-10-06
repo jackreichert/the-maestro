@@ -275,6 +275,7 @@ agents in a **single message with multiple tool calls** so they run concurrently
 ## The Dispatch Brief
 
 The brief and the standing brief block live in [brief.md](brief.md).
+The block carries the secrets-handling rule (names-only reads, no printing of secret-bearing files), so every dispatched agent gets it.
 
 ## External writes have one owner
 
