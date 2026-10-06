@@ -382,6 +382,23 @@ flowchart LR
     O --> G
 ```
 
+### web.ts
+
+`node scripts/journal.ts web [--port <n>] [--status-dir <dir>]` serves the Podium as a read-only local web page. It is a small Node server (plain TypeScript, no framework) over the same ledger, PR cache and priorities the Markdown page is built from, and the Markdown page keeps regenerating unchanged beside it. It binds `127.0.0.1` only (port 0 by default, so the OS picks one, and the URL is printed), answers `GET` only, and never writes the ledger, the priorities file or the page and never calls GitHub: PR data is whatever the last page refresh cached in `.now-prs.json`, with a `stale` flag when that is over 15 minutes old. Every request opens a fresh store, so a `streams.json` edit made from the command line shows on the next request.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/state` | The board as JSON: streams in display order, priorities (`ok`, `missing` or `stale`), the per-stream footer counts, asks split into the decision and its context with server-built links, in flight, queued, blocked, done today, deferred, open PRs with CI, merge state, flags, develop/staging twins and stack parents, and a `seq` that changes when the content does. `fragments` holds the text of `<status dir>/fragments/<tab>.md` for the Overview tab and each stream, for sections not yet converted to JSON |
+| `GET /api/streams/<name>` | The same shape narrowed to one stream; 404 for a name that is not one of the streams |
+| `GET /api/charts?days=14` | Chart data: finished items per day by stream (bucketed in the page's time zone), open asks by age bucket, PR CI mix, and finished items by model family. `days` is clamped to 1..90 |
+| `GET /`, `/dist/*`, `/theme.css`, `/fixtures/*` | The client page and its compiled scripts. Build the page first with `npm run build:web`; without it the `/api` endpoints still work |
+
+Guards, applied to every response including 404 and 500: the `Host` header must be `127.0.0.1:<port>` or `localhost:<port>` (a DNS-rebinding page arrives with its own host name and gets 403), a present `Origin` must be the server's own, a request the browser marks cross-site (`Sec-Fetch-Site`) is 403, any method but `GET` is 405, a request with a body or a target that is not a plain path (or has a backslash) is 400, and a URL over 2 KB is 414. Headers over 8 KB, a malformed request and a client that does not finish its headers within a few seconds are cut off, and still answered with the headers below. No CORS header is ever sent. A foreign page can still make the browser send a request but cannot read the answer (no CORS header, same-origin resource policy). Fragment files are read only if they are regular files, so a symlink in `fragments/` is not followed. Static files are served from a whitelist built from directory listings at start, so no request path is ever joined onto a file path. Every response carries a content security policy that forbids inline script and style and cross-origin loads, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `Cache-Control: no-store`; an error body is a fixed `{"error": "..."}` for its status and never carries a path or a stack trace (the detail goes to the server's stderr).
+
+Two conventions to know: the done-today list and footer follow the ledger's UTC date, as `journal.ts status` does, while `today` and the charts use the page's time zone, so in the evening they can disagree; and paste blocks are not in the JSON yet. The file list for `/dist/*` is taken at start, so restart after rebuilding the page.
+
+What this slice does not have: a per-start token (any process on this machine can read `/api` by sending the right `Host`), answering asks from the page, and live updates. Those come with the write endpoints.
+
 ### event-loop.ts
 
 One loop for every "wake me when X happens". The orchestrator appends a **watch** (`type`, `target`, an optional `done_when`, and a `report` note saying what it wants back) to an append-only registry; `run` checks them all and records an event only when the type's `diff()` says something changed.
@@ -662,6 +679,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | One event loop at a time | `event-loop.ts run` takes a pid lock in `event_dir`; a dead owner's lock is replaced |
 | A broken overlay type is loud | the type loader rejects a duplicate name, a module without `check` and `diff`, or a missing playbook, naming the file |
 | The brief is complete | `brief-block.ts` exits 1 if any slot is empty |
+| A request to the Podium web server cannot come from a rebound hostname, a browser-declared cross-site page, or with a write method | `lib/web/guard.ts` checks `Host`, `Origin` and the method before any route runs, and is the only place a response is written, so the security headers are on every status; the server test sends hand-built requests with each wrong value and checks the response and that the ledger is byte-identical afterwards |
 
 ### Convention only
 
