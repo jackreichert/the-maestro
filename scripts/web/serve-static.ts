@@ -18,6 +18,16 @@ import { parseArgs } from 'node:util';
 const CLIENT = fileURLToPath(new URL('./client/', import.meta.url));
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.map': 'application/json; charset=utf-8' };
 
+/** Sent on every response, errors included: no inline script or style, nothing cross-origin, no framing, no referrer. */
+export const SECURITY_HEADERS: Record<string, string> = {
+  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'cross-origin-resource-policy': 'same-origin',
+  'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff',
+  'cache-control': 'no-store',
+};
+
 /** URL path to absolute file path for every servable file; request paths are only ever looked up here. */
 export function buildRoutes(clientDir: string): Map<string, string> {
   const routes = new Map<string, string>();
@@ -41,7 +51,7 @@ export function createStaticServer(clientDir: string): Server {
   return createServer((req, res) => {
     const host = req.headers.host ?? '';
     const port = (req.socket.localPort ?? 0).toString();
-    const headers = { 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
+    const headers = SECURITY_HEADERS;
     if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) { res.writeHead(403, headers).end('forbidden'); return; }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { ...headers, allow: 'GET, HEAD' }).end('method not allowed'); return; }
     const pathname = (req.url ?? '/').split('?')[0];
