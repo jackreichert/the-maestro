@@ -3,7 +3,8 @@
  * Nothing here reads a file, runs a command or knows an org, repo or vault by name; `generate.ts` supplies all of it.
  * The page is ids and counts only, never patient or personal data.
  */
-import { obsidianUri, ticketNotePath } from './links.ts';
+import { linkNotePaths, obsidianUri, ticketNotePath } from './links.ts';
+import type { NoteLinkEnv } from './links.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
 import { sessionText } from '../session-text.ts';
@@ -34,6 +35,10 @@ export interface PageConfig {
   ticketNotePath: string;
   trackerKeyPattern: string;
   tz: string;
+  /** The page's own project: a bare note path in ask text is looked up under `Projects/<project>/` too. */
+  project?: string;
+  /** Whether a vault-relative `.md` path exists in the vault. Absent: note paths in text are not linked. */
+  noteExists?: (vaultPath: string) => boolean;
 }
 
 /** Where the PR list came from: when GitHub was last read (null when never), and why the read just now failed, if it did. */
@@ -130,6 +135,23 @@ const mdLink = (r: Ref): string => {
 export const trackerRef = (cfg: PageConfig, key: string): Ref => (cfg.trackerUrlBase ? { label: key, url: `${cfg.trackerUrlBase}${key}`, nowrap: true } : { label: key, nowrap: true });
 export const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
   (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, ticketNotePath(cfg.ticketNotePath, id)), nowrap: true } : { label: id, nowrap: true });
+
+/** The lookup `linkNotePaths` needs for `item`: a bare note path belongs to the project of its ticket (the id minus its number, as `ticketNotePath` reads it), else its stream's repo, else the page's project. */
+function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | undefined {
+  if (!cfg.noteExists) return undefined;
+  const streamRepos = Object.entries(cfg.repoStreams).filter(([, s]) => s === item.stream).map(([repo]) => repo);
+  const projects = [ticket?.replace(/-\d+$/, ''), ...streamRepos, cfg.project].filter((p): p is string => !!p);
+  return { vaultName: cfg.vaultName, projects, exists: cfg.noteExists };
+}
+/** Markdown-markup escapes only (no trim or squash), for the stretches between linked note paths. */
+const escCell = (s: string): string => s.replace(/[|\\*_`<>[\]~]/g, '\\$&');
+const escBold = (s: string): string => s.replace(/[\\*_`]/g, '\\$&');
+
+/** An in-flight or queued item's text as a table cell: clipped to one line, with existing note paths linked. */
+const workText = (cfg: PageConfig, i: Item, ticket: string | undefined): string => {
+  const linked = linkNotePaths(oneLine(i.text, 110), noteEnv(cfg, i, ticket), escCell);
+  return linked.trim() || '-';
+};
 
 /** Stream names in display order. */
 export function streamOrder(cfg: PageConfig, seen: (string | undefined)[]): string[] {
@@ -286,9 +308,11 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
     for (const a of mine) {
       const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
       const { needed, context } = splitAsk(a.text);
+      const env = noteEnv(cfg, a, a.ticket || tickets.get(a.id));
       const age = daysBetween(a.date, today);
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
-      const text = [boldSafe(needed) ? `**${boldSafe(needed)}**` : '', plain(context)].filter(Boolean).join(' ');
+      const bold = linkNotePaths(needed, env, escBold);
+      const text = [boldSafe(needed) ? `**${bold}**` : '', linkNotePaths(plain(context), env, (x) => x)].filter(Boolean).join(' ');
       out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
     }
     out.push('');
@@ -328,7 +352,7 @@ function workingSection(cfg: PageConfig, inflight: Item[], tickets: Map<string, 
   for (const i of streams.flatMap((s) => inflight.filter((x) => streamOf(x) === s))) {
     const note = i.ticket || tickets.get(i.id);
     const refs = [...(note ? [ticketNoteRef(cfg, note)] : []), ...keysIn(cfg, i.text).slice(0, 2).map((k) => trackerRef(cfg, k))].map(mdLink).join(' · ');
-    out.push(`| ${cell(streamOf(i))} | \`${i.id}\` | ${cell(oneLine(i.text, 110))} | ${refs || '-'} | ${cell(i.model ?? '')} | ${cell(running(i))} |`);
+    out.push(`| ${cell(streamOf(i))} | \`${i.id}\` | ${workText(cfg, i, note)} | ${refs || '-'} | ${cell(i.model ?? '')} | ${cell(running(i))} |`);
   }
   return [...out, ''];
 }
@@ -344,7 +368,7 @@ function queuedSection(cfg: PageConfig, queued: Item[], tickets: Map<string, str
   for (const i of streams.flatMap((s) => queued.filter((x) => streamOf(x) === s))) {
     const note = i.ticket || tickets.get(i.id);
     const refs = [...(note ? [ticketNoteRef(cfg, note)] : []), ...keysIn(cfg, i.text).slice(0, 2).map((k) => trackerRef(cfg, k))].map(mdLink).join(' · ');
-    out.push(`| ${cell(streamOf(i))} | \`${i.id}\` | ${cell(oneLine(i.text, 110))} | ${refs || '-'} | ${cell(ageLabel(i.stateTs ?? i.ts, now) || 'age unknown')} |`);
+    out.push(`| ${cell(streamOf(i))} | \`${i.id}\` | ${workText(cfg, i, note)} | ${refs || '-'} | ${cell(ageLabel(i.stateTs ?? i.ts, now) || 'age unknown')} |`);
   }
   return [...out, ''];
 }

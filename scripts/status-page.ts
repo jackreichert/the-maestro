@@ -19,7 +19,8 @@
  * from the last cached PR data (.now-prs.json) under a warning, and a note goes to stderr.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
@@ -58,11 +59,24 @@ function journalJson(sub: string, ledger: string, project: string): unknown {
   return JSON.parse(r.stdout);
 }
 
+/** The vault root: `vault_root` when set, else the part of the status directory before `/Projects/<project>/Status`; empty when neither says. */
+export function vaultRootFor(statusDir: string): string {
+  return VAULT_ROOT || /^(.+)\/Projects\/[^/]+\/Status\/?$/.exec(statusDir)?.[1] || '';
+}
+
+/** A lookup for whether `vaultPath` (vault-relative, `.md`) is a regular file inside `root`. */
+export const noteExistsIn = (root: string) => (vaultPath: string): boolean => {
+  if (!root) return false;
+  const full = resolve(root, vaultPath);
+  return full.startsWith(`${resolve(root)}${sep}`) && existsSync(full) && statSync(full).isFile();
+};
+
 /** The install's page settings from the local config; the Markdown page and the web server read the same ones. */
-export function pageConfig(): PageConfig {
+export function pageConfig(project = '', statusDir = ''): PageConfig {
   return {
     streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
     ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
+    project, noteExists: noteExistsIn(vaultRootFor(statusDir)),
   };
 }
 
@@ -73,7 +87,7 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!o.statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
   const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), fetchPrs, sleep, now: () => new Date() };
-  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig() }, deps);
+  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig(o.project, o.statusDir) }, deps);
 }
 
 function main(argv: string[]): number {
