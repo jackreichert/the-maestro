@@ -149,7 +149,7 @@ test('the loop never exits 10 because of a refresh: a regeneration produces no a
   let ran = 0;
   const io: RefreshIo = { ...rig().io, ledgerSig: () => String(Math.floor(ran / 1)), regenerate: () => { ran++; return undefined; }, pageAt: () => 0 };
   const types = { ...BUILTIN_TYPES, 'status-refresh': { ...refresh, check: (t: string, c: Parameters<typeof refresh.check>[1]) => refresh.check(t, c, io) } };
-  addWatch(dir, { id: 'sr', type: 'status-refresh', target, done_when: '', report: '', notify_overnight: false, notify: false, interval: null, created: new Date(T0).toISOString(), expires: new Date(T0 + 86_400_000).toISOString() });
+  addWatch(dir, { id: 'sr', type: 'status-refresh', target, done_when: '', report: '', notify_overnight: false, notify: false, interval: null, ttlMs: 86_400_000 }, T0);
   const config = { quietHours: 'off' };
   const out = tick({ dir, types, ctx: { run: () => ({ status: 0, stdout: '', stderr: '' }) }, config, now: T0 });
   assert.equal(ran, 1, 'the page was regenerated (it had no write time)');
