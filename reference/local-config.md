@@ -44,6 +44,7 @@ watch_quiet_weekends: off      # on: Saturday and Sunday count as quiet hours; d
 watch_tz: America/New_York     # time zone for the quiet hours; default the system time zone
 pr_max_code_files: 5           # PR size budget: most code files per PR; default 5
 pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400
+review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off

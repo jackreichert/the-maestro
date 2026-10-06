@@ -108,6 +108,22 @@ would waste effort or produce something the user no longer wants. If not, it isn
 When in doubt, scout. The cost of an unnecessary agent is low; the cost of a blocked prompt is the
 thing this mode exists to prevent.
 
+## Review queue cap
+
+Reviewer attention is the limit, not agent capacity. Before dispatching any work that will produce a new PR, run:
+
+```bash
+node scripts/journal.ts review-queue
+```
+
+It counts your open, non-draft PRs against `review_queue_cap` (default 4) and exits **0** with room, **1** when full, **2** when it cannot read the PRs (GitHub failed and there is no stored snapshot; treat that as full). When it exits 1 or 2:
+
+- Dispatch **no new PR-producing work**: no new feature, refactor or follow-up branch. Say so in one line and queue the request (`journal.ts queue`) so it is not lost.
+- Fixes to PRs that are already open still go: review comments, conflicts, failing checks. So does read-only work (scouting, research, review) that opens no PR.
+- Use the freed attention to drive the oldest open PR to merge.
+
+The count is the same PR search the PR scripts share (open, authored by you, org-scoped), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` and the footer show `review queue: N of 4` from the stored snapshot; the gate itself reads GitHub live.
+
 ## Two-stage dispatch
 
 **The user must never wait on you.** Not for a grep, not for a file read, not for "let me just check
