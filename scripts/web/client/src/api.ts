@@ -11,7 +11,9 @@ async function getJson(url: string): Promise<unknown> {
 /** Narrow an unknown payload to a PodiumState enough that rendering cannot throw on a missing array. */
 export function isState(x: unknown): x is PodiumState {
   const o = x as Partial<PodiumState> | null;
-  return typeof o === 'object' && o !== null && Array.isArray(o.streams) && Array.isArray(o.asks) && Array.isArray(o.prs) && Array.isArray(o.footer);
+  if (typeof o !== 'object' || o === null) return false;
+  const lists = [o.streams, o.asks, o.working, o.queued, o.blocked, o.prs, o.footer];
+  return lists.every(Array.isArray) && typeof o.priorities === 'object' && o.priorities !== null && typeof o.priorities.state === 'string';
 }
 
 export function isCharts(x: unknown): x is ChartsData {
