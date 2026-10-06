@@ -50,6 +50,23 @@ export function shares(values: Record<string, number>): Record<string, number> {
   return Object.fromEntries(Object.entries(values).map(([k, v]) => [k, total > 0 ? v / total : 0]));
 }
 
+/** Data for a chart: one value per label for each series. */
+export interface ChartData { labels: string[]; series: { name: string; values: number[] }[] }
+
+/** The most series a chart draws; the dataviz palette has eight validated hues. */
+export const MAX_SERIES = 8;
+
+/** Fold series past the limit into one "Other" series so no extra hue is ever generated. */
+export function limitSeries(data: ChartData, limit = MAX_SERIES): ChartData {
+  const totals = Object.fromEntries(data.series.map((x) => [x.name, x.values.reduce((a, b) => a + b, 0)]));
+  const keep = foldToOther(totals, limit);
+  if (keep.length === data.series.length) return data;
+  const kept = data.series.filter((x) => keep.includes(x.name));
+  const rest = data.series.filter((x) => !keep.includes(x.name));
+  const other = data.labels.map((_, i) => rest.reduce((a, x) => a + (x.values[i] ?? 0), 0));
+  return { labels: data.labels, series: [...kept, { name: 'Other', values: other }] };
+}
+
 /** An SVG path through points as straight segments; empty input gives an empty path. */
 export function linePath(points: [number, number][]): string {
   return points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
