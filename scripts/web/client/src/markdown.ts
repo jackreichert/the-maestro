@@ -4,13 +4,14 @@
  * Blocks: headings, paragraphs, bullet/numbered lists (with `[ ]`/`[x]` boxes), block quotes, tables, fenced code.
  * Inline: `code`, **bold**, [links](url) and the generator's nowrap span.
  * Every character of the input is HTML-escaped before it reaches the output; the only tags emitted are the ones
- * this file writes. Link targets are limited to http:, https: and obsidian:. Pure and DOM-free so node:test covers it.
+ * this file writes. Link targets are limited by url.ts. Pure and DOM-free so node:test covers it.
  */
+import { isSafeUrl } from './url.ts';
+
+export { isSafeUrl };
 
 const NOWRAP_OPEN = '<span style="white-space:nowrap">';
 const NOWRAP_CLOSE = '</span>';
-const SAFE_URL = /^(?:https?|obsidian):/i;
-
 const literal = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const INLINE = new RegExp(
@@ -26,11 +27,6 @@ const INLINE = new RegExp(
 /** Escape the characters that matter in HTML text and quoted attributes. */
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-}
-
-/** True when a link target may be used as an href. */
-export function isSafeUrl(url: string): boolean {
-  return SAFE_URL.test(url.trim());
 }
 
 /** Render one line of inline Markdown to HTML. */
