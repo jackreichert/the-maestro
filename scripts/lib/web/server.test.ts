@@ -94,7 +94,7 @@ test('GET /api/charts honours and clamps days, and the payload passes the client
   assert.equal(await days('?days=abc'), 14);
   const body = JSON.parse((await hit('/api/charts?days=2')).body);
   const { totals: _totals, ...prMix } = body.prMix;   // the reducers add PR totals the client contract does not carry
-  assert.deepEqual(sanitizeCharts(body), { ...body, prMix });
+  assert.deepEqual(sanitizeCharts(body), { data: { ...body, prMix }, dropped: 0 });
 });
 
 test('GET /api/streams/:name filters one stream; an unknown, malformed or traversal name is 404', async () => {

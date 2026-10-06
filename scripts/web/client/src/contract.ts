@@ -45,10 +45,24 @@ function validRows(v: unknown, rule: Shape): unknown[] {
   return Array.isArray(v) ? v.filter(shape(rule)) : [];
 }
 
-function priorities(v: unknown): PrioritiesState {
-  if (isObj(v) && v.state === 'ok' && str(v.date)) return { state: 'ok', date: v.date as string, items: validRows(v.items, PRIORITY_RULES) as { text: string; stream?: string }[] };
-  if (isObj(v) && v.state === 'stale' && str(v.date)) return { state: 'stale', date: v.date as string };
-  return { state: 'missing' };
+/** How many entries of a list were left out of its filtered copy; a non-array list has none to lose. */
+const lost = (v: unknown, kept: unknown[]): number => (Array.isArray(v) ? v.length - kept.length : 0);
+
+function priorities(v: unknown): { value: PrioritiesState; dropped: number } {
+  if (isObj(v) && v.state === 'ok' && str(v.date)) {
+    const items = validRows(v.items, PRIORITY_RULES) as { text: string; stream?: string }[];
+    return { value: { state: 'ok', date: v.date as string, items }, dropped: lost(v.items, items) };
+  }
+  if (isObj(v) && v.state === 'stale' && str(v.date)) return { value: { state: 'stale', date: v.date as string }, dropped: 0 };
+  return { value: { state: 'missing' }, dropped: 0 };
+}
+
+/**
+ * The markdown fragment for a tab, or undefined. Fragments are keyed by stream name, which is data: a stream called
+ * `constructor` must not find Object.prototype's function, so only own properties count.
+ */
+export function fragmentFor(fragments: Record<string, string> | undefined, stream: string): string | undefined {
+  return fragments !== undefined && Object.hasOwn(fragments, stream) ? fragments[stream] : undefined;
 }
 
 const text = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -63,15 +77,19 @@ export function sanitizeState(x: unknown): { state: PodiumState; dropped: number
   const rows = {} as Record<RowKey, unknown[]>;
   for (const key of ROW_KEYS) {
     rows[key] = validRows(x[key], ROW_RULES[key]);
-    dropped += (Array.isArray(x[key]) ? (x[key] as unknown[]).length : 0) - rows[key].length;
+    dropped += lost(x[key], rows[key]);
   }
-  const fragments = isObj(x.fragments) ? Object.fromEntries(Object.entries(x.fragments).filter(([, v]) => str(v))) as Record<string, string> : undefined;
+  const kept = isObj(x.fragments) ? Object.entries(x.fragments).filter(([, v]) => str(v)) : undefined;
+  if (kept) dropped += Object.keys(x.fragments as object).length - kept.length;
+  const fragments = kept ? Object.fromEntries(kept) as Record<string, string> : undefined;
+  const pri = priorities(x.priorities);
+  dropped += pri.dropped;
   const prData = isObj(x.prData) && bool(x.prData.stale) && (x.prData.fetchedAt === null || str(x.prData.fetchedAt))
     ? { fetchedAt: x.prData.fetchedAt as string | null, stale: x.prData.stale as boolean }
     : { fetchedAt: null, stale: true };
   const state: PodiumState = {
     generatedAt: text(x.generatedAt), today: text(x.today), tz: text(x.tz), seq: text(x.seq),
-    streams: x.streams as string[], priorities: priorities(x.priorities), prData, fragments,
+    streams: x.streams as string[], priorities: pri.value, prData, fragments,
     asks: rows.asks as AskCard[], working: rows.working as WorkItem[], queued: rows.queued as WorkItem[], blocked: rows.blocked as BlockedItem[],
     done: rows.done as DoneItem[], deferred: rows.deferred as DeferredItem[], prs: rows.prs as PrCard[], footer: rows.footer as FooterRow[],
   };
@@ -84,22 +102,36 @@ const CHART_ROWS = {
   ageBuckets: { label: str, count: num, ids: arrOf(str) } satisfies Shape,
 };
 
-/** A ChartsData built only from what passed its rules, or null when the payload is not an object. Bad parts become empty. */
-export function sanitizeCharts(x: unknown): ChartsData | null {
+/** `v` when it passes `check`, else `empty`; a present-but-invalid value counts as one dropped part. */
+function part<T>(v: unknown, check: Check, empty: T): { value: T; dropped: number } {
+  if (check(v)) return { value: v as T, dropped: 0 };
+  return { value: empty, dropped: v === undefined ? 0 : 1 };
+}
+
+/**
+ * A ChartsData built only from what passed its rules, or null when the payload is not an object. Bad parts become empty.
+ * `dropped` counts every row, day entry or whole part (a mix table) that was left out, as sanitizeState does.
+ */
+export function sanitizeCharts(x: unknown): { data: ChartsData; dropped: number } | null {
   if (!isObj(x)) return null;
   const mix = isObj(x.prMix) ? x.prMix : {};
   const model = isObj(x.modelMix) ? x.modelMix : {};
+  const days = Array.isArray(x.days) ? x.days.filter(str) as string[] : [];
+  const throughput = validRows(x.throughput, CHART_ROWS.throughput) as ChartsData['throughput'];
+  const ageBuckets = validRows(x.ageBuckets, CHART_ROWS.ageBuckets) as ChartsData['ageBuckets'];
+  const byState = part<Record<string, number>>(mix.byState, COUNTS, {});
+  const byStream = part<Record<string, Record<string, number>>>(mix.byStream, recordOf(COUNTS), {});
+  const byFamily = part<Record<string, number>>(model.byFamily, COUNTS, {});
+  const wholeMix = x.prMix !== undefined && !isObj(x.prMix) ? 1 : 0;
+  const wholeModel = x.modelMix !== undefined && !isObj(x.modelMix) ? 1 : 0;
+  const dropped = lost(x.days, days) + lost(x.throughput, throughput) + lost(x.ageBuckets, ageBuckets)
+    + byState.dropped + byStream.dropped + byFamily.dropped + wholeMix + wholeModel;
   return {
-    days: Array.isArray(x.days) ? x.days.filter(str) as string[] : [],
-    throughput: validRows(x.throughput, CHART_ROWS.throughput) as ChartsData['throughput'],
-    ageBuckets: validRows(x.ageBuckets, CHART_ROWS.ageBuckets) as ChartsData['ageBuckets'],
-    prMix: {
-      byState: COUNTS(mix.byState) ? mix.byState as Record<string, number> : {},
-      byStream: recordOf(COUNTS)(mix.byStream) ? mix.byStream as Record<string, Record<string, number>> : {},
+    data: {
+      days, throughput, ageBuckets,
+      prMix: { byState: byState.value, byStream: byStream.value },
+      modelMix: { byFamily: byFamily.value, source: model.source === 'tokens' ? 'tokens' : 'ledger' },
     },
-    modelMix: {
-      byFamily: COUNTS(model.byFamily) ? model.byFamily as Record<string, number> : {},
-      source: model.source === 'tokens' ? 'tokens' : 'ledger',
-    },
+    dropped,
   };
 }

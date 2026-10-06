@@ -3,6 +3,7 @@ import './podium-chart.ts';
 import './md-fragment.ts';
 import { BASE_CSS, h, shadow } from './dom.ts';
 import { describeSources, loadCharts, loadState } from './api.ts';
+import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
@@ -123,7 +124,7 @@ export class PodiumApp extends HTMLElement {
       h('thead', {}, h('tr', {}, ...['Stream', 'Awaiting', 'Working', 'Queued', 'Blocked', 'Done'].map((t) => h('th', { scope: 'col' }, t)))),
       h('tbody', {}, ...st.footer.map((f) => h('tr', {}, h('th', { scope: 'row' }, f.stream),
         ...[f.asks, f.working, f.queued, f.blocked, f.done].map((n) => h('td', {}, String(n)))))));
-    const frag = st.fragments?.[OVERVIEW];
+    const frag = fragmentFor(st.fragments, OVERVIEW);
     const md = frag ? h('md-fragment') : null;
     if (md && frag) md.markdown = frag;
     return h('div', {},

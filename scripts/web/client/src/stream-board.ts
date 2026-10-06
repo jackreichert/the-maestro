@@ -1,6 +1,7 @@
 import { BASE_CSS, h, refLink, shadow } from './dom.ts';
 import './ask-card.ts';
 import './md-fragment.ts';
+import { fragmentFor } from './contract.ts';
 import { prChips } from './pr-chips.ts';
 import type { PodiumState, PrCard, WorkItem } from './types.ts';
 
@@ -51,7 +52,7 @@ export class StreamBoard extends HTMLElement {
       card.locked = !this.#live;
       return card;
     });
-    const frag = st.fragments?.[stream];
+    const frag = fragmentFor(st.fragments, stream);
     const md = frag ? h('md-fragment') : null;
     if (md && frag) md.markdown = frag;
     this.#root.replaceChildren(

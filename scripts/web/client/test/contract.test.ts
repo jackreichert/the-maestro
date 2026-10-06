@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { sanitizeCharts, sanitizeState } from '../src/contract.ts';
+import { fragmentFor, sanitizeCharts, sanitizeState } from '../src/contract.ts';
 import { describeSources } from '../src/api.ts';
 
 const fixture = (name: string): Record<string, any> => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
@@ -13,7 +13,7 @@ test('the bundled fixtures pass the rules with nothing dropped', () => {
   assert.equal(got?.dropped, 0);
   assert.equal(got?.state.asks.length, 3);
   assert.equal(got?.state.prs.length, 3);
-  assert.equal(sanitizeCharts(fixture('charts.json'))?.throughput.length, 5);
+  assert.equal(sanitizeCharts(fixture('charts.json'))?.data.throughput.length, 5);
 });
 
 test('a payload with no usable shape is refused', () => {
@@ -97,12 +97,39 @@ test('a prototype-key payload cannot change the result shape', () => {
 test('charts: null prMix or modelMix become empty, bad rows are dropped, a bad source falls back to ledger', () => {
   const c = fixture('charts.json');
   const got = sanitizeCharts({ ...c, prMix: null, modelMix: null, throughput: [...c.throughput, { date: 1 }], ageBuckets: [{ label: 'x', count: 'a', ids: [] }] });
-  assert.deepEqual(got?.prMix, { byState: {}, byStream: {} });
-  assert.deepEqual(got?.modelMix, { byFamily: {}, source: 'ledger' });
-  assert.equal(got?.throughput.length, 5);
-  assert.equal(got?.ageBuckets.length, 0);
-  assert.equal(sanitizeCharts({ ...c, modelMix: { byFamily: { a: 1 }, source: 'tokens' } })?.modelMix.source, 'tokens');
-  assert.deepEqual(sanitizeCharts({ ...c, prMix: { byState: { a: 'x' }, byStream: { s: 1 } } })?.prMix, { byState: {}, byStream: {} });
+  assert.deepEqual(got?.data.prMix, { byState: {}, byStream: {} });
+  assert.deepEqual(got?.data.modelMix, { byFamily: {}, source: 'ledger' });
+  assert.equal(got?.data.throughput.length, 5);
+  assert.equal(got?.data.ageBuckets.length, 0);
+  assert.equal(sanitizeCharts({ ...c, modelMix: { byFamily: { a: 1 }, source: 'tokens' } })?.data.modelMix.source, 'tokens');
+  assert.deepEqual(sanitizeCharts({ ...c, prMix: { byState: { a: 'x' }, byStream: { s: 1 } } })?.data.prMix, { byState: {}, byStream: {} });
+});
+
+test('charts: every dropped row, day entry and mix table is counted', () => {
+  const c = fixture('charts.json');
+  assert.equal(sanitizeCharts(c)?.dropped, 0);
+  const bad = { ...c, days: [...c.days, 7], throughput: [...c.throughput, { date: 1 }], ageBuckets: [{ label: 'x', count: 'a', ids: [] }],
+    prMix: { byState: { a: 'x' }, byStream: { s: 1 } }, modelMix: null };
+  assert.equal(sanitizeCharts(bad)?.dropped, 1 + 1 + 1 + 2 + 1);
+});
+
+test('state: dropped priority items and non-string fragments are counted', () => {
+  const s = state();
+  s.priorities = { state: 'ok', date: '2026-10-06', items: [{ text: 'a' }, { text: 3 }, 'x'] };
+  s.fragments = { ops: 'ok', bad: 1 };
+  const got = sanitizeState(s);
+  assert.equal(got?.dropped, 3);
+  assert.equal(got?.state.priorities.state === 'ok' && got.state.priorities.items.length, 1);
+});
+
+test('fragmentFor finds own keys only: stream names like constructor or __proto__ get nothing', () => {
+  const got = sanitizeState({ ...state(), fragments: { ops: 'note', __proto__x: 'y' } })?.state.fragments;
+  assert.equal(fragmentFor(got, 'ops'), 'note');
+  for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) assert.equal(fragmentFor(got, name), undefined, name);
+  assert.equal(fragmentFor(undefined, 'ops'), undefined);
+  const own = sanitizeState({ ...state(), fragments: JSON.parse('{"constructor":"mine","__proto__":"p"}') })?.state.fragments;
+  assert.equal(fragmentFor(own, 'constructor'), 'mine');
+  assert.equal(fragmentFor(own, '__proto__'), 'p');
 });
 
 test('describeSources says Live only when both endpoints are live, and names which one is sample data', () => {
