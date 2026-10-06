@@ -1,14 +1,80 @@
-/* Theme tokens. Custom properties inherit into every shadow root, so components only reference these names.
-   Series colors are the validated dataviz default categorical order (slots 1-8), selected per mode. */
+/* Podium design tokens. Custom properties inherit into every shadow root, so components reference these names only.
+   Colours are hex so test/theme-contrast.test.ts can check every text and control pair for WCAG AA in both modes.
+   Neutrals are tinted toward the accent hue (petrol). Series colours are the validated dataviz categorical order
+   (slots 1-8), selected per mode, and are identity colours only: status uses --critical, --success and --warning. */
 :root {
   color-scheme: light dark;
-  --surface-1: #fcfcfb;
-  --surface-2: #f1f0ec;
-  --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --border: #d4d2cb;
-  --focus: #2a78d6;
-  --accent: #2a78d6;
+
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;
+  --leading-xs: 1rem;
+  --text-sm: 0.8125rem;
+  --leading-sm: 1.25rem;
+  --text-md: 0.9375rem;
+  --leading-md: 1.5rem;
+  --text-lg: 1.125rem;
+  --leading-lg: 1.625rem;
+  --text-xl: 1.375rem;
+  --leading-xl: 1.75rem;
+  --text-2xl: 1.75rem;
+  --leading-2xl: 2.25rem;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 680;
+
+  /* Space (4 px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --dur-press: 100ms;
+  --dur-fast: 160ms;
+  --dur-base: 220ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* Colour roles: light */
+  --surface-page: #f4f6f6;
+  --surface-1: #fcfdfd;
+  --surface-2: #eaeeee;
+  --text-primary: #121a1c;
+  --text-secondary: #465256;
+  --text-muted: #5b676c;
+  --border: #d9dfe1;
+  --border-strong: #7d898e;
+  --accent: #0a6b74;
+  --accent-hover: #07565e;
+  --accent-soft: #dfeff0;
+  --on-accent: #f6fbfb;
+  --focus: #0a6b74;
+  --critical: #b3261e;
+  --critical-soft: #fbe9e7;
+  --success: #1b6e43;
+  --success-soft: #e4f2ea;
+  --warning: #875200;
+  --warning-soft: #f9efd9;
+
+  /* Elevation */
+  --shadow-1: 0 0 0 1px rgb(18 42 46 / 0.07), 0 1px 2px rgb(18 42 46 / 0.06);
+  --shadow-2: 0 0 0 1px rgb(18 42 46 / 0.09), 0 8px 24px -10px rgb(18 42 46 / 0.22);
+
+  /* Chart series: light */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -18,20 +84,40 @@
   --series-7: #4a3aa7;
   --series-8: #e34948;
   --series-other: #8a8883;
-  --bad: #b3261e;
-  --good: #1a6b3a;
-  --warn: #8a5a00;
+
+  /* Older names kept as aliases */
+  --bad: var(--critical);
+  --good: var(--success);
+  --warn: var(--warning);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface-1: #1a1a19;
-    --surface-2: #262625;
-    --text-primary: #ffffff;
-    --text-secondary: #c3c2b7;
-    --border: #44433f;
-    --focus: #6aa8f0;
-    --accent: #3987e5;
+    /* Colour roles: dark */
+    --surface-page: #0e1314;
+    --surface-1: #151b1d;
+    --surface-2: #1e2629;
+    --text-primary: #e6ebec;
+    --text-secondary: #aab5b9;
+    --text-muted: #8d999e;
+    --border: #283135;
+    --border-strong: #66747a;
+    --accent: #5cc0c9;
+    --accent-hover: #7fd0d7;
+    --accent-soft: #123238;
+    --on-accent: #04252a;
+    --focus: #7fd0d7;
+    --critical: #ff9a8f;
+    --critical-soft: #3a1d1a;
+    --success: #7fd6a3;
+    --success-soft: #143022;
+    --warning: #f0c26a;
+    --warning-soft: #33280f;
+
+    --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.04), 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-2: 0 0 0 1px rgb(255 255 255 / 0.07), 0 8px 24px -10px rgb(0 0 0 / 0.6);
+
+    /* Chart series: dark */
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
@@ -41,15 +127,38 @@
     --series-7: #9085e9;
     --series-8: #e66767;
     --series-other: #8d8b84;
-    --bad: #f2a29c;
-    --good: #8fd5a6;
-    --warn: #f0c36a;
   }
+}
+
+/* Reduced motion: nothing moves; colour still changes instantly. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-press: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+}
+
+html {
+  background: var(--surface-page);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
-  background: var(--surface-1);
+  min-height: 100dvh;
+  background: var(--surface-page);
   color: var(--text-primary);
-  font: 16px/1.5 system-ui, sans-serif;
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+noscript {
+  display: block;
+  padding: var(--space-5);
 }
