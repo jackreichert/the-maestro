@@ -120,7 +120,10 @@ import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
-import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, footerRows, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import { boardContextFor } from './lib/journal/board-context.ts';
+import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { statusJson } from './lib/journal/status-json.ts';
+import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
@@ -134,7 +137,7 @@ import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
-import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
+import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 
@@ -181,7 +184,8 @@ if (!projectArg) {
     process.exit(1);
 }
 const project: string = projectArg;
-const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = openStore({ vault, project, dryRun });
+const store = openStore({ vault, project, dryRun });
+const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
 const today = (): string => new Date().toISOString().slice(0, 10);
 const now = (): string => new Date().toISOString();
 /** The message of a caught value; `catch` binds `unknown`. */
@@ -198,9 +202,6 @@ const gateReport = () => gateReportIn(primeCtx());
 const pendingTransitions = (since: string) => pendingTransitionsIn(primeCtx(), since);
 
 // ── stream registry ─────────────────────────────────────────────────────────
-
-/** Read-time mapping through the loaded registry. */
-const mapStream = (s: string | undefined) => mapStreamWith(loadRegistry(), s);
 
 /**
  * Write-time normalisation for --stream. `none` stays reserved and passes through. With no
@@ -243,26 +244,25 @@ function streamOrNone(raw: string | null): string | undefined {
     return s === 'none' ? undefined : s || undefined;
 }
 
-const fold = (entries: LedgerRow[]) => foldWith(entries, loadRegistry());
-
 // The board modules read the run through this: the ledger, the registry and the clock.
-const boardCtx = { readLedger, fold, today, rollPoint, has, mapStream, loadRegistry, dryRun, ensureDir, dir };
+const boardCtx = boardContextFor(store, { has, today, dryRun });
+/** Read-time mapping through the loaded registry. */
+const { fold, mapStream } = boardCtx;
 const groups = (includeArchived?: boolean) => boardGroups(boardCtx, includeArchived);
 const standupText = (d: string) => boardStandupText(boardCtx, d);
 const render = (quiet?: boolean, includeArchived?: boolean) => boardRender(boardCtx, quiet, includeArchived);
 
+/** List the open items a needle matched and exit 1. */
+function exitAmbiguous(needle: string | undefined, matches: LedgerItem[]): never {
+    console.error(`"${needle}" matches ${matches.length} open items:`);
+    matches.forEach((m) => console.error(`  ${m.id}  ${m.text}`));
+    process.exit(1);
+}
+
 function resolveTarget(items: LedgerItem[], needle: string | undefined): LedgerItem | null {
-    if (!needle) return null;
-    const exact = items.find((i) => i.id === needle);
-    if (exact) return exact;
-    const open = items.filter(isOpen);
-    const matches = open.filter((i) => i.text?.toLowerCase().includes(needle.toLowerCase()));
-    if (matches.length === 1) return matches[0];
-    if (matches.length > 1) {
-        console.error(`"${needle}" matches ${matches.length} open items:`);
-        matches.forEach((m) => console.error(`  ${m.id}  ${m.text}`));
-        process.exit(1);
-    }
+    const found = matchTarget(items, needle);
+    if (found.kind === 'found') return found.target;
+    if (found.kind === 'ambiguous') exitAmbiguous(needle, found.matches);
     return null;
 }
 
@@ -482,25 +482,17 @@ const approvalClose = (kind: string) => {
 
 function cmdClose(newKind: string): void {
     const needle = positional[0];
-    const { items } = fold(readLedger());
-    const target = resolveTarget(items, needle);
-    if (!target) { console.error(`No open item matching "${needle}".`); process.exit(1); }
-
-    const entries = readLedger();
-    const note = arg('answer') || arg('why') || null;
-    append({
-        id: newId(entries),
-        ts: now(),
-        date: today(),
+    const result = closeItem({ readLedger, append, newId, fold, today, now }, {
         kind: newKind,
-        closes: target.id,
-        text: note || target.text,
-        repo: target.repo,
-        ticket: arg('ticket') || target.ticket,
-        ...approvalClose(newKind),
-        ...usageFromArgs(),
+        needle,
+        note: arg('answer') || arg('why'),
+        ticket: arg('ticket'),
+        extras: () => ({ ...approvalClose(newKind), ...usageFromArgs() }),
     });
+    if (result.kind === 'ambiguous') exitAmbiguous(needle, result.matches);
+    if (result.kind !== 'closed') { console.error(`No open item matching "${needle}".`); process.exit(1); }
     if (!dryRun) render(true);
+    const { target, note } = result;
     console.log(`${newKind}  ${target.id}  ${target.text}${note ? `\n      ${note}` : ''}`);
 }
 
@@ -580,11 +572,7 @@ function cmdStatus() {
     const done = g.doneOn(d, { sinceRoll: true });
 
     if (asJson) {
-        console.log(JSON.stringify({
-            date: d,
-            inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
-            footer: { ledger: footerRows(g, done), session: sessionStatus(CLAUDE_PROJECTS_DIR) },
-        }, null, 2));
+        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done), null, 2));
         return;
     }
 
