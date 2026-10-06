@@ -41,7 +41,7 @@ function decisions(page: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const line of page.split('\n')) {
     const ask = line.match(/^- \[[ xX]\] `([a-z0-9]{4,6})` \*\*((?:\\.|[^\\])+?)\*\*/);
-    if (ask) { out.set(ask[1] as string, (ask[2] as string).replace(/\\([\\*_`])/g, '$1').trim()); continue; }
+    if (ask) { out.set(ask[1] as string, (ask[2] as string).replace(/\\([\\*_`[\]<>])/g, '$1').trim()); continue; }
     const m = line.match(/^\| `([a-z0-9]{4,6})` \|(.*)\|\s*$/);
     const cells = (m?.[2] ?? '').split(/(?<!\\)\|/);
     if (m) out.set(m[1] as string, (cells[cells.length - 1] ?? '').replace(/\\\|/g, '|').trim());
