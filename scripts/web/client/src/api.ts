@@ -1,3 +1,4 @@
+import { sanitizeCharts, sanitizeState } from './contract.ts';
 import type { ChartsData, PodiumState } from './types.ts';
 
 export type Source = 'server' | 'fixture';
@@ -8,31 +9,34 @@ async function getJson(url: string): Promise<unknown> {
   return res.json();
 }
 
-/** Narrow an unknown payload to a PodiumState enough that rendering cannot throw on a missing array. */
-export function isState(x: unknown): x is PodiumState {
-  const o = x as Partial<PodiumState> | null;
-  if (typeof o !== 'object' || o === null) return false;
-  const lists = [o.streams, o.asks, o.working, o.queued, o.blocked, o.prs, o.footer];
-  return lists.every(Array.isArray) && typeof o.priorities === 'object' && o.priorities !== null && typeof o.priorities.state === 'string';
+/** What the header says about where the page's data came from: Live only when both endpoints are, else which ones are sample data. */
+export function describeSources(state: Source, charts: Source, dropped: number, generatedAt: string): string {
+  const sample = [state === 'fixture' ? 'state' : '', charts === 'fixture' ? 'charts' : ''].filter(Boolean);
+  const base = sample.length === 0 ? `Live. Updated ${generatedAt}.` : `Showing bundled sample data for ${sample.join(' and ')}: no server answered.`;
+  return dropped > 0 ? `${base} ${dropped} malformed ${dropped === 1 ? 'row was' : 'rows were'} skipped.` : base;
 }
 
-export function isCharts(x: unknown): x is ChartsData {
-  const o = x as Partial<ChartsData> | null;
-  return typeof o === 'object' && o !== null && Array.isArray(o.throughput) && Array.isArray(o.ageBuckets) && typeof o.prMix === 'object' && typeof o.modelMix === 'object';
-}
+export interface Loaded<T> { data: T; source: Source; dropped: number }
 
-/** Ask the server; when nothing answers (or it answers with the wrong shape) load the bundled fixture instead. */
-async function loadWithFallback<T>(api: string, fixture: string, ok: (x: unknown) => x is T): Promise<{ data: T; source: Source }> {
+/** Ask the server; when nothing answers (or it answers with an unusable shape) load the bundled fixture instead. */
+async function loadWithFallback<T>(api: string, fixture: string, clean: (x: unknown) => { data: T; dropped: number } | null): Promise<Loaded<T>> {
   try {
-    const data = await getJson(api);
-    if (ok(data)) return { data, source: 'server' };
+    const got = clean(await getJson(api));
+    if (got) return { ...got, source: 'server' };
   } catch {
     // no server yet: fall through to the fixture
   }
-  const data = await getJson(fixture);
-  if (!ok(data)) throw new Error(`${fixture} does not match the contract`);
-  return { data, source: 'fixture' };
+  const got = clean(await getJson(fixture));
+  if (!got) throw new Error(`${fixture} does not match the contract`);
+  return { ...got, source: 'fixture' };
 }
 
-export const loadState = (): Promise<{ data: PodiumState; source: Source }> => loadWithFallback('/api/state', '/fixtures/state.json', isState);
-export const loadCharts = (): Promise<{ data: ChartsData; source: Source }> => loadWithFallback('/api/charts?days=14', '/fixtures/charts.json', isCharts);
+export const loadState = (): Promise<Loaded<PodiumState>> => loadWithFallback('/api/state', '/fixtures/state.json', (x) => {
+  const got = sanitizeState(x);
+  return got && { data: got.state, dropped: got.dropped };
+});
+
+export const loadCharts = (): Promise<Loaded<ChartsData>> => loadWithFallback('/api/charts?days=14', '/fixtures/charts.json', (x) => {
+  const data = sanitizeCharts(x);
+  return data && { data, dropped: 0 };
+});
