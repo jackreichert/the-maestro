@@ -26,6 +26,7 @@ export class StreamBoard extends HTMLElement {
   static observedAttributes = ['stream'];
   #root: ShadowRoot;
   #state: PodiumState | null = null;
+  #live = false;
 
   constructor() {
     super();
@@ -34,6 +35,9 @@ export class StreamBoard extends HTMLElement {
 
   get state(): PodiumState | null { return this.#state; }
   set state(s: PodiumState | null) { this.#state = s; this.#render(); }
+  /** True only when the state came from a server; sample data leaves every ask card locked. */
+  get live(): boolean { return this.#live; }
+  set live(v: boolean) { this.#live = v; this.#render(); }
   attributeChangedCallback(): void { this.#render(); }
 
   #render(): void {
@@ -44,6 +48,7 @@ export class StreamBoard extends HTMLElement {
     const asks = inStream(st.asks).map((a) => {
       const card = h('ask-card');
       card.ask = a;
+      card.locked = !this.#live;
       return card;
     });
     const frag = st.fragments?.[stream];
