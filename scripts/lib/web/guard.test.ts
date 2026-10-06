@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { MAX_URL_LENGTH, SECURITY_HEADERS, hostAllowed, rawError, refuse, sendError, sendJson } from './guard.ts';
+import { MAX_URL_LENGTH, hostAllowed, rawError, refuse, sendError, sendJson } from './guard.ts';
 
 // A server whose only logic is the guard: whatever it lets through answers 200.
 const server = createServer((req, res) => {
@@ -79,9 +79,18 @@ test('only origin-form URLs pass: a double slash or an absolute URL is 400', asy
   assert.equal((await hit({ path: '/\\evil.example/api/state' })).status, 400);
 });
 
+/** Written out here, not read from guard.ts: a test that loops over the constant passes when the constant is emptied. */
+const EXPECTED_HEADERS: Record<string, string> = {
+  'x-frame-options': 'DENY', 'cross-origin-resource-policy': 'same-origin', 'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff', 'cache-control': 'no-store',
+};
+
 test('success and every refusal carry the full security header set', async () => {
   const responses = [await hit(), await hit({ method: 'POST' }), await hit({ headers: { host: 'evil.example' } }), await hit({ path: `/${'a'.repeat(MAX_URL_LENGTH)}` })];
-  for (const r of responses) for (const [k, v] of Object.entries(SECURITY_HEADERS)) assert.equal(r.headers[k], v, `${r.status} ${k}`);
+  for (const r of responses) {
+    for (const [k, v] of Object.entries(EXPECTED_HEADERS)) assert.equal(r.headers[k], v, `${r.status} ${k}`);
+    assert.match(String(r.headers['content-security-policy']), /^default-src 'self'; .*frame-ancestors 'none'$/, `${r.status} csp`);
+  }
 });
 
 test('error text is fixed per status and never an exception message', () => {
