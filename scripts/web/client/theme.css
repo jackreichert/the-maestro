@@ -1,0 +1,55 @@
+/* Theme tokens. Custom properties inherit into every shadow root, so components only reference these names.
+   Series colors are the validated dataviz default categorical order (slots 1-8), selected per mode. */
+:root {
+  color-scheme: light dark;
+  --surface-1: #fcfcfb;
+  --surface-2: #f1f0ec;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --border: #d4d2cb;
+  --focus: #2a78d6;
+  --accent: #2a78d6;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --series-other: #8a8883;
+  --bad: #b3261e;
+  --good: #1a6b3a;
+  --warn: #8a5a00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-1: #1a1a19;
+    --surface-2: #262625;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --border: #44433f;
+    --focus: #6aa8f0;
+    --accent: #3987e5;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --series-other: #8d8b84;
+    --bad: #f2a29c;
+    --good: #8fd5a6;
+    --warn: #f0c36a;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: 16px/1.5 system-ui, sans-serif;
+}
