@@ -52,3 +52,13 @@ export function longDate(day: string): string {
   const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
   return `${get('weekday')} ${get('day')} ${get('month')}`;
 }
+
+/** Past this many minutes a live page is flagged stale: the Markdown Podium refreshes every 10, so 15 means a missed refresh. */
+export const STALE_MINUTES = 15;
+
+/** How old the data is at `nowMs`, as ago() text, and whether that is past STALE_MINUTES. Unreadable times are never stale. */
+export function freshness(generatedAt: string, nowMs: number): { age: string; stale: boolean } {
+  const t = Date.parse(generatedAt);
+  if (!Number.isFinite(t) || !Number.isFinite(nowMs)) return { age: '', stale: false };
+  return { age: ago(generatedAt, new Date(nowMs).toISOString()), stale: nowMs - t > STALE_MINUTES * MINUTE };
+}

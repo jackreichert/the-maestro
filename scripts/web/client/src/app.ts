@@ -6,7 +6,7 @@ import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
-import { cueParts, clockTime, longDate } from './glance.ts';
+import { cueParts, clockTime, freshness, longDate } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
@@ -32,9 +32,13 @@ const CSS = `${BOARD_CSS}
   }
   .dot { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--text-muted); }
   .fresh.live .dot { border-color: var(--success); background: var(--success); }
+  .fresh.stale { background: var(--warning-soft); color: var(--warning); box-shadow: none; }
+  .fresh.stale .dot { display: none; }
+  .scope { margin: var(--space-5) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .blk { color: var(--critical); font-size: var(--text-sm); }
   .source { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
 
-  .cue { margin: var(--space-5) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-size: var(--text-2xl); line-height: var(--leading-2xl); letter-spacing: -0.02em; }
+  .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-size: var(--text-2xl); line-height: var(--leading-2xl); letter-spacing: -0.02em; }
   .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
   .cue .n { font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; color: var(--text-primary); }
   .cue .zero, .cue .zero .n { color: var(--text-muted); font-weight: var(--weight-regular); }
@@ -56,7 +60,7 @@ const CSS = `${BOARD_CSS}
   [role=tab]:focus-visible { outline-offset: -2px; }
   [role=tab][aria-selected=true] { color: var(--text-primary); font-weight: var(--weight-semibold); }
   [role=tab][aria-selected=true]::after { content: ''; position: absolute; left: var(--space-3); right: var(--space-3); bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
-  .badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
+  .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
 
   [role=tabpanel] { padding-block: var(--space-6) var(--space-8); }
   [role=tabpanel]:focus-visible { outline-offset: 4px; }
@@ -108,7 +112,15 @@ export class PodiumApp extends HTMLElement {
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
   #dropped = 0;
   #active = OVERVIEW;
-  readonly #onHash = (): void => { this.#select(parseFragment(location.hash, this.#ids()), false); };
+  #tick: number | undefined;
+  // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
+  // tab so keyboard and screen reader users are not left on the destroyed link.
+  readonly #onHash = (): void => {
+    const id = parseFragment(location.hash, this.#ids());
+    if (id === this.#active) return;
+    this.#select(id, true);
+    window.scrollTo({ top: 0 });
+  };
 
   constructor() {
     super();
@@ -125,17 +137,26 @@ export class PodiumApp extends HTMLElement {
       this.#dropped = s.dropped + c.dropped;
       this.#active = parseFragment(location.hash, this.#ids());
       this.#safeRender();
+      // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
+      this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
     }).catch((e: unknown) => {
-      this.#root.replaceChildren(problem('The board did not load', e, 'The page asks the Podium server first and falls back to its bundled sample data; neither answered. Check that the server is running, then reload.'));
+      this.#root.replaceChildren(problem(`Can't reach the Podium server`, e, 'Start it with node scripts/journal.ts web (or npm run web:static for sample data), then reload.'));
     });
   }
 
-  disconnectedCallback(): void { window.removeEventListener('hashchange', this.#onHash); }
+  disconnectedCallback(): void {
+    window.removeEventListener('hashchange', this.#onHash);
+    window.clearInterval(this.#tick);
+  }
 
   #ids(): string[] { return tabIds(this.#state?.streams ?? []); }
 
   #select(id: string, focusTab: boolean): void {
-    if (id === this.#active && !focusTab) return;
+    // Re-selecting the open tab only moves focus: a re-render would throw away a half-typed answer or a confirmation.
+    if (id === this.#active) {
+      if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
+      return;
+    }
     this.#active = id;
     if (location.hash !== formatFragment(id)) history.replaceState(null, '', formatFragment(id));
     this.#safeRender();
@@ -155,16 +176,20 @@ export class PodiumApp extends HTMLElement {
     const st = this.#state;
     if (!st) return;
     const ids = this.#ids();
-    const count = (id: string): number => st.asks.filter((a) => a.stream === id).length;
+    const count = <T extends { stream: string }>(xs: T[], id: string): number => (id === OVERVIEW ? xs.length : xs.filter((x) => x.stream === id).length);
     const tabs = ids.map((id) => {
       const on = id === this.#active;
-      const n = id === OVERVIEW ? st.asks.length : count(id);
+      const n = count(st.asks, id);
+      const blocked = count(st.blocked, id);
       const tab = h('button', {
-        type: 'button', role: 'tab', id: `tab-${id}`, 'aria-selected': String(on), 'aria-controls': 'panel',
+        type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === OVERVIEW ? 'Overview' : id, n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null);
+      }, id === OVERVIEW ? 'Overview' : id,
+      n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
+      blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
       tab.addEventListener('click', () => this.#select(id, true));
       tab.addEventListener('keydown', (e) => {
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;   // leave browser shortcuts such as Alt+Left alone
         const next = nextTab(e.key, ids, this.#active);
         if (next === null) return;
         e.preventDefault();
@@ -172,28 +197,49 @@ export class PodiumApp extends HTMLElement {
       });
       return tab;
     });
-    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': `tab-${this.#active}`, tabindex: '0', class: 'wrap' },
+    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
       this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active));
     this.#root.replaceChildren(
       this.#header(st),
-      h('nav', { class: 'tabbar', 'aria-label': 'Streams' }, h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs)),
+      h('div', { class: 'tabbar' }, h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs)),
       h('main', {}, panel));
   }
 
+  get #live(): boolean { return this.#sources.state === 'server' && this.#sources.charts === 'server'; }
+
   #header(st: PodiumState): HTMLElement {
-    const live = this.#sources.state === 'server' && this.#sources.charts === 'server';
-    const updated = clockTime(st.generatedAt, st.tz);
-    const note = live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
-    const cue = cueParts(st).map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` },
-      h('span', { class: 'n' }, String(p.n)), p.label));
+    const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
+    // The cue line follows the tab, so its counts always match the panel below it; the scope line says which.
+    const stream = this.#active === OVERVIEW ? null : this.#active;
+    const pick = <T extends { stream: string }>(xs: T[]): T[] => (stream === null ? xs : xs.filter((x) => x.stream === stream));
+    const scope = stream === null ? 'All streams' : stream;
+    const cue = cueParts({ asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) })
+      .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
         h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, longDate(st.today))),
-        h('p', { class: `fresh${live ? ' live' : ''}`, role: 'status' },
-          h('span', { class: 'dot', 'aria-hidden': 'true' }),
-          live ? `Live${updated ? ` · updated ${updated}` : ''}` : `Sample data${updated ? ` · as of ${updated}` : ''}`)),
+        this.#freshness(st)),
       note ? h('p', { class: 'source' }, note) : null,
-      h('ul', { class: 'cue', 'aria-label': 'At a glance' }, ...cue));
+      h('p', { class: 'scope', id: 'scope' }, scope),
+      h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue));
+  }
+
+  /** The data-source pill: sample data, or live with its update time, flagged once the data is past STALE_MINUTES. */
+  #freshness(st: PodiumState): HTMLElement {
+    const updated = clockTime(st.generatedAt, st.tz);
+    const { age, stale } = freshness(st.generatedAt, Date.now());
+    const live = this.#live;
+    const text = !live ? `Sample data${updated ? ` · as of ${updated}` : ''}`
+      : stale ? `Stale · updated ${updated}${age ? `, ${age} ago` : ''}. Reload for current data.`
+        : `Live${updated ? ` · updated ${updated}` : ''}`;
+    return h('p', { class: `fresh${live ? (stale ? ' stale' : ' live') : ''}` },
+      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, text);
+  }
+
+  #updateFreshness(): void {
+    const st = this.#state;
+    const old = this.#root.querySelector('.fresh');
+    if (st && old) old.replaceWith(this.#freshness(st));
   }
 
   #board(st: PodiumState, stream: string): Node {
@@ -207,7 +253,7 @@ export class PodiumApp extends HTMLElement {
     const ctx = { now: st.generatedAt, tz: st.tz, showStream: true };
     const pri = st.priorities;
     const priorities = pri.state === 'ok' && pri.items.length > 0
-      ? h('ol', { class: 'priorities' }, ...pri.items.map((i) => h('li', {}, h('span', {}, i.text), i.stream ? streamTag(i.stream) : null)))
+      ? h('ol', { class: 'priorities', role: 'list' }, ...pri.items.map((i) => h('li', {}, h('span', {}, i.text), i.stream ? streamTag(i.stream) : null)))
       : null;
     const priEmpty = pri.state === 'stale' ? `Priorities are from ${longDate(pri.date) || pri.date}: set today's with journal.ts priorities set.` : 'No priorities set for today.';
     const frag = fragmentFor(st.fragments, OVERVIEW);
@@ -241,7 +287,7 @@ export class PodiumApp extends HTMLElement {
     const c = this.#charts;
     if (!c) return null;
     const mk = (kind: ChartKind, title: string, data: ChartData): HTMLElement => {
-      const el = h('podium-chart', { kind, title });
+      const el = h('podium-chart', { kind, label: title });
       el.data = data;
       return el;
     };
@@ -253,6 +299,11 @@ export class PodiumApp extends HTMLElement {
   }
 }
 
+/** A DOM id for a tab: stream names are data and may hold spaces, which would split an IDREF list. */
+function tabDomId(id: string): string {
+  return `tab-${encodeURIComponent(id)}`;
+}
+
 /** The loading state: the page's own shape in placeholder blocks, announced once as loading. */
 function skeleton(): HTMLElement {
   const line = (w: string): HTMLElement => {
@@ -260,8 +311,11 @@ function skeleton(): HTMLElement {
     el.style.width = w;
     return el;
   };
+  // The live region goes in empty and is filled a moment later, so screen readers announce it.
+  const said = h('span', { class: 'vh' });
+  setTimeout(() => { said.textContent = 'Loading the board'; }, 50);
   return h('div', { class: 'wrap', role: 'status' },
-    h('span', { class: 'vh' }, 'Loading the board'),
+    said,
     h('div', { class: 'sk-head' }, line('160px'), h('span', { class: 'sk sk-cue', 'aria-hidden': 'true' })),
     h('div', { class: 'board', 'aria-hidden': 'true' },
       h('div', { class: 'sk-stack' }, line('120px'), h('span', { class: 'sk sk-card' }), h('span', { class: 'sk sk-card' })),
@@ -272,7 +326,7 @@ function skeleton(): HTMLElement {
 function problem(title: string, e: unknown, hint: string): HTMLElement {
   const reload = h('button', { type: 'button', class: 'primary' }, 'Reload');
   reload.addEventListener('click', () => location.reload());
-  return h('main', {}, h('div', { class: 'problem', role: 'alert' },
+  return h('main', {}, h('h1', { class: 'vh' }, 'Podium'), h('div', { class: 'problem', role: 'alert' },
     h('h2', {}, title), h('p', {}, hint),
     h('p', { class: 'detail' }, e instanceof Error ? e.message : 'unknown error'),
     reload));

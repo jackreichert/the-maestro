@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, clockTime, cueParts, longDate } from '../src/glance.ts';
+import { ago, clockTime, cueParts, freshness, longDate } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -45,4 +45,16 @@ test('longDate names the weekday and month and rejects anything but YYYY-MM-DD',
   assert.equal(longDate('2026-10-06'), 'Tuesday 6 October');
   assert.equal(longDate('2026-13-45'), '');
   assert.equal(longDate('06/10/2026'), '');
+});
+
+test('freshness flags data older than 15 minutes and gives its age', () => {
+  const at = '2026-10-06T14:00:00Z';
+  assert.deepEqual(freshness(at, Date.parse('2026-10-06T14:15:00Z')), { age: '15 min', stale: false });
+  assert.deepEqual(freshness(at, Date.parse('2026-10-06T14:16:00Z')), { age: '16 min', stale: true });
+  assert.deepEqual(freshness(at, Date.parse('2026-10-06T17:00:00Z')), { age: '3 h', stale: true });
+});
+
+test('freshness never calls unreadable data stale', () => {
+  assert.deepEqual(freshness('', Date.parse('2026-10-06T14:00:00Z')), { age: '', stale: false });
+  assert.deepEqual(freshness('2026-10-06T14:00:00Z', Number.NaN), { age: '', stale: false });
 });
