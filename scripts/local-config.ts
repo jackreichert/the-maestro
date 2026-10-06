@@ -88,6 +88,9 @@ export const CONFIGURED_PROJECT = pick('MAESTRO_PROJECT', 'project');
 /** The container directory's project name, used for ledger paths (Projects/<name>/Journal/). */
 export const CONTAINER_PROJECT = CONFIGURED_PROJECT || 'dev-env';
 
+/** The container directory the orchestrator runs in, `~/` expanded; empty when unset. */
+const PROJECTS_ROOT = pick('MAESTRO_CONTAINER_ROOT', 'container_root').trim().replace(/^~(?=\/)/, homedir());
+
 /**
  * Claude Code's transcript directory for the container, read by token-metrics.ts. Claude Code names it after the
  * session's working directory with every path separator turned into a dash. Unset, the directory is the one for
@@ -96,7 +99,10 @@ export const CONTAINER_PROJECT = CONFIGURED_PROJECT || 'dev-env';
  */
 export const CLAUDE_PROJECTS_DIR =
   pick('MAESTRO_PROJECTS_DIR', 'projects_dir')
-  || join(homedir(), '.claude', 'projects', (pick('MAESTRO_CONTAINER_ROOT', 'container_root').trim().replace(/^~(?=\/)/, homedir()) || process.cwd()).replace(/[\\/]/g, '-'));
+  || join(homedir(), '.claude', 'projects', (PROJECTS_ROOT || process.cwd()).replace(/[\\/]/g, '-'));
+
+/** True when neither `projects_dir` nor `container_root` is set, so CLAUDE_PROJECTS_DIR is only a guess from the working directory. */
+export const PROJECTS_DIR_GUESSED = !pick('MAESTRO_PROJECTS_DIR', 'projects_dir') && !PROJECTS_ROOT;
 
 /** Where the ledger's Journal/ lives. Empty means "not set": the scripts ask for --vault. */
 export const LEDGER_ROOT = pick('LEDGER_ROOT', 'ledger_root');
