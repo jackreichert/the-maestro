@@ -11,7 +11,7 @@ import type { Watch } from './lib/types.ts';
 
 const NOW = Date.parse('2026-10-06T15:00:00Z');
 const HOUR = 3600_000;
-const watch = (id: string, type: string, expires = NOW + HOUR): Watch => ({ op: 'add', id, type, target: '/s', done_when: '', report: '', created: '', expires: new Date(expires).toISOString(), notify: false, notify_overnight: false, interval: null });
+const watch = (id: string, type: string, expires = NOW + HOUR, target = '/s'): Watch => ({ op: 'add', id, type, target, done_when: '', report: '', created: '', expires: new Date(expires).toISOString(), notify: false, notify_overnight: false, interval: null });
 
 /** Fake world: records adds and removes; `watches` is what the registry holds. */
 function world(over: Partial<StartDeps> & { held?: Watch[] } = {}) {
@@ -22,7 +22,7 @@ function world(over: Partial<StartDeps> & { held?: Watch[] } = {}) {
     watches: () => over.held ?? [],
     removeWatch: (id) => { removed.push(id); },
     addWatch: (id, type) => { added.push(`${id}:${type}`); return { ok: true, message: 'added' }; },
-    lockHolder: () => null,
+    lockHolder: () => null, waitCommand: 'node loop digest-wait',
     pageWrittenAt: () => NOW - 4 * 60_000,
     ...over,
   };
@@ -44,7 +44,7 @@ test('live watches are left alone, whatever their id, and a loop holding the loc
   assert.deepEqual(w.added, []);
   assert.deepEqual(w.removed, []);
   assert.match(r.lines[0], /already registered \(mine/);
-  assert.match(r.lines[3], /running \(pid 4242\)/);
+  assert.match(r.lines[3], /running \(pid 4242\).*supervisor.*node loop digest-wait$/);
 });
 
 test('an expired watch the loop has not retired yet is removed and registered again', () => {
@@ -67,6 +67,20 @@ test('a page older than 15 minutes is flagged stale; a missing page says how to 
   assert.match(old.lines[2], /updated 16 min ago.*STALE/);
   const none = sessionStart('/s', world({ pageWrittenAt: () => null }).deps);
   assert.match(none.lines[2], /none yet.*journal\.ts podium/);
+});
+
+test('a concurrent start that registered the watch first counts as success', () => {
+  let reads = 0;
+  const w = world({ watches: () => (reads++ < 1 ? [] : [watch('status-watch', 'status-watch'), watch('status-refresh', 'status-refresh')]), addWatch: () => ({ ok: false, message: 'already runs' }) });
+  const r = sessionStart('/s', w.deps);
+  assert.equal(r.failed, false);
+  assert.match(r.lines[0], /already registered/);
+});
+
+test('an existing watch aimed at another directory is called out', () => {
+  const r = sessionStart('/s', world({ held: [watch('status-watch', 'status-watch', NOW + HOUR, '/elsewhere'), watch('status-refresh', 'status-refresh')] }).deps);
+  assert.match(r.lines[0], /WARNING its target is \/elsewhere, not \/s/);
+  assert.doesNotMatch(r.lines[1], /WARNING/);
 });
 
 test('ageText reads in minutes, hours and days', () => {

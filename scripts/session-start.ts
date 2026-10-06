@@ -11,7 +11,7 @@
  * 3. Reports whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
  *    run_in_background (its exit wakes the orchestrator), and a detached child would exit unseen. With no loop it prints the exact command.
  *
- * Exit 0 when nothing failed, 1 when a watch could not be registered, 2 on a usage or configuration error (no status directory).
+ * Exit 0 when nothing failed, 1 when a watch could not be registered (or the registry could not be read), 2 on a usage or configuration error (no status directory).
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
@@ -42,6 +42,8 @@ export interface StartDeps {
   pageWrittenAt: (statusDir: string) => number | null;
   /** The command that starts the loop, ready to paste. */
   loopCommand: string;
+  /** The command that waits for the supervisor's saved digests. */
+  waitCommand: string;
 }
 
 export interface StartReport { lines: string[]; failed: boolean }
@@ -58,6 +60,10 @@ export function ageText(ms: number): string {
 
 const clock = (at: number, tz: string): string => new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(at);
 
+/** The line for a watch that was already there; a target other than the one this run resolved is called out, since it is a silent no-op otherwise. */
+const existing = (id: string, w: Watch, statusDir: string): string =>
+  `${id}: already registered (${w.id}, expires ${w.expires})${w.target === statusDir ? '' : `; WARNING its target is ${w.target}, not ${statusDir}: \`event-loop.ts remove ${w.id}\` and rerun to retarget`}`;
+
 /** Registers the missing watches, then reports page age and loop state. Safe to run any number of times. */
 export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   const lines: string[] = [];
@@ -65,11 +71,13 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   for (const need of NEEDED) {
     const live = deps.watches().filter((w) => w.type === need.type);
     const current = live.find((w) => Date.parse(w.expires) > deps.now);
-    if (current) { lines.push(`${need.id}: already registered (${current.id}, expires ${current.expires})`); continue; }
+    if (current) { lines.push(existing(need.id, current, statusDir)); continue; }
     live.forEach((w) => deps.removeWatch(w.id));
     const added = deps.addWatch(need.id, need.type, statusDir);
-    failed ||= !added.ok;
-    lines.push(added.ok ? `${need.id}: registered (${added.message})` : `${need.id}: NOT registered (${added.message})`);
+    // A concurrent session start may have registered it between our read and our add: that is success, not failure.
+    const raced = added.ok ? undefined : deps.watches().find((w) => w.type === need.type && Date.parse(w.expires) > deps.now);
+    failed ||= !added.ok && !raced;
+    lines.push(raced ? existing(need.id, raced, statusDir) : added.ok ? `${need.id}: registered (${added.message})` : `${need.id}: NOT registered (${added.message})`);
   }
   const written = deps.pageWrittenAt(statusDir);
   if (written === null) lines.push(`Status page: none yet (no ${PODIUM_FILE} in ${statusDir}); run \`journal.ts podium\` once`);
@@ -80,7 +88,7 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   const holder = deps.lockHolder();
   lines.push(holder === null
     ? `Event loop: NOT RUNNING. Start it now with run_in_background: ${deps.loopCommand}`
-    : `Event loop: running (pid ${holder}); leave it alone`);
+    : `Event loop: running (pid ${holder}). A loop this session did not start is the launchd supervisor's: wait on it with run_in_background: ${deps.waitCommand}`);
   return { lines, failed };
 }
 
@@ -95,13 +103,15 @@ export function realDeps(now: number = Date.now()): StartDeps {
     watches: () => listWatches(EVENT_DIR),
     removeWatch: (id) => { removeWatch(EVENT_DIR, id, 'expired, replaced at session start', now); },
     addWatch: (id, type, statusDir) => {
-      const r = spawnSync(process.execPath, [loop, 'add', '--id', id, '--type', type, '--target', statusDir], { encoding: 'utf8' });
+      const r = spawnSync(process.execPath, [loop, 'add', '--id', id, '--type', type, '--target', statusDir], { encoding: 'utf8', timeout: 30_000 });
+      if (r.error || r.status === null) return { ok: false, message: r.error?.message ?? `event-loop.ts add was killed (${r.signal ?? 'no status'})` };
       const text = (r.status === 0 ? r.stdout : r.stderr || r.stdout).trim().split('\n').pop() ?? '';
       return { ok: r.status === 0, message: text };
     },
     lockHolder: () => lockHolder(EVENT_DIR),
     pageWrittenAt: (dir) => { const file = join(dir, PODIUM_FILE); return existsSync(file) ? statSync(file).mtimeMs : null; },
     loopCommand: `node ${shq(loop)} run`,
+    waitCommand: `node ${shq(loop)} digest-wait`,
   };
 }
 
@@ -109,9 +119,14 @@ function main(argv: string[]): number {
   const { values: v } = parseArgs({ args: argv, options: { 'status-dir': { type: 'string' }, project: { type: 'string' } } });
   const statusDir = v['status-dir'] || statusDirFor(v.project || CONTAINER_PROJECT);
   if (!statusDir) { console.error('session-start: no status directory; set status_dir or vault_root (or pass --status-dir)'); return 2; }
-  const report = sessionStart(statusDir, realDeps());
-  console.log(report.lines.join('\n'));
-  return report.failed ? 1 : 0;
+  try {
+    const report = sessionStart(statusDir, realDeps());
+    console.log(report.lines.join('\n'));
+    return report.failed ? 1 : 0;
+  } catch (err) {
+    console.error(`session-start: the watch registry could not be read or written: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
 }
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
