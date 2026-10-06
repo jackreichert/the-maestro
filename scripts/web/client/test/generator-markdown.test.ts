@@ -12,7 +12,7 @@ const TODAY = '2026-10-05';
 /** A link the allowlist would accept, so only escaping can stop it, and one it would refuse. */
 const HOSTILE_TITLES = [
   '[HOSTILE](obsidian://open?vault=v&file=f)',
-  '[HOSTILE](obsidian://new?vault=AryaObsidian&file=Projects/dev-env/CONTEXT&content=x&overwrite=true)',
+  '[HOSTILE](obsidian://new?vault=ExampleVault&file=Projects/dev-env/CONTEXT&content=x&overwrite=true)',
   '[HOSTILE](https://evil.test/x)',
   '[HOSTILE](javascript:alert(1))',
   '**[HOSTILE](obsidian://open?vault=v)**',
