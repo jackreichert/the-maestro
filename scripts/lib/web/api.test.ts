@@ -138,8 +138,9 @@ test('buildStream narrows every list to one stream and is null for an unknown na
 test('buildCharts passes the client contract and counts the day, the ask age, the PR mix and the model', () => {
   const charts = buildCharts(fixture(), 3, NOW);
   const got = sanitizeCharts(JSON.parse(JSON.stringify(charts)));
-  assert.deepEqual(got?.throughput, charts.throughput);
-  assert.deepEqual(got?.prMix.byState, charts.prMix.byState);
+  assert.equal(got?.dropped, 0);
+  assert.deepEqual(got?.data.throughput, charts.throughput);
+  assert.deepEqual(got?.data.prMix.byState, charts.prMix.byState);
   assert.deepEqual(charts.days, ['2026-10-04', '2026-10-05', '2026-10-06']);
   assert.deepEqual(charts.throughput[2], { date: DAY, total: 1, byStream: { widgets: 1 } });
   assert.deepEqual(charts.ageBuckets[0].ids, ['ask1']);

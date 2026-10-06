@@ -399,6 +399,8 @@ Guards, applied to every response including 404 and 500: the `Host` header must 
 
 Two conventions to know: the done-today list and footer follow the ledger's UTC date, as `journal.ts status` does, while `today` and the charts use the page's time zone, so in the evening they can disagree; and paste blocks are not in the JSON yet. The file list for `/dist/*` is taken at start, so restart after rebuilding the page.
 
+The page checks every payload against its contract and skips rows that do not fit; the header line counts what was skipped (rows, priority items, fragments, chart rows, day entries and chart tables). It runs on current evergreen browsers: link checking uses `URL.parse` where it exists and `new URL` otherwise, and fragment lookup uses `Object.hasOwn` (Chrome 93+, Safari 15.4+, Firefox 92+).
+
 What this slice does not have: a per-start token (any process on this machine can read `/api` by sending the right `Host`), answering asks from the page, and live updates. Those come with the write endpoints.
 
 ### event-loop.ts

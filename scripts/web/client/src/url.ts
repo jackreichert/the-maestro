@@ -10,6 +10,16 @@ function isSafeObsidian(u: URL): boolean {
   return keys.length > 0 && keys.every((k) => OBSIDIAN_KEYS.has(k)) && new Set(keys).size === keys.length;
 }
 
+/** `URL.parse` where the browser has it (Chrome 126+, Safari 18+), otherwise `new URL` in a try; null when unparseable either way. */
+function parseUrl(raw: string): URL | null {
+  if (typeof URL.parse === 'function') return URL.parse(raw);
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * True when a link target may be an href: http or https, or exactly `obsidian://open` with only `vault` and `file`.
  * Other Obsidian actions (new, daily, adv-uri, hook-get-address, ...) can write or run commands in the vault, so they never link.
@@ -18,7 +28,7 @@ function isSafeObsidian(u: URL): boolean {
 export function isSafeUrl(url: string): boolean {
   const raw = url.trim();
   if (raw === '' || /[\s\u0000-\u001f\u007f]/.test(raw)) return false;
-  const u = URL.parse(raw);
+  const u = parseUrl(raw);
   if (u === null) return false;
   if (u.protocol === 'http:' || u.protocol === 'https:') return u.host !== '';
   return u.protocol === 'obsidian:' && isSafeObsidian(u);

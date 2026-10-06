@@ -37,6 +37,5 @@ export const loadState = (): Promise<Loaded<PodiumState>> => loadWithFallback('/
 });
 
 export const loadCharts = (): Promise<Loaded<ChartsData>> => loadWithFallback('/api/charts?days=14', '/fixtures/charts.json', (x) => {
-  const data = sanitizeCharts(x);
-  return data && { data, dropped: 0 };
+  return sanitizeCharts(x);
 });
