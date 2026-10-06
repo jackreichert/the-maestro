@@ -160,7 +160,7 @@ export function handoffDeltaText(ctx: HandoffContext, stream: string | null, mar
         '## Session metrics', '', sessionLine(ctx.claudeProjectsDir), '',
         '## New or still-open items since the previous roll', '', ...list(opened.map((i) => line(i, i.kind === 'blocked' ? 'blocked' : isQueued(i) ? 'queued' : 'in flight'))), '',
         '## Completed since the previous roll', '', ...list(completed.map((i) => line(i, 'done'))), '',
-        '## New asks', '', ...list(asks.map((i) => line(i, i.kind))), '',
+        '## New asks', '', ...list(asks.map((i) => line(i, i.kind ?? 'ask'))), '',
         '## PRs mentioned', '', prs.length ? prs.join(', ') : '_none_', '',
         'Work logged after this roll lands in the ledger as usual; the next roll or `journal.ts prime` picks it up.', '',
     ].join('\n');
