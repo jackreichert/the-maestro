@@ -142,7 +142,7 @@
 
 html {
   background: var(--surface-page);
-  scroll-padding-top: 64px; /* keyboard focus never lands under the sticky tab bar */
+  scroll-padding-top: 4.5rem; /* keyboard focus never lands under the sticky tab bar */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }

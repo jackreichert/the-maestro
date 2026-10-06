@@ -38,9 +38,9 @@ function color(i: number, name: string): string {
   return name === 'Other' ? 'var(--series-other)' : `var(--series-${(i % MAX_SERIES) + 1})`;
 }
 
-/** <podium-chart kind="bar|line|stacked|share" title="..." desc="..." height="200">; set `.data`. */
+/** <podium-chart kind="bar|line|stacked|share" label="..." desc="..." height="200">; set `.data`. */
 export class PodiumChart extends HTMLElement {
-  static observedAttributes = ['kind', 'title', 'desc', 'height'];
+  static observedAttributes = ['kind', 'label', 'title', 'desc', 'height'];
   #data: ChartData = { labels: [], series: [] };
   #root: ShadowRoot;
   #width = 360;
@@ -69,7 +69,8 @@ export class PodiumChart extends HTMLElement {
 
   #render(): void {
     const kind = (this.getAttribute('kind') ?? 'bar') as ChartKind;
-    const title = this.getAttribute('title') ?? 'Chart';
+    // `label`, not `title`: a title attribute on the host would show a native tooltip over the whole chart.
+    const title = this.getAttribute('label') ?? this.getAttribute('title') ?? 'Chart';
     const data = limitSeries(this.#data);
     const share = kind === 'share' && data.labels.length === 1;
     const height = share ? 40 : Number(this.getAttribute('height')) || 200;
@@ -178,13 +179,13 @@ function swatch(fill: string): HTMLElement {
 function table(data: ChartData): HTMLElement {
   return h('details', {}, h('summary', {}, 'Data table'),
     h('table', {},
-      h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, ''), ...data.series.map((x) => h('th', { scope: 'col' }, x.name)))),
+      h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, h('span', { class: 'vh' }, 'Category')), ...data.series.map((x) => h('th', { scope: 'col' }, x.name)))),
       h('tbody', {}, ...data.labels.map((l, i) => h('tr', {}, h('th', { scope: 'row' }, l), ...data.series.map((x) => h('td', {}, String(x.values[i] ?? 0))))))));
 }
 
 function describe(data: ChartData, kind: ChartKind): string {
   const total = data.series.reduce((a, x) => a + x.values.reduce((p, q) => p + q, 0), 0);
-  return `${kind} chart, ${data.labels.length} categories, ${data.series.length} series, total ${total}. A data table follows.`;
+  return `${kind} chart, ${data.labels.length} categories, ${data.series.length} series, total ${total}. Open the data table below for the values.`;
 }
 
 function hash(str: string): number {

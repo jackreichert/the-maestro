@@ -40,7 +40,7 @@ export interface RowContext { now: string; tz: string; showStream: boolean }
 /** One row per item: id, text and ticket, a right-aligned age (or closing time), then stream, gate and model. */
 export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElement | null {
   if (xs.length === 0) return null;
-  return h('ul', { class: 'rows' }, ...xs.map((x) => {
+  return h('ul', { class: 'rows', role: 'list' }, ...xs.map((x) => {
     const done = 'closedAt' in x ? (x as unknown as DoneItem).closedAt : '';
     const meta = done ? clockTime(done, ctx.tz) : ago(x.since, ctx.now);
     const gate = 'gate' in x && typeof x.gate === 'string' && x.gate ? x.gate : '';
@@ -72,12 +72,18 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean): H
 /** Open PRs as rows: link and title, branch, then status chips (text and symbol, never colour alone). */
 export function prList(prs: PrCard[]): HTMLElement | null {
   if (prs.length === 0) return null;
-  return h('ul', { class: 'prs', 'aria-label': 'Pull requests' }, ...prs.map((p) => h('li', {},
+  return h('ul', { class: 'prs', role: 'list', 'aria-label': 'Pull requests' }, ...prs.map((p) => h('li', {},
     h('span', { class: 'pr-title' }, refLink({ label: `${p.short}#${p.number}`, url: p.url }), h('span', {}, p.title)),
     h('span', { class: 'pr-branch' }, `${p.head} → ${p.base}`,
       p.twinOf ? h('span', { class: 'pr-rel' }, ` · twin of #${p.twinOf}`) : null,
       p.stackedOn ? h('span', { class: 'pr-rel' }, ` · stacked on #${p.stackedOn}`) : null),
-    h('span', { class: 'chips' }, ...prChips(p).map((c) => h('span', { class: `chip ${c.tone}` }, c.text))))));
+    h('span', { class: 'chips' }, ...prChips(p).map(chip)))));
+}
+
+/** A status chip; its leading symbol is decoration for sighted readers (the words carry the state), so it is hidden. */
+function chip(c: { text: string; tone: string }): HTMLElement {
+  const m = /^([✓✗•]) (.*)$/.exec(c.text);
+  return h('span', { class: `chip ${c.tone}` }, ...(m ? [h('span', { 'aria-hidden': 'true' }, m[1]), m[2]] : [c.text]));
 }
 
 /** <stream-board stream="...">: one stream's asks, work and PRs from `.state`. */

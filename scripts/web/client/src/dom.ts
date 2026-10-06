@@ -122,10 +122,11 @@ export const UI_CSS = `
     background: var(--surface-2); border-radius: var(--radius-sm); padding: 1px 6px; white-space: nowrap;
   }
   a.tag, span.tag {
-    font-size: var(--text-sm); color: var(--text-secondary); text-decoration: none; white-space: nowrap;
+    font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap;
+    text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: var(--border-strong);
   }
   a.tag::before, span.tag::before { content: '#'; color: var(--text-muted); margin-right: 1px; }
-  a.tag:hover { color: var(--accent); }
+  a.tag:hover { color: var(--accent); text-decoration-style: solid; text-decoration-color: currentColor; }
 
   .chip {
     display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--radius-pill);
