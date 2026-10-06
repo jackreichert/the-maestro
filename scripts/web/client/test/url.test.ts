@@ -27,6 +27,17 @@ test('isSafeUrl rejects script schemes, disguised schemes and every other obsidi
   for (const u of BAD) assert.ok(!isSafeUrl(u), JSON.stringify(u));
 });
 
+test('without URL.parse (older browsers) the same verdicts come from new URL', () => {
+  const parse = URL.parse;
+  Object.defineProperty(URL, 'parse', { value: undefined, configurable: true, writable: true });
+  try {
+    for (const u of OK) assert.ok(isSafeUrl(u), u);
+    for (const u of BAD) assert.ok(!isSafeUrl(u), JSON.stringify(u));
+  } finally {
+    Object.defineProperty(URL, 'parse', { value: parse, configurable: true, writable: true });
+  }
+});
+
 test('safeHref returns the trimmed URL or undefined', () => {
   assert.equal(safeHref(' https://ok.test '), 'https://ok.test');
   assert.equal(safeHref('obsidian://new?vault=v'), undefined);
