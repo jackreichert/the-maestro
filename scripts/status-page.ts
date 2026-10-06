@@ -23,6 +23,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
+import { noteExistsIn, vaultRootFor } from './lib/status-page/links.ts';
 import { generate } from './lib/status-page/generate.ts';
 import type { GenerateDeps, GenerateResult, RawPr } from './lib/status-page/generate.ts';
 import type { PageConfig } from './lib/status-page/render.ts';
@@ -59,10 +60,11 @@ function journalJson(sub: string, ledger: string, project: string): unknown {
 }
 
 /** The install's page settings from the local config; the Markdown page and the web server read the same ones. */
-export function pageConfig(): PageConfig {
+export function pageConfig(project = '', statusDir = ''): PageConfig {
   return {
     streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
     ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
+    project, noteExists: noteExistsIn(vaultRootFor(VAULT_ROOT, statusDir)),
   };
 }
 
@@ -73,7 +75,7 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!o.statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
   const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), fetchPrs, sleep, now: () => new Date() };
-  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig() }, deps);
+  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig(o.project, o.statusDir) }, deps);
 }
 
 function main(argv: string[]): number {
