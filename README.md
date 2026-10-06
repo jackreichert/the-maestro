@@ -238,6 +238,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [prs-snapshot.ts](#prs-snapshotts) | Mid-day PR board snapshot and actionable diff |
 | [status-page.ts](#status-pagets) | The Podium, the always-current status page, with today's priorities and inline answers |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
+| [session-start.ts](#session-startts) | First command of a session: registers the status watches, reports the page age and whether a loop is running |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
@@ -460,6 +461,26 @@ launchctl bootout gui/$(id -u)/com.jackreichert.the-maestro-loop   # uninstall
 The installer refuses while any loop holds the lock. Run it from the main checkout, not a worktree. The log is `<ledger root>/Projects/<project>/Journal/Supervisor/loop-supervisor.log`.
 
 With launchd holding the lock, a session cannot run the loop itself. It starts `node scripts/event-loop.ts digest-wait` in the background instead: it blocks until a saved digest is unseen, prints it, marks it seen and exits 10 (the same contract as `run`), so the session is woken as before. `--timeout-hours N` (default 6) exits 0 quietly. Delivery is at-least-once: a waiter claims a digest by renaming it, prints it, then marks it seen, so a crash in between shows it again (never zero times), and two waiters never both take one. `node scripts/event-loop.ts digests [--mark-seen]` prints the unseen digests without waiting.
+
+### session-start.ts
+
+The first command of every session, and the first thing to run after a compaction. It is idempotent, so running it twice changes nothing.
+
+```bash
+node scripts/session-start.ts [--status-dir <dir>] [--project <name>]
+```
+
+```
+status-watch: registered (added status-watch (status-watch /vault/Projects/my-workspace/Status), expires 2026-10-09T15:00:00.000Z)
+status-refresh: already registered (status-refresh, expires 2026-10-08T09:30:00.000Z)
+Status page: updated 4 min ago (3:01 PM EDT)
+Event loop: NOT RUNNING. Start it now with run_in_background: node '/path/to/scripts/event-loop.ts' run
+```
+
+- **Watches.** For each of `status-watch` and `status-refresh`, a live, unexpired watch of that type is left alone; otherwise one is registered through `event-loop.ts add` with the status directory as target, so each type's own validation, singleton rule and default TTL apply. A watch past its expiry that the loop has not retired yet is removed and registered again. A refused registration is printed as `NOT registered (<reason>)` and the exit code is 1, unless another session registered that type in the meantime, which counts as success. An existing watch whose target differs from the resolved status directory is kept but flagged with a `WARNING` line.
+- **Page age.** The age is the modification time of `The-Podium.md`. Past 15 minutes the line ends `STALE`: the refresh ticks every 10 minutes, so nothing is refreshing it.
+- **Loop.** Reported from the loop lock. The script never starts the loop: the loop must be launched by the orchestrator with `run_in_background` so its exit wakes the session, and a detached child would exit unseen. With no loop it prints the exact command. A fresh session cannot have started a loop that already holds the lock, so that is the launchd supervisor's ([loop-supervisor.ts](#loop-supervisorts-keep-the-loop-alive-without-a-session)); the line then also prints the `event-loop.ts digest-wait` command to wait on it.
+- Exit codes: 0 done, 1 a watch could not be registered or the registry could not be read, 2 no status directory (set `status_dir` or `vault_root`, or pass `--status-dir`).
 
 ### notion-watch (tagged Notion pages)
 
