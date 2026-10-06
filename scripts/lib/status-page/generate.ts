@@ -137,7 +137,8 @@ export type GatheredInputs = Omit<PageInput, 'command'>;
 
 /**
  * Every outside read a page needs, in one place: the override and ticket maps, the board and triage, the open PRs and the priorities.
- * The Markdown page and any other view of the board (the web app) call this, so they cannot disagree about what is on the board.
+ * For `generate()`: unless `cachedPrsOnly` it calls `deps.fetchPrs` (GitHub, with blocking `deps.sleep` retries) and, unless `dryRun`,
+ * writes the PR cache `.now-prs.json`. A view that must never do either calls `gatherInputsCached` instead.
  */
 export function gatherInputs(opts: GatherOptions, deps: GenerateDeps): GatheredInputs {
   const { statusDir, config } = opts;
@@ -151,6 +152,17 @@ export function gatherInputs(opts: GatherOptions, deps: GenerateDeps): GatheredI
   const now = deps.now();
   const priorities = readPriorities(statusDir, localDate(now, config.tz));
   return { now, status, triage, prs, prData, ticketMap, priorities, config };
+}
+
+/**
+ * The same inputs as `gatherInputs`, for a long-lived reader such as the web server. Reads only: the files beside the page
+ * (`stream-overrides.json`, `ticket-map.json`, `priorities.md`, the cached `.now-prs.json`) plus `deps.journal` and `deps.now`.
+ * Never calls `deps.fetchPrs` or `deps.sleep` and never writes the PR cache (the status-refresh watcher keeps it fresh).
+ */
+export function gatherInputsCached(statusDir: string, config: PageConfig, deps: Pick<GenerateDeps, 'journal' | 'now'>): GatheredInputs {
+  const refuse = (what: string) => (): never => { throw new Error(`gatherInputsCached never ${what}`); };
+  const noGithub: GenerateDeps = { ...deps, fetchPrs: refuse('reads GitHub'), sleep: refuse('sleeps') };
+  return gatherInputs({ statusDir, config, dryRun: true, cachedPrsOnly: true }, noGithub);
 }
 
 function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {

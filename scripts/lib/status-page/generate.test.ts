@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gatherInputs, generate, loadPrs } from './generate.ts';
+import { gatherInputs, gatherInputsCached, generate, loadPrs } from './generate.ts';
+import { readPrCache, writePrCache } from './prcache.ts';
 import { extractFields } from './inline.ts';
 import type { GenerateDeps, RawPr } from './generate.ts';
 import { writePriorities } from './priorities.ts';
@@ -436,4 +437,19 @@ test('prFlagNames lists what needs a look on a PR, in the order the Markdown fla
   const pr = { mergeable: 'CONFLICTING', ci: 'ERROR', unresolved: 2, reviewDecision: 'CHANGES_REQUESTED' } as Pr;
   assert.deepEqual(prFlagNames(pr), ['CONFLICTING', 'CI FAIL', '2 thr', 'changes requested']);
   assert.deepEqual(prFlagNames({ mergeable: 'MERGEABLE', ci: 'SUCCESS', unresolved: 0, reviewDecision: null } as Pr), []);
+});
+
+test('gatherInputsCached reads the cached PRs and never calls GitHub, sleeps or writes the cache', () => {
+  const d = dir();
+  writePrCache(d, { fetchedAt: new Date('2026-10-05T14:55:00Z'), prs: [raw(12, 'acme-widgets')] });
+  const before = readFileSync(join(d, '.now-prs.json'), 'utf8');
+  const guarded = { journal: deps([]).journal, now: () => NOW };
+  const inputs = gatherInputsCached(d, CONFIG, guarded);
+  assert.deepEqual(inputs.prs.map((p) => p.number), [12]);
+  assert.equal(inputs.prData.fetchedAt?.toISOString(), '2026-10-05T14:55:00.000Z');
+  assert.equal(readFileSync(join(d, '.now-prs.json'), 'utf8'), before);
+  assert.equal(readPrCache(d)?.prs.length, 1);
+  const empty = dir();
+  assert.deepEqual(gatherInputsCached(empty, CONFIG, guarded).prs, []);
+  assert.equal(existsSync(join(empty, '.now-prs.json')), false);
 });
