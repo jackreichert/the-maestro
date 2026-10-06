@@ -68,6 +68,22 @@ test('an ask splits into the decision and its context, with the age, the triage 
   assert.deepEqual(old?.links, { tracker: [], prs: [] });
 });
 
+test('an ask written at 8:30 pm Eastern on the 5th, seen at 9 pm, is 0 days old, not -1 from its UTC date', () => {
+  const base = inputs();
+  const s = buildState(inputs({ now: new Date('2026-10-06T01:00:00Z'), status: { ...base.status, awaiting: [{ id: 'ev01', date: '2026-10-06', ts: '2026-10-06T00:30:00Z', text: 'evening question?', stream: 'Alpha' }] } }));
+  assert.equal(s.today, '2026-10-05');
+  assert.equal(s.asks[0]?.ageDays, 0);
+});
+
+test('priorities and footer are copies: changing the state never changes the inputs', () => {
+  const i = inputs();
+  const s = buildState(i);
+  s.footer[0]!.done = 99;
+  if (s.priorities.state === 'ok') s.priorities.items.push({ text: 'x' });
+  assert.equal(i.status.footer?.ledger[0]?.done, 1);
+  assert.equal(i.priorities.state === 'ok' ? i.priorities.items.length : -1, 1);
+});
+
 test('an item whose stream is not in the display order is filed under other', () => {
   const s = buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'zz99', date: '2026-10-06', text: 'no stream here?' }] } }));
   assert.equal(s.asks[0]?.stream, 'other');
