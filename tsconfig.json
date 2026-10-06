@@ -16,5 +16,6 @@
     "allowJs": false,
     "checkJs": false
   },
-  "include": ["scripts/**/*.ts"]
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["scripts/web/client/src", "scripts/web/client/dist"]
 }
