@@ -2169,3 +2169,22 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     assert.equal(fallback.code, 1);
     assert.match(fallback.out, /stored snapshot 2026-01-01T00:00:00Z; live read failed/);
 });
+
+test('status and status --footer show the review queue from the stored snapshot, and stay as they were without one', () => {
+    const before = run('status');
+    assert.doesNotMatch(before.out, /review queue/);
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const snapshot = (takenAt: string, ...drafts: boolean[]) => writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt, prs: drafts.map((isDraft) => ({ isDraft })) }));
+    const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', ...env },
+    }).stdout;
+    snapshot(new Date().toISOString(), false, false, true);
+    assert.match(status([]), /\n {2}review queue: 2 of 4\n$/);
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 2 of 4\n\*\*Session:\*\*/m);
+    snapshot(new Date().toISOString(), false, false, false, false);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '4' }), /review queue: 4 of 4 \(full\)/);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '6' }), /review queue: 4 of 6\n/);
+    snapshot('2020-01-01T00:00:00Z', false);
+    assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
+});

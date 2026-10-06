@@ -136,7 +136,7 @@ import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSerie
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine, sessionStatus } from './token-metrics.ts';
-import { readQueue, readSnapshotPrs, queueText, queueExitCode } from './lib/review-queue.ts';
+import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue } from './lib/review-queue.ts';
 import { fetchLive, snapshotPath } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
@@ -568,6 +568,9 @@ const configuredStatusPageUri = (): string => statusPageUri({
     explicit: STATUS_PAGE_URI_SETTING, statusDir: arg('status-dir') || STATUS_DIR_SETTING, vaultRoot: VAULT_ROOT, vaultName: OBSIDIAN_VAULT,
 });
 
+/** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
+const boardReviewQueue = () => boardQueue(readSnapshotPrs(snapshotPath(vault)), REVIEW_QUEUE_CAP, new Date());
+
 function cmdStatus() {
     refreshBoard();
     const g = groups(has('include-archived'));
@@ -580,7 +583,8 @@ function cmdStatus() {
         return;
     }
 
-    if (has('footer')) { [...footerLines(g, done), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
+    const queueFooter = boardReviewQueue()?.footer;
+    if (has('footer')) { [...footerLines(g, done), ...(queueFooter ? [queueFooter] : []), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
 
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
@@ -612,6 +616,8 @@ function cmdStatus() {
         console.log('\n  (empty)');
     }
     console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
+    const queue = boardReviewQueue();
+    if (queue) console.log(`  ${queue.text}`);
 }
 
 /** The dispatch gate (reference/dispatch.md#review-queue-cap): a live count, the stored snapshot if GitHub fails, and an exit code the orchestrator can test. */

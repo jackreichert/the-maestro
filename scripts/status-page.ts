@@ -22,7 +22,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, REVIEW_QUEUE_CAP, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
 import { noteExistsIn, vaultRootFor } from './lib/status-page/links.ts';
 import { generate } from './lib/status-page/generate.ts';
 import type { GenerateDeps, GenerateResult, RawPr } from './lib/status-page/generate.ts';
@@ -63,7 +63,7 @@ function journalJson(sub: string, ledger: string, project: string): unknown {
 export function pageConfig(project = '', statusDir = ''): PageConfig {
   return {
     streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
-    ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ,
+    ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ, reviewQueueCap: REVIEW_QUEUE_CAP,
     project, noteExists: noteExistsIn(vaultRootFor(VAULT_ROOT, statusDir)),
   };
 }

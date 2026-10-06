@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { reviewQueue, reviewQueueLine, readSnapshotPrs, readQueue, queueExitCode, queueText } = await import('./review-queue.ts');
+const { reviewQueue, reviewQueueLine, readSnapshotPrs, readQueue, queueExitCode, queueText, boardQueue, staleSuffix } = await import('./review-queue.ts');
 
 const prs = (...drafts: boolean[]) => drafts.map((isDraft) => ({ isDraft }));
 
@@ -22,10 +22,6 @@ test('the queue is full at the cap, not above it', () => {
 
 test('an empty list is an empty queue', () => {
   assert.deepEqual(reviewQueue([], 4), { count: 0, cap: 4, full: false });
-});
-
-test('the cap defaults to 4', () => {
-  assert.equal(reviewQueue([]).cap, 4);
 });
 
 test('the board line shows N of cap and marks a full queue', () => {
@@ -80,4 +76,21 @@ test('with no live read and no snapshot the queue is unknown (exit 2), never emp
 test('the cap passed in applies to either source', () => {
   const r = readQueue({ fetchLive: live(false, false), readStored: () => null }, 2);
   assert.equal(queueExitCode(r), 1);
+});
+
+test('boardQueue reads the stored snapshot for the board and footer, and flags a stale one', () => {
+  const now = new Date('2026-10-06T12:00:00Z');
+  const snap = (takenAt: string, ...drafts: boolean[]) => ({ prs: prs(...drafts), takenAt });
+  assert.deepEqual(boardQueue(snap('2026-10-06T11:30:00Z', false, false, false, true), 4, now), { text: 'review queue: 3 of 4', footer: '**Review queue:** 3 of 4' });
+  assert.equal(boardQueue(snap('2026-10-06T11:30:00Z', false, false, false, false), 4, now)?.text, 'review queue: 4 of 4 (full)');
+  assert.equal(boardQueue(snap('2026-10-06T07:00:00Z', false), 4, now)?.text, 'review queue: 1 of 4 (snapshot 5h old)');
+  assert.equal(boardQueue(null, 4, now), null);
+});
+
+test('staleSuffix is silent under an hour or with no usable time, and counts days past two', () => {
+  const now = new Date('2026-10-06T12:00:00Z');
+  assert.equal(staleSuffix('2026-10-06T11:10:00Z', now), '');
+  assert.equal(staleSuffix(undefined, now), '');
+  assert.equal(staleSuffix('garbage', now), '');
+  assert.equal(staleSuffix('2026-10-03T12:00:00Z', now), ' (snapshot 3d old)');
 });

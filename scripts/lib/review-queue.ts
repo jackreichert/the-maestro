@@ -1,10 +1,10 @@
 /**
  * The review queue: open, non-draft PRs of yours waiting on a human. The cap is the most the orchestrator lets pile up
  * before it stops dispatching new PR-producing work (reference/dispatch.md#review-queue-cap).
- * Pure: callers hand in the PR list (a live fetch, the stored snapshot or the status page cache) and the cap.
+ * Pure: callers hand in the PR list (a live fetch, the stored snapshot or the status page cache) and the cap (`REVIEW_QUEUE_CAP`, local-config.ts).
+ * It reads no configuration, so the page renderer can import it.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { REVIEW_QUEUE_CAP } from '../local-config.ts';
 
 /** The one field the count reads. Every PR source the scripts use carries it. */
 export interface QueuePr { isDraft: boolean }
@@ -12,7 +12,7 @@ export interface QueuePr { isDraft: boolean }
 export interface ReviewQueue { count: number; cap: number; full: boolean }
 
 /** Open non-draft PRs against the cap. The input is already scoped to open PRs by their author (PR_SEARCH). Full means count >= cap. */
-export function reviewQueue(prs: readonly QueuePr[], cap: number = REVIEW_QUEUE_CAP): ReviewQueue {
+export function reviewQueue(prs: readonly QueuePr[], cap: number): ReviewQueue {
   const count = prs.filter((p) => !p.isDraft).length;
   return { count, cap, full: count >= cap };
 }
@@ -46,7 +46,7 @@ export type QueueReading =
  * The queue for the dispatch gate. A live read is preferred; a failed one falls back to the stored snapshot, and the reading says so,
  * so a stale count is never passed off as current. With neither, the answer is unknown (ok: false), never "empty".
  */
-export function readQueue(src: QueueSources, cap: number = REVIEW_QUEUE_CAP): QueueReading {
+export function readQueue(src: QueueSources, cap: number): QueueReading {
   let liveError: string;
   try { return { ok: true, queue: reviewQueue(src.fetchLive().prs, cap), source: 'live' }; } catch (e) { liveError = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? ''; }
   const stored = src.readStored();
@@ -62,4 +62,23 @@ export function queueText(r: QueueReading): string[] {
   if (!r.ok) return [r.error, 'Treat the queue as full: dispatch only fixes to PRs already open until it can be read.'];
   const where = r.source === 'live' ? 'live' : `stored snapshot ${r.takenAt ?? 'of unknown age'}; live read failed: ${r.liveError}`;
   return [`${reviewQueueLine(r.queue)} (${where})`, ...(r.queue.full ? ['Queue full: dispatch no new PR-producing work except fixes to PRs already open.'] : [])];
+}
+
+/** `5h`, `45m`: how old a snapshot is, for the board line; empty when it is under an hour old or its time is unknown (the board reads it without a network call, so only a stale one is flagged). */
+export function staleSuffix(takenAt: string | undefined, now: Date): string {
+  const ms = takenAt ? now.getTime() - Date.parse(takenAt) : Number.NaN;
+  if (!Number.isFinite(ms) || ms < 36e5) return '';
+  const hours = Math.floor(ms / 36e5);
+  return ` (snapshot ${hours >= 48 ? `${Math.floor(hours / 24)}d` : `${hours}h`} old)`;
+}
+
+/**
+ * The board's review queue from the stored snapshot, no network: `review queue: 3 of 4` (plus `(full)` and a stale-snapshot note), or
+ * null when there is no usable snapshot. The footer uses the same text with `**Review queue:**` as its label.
+ */
+export function boardQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date): { text: string; footer: string } | null {
+  if (!stored) return null;
+  const q = reviewQueue(stored.prs, cap);
+  const tail = `${q.count} of ${q.cap}${q.full ? ' (full)' : ''}${staleSuffix(stored.takenAt, now)}`;
+  return { text: `review queue: ${tail}`, footer: `**Review queue:** ${tail}` };
 }

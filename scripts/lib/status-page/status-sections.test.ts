@@ -208,3 +208,15 @@ test('table cells escape the characters Markdown reads as markup, not just the p
     assert.ok(line.includes('fix \\*bold\\* snake\\_case \\`code\\` \\<b\\> \\[x\\] a\\|b \\~\\~s\\~\\~'), line);
   } finally { rows.splice(0, rows.length, ...saved); }
 });
+
+test('the Open PRs section shows the review queue against the cap, and says what a full queue means', () => {
+  const pr = (number: number, isDraft: boolean) => ({
+    number, title: `feat: thing ${number}`, url: `https://example.test/acme-widgets/pull/${number}`, isDraft, baseRefName: 'develop', headRefName: `b${number}`,
+    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Narnia',
+  });
+  const render = (prs: ReturnType<typeof pr>[], config: PageConfig): string => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page;
+  const withCap = { ...CONFIG, reviewQueueCap: 2 };
+  assert.match(render([pr(1, false), pr(2, true)], withCap), /\*\*Review queue: 1 of 2\*\* non-draft PRs awaiting review\./);
+  assert.match(render([pr(1, false), pr(2, false), pr(3, true)], withCap), /\*\*Review queue: 2 of 2 \(full\)\*\*: dispatch only fixes to PRs already open/);
+  assert.doesNotMatch(render([pr(1, false)], CONFIG), /Review queue/, 'no cap configured, no line');
+});
