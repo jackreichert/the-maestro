@@ -76,6 +76,7 @@
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
  *   journal.ts resume                        the verify-on-resume checklist, running the parts a script can run
  *   journal.ts podium [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the Podium (The-Podium.md in the status dir; NOW.md stays as a pointer; `status-page` is an alias): priorities, needs-you list, PR board per stream, in flight, queued, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
+ *   journal.ts web [--port <n>] [--status-dir <dir>]   serve the Podium as a read-only page on 127.0.0.1 (GET only; prints the URL; build the page first with `npm run build:web`)
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
  *
@@ -111,7 +112,7 @@
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, renameSync, linkSync, unlinkSync, realpathSync, statSync } from 'node:fs';
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT } from './local-config.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
@@ -1384,6 +1385,15 @@ function cmdStatusPage() {
     process.exit(r.status ?? 1);
 }
 
+/** `web` `[--port <n>] [--status-dir <dir>]`: scripts/web.ts, the read-only Podium server, given this run's ledger root and project. Runs until stopped. */
+function cmdWeb() {
+    const forward = ['port', 'status-dir'].flatMap((f) => { const v = arg(f); return v ? [`--${f}`, v] : []; });
+    const child = spawn(process.execPath, [join(SKILL_DIR, 'scripts', 'web.ts'), ...forward, '--vault', vault, '--project', project], { stdio: 'inherit' });
+    // The server outlives this process unless a stop signal is passed on (a supervisor signals only the process it started).
+    for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => child.kill(sig));
+    child.on('exit', (code) => process.exit(code ?? 1));
+}
+
 // ── priorities ──────────────────────────────────────────────────────────────
 
 function cmdPriorities() {
@@ -1457,6 +1467,7 @@ switch (cmd) {
     case 'priorities': cmdPriorities(); break;
     case 'podium':
     case 'status-page': cmdStatusPage(); break;
+    case 'web': cmdWeb(); break;
     default:
         console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('/**')[1]
             .split('\n').map((l) => l.replace(/^ \* ?/, '')).join('\n').trim());

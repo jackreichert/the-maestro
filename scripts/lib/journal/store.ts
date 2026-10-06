@@ -7,7 +7,8 @@ import type { LedgerRow, Registry } from '../ledger-core.ts';
  * The ledger and stream-registry store for one run: paths, reads, appends and the registry cache.
  * One instance per process, so a registry saved mid-run is the one later writes see.
  */
-export interface StoreOptions { vault: string; project: string; dryRun: boolean }
+/** `warn` receives the store's own diagnostics (malformed ledger lines, a bad registry); it defaults to stderr, and a server passes a quiet one. */
+export interface StoreOptions { vault: string; project: string; dryRun: boolean; warn?: (message: string) => void }
 export interface Store {
     dir: string;
     ledgerPath: string;
@@ -22,7 +23,7 @@ export interface Store {
     newId(existing: { id?: string }[]): string;
 }
 
-export function openStore({ vault, project, dryRun }: StoreOptions): Store {
+export function openStore({ vault, project, dryRun, warn = (m) => console.error(m) }: StoreOptions): Store {
     const dir = join(vault, 'Projects', project, 'Journal');
     const ledgerPath = join(dir, 'ledger.jsonl');
 
@@ -42,7 +43,7 @@ export function openStore({ vault, project, dryRun }: StoreOptions): Store {
 
     function readLedger(): LedgerRow[] {
         if (!existsSync(ledgerPath)) return [];
-        return parseLedger(readFileSync(ledgerPath, 'utf8'), (n) => console.error(`  skipped malformed line ${n}`));
+        return parseLedger(readFileSync(ledgerPath, 'utf8'), (n) => warn(`  skipped malformed line ${n}`));
     }
 
     function append<E>(entry: E): E {
@@ -65,7 +66,7 @@ export function openStore({ vault, project, dryRun }: StoreOptions): Store {
 
     /** The stream registry (see readRegistry in lib/ledger-core.ts), read once per run. */
     function loadRegistry(): Registry | null {
-        if (registryCache === undefined) registryCache = readRegistry(registryPath, () => console.error('  streams.json is malformed; ignoring the registry'));
+        if (registryCache === undefined) registryCache = readRegistry(registryPath, () => warn('  streams.json is malformed; ignoring the registry'));
         return registryCache ?? null;
     }
 

@@ -23,7 +23,7 @@ export interface TriageReport {
  * Every item triage looks at, boxed: open items of any age, plus decisions and notes dated since..d that nothing
  * has closed. Each carries `ref` (the first --ref that is an existing file, else null) and `stale`.
  */
-export function triageItems(ctx: TriageContext, d: string, since: string): TriageItem[] {
+export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'today' | 'resolveRefFile'>, d: string, since: string): TriageItem[] {
     const { readLedger, fold, today, resolveRefFile } = ctx;
     const entries = readLedger();
     const folded = fold(entries);
