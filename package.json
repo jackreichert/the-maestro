@@ -6,7 +6,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p scripts/web/client/tsconfig.json --noEmit",
+    "build:web": "tsc -p scripts/web/client/tsconfig.json",
     "test": "MAESTRO_STATUS_DIR=\"$(mktemp -d)\" node --test 'scripts/**/*.test.ts'"
   },
   "devDependencies": {
