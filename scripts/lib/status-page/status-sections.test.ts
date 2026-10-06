@@ -138,3 +138,27 @@ test('the new sections are not answer areas: no id, tick or answer is read from 
   const typed = p.replace('**Session:**', '> answer: nope\n**Session:**');
   assert.deepEqual(extractFields(typed).answers, {}, 'an answer typed under Status belongs to no ask');
 });
+
+test('an ask with emphasis markers renders as one intact bold span, so what the page shows is what status-watch reads', () => {
+  const asks = [
+    row('mk01', 'question', 'Merge **now**? context after', { stream: 'Narnia' }),
+    row('mk02', 'question', '*Ship* it*? ok', { stream: 'Narnia' }),
+    row('mk03', 'question', 'Use snake_case_name and `code`? later', { stream: 'Narnia' }),
+  ];
+  const saved = rows.splice(0, rows.length, ...asks);
+  try {
+    const lines = section(page(board()), '## Needs attention now (3)').filter((l) => l.startsWith('- [ ]'));
+    assert.match(lines[0] as string, /`mk01` \*\*Merge \\\*\\\*now\\\*\\\*\?\*\* context after/);
+    assert.match(lines[1] as string, /`mk02` \*\*\\\*Ship\\\* it\\\*\?\*\* ok/);
+    assert.match(lines[2] as string, /`mk03` \*\*Use snake\\_case\\_name and \\`code\\`\?\*\* later/);
+  } finally { rows.splice(0, rows.length, ...saved); }
+});
+
+test('a single long token with no space is clipped with the ellipsis and loses no extra character', () => {
+  const token = 'x'.repeat(200);
+  const saved = rows.splice(0, rows.length, row('lt01', 'wip', token, { stream: 'Narnia' }));
+  try {
+    const line = section(page(board()), '## Working on now (1)').find((l) => l.includes('`lt01`')) as string;
+    assert.ok(line.includes(`${'x'.repeat(107)}...`) && !line.includes('x'.repeat(108)), 'exactly 107 characters then the ellipsis');
+  } finally { rows.splice(0, rows.length, ...saved); }
+});
