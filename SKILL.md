@@ -12,6 +12,10 @@ free, and keep a ledger of what is done, in flight, and waiting on the user.
 This file holds only what every turn needs. Detail lives one level down in `reference/*.md` — for
 any command below, read the file its row names, and no others, before acting.
 
+## Session start
+
+Before anything else in a new session, and after a compaction, run `node scripts/session-start.ts`. It is idempotent: it registers the `status-watch` and `status-refresh` watches when they are missing (no need to ask), then reports the status page's age and whether an event loop holds the lock. Put the page age in your first reply. If it says `Event loop: NOT RUNNING`, launch the printed command yourself with `run_in_background` (a loop launched any other way is not yours to hear from; the script deliberately never starts one). If a launchd supervisor already holds the lock, start `node scripts/event-loop.ts digest-wait` in the background instead ([README](README.md#session-startts)). Then run `journal.ts prime` as step 8 below says.
+
 ## Operating Contract
 
 1. **Resolve** — which repo(s), and is this a question or a task?
