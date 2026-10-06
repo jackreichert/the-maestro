@@ -180,6 +180,27 @@ test('an ask links its PRs as plain #N (no base or stack arrows), drops a bare r
   } finally { rows.splice(0, rows.length, ...saved); }
 });
 
+test('fragment stripping keeps the punctuation after the PR number, links a single-digit PR, and says when a PR is not open', () => {
+  const pr = { number: 7, title: 'feat: seven', url: 'https://example.test/acme-widgets/pull/7', isDraft: false, baseRefName: 'develop', headRefName: 'a', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Narnia' };
+  const saved = rows.splice(0, rows.length, row('fp01', 'question', 'merge acme-widgets/pull/7? rest of it (see x/pull/99) and #123', { stream: 'Narnia' }));
+  try {
+    const input: PageInput = { now: NOW, status: board(), triage: { items: [] }, prs: [pr], prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config: CONFIG, command: 'x' };
+    const line = section(renderPage(input).page, '## Needs attention now (1)').find((l) => l.startsWith('- [ ]')) as string;
+    assert.match(line, /`fp01` \*\*merge \?\*\* rest of it \(see \) and #123/, 'the question mark still ends the decision and the parentheses stay balanced');
+    assert.match(line, /\[#7\]\(https:\/\/example\.test\/acme-widgets\/pull\/7\)/, 'a single-digit PR gets its link');
+    assert.match(line, /#123 \(not open\)/, 'a PR that is not open says so in plain text');
+  } finally { rows.splice(0, rows.length, ...saved); }
+});
+
+test('fragment stripping is for asks only: in-flight and blocked lists keep a repo/pull/N path', () => {
+  const saved = rows.splice(0, rows.length, row('if01', 'wip', 'look at acme-widgets/pull/44 now', { stream: 'Narnia' }), row('bl01', 'blocked', 'stuck on acme-widgets/pull/44', { stream: 'Narnia' }));
+  try {
+    const p = page(board());
+    assert.ok(section(p, '## Working on now (1)').some((l) => l.includes('acme-widgets/pull/44')));
+    assert.ok(section(p, '## Other status and findings').some((l) => l.includes('acme-widgets/pull/44')));
+  } finally { rows.splice(0, rows.length, ...saved); }
+});
+
 test('table cells escape the characters Markdown reads as markup, not just the pipe', () => {
   const saved = rows.splice(0, rows.length, row('ce01', 'wip', 'fix *bold* snake_case `code` <b> [x] a|b ~~s~~', { stream: 'Narnia', model: 'Model A' }));
   try {

@@ -60,8 +60,9 @@ const CELL_MAX = 60;
 
 /** Text safe in a table cell: whitespace squashed, and each character Markdown would read as markup (pipe, backslash, emphasis, code, brackets, angle brackets, strikethrough) backslash-escaped. */
 const cell = (s: string): string => s.replace(/[|\\*_`<>[\]~]/g, '\\$&').replace(/\s+/g, ' ').trim() || '-';
-/** Drops URLs and the bare `repo/pull/N` fragments left when a URL was shortened. */
-const dropLinks = (s: string): string => s.replace(/https?:\/\/\S+/g, '').replace(/\S*\/pulls?\/\d+\S*/g, '');
+const dropLinks = (s: string): string => s.replace(/https?:\/\/\S+/g, '');
+/** Ask text only: also drops bare `repo/pull/N` fragments left when a URL was shortened (askRefs links the PR back as `#N`); the punctuation after N stays. */
+const dropPullFragments = (s: string): string => dropLinks(s).replace(/\S*\/pulls?\/\d+(?!\d)/g, '');
 /** `s` without URLs, squashed to one line; over `max` it is cut at a word boundary (never mid-word) and ends in `...`. */
 const oneLine = (s: string, max: number): string => {
   const t = dropLinks(s).replace(/\s+/g, ' ').trim();
@@ -244,12 +245,12 @@ function askRefs(cfg: PageConfig, a: Item, prs: Pr[], ticket: string | undefined
   const hint = repoHints(cfg).find(([re]) => re.test(a.text))?.[1];
   const streamRepo = Object.entries(cfg.repoStreams).find(([, s]) => s === a.stream)?.[0];
   const refs: Ref[] = [];
-  const nums = [...new Set([...a.text.matchAll(/(?:\/pull\/|#)(\d{2,5})\b/g)].map((m) => Number(m[1])))];
+  const nums = [...new Set([...a.text.matchAll(/(?:\/pull\/|#)(\d{1,6})\b/g)].map((m) => Number(m[1])))];
   for (const n of nums) {
     const all = prs.filter((p) => p.number === n);
     const pick = (repo?: string): Pr[] => (repo ? all.filter((p) => p.short === repo) : all);
     const m = [hint, streamRepo].map(pick).find((x) => x.length === 1) ?? (all.length === 1 && !hint ? all : []);
-    refs.push(m[0] ? prRef(m[0], prs, false, false) : { label: `#${n}` });
+    refs.push(m[0] ? prRef(m[0], prs, false, false) : { label: `#${n} (not open)` });
   }
   return { prs: refs, tracker: keysIn(cfg, a.text).map((k) => trackerRef(cfg, k)), note: ticket ? ticketNoteRef(cfg, ticket) : undefined };
 }
@@ -259,7 +260,7 @@ const boldSafe = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/[
 
 /** The decision an ask puts to the user (up to its first question mark) and the context after it. */
 export function splitAsk(text: string): { needed: string; context: string } {
-  const clean = plain(text);
+  const clean = dropPullFragments(text).replace(/\s+/g, ' ').trim();
   const q = clean.indexOf('?');
   return q === -1 ? { needed: clean, context: '' } : { needed: clean.slice(0, q + 1), context: clean.slice(q + 1).trim() };
 }
