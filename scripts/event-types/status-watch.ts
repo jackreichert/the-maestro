@@ -36,10 +36,12 @@ export function validate(target: string): void {
   if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`status-watch target must be the status directory (the folder holding ${PODIUM_FILE}), got "${target}"`);
 }
 
-/** Ask id to the last cell of its table row (the decision needed from the user), to say what an answer was about. */
+/** Ask id to the decision put to the user (the bold text on its ask line; the last cell of its row on an older table page), to say what an answer was about. */
 function decisions(page: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const line of page.split('\n')) {
+    const ask = line.match(/^- \[[ xX]\] `([a-z0-9]{4,6})` \*\*((?:\\.|[^\\])+?)\*\*/);
+    if (ask) { out.set(ask[1] as string, (ask[2] as string).replace(/\\([\\*_`])/g, '$1').trim()); continue; }
     const m = line.match(/^\| `([a-z0-9]{4,6})` \|(.*)\|\s*$/);
     const cells = (m?.[2] ?? '').split(/(?<!\\)\|/);
     if (m) out.set(m[1] as string, (cells[cells.length - 1] ?? '').replace(/\\\|/g, '|').trim());

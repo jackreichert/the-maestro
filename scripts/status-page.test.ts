@@ -35,7 +35,7 @@ test('journal.ts status-page reads the ledger and gh, writes The-Podium.md, and 
   const real = run('status-page', '--snapshot');
   assert.equal(real.status, 0, real.stderr);
   const page = readFileSync(join(statusDir, 'The-Podium.md'), 'utf8');
-  assert.match(page, /\| `[a-z0-9]{4}` \| Alpha \| - \| - \| Merge widgets #12\? \|/);
+  assert.match(page, /### Alpha \(1\)\n\n- \[ \] `[a-z0-9]{4}` \*\*Merge widgets #12\?\*\*[^\n]*\n  > answer: \n/);
   assert.match(page, /### Alpha \(1\)\n\n\| Ticket \| Develop PR/);
   assert.equal(readdirSync(statusDir).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).length, 1, 'snapshot written');
 });

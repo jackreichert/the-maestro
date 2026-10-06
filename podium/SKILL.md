@@ -32,8 +32,9 @@ run again. A failed GitHub read still writes the page from cached PR data under 
 2. **Today's priorities**: from `priorities.md`, each with its stream's awaiting, in-flight and
    open-PR counts when it names a stream. Unset reads "Priorities not set for today".
 3. **Working on now**: in-flight ledger items grouped by stream, with age.
-4. **Needs attention now**: one table row per ask (stream, context, ticket link, the decision
-   needed), and under it a reply line per ask with a `> answer:` stub.
+4. **Needs attention now**: grouped by stream, one list item per ask (id, the decision needed in
+   bold, context, ticket and PR links), with its `> answer:` stub on the line directly under it.
+   The ask is shown in full, never clipped.
 5. **Open PRs**: one table per stream (ticket, develop PR and base, staging twin, tl;dr) and a
    stack diagram.
 6. **Other status and findings**: in flight, blocked, recent done, deferred.
