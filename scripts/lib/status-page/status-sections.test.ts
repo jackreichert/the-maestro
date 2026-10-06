@@ -148,9 +148,9 @@ test('an ask with emphasis markers renders as one intact bold span, so what the 
   const saved = rows.splice(0, rows.length, ...asks);
   try {
     const lines = section(page(board()), '## Needs attention now (3)').filter((l) => l.startsWith('- [ ]'));
-    assert.match(lines[0] as string, /`mk01` \*\*Merge now\?\*\* context after/);
-    assert.match(lines[1] as string, /`mk02` \*\*Ship it\?\*\* ok/);
-    assert.match(lines[2] as string, /`mk03` \*\*Use snakecasename and code\?\*\* later/);
+    assert.match(lines[0] as string, /`mk01` \*\*Merge \\\*\\\*now\\\*\\\*\?\*\* context after/);
+    assert.match(lines[1] as string, /`mk02` \*\*\\\*Ship\\\* it\\\*\?\*\* ok/);
+    assert.match(lines[2] as string, /`mk03` \*\*Use snake\\_case\\_name and \\`code\\`\?\*\* later/);
   } finally { rows.splice(0, rows.length, ...saved); }
 });
 
