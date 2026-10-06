@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/web/charts.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { awaitingAge, buildCharts, lastDays, modelMix, prMix, throughputByDay } from './charts.ts';
+import { askAgeDays, awaitingAge, buildCharts, lastDays, modelMix, prMix, throughputByDay } from './charts.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 import type { Pr } from '../status-page/render.ts';
 
@@ -43,9 +43,9 @@ test('throughput zero-fills quiet days, drops days outside the window, and ignor
 
 test('awaiting age sorts open asks into under 1 d, 1-3 d, 3-7 d and over 7 d, falling back to the date when there is no time', () => {
   const ask = (id: string, ts: string | undefined, date: string): LedgerItem => item({ id, kind: 'question', ts, date });
-  const out = awaitingAge([ask('a001', '2026-10-06T10:00:00Z', '2026-10-06'), ask('a002', '2026-10-04T10:00:00Z', '2026-10-04'), ask('a003', undefined, '2026-10-01'), ask('a004', '2026-09-20T00:00:00Z', '2026-09-20')], NOW);
+  const out = awaitingAge([ask('a001', '2026-10-06T10:00:00Z', '2026-10-06'), ask('a002', '2026-10-04T10:00:00Z', '2026-10-04'), ask('a003', undefined, '2026-10-01'), ask('a004', '2026-09-20T00:00:00Z', '2026-09-20')], NOW, TZ);
   assert.deepEqual(out.map((b) => [b.label, b.count, b.ids]), [['under 1 d', 1, ['a001']], ['1-3 d', 1, ['a002']], ['3-7 d', 1, ['a003']], ['over 7 d', 1, ['a004']]]);
-  assert.equal(awaitingAge([], NOW).every((b) => b.count === 0), true);
+  assert.equal(awaitingAge([], NOW, TZ).every((b) => b.count === 0), true);
 });
 
 test('PR mix counts CI state overall and per stream, and the four Markdown totals', () => {
@@ -70,4 +70,29 @@ test('buildCharts is the four reducers over one window and is a pure function of
   assert.equal(a.throughput[1]?.total, 1);
   assert.equal(a.prMix.totals.open, 1);
   assert.deepEqual(buildCharts(input), a);
+});
+
+test('an ask written in the evening, Eastern, is 0 days old that evening although its UTC date is already tomorrow, and the age never goes negative', () => {
+  const evening = { ts: '2026-10-06T00:30:00Z', date: '2026-10-06' };
+  const viewed = new Date('2026-10-06T01:00:00Z');
+  assert.equal(askAgeDays(evening, viewed, TZ), 0);
+  assert.equal(askAgeDays({ date: '2026-10-07' }, viewed, TZ), 0);
+  assert.equal(awaitingAge([item({ id: 'ev01', kind: 'question', ...evening })], viewed, TZ)[0]?.count, 1);
+  assert.equal(askAgeDays({ ts: 'not a time', date: '2026-10-03' }, NOW, TZ), 3, 'falls back to the date when the time does not parse');
+});
+
+test('the age chart buckets exactly the whole-day age the ask card shows', () => {
+  const asks = ['2026-10-06T14:00:00Z', '2026-10-05T03:00:00Z', '2026-09-28T12:00:00Z'].map((ts, n) => item({ id: `ag0${n}`, kind: 'question', ts, date: ts.slice(0, 10) }));
+  assert.deepEqual(asks.map((a) => askAgeDays(a, NOW, TZ)), [0, 2, 8]);
+  assert.deepEqual(awaitingAge(asks, NOW, TZ).map((b) => b.ids), [['ag00'], ['ag01'], [], ['ag02']]);
+});
+
+test('a stream or CI state named __proto__ is counted as an ordinary key and pollutes nothing', () => {
+  const t = throughputByDay([doneAt('2026-10-06T14:00:00Z', { stream: '__proto__' })], 1, TZ, NOW);
+  assert.equal(Object.hasOwn(t[0]?.byStream ?? {}, '__proto__'), true);
+  const m = prMix([pr({ stream: '__proto__', ci: '__proto__' })]);
+  assert.equal(Object.hasOwn(m.byStream, '__proto__'), true);
+  assert.equal(Object.hasOwn(m.byState, '__proto__'), true);
+  assert.equal(Object.getPrototypeOf(t[0]?.byStream), Object.prototype);
+  assert.equal(({} as Record<string, unknown>).fail, undefined);
 });

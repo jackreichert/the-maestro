@@ -6,12 +6,15 @@
 import { askRefs, keysIn, pairTwins, prFlagNames, splitAsk, stackParent, streamOrder, ticketNoteRef, trackerRef } from '../status-page/render.ts';
 import type { BoardStatus, FooterData, Item, PageConfig, PageInput, Pr, Ref } from '../status-page/render.ts';
 import { localDate } from '../status-page/priorities.ts';
+import { askAgeDays } from './charts.ts';
 import type { PrioritiesState } from '../status-page/priorities.ts';
 import type { GatheredInputs } from '../status-page/generate.ts';
 
 const OTHER = 'other';
-const DAY_MS = 86_400_000;
-/** PR data older than this is flagged stale: the status-refresh watcher re-reads every 5 minutes, so three misses in a row. */
+/**
+ * PR data older than this is flagged stale. The status-refresh watcher ticks about every 10 minutes when idle and reads GitHub only
+ * when the data is over 5 minutes old (it renders from the cache alone in quiet hours), so 15 minutes means a tick was missed.
+ */
 export const PR_STALE_MS = 15 * 60_000;
 
 export interface LinkData { label: string; url?: string }
@@ -70,10 +73,10 @@ export function buildState(input: GatheredInputs): PodiumState {
   };
   const today = localDate(now, config.tz);
   return {
-    generatedAt: now.toISOString(), today, tz: config.tz, streams, priorities,
-    footer: status.footer?.ledger ?? [],
+    generatedAt: now.toISOString(), today, tz: config.tz, streams, priorities: structuredClone(priorities),
+    footer: structuredClone(status.footer?.ledger ?? []),
     prData: prDataState(prData, now),
-    asks: status.awaiting.map((a) => askCard(config, a, prs, noteOf(a), streamOf(a), today)),
+    asks: status.awaiting.map((a) => askCard(config, a, prs, noteOf(a), streamOf(a), now)),
     working: status.inflight.map(work),
     queued: status.queued.map(work),
     blocked: status.blocked.map((b) => ({ ...work(b), ...(meta.get(b.id)?.gate ? { gate: meta.get(b.id)?.gate } : {}) })),
@@ -93,12 +96,12 @@ function closedAt(d: BoardStatus['done'][number]): string | undefined {
   return (d as { closedBy?: { ts?: string } | null }).closedBy?.ts ?? d.ts;
 }
 
-/** The decision, its context and its links, with the age in whole days the Markdown page uses (page day minus the ask's date). */
-function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefined, stream: string, today: string): AskCard {
+/** The decision, its context and its links, with the age in whole page days (`askAgeDays`, the same figure the age chart buckets). */
+function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefined, stream: string, now: Date): AskCard {
   const refs = askRefs(config, a, prs, ticket);
   const { needed, context } = splitAsk(a.text);
   return {
-    id: a.id, stream, needed, context, ageDays: Math.round((Date.parse(today) - Date.parse(a.date)) / DAY_MS), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
+    id: a.id, stream, needed, context, ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
     links: { ...(refs.note ? { note: link(refs.note) } : {}), tracker: refs.tracker.map(link), prs: refs.prs.map(link) },
   };
 }
