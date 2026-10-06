@@ -84,3 +84,27 @@ test('a lone pipe line that is not a table terminates as a paragraph', () => {
 test('empty input renders nothing', () => {
   assert.equal(renderMarkdown(''), '');
 });
+
+test('a backslash before ASCII punctuation makes it literal and stops it starting a match', () => {
+  assert.equal(renderInline('\\[a\\](https://ok.test)'), '[a](https://ok.test)');
+  assert.equal(renderInline('\\*\\*x\\*\\*'), '**x**');
+  assert.equal(renderInline('\\`x\\`'), '`x`');
+  assert.equal(renderInline('a\\<b\\>'), 'a&#60;b&#62;');
+  assert.equal(renderInline('\\\\[a](https://ok.test)'), '\\<a href="https://ok.test" rel="noreferrer noopener">a</a>');
+  assert.equal(renderInline('a\\b'), 'a\\b', 'a backslash before a letter stays');
+});
+
+test('an escaped bracket inside a label does not end it, and an escaped star does not close bold', () => {
+  assert.equal(renderInline('[a\\]b](https://ok.test)'), '<a href="https://ok.test" rel="noreferrer noopener">a]b</a>');
+  assert.equal(renderInline('**x\\***'), '<strong>x*</strong>');
+});
+
+test('the generator escape for a link in a table cell renders as text, not a link', () => {
+  const cell = '\\[Fix typo\\](obsidian://open?vault=v&file=f)';
+  assert.ok(!renderMarkdown(`| a |\n| --- |\n| ${cell} |`).includes('<a'));
+});
+
+test('an escaped pipe stays in its cell, and an escaped backslash before a pipe still separates cells', () => {
+  assert.deepEqual(splitRow('| a\\|b | c |'), ['a|b', 'c']);
+  assert.deepEqual(splitRow('| a\\\\| c |'), ['a\\\\', 'c']);
+});
