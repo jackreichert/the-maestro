@@ -14,7 +14,7 @@ any command below, read the file its row names, and no others, before acting.
 
 ## Session start
 
-Before anything else in a new session, and after a compaction, run `node scripts/session-start.ts`. It is idempotent: it registers the `status-watch` and `status-refresh` watches when they are missing (no need to ask), then reports the status page's age and whether an event loop holds the lock. Put the page age in your first reply. If it says `Event loop: NOT RUNNING`, launch the printed command yourself with `run_in_background` (a loop launched any other way is not yours to hear from; the script deliberately never starts one). If a launchd supervisor already holds the lock, start `node scripts/event-loop.ts digest-wait` in the background instead ([README](README.md#session-startts)). Then run `journal.ts prime` as step 8 below says.
+Before anything else in a new session, and after a compaction, run `node scripts/session-start.ts`. It is idempotent: it registers the `status-watch` and `status-refresh` watches when they are missing (no need to ask), then reports the status page's age and whether an event loop holds the lock. Put the page age in your first reply. If it says `Event loop: NOT RUNNING`, launch the printed command yourself with `run_in_background` (a loop launched any other way is not yours to hear from; the script deliberately never starts one). If it says a loop is running that you did not start, that is the launchd supervisor's: launch the `digest-wait` command it prints with `run_in_background` instead ([README](README.md#session-startts)). A `WARNING its target is` line means a watch points at another directory; fix it as the line says. Then run `journal.ts prime` as step 8 below says.
 
 ## Operating Contract
 
