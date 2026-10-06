@@ -1,6 +1,6 @@
 /** Small DOM helpers shared by the components. Text is always set with textContent, never innerHTML. */
 
-import { isSafeUrl } from './markdown.ts';
+import { safeHref } from './url.ts';
 
 type Attrs = Record<string, string | boolean | undefined>;
 type Child = Node | string | null | undefined | false;
@@ -44,11 +44,6 @@ export function shadow(host: HTMLElement, css: string): ShadowRoot {
   const root = host.attachShadow({ mode: 'open' });
   root.adoptedStyleSheets = [sheet(css)];
   return root;
-}
-
-/** An href that is safe to use: http, https or obsidian only; anything else yields undefined. */
-export function safeHref(url: string | undefined): string | undefined {
-  return url !== undefined && isSafeUrl(url) ? url.trim() : undefined;
 }
 
 /** A link (or plain text when the ref has no safe URL) for a server-built Ref. */

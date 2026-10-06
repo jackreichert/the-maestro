@@ -3,22 +3,27 @@
  *
  * Blocks: headings, paragraphs, bullet/numbered lists (with `[ ]`/`[x]` boxes), block quotes, tables, fenced code.
  * Inline: `code`, **bold**, [links](url) and the generator's nowrap span.
- * Every character of the input is HTML-escaped before it reaches the output; the only tags emitted are the ones
- * this file writes. Link targets are limited to http:, https: and obsidian:. Pure and DOM-free so node:test covers it.
+ * Inline text is matched first and escaped per segment: the text between matches and the contents of each match are
+ * HTML-escaped before they reach the output, so the only tags emitted are the ones this file writes. A backslash before
+ * ASCII punctuation makes that character literal (the generator escapes its own text that way), and it never starts a match.
+ * Link targets are limited by url.ts: http, https, and `obsidian://open` with only `vault` and `file`.
+ * Pure and DOM-free so node:test covers it.
  */
+import { isSafeUrl } from './url.ts';
+
+export { isSafeUrl };
 
 const NOWRAP_OPEN = '<span style="white-space:nowrap">';
 const NOWRAP_CLOSE = '</span>';
-const SAFE_URL = /^(?:https?|obsidian):/i;
-
 const literal = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const INLINE = new RegExp(
   [
-    `${literal(NOWRAP_OPEN)}(.*?)${literal(NOWRAP_CLOSE)}`, // 1: nowrap inner
-    '`([^`]+)`', // 2: code
-    '\\*\\*(.+?)\\*\\*', // 3: bold
-    '\\[([^\\]]*)\\]\\(([^)\\s]*)\\)', // 4: label, 5: url
+    '\\\\([!-/:-@[-`{-~])', // 1: an escaped punctuation character
+    `${literal(NOWRAP_OPEN)}(.*?)${literal(NOWRAP_CLOSE)}`, // 2: nowrap inner
+    '`([^`]+)`', // 3: code
+    '\\*\\*((?:\\\\.|[^\\\\])+?)\\*\\*', // 4: bold
+    '\\[((?:\\\\.|[^\\]\\\\])*)\\]\\(([^)\\s]*)\\)', // 5: label, 6: url
   ].join('|'),
   'g',
 );
@@ -28,11 +33,6 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
-/** True when a link target may be used as an href. */
-export function isSafeUrl(url: string): boolean {
-  return SAFE_URL.test(url.trim());
-}
-
 /** Render one line of inline Markdown to HTML. */
 export function renderInline(text: string): string {
   let out = '';
@@ -40,16 +40,17 @@ export function renderInline(text: string): string {
   for (const m of text.matchAll(INLINE)) {
     out += escapeHtml(text.slice(last, m.index));
     last = m.index + m[0].length;
-    if (m[1] !== undefined) out += `<span class="nw">${renderInline(m[1])}</span>`;
-    else if (m[2] !== undefined) out += `<code>${escapeHtml(m[2])}</code>`;
-    else if (m[3] !== undefined) out += `<strong>${renderInline(m[3])}</strong>`;
-    else if (isSafeUrl(m[5])) out += `<a href="${escapeHtml(m[5].trim())}" rel="noreferrer noopener">${renderInline(m[4])}</a>`;
-    else out += renderInline(m[4]);
+    if (m[1] !== undefined) out += escapeHtml(m[1]);
+    else if (m[2] !== undefined) out += `<span class="nw">${renderInline(m[2])}</span>`;
+    else if (m[3] !== undefined) out += `<code>${escapeHtml(m[3])}</code>`;
+    else if (m[4] !== undefined) out += `<strong>${renderInline(m[4])}</strong>`;
+    else if (isSafeUrl(m[6])) out += `<a href="${escapeHtml(m[6].trim())}" rel="noreferrer noopener">${renderInline(m[5])}</a>`;
+    else out += renderInline(m[5]);
   }
   return out + escapeHtml(text.slice(last));
 }
 
-/** Split a table row into trimmed cells; a pipe inside a code span or after a backslash does not split. */
+/** Split a table row into trimmed cells; a pipe inside a code span or after a backslash does not split. A backslash pair stays a pair. */
 export function splitRow(line: string): string[] {
   const cells: string[] = [];
   let cur = '';
@@ -58,6 +59,7 @@ export function splitRow(line: string): string[] {
   for (let i = 0; i < body.length; i++) {
     const c = body[i];
     if (c === '\\' && body[i + 1] === '|') { cur += '|'; i++; }
+    else if (c === '\\' && i + 1 < body.length) { cur += c + body[i + 1]; i++; }
     else if (c === '`') { inCode = !inCode; cur += c; }
     else if (c === '|' && !inCode) { cells.push(cur.trim()); cur = ''; }
     else cur += c;

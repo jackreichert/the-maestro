@@ -23,6 +23,7 @@ const CSS = `${BASE_CSS}
 export class AskCardElement extends HTMLElement {
   #root: ShadowRoot;
   #ask: AskCard | null = null;
+  #locked = false;
 
   constructor() {
     super();
@@ -35,6 +36,10 @@ export class AskCardElement extends HTMLElement {
     this.#render();
   }
 
+  /** True while the page shows sample data: the card says so and Done cannot be pressed. */
+  get locked(): boolean { return this.#locked; }
+  set locked(v: boolean) { this.#locked = v; this.#render(); }
+
   #render(): void {
     const a = this.#ask;
     if (!a) { this.#root.replaceChildren(); return; }
@@ -42,9 +47,9 @@ export class AskCardElement extends HTMLElement {
     const stale = a.ageDays > STALE_DAYS;
     const links = [...(a.links.note ? [a.links.note] : []), ...a.links.tracker, ...a.links.prs];
     const heading = h('h3', { id: `${uid}-h`, tabindex: '-1' }, a.needed);
-    const answer = h('textarea', { id: `${uid}-t`, rows: '3' });
+    const answer = h('textarea', { id: `${uid}-t`, rows: '3', disabled: this.#locked });
     const status = h('p', { class: 'status', role: 'status', tabindex: '-1' });
-    const done = h('button', { type: 'button' }, 'Done');
+    const done = h('button', { type: 'button', disabled: this.#locked }, 'Done');
     done.addEventListener('click', () => {
       const detail: AskResolveDetail = { id: a.id, answer: answer.value.trim() };
       this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail, bubbles: true, composed: true }));
@@ -62,7 +67,7 @@ export class AskCardElement extends HTMLElement {
       a.context ? h('p', { class: 'context' }, a.context) : null,
       meta,
       h('label', { for: `${uid}-t` }, 'Your answer'),
-      answer, done, status));
+      answer, done, this.#locked ? h('p', { class: 'context' }, 'Sample data: this ask cannot be marked done.') : null, status));
   }
 }
 
