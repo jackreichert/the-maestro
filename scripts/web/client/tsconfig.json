@@ -1,0 +1,13 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": [],
+    "sourceMap": true
+  },
+  "include": ["./src/*.ts"],
+  "exclude": ["./dist"]
+}
