@@ -1,14 +1,14 @@
 // Run: node --test scripts/loop-supervisor.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DELAYS, quietSleepSeconds, secondsUntilClock, supervise } from './loop-supervisor.ts';
 import type { LoopResult } from './loop-supervisor.ts';
 import { digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
-import { commands, fillTemplate, LABEL } from './install-loop-supervisor.ts';
+import { commands, fillTemplate, LABEL, shq } from './install-loop-supervisor.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'loop-supervisor-test-'));
 const SUPERVISOR = new URL('./loop-supervisor.ts', import.meta.url).pathname;
@@ -58,6 +58,7 @@ test('quiet-hours parsing: next occurrence in the zone, wrap past midnight, 12h 
   assert.equal(secondsUntilClock(NOON, '11:00', 'UTC'), 12 * 3600);
   assert.equal(secondsUntilClock(NOON + 30000, '12:01', 'UTC'), 30);
   assert.equal(secondsUntilClock(NOON, '07:00', 'America/New_York'), 12 * 3600);
+  assert.equal(secondsUntilClock(Date.parse('2026-03-08T06:00:00Z'), '04:00', 'America/New_York'), 2 * 3600);
   assert.equal(secondsUntilClock(NOON, '25:00', 'UTC'), null);
   assert.equal(secondsUntilClock(NOON, '10:00', 'Not/AZone'), null);
   assert.equal(quietSleepSeconds('QUIET-HOURS stop until 13:00 America/New_York', NOON), 5 * 3600);
@@ -97,7 +98,7 @@ test('install fills every placeholder, prints the launchctl commands, never runs
   assert.equal(/\{\{/.test(plist), false);
   assert.match(plist, /<key>KeepAlive<\/key>\s*<true\/>/);
   assert.match(plist, /<integer>30<\/integer>/);
-  assert.match(ok.stdout, new RegExp(`launchctl bootstrap gui/\\d+ ${out}`));
+  assert.match(ok.stdout, new RegExp(`launchctl bootstrap gui/\\d+ '${out}'`));
   assert.match(ok.stdout, new RegExp(`launchctl bootout gui/\\d+/${LABEL}`));
   assert.match(ok.stdout, /launchctl print/);
   const events = join(ledger, 'Events');
@@ -115,4 +116,26 @@ test('fillTemplate escapes XML and rejects a placeholder without a value; comman
   assert.equal(fillTemplate('<s>{{A}}</s>', { A: 'a&b<c' }), '<s>a&amp;b&lt;c</s>');
   assert.throws(() => fillTemplate('{{A}}{{B}}', { A: '1' }), /\{\{B\}\}/);
   assert.match(commands('/p.plist', 501).unload, new RegExp(`gui/501/${LABEL}$`));
+});
+
+test('commands single-quote paths; a space and a single quote survive a shell round trip', () => {
+  const plist = "/tmp/a b/it's.plist";
+  const c = commands(plist, 501);
+  assert.equal(shq("it's"), "'it'\\''s'");
+  assert.equal(spawnSync('sh', ['-c', `printf %s ${c.load.split(' ').slice(3).join(' ')}`], { encoding: 'utf8' }).stdout, plist);
+});
+
+test('SIGTERM to the supervisor is forwarded to the loop and the supervisor exits 0 after it', async () => {
+  const dir = tempDir();
+  const marker = join(dir, 'marker');
+  const bin = join(dir, 'slow-loop.sh');
+  writeFileSync(bin, `#!/bin/sh\ntrap 'echo term >> "${marker}"; exit 143' TERM\necho started >> "${marker}"\nwhile :; do sleep 0.1; done\n`);
+  chmodSync(bin, 0o755);
+  const p = spawn(process.execPath, [SUPERVISOR], { env: envFor(tempDir(), { MAESTRO_LOOP_BIN: bin }) });
+  const closed = new Promise<number | null>((resolve) => p.on('close', resolve));
+  for (let i = 0; i < 100 && !existsSync(marker); i += 1) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(existsSync(marker), true);
+  p.kill('SIGTERM');
+  assert.equal(await closed, 0);
+  assert.match(readFileSync(marker, 'utf8'), /term/);
 });

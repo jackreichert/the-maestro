@@ -31,9 +31,12 @@ export function fillTemplate(template: string, values: Record<string, string>): 
   return filled;
 }
 
+/** A shell-safe single-quoted word: each embedded single quote becomes '\''. */
+export const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+
 /** The commands the user runs, in order. `uid` is the numeric user id launchd's gui domain is keyed by. */
 export const commands = (plist: string, uid: number): { load: string; check: string; restart: string; unload: string } => ({
-  load: `launchctl bootstrap gui/${uid} ${plist}`,
+  load: `launchctl bootstrap gui/${uid} ${shq(plist)}`,
   check: `launchctl print gui/${uid}/${LABEL}`,
   restart: `launchctl kickstart -k gui/${uid}/${LABEL}`,
   unload: `launchctl bootout gui/${uid}/${LABEL}`,

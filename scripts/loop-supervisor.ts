@@ -34,16 +34,21 @@ export interface SuperviseDeps {
   maxRuns?: number;
 }
 
-/** Seconds from `now` until the next HH:MM on the clock of `tz`, at least 1 and at most the cap; null when the text is not a time or zone. */
+/**
+ * Seconds from `now` until the wall clock of `tz` next reads HH:MM, found by scanning forward minute by minute (so a DST change
+ * in between is honoured), at most the 12h cap; null when the text is not a time or zone. Already at HH:MM counts as a full wait.
+ */
 export function secondsUntilClock(now: number, hhmm: string, tz: string): number | null {
   const m = hhmm.match(/^(\d{1,2}):(\d{2})$/);
   if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
-  let current: number;
-  try { current = localClock(now, tz).minutes; } catch { return null; }
-  const secondsIntoMinute = Math.floor(now / 1000) % 60;
-  let minutes = (Number(m[1]) * 60 + Number(m[2]) - current + 1440) % 1440;
-  if (minutes === 0) minutes = 1440;
-  return Math.min(DELAYS.quietCap, Math.max(1, minutes * 60 - secondsIntoMinute));
+  const target = Number(m[1]) * 60 + Number(m[2]);
+  const nextMinute = (Math.floor(now / 60000) + 1) * 60000;
+  try {
+    for (let at = nextMinute; at - now <= DELAYS.quietCap * 1000; at += 60000) {
+      if (localClock(at, tz).minutes === target) return Math.max(1, Math.ceil((at - now) / 1000));
+    }
+  } catch { return null; }
+  return DELAYS.quietCap;
 }
 
 /** Seconds to sleep for a quiet-hours stop, read from the loop's stdout; null when no `QUIET-HOURS stop until HH:MM <tz>` line is there. */
