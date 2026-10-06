@@ -32,7 +32,7 @@ import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
-import { digestBody, digestDir, markSeen, unseenDigests } from './lib/digest-store.ts';
+import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
 import type { TypeRegistry } from './event-types/index.ts';
@@ -204,20 +204,20 @@ async function run({ dir, types, once, pinned }: { dir: string; types: TypeRegis
   }
 }
 
-/** Unseen saved digests as one text, marked seen when `markSeen` is set. Empty string when there are none. */
-function takeUnseen(dir: string, mark: boolean): string {
-  const files = unseenDigests(dir);
-  const text = files.map(digestBody).join('\n');
-  if (mark) files.forEach(markSeen);
-  return text;
+/** Prints the unseen digests. With `claim`, they are first claimed (so no other waiter takes them) and marked seen only after printing: at-least-once. Returns whether anything was printed. */
+function printUnseen(dir: string, claim: boolean): boolean {
+  const taken = claim ? claimDigests(dir) : unseenDigests(dir).map((f) => ({ text: digestBody(f), finish: () => {} }));
+  if (!taken.length) return false;
+  console.log(taken.map((t) => t.text).join('\n'));
+  taken.forEach((t) => t.finish());
+  return true;
 }
 
-/** Blocks until an unseen digest exists (exit 10, printed and marked seen) or the timeout passes (exit 0, silent). */
+/** Blocks until an unseen digest is claimed (printed, then marked seen, exit 10) or the timeout passes (exit 0, silent). A waiter that loses a claim keeps waiting. */
 async function digestWait(dir: string, timeoutMs: number, pollSeconds: number): Promise<number> {
   const end = Date.now() + timeoutMs;
   for (;;) {
-    const text = takeUnseen(dir, true);
-    if (text) { console.log(text); return EXIT.actionable; }
+    if (printUnseen(dir, true)) return EXIT.actionable;
     if (Date.now() >= end) return EXIT.ok;
     await sleep(Math.min(pollSeconds, Math.max(0.05, (end - Date.now()) / 1000)));
   }
@@ -274,7 +274,7 @@ async function main(argv: string[]): Promise<number> {
     } else if (cmd === 'digest-wait' || cmd === 'digests') {
       if (!LEDGER_ROOT) return usage('saved digests live under the ledger root; set LEDGER_ROOT (or ledger_root in the config)');
       const saved = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
-      if (cmd === 'digests') { console.log(takeUnseen(saved, Boolean(v['mark-seen'])) || 'no unseen digests'); return EXIT.ok; }
+      if (cmd === 'digests') { if (!printUnseen(saved, Boolean(v['mark-seen']))) console.log('no unseen digests'); return EXIT.ok; }
       const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
       const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
       if (!(hours > 0) || !(poll > 0)) return usage('--timeout-hours and --poll-seconds need positive numbers');
