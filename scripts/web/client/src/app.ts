@@ -2,7 +2,7 @@ import './stream-board.ts';
 import './podium-chart.ts';
 import './md-fragment.ts';
 import { BASE_CSS, h, shadow } from './dom.ts';
-import { loadCharts, loadState } from './api.ts';
+import { describeSources, loadCharts, loadState } from './api.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
@@ -31,7 +31,8 @@ export class PodiumApp extends HTMLElement {
   #root: ShadowRoot;
   #state: PodiumState | null = null;
   #charts: ChartsData | null = null;
-  #source: Source = 'fixture';
+  #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
+  #dropped = 0;
   #active = OVERVIEW;
   readonly #onHash = (): void => { this.#select(parseFragment(location.hash, this.#ids()), false); };
 
@@ -46,9 +47,10 @@ export class PodiumApp extends HTMLElement {
     Promise.all([loadState(), loadCharts()]).then(([s, c]) => {
       this.#state = s.data;
       this.#charts = c.data;
-      this.#source = s.source;
+      this.#sources = { state: s.source, charts: c.source };
+      this.#dropped = s.dropped + c.dropped;
       this.#active = parseFragment(location.hash, this.#ids());
-      this.#render();
+      this.#safeRender();
     }).catch((e: unknown) => {
       this.#root.replaceChildren(h('p', { class: 'error', role: 'alert' }, `Could not load the Podium: ${e instanceof Error ? e.message : 'unknown error'}`));
     });
@@ -62,8 +64,17 @@ export class PodiumApp extends HTMLElement {
     if (id === this.#active && !focusTab) return;
     this.#active = id;
     if (location.hash !== formatFragment(id)) history.replaceState(null, '', formatFragment(id));
-    this.#render();
+    this.#safeRender();
     if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
+  }
+
+  /** Render, and show the failure instead of throwing uncaught from an event handler or a promise callback. */
+  #safeRender(): void {
+    try {
+      this.#render();
+    } catch (e) {
+      this.#root.replaceChildren(h('p', { class: 'error', role: 'alert' }, `Could not draw the Podium: ${e instanceof Error ? e.message : 'unknown error'}`));
+    }
   }
 
   #render(): void {
@@ -91,13 +102,14 @@ export class PodiumApp extends HTMLElement {
       this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active));
     this.#root.replaceChildren(
       h('header', {}, h('h1', {}, 'Podium'),
-        h('p', { class: 'source', role: 'status' }, this.#source === 'fixture' ? 'Showing bundled sample data: no server answered.' : `Live. Updated ${st.generatedAt}.`)),
+        h('p', { class: 'source', role: 'status' }, describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt))),
       h('div', { role: 'tablist', 'aria-label': 'Streams' }, ...tabs),
       panel);
   }
 
   #board(st: PodiumState, stream: string): Node {
     const board = h('stream-board', { stream });
+    board.live = this.#sources.state === 'server';
     board.state = st;
     return board;
   }

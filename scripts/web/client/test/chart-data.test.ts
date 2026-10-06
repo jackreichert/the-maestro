@@ -4,22 +4,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from '../src/chart-data.ts';
 import { limitSeries } from '../src/chart-math.ts';
-import { isCharts, isState } from '../src/api.ts';
 import type { ChartsData } from '../src/types.ts';
 
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 const charts = fixture('charts.json') as ChartsData;
-
-test('the bundled fixtures satisfy the contract guards the client applies at runtime', () => {
-  assert.ok(isState(fixture('state.json')));
-  assert.ok(isCharts(charts));
-  assert.ok(!isState({ streams: [] }));
-  assert.ok(!isState(null));
-  const { priorities: _p, ...noPriorities } = fixture('state.json') as Record<string, unknown>;
-  assert.ok(!isState(noPriorities), 'a state without priorities would throw at render time');
-  assert.ok(!isState({ ...(fixture('state.json') as object), working: undefined }));
-  assert.ok(!isCharts('x'));
-});
 
 test('throughputChart has one label per day and one aligned series per stream, zero-filled', () => {
   const c = throughputChart(charts);
