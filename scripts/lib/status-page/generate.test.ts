@@ -56,7 +56,7 @@ test('writes The-Podium.md with the freshness line, then the priorities, then th
   assert.match(lines[lines.indexOf('# The Podium') + 2] ?? '', /^Updated 11:00 am ET · PR data 11:00 am ET \(2026-10-05\)\./);
   assert.equal(lines[lines.indexOf('# The Podium') + 4], "## Today's priorities");
   assert.match(page, /1\. Get widgets out _\[Alpha: awaiting 1 · in flight 1 · open PRs 1\]_\n2\. Unmapped goal\n/);
-  assert.match(page, /### Alpha \(1\)\n\n- \[ \] `bb22` \*\*Merge widgets #12 now\?\*\* See FAKE-12 \(\[proj-7\]\(obsidian:[^)]*\) · \[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\) · \[#12 → develop\]\(https:\/\/example\.test\/acme-widgets\/pull\/12\)\)\n  > answer: \n/, 'under its stream: id, the full decision, context, clickable tickets and PR, then the answer stub');
+  assert.match(page, /### Alpha \(1\)\n\n- \[ \] `bb22` \*\*Merge widgets #12 now\?\*\* See FAKE-12 \(<span style=\"white-space:nowrap\">\[proj-7\]\(obsidian:[^)]*\)<\/span> · <span style=\"white-space:nowrap\">\[FAKE-12\]\(https:\/\/tracker\.test\/browse\/FAKE-12\)<\/span> · <span style=\"white-space:nowrap\">\[#12\]\(https:\/\/example\.test\/acme-widgets\/pull\/12\)<\/span>\)\n  > answer: \n/, 'under its stream: id, the full decision, context, clickable tickets and PR, then the answer stub');
   assert.match(page, /### Gamma \(1\)\n\n- \[ \] `cc33` \*\*old question \| with a pipe\*\* _10 days old_\n  > answer: \n/, 'a stream only the ledger knows still gets its heading, old asks say so');
 });
 
@@ -183,7 +183,7 @@ test('nothing in the page names an install: no org, vault or tracker unless the 
   const page = generate(opts(dir(), { dryRun: true, config: bare }), deps([raw(5, 'whatever')])).page;
   assert.doesNotMatch(page, /obsidian:\/\/|tracker\.test|atlassian/);
   assert.match(page, /### other \(1\)/);
-  assert.match(page, /\| FAKE-5 \|/, 'a key with no tracker URL is plain text');
+  assert.match(page, /\| <span style=\"white-space:nowrap\">FAKE-5<\/span> \|/, 'a key with no tracker URL is plain text');
 });
 
 test('regenerating keeps an answer, a tick and a priorities edit the watcher has not reported, and records the generator\'s own hash', () => {
@@ -232,10 +232,10 @@ test('develop and staging twins share a row, by title and by ticket key; a missi
     raw(21, 'acme-widgets', { title: 'fix: another wording FAKE-2', baseRefName: 'staging', headRefName: 'fix/b' }),
     raw(30, 'acme-widgets', { title: 'fix: lonely FAKE-3', headRefName: 'fix/c' }),
   ];
-  const rows = generate(opts(dir(), { dryRun: true }), deps(prs)).page.split('\n').filter((l) => /^\| \[FAKE-[123]\]/.test(l));
+  const rows = generate(opts(dir(), { dryRun: true }), deps(prs)).page.split('\n').filter((l) => /^\| <span style=\"white-space:nowrap\">\[FAKE-[123]\]/.test(l));
   assert.equal(rows.length, 3);
-  assert.match(rows[0] ?? '', /\[#10 → develop\].*\| \[#11 → staging\]/);
-  assert.match(rows[1] ?? '', /\[#20 → develop\].*\| \[#21 → staging\]/);
+  assert.match(rows[0] ?? '', /\[#10 → develop\].*\| <span[^>]*>\[#11 → staging\]/);
+  assert.match(rows[1] ?? '', /\[#20 → develop\].*\| <span[^>]*>\[#21 → staging\]/);
   assert.match(rows[2] ?? '', /\[#30 → develop\].* \| none \|/);
 });
 

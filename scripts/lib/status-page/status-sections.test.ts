@@ -96,7 +96,7 @@ test('Working on now sits directly under the priorities, grouped by stream, with
   assert.ok(!lines.slice(pri + 1, work).some((l) => /^## /.test(l)), 'no section between the priorities and Working on now');
   const t = section(p, '## Working on now (5)').filter((l) => l.startsWith('| ')).slice(1).map(cells);
   assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Team Select', '`aa11`'], ['Team Select', '`aa12`'], ['Bayada', '`bb21`'], ['Bayada', '`qq95`'], ['other', '`cc31`']]);
-  assert.equal(t[0]?.[3], '[FAKE-1](https://tracker.test/browse/FAKE-1)');
+  assert.equal(t[0]?.[3], `<span style="white-space:nowrap">[FAKE-1](https://tracker.test/browse/FAKE-1)</span>`);
   assert.equal(t[0]?.[4], 'Model A');
   assert.equal(t[0]?.[5], '4 h (since 7:00 am ET)');
   assert.equal(t[2]?.[5], '30 min (since 10:30 am ET)');
@@ -112,7 +112,7 @@ test('Queued sits right after Working on now, grouped by stream, with ticket lin
   assert.ok(q.length > 0);
   const t = q.filter((l) => l.startsWith('| ')).slice(1).map(cells);
   assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Team Select', '`qq91`'], ['Team Select', '`qq93`'], ['Bayada', '`qq92`']]);
-  assert.equal(t[0]?.[3], '[FAKE-9](https://tracker.test/browse/FAKE-9)');
+  assert.equal(t[0]?.[3], `<span style="white-space:nowrap">[FAKE-9](https://tracker.test/browse/FAKE-9)</span>`);
   assert.equal(t[0]?.[4], '3 h');
   assert.equal(t[1]?.[4], '10 min', 'an item parked after it started waits from the moment it was queued');
   assert.equal(t[2]?.[4], '1 h');
@@ -160,5 +160,30 @@ test('a single long token with no space is clipped with the ellipsis and loses n
   try {
     const line = section(page(board()), '## Working on now (1)').find((l) => l.includes('`lt01`')) as string;
     assert.ok(line.includes(`${'x'.repeat(107)}...`) && !line.includes('x'.repeat(108)), 'exactly 107 characters then the ellipsis');
+  } finally { rows.splice(0, rows.length, ...saved); }
+});
+
+test('an ask links its PRs as plain #N (no base or stack arrows), drops a bare repo/pull/N fragment, and keeps tickets on one line', () => {
+  const pr = (number: number, base: string, head: string) => ({
+    number, title: `feat: thing ${number}`, url: `https://example.test/acme-widgets/pull/${number}`, isDraft: false, baseRefName: base, headRefName: head,
+    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Bayada',
+  });
+  const saved = rows.splice(0, rows.length, row('pl01', 'question', 'close #31 and #32? see acme-widgets/pull/32 and FAKE-7', { stream: 'Bayada' }));
+  try {
+    const input: PageInput = { now: NOW, status: board(), triage: { items: [] }, prs: [pr(31, 'develop', 'a'), pr(32, 'a', 'b')], prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config: CONFIG, command: 'x' };
+    const line = section(renderPage(input).page, '## Needs attention now (1)').find((l) => l.startsWith('- [ ]')) as string;
+    assert.match(line, /\[#31\]\(https:\/\/example\.test\/acme-widgets\/pull\/31\)/);
+    assert.match(line, /\[#32\]\(https:\/\/example\.test\/acme-widgets\/pull\/32\)/);
+    assert.doesNotMatch(line, /→|stacked/);
+    assert.doesNotMatch(line.replace(/\]\([^)]*\)/g, ']'), /\/pull\//, 'no bare repo/pull/N left in the text');
+    assert.match(line, /<span style="white-space:nowrap">\[FAKE-7\]\(https:\/\/tracker\.test\/browse\/FAKE-7\)<\/span>/);
+  } finally { rows.splice(0, rows.length, ...saved); }
+});
+
+test('table cells escape the characters Markdown reads as markup, not just the pipe', () => {
+  const saved = rows.splice(0, rows.length, row('ce01', 'wip', 'fix *bold* snake_case `code` <b> [x] a|b ~~s~~', { stream: 'Bayada', model: 'Model A' }));
+  try {
+    const line = section(page(board()), '## Working on now (1)').find((l) => l.includes('`ce01`')) as string;
+    assert.ok(line.includes('fix \\*bold\\* snake\\_case \\`code\\` \\<b\\> \\[x\\] a\\|b \\~\\~s\\~\\~'), line);
   } finally { rows.splice(0, rows.length, ...saved); }
 });
