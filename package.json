@@ -8,6 +8,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit && tsc -p scripts/web/client/tsconfig.json --noEmit",
     "build:web": "tsc -p scripts/web/client/tsconfig.json",
+    "web:static": "npm run build:web && node scripts/web/serve-static.ts",
     "test": "MAESTRO_STATUS_DIR=\"$(mktemp -d)\" node --test 'scripts/**/*.test.ts'"
   },
   "devDependencies": {
