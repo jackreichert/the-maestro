@@ -43,6 +43,7 @@
  *   journal.ts status [--full]               what is open + done today, with usage marks
  *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
  * (with the Podium configured, --footer ends with `**Podium:** <uri>`)
+ *   journal.ts review-queue [--cap N] [--json]   the dispatch gate: open non-draft PRs awaiting review against review_queue_cap (default 4). Exit 0 room, 1 full, 2 unreadable (treat as full)
  *   journal.ts standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.ts roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
@@ -113,7 +114,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT } from './local-config.ts';
+import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP } from './local-config.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
@@ -135,6 +136,8 @@ import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSerie
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import { sessionLine, sessionStatus } from './token-metrics.ts';
+import { readQueue, readSnapshotPrs, queueText, queueExitCode } from './lib/review-queue.ts';
+import { fetchLive, snapshotPath } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
@@ -609,6 +612,15 @@ function cmdStatus() {
         console.log('\n  (empty)');
     }
     console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
+}
+
+/** The dispatch gate (reference/dispatch.md#review-queue-cap): a live count, the stored snapshot if GitHub fails, and an exit code the orchestrator can test. */
+function cmdReviewQueue() {
+    const capArg = arg('cap');
+    if (capArg !== null && !(/^\d+$/.test(capArg) && Number(capArg) > 0)) die('--cap must be a positive whole number.');
+    const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(snapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg));
+    if (asJson) console.log(JSON.stringify(reading, null, 2)); else queueText(reading).forEach((l) => console.log(l));
+    process.exit(queueExitCode(reading));
 }
 
 function cmdStandup() {
@@ -1439,6 +1451,7 @@ switch (cmd) {
     case 'stamp-missing': cmdStampMissing(); break;
     case 'usage': cmdUsage(); break;
     case 'status': cmdStatus(); break;
+    case 'review-queue': cmdReviewQueue(); break;
     case 'standup': cmdStandup(); break;
     case 'roll': cmdRoll(); if (SCRIPTS_SHELF_DIR && !has('fast')) cmdScratch(); break;
     case 'scratch': cmdScratch(); break;

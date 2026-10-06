@@ -37,7 +37,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
 import { searchAllPages } from './lib/gh-search.ts';
@@ -147,12 +147,12 @@ const toSnapshotPr = (n: SearchNodePr): SnapshotPr => ({
     commentTotal: n.comments.totalCount,
 });
 
-function fetchLive(): Snapshot {
+export function fetchLive(): Snapshot {
     // Every page: a single 50-result page made PRs past the 50th look "no longer open".
     return { takenAt: new Date().toISOString(), prs: searchAllPages<SearchNodePr>(QUERY).map(toSnapshotPr) };
 }
 
-function loadSnapshot(path: string): Snapshot | null {
+export function loadSnapshot(path: string): Snapshot | null {
     if (!existsSync(path)) return null;
     return JSON.parse(readFileSync(path, 'utf8')) as Snapshot;
 }
@@ -288,14 +288,17 @@ function printDiff({ changes, botEvents }: SnapshotDiff): void {
     }
 }
 
+/** Where the snapshot lives under a ledger root. */
+export const snapshotPath = (root: string): string => join(root, 'Projects', CONTAINER_PROJECT, 'Journal', 'prs-snapshot.json');
+
 function cmdSnapshot(): void {
     const vault = arg('vault', LEDGER_ROOT || VAULT_ROOT);
     if (!vault) {
         console.error('Pass --vault <path> (the ledger root), or set LEDGER_ROOT (or VAULT_ROOT).');
         process.exit(1);
     }
-    const dir = join(vault, 'Projects', CONTAINER_PROJECT, 'Journal');
-    const path = join(dir, 'prs-snapshot.json');
+    const path = snapshotPath(vault);
+    const dir = dirname(path);
 
     const prev = loadSnapshot(path);
     const curr = fetchLive();
