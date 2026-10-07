@@ -73,3 +73,21 @@ test('Edit answer reopens a copied ask and puts its text back as a draft', () =>
   assert.equal(s.resolvedAnswer('a1'), null);   // a redraw now rebuilds the form, not the copied status
   assert.equal(s.draft('a1'), 'ship it, with a caveat');
 });
+
+test('resolve is idempotent per ask: only the first call announces, and Edit answer re-arms it', () => {
+  const s = new AskState();
+  assert.equal(s.resolve('a1', 'first'), true);
+  assert.equal(s.resolve('a1', 'second'), false, 'a second click on a rebuilt card cannot announce again');
+  assert.equal(s.resolvedAnswer('a1'), 'first');
+  s.reopen('a1', 'first');
+  assert.equal(s.resolve('a1', 'edited'), true);
+});
+
+test('a copy in flight holds an update that lands during the press, and releases it when the copy settles', () => {
+  const g = new UpdateGate<string>();
+  g.set({ pointer: true });                 // pointerdown on Copy answer
+  g.set({ busy: true });                    // the card starts the clipboard write
+  assert.equal(g.offer('d1'), null);
+  assert.equal(g.set({ pointer: false }), null, 'the press ending is not enough: the copy has not settled');
+  assert.equal(g.set({ busy: false }), 'd1');
+});

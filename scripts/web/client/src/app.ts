@@ -6,6 +6,7 @@ import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
+import type { GateInput } from './ask-state.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
@@ -14,7 +15,7 @@ import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
-import type { ChartsData, PodiumState } from './types.ts';
+import type { AskBusyDetail, ChartsData, PodiumState } from './types.ts';
 
 interface Fresh { state: PodiumState; charts: ChartsData; dropped: number }
 
@@ -222,6 +223,7 @@ export class PodiumApp extends HTMLElement {
     this.addEventListener('focusout', this.#onFocusMove);
     this.addEventListener('input', this.#onFocusMove);
     this.addEventListener('pointerdown', this.#onPress);
+    this.addEventListener('ask-busy', this.#onBusy);
     window.addEventListener('pointerup', this.#onRelease);
     window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
@@ -247,6 +249,7 @@ export class PodiumApp extends HTMLElement {
     this.removeEventListener('focusout', this.#onFocusMove);
     this.removeEventListener('input', this.#onFocusMove);
     this.removeEventListener('pointerdown', this.#onPress);
+    this.removeEventListener('ask-busy', this.#onBusy);
     window.removeEventListener('pointerup', this.#onRelease);
     window.removeEventListener('pointercancel', this.#onRelease);
     window.clearInterval(this.#tick);
@@ -287,13 +290,17 @@ export class PodiumApp extends HTMLElement {
     this.#safeRender();
   }
 
-  #release(input: { pointer?: boolean; typing?: boolean }): void {
+  #release(input: GateInput): void {
     const held = this.#gate.set(input);
     if (held) this.#show(held);
   }
 
   // A press holds updates from pointerdown (before focus moves off a field) until the click has been delivered.
   readonly #onPress = (): void => { this.#gate.set({ pointer: true }); };
+  // A card is mid-action (copying): hold until it says it is done, however long the browser takes to answer.
+  readonly #onBusy = (e: Event): void => {
+    if (e instanceof CustomEvent) this.#release({ busy: (e.detail as AskBusyDetail).busy });
+  };
   readonly #onRelease = (): void => {
     setTimeout(() => this.#release({ pointer: false }), 0);   // the click fires after pointerup; let it run first
   };
@@ -310,6 +317,7 @@ export class PodiumApp extends HTMLElement {
       if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
       return;
     }
+    this.#release({ busy: false });   // this render replaces any card still copying, and its busy=false would never arrive
     this.#active = id;
     if (location.hash !== formatFragment(id)) history.replaceState(null, '', formatFragment(id));
     this.#safeRender();

@@ -21,9 +21,12 @@ export class AskState {
   /** The answer the card was copied for chat with, or null while it is still open. */
   resolvedAnswer(id: string): string | null { return this.#resolved.get(id) ?? null; }
 
-  resolve(id: string, answer: string): void {
+  /** Settle the ask. True the first time only: a second call for an ask already settled changes nothing, so it cannot announce twice. */
+  resolve(id: string, answer: string): boolean {
+    if (this.#resolved.has(id)) return false;
     this.#resolved.set(id, answer);
     this.#drafts.delete(id);
+    return true;
   }
 
   /** The user chose Edit answer: the card is open again and the answer goes back to being a draft. */
@@ -43,15 +46,16 @@ export class AskState {
 /** The page's shared memory; ask cards read and write it. */
 export const askState = new AskState();
 
-export interface GateInput { pointer?: boolean; typing?: boolean }
+export interface GateInput { pointer?: boolean; typing?: boolean; busy?: boolean }
 
 /** Holds the newest data back while the user is mid-interaction, and hands it over once they are not. */
 export class UpdateGate<T> {
   #held: T | null = null;
   #pointer = false;
   #typing = false;
+  #busy = false;   // an action the card started has not finished (the clipboard write behind Copy answer)
 
-  get blocked(): boolean { return this.#pointer || this.#typing; }
+  get blocked(): boolean { return this.#pointer || this.#typing || this.#busy; }
   get held(): boolean { return this.#held !== null; }
 
   /** New data: returned to show now, or null when it was held (and replaces anything held before). */
@@ -65,6 +69,7 @@ export class UpdateGate<T> {
   set(input: GateInput): T | null {
     if (input.pointer !== undefined) this.#pointer = input.pointer;
     if (input.typing !== undefined) this.#typing = input.typing;
+    if (input.busy !== undefined) this.#busy = input.busy;
     if (this.blocked || this.#held === null) return null;
     const data = this.#held;
     this.#held = null;

@@ -1,7 +1,7 @@
 import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
 import { askAge, chatAnswer } from './glance.ts';
 import { askState } from './ask-state.ts';
-import type { AskCard, AskResolveDetail } from './types.ts';
+import type { AskBusyDetail, AskCard, AskResolveDetail } from './types.ts';
 
 /** Older than this many days an ask is flagged, matching the Markdown page's 3 day threshold. */
 export const STALE_DAYS = 3;
@@ -207,23 +207,26 @@ export class AskCardElement extends HTMLElement {
           : 'Select the answer above and copy it by hand. This page cannot write to the ledger yet.'),
         h('div', { class: 'actions' }, again, edit));
       again.addEventListener('click', () => { void send(text); });
-      edit.addEventListener('click', () => { announced = false; askState.reopen(a.id, answer.value); status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
+      edit.addEventListener('click', () => { askState.reopen(a.id, answer.value); status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
       (form?.parentNode ? form : body.querySelector('.resolved'))?.replaceWith(status);   // parentNode, not isConnected: this also runs before the card is attached
       this.toggleAttribute('answered', ok);
       copied.hidden = !ok;
       if (focus) status.focus();
     };
-    let announced = false;
+    const busy = (on: boolean): void => {
+      this.dispatchEvent(new CustomEvent<AskBusyDetail>('ask-busy', { detail: { busy: on }, bubbles: true, composed: true }));
+    };
     const send = async (text: string): Promise<void> => {
+      busy(true);   // the page holds redraws until the copy has settled, or the card would be replaced mid-await
       let ok = false;
       try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
-      // Once per answer: Copy again re-copies the same text and must not look like a second decision to a future writer.
-      if (ok && !announced) {
-        announced = true;
-        askState.resolve(a.id, answer.value.trim());   // remembered, so a redraw keeps the card settled
+      // Once per answer, kept in askState so a rebuilt card cannot announce it again: Copy again re-copies the same text
+      // and must not look like a second decision to a future writer.
+      if (ok && askState.resolve(a.id, answer.value.trim())) {
         this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer: answer.value.trim() }, bubbles: true, composed: true }));
       }
       showStatus(text, ok);
+      busy(false);
     };
     const submit = (): void => {
       if (this.#locked || !form?.isConnected) return;
@@ -257,7 +260,6 @@ export class AskCardElement extends HTMLElement {
     const prior = this.#locked ? null : askState.resolvedAnswer(a.id);
     if (prior !== null) {
       answer.value = prior;
-      announced = true;
       setOpen(true, false);
       showStatus(chatAnswer(a.id, prior) ?? prior, true, false);
     } else if (!this.#locked && answer.value !== '') {

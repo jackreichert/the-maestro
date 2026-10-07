@@ -66,4 +66,6 @@ export interface ChartsData {
 }
 
 /** What `ask-resolve` carries; this slice writes nothing to the network. */
+/** `ask-busy`: a card is partway through an action (true) or has finished it (false); the page holds redraws until it has. */
+export interface AskBusyDetail { busy: boolean }
 export interface AskResolveDetail { id: string; answer: string }
