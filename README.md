@@ -196,7 +196,7 @@ flowchart LR
 
 ### PRs: draft only, sized, linked
 
-Pull requests open as drafts, assigned to you, through `pr-open.ts`, which checks the body and runs the size gate. Every PR body carries Context, Reviewer guide, Risk and blast radius, Rollback / flag and How to verify locally sections, plus a small mermaid diagram when the PR is stacked or wide, all written in the author's own voice and free of private-workspace references; `pr-open.ts` refuses without them (`n/a, <reason>` is allowed, a bare placeholder is not). It checks structure, not truth: the risk line format, a fenced verify command and secret or attribution-shaped content are machine-checked, while whether the risk is honest or the review order is best stays a reviewer's call. `{{file:path}}` tokens in the body become links to that file in the PR's Files changed tab once the PR exists (`pr-guide-links.ts` backfills an open PR). The template, the enforced-versus-advisory table and the settings are in [reference/git.md](reference/git.md#pr-body). In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
+Pull requests open as drafts, assigned to you, through `pr-open.ts`, which checks the body and runs the size gate. Every PR body carries Context, Reviewer guide, Risk and blast radius, Rollback / flag and How to verify locally sections, plus a small mermaid diagram when the PR is stacked or wide, all written in the author's own voice and free of private-workspace references; `pr-open.ts` refuses without them (`n/a, <reason>` is allowed, a bare placeholder is not). It checks structure, not truth: the risk line format, a fenced verify command and secret or attribution-shaped content are machine-checked, while whether the risk is honest or the review order is best stays a reviewer's call. `{{file:path}}` tokens in the body (optionally with a line range, `{{file:path#R25-R31}}`) become links to that file in the PR's Files changed tab once the PR exists (`pr-guide-links.ts` backfills an open PR). The template, the enforced-versus-advisory table and the settings are in [reference/git.md](reference/git.md#pr-body). In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
 
 ```mermaid
 flowchart LR
@@ -249,7 +249,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [session-start.ts](#session-startts) | First command of a session: registers the status watches, reports the page age and whether a loop is running |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
-| [pr-guide-links.ts](#pr-guide-linksts) | Expand `{{file:path}}` tokens in an open PR's body into Files changed links |
+| [pr-guide-links.ts](#pr-guide-linksts) | Expand `{{file:path}}` tokens in an open PR's body into Files changed links, or list the changed line ranges to link |
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
@@ -561,7 +561,7 @@ The only way agents and the orchestrator open a PR: `pr-open.ts --repo <path> --
 
 ### pr-guide-links.ts
 
-`pr-guide-links.ts <repo-path> <pr-number>` expands `{{file:path}}` tokens in an open PR's body into links to that file in the PR's Files changed tab, the same expansion `pr-open.ts` runs after creating a PR. Re-running changes nothing, and a token naming a path outside the diff is an error that writes nothing. The link is the PR URL plus `/files#diff-<sha256 hex of the path>`; a line in a token is shown as text because a line anchor has not been verified. Exit 0 done or nothing to do, 1 an unknown path or a `gh` failure, 2 usage.
+`pr-guide-links.ts <repo-path> <pr-number>` expands `{{file:path}}` tokens in an open PR's body into links to that file in the PR's Files changed tab, the same expansion `pr-open.ts` runs after creating a PR. Re-running changes nothing, and a token naming a path outside the diff is an error that writes nothing. The link is the PR URL plus `/changes#diff-<sha256 hex of the path>`, with an optional line suffix from the token (`#R25`, `#R25-R31`, `#L10-L12`; a malformed one is an error). The format was checked against a real PR link from a private repository; an anchor on a line outside the diff's hunks may not expand or scroll, so link ranges inside changed hunks. `pr-guide-links.ts --hunks <repo-path> <pr-number> [path]` writes nothing and prints a token for each run of added lines in the PR's diff. Exit 0 done or nothing to do, 1 an unknown path or a `gh` failure, 2 usage.
 
 ### branch-sweep.ts
 

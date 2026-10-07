@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
 import { PROTECTED_BRANCHES } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
-import { linkPr, tokenPaths, hasLooseToken } from './pr-links.ts';
+import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -114,7 +114,12 @@ function main(): void {
 function checkLinkPaths(o: OpenArgs, body: string): void {
   const wanted = [...new Set(tokenPaths(body))];
   if ((body.match(/\{\{file:/g) ?? []).length !== tokenPaths(body).length) {
-    console.error('pr-open: refused, a {{file:...}} token could not be read. A token is {{file:path}} or {{file:path#R42}} with the closing braces.');
+    console.error('pr-open: refused, a {{file:...}} token could not be read. A token is {{file:path}}, {{file:path#R42}} or {{file:path#R42-R50}} with the closing braces.');
+    process.exit(1);
+  }
+  const problems = tokenProblems(body);
+  if (problems.length) {
+    console.error(`pr-open: refused, a {{file:...}} anchor is malformed: ${problems.join('; ')}`);
     process.exit(1);
   }
   if (!wanted.length) return;
