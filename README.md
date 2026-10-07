@@ -403,6 +403,8 @@ Two conventions to know: the done-today list and footer follow the ledger's UTC 
 
 The page checks every payload against its contract and skips rows that do not fit; the header line counts what was skipped (rows, priority items, fragments, chart rows, day entries and chart tables). It runs on current evergreen browsers: link checking uses `URL.parse` where it exists and `new URL` otherwise, and fragment lookup uses `Object.hasOwn` (Chrome 93+, Safari 15.4+, Firefox 92+).
 
+Links to the web open in a new tab so the Podium stays put. A pull request or ticket link on a trusted host (GitHub, Atlassian cloud) gets its own tab name, so clicking it again refocuses that tab instead of adding another; every other web link opens a fresh tab with `rel="noopener noreferrer"`. A page cannot pick which browser window a tab lands in, only a tab name, and the name is only reused when `noopener` is left off, which is why it is limited to trusted hosts. The policy is `link-policy.ts` in the client source.
+
 What this slice does not have: a per-start token (any process on this machine can read `/api` by sending the right `Host`), answering asks from the page, and live updates. Those come with the write endpoints.
 
 #### Podium design system
