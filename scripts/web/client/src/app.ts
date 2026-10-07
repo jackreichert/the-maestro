@@ -120,6 +120,10 @@ const CSS = `${BOARD_CSS}
   table.counts tbody th { font-weight: var(--weight-medium); }
   table.counts .z { color: var(--text-muted); }
 
+  .fine { margin: var(--space-7) 0 0; display: flex; justify-content: center; align-items: center; gap: var(--space-2); color: var(--text-muted); }
+  .fine .barline { fill: var(--border-strong); }
+  .fine i { font-family: var(--font-serif); font-size: var(--text-md); letter-spacing: 0.01em; }
+  @media (forced-colors: active) { .fine .barline { fill: CanvasText; } }
   .wide { margin-top: var(--space-7); display: grid; gap: var(--space-6); }
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: var(--space-4); }
   .charts podium-chart { background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); padding: var(--space-4) var(--space-4) var(--space-3); }
@@ -249,7 +253,7 @@ export class PodiumApp extends HTMLElement {
       return tab;
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active));
+      this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     const tabbar = h('div', { class: 'tabbar' }, tablist);
     this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
@@ -395,6 +399,17 @@ export class PodiumApp extends HTMLElement {
       mk('bar', 'Pull requests by CI state', prMixChart(c)),
       mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
   }
+}
+
+/**
+ * The end of the panel, as a score ends: Fine, then the final double barline (thin, then thick, read left to right), so
+ * the foot of the page says there is nothing more below.
+ */
+function fine(): HTMLElement {
+  return h('p', { class: 'fine' },
+    h('i', { lang: 'it' }, 'Fine'),
+    s('svg', { class: 'barline', viewBox: '0 0 10 20', width: '10', height: '20', 'aria-hidden': 'true', focusable: 'false' },
+      s('rect', { x: '0', y: '0', width: '1.5', height: '20' }), s('rect', { x: '5', y: '0', width: '4', height: '20' })));
 }
 
 /**
