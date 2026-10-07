@@ -25,9 +25,10 @@ function harness(opts: { stream?: FakeStream | null; shown?: string } = {}) {
   const loads: Array<{ ok: (d: Data | null) => void; fail: () => void }> = [];
   let timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
+  let fetched = 0;
   const live = new LiveUpdates<Data>({
     open: () => stream,
-    load: () => new Promise((ok, fail) => { loads.push({ ok, fail: () => fail(new Error('down')) }); }),
+    load: () => { fetched += 1; return new Promise((ok, fail) => { loads.push({ ok, fail: () => fail(new Error('down')) }); }); },
     seqOf: (d) => d.seq,
     apply: (d) => applied.push(d.seq),
     onStatus: (s) => statuses.push(s),
@@ -35,8 +36,9 @@ function harness(opts: { stream?: FakeStream | null; shown?: string } = {}) {
     clearTimer: (id) => { timers = timers.filter((t) => t.id !== id); },
   }, opts.shown ?? 's0');
   const tick = (): void => { const t = timers.shift(); t?.fn(); };
+  const fireAll = (): void => { const due = timers; timers = []; for (const t of due) t.fn(); };
   const settle = (): Promise<void> => new Promise((ok) => setImmediate(ok));
-  return { live, stream, applied, statuses, loads, tick, settle, timers: () => timers };
+  return { live, stream, applied, statuses, loads, tick, fireAll, settle, timers: () => timers, fetched: () => fetched };
 }
 
 test('a changed event reloads, and a new seq is applied while the stream is live', async () => {
@@ -137,6 +139,40 @@ test('stop closes the stream, clears the timer, and drops an answer still in fli
   h.loads.shift()?.ok({ seq: 'late' });
   await h.settle();
   assert.deepEqual(h.applied, []);
+});
+
+test('a stream that flaps twice leaves one polling loop, and stop leaves none', async () => {
+  const h = harness();
+  h.live.start();
+  h.stream?.fail();                       // polling: timer A, load 0
+  h.loads.shift()?.ok({ seq: 's0' });
+  await h.settle();
+  const firedA = h.timers()[0]?.fn;       // timer A fires: its load (the stray) is now in flight
+  h.tick();
+  const stray = h.loads.shift();
+  h.stream?.open();                       // stream back: polling stops, catch-up load
+  h.loads.shift()?.ok({ seq: 's0' });
+  h.stream?.fail();                       // down again: timer B, load
+  h.loads.shift()?.ok({ seq: 's0' });
+  await h.settle();
+  stray?.ok({ seq: 's0' });               // the stray load settles while B is pending
+  await h.settle();
+  assert.equal(h.timers().length, 1, 'one pending timer, not a second loop');
+
+  const before = h.fetched();
+  for (let period = 0; period < 3; period += 1) {
+    h.fireAll();
+    while (h.loads.length > 0) h.loads.shift()?.ok({ seq: 's0' });
+    await h.settle();
+  }
+  assert.equal(h.fetched() - before, 3, 'one fetch per period (two loops would make 6)');
+  assert.equal(h.timers().length, 1);
+
+  h.live.stop();
+  assert.equal(h.timers().length, 0);
+  const after = h.fetched();   // a timer callback that had already fired before stop must not fetch
+  firedA?.();
+  assert.equal(h.fetched(), after, 'no fetch after stop');
 });
 
 test('the indicator says its mode in words', () => {

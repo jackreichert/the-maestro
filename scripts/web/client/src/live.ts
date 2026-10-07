@@ -35,6 +35,7 @@ export class LiveUpdates<T> {
   readonly #d: LiveDeps<T>;
   #stream: StreamLike | null = null;
   #timer: unknown = null;
+  #loop = 0;   // the polling loop that may still schedule; stopping bumps it, so a loop left in flight ends instead of restarting
   #streaming = false;   // the stream is open right now
   #stopped = true;
   #request = 0;
@@ -94,14 +95,19 @@ export class LiveUpdates<T> {
   #poll(): void {
     this.#set('polling');
     if (this.#timer !== null || this.#stopped) return;
+    const mine = ++this.#loop;
     const tick = (): void => {
-      this.#timer = this.#d.setTimer(() => { void this.refresh().then(() => { if (this.#timer !== null) tick(); }); }, POLL_MS);
+      this.#timer = this.#d.setTimer(() => {
+        if (mine !== this.#loop) return;
+        void this.refresh().then(() => { if (mine === this.#loop) tick(); });
+      }, POLL_MS);
     };
     tick();
     void this.refresh();
   }
 
   #stopPolling(): void {
+    this.#loop += 1;   // invalidates the running loop, including a poll whose fetch is still in flight
     if (this.#timer !== null) this.#d.clearTimer(this.#timer);
     this.#timer = null;
   }
