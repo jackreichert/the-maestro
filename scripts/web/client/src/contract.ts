@@ -52,7 +52,8 @@ function validRows(v: unknown, rule: Shape): unknown[] {
 /** How many entries of a list were left out of its filtered copy; a non-array list has none to lose. */
 const lost = (v: unknown, kept: unknown[]): number => (Array.isArray(v) ? v.length - kept.length : 0);
 
-function priorities(v: unknown): { value: PrioritiesState; dropped: number } {
+/** A priorities state from an untrusted value: rows that fail the rules are dropped and counted, anything unrecognised is `missing`. */
+export function sanitizePriorities(v: unknown): { value: PrioritiesState; dropped: number } {
   if (isObj(v) && v.state === 'ok' && str(v.date)) {
     const items = validRows(v.items, PRIORITY_RULES) as { text: string; stream?: string }[];
     return { value: { state: 'ok', date: v.date as string, items }, dropped: lost(v.items, items) };
@@ -91,7 +92,7 @@ export function sanitizeState(x: unknown): { state: PodiumState; dropped: number
   const kept = isObj(x.fragments) ? Object.entries(x.fragments).filter(([, v]) => str(v)) : undefined;
   if (kept) dropped += Object.keys(x.fragments as object).length - kept.length;
   const fragments = kept ? Object.fromEntries(kept) as Record<string, string> : undefined;
-  const pri = priorities(x.priorities);
+  const pri = sanitizePriorities(x.priorities);
   dropped += pri.dropped;
   const prData = isObj(x.prData) && bool(x.prData.stale) && (x.prData.fetchedAt === null || str(x.prData.fetchedAt))
     ? { fetchedAt: x.prData.fetchedAt as string | null, stale: x.prData.stale as boolean }

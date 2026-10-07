@@ -38,8 +38,10 @@ export interface PrCard {
   unresolved: number; review: string; flags: string[]; twinOf?: number; stackedOn?: number;
 }
 
+export interface Priority { text: string; stream?: string }
+
 export type PrioritiesState =
-  | { state: 'ok'; date: string; items: { text: string; stream?: string }[] }
+  | { state: 'ok'; date: string; items: Priority[] }
   | { state: 'missing' }
   | { state: 'stale'; date: string };
 
