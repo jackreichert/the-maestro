@@ -1,20 +1,21 @@
 /**
- * Project documents for the link rail: `CONTEXT.md`, `DECISIONS.md` and the `*.md` files directly inside Plans, Research,
- * Reviews and Runbooks. Only the first 4 KB of each is read (frontmatter and first heading), through the guarded reader.
+ * Project documents for the link rail: `CONTEXT.md`, `DECISIONS.md` and the `*.md` files inside Plans, Research, Reviews and
+ * Runbooks, and inside one level of subfolder under each (`Research/notion-bayada/x.md`); deeper folders are not read. Only the first 4 KB of each is read (frontmatter and first heading), through the guarded reader.
  */
 import type { Scope, VaultReader } from '../vault/reader.ts';
 
 export const DOC_FOLDERS = ['Plans', 'Research', 'Reviews', 'Runbooks'] as const;
 export type DocFolder = 'CONTEXT' | 'DECISIONS' | (typeof DOC_FOLDERS)[number];
-export const DOC_DIR_SCOPES: readonly Scope[] = [{ name: 'doc folder', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks)$/ }];
+export const DOC_DIR_SCOPES: readonly Scope[] = [{ name: 'doc folder', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks)(\/[^/]+)?$/ }];
 export const DOC_FILE_SCOPES: readonly Scope[] = [
   { name: 'project doc', pattern: /^Projects\/[^/]+\/(CONTEXT|DECISIONS)\.md$/ },
-  { name: 'folder doc', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks)\/[^/]+\.md$/ },
+  { name: 'folder doc', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks)(\/[^/]+)?\/[^/]+\.md$/ },
 ];
 
 const HEAD_BYTES = 4096;
 const MAX_DOC_BYTES = 1024 * 1024;
 const MAX_DOCS_PER_PROJECT = 500;
+const MAX_SUBFOLDERS = 20;
 const TITLE_MAX = 120;
 
 export const DOC_KINDS = ['brief', 'plan', 'research', 'review', 'runbook', 'uat', 'decision', 'other'] as const;
@@ -31,6 +32,8 @@ export interface Doc {
   tickets: string[];
   /** `ticket: none`: the note is marked project-level, so it is never reported as unattributed. */
   projectLevel: boolean;
+  /** The stream the note names in frontmatter (`stream: Bayada`), or `none` when it is deliberately off every stream tab. */
+  stream?: string;
 }
 export interface Docs { docs: Doc[]; notes: string[] }
 
@@ -45,7 +48,7 @@ function ticketIds(raw: string | undefined): string[] {
 }
 
 /** A document's header: title (frontmatter `title`, else its first `# ` heading, else the file name), status, the first date of `updated`, `last-updated`, `date`, `created`, the tickets it names and its kind. */
-export function docHeader(head: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean } {
+export function docHeader(head: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean; stream?: string } {
   const fm = head.match(/^---\n([\s\S]*?)\n---\n?/);
   /** The value of a key; a key with no value on its line takes the `- item` lines right under it as a list. */
   const raw = (k: string): string | undefined => {
@@ -66,7 +69,7 @@ export function docHeader(head: string, fileName: string, folder: DocFolder = 'P
   const pick = (v: string | undefined): DocKind | undefined => DOC_KINDS.find((k) => k === v?.toLowerCase());
   return {
     title, ...(get('status') ? { status: get('status') } : {}), ...(date ? { updated: date } : {}),
-    kind: pick(get('kind')) ?? pick(get('type')) ?? FOLDER_KIND[folder], tickets: named,
+    kind: pick(get('kind')) ?? pick(get('type')) ?? FOLDER_KIND[folder], tickets: named, ...(get('stream') ? { stream: get('stream') } : {}),
     projectLevel: !named.length && [raw('ticket'), raw('tickets')].some((v) => v?.trim().replace(/^["'\[]|["'\]]$/g, '').toLowerCase() === 'none'),
   };
 }
@@ -85,8 +88,15 @@ export function loadDocs(reader: VaultReader, project: string): Docs {
     const dir = `Projects/${project}/${folder}`;
     const ls = reader.list(dir);
     if (!ls.ok) { if (ls.reason !== 'missing' && ls.reason !== 'denied') notes.push(`${dir}: ${ls.reason}`); continue; }
-    if (ls.files.length > MAX_DOCS_PER_PROJECT) notes.push(`${dir}: ${ls.files.length} documents; only the first ${MAX_DOCS_PER_PROJECT} are read`);
-    for (const f of ls.files.slice(0, MAX_DOCS_PER_PROJECT)) add(folder, `${dir}/${f}`);
+    const files = ls.files.map((f) => `${dir}/${f}`);
+    for (const sub of ls.dirs.slice(0, MAX_SUBFOLDERS)) {
+      const inner = reader.list(`${dir}/${sub}`);
+      if (inner.ok) files.push(...inner.files.map((f) => `${dir}/${sub}/${f}`));
+      else if (inner.reason !== 'missing' && inner.reason !== 'denied') notes.push(`${dir}/${sub}: ${inner.reason}`);
+    }
+    if (ls.dirs.length > MAX_SUBFOLDERS) notes.push(`${dir}: ${ls.dirs.length} subfolders; only the first ${MAX_SUBFOLDERS} are read`);
+    if (files.length > MAX_DOCS_PER_PROJECT) notes.push(`${dir}: ${files.length} documents; only the first ${MAX_DOCS_PER_PROJECT} are read`);
+    for (const path of files.slice(0, MAX_DOCS_PER_PROJECT)) add(folder, path);
   }
   return { docs, notes };
 }
