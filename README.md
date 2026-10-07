@@ -545,10 +545,11 @@ An org overlay adds types without editing this repo: `<type>.mjs` and its playbo
 `journal.ts web` runs in the foreground and nothing restarts it, so a server started from a session dies with that session and the footer link (`status_page_uri`, for example `http://127.0.0.1:47700/`) goes to connection refused. A second LaunchAgent, `com.jackreichert.the-maestro-web`, runs `web.ts` at login and relaunches it whenever it exits (throttled to once per 30 s). The installer only fills the plist and prints the commands; you run them:
 
 ```bash
+npm run build:web                                  # the page is built output (dist/ is gitignored); without it / says "page is not built yet"
 node scripts/install-podium-web.ts [--port <n>]   # port defaults to the one in status_page_uri, else 47700
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jackreichert.the-maestro-web.plist
 launchctl print gui/$(id -u)/com.jackreichert.the-maestro-web     # check it is running
-launchctl kickstart -k gui/$(id -u)/com.jackreichert.the-maestro-web   # restart after updating the checkout
+npm run build:web && launchctl kickstart -k gui/$(id -u)/com.jackreichert.the-maestro-web   # rebuild and restart after updating the checkout
 launchctl bootout gui/$(id -u)/com.jackreichert.the-maestro-web   # uninstall
 ```
 
