@@ -17,6 +17,14 @@ export interface AskCard {
   date: string;
   ts: string;
   links: AskLinks;
+  /** Decision fields, present only on an ask that carries them; `default` only on a two-way door, `by` already formatted. */
+  recommend?: string;
+  door?: 'one-way' | 'two-way';
+  default?: string;
+  by?: string;
+  class?: string;
+  /** A run-this ask: the block file to run, shown and never read by the page. */
+  paste?: string;
 }
 
 export interface WorkItem { id: string; stream: string; text: string; ticket?: Ref; links: AskLinks; model?: string; since: string }

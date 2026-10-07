@@ -22,9 +22,10 @@ writeFileSync(join(clientDir, 'index.html'), '<p>home</p>');
 writeFileSync(join(statusDir, 'stream-homes.json'), JSON.stringify({ version: 1, streams: { Avonlea: {
   projects: ['avonlea-api'], epics: ['avonlea-api-042'], docs: ['../etc/passwd.md', 'Projects/avonlea-api/Plans/ok.md'], pins: [{ label: 'bad', url: 'javascript:alert(1)' }, { label: 'Dashboard', url: 'https://dash.example.com/d/1' }],
 } } }));
-writeFileSync(join(statusDir, 'ticket-map.json'), JSON.stringify({ 'avonlea-api-045': ['ask1'] }));
+writeFileSync(join(statusDir, 'ticket-map.json'), JSON.stringify({ 'avonlea-api-045': ['ask1', 'ps01'] }));
 const store = openStore({ vault: ledgerRoot, project: 'p', dryRun: false });
 store.append({ id: 'ask1', kind: 'question', text: 'Approve the backfill window?', stream: 'Avonlea', ts: '2026-10-07T12:00:00Z', date: '2026-10-07' });
+store.append({ id: 'ps01', kind: 'question', text: 'Run the block: it checks something', stream: 'Avonlea', box: 'paste', paste: '/tmp/fake-block.sh', ts: '2026-10-07T12:00:00Z', date: '2026-10-07' });
 store.append({ id: 'gg01', kind: 'wip', text: 'pilot work', stream: 'Green Gables', ts: '2026-10-07T12:00:00Z', date: '2026-10-07' });
 const page = { streams: ['Avonlea', 'Green Gables'], repoStreams: {}, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/', ticketNotePath: '', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'UTC' };
 const server = createWebServer({ web: { vault: ledgerRoot, project: 'p', statusDir, page, vaultRoot: fx.root }, clientDir, now: () => NOW, log: () => {} });
@@ -47,7 +48,7 @@ test('GET /api/streams/:name/home returns the epic, what is left and the unknown
   assert.equal(h.stream, 'Avonlea');
   assert.deepEqual(h.mapping, { source: 'config', configFound: true });
   const e = h.epics.find((x: { id: string }) => x.id === 'avonlea-api-042');
-  assert.deepEqual([e.total, e.closed, e.inProgress, e.blocked, e.notStarted, e.awaiting], [10, 4, 1, 2, 3, 1], 'the ask is linked through ticket-map.json');
+  assert.deepEqual([e.total, e.closed, e.inProgress, e.blocked, e.notStarted, e.awaiting], [10, 4, 1, 2, 3, 2], 'the ask and the paste ask are linked through ticket-map.json');
   assert.ok(h.unknowns.some((u: { kind: string; text: string }) => u.kind === 'config-invalid' && /docs\[0\]/.test(u.text)));
   assert.ok(h.unknowns.some((u: { kind: string; text: string }) => u.kind === 'config-invalid' && /pins\[0\]/.test(u.text)));
   assert.deepEqual(h.links.map((g: { group: string }) => g.group), ['pinned', 'epics', 'docs', 'runbooks']);

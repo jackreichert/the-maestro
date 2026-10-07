@@ -9,6 +9,8 @@
  *   - a new reply in an open thread, from anyone but the user: REPLY;
  *   - a new top-level PR comment or review body from anyone but the user: COMMENT, REVIEW;
  *   - a reviewDecision flip into or out of APPROVED / CHANGES_REQUESTED: DECISION;
+ *   - an open PR that turned CONFLICTING with its base: CONFLICT (once per conflict; GitHub's UNKNOWN, while it computes
+ *     mergeability, changes nothing, and a conflict that clears resets silently so the next one speaks);
  *   - a PR that left the open set, once GitHub confirms it is no longer open: LEFT-OPEN-SET.
  * Standing conditions (APPROVED-UNMERGED) speak once, when they first appear or their signature (the head) changes.
  *
@@ -36,6 +38,11 @@ export interface BoardPr {
   number: number;
   isDraft: boolean;
   head: string;
+  /** Branch names, so a line says what to merge into what. */
+  headRef: string;
+  base: string;
+  /** MERGEABLE | CONFLICTING | UNKNOWN: GitHub's last settled answer, carried across ticks while it re-computes. Absent in older snapshots. */
+  mergeable?: string;
   needsCopilot: boolean;
   decision: string;
   threads: Ref[];
@@ -66,6 +73,9 @@ interface PrNode {
   url: string;
   isDraft: boolean;
   reviewDecision: string | null;
+  mergeable?: string | null;
+  headRefName?: string;
+  baseRefName?: string;
   headRefOid: string;
   repository: { nameWithOwner: string };
   reviewRequests: { nodes: { requestedReviewer?: Login | null }[] };
@@ -92,7 +102,7 @@ const COPILOT = 'copilot-pull-request-reviewer';
 const TARGETS = new Set(['open-prs', 'open-prs:baseline']);
 
 const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number url isDraft reviewDecision headRefOid repository { nameWithOwner }
+  number url isDraft reviewDecision mergeable headRefName baseRefName headRefOid repository { nameWithOwner }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on Bot { login } } } }
   latestReviews(first: 20) { nodes { author { login } } }
   reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } url } } last: comments(last: 1) { nodes { id author { login } url } } } }
@@ -116,8 +126,13 @@ function gh(ctx: Ctx, args: string[], what: string): string {
 /** The user's login: gh_login when set, else asked of gh. */
 const selfLogin = (ctx: Ctx): string => ctx.config?.ghLogin ?? (GH_LOGIN || gh(ctx, ['api', 'user', '--jq', '.login'], 'gh api user').trim());
 
+/** GitHub answers UNKNOWN (or nothing) while it computes mergeability: that is no news, so the last settled answer stands. */
+function settledMergeable(now: string | null | undefined, old: BoardPr | undefined): string {
+  return now === 'MERGEABLE' || now === 'CONFLICTING' ? now : old?.mergeable ?? 'UNKNOWN';
+}
+
 /** Every open PR as a plain board keyed `owner/repo#n`, reduced to what a diff needs. */
-function fetchBoard(ctx: Ctx, self: string): Board {
+function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
   const owners = new Set((ctx.config?.copilotOrgs ?? COPILOT_ORGS).map((o) => o.toLowerCase()));
   // Fail closed: Copilot is requested only where the repo owner is listed in copilot_orgs (GitHub logins are case-insensitive).
   const copilotAllowed = (nameWithOwner: string) => owners.has((nameWithOwner.split('/')[0] ?? '').toLowerCase());
@@ -127,12 +142,16 @@ function fetchBoard(ctx: Ctx, self: string): Board {
     const copilotSeen =
       pr.reviewRequests.nodes.some((r) => r.requestedReviewer?.login === COPILOT) ||
       pr.latestReviews.nodes.some((r) => r.author?.login === COPILOT);
-    board[`${pr.repository.nameWithOwner}#${pr.number}`] = {
+    const key = `${pr.repository.nameWithOwner}#${pr.number}`;
+    board[key] = {
       url: pr.url,
       repo: pr.repository.nameWithOwner,
       number: pr.number,
       isDraft: pr.isDraft,
       head: pr.headRefOid,
+      headRef: pr.headRefName || '',
+      base: pr.baseRefName || '',
+      mergeable: settledMergeable(pr.mergeable, before[key]),
       needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
       threads: pr.reviewThreads.nodes.flatMap((t) => {
@@ -217,7 +236,7 @@ const previous = (ctx: Ctx): Snapshot | null => {
 
 export function check(target: string, ctx: Ctx): PrWatchState {
   const prev = previous(ctx);
-  const board = fetchBoard(ctx, selfLogin(ctx));
+  const board = fetchBoard(ctx, selfLogin(ctx), prev?.board);
   if (prev && looksTruncated(prev.board, board)) {
     throw new Error(`search returned ${Object.keys(board).length} of ${Object.keys(prev.board).length} PRs; skipping tick`);
   }
@@ -239,6 +258,8 @@ function changesBetween(prev: Board, next: Board): string[] {
     const seen = (list: 'threads' | 'replies' | 'comments' | 'reviews', id: string): boolean => (old ? (old[list] || []).some((x) => x.id === id) : false);
     // NONE <-> REVIEW_REQUIRED flips whenever threads resolve or commits land; only a move into or out of APPROVED / CHANGES_REQUESTED is worth waking for.
     const quiet = new Set(['NONE', 'REVIEW_REQUIRED']);
+    // CONFLICT speaks on the way in (a PR we never saw before, or one last settled as anything but CONFLICTING); staying conflicted is silent.
+    if (pr.mergeable === 'CONFLICTING' && old?.mergeable !== 'CONFLICTING') lines.push(`CONFLICT ${key} ${pr.base || '?'} <- ${pr.headRef || '?'} ${pr.url}`);
     if (old && old.decision !== pr.decision && !(quiet.has(old.decision) && quiet.has(pr.decision))) lines.push(`DECISION ${key}: ${old.decision} -> ${pr.decision} ${pr.url}`);
     for (const t of pr.threads) if (!seen('threads', t.id)) lines.push(`THREAD ${key} by ${t.who}: ${t.url}`);
     const newThreadUrls = new Set(pr.threads.filter((t) => !seen('threads', t.id)).map((t) => t.url));
@@ -263,7 +284,8 @@ export function diff(prev: unknown, next: PrWatchState): WatchEvent[] {
 function changes(prev: unknown, next: PrWatchState): WatchEvent[] {
   const base: Partial<Snapshot> | undefined = hasBoard(prev) ? prev : next.carried;
   if (next.silent && !base) return [];
-  const before = base?.board ?? next.board;
+  // A first check has nothing to compare, but a conflict already there is news nobody has been told: compare as if it were new.
+  const before = base?.board ?? Object.fromEntries(Object.entries(next.board).map(([key, pr]) => [key, { ...pr, mergeable: undefined }]));
   const told = base?.reported ?? {};
   const fresh = standingConditions(next.board).filter((c) => told[c.id] !== c.sig).map((c) => c.line);
   return [...changesBetween(before, next.board), ...(next.left ?? []), ...fresh].map((summary) => ({ summary }));

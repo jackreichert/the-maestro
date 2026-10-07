@@ -147,3 +147,13 @@ test('buildCharts passes the client contract and counts the day, the ask age, th
   assert.deepEqual(charts.prMix.byState, { pass: 1, fail: 1 });
   assert.deepEqual(charts.modelMix, { byFamily: { opus: 1 }, source: 'ledger' });
 });
+
+test('a paste ask counts the same in the asks list, the footer row and the age chart', () => {
+  const cfg = fixture();
+  openStore({ vault: cfg.vault, project: 'p', dryRun: false }).append({ id: 'ps01', kind: 'question', text: 'Run the block: it checks', stream: 'widgets', box: 'paste', paste: '/tmp/fake-block.sh', ts: `${DAY}T12:00:00Z`, date: DAY });
+  const state = buildState(cfg, NOW);
+  const mine = state.asks.filter((a) => a.stream === 'widgets').length;
+  assert.equal(mine, 2);
+  assert.equal(state.footer.find((f) => f.stream === 'widgets')?.asks, mine);
+  assert.equal(buildCharts(cfg, 14, NOW).ageBuckets.reduce((n, b) => n + b.count, 0), state.asks.length);
+});

@@ -27,7 +27,7 @@ function factsOf(items: LedgerItem[], ticketMap: Record<string, string[]>): Ledg
     const closed = i.closedBy?.kind;
     const state: LedgerFact['state'] = closed ? (closed === 'done' || closed === 'resolved' ? 'done' : 'other')
       : i.kind === 'wip' ? (isQueued(i) ? 'queued' : 'inflight') : i.kind === 'blocked' ? 'blocked'
-        : (i.kind === 'question' || i.kind === 'decision') && !i.paste && isOpen(i) ? 'ask' : 'other';
+        : (i.kind === 'question' || i.kind === 'decision') && isOpen(i) ? 'ask' : 'other';
     return [{ id: i.id, ticket, state, ...(i.stream ? { stream: i.stream } : {}) }];
   });
 }
