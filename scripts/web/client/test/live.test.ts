@@ -181,3 +181,20 @@ test('the indicator says its mode in words', () => {
   assert.equal(liveLabel('offline'), 'Offline, retrying');
   assert.equal(liveLabel(null), '');
 });
+
+test('offline is not downgraded to polling by the stream retrying; a good poll recovers it', async () => {
+  const h = harness();
+  h.live.start();
+  h.stream?.fail();
+  h.loads.shift()?.fail();
+  await h.settle();
+  assert.equal(h.live.status, 'offline');
+  h.stream?.fail();   // the browser retries the stream every few seconds and errors again
+  h.stream?.fail();
+  assert.equal(h.live.status, 'offline');
+  assert.deepEqual(h.statuses, ['polling', 'offline']);
+  h.tick();
+  h.loads.shift()?.ok({ seq: 'n' });
+  await h.settle();
+  assert.equal(h.live.status, 'polling');
+});

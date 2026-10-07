@@ -93,7 +93,7 @@ export class LiveUpdates<T> {
   }
 
   #poll(): void {
-    this.#set('polling');
+    if (this.#status !== 'offline') this.#set('polling');   // offline stays until a poll succeeds; the browser's retry error is not news
     if (this.#timer !== null || this.#stopped) return;
     const mine = ++this.#loop;
     const tick = (): void => {
