@@ -261,7 +261,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `queue "<text>"` | Open an item that is queued: a to-do not started yet, shown apart from in-flight work (`--repo`, `--ticket`, `--stream`). `queue <id>` moves an open in-flight item to queued and keeps its history |
 | `done <id\|text>` | Close an item (an id or a unique substring) |
 | `drop <id>` | Drop an item (`--why`) |
-| `ask "<question>"` | Put a question on the awaiting-you board. `--kind decision` marks a decision still pending. `--paste <file>` lists a run-this ask apart from the questions; the file must exist |
+| `ask "<question>"` | Put a question on the awaiting-you board. `--kind decision` marks a decision still pending. `--paste <file>` lists a run-this ask apart from the questions; the file must exist. Decision fields, all optional: `--recommend` (what you would do; an ask without one warns), `--door one-way\|two-way` (no door means one-way), `--default` (what happens if the user stays silent; two-way asks only, a one-way ask is refused one), `--decide-by` (`2026-10-09`, an ISO time with a zone, or `2d`, `6h`, `1w`; not in the past; alias `--by`) and `--class expedite\|fixed-date\|standard\|intangible` (default standard). `ask --help` prints them. Rows without these fields read as before |
 | `resolve <id>` | Answer an ask (`--answer`, `--approval`) |
 | `rule "<text>" --ref <file>` | Record a decision already made. Refuses unless every `--ref` is an existing file; never shows as open |
 | `log ... --kind blocked --gate <gate>` | Name what a blocked item waits for: `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. `resume` reports whether it cleared |
