@@ -33,7 +33,7 @@
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
  *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
  *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
- *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current
+ *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
@@ -114,7 +114,8 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP } from './local-config.ts';
+import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, EVENT_DIR } from './local-config.ts';
+import { supervisorStatus } from './lib/supervisor-state.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
@@ -1388,9 +1389,12 @@ function prioritiesNotice(): string[] {
     return readPriorities(dirPath, priorityDay()).state === 'ok' ? [] : [PRIORITIES_UNSET_LINE];
 }
 
+/** The supervisor line when one is set up and not running (read from its liveness record and the installed plist); silent otherwise. */
+const supervisorNotice = (): string[] => [supervisorStatus(EVENT_DIR).line].filter(Boolean);
+
 function cmdPrime() {
     refreshBoard();
-    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
 }
 
 // ── status page ─────────────────────────────────────────────────────────────
