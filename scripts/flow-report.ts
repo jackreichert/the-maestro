@@ -29,7 +29,7 @@ export function main(argv: string[]): number {
     const days = Number(arg('days', '14'));
     const oldest = arg('oldest') === null ? Infinity : Number(arg('oldest'));
     const now = new Date(arg('now', new Date().toISOString()));
-    if (!Number.isFinite(days) || days <= 0 || Number.isNaN(oldest) || Number.isNaN(now.getTime())) {
+    if (!Number.isFinite(days) || days <= 0 || Number.isNaN(oldest) || oldest < 0 || Number.isNaN(now.getTime())) {
         console.error('flow-report: --days must be a positive number, --oldest a number, --now an ISO time.');
         return 2;
     }

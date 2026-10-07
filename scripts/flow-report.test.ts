@@ -42,3 +42,7 @@ test('refuses a missing root and a bad --days', () => {
     assert.equal(run('--project', 'demo').code, 2);
     assert.equal(run('--vault', ledgerWith(rows), '--project', 'demo', '--days', '0').code, 2);
 });
+
+test('refuses a negative --oldest', () => {
+    assert.equal(run('--vault', ledgerWith(rows), '--project', 'demo', '--oldest', '-3').code, 2);
+});
