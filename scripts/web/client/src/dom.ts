@@ -1,6 +1,6 @@
 /** Small DOM helpers shared by the components. Text is always set with textContent, never innerHTML. */
 
-import { safeHref } from './url.ts';
+import { linkAttrs } from './link-policy.ts';
 import { formatFragment } from './tabs.ts';
 
 type Attrs = Record<string, string | boolean | undefined>;
@@ -49,8 +49,8 @@ export function shadow(host: HTMLElement, css: string): ShadowRoot {
 
 /** A link (or plain text when the ref has no safe URL) for a server-built Ref. */
 export function refLink(ref: { label: string; url?: string }): Node {
-  const href = safeHref(ref.url);
-  return href ? h('a', { href, rel: 'noreferrer noopener' }, ref.label) : document.createTextNode(ref.label);
+  const attrs = linkAttrs(ref.url);
+  return attrs ? h('a', attrs, ref.label) : document.createTextNode(ref.label);
 }
 
 /** A link to a stream's tab, for rows and cards shown outside that tab. The href is built here, never taken from data. */
