@@ -25,7 +25,7 @@ const CSS = `${BASE_CSS}
   ul.legend .v { color: var(--text-muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
   .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 3px; }
   details { margin-top: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-sm); }
-  summary { cursor: pointer; color: var(--text-secondary); width: max-content; border-radius: 4px; }
+  summary { cursor: pointer; color: var(--text-secondary); width: max-content; border-radius: 4px; padding-block: 2px; line-height: 20px; }
   summary:hover { color: var(--text-primary); }
   table { border-collapse: collapse; margin-top: var(--space-2); font-variant-numeric: tabular-nums; }
   th, td { border-bottom: 1px solid var(--border); padding: var(--space-1) var(--space-3) var(--space-1) 0; text-align: right; }

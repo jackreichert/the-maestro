@@ -66,7 +66,9 @@ export const BASE_CSS = `
   :host { display: block; color: var(--text-primary); font-family: var(--font-sans); }
   :host([hidden]) { display: none; }
   *, *::before, *::after { box-sizing: border-box; }
+  /* Inline padding grows each link's hit area to at least 24 px tall (WCAG 2.2 target size) without moving the line box. */
   a {
+    padding-block: max(4.5px, 0.35em);
     color: var(--accent); text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: 0.2em;
     text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
     transition: text-decoration-color var(--dur-fast) var(--ease-out);
