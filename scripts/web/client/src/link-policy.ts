@@ -5,7 +5,7 @@
  * A named target reuses the tab that already holds that name, so a second click on the same item refocuses its tab instead of
  * adding a duplicate. Per the HTML spec, `noopener` and `noreferrer` make the browser skip the name lookup and always create a new
  * context, so reuse needs both left off. That leaves `window.opener` open to the destination, which is why only the hosts in
- * TRUSTED_HOSTS ever get a named target. Every other web link is `_blank` with `rel="noopener noreferrer"`.
+ * TRUSTED_HOSTS ever get a named target: github.com, plus Atlassian tenants the operator listed by name (never a whole suffix). Every other web link is `_blank` with `rel="noopener noreferrer"`.
  */
 
 import { isSafeUrl } from './url.ts';
@@ -26,9 +26,23 @@ interface TabRule {
   tab: (u: URL) => string | null;
 }
 
+/** One Atlassian cloud tenant hostname, e.g. `example.atlassian.net`. Anyone can register a tenant, so none is trusted unless configured. */
+const TENANT = /^[a-z0-9][a-z0-9-]*\.atlassian\.net$/;
+const trustedTenants = new Set<string>();
+
+/**
+ * Set which Atlassian tenant hosts get a reusable tab. Empty by default; the server hands the client the list its operator configured.
+ * Anything that is not exactly `<label>.atlassian.net` is dropped, and a call replaces the previous list.
+ */
+export function configureTrustedTenants(hosts: unknown): void {
+  trustedTenants.clear();
+  if (!Array.isArray(hosts)) return;
+  for (const h of hosts) if (typeof h === 'string' && TENANT.test(h.trim().toLowerCase())) trustedTenants.add(h.trim().toLowerCase());
+}
+
 const TRUSTED_HOSTS: TrustedHost[] = [
   { name: 'github', matches: (h) => h === 'github.com' },
-  { name: 'atlassian-cloud', matches: (h) => h.endsWith('.atlassian.net') && h.length > '.atlassian.net'.length },
+  { name: 'configured-atlassian-tenant', matches: (h) => trustedTenants.has(h) },
 ];
 
 const PULL = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)\/?$/;

@@ -1,10 +1,11 @@
 // Run: node --test scripts/web/client/test/link-policy.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { linkAttrs } from '../src/link-policy.ts';
+import { configureTrustedTenants, linkAttrs } from '../src/link-policy.ts';
 
 const PR = 'https://github.com/example-org/example-repo/pull/42';
 const TICKET = 'https://example.atlassian.net/browse/EX-123';
+configureTrustedTenants(['example.atlassian.net', 'other.atlassian.net']);
 
 test('a pull request gets a per-item tab name and no rel, so repeat clicks reuse its tab', () => {
   assert.deepEqual(linkAttrs(PR), { href: PR, target: 'podium-pr~example-org~example-repo~42' });
@@ -78,4 +79,26 @@ test('names are injective: a-b/c and a/b-c differ, case does not matter, and the
   assert.notEqual(t('https://github.com/a/b_c/pull/1'), t('https://github.com/a_b/c/pull/1'));
   assert.equal(t('https://github.com/Example-Org/Example-Repo/pull/007'), t('https://github.com/example-org/example-repo/pull/7'));
   assert.notEqual(t('https://github.com/a/b/pull/1'), t('https://github.com/a/b/pull/10'));
+});
+
+test('with no configured tenant, or for an unlisted one, a ticket link is a safe new tab', () => {
+  configureTrustedTenants([]);
+  assert.deepEqual(linkAttrs(TICKET), { href: TICKET, target: '_blank', rel: 'noopener noreferrer' });
+  configureTrustedTenants(['example.atlassian.net']);
+  const other = 'https://attacker.atlassian.net/browse/EX-123';
+  assert.deepEqual(linkAttrs(other), { href: other, target: '_blank', rel: 'noopener noreferrer' });
+  assert.equal(linkAttrs(TICKET)?.target, 'podium-ticket~example.atlassian.net~EX-123');
+  configureTrustedTenants(['example.atlassian.net', 'other.atlassian.net']);
+});
+
+test('two tenants with the same key get different tab names', () => {
+  assert.notEqual(linkAttrs(TICKET)?.target, linkAttrs('https://other.atlassian.net/browse/EX-123')?.target);
+});
+
+test('a malformed tenant entry is dropped, not trusted', () => {
+  configureTrustedTenants(['atlassian.net', '.atlassian.net', 'evil.test', 'a.b.atlassian.net', 'x.atlassian.net.evil.test', 42, '']);
+  for (const u of ['https://atlassian.net/browse/EX-1', 'https://a.b.atlassian.net/browse/EX-1', 'https://x.atlassian.net/browse/EX-1']) assert.equal(linkAttrs(u)?.target, '_blank', u);
+  configureTrustedTenants('example.atlassian.net');
+  assert.equal(linkAttrs(TICKET)?.target, '_blank');
+  configureTrustedTenants(['example.atlassian.net', 'other.atlassian.net']);
 });

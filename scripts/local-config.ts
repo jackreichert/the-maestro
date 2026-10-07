@@ -101,6 +101,9 @@ export const CLAUDE_PROJECTS_DIR =
 /** Where the ledger's Journal/ lives. Empty means "not set": the scripts ask for --vault. */
 export const LEDGER_ROOT = pick('LEDGER_ROOT', 'ledger_root');
 
+/** Atlassian tenant hosts the Podium may reuse a tab for (comma-separated `<label>.atlassian.net`). Empty means none: every ticket link opens a fresh tab. */
+export const PODIUM_TRUSTED_ATLASSIAN_HOSTS = pick('PODIUM_TRUSTED_ATLASSIAN_HOSTS', 'podium_trusted_atlassian_hosts').split(',').map((s) => s.trim()).filter(Boolean);
+
 /** The vault holding tickets, CONTEXT.md and the rest. Empty means "not set". */
 export const VAULT_ROOT = pick('VAULT_ROOT', 'vault_root');
 

@@ -1,4 +1,5 @@
 import { sanitizeCharts, sanitizeState } from './contract.ts';
+import { configureTrustedTenants } from './link-policy.ts';
 import type { ChartsData, PodiumState } from './types.ts';
 
 export type Source = 'server' | 'fixture';
@@ -7,6 +8,16 @@ async function getJson(url: string): Promise<unknown> {
   const res = await fetch(url, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
   return res.json();
+}
+
+/** Tell the link policy which Atlassian tenants the server was configured to trust. Any failure leaves the list empty, which is the safe default. */
+export async function loadLinkHosts(): Promise<void> {
+  try {
+    const body = await getJson('/api/link-hosts');
+    configureTrustedTenants(typeof body === 'object' && body !== null ? (body as { atlassian?: unknown }).atlassian : undefined);
+  } catch {
+    configureTrustedTenants([]);
+  }
 }
 
 /** What the header says about where the page's data came from: Live only when both endpoints are, else which ones are sample data. */

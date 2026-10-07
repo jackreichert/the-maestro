@@ -3,7 +3,7 @@ import './podium-chart.ts';
 import './md-fragment.ts';
 import { h, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadState } from './api.ts';
+import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { cueParts, clockTime, freshness, longDate } from './glance.ts';
@@ -130,7 +130,7 @@ export class PodiumApp extends HTMLElement {
   connectedCallback(): void {
     window.addEventListener('hashchange', this.#onHash);
     this.#root.replaceChildren(skeleton());
-    Promise.all([loadState(), loadCharts()]).then(([s, c]) => {
+    Promise.all([loadState(), loadCharts(), loadLinkHosts()]).then(([s, c]) => {
       this.#state = s.data;
       this.#charts = c.data;
       this.#sources = { state: s.source, charts: c.source };
