@@ -27,6 +27,9 @@
  *   prs-snapshot.ts [--diff] [--ready] ...   --ready adds the readiness report: PRs that are ready to merge, and approved ones that are not, with why
  *   prs-snapshot.ts ready <snapshot.json>   the readiness report for a snapshot on disk (no network; it says how old the file is and is not a merge gate)
  *
+ *   prs-snapshot.ts [--stacks] ...   --stacks adds the stack report: any stack of PRs deeper than stack_max_depth (default 3) or older than stack_max_age_days (default 5), with the bottom PR to drive to merge
+ *   prs-snapshot.ts stacks <snapshot.json>   the stack report for a snapshot on disk (no network)
+ *
  *   prs-snapshot.ts diff <old-snapshot.json> <new-snapshot.json>
  *       Pure diff of two snapshot files already on disk. No network call, no
  *       write. This is what the test file exercises.
@@ -39,7 +42,8 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
+import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, STACK_MAX_AGE_DAYS, STACK_MAX_DEPTH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
+import { stackLines } from './lib/stack-cap.ts';
 import { searchAllPages } from './lib/gh-search.ts';
 
 /** A review as the snapshot keeps it (the latest one per reviewer). */
@@ -48,7 +52,7 @@ export interface SnapshotThread { id: string; isResolved: boolean; isOutdated: b
 /** One open PR, flattened from the search node (see toSnapshotPr). */
 export interface SnapshotPr {
     key: string; repo: string; number: number; title: string; url: string; isDraft: boolean;
-    headRefName: string; baseRefName: string; updatedAt: string; reviewDecision: string; mergeable: string;
+    headRefName: string; baseRefName: string; createdAt?: string; updatedAt: string; reviewDecision: string; mergeable: string;
     threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
 }
 export interface Snapshot { takenAt?: string; prs: SnapshotPr[] }
@@ -59,7 +63,7 @@ export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComple
 
 /** The fields QUERY selects. gh's JSON is not validated against this; it is only as right as the query. */
 interface SearchNodePr {
-    number: number; title: string; isDraft: boolean; url: string; headRefName: string; baseRefName: string; updatedAt: string;
+    number: number; title: string; isDraft: boolean; url: string; headRefName: string; baseRefName: string; createdAt?: string; updatedAt: string;
     reviewDecision: string | null; mergeable: string | null; repository: { nameWithOwner: string };
     reviewRequests: { nodes: { requestedReviewer?: { login?: string; name?: string } | null }[] };
     latestReviews: { nodes: { author?: { login?: string } | null; state: string; submittedAt: string }[] };
@@ -83,7 +87,7 @@ const isBot = (login: string | undefined): boolean => !login || login.endsWith(B
 const HUMAN_REVIEW_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED']);
 
 const argv = process.argv.slice(2);
-const cmd = ['diff', 'ready'].includes(argv[0]) ? argv[0] : 'snapshot';
+const cmd = ['diff', 'ready', 'stacks'].includes(argv[0]) ? argv[0] : 'snapshot';
 const positional = argv.slice(cmd === 'snapshot' ? 0 : 1).filter((a) => !a.startsWith('--'));
 function arg(name: string): string | null;
 function arg(name: string, fallback: string): string;
@@ -107,6 +111,7 @@ const QUERY = `query($after: String) {
         url
         headRefName
         baseRefName
+        createdAt
         updatedAt
         reviewDecision
         mergeable
@@ -137,6 +142,7 @@ const toSnapshotPr = (n: SearchNodePr): SnapshotPr => ({
     isDraft: n.isDraft,
     headRefName: n.headRefName,
     baseRefName: n.baseRefName,
+    createdAt: n.createdAt,
     updatedAt: n.updatedAt,
     reviewDecision: n.reviewDecision || 'NONE',
     mergeable: n.mergeable || 'UNKNOWN',
@@ -289,6 +295,11 @@ function printDiff({ changes, botEvents }: SnapshotDiff): void {
 }
 
 /** Where the snapshot lives under a ledger root. */
+/** Lines naming every stack over the depth or age cap (lib/stack-cap.ts), for the PR board. */
+export function stackReport(snapshot: { prs: StoredPr[] }, now: Date = new Date()): string[] {
+    return stackLines(snapshot.prs, now, { maxDepth: STACK_MAX_DEPTH, maxAgeDays: STACK_MAX_AGE_DAYS });
+}
+
 export const snapshotPath = (root: string): string => join(root, 'Projects', CONTAINER_PROJECT, 'Journal', 'prs-snapshot.json');
 
 function cmdSnapshot(): void {
@@ -313,6 +324,7 @@ function cmdSnapshot(): void {
     }
 
     if (has('ready')) readyLines(curr).forEach((l) => console.log(l));
+    if (has('stacks')) stackReport(curr).forEach((l) => console.log(l));
 
     if (!has('dry-run')) {
         mkdirSync(dir, { recursive: true });
@@ -340,11 +352,19 @@ function cmdReadyFile(): void {
     readyLines(snapshot).forEach((l) => console.log(l));
 }
 
+function cmdStacksFile(): void {
+    if (!positional[0]) { console.error('Usage: prs-snapshot.ts stacks <snapshot.json>'); process.exit(1); }
+    const snapshot = JSON.parse(readFileSync(positional[0], 'utf8')) as Snapshot;
+    console.log(`Snapshot taken ${snapshot.takenAt || 'at an unknown time'}. Run \`prs-snapshot.ts --stacks\` for a live answer.`);
+    stackReport(snapshot).forEach((l) => console.log(l));
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
 if (isMain()) {
     if (cmd === 'diff') cmdDiffFiles();
     else if (cmd === 'ready') cmdReadyFile();
+    else if (cmd === 'stacks') cmdStacksFile();
     else cmdSnapshot();
 }

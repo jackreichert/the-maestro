@@ -52,6 +52,7 @@ export function prNode(number: number, overrides: Record<string, unknown> = {}) 
     isDraft: false,
     headRefName: 'feat',
     baseRefName: 'develop',
+    createdAt: '2026-09-23T00:00:00Z',
     updatedAt: '2026-09-24T00:00:00Z',
     reviewDecision: 'REVIEW_REQUIRED',
     headRefOid: 'sha-a',
