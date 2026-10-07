@@ -5,7 +5,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ageText, repairStandingWatches, sessionStart, STALE_MS } from './session-start.ts';
+import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
+import { ageText, connects, repairStandingWatches, sessionStart, STALE_MS } from './session-start.ts';
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import { listWatches } from './lib/watch-registry.ts';
 import type { StartDeps } from './session-start.ts';
@@ -145,4 +147,24 @@ test('repairStandingWatches marks a standing-type watch that lacks the flag, onc
   assert.equal(after.find((w) => w.id === 'prs')?.expires, '2026-10-09T00:00:00.000Z');
   assert.equal(after.find((w) => w.id === 'once')?.renew, undefined);
   assert.deepEqual(repairStandingWatches(dir, BUILTIN_TYPES, NOW), [], 'idempotent');
+});
+
+test('a Podium web link that does not answer prints the down line; an answering one, and no link, print nothing', () => {
+  const down = sessionStart('/s', world({ webProbe: () => ({ url: 'http://127.0.0.1:47700/', up: false }) }).deps).lines;
+  assert.match(down.find((l) => l.startsWith('Podium web:')) ?? '', /^Podium web: down \(nothing answers at http:\/\/127\.0\.0\.1:47700\/\)/);
+  for (const probe of [() => ({ url: 'http://127.0.0.1:47700/', up: true }), () => ({ url: '', up: true })]) {
+    assert.equal(sessionStart('/s', world({ webProbe: probe }).deps).lines.some((l) => l.startsWith('Podium web:')), false);
+  }
+});
+
+test('connects is true for a listening port, false for a closed one and a bad URL, and never waits long', async () => {
+  const server = createServer().listen(0, '127.0.0.1');
+  await new Promise((ok) => server.once('listening', ok));
+  const { port } = server.address() as AddressInfo;
+  assert.equal(connects(`http://127.0.0.1:${port}/`), true);
+  await new Promise((ok) => server.close(ok));
+  const t = Date.now();
+  assert.equal(connects(`http://127.0.0.1:${port}/`), false);
+  assert.equal(connects('not a url'), false);
+  assert.ok(Date.now() - t < 3000);
 });
