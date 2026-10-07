@@ -105,14 +105,17 @@ export const CLAUDE_PROJECTS_DIR =
 /** True when neither `projects_dir` nor `container_root` is set, so CLAUDE_PROJECTS_DIR is only a guess from the working directory. */
 export const PROJECTS_DIR_GUESSED = !pick('MAESTRO_PROJECTS_DIR', 'projects_dir') && !PROJECTS_ROOT;
 
+/** Expands a leading `~/`. */
+const expandHome = (v: string): string => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v);
+
 /** Where the ledger's Journal/ lives. Empty means "not set": the scripts ask for --vault. */
-export const LEDGER_ROOT = pick('LEDGER_ROOT', 'ledger_root');
+export const LEDGER_ROOT = expandHome(pick('LEDGER_ROOT', 'ledger_root').trim());
 
 /** Atlassian tenant hosts the Podium may reuse a tab for (comma-separated `<label>.atlassian.net`). Empty means none: every ticket link opens a fresh tab. */
 export const PODIUM_TRUSTED_ATLASSIAN_HOSTS = pick('PODIUM_TRUSTED_ATLASSIAN_HOSTS', 'podium_trusted_atlassian_hosts').split(',').map((s) => s.trim()).filter(Boolean);
 
 /** The vault holding tickets, CONTEXT.md and the rest. Empty means "not set". */
-export const VAULT_ROOT = pick('VAULT_ROOT', 'vault_root');
+export const VAULT_ROOT = expandHome(pick('VAULT_ROOT', 'vault_root').trim());
 
 /** Process patterns `journal.ts resume` checks with pgrep, comma-separated in the config. Empty means none. */
 export const LOOP_PATTERNS = pick('MAESTRO_LOOP_PATTERNS', 'loop_patterns').split(',').map((s) => s.trim()).filter(Boolean);
@@ -407,9 +410,6 @@ export const SCRIPTS_SHELF_DIR = ((v: string) => (v.startsWith('~/') ? join(home
 export const AGENT_OWNED_REPOS = globList('MAESTRO_AGENT_OWNED_REPOS', 'agent_owned_repos').map((v) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v));
 
 export const CONTAINER_ROOT = ((v: string) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_CONTAINER_ROOT', 'container_root').trim());
-
-/** Expands a leading `~/`. */
-const expandHome = (v: string): string => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v);
 
 /** The status page directory as configured (`status_dir`); empty when unset. Set means `journal.ts status --footer` may link the page. */
 export const STATUS_DIR_SETTING = expandHome(pick('MAESTRO_STATUS_DIR', 'status_dir').trim());

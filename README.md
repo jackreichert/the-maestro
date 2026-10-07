@@ -732,6 +732,8 @@ vault_root: /path/to/vault
 ```
 ~~~
 
+A leading `~/` is expanded in `ledger_root`, `vault_root`, `status_dir` and `container_root`. A line outside the fenced block is prose and is ignored.
+
 Each setting resolves as: **environment variable, then the user file, then the overlay's `config.md`**. The user file is `MAESTRO_LOCAL_CONFIG` (an explicit path; the empty string reads no file, which is what the tests set), else `~/.config/the-maestro/config.md`. `node scripts/local-config.ts` shows what resolved. An environment variable set to the empty string counts as set.
 
 | Key | Environment variable | Default | Purpose |
