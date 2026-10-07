@@ -2,9 +2,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
@@ -1434,7 +1434,7 @@ test('a grant that is both resolved with --approval and approve-tagged is listed
 // ── roll sweeps stale worktrees ─────────────────────────────────────────────
 
 /** A container holding one repo cloned from a bare origin, with a clean and a dirty detached worktree outside the container. */
-function sweepWorld() {
+function sweepWorld(ignoreFiles = '') {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'roll-sweep-')));
     const git = (cwd: string, ...a: string[]) => { const r = spawnSync('git', ['-C', cwd, '-c', 'user.email=me@example.com', '-c', 'user.name=T', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
     git(root, 'init', '-q', '--bare', '-b', 'main', 'origin.git');
@@ -1442,6 +1442,7 @@ function sweepWorld() {
     git(root, 'clone', '-q', join(root, 'origin.git'), join(root, 'box', 'proj'));
     const repo = join(root, 'box', 'proj');
     writeFileSync(join(repo, 'a.txt'), 'a\n'); git(repo, 'add', 'a.txt'); git(repo, 'commit', '-q', '-m', 'init');
+    if (ignoreFiles) { writeFileSync(join(repo, '.gitignore'), ignoreFiles); git(repo, 'add', '.gitignore'); git(repo, 'commit', '-q', '-m', 'chore: ignore'); }
     git(repo, 'branch', 'develop'); git(repo, 'push', '-q', 'origin', 'main', 'develop'); git(repo, 'remote', 'set-head', 'origin', 'main');
     const clean = join(root, 'clean'); const dirty = join(root, 'dirty');
     git(repo, 'worktree', 'add', '-q', '--detach', clean, 'origin/develop');
@@ -1467,6 +1468,32 @@ test('roll removes a stale worktree without asking, keeps dirty ones with the re
     assert.match(first.out, /worktrees: 1 removed, 0 pruned, 1 kept\./);
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [false, true]);
     assert.match(runEnvIn(w.container, env, 'roll').out, /worktrees: 0 removed, 0 pruned, 1 kept\./);
+});
+
+test('roll asks once to move a real env file into the store, names only, and removes the worktree after it is a store link', () => {
+    const w = sweepWorld('.env*\n');
+    const store = join(dirname(w.container), 'env-store'); mkdirSync(join(store, 'proj', 'alpha'), { recursive: true });
+    const envFile = join(w.clean, '.env'); writeFileSync(envFile, 'FAKE_SENTINEL=sentinel-not-a-secret\n');
+    const aged = new Date(Date.now() - 3 * 36e5); utimesSync(w.clean, aged, aged); // writing the file touched the directory; only the env file may keep it
+    const env = { MAESTRO_CONTAINER_ROOT: w.container, MAESTRO_ENV_STORE_ROOT: store };
+    const first = runEnvIn(w.container, env, 'roll');
+    assert.equal(first.code, 0, first.err);
+    assert.match(first.out, new RegExp(`asked +${w.clean}: move \\.env into the env store`));
+    const asks = ledger().filter((e) => e.kind === 'question');
+    assert.equal(asks.length, 1);
+    assert.match(asks[0].text ?? '', new RegExp(`Env files stop the sweep: proj worktree ${w.clean} holds real env file\\(s\\) \\.env, .*env-store-move\\.ts' '${w.clean}' '\\.env' PROJECT`));
+    assert.equal(asks[0].repo, 'proj');
+    assert.doesNotMatch(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), /sentinel-not-a-secret/);
+    assert.equal(existsSync(w.clean), true);
+    runEnvIn(w.container, env, 'roll');
+    assert.equal(ledger().filter((e) => e.kind === 'question').length, 1, 'the same question is not raised twice');
+    // the user moves it: the worktree now holds a link into the store
+    const target = join(store, 'proj', 'alpha', '.env'); writeFileSync(target, 'FAKE_KEY=not-a-secret\n');
+    rmSync(envFile); symlinkSync(target, envFile);
+    const old = new Date(Date.now() - 3 * 36e5); utimesSync(w.clean, old, old); // the move touched the directory; let the idle window pass again
+    assert.match(runEnvIn(w.container, env, 'roll').out, new RegExp(`removed +${w.clean}`));
+    assert.equal(existsSync(w.clean), false);
+    assert.equal(readFileSync(target, 'utf8'), 'FAKE_KEY=not-a-secret\n');
 });
 
 test('roll sweeps the configured root even when run from a subdirectory of it', () => {
