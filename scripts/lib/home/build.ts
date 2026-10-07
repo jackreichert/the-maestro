@@ -17,6 +17,7 @@ import { mapUnits, subtree } from './mapping.ts';
 import type { LedgerLink } from './mapping.ts';
 import { buildRail } from './rail.ts';
 import { prsNaming } from './prs.ts';
+import { epicDocs } from './epic-docs.ts';
 import type { Doc, Docs } from './docs.ts';
 import type { EpicSummary, Ref, StreamHome, TicketRow, Unknown } from './types.ts';
 
@@ -109,7 +110,23 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   const projects = [...new Set([...(cfg?.projects ?? []), ...[...epicIds, ...looseIds].map((id) => (forest.byId.get(id) as Ticket).project)])].sort();
   const docs = new Map<string, Doc[]>();
   for (const project of projects) { const d = inp.readDocs(project); docs.set(project, d.docs); for (const n of d.notes) unknowns.push({ kind: 'unreadable-doc', text: n }); }
-  const rail = buildRail({ page, cfg, stream, epics, prs: inp.prs, docs }, unknowns);
+  // Documents attributed to an epic may sit in any project its tickets live in; those projects are read for the epic's shelf only, so they add nothing to the rail unless the stream maps them.
+  const read = new Map<string, Doc[]>(docs);
+  const attributed = new Set<string>();
+  for (const e of epics) {
+    const tree = new Set(own(e.id));
+    for (const project of new Set([...tree].map((x) => forest.byId.get(x)?.project).filter((p): p is string => !!p))) {
+      if (read.has(project)) continue;
+      const d = inp.readDocs(project);
+      read.set(project, d.docs);
+      for (const n of d.notes) unknowns.push({ kind: 'unreadable-doc', text: n });
+    }
+    const found = epicDocs({ epic: e.id, tree, epicBody: (forest.byId.get(e.id) as Ticket).body, docs: [...tree].flatMap((x) => forest.byId.get(x)?.project ?? []).filter((p, i, a) => a.indexOf(p) === i).flatMap((p) => read.get(p) ?? []), vaultName: page.vaultName, now });
+    e.docs = found.docs;
+    for (const p of found.paths) attributed.add(p);
+  }
+  const railDocs = new Map([...docs].map(([project, ds]) => [project, ds.filter((d) => !attributed.has(d.path))] as const));
+  const rail = buildRail({ page, cfg, stream, epics, prs: inp.prs, docs: railDocs }, unknowns);
   for (const e of epics) e.unknowns = unknowns.filter((u) => u.epic === e.id).length;
   const source = !cfg || !cfg.epics.length ? 'auto' : epicIds.every((id) => cfg.epics.includes(id)) ? 'config' : 'mixed';
   return base({
@@ -196,7 +213,7 @@ function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
     points: pointed ? { done: roll.ptsDone, total: roll.ptsTotal, pointedOpen, open: open.length } : null,
     ...(next ? { next: row(ctx, next) } : {}),
     awaiting: [...tree, id].reduce((n, x) => n + (ctx.facts.get(x) ?? []).filter((f) => f.state === 'ask').length, 0),
-    unknowns: 0, quietDays: quiet(daysSince(newest(ctx, id), inp.now)),
+    docs: { groups: [], unattributedRecent: 0 }, unknowns: 0, quietDays: quiet(daysSince(newest(ctx, id), inp.now)),
   };
 }
 
