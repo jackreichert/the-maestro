@@ -108,9 +108,9 @@ const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 
 /** What the asks list says once, under its heading, instead of on every ask: how answering works on this page. */
 export function askHint(live: boolean): Node {
-  if (!live) return document.createTextNode('Sample data: open an ask to read it. Answering needs the Podium server.');
+  if (!live) return document.createTextNode('Sample data: asks open read-only. Answering needs the Podium server.');
   const hint = document.createDocumentFragment();
-  hint.append('Open an ask to answer it. ', h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' copies the answer for the orchestrator chat; this page saves nothing yet.');
+  hint.append(h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' copies an answer for the chat; nothing is saved here yet.');
   return hint;
 }
 
