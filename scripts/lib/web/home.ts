@@ -3,6 +3,7 @@
  * optional `stream-homes.json` in the status directory, and what `readBoard` already reads (ledger, PR cache). Read-only.
  */
 import { createReader } from '../vault/reader.ts';
+import { DOC_DIR_SCOPES, DOC_FILE_SCOPES, loadDocs } from '../home/docs.ts';
 import { loadTickets, TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from '../vault/tickets.ts';
 import { readHomes } from '../home/config.ts';
 import { buildStreamHome } from '../home/build.ts';
@@ -39,9 +40,11 @@ export function buildHome(cfg: WebConfig, name: string, now: Date = new Date()):
   const canon = streams.find((s) => s === name);
   if (!canon) return null;
   const root = cfg.vaultRoot;
-  const vault = root ? loadTickets(createReader({ root, dirScopes: TICKET_DIR_SCOPES, fileScopes: TICKET_FILE_SCOPES }), root) : null;
+  const reader = root ? createReader({ root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES] }) : null;
+  const vault = root && reader ? loadTickets(reader, root) : null;
   return buildStreamHome({
     stream: canon, streams, now, vault, homes: readHomes(cfg.statusDir, streams), ledger: factsOf(g.items, inputs.ticketMap),
+    readDocs: (project) => (reader ? loadDocs(reader, project) : { docs: [], notes: [] }),
     prs: inputs.prs, prData: { fetchedAt: inputs.prData.fetchedAt }, page: cfg.page,
   });
 }

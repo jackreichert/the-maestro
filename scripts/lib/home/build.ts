@@ -15,6 +15,9 @@ import { PR_STALE_MS } from '../web/state.ts';
 import type { Homes } from './config.ts';
 import { mapUnits, subtree } from './mapping.ts';
 import type { LedgerLink } from './mapping.ts';
+import { buildRail } from './rail.ts';
+import { prsNaming } from './prs.ts';
+import type { Doc, Docs } from './docs.ts';
 import type { EpicSummary, Ref, StreamHome, TicketRow, Unknown } from './types.ts';
 
 /** A ledger item that names a ticket, reduced to what the home base reads. */
@@ -32,6 +35,8 @@ export interface HomeInput {
   prs: Pr[];
   prData: { fetchedAt: Date | null };
   page: PageConfig;
+  /** The documents of one project; called only for the projects this stream maps. */
+  readDocs: (project: string) => Docs;
 }
 
 const ROW_CAP = 200;
@@ -97,11 +102,16 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   sorted.forEach((t, i) => { if (i < ROW_CAP) left[bucketOf(ctx, t)].push(row(ctx, t)); else left.truncated += 1; });
 
   addStreamUnknowns(ctx, unknowns, { stream, mapping, owned, epicIds, forest });
+  const projects = [...new Set([...(cfg?.projects ?? []), ...[...epicIds, ...looseIds].map((id) => (forest.byId.get(id) as Ticket).project)])].sort();
+  const docs = new Map<string, Doc[]>();
+  for (const project of projects) { const d = inp.readDocs(project); docs.set(project, d.docs); for (const n of d.notes) unknowns.push({ kind: 'unreadable-doc', text: n }); }
+  const rail = buildRail({ page, cfg, stream, epics, prs: inp.prs, docs }, unknowns);
   for (const e of epics) e.unknowns = unknowns.filter((u) => u.epic === e.id).length;
   const source = !cfg || !cfg.epics.length ? 'auto' : epicIds.every((id) => cfg.epics.includes(id)) ? 'config' : 'mixed';
   return base({
     mapping: { source, configFound: Boolean(cfg) }, epics,
     loose: looseIds.map((id) => forest.byId.get(id) as Ticket).filter(isOpen).slice(0, ROW_CAP).map((t) => row(ctx, t)), left,
+    links: rail,
     doneMeans: epicIds.flatMap((id) => { const t = forest.byId.get(id) as Ticket; const text = section(t.body, /^## What done looks like\b/); return text?.trim() ? [{ epic: id, text: clip(text, DONE_MEANS_MAX) }] : []; }),
     unknowns: unknowns.slice(0, 100),
     freshness: { tickets: inp.vault.newestMtime ? new Date(inp.vault.newestMtime).toISOString() : '', prs: prState(inp), tracker: null },
@@ -141,9 +151,10 @@ function bucketOf(ctx: Ctx, t: Ticket): Bucket {
 
 function row(ctx: Ctx, t: Ticket): TicketRow {
   const key = trackerKey(ctx.inp.page, t);
+  const named = prsNaming(ctx.inp.prs, [t.id, key ?? '']);
   return {
     id: t.id, title: clip(t.title, TITLE_MAX), status: t.status, ...(t.points ? { points: t.points } : {}), priority: t.priority, ref: noteRef(ctx.inp.page, t),
-    ...(key ? { tracker: trackerRef(ctx.inp.page, key) } : {}), prs: [], awaitsYou: (ctx.facts.get(t.id) ?? []).some((f) => f.state === 'ask'),
+    ...(key ? { tracker: trackerRef(ctx.inp.page, key) } : {}), prs: named.shown, ...(named.more ? { prsMore: named.more } : {}), awaitsYou: (ctx.facts.get(t.id) ?? []).some((f) => f.state === 'ask'),
     quietDays: isOpen(t) ? quiet(daysSince(t.updated, ctx.inp.now)) : null,
   };
 }

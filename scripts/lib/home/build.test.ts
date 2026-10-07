@@ -7,17 +7,19 @@ import { assertNoCanary, buildFixture } from '../vault/fixture.ts';
 import type { PageConfig } from '../status-page/render.ts';
 import { validateHomes } from './config.ts';
 import { buildStreamHome } from './build.ts';
+import { DOC_DIR_SCOPES, DOC_FILE_SCOPES, loadDocs } from './docs.ts';
 import type { HomeInput, LedgerFact } from './build.ts';
 
 const NOW = new Date('2026-10-07T12:00:00Z');
 const PAGE: PageConfig = { streams: [], repoStreams: {}, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/', ticketNotePath: '', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'UTC' };
 const STREAMS = ['Avonlea', 'Green Gables'];
 const fx = buildFixture();
-const vault = loadTickets(createReader({ root: fx.root, dirScopes: TICKET_DIR_SCOPES, fileScopes: TICKET_FILE_SCOPES }), fx.root);
+const READER = createReader({ root: fx.root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES] });
+const vault = loadTickets(READER, fx.root);
 
 function input(over: Partial<HomeInput> & { config?: object; ledger?: LedgerFact[] } = {}): HomeInput {
   const { config, ...rest } = over;
-  return { stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: config ?? { Avonlea: { epics: ['avonlea-api-042'] } } }, STREAMS), ledger: [], prs: [], prData: { fetchedAt: new Date('2026-10-07T11:55:00Z') }, page: PAGE, ...rest };
+  return { stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: config ?? { Avonlea: { epics: ['avonlea-api-042'] } } }, STREAMS), ledger: [], prs: [], prData: { fetchedAt: new Date('2026-10-07T11:55:00Z') }, page: PAGE, readDocs: (p) => loadDocs(READER, p), ...rest };
 }
 
 test('an epic reports honest counts with their units, and the numbers add up to its total', () => {
