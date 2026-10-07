@@ -69,6 +69,11 @@ export function fragmentFor(fragments: Record<string, string> | undefined, strea
   return fragments !== undefined && Object.hasOwn(fragments, stream) ? fragments[stream] : undefined;
 }
 
+/** A whole number of at least 1, else the fallback. */
+const wholeAtLeastOne = (v: unknown, fallback: number): number => (typeof v === 'number' && Number.isInteger(v) && v >= 1 ? v : fallback);
+/** The cap when the server names none (an older server, or the bundled sample data). */
+const DEFAULT_PRIORITIES_MAX = 5;
+
 const text = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 /**
@@ -93,7 +98,7 @@ export function sanitizeState(x: unknown): { state: PodiumState; dropped: number
     : { fetchedAt: null, stale: true };
   const state: PodiumState = {
     generatedAt: text(x.generatedAt), today: text(x.today), tz: text(x.tz), seq: text(x.seq),
-    streams: x.streams as string[], priorities: pri.value, prData, fragments,
+    streams: x.streams as string[], priorities: pri.value, prioritiesMax: wholeAtLeastOne(x.prioritiesMax, DEFAULT_PRIORITIES_MAX), prData, fragments,
     asks: rows.asks as AskCard[], working: rows.working as WorkItem[], queued: rows.queued as WorkItem[], blocked: rows.blocked as BlockedItem[],
     done: rows.done as DoneItem[], deferred: rows.deferred as DeferredItem[], prs: rows.prs as PrCard[], footer: rows.footer as FooterRow[],
   };

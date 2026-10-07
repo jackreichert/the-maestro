@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * web.ts: serve the Podium as a read-only local web page. Normally run as `journal.ts web`, which passes the ledger root and project.
+ * web.ts: serve the Podium as a local web page. It is read-only except for today's priorities (reorder, add, delete). Normally run as `journal.ts web`, which passes the ledger root and project.
  *
  *   web.ts [--port <n>] [--status-dir <dir>] [--vault <ledger root>] [--project <name>]
  *
  *   --port N          listen on 127.0.0.1:N (default 0: the OS picks a free port; the URL is printed)
  *   --status-dir DIR  where priorities.md, .now-prs.json, ticket-map.json and fragments/ live (default as for `podium`)
  *
- * Binds 127.0.0.1 only and answers only GET. It reads the ledger, the PR cache and priorities; it never writes them and never calls GitHub.
+ * Binds 127.0.0.1 only. It answers GET, plus three POST routes that edit today's priorities (priorities.md) and, for each, append
+ * one closed note to the ledger. Nothing else is written, and it never calls GitHub.
  * The page itself is built by `npm run build:web`; without that build the server still answers /api/* and says so.
  */
 import { existsSync, realpathSync } from 'node:fs';
@@ -15,7 +16,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, PODIUM_TRUSTED_ATLASSIAN_HOSTS, VAULT_ROOT, statusDirFor } from './local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, PODIUM_TRUSTED_ATLASSIAN_HOSTS, PRIORITIES_MAX, VAULT_ROOT, statusDirFor } from './local-config.ts';
 import { pageConfig } from './status-page.ts';
 import { createWebServer } from './lib/web/server.ts';
 
@@ -31,10 +32,10 @@ function main(argv: string[]): void {
   const statusDir = v['status-dir'] || statusDirFor(project);
   if (!vault) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
-  const server = createWebServer({ web: { vault, project, statusDir, page: pageConfig(project, statusDir), ...(VAULT_ROOT ? { vaultRoot: VAULT_ROOT } : {}) }, clientDir: CLIENT, trustedAtlassianHosts: PODIUM_TRUSTED_ATLASSIAN_HOSTS });
+  const server = createWebServer({ web: { vault, project, statusDir, page: pageConfig(project, statusDir), prioritiesMax: PRIORITIES_MAX, ...(VAULT_ROOT ? { vaultRoot: VAULT_ROOT } : {}) }, clientDir: CLIENT, trustedAtlassianHosts: PODIUM_TRUSTED_ATLASSIAN_HOSTS });
   server.once('error', (e) => { console.error(`web: ${e.message.split('\n')[0]}`); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => {
-    console.log(`Podium web: http://127.0.0.1:${(server.address() as AddressInfo).port}/  (read-only; Ctrl-C to stop)`);
+    console.log(`Podium web: http://127.0.0.1:${(server.address() as AddressInfo).port}/  (Ctrl-C to stop)`);
     if (!existsSync(join(CLIENT, 'dist', 'app.js'))) console.error('web: the page is not built yet; run `npm run build:web` and restart (the /api endpoints work without it)');
   });
 }

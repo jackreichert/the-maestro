@@ -51,6 +51,8 @@ export interface PodiumState {
   tz: string;
   streams: string[];
   priorities: PrioritiesState;
+  /** `priorities_max`: how many priorities the list may hold. */
+  prioritiesMax: number;
   footer: FooterRow[];
   prData: { fetchedAt: string | null; stale: boolean };
   asks: AskCard[];
