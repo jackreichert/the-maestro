@@ -64,8 +64,11 @@ export const VISUALLY_HIDDEN = `.vh{position:absolute;width:1px;height:1px;overf
 /** Shared base for every component: type, links, the focus ring, mono and tabular figures. Tokens only, from theme.css. */
 export const BASE_CSS = `
   :host { display: block; color: var(--text-primary); font-family: var(--font-sans); }
+  :host([hidden]) { display: none; }
   *, *::before, *::after { box-sizing: border-box; }
+  /* Inline padding grows each link's hit area to at least 24 px tall (WCAG 2.2 target size) without moving the line box. */
   a {
+    padding-block: max(4.5px, 0.35em);
     color: var(--accent); text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: 0.2em;
     text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
     transition: text-decoration-color var(--dur-fast) var(--ease-out);
@@ -87,6 +90,7 @@ export const UI_CSS = `
   @media (min-width: 960px) { .board { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); } }
   @media (min-width: 1280px) { .board { grid-template-columns: minmax(0, 1fr) 360px; } }
   .col { display: grid; gap: var(--space-6); min-width: 0; }
+  @media (max-width: 480px) { .board { row-gap: var(--space-6); } .col { gap: var(--space-5); } }
   section { container-type: inline-size; min-width: 0; }
 
   .head { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); }
@@ -95,12 +99,25 @@ export const UI_CSS = `
   .quiet .head h2 { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); letter-spacing: 0.02em; }
   .glyph { display: inline-block; width: 1.1em; text-align: center; }
   .head .glyph { color: var(--text-muted); }
+  /* Wide screens hang the status glyph in the margin, so every heading's text starts on the same edge as its rows. */
+  @media (min-width: 1100px) { .head .glyph { margin-left: calc(-1.1em - var(--space-2)); } }
   .tone-critical .head .glyph { color: var(--critical); }
   .tone-success .head .glyph { color: var(--success); }
   .tone-accent .head .glyph { color: var(--accent); }
 
+  .section-hint { margin: calc(-1 * var(--space-2)) 0 var(--space-3); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); max-width: 70ch; }
+  .section-hint .touch { display: none; }
+  @media (pointer: coarse), (max-width: 480px) { .section-hint .keys { display: none; } .section-hint .touch { display: inline; } }
+  kbd { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1; padding: 2px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-1); color: var(--text-secondary); white-space: nowrap; }
   .empty { margin: 0; padding: var(--space-3) 0; color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-sm); border-top: 1px solid var(--border); }
-  .cards { display: grid; gap: var(--space-4); }
+  .asks { border-top: 1px solid var(--border); }
+  button.more {
+    font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); color: var(--accent);
+    margin-top: var(--space-2); min-height: 32px; padding: 0 var(--space-3); margin-left: calc(-1 * var(--space-3));
+    border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; font-variant-numeric: tabular-nums;
+    transition: background-color var(--dur-fast) var(--ease-out);
+  }
+  @media (hover: hover) { button.more:hover { background: var(--accent-soft); } }
 
   ul.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.rows > li {
@@ -109,13 +126,14 @@ export const UI_CSS = `
   }
   .row-text { min-width: 0; overflow-wrap: anywhere; }
   .row-meta { color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .row-sub { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
+  /* A link that is a flex or grid item is blockified, so the inline padding above would add height: there it trades 2 px of
+     padding for 2 px of negative margin instead, a 24 px target on a 20 px line with the row's rhythm unchanged. */
+  .row-sub > a { padding-block: 2px; margin-block: -2px; }
+  .row-sub { align-items: baseline; grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
   .gate { color: var(--critical); }
   .gate .glyph { width: auto; margin-right: 4px; }
-  @container (max-width: 420px) {
-    ul.rows > li { grid-template-columns: auto minmax(0, 1fr); }
-    .row-meta { grid-column: 2; }
-  }
+  .gate .mono { font-family: var(--font-mono); font-size: 0.92em; }
+  .gate a { color: var(--critical); text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
 
   .id {
     font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-secondary);

@@ -3,7 +3,9 @@ import './ask-card.ts';
 import './md-fragment.ts';
 import { fragmentFor } from './contract.ts';
 import { prChips } from './pr-chips.ts';
-import { ago, clockTime } from './glance.ts';
+import { ago, clockTime, oldestFirst } from './glance.ts';
+import { gateView } from './gate.ts';
+import type { GateView } from './gate.ts';
 import type { AskCard, DoneItem, PodiumState, PrCard, WorkItem } from './types.ts';
 
 const CSS = `${BASE_CSS}${UI_CSS}
@@ -20,7 +22,8 @@ const CSS = `${BASE_CSS}${UI_CSS}
 export const BOARD_CSS = CSS;
 
 export type Tone = 'accent' | 'critical' | 'success' | 'neutral';
-export interface SectionSpec { title: string; n: number; glyph: string; tone: Tone; empty: string; quiet?: boolean }
+/** A section; only the three status sections (needs you, blocked, shipped) carry a glyph. */
+export interface SectionSpec { title: string; n: number; glyph?: string; tone: Tone; empty: string; quiet?: boolean; hint?: Node | null }
 
 let sectionSeq = 0;
 
@@ -29,13 +32,21 @@ export function section(spec: SectionSpec, body: Node | null): HTMLElement {
   const id = `s${++sectionSeq}`;
   return h('section', { 'aria-labelledby': id, class: `tone-${spec.tone}${spec.quiet ? ' quiet' : ''}` },
     h('div', { class: 'head' },
-      h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph),
+      spec.glyph ? h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph) : null,
       h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null)),
+    body && spec.hint ? h('p', { class: 'section-hint' }, spec.hint) : null,
     body ?? h('p', { class: 'empty' }, spec.empty));
 }
 
 /** Where rows are drawn: the reference time and zone for ages, and whether each row names its stream. */
-export interface RowContext { now: string; tz: string; showStream: boolean }
+export interface RowContext { now: string; tz: string; showStream: boolean; prs?: PrCard[] }
+
+/** A blocked row's gate: the words, then its target, linked when the gate names a pull request with a known URL. */
+function gateNode(g: GateView): HTMLElement {
+  const target = g.url ? refLink({ label: g.label, url: g.url }) : h('span', { class: g.mono ? 'mono' : undefined }, g.label);
+  if (g.url && target instanceof HTMLElement) target.classList.add('mono');
+  return h('span', { class: 'gate' }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, '⊘'), `${g.lead} `, target);
+}
 
 /** One row per item: id, text and ticket, a right-aligned age (or closing time), then stream, gate and model. */
 export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElement | null {
@@ -46,27 +57,63 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
     const gate = 'gate' in x && typeof x.gate === 'string' && x.gate ? x.gate : '';
     const sub = [
       ctx.showStream ? streamTag(x.stream) : null,
-      gate ? h('span', { class: 'gate' }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, '⊘'), `Waiting on ${gate}`) : null,
+      gate ? gateNode(gateView(gate, ctx.prs ?? [])) : null,
       x.model ? h('span', {}, x.model) : null,
     ].filter((n): n is HTMLElement => n !== null);
     return h('li', {},
       h('span', { class: 'id' }, x.id),
       h('span', { class: 'row-text' }, x.text, ...(x.ticket ? [' ', refLink(x.ticket)] : [])),
-      h('span', { class: 'row-meta' }, meta ? (done ? `shipped ${meta}` : meta) : ''),
+      // Under a "Shipped today" heading the word is redundant to the eye, so only a screen reader hears it.
+      h('span', { class: 'row-meta' }, meta && done ? h('span', { class: 'vh' }, 'shipped ') : null, meta),
       sub.length ? h('span', { class: 'row-sub' }, ...sub) : null);
   }));
 }
 
-/** Ask cards; `showStream` tags each card with its stream (the overview mixes streams). */
-export function askCards(asks: AskCard[], live: boolean, showStream: boolean): HTMLElement | null {
+/**
+ * Asks as one row each, oldest first; `showStream` tags each row with its stream (the overview mixes streams). With a
+ * `cap`, only the oldest `cap` rows show until "Show all N" reveals the rest, so the sections below stay in view.
+ */
+export function askCards(asks: AskCard[], live: boolean, showStream: boolean, cap = Number.POSITIVE_INFINITY): HTMLElement | null {
   if (asks.length === 0) return null;
-  return h('div', { class: 'cards' }, ...asks.map((a) => {
-    const card = h('ask-card');
+  const id = `asks${++sectionSeq}`;
+  const cards = oldestFirst(asks).map((a, i) => {
+    const card = h('ask-card', { role: 'listitem', hidden: i >= cap });
     card.showStream = showStream;
     card.locked = !live;
     card.ask = a;
     return card;
-  }));
+  });
+  const list = h('div', { class: 'asks', role: 'list', id }, ...cards);
+  const hidden = cards.slice(cap);
+  if (hidden.length === 0) return list;
+  const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', 'aria-controls': id });
+  const label = (open: boolean): void => {
+    more.textContent = open ? `Show the oldest ${cap} only` : `Show all ${asks.length}`;
+    more.setAttribute('aria-expanded', String(open));
+  };
+  label(false);
+  let open = false;
+  more.addEventListener('click', () => {
+    open = !open;
+    for (const c of hidden) c.hidden = !open;
+    label(open);
+    // Revealing moves focus to the first ask that was hidden, so a keyboard user lands on the new rows, not past them.
+    if (open) hidden[0]?.focusToggle();
+  });
+  return h('div', {}, list, more);
+}
+
+/** True on Apple platforms, where the copy shortcut is shown with the Command key. */
+const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/** What the asks list says once, under its heading, instead of on every ask: how answering works on this page. */
+export function askHint(live: boolean): Node {
+  if (!live) return document.createTextNode('Sample data: asks open read-only. Answering needs the Podium server.');
+  const hint = document.createDocumentFragment();
+  // A phone has no shortcut to mention, and the shorter line keeps the hint to one line there.
+  hint.append(h('span', { class: 'keys' }, h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' copies an answer for the chat; nothing is saved here yet.'),
+    h('span', { class: 'touch' }, 'Answers are copied for the chat; nothing is saved here yet.'));
+  return hint;
 }
 
 /** Open PRs as rows: link and title, branch, then status chips (text and symbol, never colour alone). */
@@ -110,7 +157,7 @@ export class StreamBoard extends HTMLElement {
     const stream = this.getAttribute('stream') ?? '';
     if (!st) { this.#root.replaceChildren(); return; }
     const inStream = <T extends { stream: string }>(xs: T[]): T[] => xs.filter((x) => x.stream === stream);
-    const ctx: RowContext = { now: st.generatedAt, tz: st.tz, showStream: false };
+    const ctx: RowContext = { now: st.generatedAt, tz: st.tz, showStream: false, prs: st.prs };
     const asks = inStream(st.asks);
     const working = inStream(st.working);
     const queued = inStream(st.queued);
@@ -123,15 +170,15 @@ export class StreamBoard extends HTMLElement {
     if (md && frag) md.markdown = frag;
     this.#root.replaceChildren(h('div', { class: 'board' },
       h('div', { class: 'col' },
-        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.' }, askCards(asks, this.#live, false)),
+        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', hint: askHint(this.#live) }, askCards(asks, this.#live, false)),
         section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(blocked, ctx)),
-        section({ title: 'Pull requests', n: prs.length, glyph: '⇄', tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
+        section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
       h('div', { class: 'col' },
-        section({ title: 'In flight', n: working.length, glyph: '◐', tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(working, ctx)),
-        section({ title: 'Queued', n: queued.length, glyph: '○', tone: 'neutral', empty: 'The queue is empty.', quiet: true }, itemRows(queued, ctx)),
+        section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(working, ctx)),
+        section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: 'The queue is empty.', quiet: true }, itemRows(queued, ctx)),
         section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', quiet: true }, itemRows(done, ctx)),
-        deferred.length ? section({ title: 'Deferred', n: deferred.length, glyph: '↷', tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx)) : null,
-        md ? section({ title: 'Notes', n: 0, glyph: '¶', tone: 'neutral', empty: '', quiet: true }, md) : null)));
+        deferred.length ? section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx)) : null,
+        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null)));
   }
 }
 

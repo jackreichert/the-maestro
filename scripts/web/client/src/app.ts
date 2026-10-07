@@ -2,11 +2,11 @@ import './stream-board.ts';
 import './podium-chart.ts';
 import './md-fragment.ts';
 import { h, shadow, streamTag } from './dom.ts';
-import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
+import { BOARD_CSS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
-import { cueParts, clockTime, freshness, longDate } from './glance.ts';
+import { cueParts, clockTime, freshness, longDate, shortDate } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
@@ -25,6 +25,15 @@ const CSS = `${BOARD_CSS}
   h1 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-bold); letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: var(--space-2); }
   h1::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--accent); transform: rotate(45deg); }
   .date { font-size: var(--text-sm); color: var(--text-secondary); }
+  .date .short, .fresh .short-hide { display: inline; }
+  .date .short { display: none; }
+  @media (max-width: 480px) {
+    .top { flex-wrap: nowrap; }
+    .date .long, .fresh .short-hide { display: none; }
+    .date .short { display: inline; }
+    .scope { margin-top: var(--space-4); }
+    [role=tabpanel] { padding-top: var(--space-5); }
+  }
   .fresh {
     display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-3); border-radius: var(--radius-pill);
     background: var(--surface-1); box-shadow: var(--shadow-1); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary);
@@ -50,6 +59,9 @@ const CSS = `${BOARD_CSS}
   .tabbar { position: sticky; top: 0; z-index: 2; background: var(--surface-page); border-bottom: 1px solid var(--border); }
   [role=tablist] { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; padding-top: var(--space-2); }
   [role=tablist]::-webkit-scrollbar { display: none; }
+  .more-end [role=tablist] { mask-image: linear-gradient(to right, black calc(100% - 56px), transparent); }
+  .more-start [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px); }
+  .more-start.more-end [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px, black calc(100% - 56px), transparent); }
   [role=tab] {
     position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 40px;
     padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: none; cursor: pointer;
@@ -63,12 +75,14 @@ const CSS = `${BOARD_CSS}
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
 
   [role=tabpanel] { padding-block: var(--space-6) var(--space-8); }
-  [role=tabpanel]:focus-visible { outline-offset: 4px; }
+  /* The panel takes focus between the tabs and its content: a 2 px focus line under the tab bar, not a frame round the page. */
+  [role=tabpanel]:focus-visible { outline: none; border-radius: 0; box-shadow: inset 0 2px 0 var(--focus); }
+  @media (forced-colors: active) { [role=tabpanel]:focus-visible { outline: 2px solid CanvasText; outline-offset: -2px; } }
 
   ol.priorities { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); counter-reset: p; }
   ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 1.5em minmax(0, 1fr); gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
   ol.priorities li::before { content: counter(p); color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
-  ol.priorities .tag { grid-column: 2; }
+  ol.priorities .tag { grid-column: 2; justify-self: start; padding-block: 2px; margin-block: -2px; }
 
   .table-wrap { overflow-x: auto; }
   table.counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); line-height: var(--leading-sm); font-variant-numeric: tabular-nums; }
@@ -104,6 +118,12 @@ const CSS = `${BOARD_CSS}
   .problem .detail { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-primary); background: var(--surface-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 `;
 
+/** How many asks the Overview lists before "Show all N": the oldest few, so Blocked and Shipped today stay above the fold. */
+export const ASK_PREVIEW = 4;
+/** On a phone each ask row takes two lines, so the preview is one shorter there. */
+const ASK_PREVIEW_PHONE = 3;
+const askPreview = (): number => (window.matchMedia('(max-width: 640px)').matches ? ASK_PREVIEW_PHONE : ASK_PREVIEW);
+
 /** <podium-app>: header with the cue line, stream tabs plus Overview. The active tab lives in the URL fragment. */
 export class PodiumApp extends HTMLElement {
   #root: ShadowRoot;
@@ -113,6 +133,7 @@ export class PodiumApp extends HTMLElement {
   #dropped = 0;
   #active = OVERVIEW;
   #tick: number | undefined;
+  #tabsObserver: ResizeObserver | null = null;
   // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
   // tab so keyboard and screen reader users are not left on the destroyed link.
   readonly #onHash = (): void => {
@@ -147,6 +168,7 @@ export class PodiumApp extends HTMLElement {
   disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.#onHash);
     window.clearInterval(this.#tick);
+    this.#tabsObserver?.disconnect();
   }
 
   #ids(): string[] { return tabIds(this.#state?.streams ?? []); }
@@ -199,10 +221,35 @@ export class PodiumApp extends HTMLElement {
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
       this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active));
-    this.#root.replaceChildren(
-      this.#header(st),
-      h('div', { class: 'tabbar' }, h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs)),
-      h('main', {}, panel));
+    const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
+    const tabbar = h('div', { class: 'tabbar' }, tablist);
+    this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
+    this.#watchTabOverflow(tabbar, tablist);
+  }
+
+  /**
+   * On a narrow screen the tabs scroll sideways. Keep the selected tab in view, and fade whichever edge has more tabs
+   * past it, so it is visible that the row scrolls (the scrollbar itself is hidden).
+   */
+  #watchTabOverflow(tabbar: HTMLElement, tablist: HTMLElement): void {
+    this.#tabsObserver?.disconnect();
+    const selected = tablist.querySelector<HTMLElement>('[aria-selected=true]');
+    const update = (): void => {
+      const max = tablist.scrollWidth - tablist.clientWidth;
+      tabbar.classList.toggle('more-start', max > 1 && tablist.scrollLeft > 1);
+      tabbar.classList.toggle('more-end', max > 1 && tablist.scrollLeft < max - 1);
+    };
+    const reveal = (): void => {
+      if (!selected) return;
+      const pad = 48;   // clear of the faded edge
+      const left = selected.offsetLeft - tablist.offsetLeft;
+      const right = left + selected.offsetWidth;
+      if (left - pad < tablist.scrollLeft) tablist.scrollLeft = Math.max(0, left - pad);
+      else if (right + pad > tablist.scrollLeft + tablist.clientWidth) tablist.scrollLeft = right + pad - tablist.clientWidth;
+    };
+    tablist.addEventListener('scroll', update, { passive: true });
+    this.#tabsObserver = new ResizeObserver(() => { reveal(); update(); });
+    this.#tabsObserver.observe(tablist);
   }
 
   get #live(): boolean { return this.#sources.state === 'server' && this.#sources.charts === 'server'; }
@@ -217,7 +264,7 @@ export class PodiumApp extends HTMLElement {
       .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
-        h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, longDate(st.today))),
+        h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
         this.#freshness(st)),
       note ? h('p', { class: 'source' }, note) : null,
       h('p', { class: 'scope', id: 'scope' }, scope),
@@ -231,9 +278,11 @@ export class PodiumApp extends HTMLElement {
     const live = this.#live;
     const text = !live ? `Sample data${updated ? ` · as of ${updated}` : ''}`
       : stale ? `Stale · updated ${updated}${age ? `, ${age} ago` : ''}. Reload for current data.`
-        : `Live${updated ? ` · updated ${updated}` : ''}`;
+        : null;
+    // Live and fresh: "Live · updated 2:05 pm", with "updated" dropped on a phone so the pill shares the brand's line.
+    const body: (Node | string)[] = text !== null ? [text] : updated ? ['Live · ', h('span', { class: 'short-hide' }, 'updated '), updated] : ['Live'];
     return h('p', { class: `fresh${live ? (stale ? ' stale' : ' live') : ''}` },
-      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, text);
+      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, h('span', {}, ...body));
   }
 
   #updateFreshness(): void {
@@ -250,7 +299,7 @@ export class PodiumApp extends HTMLElement {
   }
 
   #overview(st: PodiumState): Node {
-    const ctx = { now: st.generatedAt, tz: st.tz, showStream: true };
+    const ctx = { now: st.generatedAt, tz: st.tz, showStream: true, prs: st.prs };
     const pri = st.priorities;
     const priorities = pri.state === 'ok' && pri.items.length > 0
       ? h('ol', { class: 'priorities', role: 'list' }, ...pri.items.map((i) => h('li', {}, h('span', {}, i.text), i.stream ? streamTag(i.stream) : null)))
@@ -262,16 +311,16 @@ export class PodiumApp extends HTMLElement {
     return h('div', {},
       h('div', { class: 'board' },
         h('div', { class: 'col' },
-          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.' }, askCards(st.asks, this.#sources.state === 'server', true)),
+          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', hint: askHint(this.#sources.state === 'server') }, askCards(st.asks, this.#sources.state === 'server', true, askPreview())),
           section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(st.blocked, ctx)),
           section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.' }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },
-          section({ title: `Today's priorities`, n: 0, glyph: '↑', tone: 'neutral', empty: priEmpty, quiet: true }, priorities),
-          section({ title: 'In flight', n: st.working.length, glyph: '◐', tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(st.working, ctx)),
-          section({ title: 'Streams', n: 0, glyph: '≡', tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
+          section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: priEmpty, quiet: true }, priorities),
+          section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(st.working, ctx)),
+          section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
       h('div', { class: 'wide' },
-        section({ title: 'Trends', n: 0, glyph: '▥', tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),
-        md ? section({ title: 'Notes', n: 0, glyph: '¶', tone: 'neutral', empty: '', quiet: true }, md) : null));
+        section({ title: 'Trends', n: 0, tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),
+        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null));
   }
 
   #counts(st: PodiumState): Node | null {
