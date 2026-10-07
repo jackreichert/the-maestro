@@ -9,6 +9,8 @@ import { installGhStub, prNode } from './lib/gh-stub.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
+// ...nor the user's event loop: `prime` and `handoff` read the standing pickups' runtime checks from it.
+process.env.MAESTRO_EVENT_DIR = mkdtempSync(join(tmpdir(), 'journal-events-'));
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
@@ -43,7 +45,8 @@ function must<T>(v: T | undefined | null, label = 'value'): T {
 function run(...args: string[]): Run {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
-        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off' },
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off',
+            MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents') },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -1577,6 +1580,91 @@ test('ask takes only question or decision', () => {
     assert.throws(() => ledger());
 });
 
+// ── ask fields: recommend, default, door, decide-by, class (the-maestro-094, 098) ──
+
+test('ask stores its decision fields on the row and the fold exposes them', () => {
+    const r = run('ask', 'use the nightly window?', '--recommend', 'Yes, 01:00 to 03:00', '--door', 'two-way', '--default', 'apply the window', '--decide-by', '2d', '--class', 'intangible', ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.err, '', 'a complete ask warns about nothing');
+    const row = must(ledger().find((e) => e.id === idOf(r.out)));
+    assert.deepEqual([row.recommend, row.door, row.default, row.class], ['Yes, 01:00 to 03:00', 'two-way', 'apply the window', 'intangible']);
+    assert.match(String(row.by), /^\d{4}-\d{2}-\d{2}$/);
+    const item = must(statusJson().awaiting.find((i) => i.id === row.id));
+    assert.equal(item.door, 'two-way');
+    assert.equal(item.default, 'apply the window');
+});
+
+test('ask without --recommend or --door warns naming each flag, still writes, and defaults the class to standard', () => {
+    const r = run('ask', 'which way?', ...MARK);
+    assert.equal(r.code, 0);
+    assert.match(r.err, /no --recommend/);
+    assert.match(r.err, /no --door/);
+    const row = must(ledger().find((e) => e.id === idOf(r.out)));
+    assert.equal(row.class, 'standard');
+    assert.equal(row.door, undefined);
+});
+
+test('a one-way ask can never carry a default: refused with nothing written', () => {
+    for (const args of [['--door', 'one-way', '--default', 'merge it'], ['--default', 'merge it']]) {
+        const r = run('ask', 'merge to staging?', '--recommend', 'wait', ...args, ...MARK);
+        assert.equal(r.code, 1, args.join(' '));
+        assert.match(r.err, /default/);
+    }
+    assert.throws(() => ledger(), 'no ledger file: nothing was written');
+});
+
+test('ask refuses a bad door, class or decide-by, and a decide-by in the past', () => {
+    for (const args of [['--door', 'sideways'], ['--class', 'urgent'], ['--decide-by', 'someday'], ['--decide-by', '2020-01-01'], ['--decide-by', '-1d']]) {
+        const r = run('ask', 'q?', '--recommend', 'r', ...(args[0] === '--door' ? [] : ['--door', 'two-way']), ...args, ...MARK);
+        assert.equal(r.code, 1, args.join(' '));
+    }
+    assert.throws(() => ledger());
+});
+
+test('--by is an alias of --decide-by, and relative hours store an instant', () => {
+    const r = run('ask', 'q?', '--recommend', 'r', '--door', 'two-way', '--by', '6h', ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.match(String(must(ledger()[0]).by), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+});
+
+test('a paste ask takes no decision fields and warns about none', () => {
+    const block = join(vault, 'block.txt');
+    mkdirSync(vault, { recursive: true });
+    writeFileSync(block, 'echo hi\n');
+    const bad = run('ask', 'run this', '--paste', block, '--recommend', 'r', ...MARK);
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /run-this block/);
+    const ok = run('ask', 'run this', '--paste', block, ...MARK);
+    assert.equal(ok.code, 0);
+    assert.equal(ok.err, '');
+    assert.equal(must(ledger()[0]).class, undefined);
+});
+
+test('the decision flags are refused on any command but ask', () => {
+    const r = run('log', 'a note', '--door', 'two-way', ...MARK);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /only go on `ask`/);
+    assert.equal(run('start', 'work', '--recommend', 'x', ...MARK).code, 1);
+});
+
+test('ask --help prints the usage and needs no ledger', () => {
+    const r = run('ask', '--help');
+    assert.equal(r.code, 0);
+    for (const flag of ['--recommend', '--door', '--default', '--decide-by', '--class']) assert.match(r.out, new RegExp(flag));
+    assert.throws(() => ledger());
+});
+
+test('ask rows written before the fields existed still read, resolve and verify', () => {
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${JSON.stringify({ id: 'oldq', ts: '2026-09-01T10:00:00.000Z', date: '2026-09-01', kind: 'question', text: 'old style ask?', model: 'x', used: ['x'] })}\n`);
+    const item = must(statusJson().awaiting.find((i) => i.id === 'oldq'));
+    assert.equal(item.door, undefined);
+    assert.match(run('status').out, /old style ask\? — model: x · used: x/);
+    assert.equal(run('verify').code, 0);
+    assert.equal(run('resolve', 'oldq', '--answer', 'fine', ...MARK).code, 0);
+    assert.deepEqual(statusJson().awaiting, []);
+});
+
 test('rule with an existing ref file writes a closed-off decision carrying the absolute ref', () => {
     const memo = join(tv, 'memory.md');
     writeFileSync(memo, '# rule\n');
@@ -1939,6 +2027,22 @@ test('prime is at most 40 lines however much is open, shares lines between boxes
     assert.match(big.out, /… \+\d+ more/);
     assert.match(big.out, /Paste blocks for Jack \(1\)\n  \w+ run the count/, 'a short section is not starved');
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
+
+test('prime says when a supervisor is set up and not running, with the board still under 40 lines, and is silent otherwise', () => {
+    run('log', 'an open item', '--kind', 'inflight', '--stream', 'S', '--new-stream', ...MARK);
+    assert.doesNotMatch(run('prime').out, /Loop supervisor/);
+    mkdirSync(join(vault, 'Events'), { recursive: true });
+    writeFileSync(join(vault, 'Events', 'supervisor.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-06T10:00:00Z' }));
+    assert.doesNotMatch(run('prime').out, /Loop supervisor/);
+    writeFileSync(join(vault, 'Events', 'supervisor.json'), JSON.stringify({ pid: 2 ** 22 + 12345, startedAt: '2026-10-06T10:00:00Z' }));
+    const dead = run('prime').out;
+    assert.match(dead, /^Loop supervisor: DEAD \(pid \d+, started 2026-10-06T10:00:00Z\)\./m);
+    assert.ok(dead.trimEnd().split('\n').length <= 40);
+    rmSync(join(vault, 'Events', 'supervisor.json'));
+    mkdirSync(join(vault, 'LaunchAgents'), { recursive: true });
+    writeFileSync(join(vault, 'LaunchAgents', 'com.jackreichert.the-maestro-loop.plist'), '<plist/>');
+    assert.match(run('prime').out, /^Loop supervisor: NOT RUNNING \(installed at .*never seen alive\)/m);
 });
 
 test('prime on an empty ledger says so and creates nothing', () => {

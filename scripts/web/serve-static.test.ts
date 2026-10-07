@@ -19,6 +19,9 @@ writeFileSync(join(dir, 'dist', 'app.js'), 'export {}');
 writeFileSync(join(dir, 'dist', 'notes.txt'), 'not served');
 writeFileSync(join(dir, 'fixtures', 'state.json'), '{}');
 writeFileSync(join(dir, 'secret.json'), '{"no":1}');
+writeFileSync(join(dir, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+writeFileSync(join(dir, 'favicon-cue.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+writeFileSync(join(dir, 'stray.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
 
 const server = createStaticServer(dir);
 let port = 0;
@@ -48,10 +51,11 @@ test('serves the index at / and /index.html, the theme, built files and fixtures
   assert.equal((await get('/theme.css')).type, 'text/css; charset=utf-8');
   assert.equal((await get('/dist/app.js')).type, 'text/javascript; charset=utf-8');
   assert.equal((await get('/fixtures/state.json')).body, '{}');
+  for (const icon of ['/favicon.svg', '/favicon-cue.svg']) assert.deepEqual([(await get(icon)).status, (await get(icon)).type], [200, 'image/svg+xml'], icon);
 });
 
 test('does not serve unlisted files, other extensions, traversal or prototype names', async () => {
-  for (const p of ['/secret.json', '/dist/notes.txt', '/dist/../secret.json', '/%2e%2e/secret.json', '/../secret.json', '/__proto__', '/constructor', '/api/state']) {
+  for (const p of ['/secret.json', '/stray.svg', '/dist/notes.txt', '/dist/../secret.json', '/%2e%2e/secret.json', '/../secret.json', '/__proto__', '/constructor', '/api/state']) {
     assert.equal((await get(p)).status, 404, p);
   }
 });

@@ -1,4 +1,5 @@
 import type { LedgerRow, Registry } from '../ledger-core.ts';
+import { askBits } from './ask-fields.ts';
 
 /** A row, or a folded item: the closing row is there once something closed it. */
 type Item = LedgerRow & { closedBy?: LedgerRow | null };
@@ -54,6 +55,7 @@ export function fmt(i: Item, { showId = true, showUsage = true } = {}): string {
     if (i.ticket) tail.push(`[[${i.ticket}]]`);
     if (i.paste) tail.push(`block: ${i.paste}`);
     if (i.gate) tail.push(`gate: ${i.gate}`);
+    if ((i.kind === 'question' || i.kind === 'decision') && !i.paste) tail.push(...askBits(i));
     if (showUsage) tail.push(usageSuffix(i));
     if (tail.length) bits.push(`— ${tail.join(' · ')}`);
     return bits.join(' ');

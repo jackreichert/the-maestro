@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/chart-math.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { barPath, foldToOther, linePath, linearScale, niceTicks, shares, stack } from '../src/chart-math.ts';
+import { barPath, foldToOther, limitSeries, linePath, linearScale, niceTicks, seriesColors, shares, stack } from '../src/chart-math.ts';
 
 test('linearScale maps the domain ends to the range ends and inverts for y axes', () => {
   const x = linearScale([0, 10], [0, 100]);
@@ -69,4 +69,29 @@ test('barPath clamps the radius to the bar and draws nothing for an empty bar', 
   assert.equal(barPath(0, 0, 4, 50, 4), 'M0.0 50.0V2.0Q0.0 0.0 2.0 0.0H2.0Q4.0 0.0 4.0 2.0V50.0Z');
   assert.equal(barPath(0, 0, 10, 0, 4), '');
   assert.equal(barPath(0, 0, 0, 10, 4), '');
+});
+
+test('seriesColors gives catch-alls the neutral whatever their case, and named series consecutive hues', () => {
+  assert.deepEqual(seriesColors(['acme', 'other', 'ops', 'Other', ' OTHER ']), [
+    'var(--series-1)', 'var(--series-other)', 'var(--series-2)', 'var(--series-other)', 'var(--series-other)',
+  ]);
+  assert.deepEqual(seriesColors([]), []);
+  const many = seriesColors(Array.from({ length: 10 }, (_, i) => `s${i}`));
+  assert.equal(many[8], 'var(--series-1)', 'past eight the hues wrap rather than inventing a ninth');
+});
+
+test('a stream named other joins the fold instead of sitting beside a second Other', () => {
+  const totals = { a: 9, b: 8, c: 7, other: 6, d: 5 };
+  assert.deepEqual(foldToOther(totals, 3), ['a', 'b', 'Other']);
+  const data = { labels: ['x'], series: Object.entries(totals).map(([name, v]) => ({ name, values: [v] })) };
+  const out = limitSeries(data, 3);
+  assert.deepEqual(out.series.map((x) => [x.name, x.values[0]]), [['a', 9], ['b', 8], ['Other', 18]]);
+});
+
+test('a series already named Other, in any case, joins the fold and the limit holds', () => {
+  for (const name of ['Other', 'other', ' OTHER ']) {
+    const data = { labels: ['x'], series: [['a', 9], ['b', 8], ['c', 7], [name, 6], ['d', 5]].map(([n, v]) => ({ name: n as string, values: [v as number] })) };
+    const out = limitSeries(data, 3);
+    assert.deepEqual(out.series.map((x) => [x.name, x.values[0]]), [['a', 9], ['b', 8], ['Other', 18]], name);
+  }
 });

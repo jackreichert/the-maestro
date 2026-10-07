@@ -9,14 +9,14 @@
  * lock, since launchd's loop would then exit 2 and sit idle. Exit 0 wrote the plist, 2 refused or misconfigured.
  */
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { LABEL, launchAgentsDir } from './lib/supervisor-state.ts';
 import { lockHolder } from './lib/watch-registry.ts';
 import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT } from './local-config.ts';
 
-export const LABEL = 'com.jackreichert.the-maestro-loop';
+export { LABEL };
 const TEMPLATE = fileURLToPath(new URL(`./launchd/${LABEL}.plist.template`, import.meta.url));
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const BASE_PATH = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
@@ -50,7 +50,7 @@ function main(argv: string[]): number {
   if (holder !== null) {
     return fail(`an event loop holds the lock (pid ${holder}). Stop it first: end the session's background \`event-loop.ts run\` task, or \`kill ${holder}\` (the lock releases on SIGTERM); if launchd already runs the supervisor, \`launchctl bootout\` it. Never delete the lock file.`);
   }
-  const out = v.out ?? join(homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
+  const out = v.out ?? join(launchAgentsDir(), `${LABEL}.plist`);
   const log = v.log ?? join(LEDGER_ROOT, 'Projects', CONTAINER_PROJECT, 'Journal', 'Supervisor', 'loop-supervisor.log');
   const path = [...new Set([dirname(process.execPath), ...BASE_PATH])].join(':');
   const plist = fillTemplate(readFileSync(TEMPLATE, 'utf8'), { NODE: realpathSync(process.execPath), REPO, LEDGER_ROOT, PROJECT: CONTAINER_PROJECT, LOG: log, PATH: path });

@@ -5,6 +5,7 @@ import type { LedgerItem, LedgerRow, fold as foldRows } from '../ledger-core.ts'
 import type { Args } from './args.ts';
 import type { Store } from './store.ts';
 import { fmt, slug } from './format.ts';
+import { askSummary, asksNote } from './ask-fields.ts';
 
 /** What the board reads from the run: the store, the fold, the clock, the stream mapping and the flags. */
 export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | 'loadRegistry' | 'ensureDir' | 'dir'> {
@@ -76,7 +77,13 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
 }
 
 /** One reply-footer Ledger line as numbers: `name` is the stream (`other` for items with none), or null for the single plain line. */
-export interface FooterRow { name: string | null; done: number; inflight: number; queued: number; awaiting: number; paste: number; blocked: number }
+export interface FooterRow {
+    name: string | null; done: number; inflight: number; queued: number; awaiting: number; paste: number; blocked: number;
+    /** Of the awaiting asks that carry decision fields, how many are one-way doors; absent when none carry them. */
+    oneWay?: number;
+    /** The soonest decide-by among them, as stored; absent when none names one. */
+    nextBy?: string;
+}
 
 /**
  * The counts behind the reply-footer Ledger lines: one row per active stream (canonical registry names), then `other` for
@@ -86,7 +93,8 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     const row = (name: string | null, pick: (i: LedgerItem) => boolean): FooterRow => {
         const n = (arr: LedgerItem[]): number => arr.filter(pick).length;
-        return { name, done: n(done), inflight: n(g.inflight), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked) };
+        const asks = askSummary(g.awaiting.filter(pick));
+        return { name, done: n(done), inflight: n(g.inflight), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
     };
     if (!streams.length) return [row(null, () => true)];
     const rows = streams.map((s) => row(s, (i) => i.stream === s));
@@ -96,7 +104,7 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
 }
 
 const footerLine = (r: FooterRow): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today · ${r.inflight} in flight${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today · ${r.inflight} in flight${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
 
 /** The reply-footer Ledger lines, one per `footerRows` row. */
 export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): string[] => footerRows(g, done).map(footerLine);

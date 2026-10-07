@@ -28,12 +28,16 @@
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
+ *   journal.ts ask "<question>" [--recommend "<what you would do>"] [--door one-way|two-way] [--default "<what happens if silent>"] [--decide-by 2026-10-09|2d|6h] [--class expedite|fixed-date|standard|intangible]
+ *                                             a decision made cheap to answer. No --door means one-way; a one-way ask is refused a --default; no --recommend warns. `ask --help` prints this
  *   journal.ts ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
  *   journal.ts triage [--date D] [--since D] [--apply] [--json]   box every open item and the day's decisions and notes, flag stale/unpromoted/unticketed, print the don't-miss
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
  *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
  *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
- *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current
+ *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise
+ *   journal.ts standing list|check|add <id>|done <id>|retire <id>   duties to pick up without a reminder, read from data and checked at runtime; `prime` prints the ones needing attention, `handoff` the whole list.
+ *                                             add: --trigger --action --who and (--check <name> | --every-hours N). done: runs the row's check and refuses if it fails; a row with no check needs --evidence. check exits 1 when any row needs attention
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
@@ -114,7 +118,8 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP } from './local-config.ts';
+import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, EVENT_DIR } from './local-config.ts';
+import { supervisorStatus } from './lib/supervisor-state.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
@@ -124,6 +129,8 @@ import { openStore } from './lib/journal/store.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
+import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
@@ -144,6 +151,9 @@ import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween,
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
+import { STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine } from './lib/standing.ts';
+import type { CheckContext, StandingRow } from './lib/standing.ts';
+import { listWatches, lockHolder } from './lib/watch-registry.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag'];
@@ -175,6 +185,12 @@ if (cmd === 'autopull') {
     process.exit(0);
 }
 
+// `ask --help` prints its usage and needs no ledger.
+if (cmd === 'ask' && has('help')) {
+    ASK_USAGE.forEach((l) => console.log(l));
+    process.exit(0);
+}
+
 const dryRun = has('dry-run');
 const asJson = has('json');
 const vault = arg('vault', DEFAULT_LEDGER_ROOT);
@@ -198,7 +214,7 @@ const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : S
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
 const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
-const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg });
+const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false) });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
 const verifyLedger = () => verifyLedgerIn(verifyCtx());
 const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
@@ -399,6 +415,28 @@ function transitionedFlag(): string[] | undefined {
     return keys;
 }
 
+/**
+ * The decision fields of an `ask` (--recommend, --default, --door, --decide-by, --class), parsed and checked by the
+ * rule tables in ask-fields.ts. Refusals exit 1 before anything is written; warnings go to stderr and the ask is written.
+ * Any other command that is given one of these flags refuses rather than ignore it.
+ */
+function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
+    const flag = (names: string[]): RawFlag => {
+        const name = names.find((n) => has(n));
+        return { given: name !== undefined, value: name ? arg(name) : null };
+    };
+    const flags: RawAskFlags = { recommend: flag(['recommend']), default: flag(['default']), door: flag(['door']), 'decide-by': flag(['decide-by', 'by']), class: flag(['class']) };
+    if (!ask) {
+        const stray = (Object.keys(flags) as (keyof RawAskFlags)[]).filter((f) => flags[f].given);
+        if (stray.length) die(`--${stray.join(', --')} only go on \`ask\`.`);
+        return {};
+    }
+    const { fields, errors, warnings } = parseAskFields(flags, { paste, now: new Date() });
+    if (errors.length) die(errors.join('\n'));
+    warnings.forEach((w) => console.error(w));
+    return fields;
+}
+
 function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false } = {}) {
     const text = arg('text') || positional.join(' ');
     if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
@@ -409,6 +447,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const refs = rule ? ruleRefs() : refsFromArgs();
     const paste = ask ? pasteFile(kind) : undefined;
     const gate = gateFlag(kind);
+    const askFields = askFieldsFromArgs(ask, Boolean(paste));
 
     const entries = readLedger();
     const entry = {
@@ -427,6 +466,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         paste,
         gate,
         transitioned: transitionedFlag(),
+        ...askFields,
         ...approvalFor(kind),
         ...usageFromArgs(),
     };
@@ -1180,7 +1220,7 @@ function cmdClaims() {
 // ── backfill ────────────────────────────────────────────────────────────────
 
 const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
-const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR });
+const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true) });
 const handoffText = (stream: string | null, since: string, keptWorktrees?: Parameters<typeof handoffTextIn>[3], opts?: Parameters<typeof handoffTextIn>[4]) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
 const updateContextLink = (file: string, handoffPath: string) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 
@@ -1388,9 +1428,12 @@ function prioritiesNotice(): string[] {
     return readPriorities(dirPath, priorityDay()).state === 'ok' ? [] : [PRIORITIES_UNSET_LINE];
 }
 
+/** The supervisor line when one is set up and not running (read from its liveness record and the installed plist); silent otherwise. */
+const supervisorNotice = (): string[] => [supervisorStatus(EVENT_DIR).line].filter(Boolean);
+
 function cmdPrime() {
     refreshBoard();
-    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
 }
 
 // ── status page ─────────────────────────────────────────────────────────────
@@ -1426,6 +1469,71 @@ function cmdPriorities() {
         const state = readPriorities(dirPath, day);
         if (asJson) console.log(JSON.stringify(state, null, 2)); else showLines(state).forEach((l) => console.log(l));
     } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show');
+}
+
+// ── standing pickups ────────────────────────────────────────────────────────
+
+const standingFile = (): string => join(dir, STANDING_FILE);
+
+/** What the runtime checks read, from this machine: the loop lock, the watch registry, the board and the done-but-not-transitioned list. */
+function standingContext(): CheckContext {
+    const at = Date.now();
+    return {
+        now: at,
+        loopPid: () => lockHolder(EVENT_DIR),
+        watches: () => { const live = listWatches(EVENT_DIR); return { live: live.length, expired: live.filter((w) => Date.parse(w.expires) <= at).map((w) => w.id) }; },
+        queue: () => { const g = groups(); return { inflight: g.inflight.length, queued: g.queued.length }; },
+        pendingTransitions: () => pendingTransitions(defaultPendingSince()).map((r) => r.key),
+    };
+}
+
+const standingStates = () => standingState(readEvents(standingFile()), standingContext());
+
+/** The standing-pickups block: rows needing attention (prime), or every row (handoff). Never throws: a broken read must not take prime down. */
+function standingLines(all: boolean): string[] {
+    try { return standingBlock(standingStates(), { all }); } catch (e) { return [`Standing pickups: could not be read (${errorMessage(e)})`]; }
+}
+
+/**
+ * `standing list | check | add <id> | done <id> | retire <id>`. Rows live in standing.jsonl beside the ledger (lib/standing.ts).
+ * `check` prints the rows needing attention and exits 1 when there are any. `done` runs the row's runtime check and refuses when it
+ * fails; a row without a check needs --evidence.
+ */
+function cmdStanding() {
+    const sub = positional[0];
+    const id = positional[1];
+    const file = standingFile();
+    const at = now();
+    if (sub === 'list' || sub === 'check') {
+        const states = standingStates();
+        const attention = states.filter((s) => s.status !== 'ok');
+        if (asJson) console.log(JSON.stringify({ rows: states, attention: attention.length }, null, 2));
+        else (sub === 'list' ? states : attention).forEach((s) => console.log(rowLine(s)));
+        if (!asJson && sub === 'check' && !attention.length) console.log('All standing pickups are current.');
+        if (sub === 'check' && attention.length) process.exitCode = 1;
+    } else if (sub === 'add') {
+        const every = arg('every-hours');
+        const row: StandingRow = { id: id ?? '', trigger: arg('trigger', ''), action: arg('action', ''), who: arg('who', ''), ...(every ? { everyHours: Number(every) } : {}), ...(arg('check', '') ? { check: arg('check', '') } : {}) };
+        const problem = validRow(row);
+        if (problem) die(`standing add: ${problem}. Usage: journal.ts standing add <id> --trigger "..." --action "..." --who "..." (--check <name> | --every-hours N)`);
+        if (dryRun) { console.log('[dry-run]', JSON.stringify(row)); return; }
+        appendEvent(file, { op: 'add', at, ...row });
+        console.log(`standing  ${row.id}  added`);
+    } else if (sub === 'done') {
+        const state = id ? standingStates().find((s) => s.row.id === id) : undefined;
+        if (!state) die(`No standing pickup "${id ?? ''}". \`journal.ts standing list\` has them.`);
+        if (state.row.check !== undefined && state.status !== 'ok') die(`${state.row.id} is not done: its check says ${state.detail}. Fix that; \`standing done\` will pass once the check does.`);
+        const evidence = [state.row.check !== undefined ? state.detail : '', arg('evidence')].filter(Boolean).join('; ');
+        if (!evidence) die(`${state.row.id} has no runtime check, so \`done\` needs --evidence "<what you did, with a link or id>".`);
+        if (dryRun) { console.log('[dry-run]', JSON.stringify({ op: 'ran', id, evidence })); return; }
+        appendEvent(file, { op: 'ran', id: state.row.id, evidence, at });
+        console.log(`standing  ${state.row.id}  done  (${evidence})`);
+    } else if (sub === 'retire') {
+        if (!id || !standingStates().some((s) => s.row.id === id)) die(`No standing pickup "${id ?? ''}".`);
+        if (dryRun) { console.log(`[dry-run] retire ${id}`); return; }
+        appendEvent(file, { op: 'retire', id, at });
+        console.log(`standing  ${id}  retired`);
+    } else die('Usage: journal.ts standing list|check|add <id> ...|done <id> [--evidence "..."]|retire <id>  [--json]');
 }
 
 // ── pending tracker transitions ─────────────────────────────────────────────
@@ -1484,6 +1592,7 @@ switch (cmd) {
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
     case 'priorities': cmdPriorities(); break;
+    case 'standing': cmdStanding(); break;
     case 'podium':
     case 'status-page': cmdStatusPage(); break;
     case 'web': cmdWeb(); break;

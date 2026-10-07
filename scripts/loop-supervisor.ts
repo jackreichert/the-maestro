@@ -9,14 +9,18 @@
  *   other    log, sleep 30s, relaunch
  *
  * Digests are written only under the ledger root; with no ledger root the supervisor refuses to start (exit 2).
+ * While it runs it keeps <event dir>/supervisor.json ({ pid, startedAt }); a stop by SIGTERM or SIGINT removes it, so `prime` can tell a
+ * supervisor that was stopped from one that died (lib/supervisor-state.ts).
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches.
  */
 import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { localClock } from './lib/cadence.ts';
 import { digestDir, saveDigest } from './lib/digest-store.ts';
-import { CONTAINER_PROJECT, LEDGER_ROOT } from './local-config.ts';
+import { clearRecord, writeRecord } from './lib/supervisor-state.ts';
+import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT } from './local-config.ts';
 
 const EVENT_LOOP = fileURLToPath(new URL('./event-loop.ts', import.meta.url));
 export const DELAYS = { idle: 300, usage: 300, crash: 30, quietCap: 12 * 3600, quietFallback: 300 };
@@ -81,21 +85,32 @@ export async function supervise({ runLoop, sleep, save, log, now = Date.now, max
   }
 }
 
-/** Launches the real loop (or MAESTRO_LOOP_BIN) once, collecting its output. SIGTERM to the supervisor is forwarded so the loop releases its lock. */
+/** The loop launched most recently while it runs, so a stop signal can reach it. */
+let running: ChildProcess | null = null;
+
+/** Launches the real loop (or MAESTRO_LOOP_BIN) once, collecting its output. */
 function launch(): Promise<LoopResult> {
   const bin = process.env.MAESTRO_LOOP_BIN;
   const child = bin ? spawn(bin, ['run'], { stdio: ['ignore', 'pipe', 'pipe'] }) : spawn(process.execPath, [EVENT_LOOP, 'run'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  running = child;
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (d) => { stdout += d; });
   child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
-  const forward = (sig: NodeJS.Signals) => () => { child.kill(sig); child.once('exit', () => process.exit(0)); };
-  process.once('SIGTERM', forward('SIGTERM'));
-  process.once('SIGINT', forward('SIGINT'));
   return new Promise((resolve) => {
-    child.on('error', (err) => resolve({ code: -1, stdout, stderr: err.message }));
-    child.on('close', (code) => { process.removeAllListeners('SIGTERM'); process.removeAllListeners('SIGINT'); resolve({ code, stdout, stderr }); });
+    child.on('error', (err) => { running = null; resolve({ code: -1, stdout, stderr: err.message }); });
+    child.on('close', (code) => { running = null; resolve({ code, stdout, stderr }); });
   });
+}
+
+/** Stops on SIGTERM or SIGINT: forwards the signal to a running loop so it releases its lock, then drops the liveness record and exits 0. */
+function stopOnSignals(eventDir: string): void {
+  const stop = (sig: NodeJS.Signals): void => {
+    const done = (): void => { clearRecord(eventDir, process.pid); process.exit(0); };
+    if (running) { running.once('exit', done); running.kill(sig); } else done();
+  };
+  process.once('SIGTERM', () => stop('SIGTERM'));
+  process.once('SIGINT', () => stop('SIGINT'));
 }
 
 const stamped = (line: string): string => `${new Date().toISOString()} loop-supervisor: ${line}`;
@@ -105,6 +120,8 @@ async function main(): Promise<number> {
   const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
   const max = Number(process.env.MAESTRO_SUPERVISOR_MAX_RUNS);
   console.error(stamped(`supervising; digests go to ${dir}`));
+  writeRecord(EVENT_DIR, process.pid);
+  stopOnSignals(EVENT_DIR);
   await supervise({
     runLoop: launch,
     sleep: (s) => new Promise((r) => setTimeout(r, s * 1000)),
