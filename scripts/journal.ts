@@ -35,7 +35,7 @@
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
  *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
  *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
- *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop:` line (same verdict as the footer), then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise
+ *   journal.ts prime [--no-update-check] [--source startup|compact]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop:` line (same verdict as the footer), then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise. With `--source startup` or `compact` (a SessionStart hook's source) it ends with the short "After a compact" checklist; any other source prints none
  *   journal.ts standing list|check|add <id>|done <id>|retire <id>   duties to pick up without a reminder, read from data and checked at runtime; `prime` prints the ones needing attention, `handoff` the whole list.
  *                                             add: --trigger --action --who and (--check <name> | --every-hours N). done: runs the row's check and refuses if it fails; a row with no check needs --evidence. check exits 1 when any row needs attention
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
@@ -136,6 +136,7 @@ import { statusJson } from './lib/journal/status-json.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
+import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
@@ -156,6 +157,12 @@ import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 import { STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
+import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
+import { createReader } from './lib/vault/reader.ts';
+import { TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from './lib/vault/tickets.ts';
+import { DOC_DIR_SCOPES, DOC_FILE_SCOPES } from './lib/home/docs.ts';
+import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES } from './lib/home/brief.ts';
+import type { EpicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { listWatches, lockHolder } from './lib/watch-registry.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -745,7 +752,25 @@ function cmdRoll() {
     const d = arg('date', today());
     triageBeforeRoll(d);
     rollArchive(d);
+    printEpicBriefs(d);
     if (!has('fast')) sweepWorktreesForRoll();
+}
+
+/**
+ * What the day did to its epics: which open epics a ledger item touched, whether their briefs are fresh, and which notes written
+ * today name no ticket. Null when no vault root is configured. Read-only, through the same guarded reader the home base uses.
+ */
+function epicBriefsToday(d: string): EpicBriefsReport | null {
+    if (!VAULT_ROOT) return null;
+    const reader = createReader({ root: VAULT_ROOT, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES, ...BRIEF_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES, ...BRIEF_FILE_SCOPES] });
+    let ticketMap: Record<string, string[]> = {};
+    try { ticketMap = JSON.parse(readFileSync(join(arg('status-dir') || STATUS_DIR_SETTING || dir, 'ticket-map.json'), 'utf8')) as Record<string, string[]>; } catch { /* no map: only items that name a ticket count */ }
+    return epicBriefsReport({ reader, date: d, rows: readLedger(), ticketMap, dateOf: (ms) => new Date(ms).toISOString().slice(0, 10), cacheKey: 'roll' });
+}
+
+/** The roll prints what the briefs and notes still owe; it never blocks the roll, and the standing row stays failing until it is fixed. */
+function printEpicBriefs(d: string): void {
+    try { for (const line of epicBriefsLines(epicBriefsToday(d) ?? { epics: [], failures: [] })) console.log(line); } catch (e) { console.log(`Epic briefs: could not be checked (${errorMessage(e)})`); }
 }
 
 /**
@@ -1457,6 +1482,8 @@ const loopNotice = (): string[] => [liveLoopHealth().line.replace(/\*\*/g, '')].
 function cmdPrime() {
     refreshBoard();
     primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
+    compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(l));
 }
 
 // ── status page ─────────────────────────────────────────────────────────────
@@ -1508,6 +1535,7 @@ function standingContext(): CheckContext {
         watches: () => { const live = listWatches(EVENT_DIR); return { live: live.length, expired: live.filter((w) => Date.parse(w.expires) <= at).map((w) => w.id) }; },
         queue: () => { const g = groups(); return { inflight: g.inflight.length, queued: g.queued.length }; },
         pendingTransitions: () => pendingTransitions(defaultPendingSince()).map((r) => r.key),
+        epicBriefs: () => { const r = epicBriefsToday(today()); return r ? { epics: r.epics.length, failures: r.failures } : null; },
     };
 }
 
