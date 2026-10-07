@@ -157,6 +157,12 @@ import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 import { STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
+import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
+import { createReader } from './lib/vault/reader.ts';
+import { TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from './lib/vault/tickets.ts';
+import { DOC_DIR_SCOPES, DOC_FILE_SCOPES } from './lib/home/docs.ts';
+import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES } from './lib/home/brief.ts';
+import type { EpicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { listWatches, lockHolder } from './lib/watch-registry.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -746,7 +752,25 @@ function cmdRoll() {
     const d = arg('date', today());
     triageBeforeRoll(d);
     rollArchive(d);
+    printEpicBriefs(d);
     if (!has('fast')) sweepWorktreesForRoll();
+}
+
+/**
+ * What the day did to its epics: which open epics a ledger item touched, whether their briefs are fresh, and which notes written
+ * today name no ticket. Null when no vault root is configured. Read-only, through the same guarded reader the home base uses.
+ */
+function epicBriefsToday(d: string): EpicBriefsReport | null {
+    if (!VAULT_ROOT) return null;
+    const reader = createReader({ root: VAULT_ROOT, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES, ...BRIEF_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES, ...BRIEF_FILE_SCOPES] });
+    let ticketMap: Record<string, string[]> = {};
+    try { ticketMap = JSON.parse(readFileSync(join(arg('status-dir') || STATUS_DIR_SETTING || dir, 'ticket-map.json'), 'utf8')) as Record<string, string[]>; } catch { /* no map: only items that name a ticket count */ }
+    return epicBriefsReport({ reader, date: d, rows: readLedger(), ticketMap, dateOf: (ms) => new Date(ms).toISOString().slice(0, 10), cacheKey: 'roll' });
+}
+
+/** The roll prints what the briefs and notes still owe; it never blocks the roll, and the standing row stays failing until it is fixed. */
+function printEpicBriefs(d: string): void {
+    try { for (const line of epicBriefsLines(epicBriefsToday(d) ?? { epics: [], failures: [] })) console.log(line); } catch (e) { console.log(`Epic briefs: could not be checked (${errorMessage(e)})`); }
 }
 
 /**
@@ -1511,6 +1535,7 @@ function standingContext(): CheckContext {
         watches: () => { const live = listWatches(EVENT_DIR); return { live: live.length, expired: live.filter((w) => Date.parse(w.expires) <= at).map((w) => w.id) }; },
         queue: () => { const g = groups(); return { inflight: g.inflight.length, queued: g.queued.length }; },
         pendingTransitions: () => pendingTransitions(defaultPendingSince()).map((r) => r.key),
+        epicBriefs: () => { const r = epicBriefsToday(today()); return r ? { epics: r.epics.length, failures: r.failures } : null; },
     };
 }
 
