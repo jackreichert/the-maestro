@@ -5,7 +5,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ageText, sessionStart, STALE_MS } from './session-start.ts';
+import { ageText, repairStandingWatches, sessionStart, STALE_MS } from './session-start.ts';
+import { BUILTIN_TYPES } from './event-types/index.ts';
+import { listWatches } from './lib/watch-registry.ts';
 import type { StartDeps } from './session-start.ts';
 import type { Watch } from './lib/types.ts';
 
@@ -117,4 +119,30 @@ test('a status directory that does not exist fails the registration with the typ
   const r = spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', join(events, 'nope')], { encoding: 'utf8', env: { ...process.env, MAESTRO_EVENT_DIR: events } });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /NOT registered.*must be the status directory/);
+});
+
+test('the loop health verdict prints just before the event loop line, without footer markup, and nothing when it is empty', () => {
+  const said = sessionStart('/s', world({ loopHealth: () => '**Loop:** STALLED 20 min (no heartbeat since 1:40 PM EDT)' }).deps).lines;
+  assert.equal(said[3], 'Loop: STALLED 20 min (no heartbeat since 1:40 PM EDT)');
+  assert.match(said[4], /^Event loop:/);
+  assert.equal(sessionStart('/s', world({ loopHealth: () => '' }).deps).lines.length, 4);
+});
+
+test('session start says which watches it marked standing, and nothing when none needed it', () => {
+  assert.equal(sessionStart('/s', world({ repairStanding: () => [] }).deps).lines.some((l) => /Standing watches/.test(l)), false);
+  const line = sessionStart('/s', world({ repairStanding: () => ['prs', 'texts'] }).deps).lines.find((l) => /Standing watches/.test(l));
+  assert.match(String(line), /^Standing watches: marked prs, texts as renewing/);
+});
+
+test('repairStandingWatches marks a standing-type watch that lacks the flag, once, keeping its expiry; other types are left alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'repair-'));
+  const old = JSON.stringify({ op: 'add', id: 'prs', type: 'pr-watch', target: 'org', done_when: '', report: '', created: '2026-10-02T00:00:00Z', expires: '2026-10-09T00:00:00.000Z', notify: false, notify_overnight: false, interval: null });
+  const plain = JSON.stringify({ op: 'add', id: 'once', type: 'reminder', target: 'x', done_when: '', report: '', created: '2026-10-02T00:00:00Z', expires: '2026-10-09T00:00:00.000Z', notify: true, notify_overnight: false, interval: null });
+  writeFileSync(join(dir, 'watches.jsonl'), `${old}\n${plain}\n`);
+  assert.deepEqual(repairStandingWatches(dir, BUILTIN_TYPES, NOW), ['prs']);
+  const after = listWatches(dir);
+  assert.equal(after.find((w) => w.id === 'prs')?.renew, true);
+  assert.equal(after.find((w) => w.id === 'prs')?.expires, '2026-10-09T00:00:00.000Z');
+  assert.equal(after.find((w) => w.id === 'once')?.renew, undefined);
+  assert.deepEqual(repairStandingWatches(dir, BUILTIN_TYPES, NOW), [], 'idempotent');
 });

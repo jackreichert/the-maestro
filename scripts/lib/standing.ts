@@ -27,6 +27,8 @@ export interface CheckContext {
   loopPid: () => number | null;
   /** Ids of live watches past their expiry, and how many watches are live. */
   watches: () => { live: number; expired: string[] };
+  /** The loop's heartbeat verdict (lib/loop-health.ts); absent where nothing reads one. */
+  health?: () => { state: string; line: string };
   /** Open in-flight and queued ledger items. */
   queue: () => { inflight: number; queued: number };
   /** Tracker keys done but not transitioned. */
@@ -37,13 +39,18 @@ export type Check = (ctx: CheckContext) => CheckResult;
 
 /** Every runtime check a row may name. A row naming anything else reads as failing, loudly. */
 export const CHECKS: Record<string, Check> = {
-  'loop-alive': ({ loopPid, watches }) => {
+  'loop-alive': ({ loopPid, watches, health }) => {
     const pid = loopPid();
+    const verdict = health?.();
+    // A hung or missing loop fails here whatever the lock says: a held lock is not a working loop. A supervisor between launches holds no lock but reports ok.
+    if (verdict && ['stalled', 'down', 'not-installed'].includes(verdict.state)) return { ok: false, detail: verdict.line.replace(/\*\*/g, '') };
+    const supervised = verdict?.state === 'ok' || verdict?.state === 'quiet';
     const { live, expired } = watches();
-    if (pid === null) return { ok: false, detail: 'no event loop holds the lock' };
-    if (!live) return { ok: false, detail: `loop pid ${pid} is running but no watches are registered` };
+    if (pid === null && !supervised) return { ok: false, detail: 'no event loop holds the lock' };
+    const who = pid === null ? 'supervised loop' : `loop pid ${pid}`;
+    if (!live) return { ok: false, detail: `${who} is running but no watches are registered` };
     if (expired.length) return { ok: false, detail: `expired watches: ${expired.join(', ')}` };
-    return { ok: true, detail: `loop pid ${pid} running, ${live} watch(es) live` };
+    return { ok: true, detail: `${who} running, ${live} watch(es) live` };
   },
   'queue-moving': ({ queue }) => {
     const { inflight, queued } = queue();

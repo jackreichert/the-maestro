@@ -96,7 +96,7 @@ const JOURNAL = new URL('./journal.ts', import.meta.url).pathname;
 function cli(vault: string, events: string, ...args: string[]) {
   const r = spawnSync(process.execPath, [JOURNAL, ...args, '--vault', vault, '--project', 'test-proj'], {
     encoding: 'utf8', cwd: tmpdir(),
-    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: '', MAESTRO_EVENT_DIR: events, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
+    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: '', MAESTRO_EVENT_DIR: events, MAESTRO_LAUNCH_AGENTS_DIR: join(events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -332,4 +332,16 @@ test('cli: the standing add refusals do not echo the id, and a missing id gets a
   const none = cli(vault, events, 'standing', 'add', '--trigger', 't', '--action', 'a', '--who', 'w', '--every-hours', '1');
   assert.equal(none.code, 1);
   assert.match(none.err, /standing add needs an id\. Usage:/);
+});
+
+test('loop-alive follows the heartbeat verdict: stalled or down fails even with the lock held, and a supervised loop with no lock passes', () => {
+  const fresh = [ran('loop-alive', 0), ran('chain-next', 0), ran('tracker-reconcile', 0)];
+  const verdict = (state: string) => healthy({ health: () => ({ state, line: `**Loop:** ${state} 12 min` }) });
+  assert.equal(statusOf(fresh, verdict('stalled'), 'loop-alive'), 'failing');
+  assert.equal(statusOf(fresh, verdict('down'), 'loop-alive'), 'failing');
+  assert.equal(statusOf(fresh, verdict('ok'), 'loop-alive'), 'ok');
+  assert.equal(statusOf(fresh, healthy({ loopPid: () => null, health: () => ({ state: 'quiet', line: '' }) }), 'loop-alive'), 'ok', 'quiet hours: the supervisor waits, no loop holds the lock');
+  assert.equal(statusOf(fresh, healthy({ loopPid: () => null, health: () => ({ state: 'running', line: '' }) }), 'loop-alive'), 'failing');
+  const detail = DEFAULT_ROWS.find((r) => r.id === 'loop-alive') && standingState(fresh, verdict('stalled')).find((s) => s.row.id === 'loop-alive')?.detail;
+  assert.match(String(detail), /^Loop: stalled 12 min$/);
 });
