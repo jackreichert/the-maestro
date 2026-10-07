@@ -45,7 +45,8 @@ function must<T>(v: T | undefined | null, label = 'value'): T {
 function run(...args: string[]): Run {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
-        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off' },
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off',
+            MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents') },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -1941,6 +1942,22 @@ test('prime is at most 40 lines however much is open, shares lines between boxes
     assert.match(big.out, /… \+\d+ more/);
     assert.match(big.out, /Paste blocks for Jack \(1\)\n  \w+ run the count/, 'a short section is not starved');
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
+});
+
+test('prime says when a supervisor is set up and not running, with the board still under 40 lines, and is silent otherwise', () => {
+    run('log', 'an open item', '--kind', 'inflight', '--stream', 'S', '--new-stream', ...MARK);
+    assert.doesNotMatch(run('prime').out, /Loop supervisor/);
+    mkdirSync(join(vault, 'Events'), { recursive: true });
+    writeFileSync(join(vault, 'Events', 'supervisor.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-06T10:00:00Z' }));
+    assert.doesNotMatch(run('prime').out, /Loop supervisor/);
+    writeFileSync(join(vault, 'Events', 'supervisor.json'), JSON.stringify({ pid: 2 ** 22 + 12345, startedAt: '2026-10-06T10:00:00Z' }));
+    const dead = run('prime').out;
+    assert.match(dead, /^Loop supervisor: DEAD \(pid \d+, started 2026-10-06T10:00:00Z\)\./m);
+    assert.ok(dead.trimEnd().split('\n').length <= 40);
+    rmSync(join(vault, 'Events', 'supervisor.json'));
+    mkdirSync(join(vault, 'LaunchAgents'), { recursive: true });
+    writeFileSync(join(vault, 'LaunchAgents', 'com.jackreichert.the-maestro-loop.plist'), '<plist/>');
+    assert.match(run('prime').out, /^Loop supervisor: NOT RUNNING \(installed at .*never seen alive\)/m);
 });
 
 test('prime on an empty ledger says so and creates nothing', () => {

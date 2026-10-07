@@ -220,6 +220,46 @@ test('CLI: warns on stderr when the projects dir has no sessions, instead of cra
     assert.match(r.stderr, /no sessions in/);
 });
 
+test('emptyDirWarning and sessionStatus say when the folder was only guessed from the working directory', () => {
+    const empty = mkdtempSync(join(tmpdir(), 'tm-empty-'));
+    assert.match(emptyDirWarning(empty, true), /Neither is set.*guess.*working directory/);
+    assert.doesNotMatch(emptyDirWarning(empty, false), /guess/);
+    assert.deepEqual(sessionStatus(empty, 180, 350000, 85, 90, true), {
+        available: false,
+        unavailable: `no sessions in ${empty}; set projects_dir or container_root (this folder was guessed from the working directory)`,
+    });
+    assert.deepEqual(sessionStatus(empty, 180, 350000, 85, 90, false), { available: false, unavailable: `no sessions in ${empty}; set projects_dir` });
+});
+
+// The default folder when run from a directory other than the container: no flags, a throwaway HOME, a clean environment.
+function fromElsewhere(env: Record<string, string>) {
+    const home = mkdtempSync(join(tmpdir(), 'tm-home-'));
+    const container = join(home, 'work', 'my-container');
+    const dir = join(home, '.claude', 'projects', container.replace(/[\\/]/g, '-'));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'sess9999.jsonl'), jsonl(assistant('x1', '2026-09-25T10:00:01Z', [1, 2, 3, 4])));
+    const elsewhere = join(home, 'work', 'my-container', 'tools', 'the-maestro');
+    mkdirSync(elsewhere, { recursive: true });
+    const r = spawnSync(process.execPath, [SCRIPT, '--json', '--date', '2026-09-25'], {
+        encoding: 'utf8', cwd: elsewhere, env: { PATH: process.env.PATH ?? '', HOME: home, MAESTRO_LOCAL_CONFIG: '', TZ: 'UTC', ...env },
+    });
+    return { status: r.status, out: r.stdout, err: r.stderr };
+}
+
+test('CLI from another directory: container_root finds the container\'s session', () => {
+    const r = fromElsewhere({ MAESTRO_CONTAINER_ROOT: '~/work/my-container' });
+    assert.equal(r.status, 0, r.err);
+    assert.equal(r.err, '', 'no warning: the session was found');
+    assert.equal(JSON.parse(r.out).sessions.length, 1);
+});
+
+test('CLI from another directory: with nothing set it warns that the folder was a guess, not a silent empty result', () => {
+    const r = fromElsewhere({});
+    assert.equal(r.status, 0, r.err);
+    assert.match(r.err, /no sessions in /);
+    assert.match(r.err, /Neither is set, so this folder is only a guess from the current working directory/);
+});
+
 test('sessionLine reports the newest session against the thresholds', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
     assert.match(sessionLine(dir), /^\*\*Session:\*\* unavailable/);

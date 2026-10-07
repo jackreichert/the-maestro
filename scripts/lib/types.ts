@@ -24,6 +24,8 @@ export interface Watch {
   /** ISO times. */
   created: string;
   expires: string;
+  /** Set at `add` for a standing watch (its type `renews`, no explicit --ttl-hours): the loop keeps pushing `expires` out. */
+  renew?: boolean;
 }
 
 /** What the loop is given once: how to run commands, its settings and the registry directory. A tick adds `now`, `watch` and `prev` per watch. */
@@ -65,6 +67,8 @@ export interface EventType<State = unknown> {
   /** False for a check that never leaves the machine. */
   network?: boolean;
   singleton?: boolean;
+  /** True for a standing type: a watch added without --ttl-hours is marked `renew`, and the loop pushes its expiry out by the type's default TTL once less than half is left, instead of retiring it. */
+  renews?: boolean;
   slowInQuiet?: boolean;
   /** A minimum interval above the network or local one. */
   floor?: number;

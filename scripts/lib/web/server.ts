@@ -15,6 +15,8 @@ import type { WebConfig } from './api.ts';
 export interface WebServerOptions {
   web: WebConfig;
   clientDir: string;
+  /** Atlassian tenant hosts (`<label>.atlassian.net`) whose ticket links may reuse a tab. Empty by default; the client re-validates each one. */
+  trustedAtlassianHosts?: string[];
   now?: () => Date;
   /** Where a handler's real error goes (the response only says "internal error"). */
   log?: (message: string) => void;
@@ -47,6 +49,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
   return [
     { method: 'GET', pattern: /^\/api\/state$/, handler: () => buildState(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
+    { method: 'GET', pattern: /^\/api\/link-hosts$/, handler: () => ({ atlassian: o.trustedAtlassianHosts ?? [] }) },
     { method: 'GET', pattern: /^\/api\/charts$/, handler: (u) => buildCharts(o.web, daysParam(u), now()) },
   ];
 }

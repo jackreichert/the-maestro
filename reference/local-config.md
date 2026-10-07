@@ -58,6 +58,7 @@ sweep_budget_seconds: 300     # the worktree sweep stops at the next repo bounda
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.ts offers it; default 60
 sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a worktree as a live skill; ~/.claude/skills and <container>/.claude/skills always count
 sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
+podium_trusted_atlassian_hosts: example.atlassian.net  # Podium: Atlassian tenants whose ticket links reuse one tab per ticket (comma-separated); default none
 event_dir: /path/to/events     # event loop: registry, state, digest; default <ledger_root>/Events, else ~/.local/state/the-maestro/events
 notify_command: ["my-notifier", "--to-me"]  # event loop: argv (JSON array); the one-line summary is appended as the last argument; used only for watches added with --notify (reminders by default); omit for no notifications
 watch_network_floor: 120       # event loop: fastest poll for network types (pr-checks, pr-watch, gh-run), seconds; can only raise the 120 floor

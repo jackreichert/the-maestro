@@ -51,7 +51,7 @@ import type { ModelPrice } from './local-config.ts';
 import { family } from './lib/model-family.ts';
 import { sessionText } from './lib/session-text.ts';
 import type { SessionStatus } from './lib/session-text.ts';
-import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
+import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
 
@@ -181,14 +181,20 @@ function sessionFiles(dir: string): string[] {
     return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.jsonl')) : [];
 }
 
+/** Whether `dir` is the configured default and that default was only guessed from the working directory. */
+const guessedFromCwd = (dir: string): boolean => PROJECTS_DIR_GUESSED && dir === CLAUDE_PROJECTS_DIR;
+
 /**
- * A warning when `dir` holds no sessions, else ''. Unset `projects_dir` falls back to the transcript directory of the
- * process's working directory (local-config.ts), which is empty or missing when the script runs from anywhere else.
+ * A warning when `dir` holds no sessions, else ''. Unset `projects_dir` follows `container_root`, else the working
+ * directory (local-config.ts); the working directory is the wrong folder when the script runs from anywhere else, so
+ * when it was the guess the warning says so.
  */
-export function emptyDirWarning(dir: string): string {
+export function emptyDirWarning(dir: string, guessed: boolean = guessedFromCwd(dir)): string {
     if (sessionFiles(dir).length) return '';
-    return `token-metrics: no sessions in ${dir}${existsSync(dir) ? '' : ' (directory does not exist)'}. Set projects_dir in local-config (or MAESTRO_PROJECTS_DIR, or --projects-dir); unset, it defaults to the transcript directory of the current working directory.`;
+    return `token-metrics: no sessions in ${dir}${existsSync(dir) ? '' : ' (directory does not exist)'}. Set projects_dir or container_root in local-config (or MAESTRO_PROJECTS_DIR, MAESTRO_CONTAINER_ROOT, or --projects-dir).${guessed ? GUESS_NOTE : ''}`;
 }
+
+const GUESS_NOTE = ' Neither is set, so this folder is only a guess from the current working directory.';
 
 export function collect(projectsDir: string): { days: Map<string, DayStats>; sessions: SessionStats[]; curve: Map<number, { n: number; read: number }> } {
     const days = new Map<string, DayStats>();
@@ -258,10 +264,10 @@ export function currentSession(dir: string): { session: string; turns: number; r
 }
 
 /** The current session measured against the roll thresholds (see `sessionLine` for the rules). */
-export function sessionStatus(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT): SessionStatus {
+export function sessionStatus(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT, guessed: boolean = guessedFromCwd(dir)): SessionStatus {
     let s;
     try { s = currentSession(dir); } catch (e) { const err = e as NodeJS.ErrnoException; return { available: false, unavailable: `${err.code || err.message.split('\n')[0]} reading ${dir}` }; }
-    if (!s) return { available: false, unavailable: `no sessions in ${dir}; set projects_dir` };
+    if (!s) return { available: false, unavailable: `no sessions in ${dir}; set projects_dir${guessed ? ' or container_root (this folder was guessed from the working directory)' : ''}` };
     // Cross-multiplied so 85% of 180 is exactly 153 turns, with no float division at the boundary.
     const reached = (pct: number): boolean => s.turns * 100 >= pct * rollTurns || s.readPerTurn * 100 >= pct * rollRead;
     const advice = reached(rollPct) ? 'roll now' : reached(warnPct) ? 'roll soon' : '';

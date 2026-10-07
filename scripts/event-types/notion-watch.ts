@@ -12,6 +12,7 @@ const type = tagWatchType('notion-sync', 'scripts/notion-watch-adapter.ts', { in
 
 // Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
 export const interval = type.interval;
+export const renews = true;
 export const network = type.network;
 export const backoff = type.backoff;
 export const slowInQuiet = type.slowInQuiet;
