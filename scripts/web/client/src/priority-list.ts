@@ -70,6 +70,7 @@ export class PriorityList extends HTMLElement {
   #over = -1;
   #message: { text: string; error: boolean } = { text: '', error: false };
   #focus: string | null = null;
+  #dragHold = false;   // the drag's own hold on redraws; released once, by whichever of drop or dragend comes first
   #holds = 0;   // reasons to hold the page's redraws: a drag, a request; the page is told only on 0 to 1 and 1 to 0
   #draft = { text: '', stream: '' };
   readonly #editor = createEditor();
@@ -151,7 +152,7 @@ export class PriorityList extends HTMLElement {
     const kept = this.#draft;
     this.#draft = { text: '', stream: '' };
     const item: Priority = stream ? { text, stream } : { text };
-    void this.#apply([...this.#items, item], { op: 'add', text, ...(stream ? { stream } : {}) }, 'pl-text').then((ok) => {
+    void this.#apply([...this.#items, item], { op: 'add', text, ...(stream ? { stream } : {}) }, this.#items.length + 1 >= this.#max ? `pl-del-${this.#items.length}` : 'pl-text').then((ok) => {
       if (ok) return;
       this.#draft = kept;   // a refused add keeps what was typed, so it can be fixed rather than retyped
       this.#render();
@@ -227,14 +228,18 @@ export class PriorityList extends HTMLElement {
       li.classList.add('dragging');
       e.dataTransfer?.setData('text/plain', String(i));
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setDragImage(li, 8, 8); }
+      this.#dragHold = true;
       this.#busy(true);
     });
-    grip.addEventListener('dragend', () => {
+    // A drop rebuilds the list, which removes the grip that started the drag, and some browsers then never send dragend.
+    const endDrag = (): void => {
       this.#drag = -1;
       this.#over = -1;
-      this.#render();
+      if (!this.#dragHold) return;
+      this.#dragHold = false;
       this.#busy(false);
-    });
+    };
+    grip.addEventListener('dragend', () => { endDrag(); this.#render(); });
     li.addEventListener('dragover', (e) => {
       if (this.#drag < 0) return;
       e.preventDefault();
@@ -247,9 +252,8 @@ export class PriorityList extends HTMLElement {
     li.addEventListener('drop', (e) => {
       e.preventDefault();
       const from = this.#drag;
-      this.#drag = -1;
-      this.#over = -1;
       this.#move(from, i, i === 0 ? `pl-down-${i}` : `pl-up-${i}`);
+      endDrag();
     });
     li.append(h('span', { class: 'tools' }, grip, up, down, del));
     return li;
