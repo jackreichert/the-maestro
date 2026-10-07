@@ -142,6 +142,8 @@ import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/ba
 import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
+import type { EnvAsk } from './branch-sweep.ts';
+import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue } from './lib/review-queue.ts';
 import { fetchLive, snapshotPath } from './prs-snapshot.ts';
@@ -713,7 +715,24 @@ function sweepRootRefusal(root: string, from: string): string | null {
  */
 function sweepWorktreesForRoll() {
     const result = runWorktreeSweep(dryRun);
-    if (result) console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
+    if (!result) return;
+    console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
+    raiseEnvAsks(result.envAsks);
+}
+
+/** One question per worktree the sweep would remove but for real env files in it (names only), unless the same question is already open. */
+function raiseEnvAsks(asks: EnvAsk[]): void {
+    const entries = readLedger();
+    const open = fold(entries).items.filter((i) => i.kind === 'question' && isOpen(i)).map((i) => i.text ?? '');
+    for (const { ask, text } of envAsksToRaise(asks, open)) {
+        append({
+            id: newId(readLedger()), ts: now(), date: today(), kind: 'question', text, repo: ask.repo, refs: [],
+            recommend: 'Move them now; the next roll then removes the worktree and the files stay in the env store.', door: 'two-way',
+            model: 'unrecorded', used: ['skill:the-maestro', 'tool:branch-sweep'],
+        });
+        if (!dryRun) render(true);
+        console.log(`asked  ${ask.worktree}: move ${ask.files.join(', ')} into the env store`);
+    }
 }
 
 /**
