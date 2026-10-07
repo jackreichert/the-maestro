@@ -22,6 +22,9 @@
  * `digest-wait` blocks until the supervisor (loop-supervisor.ts) has saved an unseen digest, prints it, marks it seen and
  * exits 10, so a session that cannot hold the loop lock is still woken; it exits 0 quietly at the timeout (default 6h).
  *
+ * Heartbeat: unless `--once`, `run` rewrites <event dir>/heartbeat.json on each tick and each sleep chunk (lib/heartbeat.ts), and sleeps in chunks of at most 60 s
+ * against the wall clock (lib/wall-sleep.ts), so a lid closed mid-sleep costs under a minute, not the whole lid time.
+ *
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
 import { spawnSync } from 'node:child_process';
@@ -33,6 +36,8 @@ import {
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
+import { writeHeartbeat } from './lib/heartbeat.ts';
+import { sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
 import type { TypeRegistry } from './event-types/index.ts';
@@ -203,17 +208,35 @@ function finish(dir: string): boolean {
 
 const sleep = (s: number): Promise<void> => new Promise((r) => setTimeout(r, s * 1000));
 
+/** The loop's heartbeat writer. A `--once` run writes none: it is a one-off, and its pid would read as a dead loop once it exits. Never throws; a failed write must not stop the loop. */
+function heartbeatWriter(dir: string, enabled: boolean): (over?: { sleepingUntil?: number | null; lastError?: string }) => void {
+  let tick = 0;
+  let lastError = '';
+  return ({ sleepingUntil = null, lastError: err } = {}) => {
+    if (!enabled) return;
+    if (err !== undefined) lastError = err;
+    if (sleepingUntil === null) tick += 1;
+    try {
+      writeHeartbeat(dir, { pid: process.pid, at: new Date().toISOString(), tick, watchesLive: listWatches(dir).length, sleepingUntil: sleepingUntil === null ? null : new Date(sleepingUntil).toISOString(), mode: 'run', lastError });
+    } catch { /* the heartbeat is advisory */ }
+  };
+}
+
 async function run({ dir, types, once, pinned }: { dir: string; types: TypeRegistry; once?: boolean; pinned?: number }): Promise<number> {
   const ctx = { run: defaultRun, config: { inboxCommand: INBOX_COMMAND }, dir };
+  const beat = heartbeatWriter(dir, !once);
   for (;;) {
     if (!listWatches(dir).length) { console.log('no watches registered'); return EXIT.ok; }
-    tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND });
+    try {
+      tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND });
+    } catch (err) { beat({ lastError: errorMessage(err).split('\n')[0] }); throw err; }
+    beat({ lastError: '' });
     if (finish(dir)) return EXIT.actionable;
     const next = pace({ dir, types, config: cadenceConfig(pinned) });
     if ('stop' in next) { console.log(`QUIET-HOURS stop until ${next.until} ${next.tz}`); return EXIT.quietStop; }
     if (once) { console.log('no actionable events'); return EXIT.ok; }
     console.error(`next check in ${next.seconds}s (${next.reason})`);
-    await sleep(next.seconds);
+    await sleepUntil(Date.now() + next.seconds * 1000, { sleep, onChunk: (until) => beat({ sleepingUntil: until }) });
   }
 }
 

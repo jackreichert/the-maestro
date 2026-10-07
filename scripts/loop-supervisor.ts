@@ -11,6 +11,9 @@
  * Digests are written only under the ledger root; with no ledger root the supervisor refuses to start (exit 2).
  * While it runs it keeps <event dir>/supervisor.json ({ pid, startedAt }); a stop by SIGTERM or SIGINT removes it, so `prime` can tell a
  * supervisor that was stopped from one that died (lib/supervisor-state.ts).
+ * While it waits (idle, quiet hours or crash back-off) it sleeps in chunks of at most 60 s against the wall clock, so a closed lid costs
+ * under a minute, and rewrites <event dir>/heartbeat.json each chunk with mode `idle` or `quiet`, so a supervisor between loop launches
+ * still reads as alive (lib/loop-health.ts). The loop writes its own heartbeat while it runs.
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches.
  */
 import { spawn } from 'node:child_process';
@@ -19,6 +22,9 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { localClock } from './lib/cadence.ts';
 import { digestDir, saveDigest } from './lib/digest-store.ts';
+import { writeHeartbeat } from './lib/heartbeat.ts';
+import type { HeartbeatMode } from './lib/heartbeat.ts';
+import { sleepUntil } from './lib/wall-sleep.ts';
 import { clearRecord, writeRecord } from './lib/supervisor-state.ts';
 import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT } from './local-config.ts';
 
@@ -31,7 +37,8 @@ export interface LoopResult { code: number | null; stdout: string; stderr: strin
 /** Everything `supervise` touches outside itself, so tests can fake it. */
 export interface SuperviseDeps {
   runLoop: () => Promise<LoopResult>;
-  sleep: (seconds: number) => Promise<void>;
+  /** `mode` says why: `quiet` for a quiet-hours stop, `idle` for every other wait (the heartbeat records it). */
+  sleep: (seconds: number, mode?: HeartbeatMode) => Promise<void>;
   save: (digest: string) => void;
   log: (line: string) => void;
   now?: () => number;
@@ -72,7 +79,7 @@ export async function supervise({ runLoop, sleep, save, log, now = Date.now, max
     } else if (code === 3) {
       const seconds = quietSleepSeconds(stdout, now());
       if (seconds === null) log(`quiet-hours stop with no readable time: ${lastLine(stdout)}`);
-      await sleep(seconds ?? DELAYS.quietFallback);
+      await sleep(seconds ?? DELAYS.quietFallback, 'quiet');
     } else if (code === 0) {
       await sleep(DELAYS.idle);
     } else if (code === 2) {
@@ -115,6 +122,11 @@ function stopOnSignals(eventDir: string): void {
 
 const stamped = (line: string): string => `${new Date().toISOString()} loop-supervisor: ${line}`;
 
+/** The supervisor's own heartbeat while it waits. Never throws: it is advisory. */
+function beat(mode: HeartbeatMode, until: number): void {
+  try { writeHeartbeat(EVENT_DIR, { pid: process.pid, at: new Date().toISOString(), tick: 0, watchesLive: 0, sleepingUntil: new Date(until).toISOString(), mode, lastError: '' }); } catch { /* advisory */ }
+}
+
 async function main(): Promise<number> {
   if (!LEDGER_ROOT) { console.error(stamped('no ledger root; set LEDGER_ROOT (digests are saved only under it)')); return 2; }
   const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
@@ -124,7 +136,10 @@ async function main(): Promise<number> {
   stopOnSignals(EVENT_DIR);
   await supervise({
     runLoop: launch,
-    sleep: (s) => new Promise((r) => setTimeout(r, s * 1000)),
+    sleep: (s, mode = 'idle') => sleepUntil(Date.now() + s * 1000, {
+      sleep: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
+      onChunk: (until) => beat(mode, until),
+    }),
     save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); },
     log: (line) => console.error(stamped(line)),
     maxRuns: max > 0 ? max : Infinity,

@@ -481,3 +481,35 @@ test('a pin of Infinity that reaches tick anyway still honours the floor', () =>
   assert.equal(Number.isFinite(loadState(dir).watches.s.nextDue), true);
   assert.equal(secondsOf(pace({ dir, types, config, now: NOON })), 180);
 });
+
+/** Starts `run` (not --once) over a registry with one unknown-type watch, waits for a heartbeat that says it is asleep, and stops it. */
+async function runAndStop(dir: string, ...extra: string[]): Promise<void> {
+  const p = spawn(process.execPath, [SCRIPT, 'run', ...extra], { env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' }, stdio: 'ignore' });
+  const closed = new Promise((resolve) => p.on('close', resolve));
+  const file = join(dir, 'heartbeat.json');
+  for (let i = 0; i < 100; i += 1) {
+    await new Promise((r) => setTimeout(r, 50));
+    try { if (JSON.parse(readFileSync(file, 'utf8')).sleepingUntil) break; } catch { /* not written yet */ }
+  }
+  p.kill('SIGTERM');
+  await closed;
+}
+
+test('cli: run writes a heartbeat with its pid, the live watch count and the wake time it sleeps until', async () => {
+  const dir = tempDir();
+  cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
+  await runAndStop(dir);
+  const beat = JSON.parse(readFileSync(join(dir, 'heartbeat.json'), 'utf8'));
+  assert.equal(beat.mode, 'run');
+  assert.equal(beat.watchesLive, 1);
+  assert.ok(beat.pid > 0 && beat.tick >= 1);
+  assert.ok(Date.parse(beat.sleepingUntil) > Date.parse(beat.at), 'it says when it expects to wake');
+  assert.match(beat.lastError, /^$/);
+});
+
+test('cli: run --once leaves no heartbeat, so a one-off never reads as a dead loop', () => {
+  const dir = tempDir();
+  cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
+  assert.equal(cli(dir, 'run', '--once').status, EXIT.ok);
+  assert.equal(existsSync(join(dir, 'heartbeat.json')), false);
+});
