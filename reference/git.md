@@ -150,6 +150,7 @@ Diagram: <a mermaid block, or "n/a, <reason>">
 | Diagram | Enforced only when stacked or wide | a stacked PR (base is not a `protected_branches` entry), or one over `pr_diagram_min_files` code files (default 3), needs a fenced mermaid block or a `Diagram: n/a, <reason>` line. Elsewhere it is advisory | `pr_body_check_diagram`, `pr_diagram_min_files` |
 | Attribution, key, token and PHI-shaped content | Enforced, best effort | regexes for attribution lines, private keys, cloud and GitHub tokens, credential assignments, SSN and MRN shapes; the match is named, never printed. A pass is not a guarantee | `pr_body_check_forbidden` |
 | Private references | Enforced, best effort | no wiki-links, `obsidian://` links or private-workspace words in the title or body; extra install-specific id patterns from config. Cannot catch every private reference | `pr_body_check_private`, `pr_body_private_patterns` |
+| Smells run | Enforced in repos listed in `pr_smells_repos` | a smells run recorded for the head commit (`pr-smells.ts record`) and its `Smells:` line in the body; exempt when the diff has no code files. Cannot tell whether the run was real | `pr_smells_repos` |
 | Derivable counts | Enforced, best effort | refuses `N commits`, `N files (changed)`, `N lines` and `+A -B` outside code; a code span is the escape. Cannot tell a legitimate count in prose | `pr_body_check_counts` |
 | First-person voice | Enforced, best effort | refuses assistant self-references, AI-generated wording and the author's own name in the third person, outside code. Voice cannot be fully machine-checked | `pr_body_check_voice`, `pr_body_voice_names` |
 | File links | Enforced | a `{{file:path}}` token for a path outside the diff refuses before the PR is created; see below | none |
@@ -186,6 +187,21 @@ flowchart LR
   rules -->|pass| size[size gate]
   size --> draft[gh pr create --draft]
 ```
+
+### Smells gate
+
+In repos named in `pr_smells_repos` (GitHub `owner/name` globs, default none, so off), `pr-open.ts` also refuses to open a PR until a report-only smells review has been run on the diff and recorded.
+Run `mithril-lite-review` (or `/mithril smells`) on the branch, fix what is worth fixing, then record the run for the head commit:
+
+```bash
+node <scripts dir>/pr-smells.ts record --repo <repo> --summary "<findings, fixed, deliberately left>"
+```
+
+and paste the line it prints (`Smells: ...`) into the PR body on a line of its own.
+
+- Enforced: the record exists for exactly the head commit being opened, so a later commit invalidates it and the run is repeated; and the body carries the recorded `Smells:` line. A diff with no code files (docs, config, tests only) is exempt. Advisory findings never block; only a missing run does.
+- Not enforced: that the run really happened or was any good. The record is an attestation kept in the repo's git directory, and the reviewer still reads the findings line.
+- Layer two, `mithril-gates` (lint, complexity, function length, duplication) as a CI check, needs the team and is not part of this.
 
 All of these are settings in [local-config.md](local-config.md); each switch defaults on and any can be turned off, and `pr_body_sections` replaces the required list.
 
