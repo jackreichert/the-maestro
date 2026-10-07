@@ -21,6 +21,7 @@ import { triageItems } from '../journal/triage.ts';
 import { ticketNoteRef } from '../status-page/render.ts';
 import type { PageConfig, Ref } from '../status-page/render.ts';
 import { gatherInputsCached } from '../status-page/generate.ts';
+import { DEFAULT_PRIORITIES_MAX } from '../status-page/priorities.ts';
 import type { GatheredInputs } from '../status-page/generate.ts';
 import { buildCharts as reduceCharts } from './charts.ts';
 import { buildState as reduceState } from './state.ts';
@@ -32,6 +33,8 @@ export interface WebConfig {
   vault: string; project: string; statusDir: string; page: PageConfig; warn?: (message: string) => void;
   /** The notes vault the stream home base reads tickets from (`vault_root`); absent means no tickets are read. */
   vaultRoot?: string;
+  /** `priorities_max`: the cap the page shows and the write path enforces. Default 5. */
+  prioritiesMax?: number;
 }
 
 const MAX_FRAGMENT_BYTES = 64 * 1024;
@@ -86,7 +89,7 @@ function toWire(cfg: WebConfig, s: ReducedState): PodiumState {
     ...s, footer, asks, prs: s.prs.map((p) => ({ ...p, review: p.review ?? '' })), blocked, done, deferred, working: s.working.map(work), queued: s.queued.map(work),
     fragments: readFragments(cfg.statusDir, ['overview', ...s.streams]),
   };
-  return { generatedAt, ...body, seq: createHash('sha1').update(JSON.stringify(body)).digest('hex').slice(0, 12) };
+  return { generatedAt, ...body, prioritiesMax: cfg.prioritiesMax ?? DEFAULT_PRIORITIES_MAX, seq: createHash('sha1').update(JSON.stringify(body)).digest('hex').slice(0, 12) };
 }
 
 /** The whole board as the client's PodiumState. */

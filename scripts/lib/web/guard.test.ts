@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { MAX_URL_LENGTH, hostAllowed, rawError, refuse, sendError, sendJson } from './guard.ts';
+import { MAX_BODY_BYTES, MAX_URL_LENGTH, hostAllowed, rawError, refuse, sendError, sendJson } from './guard.ts';
 
 // A server whose only logic is the guard: whatever it lets through answers 200.
 const server = createServer((req, res) => {
@@ -97,4 +97,59 @@ test('error text is fixed per status and never an exception message', () => {
   assert.match(rawError(500), /^HTTP\/1\.1 500 internal error\r\n/);
   assert.match(rawError(431), /content-security-policy: /);
   assert.ok(rawError(404).endsWith('{"error":"not found"}'));
+});
+
+// A second server that lists one write path, to check what a POST must carry and that nothing else widens.
+const WRITE = '/api/priorities/add';
+const writer = createServer((req, res) => {
+  const no = refuse(req, (req.socket.localPort ?? 0), new Set([WRITE]));
+  if (no) sendError(res, no.status, no.headers);
+  else { req.resume(); sendJson(res, 200, { ok: true }); }
+});
+before(async () => { await new Promise<void>((ok) => writer.listen(0, '127.0.0.1', ok)); });
+after(() => { writer.close(); });
+
+function post(opts: { path?: string; method?: string; headers?: Record<string, string>; body?: string; host?: string } = {}): Promise<{ status: number; headers: IncomingHttpHeaders }> {
+  const p = (writer.address() as AddressInfo).port;
+  const body = opts.body ?? '{"text":"x"}';
+  const headers: Record<string, string> = { host: opts.host ?? `127.0.0.1:${p}`, origin: `http://127.0.0.1:${p}`, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)), ...opts.headers };
+  for (const k of Object.keys(headers)) if (headers[k] === '') delete headers[k];
+  return new Promise((ok, fail) => {
+    const req = request({ host: '127.0.0.1', port: p, method: opts.method ?? 'POST', path: opts.path ?? WRITE, headers }, (res) => { res.resume(); res.on('end', () => ok({ status: res.statusCode ?? 0, headers: res.headers })); });
+    req.on('error', fail);
+    req.end(body);
+  });
+}
+
+test('a write path takes a same-origin JSON POST and nothing else', async () => {
+  assert.equal((await post()).status, 200);
+  assert.equal((await post({ headers: { 'sec-fetch-site': 'same-origin' } })).status, 200);
+  assert.equal((await post({ headers: { 'content-type': 'application/json; charset=utf-8' } })).status, 200);
+});
+
+test('a write is refused without this server own Origin, from another site, or on a rebound host', async () => {
+  assert.equal((await post({ headers: { origin: '' } })).status, 403, 'no Origin is not enough for a write');
+  assert.equal((await post({ headers: { origin: 'https://evil.example' } })).status, 403);
+  assert.equal((await post({ headers: { origin: 'null' } })).status, 403);
+  for (const site of ['cross-site', 'same-site', 'none']) assert.equal((await post({ headers: { 'sec-fetch-site': site } })).status, 403, site);
+  assert.equal((await post({ host: 'evil.example' })).status, 403);
+});
+
+test('a write must be JSON of a declared, small size, with no query string and no chunking', async () => {
+  for (const type of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x', 'application/jsonp', '']) assert.equal((await post({ headers: { 'content-type': type } })).status, 415, type);
+  assert.equal((await post({ body: 'x'.repeat(MAX_BODY_BYTES + 1) })).status, 413);
+  assert.equal((await post({ body: '' })).status, 400);
+  assert.equal((await post({ headers: { 'content-length': '', 'transfer-encoding': 'chunked' } })).status, 400);
+  assert.equal((await post({ path: `${WRITE}?x=1` })).status, 400);
+});
+
+test('only the listed path takes POST; GET on it and every other method are 405 naming the method that is allowed', async () => {
+  assert.equal((await post({ path: '/api/state' })).status, 405);
+  assert.equal((await post({ path: `${WRITE}/` })).status, 405);
+  assert.equal((await post({ path: '/' })).headers.allow, 'GET');
+  for (const method of ['GET', 'PUT', 'DELETE', 'PATCH']) {
+    const r = await post({ method });
+    assert.equal(r.status, 405, method);
+    assert.equal(r.headers.allow, 'POST', method);
+  }
 });
