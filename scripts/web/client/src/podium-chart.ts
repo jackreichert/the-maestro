@@ -40,10 +40,19 @@ export class PodiumChart extends HTMLElement {
   #root: ShadowRoot;
   #width = 360;
   #resize: ResizeObserver | null = null;
+  // Built once and kept: a redraw (data, attribute or width change) swaps only the caption text, the SVG, the legend and
+  // the table rows, so an open data table stays open and focus on its summary is not dropped.
+  readonly #caption = h('figcaption');
+  #svg: SVGSVGElement = s('svg');
+  #legend: HTMLElement | null = null;
+  readonly #details = h('details', {}, h('summary', {}, 'Data table'));
+  #table: HTMLElement = h('table');
 
   constructor() {
     super();
     this.#root = shadow(this, CSS);
+    this.#details.append(this.#table);
+    this.#root.replaceChildren(h('figure', {}, this.#caption, this.#svg, this.#details));
   }
 
   get data(): ChartData { return this.#data; }
@@ -81,10 +90,18 @@ export class PodiumChart extends HTMLElement {
     const total = data.series.reduce((a, x) => a + (x.values[0] ?? 0), 0);
     const colors = seriesColors(data.series.map((x) => x.name));
     const legend = data.series.length > 1
-      ? h('ul', { class: 'legend', 'aria-label': 'Legend' }, ...data.series.map((x, i) => h('li', {}, swatch(colors[i]), x.name,
+      ? h('ul', { class: 'legend', role: 'list', 'aria-label': 'Legend' }, ...data.series.map((x, i) => h('li', {}, swatch(colors[i]), x.name,
         share && total > 0 ? h('span', { class: 'v' }, `${Math.round(((x.values[0] ?? 0) / total) * 100)}%`) : null)))
       : null;
-    this.#root.replaceChildren(h('figure', {}, h('figcaption', {}, title), svg, legend, table(data)));
+    this.#caption.textContent = title;
+    this.#svg.replaceWith(svg);
+    this.#svg = svg;
+    if (this.#legend) this.#legend.replaceWith(legend ?? '');
+    else if (legend) svg.after(legend);
+    this.#legend = legend;
+    const rows = table(data);
+    this.#table.replaceWith(rows);
+    this.#table = rows;
   }
 
   /** One horizontal 100% bar: a single part-to-whole needs no axis, and a lone vertical bar wastes the panel. */
@@ -175,11 +192,11 @@ function swatch(fill: string): HTMLElement {
   return el;
 }
 
+/** The chart's values as a table, for the disclosure under it. */
 function table(data: ChartData): HTMLElement {
-  return h('details', {}, h('summary', {}, 'Data table'),
-    h('table', {},
-      h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, h('span', { class: 'vh' }, 'Category')), ...data.series.map((x) => h('th', { scope: 'col' }, x.name)))),
-      h('tbody', {}, ...data.labels.map((l, i) => h('tr', {}, h('th', { scope: 'row' }, l), ...data.series.map((x) => h('td', {}, String(x.values[i] ?? 0))))))));
+  return h('table', {},
+    h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, h('span', { class: 'vh' }, 'Category')), ...data.series.map((x) => h('th', { scope: 'col' }, x.name)))),
+    h('tbody', {}, ...data.labels.map((l, i) => h('tr', {}, h('th', { scope: 'row' }, l), ...data.series.map((x) => h('td', {}, String(x.values[i] ?? 0)))))));
 }
 
 function describe(data: ChartData, kind: ChartKind): string {

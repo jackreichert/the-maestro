@@ -14,6 +14,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
     transition: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
   }
   :host([open]) article { background: var(--surface-1); box-shadow: var(--shadow-1); margin-block: var(--space-2); }
+  @media (forced-colors: active) { :host([open]) article { outline: 1px solid CanvasText; } }
 
   /* The row: id, the decision (the disclosure button), stream and age. The whole row is the click target. */
   .row {
@@ -31,6 +32,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .where { font-size: var(--text-sm); line-height: var(--leading-sm); white-space: nowrap; }
   .age { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; min-width: 3.5em; }
   .age.stale { color: var(--warning); font-weight: var(--weight-medium); }
+  .stale-mark { margin-right: 3px; font-size: 0.92em; }
   .chev {
     display: inline-block; width: 6px; height: 6px; margin-left: var(--space-2); border: solid var(--text-muted); border-width: 0 1.5px 1.5px 0;
     transform: translateY(-2px) rotate(45deg); transition: transform var(--dur-base) var(--ease-out);
@@ -145,6 +147,8 @@ export class AskCardElement extends HTMLElement {
       h('h3', {}, toggle),
       this.#showStream ? h('span', { class: 'where' }, streamTag(a.stream)) : null,
       h('span', { class: `age${stale ? ' stale' : ''}` },
+        // Stale is a glyph as well as the warning colour, so it survives forced colours and colour blindness.
+        stale ? h('span', { class: 'stale-mark', 'aria-hidden': 'true' }, '⚠\uFE0E') : null,
         h('span', { class: 'vh' }, a.ageDays < 1 ? 'asked ' : 'waiting '), askAge(a.ageDays), stale ? h('span', { class: 'vh' }, ', stale') : null,
         h('span', { class: 'chev', 'aria-hidden': 'true' })));
     toggle.append(copied);

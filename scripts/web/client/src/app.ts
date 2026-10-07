@@ -74,6 +74,13 @@ const CSS = `${BOARD_CSS}
   [role=tab][aria-selected=true]::after { content: ''; position: absolute; left: var(--space-3); right: var(--space-3); bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
 
+  @media (forced-colors: active) {
+    [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; bottom: 0; }
+    .fresh, .sk { border: 1px solid CanvasText; }
+    .dot { forced-color-adjust: none; border-color: CanvasText; }
+    .fresh.live .dot { background: CanvasText; }
+    h1::before { forced-color-adjust: none; background: CanvasText; }
+  }
   [role=tabpanel] { padding-block: var(--space-6) var(--space-8); }
   /* The panel takes focus between the tabs and its content: a 2 px focus line under the tab bar, not a frame round the page. */
   [role=tabpanel]:focus-visible { outline: none; border-radius: 0; box-shadow: inset 0 2px 0 var(--focus); }
@@ -84,7 +91,7 @@ const CSS = `${BOARD_CSS}
   ol.priorities li::before { content: counter(p); color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
   ol.priorities .tag { grid-column: 2; justify-self: start; padding-block: 2px; margin-block: -2px; }
 
-  .table-wrap { overflow-x: auto; }
+  .table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
   table.counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); line-height: var(--leading-sm); font-variant-numeric: tabular-nums; }
   table.counts th, table.counts td { padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
   table.counts thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: 1px solid var(--border); white-space: normal; vertical-align: bottom; }
@@ -102,9 +109,10 @@ const CSS = `${BOARD_CSS}
   @keyframes fade-in { from { opacity: 0; } }
   @keyframes grow { from { transform: scaleX(0.4); opacity: 0; } }
 
-  .sk { display: block; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--surface-2) 30%, var(--surface-1) 50%, var(--surface-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.6s linear infinite; }
-  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
-  @media (prefers-reduced-motion: reduce) { .sk { animation: none; background: var(--surface-2); } }
+  /* Placeholder blocks breathe in opacity (composited, no repaint per frame), not a moving gradient. */
+  .sk { display: block; border-radius: var(--radius-sm); background: var(--surface-2); animation: breathe 1.6s var(--ease-in-out) infinite; }
+  @keyframes breathe { 50% { opacity: 0.5; } }
+  @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
   .sk-head { padding-block: var(--space-5) var(--space-7); }
   .sk-line { height: 12px; }
   .sk-cue { height: 28px; width: min(560px, 90%); margin-top: var(--space-5); }
@@ -326,7 +334,8 @@ export class PodiumApp extends HTMLElement {
   #counts(st: PodiumState): Node | null {
     if (st.footer.length === 0) return null;
     const cell = (n: number): HTMLElement => h('td', { class: n === 0 ? 'z' : undefined }, String(n));
-    return h('div', { class: 'table-wrap' }, h('table', { class: 'counts' }, h('caption', { class: 'vh' }, 'Counts per stream'),
+    // The table scrolls sideways on a narrow screen, so its wrapper is a focusable, named region: arrow keys can scroll it.
+    return h('div', { class: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': 'Counts per stream' }, h('table', { class: 'counts' }, h('caption', { class: 'vh' }, 'Counts per stream'),
       h('thead', {}, h('tr', {}, ...['Stream', 'Need you', 'Working', 'Queued', 'Blocked', 'Done'].map((t) => h('th', { scope: 'col' }, t)))),
       h('tbody', {}, ...st.footer.map((f) => h('tr', {}, h('th', { scope: 'row' }, streamTag(f.stream)),
         ...[f.asks, f.working, f.queued, f.blocked, f.done].map(cell))))));

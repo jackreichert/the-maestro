@@ -2,6 +2,7 @@
 
 import { linkAttrs } from './link-policy.ts';
 import { formatFragment } from './tabs.ts';
+import { memoByKey } from './memo.ts';
 
 type Attrs = Record<string, string | boolean | undefined>;
 type Child = Node | string | null | undefined | false;
@@ -33,12 +34,15 @@ export function s<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Attrs = {
   return node;
 }
 
-/** A constructable stylesheet, so the page needs no inline style. */
-export function sheet(css: string): CSSStyleSheet {
+/**
+ * A constructable stylesheet, so the page needs no inline style. One sheet per distinct CSS text, shared by every
+ * shadow root that adopts it: forty ask rows parse their styles once, not forty times.
+ */
+export const sheet = memoByKey((css: string): CSSStyleSheet => {
   const sh = new CSSStyleSheet();
   sh.replaceSync(css);
   return sh;
-}
+});
 
 /** Attach an open shadow root with the given styles and return it. */
 export function shadow(host: HTMLElement, css: string): ShadowRoot {
@@ -78,6 +82,12 @@ export const BASE_CSS = `
   code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
   .num { font-variant-numeric: tabular-nums; }
   ${VISUALLY_HIDDEN}
+  /* Forced colours (Windows contrast themes) drop backgrounds and shadows: shapes that were only a fill get a border. */
+  @media (forced-colors: active) {
+    .chip, .id, kbd, .badge, .unsaved { border: 1px solid CanvasText; }
+    .swatch { forced-color-adjust: none; outline: 1px solid CanvasText; }
+    button.more, button.quiet { border: 1px solid ButtonText; }
+  }
 `;
 
 /**
