@@ -42,7 +42,9 @@ let sectionSeq = 0;
 /** A titled section with its count; an empty body becomes a one-line empty state that says what empty means. */
 export function section(spec: SectionSpec, body: Node | null): HTMLElement {
   const id = `s${++sectionSeq}`;
-  return h('section', { 'aria-labelledby': id, class: `tone-${spec.tone}${spec.quiet ? ' quiet' : ''}` },
+  // An empty section's status glyph goes muted: a red blocked mark over "Nothing is blocked" would read as an alarm.
+  const tone = body ? spec.tone : 'neutral';
+  return h('section', { 'aria-labelledby': id, class: `tone-${tone}${spec.quiet ? ' quiet' : ''}` },
     h('div', { class: 'head' },
       spec.glyph ? h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph) : null,
       h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null)),
