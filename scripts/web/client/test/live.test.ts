@@ -184,6 +184,8 @@ test('the indicator says its mode in words', () => {
   assert.equal(liveLabel('polling'), 'Checking every 30 s');
   assert.equal(liveLabel('offline'), 'Offline, retrying');
   assert.equal(liveLabel(null), '');
+  assert.equal(liveLabel('live', true), 'Updates live · update waiting');
+  assert.equal(liveLabel(null, true), '', 'nothing to qualify before the first answer');
 });
 
 test('offline is not downgraded to polling by the stream retrying; a good poll recovers it', async () => {

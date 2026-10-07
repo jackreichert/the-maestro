@@ -279,6 +279,7 @@ export class PodiumApp extends HTMLElement {
   #adopt(f: Fresh): void {
     const now = this.#gate.offer(f);
     if (now) this.#show(now);
+    else this.#updateLink();   // held: the label says an update is waiting
   }
 
   #show(f: Fresh): void {
@@ -471,7 +472,7 @@ export class PodiumApp extends HTMLElement {
   /** Whether updates arrive by the live stream, by polling, or not at all; hidden for sample data and before the first answer. */
   #link(): HTMLElement {
     const st = this.#liveStatus;
-    return h('span', { class: `link${st === 'offline' ? ' offline' : ''}`, role: 'status' }, liveLabel(st));
+    return h('span', { class: `link${st === 'offline' ? ' offline' : ''}`, role: 'status' }, liveLabel(st, this.#gate.held));
   }
 
   #updateLink(): void {

@@ -130,11 +130,15 @@ export class LiveUpdates<T> {
 }
 
 /** The indicator's words. Words, not colour alone, say which mode the page is in. */
-export function liveLabel(status: LiveStatus | null): string {
-  switch (status) {
-    case 'live': return 'Updates live';
-    case 'polling': return 'Checking every 30 s';
-    case 'offline': return 'Offline, retrying';
-    case null: return '';
-  }
+export function liveLabel(status: LiveStatus | null, held = false): string {
+  const words = ((): string => {
+    switch (status) {
+      case 'live': return 'Updates live';
+      case 'polling': return 'Checking every 30 s';
+      case 'offline': return 'Offline, retrying';
+      case null: return '';
+    }
+  })();
+  // Newer data is waiting behind a field being typed in: say so, or the label claims updates the page is not showing.
+  return held && words ? `${words} · update waiting` : words;
 }
