@@ -97,6 +97,13 @@ test('GET /api/charts honours and clamps days, and the payload passes the client
   assert.deepEqual(sanitizeCharts(body), { data: { ...body, prMix }, dropped: 0 });
 });
 
+test('GET /api/link-hosts is empty by default', async () => {
+  const r = await hit('/api/link-hosts');
+  assert.equal(r.status, 200);
+  assert.deepEqual(JSON.parse(r.body), { atlassian: [] });
+  assert.deepEqual(dataRoutes({ ...options, trustedAtlassianHosts: ['example.atlassian.net'] }).find((x) => x.pattern.test('/api/link-hosts'))?.handler(new URL('http://x/'), [] as unknown as RegExpMatchArray), { atlassian: ['example.atlassian.net'] });
+});
+
 test('GET /api/streams/:name filters one stream; an unknown, malformed or traversal name is 404', async () => {
   assert.equal((await hit('/api/streams/widgets')).status, 200);
   for (const bad of ['nope', '%E0%A4%A', '..%2F..%2Fsecret', '%2e%2e', 'widgets%2Fx']) {
