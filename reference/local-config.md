@@ -52,6 +52,7 @@ pr_body_voice_names: Sam, samf # your names or logins that must not appear in th
 pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>`; default 3
 pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off
 review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
+rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
 stack_max_depth: 3           # most PRs in one stack; the PR board flags a deeper stack; default 3
 stack_max_age_days: 5         # most days since a stack's oldest PR was opened; the PR board flags an older stack; default 5
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
