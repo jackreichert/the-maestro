@@ -33,7 +33,12 @@ const INLINE = new RegExp(
 
 /** A bare URL in free text (opt-in): up to whitespace, an angle bracket or a quote. Trailing sentence punctuation is trimmed off the match. */
 const BARE_URL = '((?:https?|obsidian):\\/\\/[^\\s<>"\'`]+)'; // 7
-const TRAILING = /[.,;:!?)\]}]+$/;
+/** The length of `url` once trailing sentence punctuation is gone (a backward scan, linear in the run). */
+const trimmedLength = (url: string): number => {
+  let n = url.length;
+  while (n > 0 && '.,;:!?)]}'.includes(url[n - 1] as string)) n--;
+  return n;
+};
 const INLINE_AUTOLINK = new RegExp(`${INLINE.source}|${BARE_URL}`, 'g');
 
 export interface RenderOptions { autolink?: boolean; breaks?: boolean }
@@ -65,7 +70,7 @@ export function renderInline(text: string, opts: RenderOptions = {}): string {
     else if (m[5] !== undefined) out += renderLink(m[5], m[6]);
     else {
       // A bare URL: the sentence punctuation after it stays text (the next match's leading slice picks it up).
-      const url = m[7].replace(TRAILING, '');
+      const url = m[7].slice(0, trimmedLength(m[7]));
       last = m.index + url.length;
       out += renderLink(url, url);
     }
