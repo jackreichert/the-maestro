@@ -84,6 +84,7 @@
  *   journal.ts web [--port <n>] [--status-dir <dir>]   serve the Podium as a read-only page on 127.0.0.1 (GET only; prints the URL; build the page first with `npm run build:web`)
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts start-here [--stream <name>] [--json] [--status-dir <dir>]   the first page a fresh reader needs, as text with no server: this week's goals, priorities, the top five asks with their stakes, conditions, in flight, yesterday, answers from the last 2 days and where each stream's notes live (80 lines at most; --stream shows one stream's)
+ *   journal.ts notes-check [--since 30d|YYYY-MM-DD] [--json]   durable notes (Plans, Research, Reviews, Runbooks, one subfolder deep) in the projects of every active stream that no stream tab lists: attributed to no ticket in a claimed tree, no `stream:` field, not pinned. Prints each with its reason and fix. Exit 0 none, 1 some, 2 when no vault root is set or the vault could not be read. The roll prints it and the `notes-reachable` standing row fails while any exist; it blocks neither a roll nor a PR
  *   journal.ts week set "<goal>" ["<goal> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write this week's goals to <status dir>/week.md (dated by the week's Monday; a ` | Stream` suffix maps one to a stream)
  *   journal.ts week show [--status-dir <dir>] [--json]   read them back; a missing or out-of-week file prints the not-set line
  *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
@@ -156,7 +157,8 @@ import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { buildStart, homeCounts, startLines } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
-import { buildHome } from './lib/web/home.ts';
+import { buildHome, notesReachability } from './lib/web/home.ts';
+import { reachabilityLines } from './lib/notes/reachability.ts';
 import { pageConfig } from './status-page.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
@@ -783,6 +785,33 @@ function printEpicBriefs(d: string): void {
         if (!report) console.log(`Epic briefs: ${NO_VAULT_DETAIL}.`);
         else for (const line of epicBriefsLines(report)) console.log(line);
     } catch (e) { console.log(`Epic briefs: could not be checked (${errorMessage(e)})`); }
+}
+
+/** The notes-reachability report for this run, memoized because `prime` reads the standing rows more than once. Null when no vault root is set. */
+const notesMemo = new Map<string, ReturnType<typeof notesReachability>>();
+function notesCheck(since: string | undefined) {
+    const key = since ?? '';
+    if (!notesMemo.has(key)) {
+        const dirPath = statusDir();
+        notesMemo.set(key, notesReachability({ vault, project, statusDir: dirPath, page: pageConfig(project, dirPath), vaultRoot: VAULT_ROOT }, since));
+    }
+    return notesMemo.get(key) ?? null;
+}
+
+/** `--since 30d` (days back) or `--since YYYY-MM-DD`, as a day; undefined when not given. */
+function sinceDay(raw: string | undefined): string | undefined {
+    if (!raw) return undefined;
+    const days = raw.match(/^(\d+)d$/);
+    if (days) return new Date(Date.now() - Number(days[1]) * 864e5).toISOString().slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : die('--since takes 30d (days back) or YYYY-MM-DD');
+}
+
+/** `notes-check [--since 30d] [--json]`: durable notes under an active stream that no stream tab lists, each with its reason and fix. Exit 0 none, 1 some, 2 when the vault could not be read. Never blocks a roll or a PR. */
+function cmdNotesCheck() {
+    const r = notesCheck(sinceDay(arg('since') || undefined));
+    if (!r) { console.error(`notes-check: ${NO_VAULT_DETAIL}`); process.exit(2); }
+    if (asJson) console.log(JSON.stringify(r, null, 2)); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
+    process.exit(r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0);
 }
 
 /**
@@ -1717,6 +1746,7 @@ switch (cmd) {
     case 'priorities': cmdPriorities(); break;
     case 'week': cmdWeek(); break;
     case 'start-here': cmdStartHere(); break;
+    case 'notes-check': cmdNotesCheck(); break;
     case 'standing': cmdStanding(); break;
     case 'podium':
     case 'status-page': cmdStatusPage(); break;
