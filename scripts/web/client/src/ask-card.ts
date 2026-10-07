@@ -77,9 +77,9 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .resolved:focus { outline: none; }
   .resolved .done { margin: 0; color: var(--text-primary); font-weight: var(--weight-semibold); }
   .resolved .unsaved { margin: 0; width: fit-content; padding: 2px var(--space-2); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); }
-  .resolved button { justify-self: start; margin-top: var(--space-1); }
-  .resolved blockquote { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); overflow-wrap: anywhere; }
-  .resolved .note { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
+  .resolved .actions { margin-top: var(--space-2); }
+  .resolved blockquote { margin: 0; max-width: 70ch; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .resolved blockquote.select { user-select: all; }
   @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
 `;
 
