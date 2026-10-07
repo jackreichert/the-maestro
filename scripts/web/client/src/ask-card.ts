@@ -142,7 +142,7 @@ export class AskCardElement extends HTMLElement {
     const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': [`${uid}-h`, a.context ? `${uid}-c` : ''].filter(Boolean).join(' ') });
     answer.value = this.#locked ? '' : askState.draft(a.id);   // a redraw rebuilds the card; the half-typed answer comes back with it
     answer.addEventListener('input', () => askState.setDraft(a.id, answer.value));
-    const copy = h('button', { type: 'button', class: 'secondary', 'aria-describedby': `${uid}-h` }, 'Copy answer for chat');
+    const copy = h('button', { type: 'button', class: 'secondary', id: `${uid}-copy`, 'aria-describedby': `${uid}-h` }, 'Copy answer for chat');
     const error = h('p', { class: 'error', id: `${uid}-e`, role: 'alert', hidden: true }, 'Write an answer first: there is no approve-as-asked shortcut here.');
     // Sample data: no answer field at all (the section head says why), so a locked board has nothing that looks pressable.
     const form = this.#locked ? null
@@ -197,10 +197,10 @@ export class AskCardElement extends HTMLElement {
       const head = h('p', { class: 'done', id: `${uid}-s` }, ...(ok
         ? [barline(), 'Copied for chat ', h('i', { class: 'unresolved' }, 'unresolved')]
         : ['Could not copy']));
-      const again = h('button', { type: 'button', class: 'secondary' }, ok ? 'Copy again' : 'Try again');
-      const edit = h('button', { type: 'button', class: 'quiet' }, 'Edit answer');
+      const again = h('button', { type: 'button', class: 'secondary', id: `${uid}-again` }, ok ? 'Copy again' : 'Try again');
+      const edit = h('button', { type: 'button', class: 'quiet', id: `${uid}-edit` }, 'Edit answer');
       // A focused group reads only its name, so the quote and the not-saved sentence are tied to it as its description.
-      const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s`, 'aria-describedby': `${uid}-q ${uid}-n` },
+      const status = h('div', { class: 'resolved', id: `${uid}-r`, role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s`, 'aria-describedby': `${uid}-q ${uid}-n` },
         head,
         h('blockquote', { class: ok ? undefined : 'select', id: `${uid}-q` }, text),
         h('p', { class: 'unsaved', id: `${uid}-n` }, ok
