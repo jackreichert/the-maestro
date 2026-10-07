@@ -41,7 +41,8 @@ test('the gate applies only to repos matching a glob, and never with an empty li
   assert.equal(gateApplies(r, ['example/*']), true);
   assert.equal(gateApplies(r, ['Example/Widgets']), true);
   assert.equal(gateApplies(r, ['other/*']), false);
-  assert.equal(gateApplies(repo(''), ['*/*']), false, 'no origin, no gate');
+  assert.equal(gateApplies(repo(''), ['other/*']), true, 'an origin that cannot be read never fails open');
+  assert.equal(gateApplies(repo(''), []), false);
 });
 
 test('a record names the head commit and a later commit invalidates it', () => {

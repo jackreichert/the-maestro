@@ -12,7 +12,7 @@
  * the head commit, so a push after the run invalidates it and the run is repeated. Exit 0 ok, 1 no record, 2 usage or git error.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { globToRegExp } from './pr-size.ts';
@@ -28,11 +28,11 @@ export function repoSlug(url: string): string {
   return /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim())?.[1] ?? '';
 }
 
-/** True when the repo's origin matches one of the `pr_smells_repos` globs (`owner/name`, `*` allowed). */
+/** True when the repo's origin matches one of the `pr_smells_repos` globs (`owner/name`, `*` allowed). An origin that cannot be read as a GitHub repo counts as gated once any glob is set, so the gate never fails open. */
 export function gateApplies(repo: string, globs: string[] = PR_SMELLS_REPOS): boolean {
   if (!globs.length) return false;
   const slug = repoSlug(git(repo, 'remote', 'get-url', 'origin').stdout || '');
-  return slug !== '' && globs.some((g) => globToRegExp(g.toLowerCase()).test(slug.toLowerCase()));
+  return slug === '' || globs.some((g) => globToRegExp(g.toLowerCase()).test(slug.toLowerCase()));
 }
 
 /** The full sha of `head` (a branch, or HEAD when empty). */
@@ -50,7 +50,8 @@ function storePath(repo: string): string {
 }
 
 function readAll(path: string): Record<string, SmellsRecord> {
-  try { return JSON.parse(readFileSync(path, 'utf8')) as Record<string, SmellsRecord>; } catch { return {}; }
+  if (!existsSync(path)) return {};
+  return JSON.parse(readFileSync(path, 'utf8')) as Record<string, SmellsRecord>;
 }
 
 /** Record a smells run for the head commit; returns the record. An empty summary is refused. */
