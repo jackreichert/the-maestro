@@ -65,3 +65,11 @@ test('a held update waits for every reason to clear', () => {
   assert.equal(g.set({ typing: false }), null);
   assert.equal(g.set({ pointer: false }), 'd1');
 });
+
+test('Edit answer reopens a copied ask and puts its text back as a draft', () => {
+  const s = new AskState();
+  s.resolve('a1', 'ship it');
+  s.reopen('a1', 'ship it, with a caveat');
+  assert.equal(s.resolvedAnswer('a1'), null);   // a redraw now rebuilds the form, not the copied status
+  assert.equal(s.draft('a1'), 'ship it, with a caveat');
+});

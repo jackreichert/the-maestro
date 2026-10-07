@@ -1,7 +1,7 @@
 /**
  * What the page remembers about asks so a redraw cannot lose it, with no DOM in it so it can be tested under node.
  *
- * A live update rebuilds every card. A half-typed answer and a "marked done on this page" card (the only place that
+ * A live update rebuilds every card. A half-typed answer and a "copied for chat" card (the only place that
  * answer lives until the page can write to the ledger) are therefore kept here, keyed by ask id, and restored into the
  * rebuilt cards. UpdateGate decides when newer data may be shown at all: never while a pointer press is in flight (a
  * redraw between mousedown and mouseup swallows the click) or while a field the user is typing in has focus.
@@ -18,12 +18,18 @@ export class AskState {
     else this.#drafts.set(id, text);
   }
 
-  /** The answer the card was marked done with, or null while it is still open. */
+  /** The answer the card was copied for chat with, or null while it is still open. */
   resolvedAnswer(id: string): string | null { return this.#resolved.get(id) ?? null; }
 
   resolve(id: string, answer: string): void {
     this.#resolved.set(id, answer);
     this.#drafts.delete(id);
+  }
+
+  /** The user chose Edit answer: the card is open again and the answer goes back to being a draft. */
+  reopen(id: string, draft: string): void {
+    this.#resolved.delete(id);
+    this.setDraft(id, draft);
   }
 
   /** Forget asks that are no longer on the board (answered elsewhere), so their text cannot come back on a reused id. */
