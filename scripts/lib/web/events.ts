@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
+import { HOMES_FILE } from '../home/config.ts';
 import { stampAll } from '../stamp.ts';
 import { DIRTY_PRS } from '../status-page/dirty.ts';
 import { PRS_CACHE } from '../status-page/prcache.ts';
@@ -30,7 +31,7 @@ export function boardFiles(vault: string, project: string, statusDir: string): s
   try { fragments = readdirSync(join(statusDir, 'fragments')).filter((n) => n.endsWith('.md')).sort().map((n) => join(statusDir, 'fragments', n)); } catch { /* no fragments directory yet */ }
   return [
     join(root, 'Journal', 'ledger.jsonl'), join(root, 'streams.json'),
-    ...['priorities.md', PRS_CACHE, DIRTY_PRS, PODIUM_FILE, 'ticket-map.json', 'stream-overrides.json', 'stream-homes.json'].map((n) => join(statusDir, n)),
+    ...['priorities.md', PRS_CACHE, DIRTY_PRS, PODIUM_FILE, 'ticket-map.json', 'stream-overrides.json', HOMES_FILE].map((n) => join(statusDir, n)),
     ...fragments,
   ];
 }
