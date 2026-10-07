@@ -622,6 +622,15 @@ The rework rate and corrections from the user are not computed from transcripts.
 
 Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. The block tells a worker to look a credential up with `env-where` (names only) before reporting it missing. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
 
+### env-store-move.ts
+
+`node scripts/env-store-move.ts <worktree> <file> <project> [--repo <name>] [--store-root <dir>] [--dry-run]` moves one real environment file out of a worktree into the env store and leaves a symlink at its old path. The store lives outside every worktree, as `<store root>/<repo>/<project>/<file>`, with `<repo>/shared/` for repo-wide values, and is never committed; a worktree links only its own project's files plus shared.
+
+- The store root is `env_store_root` (default `~/dev-env/.env-store`). Directories it creates are mode 700; the file keeps its owner permissions and drops group and other access.
+- It refuses to overwrite a store file that differs, refuses names that are not env files (`.env`, `.env.*`, `ssm-*.json`; templates such as `.env.example` stay), and never prints a file's contents. It copies, checks the copy byte for byte, then swaps the original for the link, so the only copy is never missing. A rerun that finds the same bytes already stored finishes the swap.
+- It is idempotent: a path that is already a link into the store only refreshes the manifest. A link to a different project or file is refused, not re-pointed.
+- `<store root>/manifest.json` is names only (mode 600): for each store file, its repo, project and file name, and the worktrees that link to it. No values, ever.
+
 ### local-config.ts
 
 `node scripts/local-config.ts` prints each resolved setting and which files it came from. The rest of the scripts import it.
@@ -696,6 +705,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `sweep_pr_days` | `MAESTRO_SWEEP_PR_DAYS` | 180 | Days of merged PRs the sweep reads as evidence |
 | `sweep_protect_symlink_dirs` | `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS` | `~/.claude/skills` and `<container>/.claude/skills` always count | Extra directories whose symlinks mark a worktree as a live skill |
 | `sweep_disposable_ignored` | `MAESTRO_SWEEP_DISPOSABLE_IGNORED` | `node_modules, .venv, dist, __pycache__` | Ignored paths that do not keep a worktree; any other ignored file does, and an environment file always does |
+| `env_store_root` | `MAESTRO_ENV_STORE_ROOT` | `~/dev-env/.env-store` | Where environment files live outside worktrees, as `<root>/<repo>/<project>/`. A worktree whose env files are symlinks into it is safe for the sweep to remove; `env-store-move.ts` writes into it. A leading `~/` is expanded |
 | `container_root` | `MAESTRO_CONTAINER_ROOT` | none (sweep refuses) | The container directory `roll` and `handoff` may sweep for stale worktrees; a leading `~/` is expanded. Unset, or run from outside it, the sweep prints a refusal and does nothing |
 | `agent_owned_repos` | `MAESTRO_AGENT_OWNED_REPOS` | none | Comma-separated repo paths (a leading `~/` is expanded) the agent manages itself. The protected-branch stop does not apply there, so agents may commit straight to the default branch; Conventional Commits, staging by path and no attribution still apply. The brief carries a line naming them |
 | `status_dir` | `MAESTRO_STATUS_DIR` | `<vault_root>/Projects/<project>/Status` | Where `The-Podium.md`, `priorities.md` and their companions live. Setting it (inside `vault_root`) also turns on the `**Podium:**` footer line |
