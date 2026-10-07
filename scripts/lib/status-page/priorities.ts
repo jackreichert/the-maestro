@@ -21,6 +21,8 @@ export type PrioritiesState = { state: 'ok'; date: string; items: Priority[] } |
 export const PRIORITIES_UNSET_LINE = 'Priorities not set for today — orchestrator will ask';
 
 export const PRIORITIES_FILE = 'priorities.md';
+/** The most priorities a list may hold unless `priorities_max` says otherwise: a short list is the point, so adding past it is refused. */
+export const DEFAULT_PRIORITIES_MAX = 5;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** `YYYY-MM-DD` of `now` in the IANA zone `tz` (the system zone when empty). */
@@ -62,11 +64,17 @@ export function readPriorities(statusDir: string, today: string): PrioritiesStat
   return { state: 'ok', date, items };
 }
 
-/** Writes today's list (temp file, then rename). Refuses an empty list or a bad date, so the file is never left meaningless. */
-export function writePriorities(statusDir: string, date: string, items: Priority[]): string {
+/** Why a list of `count` is over the cap `max`, or null when it fits. One wording for the CLI and the Podium. */
+export const capRefusal = (count: number, max: number): string | null =>
+  (count > max ? `at most ${max} priorities (priorities_max); got ${count}: drop ${count - max} or raise priorities_max` : null);
+
+/** Writes today's list (temp file, then rename). Refuses an empty list, a bad date or a list over `max`, so the file is never left meaningless or over the cap. */
+export function writePriorities(statusDir: string, date: string, items: Priority[], max = DEFAULT_PRIORITIES_MAX): string {
   if (!DATE.test(date)) throw new Error(`date must be YYYY-MM-DD, got "${date}"`);
   const clean = items.filter((p) => p.text);
   if (!clean.length) throw new Error('give at least one priority');
+  const over = capRefusal(clean.length, max);
+  if (over) throw new Error(over);
   mkdirSync(statusDir, { recursive: true });
   const path = join(statusDir, PRIORITIES_FILE);
   const tmp = `${path}.tmp-${process.pid}`;

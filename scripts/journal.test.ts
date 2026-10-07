@@ -2278,6 +2278,17 @@ test('priorities set and show round-trip through the status dir, with a stream s
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
 
+test('priorities set refuses more than priorities_max and the error names the cap; the env setting moves it', () => {
+    const sd = join(vault, 'Status');
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const over = run('priorities', 'set', ...six, '--status-dir', sd);
+    assert.equal(over.code, 1);
+    assert.match(over.err, /at most 5 priorities \(priorities_max\); got 6/);
+    assert.equal(run('priorities', 'set', ...six.slice(0, 5), '--status-dir', sd).code, 0);
+    const r = spawnSync(process.execPath, [SCRIPT, 'priorities', 'set', ...six, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PRIORITIES_MAX: '6' } });
+    assert.equal(r.status, 0, r.stderr);
+});
+
 test('prime prints the not-set line when a status dir exists and today\'s priorities are missing or stale, and not otherwise', () => {
     const sd = join(vault, 'Status');
     const line = 'Priorities not set for today — orchestrator will ask';

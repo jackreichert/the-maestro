@@ -381,3 +381,11 @@ test('status page settings: unset means nothing hardcoded; the file and the envi
     assert.equal(show({ MAESTRO_OBSIDIAN_VAULT: '' }).OBSIDIAN_VAULT, 'MyVault', 'falls back to the vault_root folder name');
     assert.equal(show({ MAESTRO_STATUS_DIR: '/s' }).STATUS_DIR, '/s');
 });
+
+test('priorities_max defaults to 5, reads the file and the env, and ignores a non-positive value', () => {
+    assert.equal(show().PRIORITIES_MAX, '5');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('priorities_max: 3'));
+    assert.equal(show().PRIORITIES_MAX, '3');
+    assert.equal(show({ MAESTRO_PRIORITIES_MAX: '7' }).PRIORITIES_MAX, '7');
+    assert.equal(show({ MAESTRO_PRIORITIES_MAX: '0' }).PRIORITIES_MAX, '5');
+});

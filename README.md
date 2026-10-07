@@ -308,7 +308,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `resume` | The verify-on-resume checklist: ledger status, `gh pr list`, `pgrep` for each loop pattern, gate checks |
 | `podium` (alias `status-page`) | Regenerate the Podium (see [status-page.ts](#status-pagets) and the [podium sub skill](podium/SKILL.md)). `--snapshot`, `--dry-run`, `--status-dir` |
 | `standing list\|check\|add <id>\|done <id>\|retire <id>` | Standing pickups: duties to pick up without a reminder, read from `standing.jsonl` beside the ledger and checked at runtime (see below). `add` takes `--trigger`, `--action`, `--who` and either `--check <name>` or `--every-hours N`; `done` runs the row's check and refuses when it fails, and a row without a check needs `--evidence`; `check` exits 1 when any row needs attention; `--json` |
-| `priorities set "<text>" ...`, `priorities show` | Write or read today's priorities (`<status dir>/priorities.md`); `"<text> \| <Stream>"` maps one to a stream. `--date`, `--status-dir`, `--json` |
+| `priorities set "<text>" ...`, `priorities show` | Write or read today's priorities (`<status dir>/priorities.md`); `"<text> \| <Stream>"` maps one to a stream; more than `priorities_max` (default 5) is refused with an error that names the cap. `--date`, `--status-dir`, `--json` |
 
 Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed rules for each command are in [reference/ledger.md](reference/ledger.md).
 
@@ -748,6 +748,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `env_store_root` | `MAESTRO_ENV_STORE_ROOT` | `~/dev-env/.env-store` | Where environment files live outside worktrees, as `<root>/<repo>/<project>/`. A worktree whose env files are symlinks into it is safe for the sweep to remove; `env-store-move.ts` writes into it. A leading `~/` is expanded |
 | `container_root` | `MAESTRO_CONTAINER_ROOT` | none (sweep refuses) | The container directory `roll` and `handoff` may sweep for stale worktrees; a leading `~/` is expanded. Unset, or run from outside it, the sweep prints a refusal and does nothing |
 | `agent_owned_repos` | `MAESTRO_AGENT_OWNED_REPOS` | none | Comma-separated repo paths (a leading `~/` is expanded) the agent manages itself. The protected-branch stop does not apply there, so agents may commit straight to the default branch; Conventional Commits, staging by path and no attribution still apply. The brief carries a line naming them |
+| `priorities_max` | `MAESTRO_PRIORITIES_MAX` | 5 | The most priorities today's list may hold. `journal.ts priorities set` and the Podium both refuse more (a short list is the point); a list already over it can be reordered and shortened but not added to. A value that is not a positive whole number falls back to 5 |
 | `status_dir` | `MAESTRO_STATUS_DIR` | `<vault_root>/Projects/<project>/Status` | Where `The-Podium.md`, `priorities.md` and their companions live. Setting it (inside `vault_root`) also turns on the `**Podium:**` footer line |
 | `status_page_uri` | `MAESTRO_STATUS_PAGE_URI` | derived from `status_dir`, `vault_root` and `obsidian_vault` | A full URI for the page (`obsidian://...` or a URL); wins over the derived one and is what the footer prints |
 | `obsidian_vault` | `MAESTRO_OBSIDIAN_VAULT` | the folder name of `vault_root` | The Obsidian vault name used in links |
