@@ -179,6 +179,23 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
     assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
 });
 
+test('PR body settings: defaults on, file values, env wins, bad values fall back', () => {
+    const d = show();
+    assert.equal(d.PR_BODY_SECTIONS, 'Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally');
+    for (const k of ['PR_BODY_CHECK_RISK', 'PR_BODY_CHECK_VERIFY', 'PR_BODY_CHECK_FORBIDDEN', 'PR_BODY_CHECK_DIAGRAM']) assert.equal(d[k], 'on', k);
+    assert.equal(d.PR_DIAGRAM_MIN_FILES, '3');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_sections: Context, Notes\npr_body_check_risk: off\npr_diagram_min_files: 6'));
+    const f = show();
+    assert.equal(f.PR_BODY_SECTIONS, 'Context, Notes');
+    assert.equal(f.PR_BODY_CHECK_RISK, 'off');
+    assert.equal(f.PR_BODY_CHECK_VERIFY, 'on');
+    assert.equal(f.PR_DIAGRAM_MIN_FILES, '6');
+    const e = show({ MAESTRO_PR_BODY_CHECK_RISK: 'on', MAESTRO_PR_BODY_CHECK_FORBIDDEN: 'false', MAESTRO_PR_DIAGRAM_MIN_FILES: 'many' });
+    assert.equal(e.PR_BODY_CHECK_RISK, 'on');
+    assert.equal(e.PR_BODY_CHECK_FORBIDDEN, 'off');
+    assert.equal(e.PR_DIAGRAM_MIN_FILES, '3', 'a bad number falls back to the default, not the file value');
+});
+
 test('review_queue_cap: default 4, file value, env wins, bad values fall back', () => {
     assert.equal(show().REVIEW_QUEUE_CAP, '4');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('review_queue_cap: 6'));

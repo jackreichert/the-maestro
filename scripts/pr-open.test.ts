@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { bodyProblems } from './pr-open.ts';
+import { bodyProblems, type BodyRules } from './pr-body.ts';
 
 const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
 
@@ -37,7 +37,15 @@ function fixture(files: Record<string, string>) {
     return { repo, log, gh };
 }
 
-const GOOD_BODY = '## Context\n\nWhy this exists and what changed.\n\n## Reviewer guide\n\n- Look at pr-open.ts first; the rest is mechanical.\n';
+const NONE: BodyRules = { sections: [], risk: false, verify: false, forbidden: false, diagram: false, diagramMinFiles: 3 };
+const TWO: BodyRules = { ...NONE, sections: ['Context', 'Reviewer guide'] };
+const GOOD_BODY = [
+    '## Context', 'Why this exists and what changed.',
+    '## Reviewer guide', '- Look at pr-open.ts first; the rest is mechanical.',
+    '## Risk and blast radius', 'Risk: low - internal tool only.',
+    '## Rollback / flag', 'Plain revert.',
+    '## How to verify locally', '```bash', 'npm test', '```', 'Expected: all pass.', '',
+].join('\n');
 
 /** A body file next to the repo; `open` supplies a valid one unless the test passes its own --body-file. */
 const bodyFile = (repo: string, text: string): string => { const p = join(repo, '..', `body-${Math.random().toString(36).slice(2)}.md`); writeFileSync(p, text); return p; };
@@ -144,17 +152,18 @@ test('a body-less PR also refuses on --dry-run, and a valid body passes it', () 
 });
 
 test('bodyProblems: placeholders, comments, fences, heading level and case', () => {
+    const two = (b: string) => bodyProblems(b, TWO);
     const filled = (ctx: string, guide = 'Look at the gate.') => `## Context\n${ctx}\n## Reviewer guide\n${guide}\n`;
-    assert.deepEqual(bodyProblems(filled('Why it exists.')), []);
-    assert.deepEqual(bodyProblems('## context\nWhy.\n## REVIEWER GUIDE\nHere.\n'), []);
+    assert.deepEqual(two(filled('Why it exists.')), []);
+    assert.deepEqual(two('## context\nWhy.\n## REVIEWER GUIDE\nHere.\n'), []);
     for (const ph of ['', 'TBD', '_TBD_', 'TODO', 'todo.', 'N/A', '-', '<!-- fill in -->', '...']) {
-        assert.equal(bodyProblems(filled(ph)).length, 1, `placeholder ${JSON.stringify(ph)}`);
+        assert.equal(two(filled(ph)).length, 1, `placeholder ${JSON.stringify(ph)}`);
     }
-    assert.deepEqual(bodyProblems(filled('### Sub\nWhy it exists.')), [], 'a subheading is content');
-    assert.equal(bodyProblems('### Context\nWhy.\n### Reviewer guide\nHere.\n').length, 2, 'only ## headings count');
-    assert.equal(bodyProblems('```\n## Context\nWhy.\n## Reviewer guide\nHere.\n```\n').length, 2, 'headings in a fence do not count');
-    assert.equal(bodyProblems('## Context\nWhy.\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 0);
-    assert.equal(bodyProblems('## Context\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 1, 'a section ends at the next heading');
+    assert.deepEqual(two(filled('### Sub\nWhy it exists.')), [], 'a subheading is content');
+    assert.equal(two('### Context\nWhy.\n### Reviewer guide\nHere.\n').length, 2, 'only ## headings count');
+    assert.equal(two('```\n## Context\nWhy.\n## Reviewer guide\nHere.\n```\n').length, 2, 'headings in a fence do not count');
+    assert.equal(two('## Context\nWhy.\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 0);
+    assert.equal(two('## Context\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 1, 'a section ends at the next heading');
 });
 
 test('a repeated flag is a usage error, so the checked body is the one gh gets', () => {
@@ -167,4 +176,100 @@ test('a repeated flag is a usage error, so the checked body is the one gh gets',
     const sneaky = open(f, ['--title', '--body-file', good, '--dry-run']);
     assert.equal(sneaky.status, 2, 'a flag name used as a value is not the body file');
     assert.ok(!existsSync(f.log));
+});
+
+const CTX = { stacked: false, codeFiles: 1 };
+
+test('bodyProblems: sections come from the rules, and n/a with a reason fills one', () => {
+    const rules = { ...NONE, sections: ['Context', 'Notes'] };
+    assert.deepEqual(bodyProblems('## Context\nWhy.\n## Notes\nn/a, nothing to add\n', rules), []);
+    assert.deepEqual(bodyProblems('## Context\nWhy.\n## Notes\nn/a\n', rules), ['"## Notes" has no content (empty or a placeholder)']);
+    assert.deepEqual(bodyProblems('## Context\nWhy.\n', rules), ['missing a "## Notes" section']);
+});
+
+test('bodyProblems: the risk line must be well formed, and high risk needs a real rollback', () => {
+    const body = (risk: string, rollback = 'Plain revert.') => `## Risk and blast radius\n${risk}\n## Rollback / flag\n${rollback}\n`;
+    const risk = (b: string) => bodyProblems(b, { ...NONE, risk: true });
+    assert.deepEqual(risk(body('Risk: low - internal')), []);
+    assert.deepEqual(risk(body('- **Risk:** Medium, one tenant')), []);
+    assert.match(risk(body('It is fine.'))[0], /no "Risk: low \| medium \| high" line/);
+    assert.match(risk(body('Risk: severe'))[0], /no "Risk/);
+    assert.deepEqual(risk(body('Risk: high - migration', 'Revert plus migration down.')), []);
+    assert.match(risk(body('Risk: high - migration', 'n/a'))[0], /Risk is high/);
+    assert.match(risk(body('Risk: high - migration', 'n/a, trust me'))[0], /Risk is high/);
+    assert.match(risk('## Risk and blast radius\nRisk: high - x\n')[0], /Risk is high/, 'no rollback section at all');
+    assert.deepEqual(bodyProblems(body('nonsense'), NONE), [], 'switched off');
+});
+
+test('bodyProblems: the verify section needs a filled code fence unless it is n/a with a reason', () => {
+    const v = (text: string) => bodyProblems(`## How to verify locally\n${text}\n`, { ...NONE, verify: true });
+    assert.deepEqual(v('```bash\nnpm test\n```'), []);
+    assert.deepEqual(v('~~~\nrun it\n~~~'), []);
+    assert.deepEqual(v('n/a, docs only, no runtime change'), []);
+    assert.equal(v('run npm test').length, 1);
+    assert.equal(v('```\n```').length, 1, 'an empty fence is not a command');
+    assert.equal(v('n/a').length, 1);
+    assert.deepEqual(bodyProblems('## Context\nx\n', { ...NONE, verify: true }), [], 'no verify section: the sections rule decides, not this one');
+});
+
+test('bodyProblems: attribution, key, token and PHI-shaped content is refused without echoing it', () => {
+    const cases: [string, RegExp][] = [
+        ['Co-Authored-By: Someone <a@example.com>', /AI attribution/],
+        ['Generated with [Claude Code](x)', /AI attribution/],
+        [['-----BEGIN RSA ', 'PRIVATE KEY-----'].join(''), /private key/],
+        [['AKI', 'AABCDEFGHIJKLMNOP'].join(''), /AWS access key/],
+        [`ghp_${'a'.repeat(36)}`, /GitHub token/],
+        [['api_', 'key = "abcdefghij0123456789"'].join(''), /credential assignment/],
+        ['ssn 123-45-6789', /SSN-shaped/],
+        ['MRN: 00123456', /medical record/],
+    ];
+    for (const [text, expected] of cases) {
+        const p = bodyProblems(`## Context\n${text}\n`, { ...NONE, forbidden: true });
+        assert.equal(p.length, 1, expected.source);
+        assert.match(p[0], expected);
+        assert.ok(!p[0].includes(text.slice(-12)), 'the match itself is never printed');
+    }
+    assert.deepEqual(bodyProblems('## Context\nThe token store holds sessions.\n', { ...NONE, forbidden: true }), []);
+    assert.deepEqual(bodyProblems('## Context\nCo-Authored-By: x\n', NONE), [], 'switched off');
+});
+
+test('bodyProblems: a stacked or wide PR needs a mermaid diagram or a Diagram: n/a line', () => {
+    const d = (text: string, ctx: { stacked: boolean; codeFiles: number }) => bodyProblems(`## Context\n${text}\n`, { ...NONE, diagram: true }, ctx);
+    assert.deepEqual(d('plain', CTX), [], 'small, not stacked: advisory only');
+    assert.match(d('plain', { stacked: true, codeFiles: 1 })[0], /stacked PR needs a mermaid diagram/);
+    assert.match(d('plain', { stacked: false, codeFiles: 4 })[0], /over 3 code files/);
+    assert.deepEqual(d('```mermaid\nflowchart LR\n  A --> B\n```', { stacked: true, codeFiles: 9 }), []);
+    assert.deepEqual(d('Diagram: n/a, one-line config change', { stacked: true, codeFiles: 1 }), []);
+    assert.equal(d('Diagram: n/a', { stacked: true, codeFiles: 1 }).length, 1, 'n/a needs a reason');
+    assert.deepEqual(bodyProblems('## Context\nx\n', { ...NONE, diagram: true, diagramMinFiles: 9 }, { stacked: false, codeFiles: 8 }), []);
+});
+
+test('pr-open runs the structural rules end to end: a stacked base needs a diagram, a bad risk line refuses', () => {
+    const f = fixture({ 'src/a.py': lines(3) });
+    git(f.repo, 'branch', 'feature-base', 'main');
+    const stacked = spawnSync(process.execPath, [SCRIPT, '--repo', f.repo, '--base', 'feature-base', '--title', 'T', '--body-file', bodyFile(f.repo, GOOD_BODY), '--dry-run'], {
+        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: f.repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: f.gh },
+    });
+    assert.equal(stacked.status, 1);
+    assert.match(stacked.stderr, /stacked PR needs a mermaid diagram/);
+    const noRisk = open(f, ['--body-file', bodyFile(f.repo, GOOD_BODY.replace('Risk: low', 'Fine'))]);
+    assert.equal(noRisk.status, 1);
+    assert.match(noRisk.stderr, /no "Risk: low \| medium \| high" line/);
+    assert.ok(!existsSync(f.log));
+});
+
+test('bodyProblems: an unedited template, and a diagram that only sits in an HTML comment, do not pass', () => {
+    const template = [
+        '## Context', '<why this change exists, 2-4 lines>', '## Reviewer guide', '- Review order: 1. a.ts',
+        '## Risk and blast radius', 'Risk: low | medium | high - <one-line reason>',
+        '## Rollback / flag', 'Plain revert.', '## How to verify locally', '```bash', '<exact command>', '```', '',
+    ].join('\n');
+    const rules = { ...NONE, sections: ['Context', 'Reviewer guide', 'Risk and blast radius', 'Rollback / flag', 'How to verify locally'], risk: true, verify: true };
+    const p = bodyProblems(template, rules);
+    assert.ok(p.some((x) => /"## Context" has no content/.test(x)), p.join('; '));
+    assert.ok(p.some((x) => /no "Risk: low/.test(x)));
+    assert.ok(p.some((x) => /verify section has no fenced/.test(x)));
+    const stacked = { stacked: true, codeFiles: 1 };
+    const hidden = bodyProblems('## Context\nx\n<!--\n```mermaid\nflowchart LR\n```\n-->\n', { ...NONE, diagram: true }, stacked);
+    assert.equal(hidden.length, 1, 'a commented-out diagram is not a diagram');
 });

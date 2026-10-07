@@ -52,7 +52,7 @@ So a "make a PR" request ends like this:
    the change touches auth, permissions, logging, secrets or multi-tenant scoping. Report what it found
    and what you did with each item.
 4. **Within the PR size budget** — `pr-open.ts` runs the `pr-size.ts` gate and refuses otherwise ([below](#pr-size-budget)).
-5. **A body that explains itself** — a `## Context` and a `## Reviewer guide` section, and `pr-open.ts` refuses without them ([below](#pr-body)).
+5. **A body that explains itself** — Context, Reviewer guide, risk, rollback and verify sections, and `pr-open.ts` refuses without them ([below](#pr-body)).
 6. Committed and pushed, then opened as a **draft** PR, assigned to the user (`--assignee @me`).
    The user promotes it to ready for review; you never do, and a deploy PR (`staging` → `main` or
    equivalent) is not yours to open at all. Copilot review on the draft is handled per
@@ -79,24 +79,81 @@ The PR board shows the state per PR: [prs.md#twin-prs](prs.md#twin-prs).
 
 ## PR body
 
-Every PR body has two sections, written for the person who reviews the diff and has not watched the work happen. `pr-open.ts` enforces them: `--body-file` is required, and it refuses (exit 1, never calls gh, `--dry-run` included) when the file lacks a `## Context` heading or a `## Reviewer guide` heading, or when either has no real content. An empty section or a placeholder such as `TBD`, `_TBD_`, `TODO` or `N/A` does not count; a heading inside a code fence or an HTML comment does not count either.
+A PR body exists to transfer the author's understanding to a reviewer who has not watched the work happen. Reviewing is mostly about understanding the change, and authors who annotate their own change before review point reviewers at the right files first ([Bird and Bacchelli](https://www.microsoft.com/en-us/research/publication/expectations-outcomes-and-challenges-of-modern-code-review/); [SmartBear on the Cisco study](https://smartbear.com/learn/code-review/best-practices-for-peer-code-review/)). Size matters more than any template, which is why the [size budget](#pr-size-budget) sits beside this. The headings below come from a short review of the public guidance on what else belongs in a body; most section advice is practitioner guidance, not controlled studies, and each item says so.
 
-- **`## Context`** — short: why the change exists, what changed, and where it sits (the ticket, the stack or the twin PR it belongs to).
-- **`## Reviewer guide`** — what to look at (the hunks that carry the real change), the riskiest or least obvious parts, what is mechanical and safe to skim, how it was validated (commands and their real results), and what is out of scope.
+`pr-open.ts` enforces the cheap, deterministic part and nothing more. `--body-file` is required, and it refuses (exit 1, never calls gh, `--dry-run` included) when a rule below fails. A passing check proves structure, not truth: it cannot tell whether a risk level is honest or a command works.
 
-```markdown
+### The template
+
+Each section is one to three lines. Write `n/a, <reason>` rather than deleting a section; a bare `n/a`, `TBD`, `TODO` or an empty section does not count, and a heading inside a code fence or an HTML comment does not count either. Put the sections in this order:
+
+````markdown
 ## Context
-
-Agents could open a PR with an empty body. This makes the body a gate. Part of the review-quality ticket; no stack.
+<why this change exists, 2-4 lines; the ticket; where it sits in a stack>
 
 ## Reviewer guide
+- Review order: 1. `path/core.ts` (the logic) 2. `path/core.test.ts` 3. `path/wiring.ts`
+- Skim-safe: <generated or mechanical files>
+- Validated: <commands and their real results>
+- Out of scope / deferred: <thing> (ticket id or "will not do", reason)
 
-- Look at: `checkBody` in `pr-open.ts`, the only behaviour change.
-- Riskiest: the placeholder pattern; a false refusal blocks a PR.
-- Skim: the test fixtures and the docs.
-- Validated: `npm test`, 1137 passed, 0 failed.
-- Out of scope: checking the body for anything beyond the two sections.
+## Risk and blast radius
+Risk: low | medium | high - <one-line reason>
+Affects: <service, job, endpoint, tenant scope>
+Worst case: <what breaks and how you would notice>
+Irreversible steps: none | <migration, backfill, external write>
+
+## Rollback / flag
+<plain revert | revert plus migration down | flag `NAME` default off>; deploy order: <n/a or A then B>
+
+## How to verify locally
+```bash
+<exact command>
 ```
+Expected: <one line of output>
+Not tested: <what you did not run, and why>
+
+## Evidence
+<trimmed log line, response body or before/after numbers; placeholder data only>
+
+## Stack
+Position: 2 of 4. Base: #<n>. Above: #<n>. Assumes from below: <...>. Left for above: <...>. Standalone review: yes | no
+
+## Questions for reviewers
+- question (blocking): <...>
+
+Diagram: <a mermaid block, or "n/a, <reason>">
+````
+
+### Enforced and advisory
+
+| Item | Status | What `pr-open.ts` checks | Setting |
+|---|---|---|---|
+| Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally | Enforced | each heading exists with real content | `pr_body_sections` |
+| Risk line | Enforced | a `Risk: low`, `medium` or `high` line; when `high`, the Rollback section must be real (not empty, not `n/a`) | `pr_body_check_risk` |
+| Verify commands | Enforced | a fenced block with a non-blank line, unless the section is `n/a, <reason>` | `pr_body_check_verify` |
+| Diagram | Enforced only when stacked or wide | a stacked PR (base is not a `protected_branches` entry), or one over `pr_diagram_min_files` code files (default 3), needs a fenced mermaid block or a `Diagram: n/a, <reason>` line. Elsewhere it is advisory | `pr_body_check_diagram`, `pr_diagram_min_files` |
+| Attribution, key, token and PHI-shaped content | Enforced, best effort | regexes for attribution lines, private keys, cloud and GitHub tokens, credential assignments, SSN and MRN shapes; the match is named, never printed. A pass is not a guarantee | `pr_body_check_forbidden` |
+| Evidence, Questions for reviewers, Stack | Advisory | nothing; write them when they help, skip when nothing applies (Stack only when stacked). A fake question is worse than none | none |
+| Review order being the best order, skim-safe files really being safe, risk level honest, blast radius complete, deferred items legitimate, verify output real | Advisory | nothing; this is review's job | none |
+
+Why each: review order, annotations and verify commands save the reviewer reading time ([Google, navigating a CL](https://google.github.io/eng-practices/review/reviewer/navigate.html); [awesomecodereviews template](https://www.awesomecodereviews.com/pull-request-template/)); risk, rollback and flags let a reviewer approve a medium-risk change because the exit is cheap ([Google, small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html)); the stack position stops reviewers flagging as missing what lives upstack ([Graphite on reviewing stacks](https://graphite.com/docs/best-practices-for-reviewing-stacks)); out-of-scope notes pre-empt scope comments, and a generic author checklist is left out because CI should enforce it. Keep the template short: long checklists become box ticking.
+
+### Diagrams when they help
+
+A small mermaid diagram often explains a change faster than prose: stack position, a data or flow change, a state machine, dependency direction, before and after. Add one whenever it helps; keep it to a handful of nodes. The only enforced part is the cheap one above (stacked or wide PRs carry one or say why not).
+
+```mermaid
+flowchart LR
+  body[body file] --> sections{sections have content?}
+  sections -->|no| refuse[exit 1, gh never runs]
+  sections -->|yes| rules{risk, verify, diagram, forbidden}
+  rules -->|fail| refuse
+  rules -->|pass| size[size gate]
+  size --> draft[gh pr create --draft]
+```
+
+All of these are settings in [local-config.md](local-config.md); each switch defaults on and any can be turned off, and `pr_body_sections` replaces the required list.
 
 ## PR size budget
 
