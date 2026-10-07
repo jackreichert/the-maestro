@@ -110,7 +110,9 @@ const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 export function askHint(live: boolean): Node {
   if (!live) return document.createTextNode('Sample data: asks open read-only. Answering needs the Podium server.');
   const hint = document.createDocumentFragment();
-  hint.append(h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' copies an answer for the chat; nothing is saved here yet.');
+  // A phone has no shortcut to mention, and the shorter line keeps the hint to one line there.
+  hint.append(h('span', { class: 'keys' }, h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' copies an answer for the chat; nothing is saved here yet.'),
+    h('span', { class: 'touch' }, 'Answers are copied for the chat; nothing is saved here yet.'));
   return hint;
 }
 
