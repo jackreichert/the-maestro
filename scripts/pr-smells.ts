@@ -76,8 +76,8 @@ export const smellsLine = (rec: SmellsRecord): string => `Smells: ${rec.summary}
 export function smellsProblems(repo: string, head: string, body: string, codeFiles: number, globs: string[] = PR_SMELLS_REPOS): string[] {
   if (codeFiles === 0 || !gateApplies(repo, globs)) return [];
   const rec = recordFor(repo, head);
-  if (!rec) return [`no smells run is recorded for this head commit. Run a report-only smells review (mithril-lite-review or /mithril smells) on the diff, fix what is worth fixing, then: node scripts/pr-smells.ts record --repo ${repo} --summary "<findings, fixed, deliberately left>"`];
-  return body.split('\n').some((l) => l.trim() === smellsLine(rec)) ? [] : [`the PR body must carry the recorded run on a line of its own: ${smellsLine(rec)}`];
+  if (!rec) return [`needs a recorded smells run and none is recorded for this head commit. Run a report-only smells review (mithril-lite-review or /mithril smells) on the diff, fix what is worth fixing, then: node scripts/pr-smells.ts record --repo ${repo} --summary "<findings, fixed, deliberately left>"`];
+  return body.split('\n').some((l) => l.trim() === smellsLine(rec)) ? [] : [`must carry the recorded run on a line of its own: ${smellsLine(rec)}`];
 }
 
 function main(argv: string[]): number {

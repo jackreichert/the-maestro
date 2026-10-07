@@ -64,7 +64,7 @@ test('an empty summary is refused and nothing is written', () => {
 test('smellsProblems: refuses without a record, then without the body line, then passes', () => {
   const r = repo();
   const globs = ['example/*'];
-  assert.match(smellsProblems(r, '', 'body', 3, globs)[0], /no smells run is recorded/);
+  assert.match(smellsProblems(r, '', 'body', 3, globs)[0], /none is recorded/);
   const rec = recordSmells(r, 'none found');
   assert.match(smellsProblems(r, '', 'body', 3, globs)[0], /Smells: none found/);
   assert.match(smellsProblems(r, '', 'Smells: something else', 3, globs)[0], /on a line of its own/);
