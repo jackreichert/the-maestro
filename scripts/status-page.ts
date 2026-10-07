@@ -74,7 +74,7 @@ export interface RegenerateOptions { project: string; ledger: string; statusDir:
 export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!o.statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
-  const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), fetchPrs, sleep, now: () => new Date() };
+  const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), start: () => journalJson('start-here', o.ledger, o.project), fetchPrs, sleep, now: () => new Date() };
   return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig(o.project, o.statusDir) }, deps);
 }
 

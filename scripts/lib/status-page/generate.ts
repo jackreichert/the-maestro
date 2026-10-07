@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { renderPage } from './render.ts';
 import type { BoardStatus, PageConfig, PageInput, Pr, PrData, Triage } from './render.ts';
 import { prStream } from './streams.ts';
+import type { StartHere } from '../start/start-here.ts';
 import type { StreamEvidence } from './streams.ts';
 import { PRIORITIES_HEADING, carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
 import type { Unprocessed } from './inline.ts';
@@ -30,6 +31,8 @@ export interface RawPr {
 export interface GenerateDeps {
   /** `journal.ts <sub> --json`, parsed. Throws when the ledger cannot be read. */
   journal(sub: 'status' | 'triage'): unknown;
+  /** `journal.ts start-here --json`, parsed, for the page's Start block. Optional: without it the page has no Start block. Throws when it cannot be read. */
+  start?(): unknown;
   /** Open PRs; throws when GitHub cannot be read. */
   fetchPrs(): RawPr[];
   sleep(ms: number): void;
@@ -131,7 +134,7 @@ export function generate(opts: GenerateOptions, deps: GenerateDeps): GenerateRes
 }
 
 /** What `gatherInputs` reads and how: the files beside the page, whether to touch the PR cache, and the page settings. */
-export type GatherOptions = Pick<GenerateOptions, 'statusDir' | 'dryRun' | 'cachedPrsOnly' | 'config'>;
+export type GatherOptions = Pick<GenerateOptions, 'statusDir' | 'dryRun' | 'cachedPrsOnly' | 'config'> & { /** Also read the Start view (`journal.ts start-here --json`) for the page's Start block; only `generate` asks for it. */ start?: boolean };
 /** The page's inputs before a command line is chosen: everything `renderPage` reads except `command`. */
 export type GatheredInputs = Omit<PageInput, 'command'>;
 
@@ -151,7 +154,16 @@ export function gatherInputs(opts: GatherOptions, deps: GenerateDeps): GatheredI
   const prs = loadPrs(raw, { items, ticketMap, overrides, repoStreams: config.repoStreams, keyPattern: config.trackerKeyPattern });
   const now = deps.now();
   const priorities = readPriorities(statusDir, localDate(now, config.tz));
-  return { now, status, triage, prs, prData, ticketMap, priorities, config };
+  return { now, status, triage, prs, prData, ticketMap, priorities, config, ...(opts.start ? readStart(deps) : {}) };
+}
+
+/** The Start view for the page, nothing when the caller supplies none, or why it is missing: a broken Start block must never stop the page being written. */
+function readStart(deps: GenerateDeps): { start: StartHere } | { startFailure: string } | Record<string, never> {
+  if (!deps.start) return {};
+  try {
+    const s = deps.start() as StartHere;
+    return typeof s?.needs?.total === 'number' && Array.isArray(s.inFlight) ? { start: s } : { startFailure: 'unexpected shape' };
+  } catch (e) { return { startFailure: firstLine(e) || 'unknown error' }; }
 }
 
 /**
@@ -167,7 +179,7 @@ export function gatherInputsCached(statusDir: string, config: PageConfig, deps: 
 
 function build(opts: GenerateOptions, deps: GenerateDeps): GenerateResult {
   const { statusDir } = opts;
-  const inputs = gatherInputs(opts, deps);
+  const inputs = gatherInputs({ ...opts, start: true }, deps);
   const prFailure = inputs.prData.failure;
   const rendered = renderPage({ ...inputs, command: opts.command });
   // The page on disk may hold an answer the watcher has not reported. Carry it forward, and if the user saves another
