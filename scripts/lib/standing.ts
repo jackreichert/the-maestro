@@ -31,6 +31,8 @@ export interface CheckContext {
   queue: () => { inflight: number; queued: number };
   /** Tracker keys done but not transitioned. */
   pendingTransitions: () => string[];
+  /** What today did to the epics: how many were touched and what their briefs and notes still owe. Null when no vault is configured. */
+  epicBriefs?: () => { epics: number; failures: string[] } | null;
 }
 export interface CheckResult { ok: boolean; detail: string }
 export type Check = (ctx: CheckContext) => CheckResult;
@@ -49,6 +51,11 @@ export const CHECKS: Record<string, Check> = {
     const { inflight, queued } = queue();
     return queued > 0 && inflight === 0 ? { ok: false, detail: `${queued} queued, nothing in flight` } : { ok: true, detail: `${inflight} in flight, ${queued} queued` };
   },
+  'epic-briefs': ({ epicBriefs }) => {
+    const r = epicBriefs?.();
+    if (!r) return { ok: true, detail: 'not checked: no vault root is configured' };
+    return r.failures.length ? { ok: false, detail: `${r.failures.length} to fix, first: ${r.failures[0]}` } : { ok: true, detail: `${r.epics} epic${r.epics === 1 ? '' : 's'} touched today, briefs fresh and notes attributed` };
+  },
   'tracker-transitions': ({ pendingTransitions }) => {
     const keys = pendingTransitions();
     return keys.length ? { ok: false, detail: `${keys.length} not transitioned: ${keys.slice(0, 5).join(', ')}` } : { ok: true, detail: 'none pending' };
@@ -61,6 +68,7 @@ export const DEFAULT_ROWS: StandingRow[] = [
   { id: 'chain-next', trigger: 'an agent in a lane completes', action: 'dispatch the next queued item for that lane without being asked', who: 'orchestrator', check: 'queue-moving' },
   { id: 'merge-sweep', trigger: 'a pull request merges', action: 'sweep merged PRs: close their ledger items, sync any overlay branch, delete merged feature branches', who: 'any model (haiku)', everyHours: 24 },
   { id: 'branch-sweep', trigger: 'roll or handoff', action: 'branch and worktree sweep (journal.ts roll removes qualifying worktrees; branch-sweep.ts lists the rest)', who: 'any model (haiku)', everyHours: 36 },
+  { id: 'epic-briefs', trigger: 'roll, and when an epic changes state', action: 'refresh each stale or missing epic brief (`ticket.mjs brief <epic> --refresh`) and attach each note written today to its ticket (`ticket.mjs attach`)', who: 'any model (sonnet)', check: 'epic-briefs' },
   { id: 'tracker-reconcile', trigger: 'a done item carries a tracker key', action: 'move the tracker ticket and record it with `log --transitioned KEY`', who: 'any model (haiku)', check: 'tracker-transitions' },
 ];
 
