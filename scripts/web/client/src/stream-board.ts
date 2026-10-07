@@ -12,7 +12,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
   ul.prs { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.prs > li { display: grid; gap: var(--space-1); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
   .pr-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--space-2); font-size: var(--text-md); line-height: var(--leading-md); }
-  .pr-title a { font-family: var(--font-mono); font-size: var(--text-sm); white-space: nowrap; }
+  .pr-title a { font-family: var(--font-mono); font-size: var(--text-sm); white-space: nowrap; padding-block: 2px; margin-block: -2px; }
   .pr-branch { font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-muted); overflow-wrap: anywhere; }
   .pr-rel { color: var(--text-secondary); font-size: var(--text-sm); }
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
