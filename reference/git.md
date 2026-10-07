@@ -91,6 +91,13 @@ Titles, bodies and comments are written in the author's own voice, in the first 
 - Enforced: `pr-open.ts` refuses, naming the line, when the title or body holds a `[[wiki-link]]`, an `obsidian://` link, or one of the private words (by default ledger, vault, Podium, orchestrator), or matches an install-specific id format in `pr_body_private_patterns` (for example a ticket-id regex). It also refuses, outside code, self-references such as "the assistant wrote", "as an assistant" and "AI-generated", and any name in `pr_body_voice_names` used in the third person. Ordinary uses of a word (a User-Agent header, ssh-agent) pass. The private words are the `pr_body_private_words` setting (`none` empties it for a repo where they are plain vocabulary; wiki-links and `obsidian://` links stay refused), and they are ignored inside code. Both checks are switchable (`pr_body_check_private`, `pr_body_check_voice`).
 - Advisory: pattern matching cannot catch every private reference, and voice cannot be fully machine-checked. A pass means no known pattern matched, not that the text is clean or in the author's voice.
 
+### No counts the page already shows
+
+The PR page shows the commit, file and line counts, and a count written into the body is wrong after the next push. Say what the change consists of (what each commit or file group does) and let GitHub carry the numbers. For test results, say what I ran and against which commit, not a running tally a later push invalidates.
+
+- Before: `13 commits + lint, 40 files changed, +1200 -300, 1180 tests pass.` After: `One commit moves the checks into pr-body.ts, one adds the count rule, one documents it. I ran npm test on 4f04517 and it passed.`
+- Enforced, best effort: `pr-open.ts` refuses, naming the line, a number followed by commit(s), file(s), files changed or line(s), and a `+120 -40` pair, in the title or body outside code. It cannot tell a legitimate "2 files" in prose about something else; put that number in a code span (`2 files`) and it passes. Switch: `pr_body_check_counts`, on by default.
+
 ### The template
 
 Each section is one to three lines. Write `n/a, <reason>` rather than deleting a section; a bare `n/a`, `TBD`, `TODO` or an empty section does not count, and a heading inside a code fence or an HTML comment does not count either. Put the sections in this order:
@@ -143,6 +150,7 @@ Diagram: <a mermaid block, or "n/a, <reason>">
 | Diagram | Enforced only when stacked or wide | a stacked PR (base is not a `protected_branches` entry), or one over `pr_diagram_min_files` code files (default 3), needs a fenced mermaid block or a `Diagram: n/a, <reason>` line. Elsewhere it is advisory | `pr_body_check_diagram`, `pr_diagram_min_files` |
 | Attribution, key, token and PHI-shaped content | Enforced, best effort | regexes for attribution lines, private keys, cloud and GitHub tokens, credential assignments, SSN and MRN shapes; the match is named, never printed. A pass is not a guarantee | `pr_body_check_forbidden` |
 | Private references | Enforced, best effort | no wiki-links, `obsidian://` links or private-workspace words in the title or body; extra install-specific id patterns from config. Cannot catch every private reference | `pr_body_check_private`, `pr_body_private_patterns` |
+| Derivable counts | Enforced, best effort | refuses `N commits`, `N files (changed)`, `N lines` and `+A -B` outside code; a code span is the escape. Cannot tell a legitimate count in prose | `pr_body_check_counts` |
 | First-person voice | Enforced, best effort | refuses assistant self-references, AI-generated wording and the author's own name in the third person, outside code. Voice cannot be fully machine-checked | `pr_body_check_voice`, `pr_body_voice_names` |
 | File links | Enforced | a `{{file:path}}` token for a path outside the diff refuses before the PR is created; see below | none |
 | Evidence, Questions for reviewers, Stack | Advisory | nothing; write them when they help, skip when nothing applies (Stack only when stacked). A fake question is worse than none | none |
