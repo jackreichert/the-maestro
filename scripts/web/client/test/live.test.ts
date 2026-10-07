@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/live.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LiveUpdates, POLL_MS, liveLabel } from '../src/live.ts';
+import { LiveUpdates, POLL_MS, RETRY_MS, liveLabel } from '../src/live.ts';
 import type { LiveStatus, StreamLike } from '../src/live.ts';
 
 class FakeStream implements StreamLike {
@@ -226,4 +226,48 @@ test('a stream that is only retrying is left alone', async () => {
   h.loads.shift()?.ok({ seq: 's0' });
   await h.settle();
   assert.equal(h.opened(), 1);
+});
+
+test('a reload that fails while the stream is up is retried, then polling stops once it works', async () => {
+  const h = harness();
+  h.live.start();
+  h.stream?.open();
+  h.loads.shift()?.ok({ seq: 's0' });
+  await h.settle();
+  h.stream?.push();                       // a change; the reload fails
+  h.loads.shift()?.fail();
+  await h.settle();
+  assert.equal(h.live.status, 'offline');
+  assert.equal(h.timers().length, 1, 'one retry is scheduled');
+  assert.equal(h.timers()[0]?.ms, RETRY_MS);
+  h.tick();                               // the retry also fails: back off to the normal poll period
+  h.loads.shift()?.fail();
+  await h.settle();
+  assert.equal(h.timers().length, 1);
+  assert.equal(h.timers()[0]?.ms, POLL_MS);
+  h.tick();
+  h.loads.shift()?.ok({ seq: 's1' });
+  await h.settle();
+  assert.deepEqual(h.applied, ['s1'], 'the missed change is shown without another file change');
+  assert.equal(h.live.status, 'live');
+  assert.equal(h.timers().length, 0, 'polling stopped; the stream is enough again');
+});
+
+test('a failed reload while the stream is up keeps a single loop, even if the stream flaps meanwhile', async () => {
+  const h = harness();
+  h.live.start();
+  h.stream?.open();
+  h.loads.shift()?.ok({ seq: 's0' });
+  await h.settle();
+  h.stream?.push();
+  h.loads.shift()?.fail();
+  await h.settle();
+  h.stream?.fail();                       // the stream drops too: the poll loop takes over, not a second one
+  h.stream?.open();
+  h.stream?.fail();
+  for (const l of h.loads.splice(0)) l.fail();
+  await h.settle();
+  assert.equal(h.timers().length, 1);
+  h.live.stop();
+  assert.equal(h.timers().length, 0);
 });

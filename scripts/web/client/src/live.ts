@@ -10,6 +10,8 @@
 export type LiveStatus = 'live' | 'polling' | 'offline';
 
 export const POLL_MS = 30_000;
+/** The first retry after a reload fails while the stream is up: sooner than a full poll, since nothing else will prompt it. */
+export const RETRY_MS = 5_000;
 const STREAM_CLOSED = 2;   // EventSource.CLOSED
 
 /** The slice of EventSource this uses. */
@@ -92,7 +94,12 @@ export class LiveUpdates<T> {
     let data: T | null = null;
     try { data = await this.#d.load(); } catch { data = null; }
     if (mine !== this.#request || this.#stopped) return;
-    if (data === null) { this.#set('offline'); return; }
+    if (data === null) {
+      this.#set('offline');
+      // The stream is up and says nothing more until the next file change, so the missed change would stay missing: retry.
+      if (!this.#stopped && this.#timer === null) this.#loopFrom(RETRY_MS);
+      return;
+    }
     this.#set(this.#streaming ? 'live' : 'polling');
     // The browser stops retrying after a non-stream answer; the server answered this poll, so try the stream again.
     if (!this.#streaming && this.#stream?.readyState === STREAM_CLOSED) { this.#stream.close(); this.#attach(); }
@@ -105,15 +112,25 @@ export class LiveUpdates<T> {
   #poll(): void {
     if (this.#status !== 'offline') this.#set('polling');   // offline stays until a poll succeeds; the browser's retry error is not news
     if (this.#timer !== null || this.#stopped) return;
+    this.#loopFrom(POLL_MS);
+    void this.refresh();
+  }
+
+  /** One loop at a time (see #loop): wait `firstMs`, reload, then every POLL_MS while polling is still needed. */
+  #loopFrom(firstMs: number): void {
     const mine = ++this.#loop;
-    const tick = (): void => {
+    const tick = (ms: number): void => {
       this.#timer = this.#d.setTimer(() => {
         if (mine !== this.#loop) return;
-        void this.refresh().then(() => { if (mine === this.#loop) tick(); });
-      }, POLL_MS);
+        void this.refresh().then(() => {
+          if (mine !== this.#loop) return;
+          // The stream is up and the reload worked: nothing left to poll for.
+          if (this.#streaming && this.#status === 'live') this.#stopPolling();
+          else tick(POLL_MS);
+        });
+      }, ms);
     };
-    tick();
-    void this.refresh();
+    tick(firstMs);
   }
 
   #stopPolling(): void {
