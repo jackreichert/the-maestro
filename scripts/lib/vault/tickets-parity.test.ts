@@ -24,7 +24,7 @@ const ticketmjs = (vault: string, project: string, ...args: string[]) => spawnSy
   encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', XENOPHON_CONFIG: '', XENOPHON_DECIDER: '' },
 });
 
-test('rollups equal ticket.mjs list --tree and show on the fixture vault', { skip: existsSync(SCRIPT) ? false : `ticket.mjs not found at ${SCRIPT}` }, () => {
+test('rollups equal ticket.mjs list --tree and show on the fixture vault', { skip: existsSync(SCRIPT) || process.env.CI ? false : `ticket.mjs not found at ${SCRIPT}` }, () => {
   const fx = buildFixture();
   // ticket.mjs cannot read a file that is not readable, so the hostile notes the reader refuses are taken out for the comparison.
   chmodSync(join(fx.root, 'Projects/avonlea-api/Tickets/locked.md'), 0o644);
