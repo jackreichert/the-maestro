@@ -153,7 +153,9 @@ Diagram: <a mermaid block, or "n/a, <reason>">
 | Derivable counts | Enforced, best effort | refuses `N commits`, `N files (changed)`, `N lines` and `+A -B` outside code; a code span is the escape. Cannot tell a legitimate count in prose | `pr_body_check_counts` |
 | First-person voice | Enforced, best effort | refuses assistant self-references, AI-generated wording and the author's own name in the third person, outside code. Voice cannot be fully machine-checked | `pr_body_check_voice`, `pr_body_voice_names` |
 | File links | Enforced | a `{{file:path}}` token for a path outside the diff refuses before the PR is created; see below | none |
-| Evidence, Questions for reviewers, Stack | Advisory | nothing; write them when they help, skip when nothing applies (Stack only when stacked). A fake question is worse than none | none |
+| Stack | Enforced when stacked | a stacked PR (base is not a `protected_branches` entry) needs a `## Stack` section that names its base PR (`Base: #<n>` or a PR link) or says `n/a, <reason>`. Does not check that the PR exists or is open | `pr_body_check_stack` |
+| Review order | Enforced over a file threshold | a PR over `pr_review_order_min_files` code files (default 3) needs a `Review order:` line in the Reviewer guide that holds a `{{file:path}}` token or a `` `path` `` in code, or `n/a, <reason>`. Whether the order is the best one stays advisory | `pr_body_check_order`, `pr_review_order_min_files` |
+| Evidence, Questions for reviewers | Advisory | nothing; write them when they help, skip when nothing applies. A fake question is worse than none | none |
 | Review order being the best order, skim-safe files really being safe, risk level honest, blast radius complete, deferred items legitimate, verify output real | Advisory | nothing; this is review's job | none |
 
 Why each: review order, annotations and verify commands save the reviewer reading time ([Google, navigating a CL](https://google.github.io/eng-practices/review/reviewer/navigate.html); [awesomecodereviews template](https://www.awesomecodereviews.com/pull-request-template/)); risk, rollback and flags let a reviewer approve a medium-risk change because the exit is cheap ([Google, small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html)); the stack position stops reviewers flagging as missing what lives upstack ([Graphite on reviewing stacks](https://graphite.com/docs/best-practices-for-reviewing-stacks)); out-of-scope notes pre-empt scope comments, and a generic author checklist is left out because CI should enforce it. Keep the template short: long checklists become box ticking.
@@ -186,6 +188,8 @@ flowchart LR
   rules -->|pass| size[size gate]
   size --> draft[gh pr create --draft]
 ```
+
+Not checked, on purpose: that a migration or flag file in the diff is mentioned under Rollback / flag. It is only a path heuristic, so it stays a reviewer's question. Sources for every item above are in the research note behind the template (Google's CL and review guides, SmartBear on the Cisco study, Bird and Bacchelli, Graphite on stacks, Conventional Comments).
 
 All of these are settings in [local-config.md](local-config.md); each switch defaults on and any can be turned off, and `pr_body_sections` replaces the required list.
 
