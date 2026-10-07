@@ -52,7 +52,7 @@ test('bad input is refused: verdict, pr, sha, missing ids', () => {
 test('a damaged line is skipped, so damage cannot create a SHIP IT', () => {
   const r = root();
   recordVerdict(r, base);
-  appendFileSync(verdictsPath(r), '{not json\n{"pr":1}\n');
+  appendFileSync(verdictsPath(r), '{not json\n{"pr":1}\n{"pr":"org/repo#7","head":"","verdict":"SHIP IT"}\n');
   assert.equal(loadVerdicts(r).length, 1);
 });
 

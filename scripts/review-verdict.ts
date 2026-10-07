@@ -52,7 +52,7 @@ export function loadVerdicts(root: string): VerdictRow[] {
   return readFileSync(path, 'utf8').split('\n').flatMap((l) => {
     try {
       const r = JSON.parse(l) as VerdictRow;
-      return r && normalize(String(r.verdict)) && typeof r.pr === 'string' && typeof r.head === 'string' ? [r] : [];
+      return r && normalize(String(r.verdict)) && typeof r.pr === 'string' && /^[0-9a-f]{7,40}$/i.test(String(r.head)) ? [r] : [];
     } catch { return []; }
   });
 }
