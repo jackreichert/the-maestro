@@ -101,12 +101,10 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, ca
   const list = h('div', { class: 'asks', role: 'list', id }, ...cards);
   const hidden = cards.slice(cap);
   if (hidden.length === 0) return { list, more: null };
-  const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', 'aria-controls': id });
-  const label = (open: boolean): void => {
-    more.textContent = open ? `Show oldest ${cap}` : `Show all ${asks.length}`;
-    more.setAttribute('aria-expanded', String(open));
-  };
-  label(false);
+  // One name in both states (APG disclosure): aria-expanded carries the state, and the chevron turns to show it.
+  const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', 'aria-controls': id },
+    `Show all ${asks.length}`, h('span', { class: 'vh' }, ' asks'), h('span', { class: 'chev', 'aria-hidden': 'true' }));
+  const label = (open: boolean): void => { more.setAttribute('aria-expanded', String(open)); };
   let open = false;
   more.addEventListener('click', () => {
     open = !open;

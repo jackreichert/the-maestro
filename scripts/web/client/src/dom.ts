@@ -129,6 +129,11 @@ export const UI_CSS = `
     transition: background-color var(--dur-fast) var(--ease-out);
   }
   @media (hover: hover) { button.more:hover { background: var(--accent-soft); } }
+  button.more .chev {
+    display: inline-block; width: 6px; height: 6px; margin-left: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0;
+    transform: translateY(-2px) rotate(45deg); transition: transform var(--dur-base) var(--ease-out);
+  }
+  button.more[aria-expanded=true] .chev { transform: translateY(1px) rotate(225deg); }
 
   ul.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.rows > li {
