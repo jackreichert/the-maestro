@@ -52,7 +52,8 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
     return h('li', {},
       h('span', { class: 'id' }, x.id),
       h('span', { class: 'row-text' }, x.text, ...(x.ticket ? [' ', refLink(x.ticket)] : [])),
-      h('span', { class: 'row-meta' }, meta ? (done ? `shipped ${meta}` : meta) : ''),
+      // Under a "Shipped today" heading the word is redundant to the eye, so only a screen reader hears it.
+      h('span', { class: 'row-meta' }, meta && done ? h('span', { class: 'vh' }, 'shipped ') : null, meta),
       sub.length ? h('span', { class: 'row-sub' }, ...sub) : null);
   }));
 }

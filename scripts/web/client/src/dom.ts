@@ -120,10 +120,6 @@ export const UI_CSS = `
   .row-sub { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
   .gate { color: var(--critical); }
   .gate .glyph { width: auto; margin-right: 4px; }
-  @container (max-width: 420px) {
-    ul.rows > li { grid-template-columns: auto minmax(0, 1fr); }
-    .row-meta { grid-column: 2; }
-  }
 
   .id {
     font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-secondary);
