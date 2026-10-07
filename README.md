@@ -467,7 +467,7 @@ Freshness is computed, never claimed. A brief carries a `basis` line (for exampl
 
 #### Epic briefs at the roll
 
-The built-in standing row `epic-briefs` is checked at runtime, not described. For every open epic that a ledger item dated today touched (found by walking the ticket up to its top ancestor, through `ticket-map.json` too), it requires a fresh brief, judged by the same code and the same fingerprint as the home base, and it requires every note written today in that epic's projects to name a ticket or say `ticket: none`. `journal.ts roll` prints what is owed beside the archive output and does not block the roll; the row stays failing on the board, and `standing done epic-briefs` refuses until the list is empty. With no `vault_root` configured the check says it did not run and passes.
+The built-in standing row `epic-briefs` is checked at runtime, not described. For every open epic that a ledger item dated today touched (found by walking the ticket up to its top ancestor, through `ticket-map.json` too), it requires a fresh brief, judged by the same code and the same fingerprint as the home base, and it requires every note written today in that epic's projects to name a ticket or say `ticket: none`. `journal.ts roll` prints what is owed beside the archive output and does not block the roll; the row stays failing on the board, and `standing done epic-briefs` refuses until the list is empty. With no `vault_root` configured the check cannot look, so the row fails (`could not be checked: no vault root is configured`) and the roll prints that line; an unread vault is never a pass.
 
 ```mermaid
 flowchart LR

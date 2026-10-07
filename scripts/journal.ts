@@ -163,7 +163,7 @@ import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween,
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
-import { STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
+import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
 import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { createReader } from './lib/vault/reader.ts';
@@ -778,7 +778,11 @@ function epicBriefsToday(d: string): EpicBriefsReport | null {
 
 /** The roll prints what the briefs and notes still owe; it never blocks the roll, and the standing row stays failing until it is fixed. */
 function printEpicBriefs(d: string): void {
-    try { for (const line of epicBriefsLines(epicBriefsToday(d) ?? { epics: [], failures: [] })) console.log(line); } catch (e) { console.log(`Epic briefs: could not be checked (${errorMessage(e)})`); }
+    try {
+        const report = epicBriefsToday(d);
+        if (!report) console.log(`Epic briefs: ${NO_VAULT_DETAIL}.`);
+        else for (const line of epicBriefsLines(report)) console.log(line);
+    } catch (e) { console.log(`Epic briefs: could not be checked (${errorMessage(e)})`); }
 }
 
 /**

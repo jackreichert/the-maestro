@@ -13,7 +13,7 @@ import { addWatch } from './lib/watch-registry.ts';
 const NOON = Date.parse('2026-10-06T12:00:00Z');
 const HOUR = 3600_000;
 const healthy = (over: Partial<CheckContext> = {}): CheckContext => ({
-  now: NOON, loopPid: () => 4242, watches: () => ({ live: 3, expired: [] }), queue: () => ({ inflight: 1, queued: 2 }), pendingTransitions: () => [], ...over,
+  now: NOON, loopPid: () => 4242, watches: () => ({ live: 3, expired: [] }), queue: () => ({ inflight: 1, queued: 2 }), pendingTransitions: () => [], epicBriefs: () => ({ epics: 0, failures: [] }), ...over,
 });
 const ran = (id: string, hoursAgo: number): StandingEvent => ({ op: 'ran', id, evidence: 'did it', at: new Date(NOON - hoursAgo * HOUR).toISOString() });
 const statusOf = (events: StandingEvent[], ctx: CheckContext, id: string) => standingState(events, ctx).find((s) => s.row.id === id)?.status;
@@ -35,7 +35,10 @@ test('checked rows take their status from the machine, not from anyone saying th
 });
 
 test('the epic-briefs row fails while an epic touched today owes a brief or a note, and says what', () => {
-  assert.equal(statusOf([], healthy(), 'epic-briefs'), 'ok', 'no vault configured: nothing to check, and it says so');
+  const blind = standingState([], healthy({ epicBriefs: undefined })).find((x) => x.row.id === 'epic-briefs');
+  assert.equal(blind?.status, 'failing', 'no vault configured: the check could not look, so it has not passed');
+  assert.match(blind?.detail ?? '', /could not be checked: no vault root is configured/);
+  assert.equal(standingState([], healthy({ epicBriefs: () => null })).find((x) => x.row.id === 'epic-briefs')?.status, 'failing');
   const owing = healthy({ epicBriefs: () => ({ epics: 2, failures: ['e-1 brief is stale: 1 ticket updated after 2026-10-05.', 'a note names no ticket.'] }) });
   const row = standingState([ran('epic-briefs', 0)], owing).find((x) => x.row.id === 'epic-briefs');
   assert.equal(row?.status, 'failing', 'a recorded run does not clear a failing check');

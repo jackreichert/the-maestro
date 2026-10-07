@@ -39,6 +39,9 @@ export interface CheckContext {
 export interface CheckResult { ok: boolean; detail: string }
 export type Check = (ctx: CheckContext) => CheckResult;
 
+/** What a vault-reading check says when no vault root is configured. */
+export const NO_VAULT_DETAIL = 'could not be checked: no vault root is configured (set vault_root)';
+
 /** Every runtime check a row may name. A row naming anything else reads as failing, loudly. */
 export const CHECKS: Record<string, Check> = {
   'loop-alive': ({ loopPid, watches, health }) => {
@@ -60,7 +63,8 @@ export const CHECKS: Record<string, Check> = {
   },
   'epic-briefs': ({ epicBriefs }) => {
     const r = epicBriefs?.();
-    if (!r) return { ok: true, detail: 'not checked: no vault root is configured' };
+    // A check that cannot look has not passed: with no vault root the row fails and says why, instead of reading as fine.
+    if (!r) return { ok: false, detail: NO_VAULT_DETAIL };
     return r.failures.length ? { ok: false, detail: `${r.failures.length} to fix, first: ${r.failures[0]}` } : { ok: true, detail: `${r.epics} epic${r.epics === 1 ? '' : 's'} touched today, briefs fresh and notes attributed` };
   },
   'tracker-transitions': ({ pendingTransitions }) => {
