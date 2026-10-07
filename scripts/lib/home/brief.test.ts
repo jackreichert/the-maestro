@@ -5,12 +5,12 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createReader } from '../vault/reader.ts';
-import { loadTickets, TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from '../vault/tickets.ts';
+import { buildForest, loadTickets, TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from '../vault/tickets.ts';
 import { buildFixture } from '../vault/fixture.ts';
 import type { PageConfig } from '../status-page/render.ts';
 import { validateHomes } from './config.ts';
 import { buildStreamHome } from './build.ts';
-import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES, basisOf, judgeBrief, noteIndex, parseBlocks, readBriefNote } from './brief.ts';
+import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES, forestBasis, judgeBrief, noteIndex, parseBlocks, readBriefNote } from './brief.ts';
 import type { BriefInput } from './brief.ts';
 import type { Inline } from './types.ts';
 
@@ -48,15 +48,16 @@ test('lists keep one level of nesting and quotes are their own block', () => {
   assert.equal(quote?.type, 'quote');
 });
 
+const FP = 'closed 3 of 10 · blocked 1 · points 5 of 20 · open';
 const base = (over: Partial<BriefInput> = {}): BriefInput => ({
-  epic: 'e-1', read: { ok: true, text: '' }, now: { closed: 3, total: 10, blocked: 1, status: 'open' }, ticketDates: [], docDates: [], doneMeans: null, link: env, ref: { label: 'e-1 brief' }, ...over,
+  epic: 'e-1', read: { ok: true, text: '' }, basis: FP, ticketDates: [], docDates: [], doneMeans: null, link: env, ref: { label: 'e-1 brief' }, ...over,
 });
 const note = (basis: string, updated = '2026-10-07'): { ok: true; text: string } => ({ ok: true, text: `---\nkind: brief\nupdated: ${updated}\nbasis: "${basis}"\n---\n# e-1 brief\n## Goal\nShip it.\n` });
 
 test('a brief is stale on a same-day state change, a later ticket or document, or a missing date or basis', () => {
-  const fp = basisOf({ closed: 3, total: 10, blocked: 1, status: 'open' });
+  const fp = FP;
   assert.equal(judgeBrief(base({ read: note(fp) })).state, 'fresh');
-  const moved = judgeBrief(base({ read: note(basisOf({ closed: 2, total: 10, blocked: 1, status: 'open' })) }));
+  const moved = judgeBrief(base({ read: note('closed 2 of 10 · blocked 1 · points 5 of 20 · open') }));
   assert.equal(moved.state, 'stale');
   assert.match(moved.staleBecause?.[0] ?? '', /changed since it was written/);
   const later = judgeBrief(base({ read: note(fp, '2026-10-05'), ticketDates: ['2026-10-06', '2026-10-05', undefined], docDates: ['2026-10-07'] }));
@@ -95,4 +96,18 @@ test('an open epic without a fresh brief produces one unknown with the fix, and 
   assert.equal(u.length, 1);
   assert.match(u[0]?.text ?? '', /ticket\.mjs brief avonlea-api-042/);
   assert.ok((e?.unknowns ?? 0) >= 1);
+});
+
+test('the fingerprint is the exact line ticket.mjs brief writes, read from the forest rollup', () => {
+  const fx = buildFixture();
+  const reader = createReader({ root: fx.root, dirScopes: TICKET_DIR_SCOPES, fileScopes: TICKET_FILE_SCOPES });
+  const forest = buildForest(loadTickets(reader, fx.root).tickets);
+  const r = forest.roll('avonlea-api-042');
+  assert.equal(forestBasis(forest, 'avonlea-api-042'), `closed ${r.closed} of ${r.total} · blocked ${r.blocked} · points ${r.ptsDone} of ${r.ptsTotal} · in-progress`);
+  assert.match(forestBasis(forest, 'avonlea-api-042'), /^closed \d+ of \d+ · blocked \d+ · points \d+ of \d+ · [a-z-]+$/);
+});
+
+test('an id shared by two notes links to nothing, even when a base name would match', () => {
+  const idx = noteIndex([{ id: 'dup-1', path: 'Projects/a/Tickets/dup-1.md' }, { id: 'dup-1', path: 'Projects/b/Tickets/dup-1.md' }, { path: 'Projects/a/Plans/dup-1.md' }]);
+  assert.equal(idx.resolve('dup-1'), null);
 });

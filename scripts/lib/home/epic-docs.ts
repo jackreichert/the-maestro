@@ -49,7 +49,6 @@ export interface EpicDocsInput {
 /** The documents attributed to one epic, grouped by kind, with their paths (so the caller can take them off the rail) and dates (for brief freshness). */
 export function epicDocs(inp: EpicDocsInput): { docs: EpicDocs; paths: Set<string>; dates: (string | undefined)[] } {
   const mine = inp.docs.filter((d) => d.tickets.some((t) => inp.tree.has(t)));
-  const projects = new Set(inp.docs.map((d) => d.project));
   const items: DocItem[] = mine.map((d) => ({
     title: d.title, kind: d.kind, project: d.project, ticket: d.tickets.find((t) => inp.tree.has(t)) as string,
     ...(d.status ? { status: d.status } : {}), ...(d.updated ? { updated: d.updated } : {}),
@@ -57,7 +56,7 @@ export function epicDocs(inp: EpicDocsInput): { docs: EpicDocs; paths: Set<strin
   }));
   for (const l of externalLinks(inp.epicBody)) items.push({ title: l.label, kind: l.kind, project: '', ticket: inp.epic, url: l.url });
   const cutoff = inp.now.getTime() - RECENT_DAYS * DAY_MS;
-  const unattributedRecent = inp.docs.filter((d) => projects.has(d.project) && d.folder !== 'CONTEXT' && d.folder !== 'DECISIONS' && !d.tickets.length && !d.projectLevel
+  const unattributedRecent = inp.docs.filter((d) => d.folder !== 'CONTEXT' && d.folder !== 'DECISIONS' && !d.tickets.length && !d.projectLevel
     && /^\d{4}-\d{2}-\d{2}/.test(d.updated ?? '') && Date.parse(`${(d.updated as string).slice(0, 10)}T00:00:00Z`) >= cutoff).length;
   const groups = KIND_ORDER.flatMap((kind) => {
     const of = items.filter((i) => i.kind === kind).sort(newestFirst);

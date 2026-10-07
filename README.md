@@ -449,7 +449,7 @@ flowchart LR
   J --> F[brief: fresh, stale or missing, with the reasons]
 ```
 
-Freshness is computed, never claimed. A brief carries a `basis` line (for example `closed 12 of 37 · blocked 2 · open`) written when it was last revised. It is stale when that line no longer matches the epic, or when any ticket in the epic's tree or any attributed document was updated after the brief's `updated` date, and `staleBecause` says which. An open epic whose brief is missing or not fresh gets one unknown (`brief-missing` or `brief-stale`) with the fix in its text.
+Freshness is computed, never claimed. A brief carries a `basis` line (for example `closed 12 of 37 · blocked 2 · points 20 of 60 · open`, the exact line `ticket.mjs brief` writes) written when it was last revised. It is stale when that line no longer matches the epic, or when any ticket in the epic's tree or any attributed document was updated after the brief's `updated` date, and `staleBecause` says which. An open epic whose brief is missing or not fresh gets one unknown (`brief-missing` or `brief-stale`) with the fix in its text.
 
 #### Stream mapping (`stream-homes.json`)
 

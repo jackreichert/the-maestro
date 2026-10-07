@@ -47,7 +47,17 @@ function ticketIds(raw: string | undefined): string[] {
 /** A document's header: title (frontmatter `title`, else its first `# ` heading, else the file name), status, the first date of `updated`, `last-updated`, `date`, `created`, the tickets it names and its kind. */
 export function docHeader(head: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean } {
   const fm = head.match(/^---\n([\s\S]*?)\n---\n?/);
-  const raw = (k: string): string | undefined => fm?.[1]?.match(new RegExp(`^${k}:[ \\t]*(.+)$`, 'm'))?.[1];
+  /** The value of a key; a key with no value on its line takes the `- item` lines right under it as a list. */
+  const raw = (k: string): string | undefined => {
+    const lines = fm?.[1]?.split('\n') ?? [];
+    const at = lines.findIndex((l) => l.startsWith(`${k}:`));
+    if (at === -1) return undefined;
+    const inline = (lines[at] as string).slice(k.length + 1).trim();
+    if (inline) return inline;
+    const items: string[] = [];
+    for (const l of lines.slice(at + 1)) { const m = l.match(/^\s*-\s+(.+)$/); if (!m) break; items.push(m[1] as string); }
+    return items.length ? items.join(',') : undefined;
+  };
   const get = (k: string): string | undefined => { const v = raw(k); return v ? clean(v.replace(/^"|"$/g, '')) || undefined : undefined; };
   const body = fm ? head.slice(fm[0].length) : head;
   const title = get('title') || clean(body.match(/^#\s+(.+)$/m)?.[1] ?? '') || fileName.replace(/\.md$/, '');

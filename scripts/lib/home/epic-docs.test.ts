@@ -30,6 +30,7 @@ test('the header reads ticket, tickets and epic, the first date alias, and the k
   assert.equal(docHeader(fm(['type: nonsense']), 'd.md', 'Research').kind, 'research', 'an unknown kind falls back to the folder');
   assert.deepEqual(docHeader(fm(['ticket: none']), 'e.md', 'Plans'), { ...docHeader(fm(['ticket: none']), 'e.md', 'Plans'), tickets: [], projectLevel: true });
   assert.deepEqual(docHeader(fm(['ticket: ../../x y']), 'f.md', 'Plans').tickets, [], 'text that is not an id names no ticket');
+  assert.deepEqual(docHeader(fm(['tickets:', '  - t-4', '  - t-5', 'kind: plan']), 'g.md', 'Plans').tickets, ['t-4', 't-5'], 'a block list names tickets too');
 });
 
 test('a document for a child ticket lands on its epic, across projects, and leaves the rail', () => {

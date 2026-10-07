@@ -11,6 +11,7 @@
 import { obsidianUri } from '../status-page/links.ts';
 import type { VaultReader } from '../vault/reader.ts';
 import type { Scope } from '../vault/reader.ts';
+import type { Forest, Ticket } from '../vault/tickets.ts';
 import { isHttpUrl } from './config.ts';
 import type { Block, EpicBrief, Inline, ListItem } from './types.ts';
 
@@ -32,8 +33,15 @@ export function readBriefNote(reader: VaultReader, project: string, epic: string
   return { ok: false, reason: r.reason === 'missing' || r.reason === 'denied' || r.reason === 'out-of-scope' ? 'missing' : r.reason === 'too-large' ? 'too-large' : 'unreadable' };
 }
 
-/** What the epic looked like when a brief was written, in the words the brief's `basis` field uses. */
-export const basisOf = (e: { closed: number; total: number; blocked: number; status: string }): string => `closed ${e.closed} of ${e.total} · blocked ${e.blocked} · ${e.status}`;
+/**
+ * What the epic looked like when a brief was written, in the exact words `ticket.mjs brief` writes to the brief's `basis` line:
+ * closed of total, blocked count, points done of points total, and the epic's status. It reads the forest rollup only, which
+ * `tickets-parity.test.ts` holds equal to xenophon's, so the tool that writes the line and the home base that checks it agree.
+ */
+export function forestBasis(forest: Forest, epic: string): string {
+  const r = forest.roll(epic);
+  return `closed ${r.closed} of ${r.total} · blocked ${r.blocked} · points ${r.ptsDone} of ${r.ptsTotal} · ${(forest.byId.get(epic) as Ticket).status}`;
+}
 
 // ── links ────────────────────────────────────────────────────────────────────
 
@@ -52,7 +60,13 @@ export function noteIndex(notes: { id?: string; path: string }[]): NoteIndex {
     if (n.id) put(byId, n.id, path);
     put(byBase, path.split('/').at(-1) as string, path);
   }
-  return { resolve(target) { return byPath.has(target) ? target : byId.get(target) ?? byBase.get(target) ?? null; } };
+  return {
+    resolve(target) {
+      if (byPath.has(target)) return target;
+      // A name two notes share resolves to nothing: `has` keeps an ambiguous id from falling through to a base name.
+      return byId.has(target) ? byId.get(target) ?? null : byBase.get(target) ?? null;
+    },
+  };
 }
 
 interface LinkEnv { vaultName: string; index: NoteIndex }
@@ -160,8 +174,8 @@ const frontmatter = (text: string): { fm: Record<string, string>; body: string }
 export interface BriefInput {
   epic: string;
   read: BriefRead;
-  /** The epic's counts now, for the fingerprint. */
-  now: { closed: number; total: number; blocked: number; status: string };
+  /** The epic's fingerprint now (`forestBasis`). */
+  basis: string;
   /** `updated` dates of the tickets in the epic's tree and of the documents attributed to it. */
   ticketDates: (string | undefined)[];
   docDates: (string | undefined)[];
@@ -177,7 +191,7 @@ export function judgeBrief(inp: BriefInput): EpicBrief {
   const { fm, body } = frontmatter(inp.read.text);
   const updated = DATE.test(fm.updated ?? '') ? (fm.updated as string).slice(0, 10) : undefined;
   const why: string[] = [];
-  const nowBasis = basisOf(inp.now);
+  const nowBasis = inp.basis;
   if (!updated) why.push('the brief has no updated date');
   if (!fm.basis) why.push('the brief has no basis line to compare with');
   else if (fm.basis !== nowBasis) why.push(`the epic changed since it was written (then: ${fm.basis}; now: ${nowBasis})`);
@@ -195,7 +209,7 @@ export function judgeBrief(inp: BriefInput): EpicBrief {
 export function briefUnknown(epic: string, b: EpicBrief): string | null {
   switch (b.state) {
     case 'fresh': return null;
-    case 'missing': return `${epic} has no brief. Run ticket.mjs brief ${epic} and write it.`;
+    case 'missing': return `${epic} has no brief. Run ticket.mjs brief ${epic} --init and write it.`;
     case 'stale': return `${epic} brief is stale: ${(b.staleBecause ?? []).join('; ')}. Run ticket.mjs brief ${epic} --refresh and rewrite Status.`;
     case 'too-long': return `${epic} brief is longer than ${MAX_BRIEF_BYTES / 1024} KB, so it is not shown. A brief is short; cut it.`;
     default: return `${epic} brief could not be read.`;

@@ -18,7 +18,7 @@ import type { LedgerLink } from './mapping.ts';
 import { buildRail } from './rail.ts';
 import { prsNaming } from './prs.ts';
 import { epicDocs } from './epic-docs.ts';
-import { briefUnknown, judgeBrief, noteIndex } from './brief.ts';
+import { briefUnknown, forestBasis, judgeBrief, noteIndex } from './brief.ts';
 import type { BriefRead } from './brief.ts';
 import type { Doc, Docs } from './docs.ts';
 import type { EpicSummary, Ref, StreamHome, TicketRow, Unknown } from './types.ts';
@@ -124,7 +124,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
       if (read.has(project)) continue;
       const d = inp.readDocs(project);
       read.set(project, d.docs);
-      for (const n of d.notes) unknowns.push({ kind: 'unreadable-doc', text: n });
+      for (const n of d.notes) unknowns.push({ kind: 'unreadable-doc', epic: e.id, text: n });
     }
     const found = epicDocs({ epic: e.id, tree, epicBody: (forest.byId.get(e.id) as Ticket).body, docs: [...tree].flatMap((x) => forest.byId.get(x)?.project ?? []).filter((p, i, a) => a.indexOf(p) === i).flatMap((p) => read.get(p) ?? []), vaultName: page.vaultName, now });
     e.docs = found.docs;
@@ -138,8 +138,8 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
     const t = forest.byId.get(e.id) as Ticket;
     const done = section(t.body, /^## What done looks like\s*$/i)?.trim();
     e.brief = judgeBrief({
-      epic: e.id, read: inp.readBrief(t), now: { closed: e.closed, total: e.total, blocked: e.blocked, status: e.status },
-      ticketDates: own(e.id).map((x) => forest.byId.get(x)?.updated), docDates: docDates.get(e.id) ?? [], doneMeans: done ? clip(done, DONE_MEANS_MAX) : null,
+      epic: e.id, read: inp.readBrief(t), basis: forestBasis(forest, e.id),
+      ticketDates: subtree(forest, e.id).map((x) => forest.byId.get(x)?.updated), docDates: docDates.get(e.id) ?? [], doneMeans: done ? clip(done, DONE_MEANS_MAX) : null,
       link: { vaultName: page.vaultName, index }, ref: { label: `${e.id} brief`, ...(page.vaultName ? { url: obsidianUri(page.vaultName, `Projects/${t.project}/Briefs/${e.id}`) } : {}) },
     });
     if (e.brief.state === 'fresh' || e.status === 'closed') continue;
