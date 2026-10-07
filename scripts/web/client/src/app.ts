@@ -1,7 +1,7 @@
 import './stream-board.ts';
 import './podium-chart.ts';
 import './md-fragment.ts';
-import { h, shadow, streamTag } from './dom.ts';
+import { h, s, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
@@ -22,8 +22,14 @@ const CSS = `${BOARD_CSS}
   header { padding-block: var(--space-5) var(--space-4); }
   .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
   .brand { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
-  h1 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-bold); letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: var(--space-2); }
-  h1::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--accent); transform: rotate(45deg); }
+  h1 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-bold); letter-spacing: -0.01em; white-space: nowrap; }
+  /* The baton wordmark: the stick is ink, and its tip takes the accent only while something needs you. */
+  .baton { width: 20px; height: 20px; margin-right: 6px; vertical-align: -4px; color: var(--text-primary); overflow: visible; }
+  .baton .stick { transform-box: view-box; transform-origin: 9.4px 22.6px; }
+  .baton .tip { fill: var(--text-muted); }
+  .baton .tip.on { fill: var(--accent); }
+  @media (hover: hover) { h1:hover .baton .stick { animation: downbeat calc(var(--dur-base) * 1.6) var(--ease-out); } }
+  @keyframes downbeat { 40% { transform: rotate(-8deg); } }
   .date { font-size: var(--text-sm); color: var(--text-secondary); }
   .date .short, .fresh .short-hide { display: inline; }
   .date .short { display: none; }
@@ -79,7 +85,7 @@ const CSS = `${BOARD_CSS}
     .fresh, .sk { border: 1px solid CanvasText; }
     .dot { forced-color-adjust: none; border-color: CanvasText; }
     .fresh.live .dot { background: CanvasText; }
-    h1::before { forced-color-adjust: none; background: CanvasText; }
+    .baton .tip.on { fill: Highlight; }
   }
   [role=tabpanel] { padding-block: var(--space-6) var(--space-8); }
   /* The panel takes focus between the tabs and its content: a 2 px focus line under the tab bar, not a frame round the page. */
@@ -273,7 +279,7 @@ export class PodiumApp extends HTMLElement {
       .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
-        h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
+        h('div', { class: 'brand' }, h('h1', {}, baton(st.asks.length > 0), 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
         this.#freshness(st)),
       note ? h('p', { class: 'source' }, note) : null,
       h('p', { class: 'scope', id: 'scope' }, scope),
@@ -356,6 +362,18 @@ export class PodiumApp extends HTMLElement {
       mk('bar', 'Pull requests by CI state', prMixChart(c)),
       mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
   }
+}
+
+/**
+ * The wordmark's baton, drawn with presentation attributes only (no style attribute, so the CSP holds). Its tip is a
+ * tiny cue of its own: accent while asks need you, muted when none do. Decorative: the h1's text names the page.
+ */
+function baton(cue: boolean): SVGSVGElement {
+  return s('svg', { class: 'baton', viewBox: '4 4 24 24', 'aria-hidden': 'true', focusable: 'false' },
+    s('g', { class: 'stick' },
+      s('path', { d: 'M7.9 21.3 23.5 7.5 24.5 8.5 10.7 24.1Z', fill: 'currentColor' }),
+      s('ellipse', { cx: '9.4', cy: '22.6', rx: '4.4', ry: '2.5', transform: 'rotate(-45 9.4 22.6)', fill: 'currentColor' }),
+      s('circle', { class: `tip${cue ? ' on' : ''}`, cx: '24', cy: '8', r: cue ? '3.4' : '1.8' })));
 }
 
 /**
