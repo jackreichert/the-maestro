@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createReader } from '../vault/reader.ts';
 import { loadTickets, TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from '../vault/tickets.ts';
+import fs from 'node:fs';
 import { assertNoCanary, buildFixture } from '../vault/fixture.ts';
 import type { PageConfig } from '../status-page/render.ts';
 import { validateHomes } from './config.ts';
@@ -127,4 +128,35 @@ test('PR data freshness is reported, stale after 15 minutes or when never read',
   assert.equal(buildStreamHome(input()).freshness.prs.stale, false);
   assert.equal(buildStreamHome(input({ prData: { fetchedAt: new Date('2026-10-07T11:00:00Z') } })).freshness.prs.stale, true);
   assert.deepEqual(buildStreamHome(input({ prData: { fetchedAt: null } })).freshness.prs, { fetchedAt: null, stale: true });
+});
+
+test('a nested epic listed for another stream is not counted in its parent epic or its left list', () => {
+  const both = { Avonlea: { epics: ['avonlea-api-042'] }, 'Green Gables': { epics: ['avonlea-api-048'] } };
+  const a = buildStreamHome(input({ config: both }));
+  const parent = a.epics.find((e) => e.id === 'avonlea-api-042');
+  assert.deepEqual([parent?.total, parent?.closed], [7, 3], '10 tickets less the nested epic and its 2 children (1 closed)');
+  assert.ok(![...a.left.inProgress, ...a.left.blocked, ...a.left.notStarted].some((r) => ['avonlea-api-048', 'avonlea-api-050'].includes(r.id)));
+  const g = buildStreamHome(input({ stream: 'Green Gables', config: both }));
+  assert.deepEqual(g.epics.filter((e) => e.id.startsWith('avonlea')).map((e) => [e.id, e.total, e.closed]), [['avonlea-api-048', 2, 1]]);
+});
+
+test('something that really blocks a ticket wins over its in-progress status', () => {
+  const h = buildStreamHome(input({ ledger: [{ id: 'b1', ticket: 'avonlea-api-045', state: 'blocked' }] }));
+  assert.ok(h.left.blocked.some((r) => r.id === 'avonlea-api-045') && !h.left.inProgress.some((r) => r.id === 'avonlea-api-045'));
+  const e = h.epics[0];
+  assert.equal((e?.inProgress ?? 0) + (e?.blocked ?? 0) + (e?.notStarted ?? 0) + (e?.closed ?? 0), e?.total);
+});
+
+test('a vault that cannot be read is an unknown on every stream, never a quiet empty page', () => {
+  const broken = { tickets: [], issues: [{ kind: 'unreadable-folder' as const, text: 'Projects: cannot be read', path: 'Projects' }], projects: [], newestMtime: 0 };
+  const h = buildStreamHome(input({ vault: broken, config: {} }));
+  assert.ok(h.unknowns.some((u) => u.kind === 'unreadable-note' && /Projects: cannot be read/.test(u.text)));
+});
+
+test('a configured epic that is not in the vault is named, and a differently cased heading still counts', () => {
+  const h = buildStreamHome(input({ config: { Avonlea: { epics: ['avonlea-api-042', 'avonlea-api-777'] } } }));
+  assert.ok(h.unknowns.some((u) => u.kind === 'config-invalid' && /avonlea-api-777/.test(u.text)));
+  fx.write('Projects/avonlea-api/Tickets/avonlea-api-042.md', fs.readFileSync(`${fx.root}/Projects/avonlea-api/Tickets/avonlea-api-042.md`, 'utf8').replace('## What done looks like', '## What Done Looks Like'));
+  const again = buildStreamHome(input({ vault: loadTickets(READER, fx.root) }));
+  assert.equal(again.doneMeans.length, 1);
 });

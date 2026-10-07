@@ -90,3 +90,12 @@ test('no canary and no absolute path appears anywhere in the home base, decoys b
   assert.ok(!out.includes(fx.root) && !out.includes(fx.outside));
   assert.ok(!/\.env|ssm-test|tfvars|tfstate|id_ed25519|\.npmrc|credentials/.test(out), 'no denied name is echoed');
 });
+
+test('a PR with a non-http URL never becomes a link on a ticket row', () => {
+  assert.deepEqual(prsNaming([pr(1, 'avonlea-api-045', 'x', { url: 'javascript:alert(1)' })], ['avonlea-api-045']), { shown: [], more: 0 });
+});
+
+test('an id that is the tail of another project id does not match that project\'s PR', () => {
+  assert.deepEqual(prsNaming([pr(1, 'feat/arya-x-5-thing', 'y')], ['x-5']), { shown: [], more: 0 });
+  assert.equal(prsNaming([pr(2, 'feat/x-5-thing', 'y')], ['x-5']).shown.length, 1);
+});

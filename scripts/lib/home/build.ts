@@ -40,6 +40,7 @@ export interface HomeInput {
 }
 
 const ROW_CAP = 200;
+const UNKNOWN_CAP = 100;
 const QUIET_DAYS = 14;
 const DAY_MS = 86_400_000;
 const TITLE_MAX = 300;
@@ -66,7 +67,7 @@ function section(body: string, heading: RegExp): string | null {
   return (end === -1 ? rest : rest.slice(0, end)).join('\n');
 }
 /** A closed ticket is verified when its `## Verified` section has a line that starts with an ISO date. */
-const isVerified = (t: Ticket): boolean => t.status === 'closed' && (section(t.body, /^## Verified\b/)?.split('\n').some((l) => /^\s*(?:[-*]\s*)?\d{4}-\d{2}-\d{2}\b/.test(l)) ?? false);
+const isVerified = (t: Ticket): boolean => t.status === 'closed' && (section(t.body, /^## Verified\s*$/i)?.split('\n').some((l) => /^\s*(?:[-*]\s*)?\d{4}-\d{2}-\d{2}\b/.test(l)) ?? false);
 
 type Bucket = 'inProgress' | 'blocked' | 'notStarted';
 
@@ -83,6 +84,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
     return base({});
   }
   const forest = buildForest(inp.vault.tickets);
+  for (const id of cfg?.epics ?? []) if (!forest.byId.has(id)) unknowns.push({ kind: 'config-invalid', text: `stream-homes.json: epic ${id} is not a ticket in the vault; ignored.` });
   const links: LedgerLink[] = inp.ledger.filter((f) => f.stream && inp.streams.includes(f.stream)).map((f) => ({ stream: f.stream as string, ticket: f.ticket }));
   const mapping = mapUnits(forest, inp.homes, inp.streams, links);
   const mine = [...mapping.claims].filter(([, c]) => c.stream === stream);
@@ -91,11 +93,13 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
 
   const facts = new Map<string, LedgerFact[]>();
   for (const f of inp.ledger) facts.set(f.ticket, [...(facts.get(f.ticket) ?? []), f]);
-  const ctx: Ctx = { inp, forest, facts, verifyRequired: (id) => cfg?.done[id] === 'verified' || (forest.byId.get(id)?.labels.includes('verify-required') ?? false) };
 
-  const owned = new Set([...epicIds, ...looseIds].flatMap((id) => subtree(forest, id)));
-  const epics = epicIds.map((id) => epicSummary(ctx, id, unknowns)).sort((a, b) => (newest(forest, b.id) ?? '').localeCompare(newest(forest, a.id) ?? '') || a.id.localeCompare(b.id));
-  const openOf = (id: string): Ticket[] => subtree(forest, id).map((x) => forest.byId.get(x) as Ticket).filter((t) => isOpen(t) && t.id !== id);
+  const nested = new Set(mapping.units.filter((u) => forest.parentOf.has(u)));   // a nested epic listed in config is its own unit: its tree is not also its parent's
+  const own = (id: string): string[] => subtree(forest, id, nested);
+  const ctx: Ctx = { inp, forest, facts, own, verifyRequired: (id) => cfg?.done[id] === 'verified' || (forest.byId.get(id)?.labels.includes('verify-required') ?? false) };
+  const owned = new Set([...epicIds, ...looseIds].flatMap(own));
+  const epics = epicIds.map((id) => epicSummary(ctx, id, unknowns)).sort((a, b) => (newest(ctx, b.id) ?? '').localeCompare(newest(ctx, a.id) ?? '') || a.id.localeCompare(b.id));
+  const openOf = (id: string): Ticket[] => own(id).map((x) => forest.byId.get(x) as Ticket).filter((t) => isOpen(t) && t.id !== id);
   const leftTickets = [...epicIds.flatMap(openOf), ...looseIds.map((id) => forest.byId.get(id) as Ticket).filter(isOpen)];
   const left = { inProgress: [] as TicketRow[], blocked: [] as TicketRow[], notStarted: [] as TicketRow[], truncated: 0 };
   const sorted = [...new Map(leftTickets.map((t) => [t.id, t])).values()].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
@@ -112,13 +116,13 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
     mapping: { source, configFound: Boolean(cfg) }, epics,
     loose: looseIds.map((id) => forest.byId.get(id) as Ticket).filter(isOpen).slice(0, ROW_CAP).map((t) => row(ctx, t)), left,
     links: rail,
-    doneMeans: epicIds.flatMap((id) => { const t = forest.byId.get(id) as Ticket; const text = section(t.body, /^## What done looks like\b/); return text?.trim() ? [{ epic: id, text: clip(text, DONE_MEANS_MAX) }] : []; }),
-    unknowns: unknowns.slice(0, 100),
+    doneMeans: epicIds.flatMap((id) => { const t = forest.byId.get(id) as Ticket; const text = section(t.body, /^## What done looks like\s*$/i); return text?.trim() ? [{ epic: id, text: clip(text, DONE_MEANS_MAX) }] : []; }),
+    unknowns: unknowns.length > UNKNOWN_CAP ? [...unknowns.slice(0, UNKNOWN_CAP), { kind: 'config-invalid' as const, text: `${unknowns.length - UNKNOWN_CAP} more unknowns are not shown.` }] : unknowns,
     freshness: { tickets: inp.vault.newestMtime ? new Date(inp.vault.newestMtime).toISOString() : '', prs: prState(inp), tracker: null },
   });
 }
 
-interface Ctx { inp: HomeInput; forest: Forest; facts: Map<string, LedgerFact[]>; verifyRequired: (epic: string) => boolean }
+interface Ctx { inp: HomeInput; forest: Forest; facts: Map<string, LedgerFact[]>; own: (id: string) => string[]; verifyRequired: (epic: string) => boolean }
 
 const prState = (inp: HomeInput): { fetchedAt: string | null; stale: boolean } => ({
   fetchedAt: inp.prData.fetchedAt ? inp.prData.fetchedAt.toISOString() : null,
@@ -139,14 +143,15 @@ function trackerKey(page: PageConfig, t: Ticket): string | null {
   try { return key && new RegExp(`^(?:${page.trackerKeyPattern})$`).test(key) ? key : null; } catch { return null; }
 }
 
-/** open ticket -> bucket. A closed-ticket status never reaches here. Blocked beats in progress for an open ticket, and a status the person set beats the ledger. */
+/**
+ * open ticket -> bucket. Something real that blocks it wins over progress: a `blocked` status, an unresolved `blocked-by`, or a
+ * blocked ledger item all make it blocked, even when its status says in progress. Then a status of in progress, then a ledger item in flight.
+ */
 function bucketOf(ctx: Ctx, t: Ticket): Bucket {
-  if (t.status === 'blocked') return 'blocked';
-  if (t.status === 'in-progress') return 'inProgress';
   const open = ctx.facts.get(t.id) ?? [];
   const unresolved = t.blockedBy.some((b) => { const x = ctx.forest.byId.get(b); return x !== undefined && isOpen(x); });
-  if (unresolved || open.some((f) => f.state === 'blocked')) return 'blocked';
-  return open.some((f) => f.state === 'inflight') ? 'inProgress' : 'notStarted';
+  if (t.status === 'blocked' || unresolved || open.some((f) => f.state === 'blocked')) return 'blocked';
+  return t.status === 'in-progress' || open.some((f) => f.state === 'inflight') ? 'inProgress' : 'notStarted';
 }
 
 function row(ctx: Ctx, t: Ticket): TicketRow {
@@ -160,13 +165,14 @@ function row(ctx: Ctx, t: Ticket): TicketRow {
 }
 
 /** The newest `updated` date in a tree, or undefined. */
-const newest = (forest: Forest, id: string): string | undefined => subtree(forest, id).map((x) => forest.byId.get(x)?.updated).filter((d): d is string => !!d).sort().at(-1);
+const newest = (ctx: Ctx, id: string): string | undefined => ctx.own(id).map((x) => ctx.forest.byId.get(x)?.updated).filter((d): d is string => !!d).sort().at(-1);
 
 function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
   const { forest, inp } = ctx;
   const t = forest.byId.get(id) as Ticket;
-  const roll = forest.roll(id);
-  const below = subtree(forest, id).filter((x) => x !== id).sort().map((x) => forest.byId.get(x) as Ticket);
+  const below = ctx.own(id).filter((x) => x !== id).sort().map((x) => forest.byId.get(x) as Ticket);
+  // Totals come from the tree this epic owns, so a nested epic another unit owns is not counted twice; with no such epic they equal forest.roll (and ticket.mjs).
+  const roll = { total: below.length, closed: below.filter((b) => b.status === 'closed').length, ptsTotal: below.reduce((n, b) => n + b.points, 0), ptsDone: below.filter((b) => b.status === 'closed').reduce((n, b) => n + b.points, 0) };
   const open = below.filter(isOpen);
   const counts = { inProgress: 0, blocked: 0, notStarted: 0 };
   for (const o of open) counts[bucketOf(ctx, o)] += 1;
@@ -178,7 +184,7 @@ function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
   if (big.length) unknowns.push({ kind: 'big-points', epic: id, text: `${id}: ${big.slice(0, LIST_IDS).join(', ')}${big.length > LIST_IDS ? ` and ${big.length - LIST_IDS} more` : ''} ${big.length === 1 ? 'is' : 'are'} pointed above ${SCALE_MAX}; the scale says split ${big.length === 1 ? 'it' : 'them'}.` });
   const unverified = below.filter((b) => b.status === 'closed' && !isVerified(b)).map((b) => b.id);
   if (required && unverified.length) unknowns.push({ kind: 'closed-not-verified', epic: id, text: `${id}: closed but not verified (no dated "## Verified" line): ${unverified.slice(0, LIST_IDS).join(', ')}${unverified.length > LIST_IDS ? ` and ${unverified.length - LIST_IDS} more` : ''}.` });
-  if (!section(t.body, /^## What done looks like\b/)?.trim()) unknowns.push({ kind: 'no-done-means', epic: id, text: `${id} has no "What done looks like" section; ask for one, do not guess it.` });
+  if (!section(t.body, /^## What done looks like\s*$/i)?.trim()) unknowns.push({ kind: 'no-done-means', epic: id, text: `${id} has no "What done looks like" section; ask for one, do not guess it.` });
   const key = trackerKey(inp.page, t);
   const rows = open.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   const next = rows.find((o) => bucketOf(ctx, o) === 'inProgress') ?? rows.find((o) => bucketOf(ctx, o) === 'notStarted');
@@ -190,11 +196,11 @@ function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
     points: pointed ? { done: roll.ptsDone, total: roll.ptsTotal, pointedOpen, open: open.length } : null,
     ...(next ? { next: row(ctx, next) } : {}),
     awaiting: [...tree, id].reduce((n, x) => n + (ctx.facts.get(x) ?? []).filter((f) => f.state === 'ask').length, 0),
-    unknowns: 0, quietDays: quiet(daysSince(newest(forest, id), inp.now)),
+    unknowns: 0, quietDays: quiet(daysSince(newest(ctx, id), inp.now)),
   };
 }
 
-/** The unknowns that belong to the stream as a whole; each epic's own were added by `epicSummary`. Fills in each epic's unknown count last. */
+/** The unknowns that belong to the stream as a whole; each epic's own were added by `epicSummary`. */
 function addStreamUnknowns(ctx: Ctx, out: Unknown[], s: { stream: string; mapping: ReturnType<typeof mapUnits>; owned: Set<string>; epicIds: string[]; forest: Forest }): void {
   const { forest, inp } = ctx;
   for (const [unit, a] of s.mapping.ambiguous) if (a.streams.includes(s.stream)) out.push({ kind: 'ambiguous-epic', epic: unit, text: `${unit} is claimed equally by ${a.streams.join(' and ')} (${a.rule}); pin it in stream-homes.json.` });
@@ -204,7 +210,10 @@ function addStreamUnknowns(ctx: Ctx, out: Unknown[], s: { stream: string; mappin
   }
   for (const loop of forest.cycles) if (loop.split(' -> ').some((x) => s.owned.has(x))) out.push({ kind: 'parent-cycle', text: `Parent loop ${loop}; one edge is ignored. Fix the parent of the last ticket.` });
   const projects = new Set([...(inp.homes.streams[s.stream]?.projects ?? []), ...[...s.owned].map((id) => (forest.byId.get(id) as Ticket).project)]);
-  for (const i of (inp.vault?.issues ?? []) as Issue[]) if (i.path && projects.has(i.path.split('/')[1] ?? '')) out.push({ kind: 'unreadable-note', text: i.text });
+  const issues = (inp.vault?.issues ?? []) as Issue[];
+  const mine = issues.filter((i) => !i.path?.split('/')[1] || projects.has(i.path.split('/')[1] as string));   // a vault-wide problem concerns every stream
+  for (const i of mine) out.push({ kind: 'unreadable-note', text: i.text });
+  if (issues.length > mine.length) out.push({ kind: 'unreadable-note', text: `${issues.length - mine.length} notes in other projects could not be read; a ticket there that is a parent or child of this stream's would be missing from its counts.` });
   const disagree: Unknown[] = [];
   for (const id of s.owned) {
     const t = forest.byId.get(id) as Ticket;

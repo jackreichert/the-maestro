@@ -73,3 +73,8 @@ test('readHomes: absent is not found, and a symlink, bad JSON or oversize file i
   symlinkSync(join(other, 'real.json'), join(other, 'sub', HOMES_FILE));
   assert.match(readHomes(join(other, 'sub'), KNOWN).warnings[0] ?? '', /not a regular file/);
 });
+
+test('a project or ticket id that is a secret-file name is dropped, so it is never echoed back', () => {
+  const h = validateHomes({ version: 1, streams: { Avonlea: { projects: ['credentials', 'ok-project'], epics: ['.env', 'ok-1'], exclude: ['id_rsa'] } } }, KNOWN);
+  assert.deepEqual([h.streams.Avonlea?.projects, h.streams.Avonlea?.epics, h.streams.Avonlea?.exclude], [['ok-project'], ['ok-1'], []]);
+});

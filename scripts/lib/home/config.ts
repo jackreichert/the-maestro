@@ -12,6 +12,8 @@ export const HOMES_FILE = 'stream-homes.json';
 const MAX_BYTES = 64 * 1024;
 const MAX_LIST = 50;
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** A project or ticket id that is not itself a secret-file name: such a name is refused by the reader and must not be echoed back. */
+const plainName = (v: unknown): boolean => typeof v === 'string' && PROJECT_NAME.test(v) && !hasSecretSegment(v);
 
 export type Pin = { label: string; url: string } | { label: string; note: string };
 export interface StreamHomeConfig { projects: string[]; epics: string[]; exclude: string[]; done: Record<string, string>; docs: string[]; runbooks: string[]; pins: Pin[] }
@@ -28,9 +30,9 @@ export function isHttpUrl(s: unknown): s is string {
 interface ElementRule { ok: (v: unknown) => boolean; why: string }
 /** What each list field's elements must be. */
 const ELEMENT_RULES: Record<'projects' | 'epics' | 'exclude' | 'docs' | 'runbooks', ElementRule> = {
-  projects: { ok: (v) => typeof v === 'string' && PROJECT_NAME.test(v), why: 'is not a project folder name' },
-  epics: { ok: (v) => typeof v === 'string' && PROJECT_NAME.test(v), why: 'is not a ticket id' },
-  exclude: { ok: (v) => typeof v === 'string' && PROJECT_NAME.test(v), why: 'is not a ticket id' },
+  projects: { ok: plainName, why: 'is not a project folder name' },
+  epics: { ok: plainName, why: 'is not a ticket id' },
+  exclude: { ok: plainName, why: 'is not a ticket id' },
   docs: { ok: isVaultNote, why: 'is not a vault-relative .md path' },
   runbooks: { ok: isVaultNote, why: 'is not a vault-relative .md path' },
 };
