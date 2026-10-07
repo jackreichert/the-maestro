@@ -20,6 +20,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { nextInterval } from '../lib/cadence.ts';
+import { stampAll } from '../lib/stamp.ts';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, WATCH_QUIET_HOURS, WATCH_QUIET_WEEKENDS, WATCH_TZ } from '../local-config.ts';
 import { prsDirtyAt } from '../lib/status-page/dirty.ts';
 import { readPrCache } from '../lib/status-page/prcache.ts';
@@ -67,8 +68,6 @@ export interface RefreshIo {
   regenerate(statusDir: string, cachedPrsOnly: boolean): string | undefined;
 }
 
-const stamp = (path: string): string => { try { const s = statSync(path); return `${s.mtimeMs}:${s.size}`; } catch { return '-'; } };
-
 const mtime = (path: string): number => { try { return statSync(path).mtimeMs; } catch { return 0; } };
 /** The page's modification time; before the first Podium is written, the legacy NOW.md page that readPodium falls back to. */
 const pageMtime = (dir: string): number => mtime(join(dir, PODIUM_FILE)) || mtime(join(dir, LEGACY_FILE));
@@ -77,7 +76,7 @@ export const realIo: RefreshIo = {
   ledgerSig: (statusDir) => {
     const project = CONFIGURED_PROJECT || CONTAINER_PROJECT;
     const root = join(LEDGER_ROOT || VAULT_ROOT, 'Projects', project);
-    return [join(root, 'Journal', 'ledger.jsonl'), join(root, 'streams.json'), join(statusDir, 'priorities.md')].map(stamp).join('|');
+    return stampAll([join(root, 'Journal', 'ledger.jsonl'), join(root, 'streams.json'), join(statusDir, 'priorities.md')]);
   },
   prsDirtyAt,
   userEditAt: (dir) => {
