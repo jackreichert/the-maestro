@@ -90,7 +90,7 @@ export class PodiumChart extends HTMLElement {
     const total = data.series.reduce((a, x) => a + (x.values[0] ?? 0), 0);
     const colors = seriesColors(data.series.map((x) => x.name));
     const legend = data.series.length > 1
-      ? h('ul', { class: 'legend', 'aria-label': 'Legend' }, ...data.series.map((x, i) => h('li', {}, swatch(colors[i]), x.name,
+      ? h('ul', { class: 'legend', role: 'list', 'aria-label': 'Legend' }, ...data.series.map((x, i) => h('li', {}, swatch(colors[i]), x.name,
         share && total > 0 ? h('span', { class: 'v' }, `${Math.round(((x.values[0] ?? 0) / total) * 100)}%`) : null)))
       : null;
     this.#caption.textContent = title;
