@@ -4,17 +4,18 @@
  */
 import {
   PR_BODY_SECTIONS, PR_BODY_CHECK_PRIVATE, PR_BODY_PRIVATE_WORDS, PR_BODY_PRIVATE_PATTERNS, PR_BODY_CHECK_VOICE, PR_BODY_CHECK_COUNTS, PR_BODY_VOICE_NAMES, PR_BODY_CHECK_RISK, PR_BODY_CHECK_VERIFY, PR_BODY_CHECK_FORBIDDEN, PR_BODY_CHECK_DIAGRAM, PR_DIAGRAM_MIN_FILES,
+  PR_BODY_CHECK_STACK, PR_BODY_CHECK_ORDER, PR_REVIEW_ORDER_MIN_FILES,
 } from './local-config.ts';
 
 /** Which rules run. Each switch maps to a local-config key (`pr_body_*`); the defaults are the configured values. */
-export interface BodyRules { sections: string[]; risk: boolean; verify: boolean; forbidden: boolean; diagram: boolean; diagramMinFiles: number;
+export interface BodyRules { sections: string[]; risk: boolean; verify: boolean; forbidden: boolean; diagram: boolean; diagramMinFiles: number; stack: boolean; order: boolean; orderMinFiles: number;
   private: boolean; privateWords: string[]; privatePatterns: string[]; voice: boolean; voiceNames: string[]; counts: boolean }
 /** What the diff says about the PR, for the rules that need it. */
 export interface BodyContext { stacked: boolean; codeFiles: number; title?: string }
 
 export const DEFAULT_RULES: BodyRules = {
   sections: PR_BODY_SECTIONS, risk: PR_BODY_CHECK_RISK, verify: PR_BODY_CHECK_VERIFY, forbidden: PR_BODY_CHECK_FORBIDDEN,
-  diagram: PR_BODY_CHECK_DIAGRAM, diagramMinFiles: PR_DIAGRAM_MIN_FILES,
+  diagram: PR_BODY_CHECK_DIAGRAM, diagramMinFiles: PR_DIAGRAM_MIN_FILES, stack: PR_BODY_CHECK_STACK, order: PR_BODY_CHECK_ORDER, orderMinFiles: PR_REVIEW_ORDER_MIN_FILES,
   private: PR_BODY_CHECK_PRIVATE, privateWords: PR_BODY_PRIVATE_WORDS, privatePatterns: PR_BODY_PRIVATE_PATTERNS, voice: PR_BODY_CHECK_VOICE, voiceNames: PR_BODY_VOICE_NAMES, counts: PR_BODY_CHECK_COUNTS,
 };
 
@@ -125,6 +126,41 @@ function verifyProblems(sections: Map<string, string>): string[] {
   return ['the verify section has no fenced code block with a command (or "n/a, <reason>")'];
 }
 
+/** A stacked PR names the PR below it, so a reviewer does not flag as missing what lives upstack (reference/git.md#pr-body). */
+function stackProblems(sections: Map<string, string>, ctx: BodyContext): string[] {
+  if (!ctx.stacked) return [];
+  const text = sectionMatching(sections, /^stack/);
+  if (text === undefined) return ['a stacked PR needs a "## Stack" section naming its base PR (or "n/a, <reason>")'];
+  if (naWithReason(text) || /(?:base|on top of|depends on|stacked on)\W{0,12}(?:#\d+|\S*\/pull\/\d+)/i.test(text)) return [];
+  return ['the "## Stack" section names no base PR (write "Base: #<n>" or a PR link, or "n/a, <reason>")'];
+}
+
+/** The label line of a bullet plus the lines nested under it (indented deeper), as one string. */
+function bulletSpan(text: string, label: RegExp): string | undefined {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => label.test(l));
+  if (at < 0) return undefined;
+  const indent = (l: string): number => l.length - l.trimStart().length;
+  const rest = [];
+  for (const l of lines.slice(at + 1)) {
+    if (!l.trim() || indent(l) <= indent(lines[at])) break;
+    rest.push(l);
+  }
+  return [lines[at], ...rest].join('\n');
+}
+
+/** Past a few files, the Reviewer guide says where to start reading: a "Review order:" bullet (nested lines count) that points at files. */
+function orderProblems(sections: Map<string, string>, ctx: BodyContext, min: number): string[] {
+  if (ctx.codeFiles <= min) return [];
+  const guide = sectionMatching(sections, /^reviewer guide/);
+  if (guide === undefined) return [];
+  const span = bulletSpan(guide, /review order\s*:/i);
+  if (span === undefined) return [`a PR over ${min} code files needs a "Review order:" line in the Reviewer guide (or "Review order: n/a, <reason>")`];
+  const after = span.replace(/^[\s\S]*?review order\s*:/i, '');
+  if (/^\s*n\/a\b[\s,:;.-]*\S/i.test(after) || /\{\{file:[^}]+\}\}|`(?:[^`\s]*\/[^`\s]+|[^`\s]+\.[a-z][a-z0-9]{0,5})`/i.test(after)) return [];
+  return ['the "Review order:" line names no file (use {{file:path}} or a `path` in code)'];
+}
+
 const forbiddenProblems = (body: string): string[] => FORBIDDEN.filter(([, re]) => re.test(body)).map(([what]) => `the body contains ${what}`);
 
 function diagramProblems(raw: string, ctx: BodyContext, min: number): string[] {
@@ -147,6 +183,8 @@ export function bodyProblems(body: string, rules: BodyRules = DEFAULT_RULES, ctx
     ...(rules.risk ? riskProblems(sections) : []),
     ...(rules.verify ? verifyProblems(sections) : []),
     ...(rules.diagram ? diagramProblems(body, ctx, rules.diagramMinFiles) : []),
+    ...(rules.stack ? stackProblems(sections, ctx) : []),
+    ...(rules.order ? orderProblems(sections, ctx, rules.orderMinFiles) : []),
     ...(rules.forbidden ? forbiddenProblems(body) : []),
     ...lineProblems(body, 'the body', rules),
     ...(ctx.title ? lineProblems(ctx.title, 'the title', rules) : []),

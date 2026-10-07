@@ -50,6 +50,7 @@ pr_body_private_words: ledger, vault # words refused outside code in a PR title 
 pr_body_private_patterns: \bX-\d+\b # extra regexes for private ids a PR must not carry (comma-separated, no commas inside); checked in title and body
 pr_body_voice_names: Sam, samf # your names or logins that must not appear in the third person; also pr_body_check_private, pr_body_check_voice and pr_body_check_counts (on/off)
 pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>`; default 3
+pr_body_check_stack: on         # stacked PR needs a Stack section naming its base PR; also pr_body_check_order (Review order line over pr_review_order_min_files code files, default 3); on by default
 pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off
 review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on

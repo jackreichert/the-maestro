@@ -38,7 +38,7 @@ function fixture(files: Record<string, string>) {
     return { repo, log, gh };
 }
 
-const NONE: BodyRules = { sections: [], risk: false, verify: false, forbidden: false, diagram: false, diagramMinFiles: 3, private: false, privateWords: [], privatePatterns: [], voice: false, voiceNames: [], counts: false };
+const NONE: BodyRules = { sections: [], risk: false, verify: false, forbidden: false, diagram: false, diagramMinFiles: 3, private: false, privateWords: [], privatePatterns: [], voice: false, voiceNames: [], counts: false, stack: false, order: false, orderMinFiles: 3 };
 const TWO: BodyRules = { ...NONE, sections: ['Context', 'Reviewer guide'] };
 const GOOD_BODY = [
     '## Context', 'Why this exists and what changed.',
@@ -243,6 +243,34 @@ test('bodyProblems: a stacked or wide PR needs a mermaid diagram or a Diagram: n
     assert.deepEqual(d('Diagram: n/a, one-line config change', { stacked: true, codeFiles: 1 }), []);
     assert.equal(d('Diagram: n/a', { stacked: true, codeFiles: 1 }).length, 1, 'n/a needs a reason');
     assert.deepEqual(bodyProblems('## Context\nx\n', { ...NONE, diagram: true, diagramMinFiles: 9 }, { stacked: false, codeFiles: 8 }), []);
+});
+
+test('bodyProblems: a stacked PR names its base PR in a Stack section, or says n/a with a reason', () => {
+    const st = (text: string, ctx = { stacked: true, codeFiles: 1 }) => bodyProblems(`## Context\nx\n${text}`, { ...NONE, stack: true }, ctx);
+    assert.deepEqual(st('', { stacked: false, codeFiles: 1 }), [], 'not stacked: no Stack section needed');
+    assert.match(st('')[0], /stacked PR needs a "## Stack" section/);
+    assert.match(st('## Stack\n_TBD_\n')[0], /"## Stack" section names no base PR/);
+    assert.match(st('## Stack\nPosition: 2 of 4, standalone review: yes\n')[0], /names no base PR/);
+    assert.match(st('## Stack\nPosition: 2 of 4, see ticket #123\n')[0], /names no base PR/, 'a bare number is not a base');
+    assert.deepEqual(st('## Stack\nPosition: 2 of 4. Base: #12. Standalone review: yes\n'), []);
+    assert.deepEqual(st('## Stack\nBase: https://github.com/o/r/pull/12\n'), []);
+    assert.deepEqual(st('## Stack\nn/a, the base is a long-lived release branch\n'), []);
+    assert.deepEqual(bodyProblems('## Context\nx\n', NONE, { stacked: true, codeFiles: 1 }), [], 'switched off');
+});
+
+test('bodyProblems: a PR over the file threshold gives a review order that points at files', () => {
+    const rg = (text: string, ctx = { stacked: false, codeFiles: 4 }) => bodyProblems(`## Context\nx\n## Reviewer guide\n${text}\n`, { ...NONE, order: true }, ctx);
+    assert.deepEqual(rg('- Validated: ran it', { stacked: false, codeFiles: 3 }), [], 'at the threshold: only over it');
+    assert.match(rg('- Validated: ran it')[0], /needs a "Review order:" line in the Reviewer guide/);
+    assert.match(rg('- Review order: read the core first')[0], /names no file/);
+    assert.deepEqual(rg('- Review order: 1. {{file:src/core.ts}} 2. {{file:src/core.test.ts}}'), []);
+    assert.deepEqual(rg('- Review order: 1. `src/core.ts` then the tests'), []);
+    assert.deepEqual(rg('- Review order: n/a, the files are independent'), []);
+    assert.deepEqual(rg('- Review order:\n  1. {{file:src/core.ts}}\n  2. {{file:src/b.ts}}\n- Skim-safe: none'), [], 'files nested under the label count');
+    assert.match(rg('- Review order:\n- Skim-safe: {{file:src/x.ts}}')[0], /names no file/, 'a sibling bullet does not count');
+    assert.match(rg('- Review order: start with the `e.g.` part and `v1.2`')[0], /names no file/, 'a backtick token must look like a path');
+    assert.deepEqual(bodyProblems('## Context\nx\n', { ...NONE, order: true, orderMinFiles: 9 }, { stacked: false, codeFiles: 9 }), []);
+    assert.deepEqual(bodyProblems('## Context\nx\n', NONE, { stacked: false, codeFiles: 8 }), [], 'switched off');
 });
 
 test('pr-open runs the structural rules end to end: a stacked base needs a diagram, a bad risk line refuses', () => {
