@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { bodyProblems } from './pr-open.ts';
+import { bodyProblems } from './pr-body.ts';
 
 const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
 
