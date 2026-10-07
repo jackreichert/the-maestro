@@ -12,7 +12,7 @@ import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
 import type { BoardContext } from './board.ts';
 
 /** What the handoff draft reads from the run: the ledger, its fold, the clock and the transcript directory for the session line. */
-export interface HandoffContext { fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string }
+export interface HandoffContext { fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string; /** Every standing pickup with its runtime status, as lines (the same block `prime` prints, whole). */ standing?: () => string[] }
 /** A PR, ref, ticket or path an item mentions. */
 export interface Artifact { kind: string; v: string }
 type KeptWorktree = { path: string; repo: string; reason: string };
@@ -103,6 +103,8 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
         ] : ['_none_']), '',
         '## 5. Next concrete action', '',
         next || '_Author: one concrete first step for the fresh session._', '',
+        '## Standing pickups', '',
+        ...((ctx.standing?.() ?? []).length ? ['Duties to pick up without being reminded, checked just now. Copy this block into the handoff unedited.', '', ...(ctx.standing?.() ?? []).map((l) => (l.startsWith('  ') ? `- ${l.trim()}` : `**${l}**`))] : ['_none_']), '',
         '## Cleanup candidates', '',
         '_Run `node scripts/branch-sweep.ts` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
         ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
