@@ -5,12 +5,17 @@
  *
  *   node scripts/pr-open.ts --repo <path> --base <branch> --title <t> --body-file <f> [--head <branch>] [--dry-run]
  *
- * The body file is required and must hold a `## Context` and a `## Reviewer guide` section, each with real
- * content (not empty, not a placeholder such as TBD or TODO); otherwise exit 1 and gh is never called.
+ * The body file is required and must pass the body rules in pr-body.ts (the sections in pr_body_sections with
+ * real content, a Risk line, a fenced verify command, a diagram when stacked or wide, no forbidden content);
+ * otherwise exit 1 and gh is never called.
+ * File tokens: `{{file:<path>}}` in the body become links to that file in the PR's Files changed tab once the PR
+ * exists (pr-links.ts); a path outside the diff refuses before anything is created.
+ *
  * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
  * never calls gh. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
  * be turned off; no other gh flag passes through. --dry-run prints the gh command instead of running it.
- * Exit 0 opened (or dry run), 1 refused by the gate, 2 bad usage or a git/gh error.
+ * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
+ * opened but its file links could not be expanded (run pr-guide-links.ts).
  * The gh binary is `gh`, or the path in MAESTRO_GH_BIN (tests use a fake).
  */
 import { spawnSync } from 'node:child_process';
@@ -19,7 +24,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
 import { PROTECTED_BRANCHES } from './local-config.ts';
-import { globToRegExp } from './pr-size.ts';
+import { globToRegExp, resolveBase } from './pr-size.ts';
+import { linkPr, tokenPaths, hasLooseToken } from './pr-links.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -53,7 +59,7 @@ export function parseArgs(argv: string[]): OpenArgs {
 export const ghArgs = ({ base, pass }: Pick<OpenArgs, 'base' | 'pass'>): string[] => ['pr', 'create', '--draft', '--assignee', '@me', '--base', base, ...pass];
 
 /** Read and check the --body-file; the gh argument is rewritten to the absolute path that was checked. */
-function checkBody(o: OpenArgs): void {
+function checkBody(o: OpenArgs): string {
   const i = flagIndex(o.pass, '--body-file');
   if (i < 0 || !o.pass[i + 1]) {
     console.error('pr-open: refused, --body-file is required. The body needs the sections in pr_body_sections, by default Context, Reviewer guide, Risk and blast radius, Rollback / flag and How to verify locally (see reference/git.md#pr-body).');
@@ -68,6 +74,7 @@ function checkBody(o: OpenArgs): void {
     process.exit(1);
   }
   o.pass[i + 1] = path;
+  return body;
 }
 
 /** What the diff says about the PR: whether it targets a non-default branch (stacked) and how many code files it changes. */
@@ -76,12 +83,13 @@ function diffContext(o: OpenArgs): BodyContext {
   const r = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, '--json', ...(head ? ['--head', head] : [])], { encoding: 'utf8' });
   let codeFiles = 0;
   try { codeFiles = (JSON.parse(r.stdout) as { code: { files: number } }).code.files; } catch { /* the size gate reports the real error next */ }
-  return { stacked: !PROTECTED_BRANCHES.some((g) => globToRegExp(g).test(o.base)), codeFiles };
+  const t = flagIndex(o.pass, '--title');
+  return { stacked: !PROTECTED_BRANCHES.some((g) => globToRegExp(g).test(o.base)), codeFiles, title: t >= 0 ? o.pass[t + 1] : '' };
 }
 
 function main(): void {
   const o = parseArgs(process.argv.slice(2));
-  checkBody(o);
+  const body = checkBody(o);
   const gate = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, ...(headOf(o) ? ['--head', headOf(o)] : [])], { encoding: 'utf8' });
   process.stdout.write(gate.stdout || '');
   if (gate.status === 1) {
@@ -89,11 +97,35 @@ function main(): void {
     process.exit(1);
   }
   if (gate.status !== 0) { console.error(gate.stderr || 'pr-open: pr-size failed'); process.exit(2); }
+  checkLinkPaths(o, body);
   const gh = process.env.MAESTRO_GH_BIN || 'gh';
   const args = ghArgs(o);
   if (o.dryRun) { console.log(`${gh} ${args.join(' ')}`); return; }
-  const r = spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit' });
-  process.exit(r.status ?? 2);
+  if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit' }).status ?? 2);
+  const r = spawnSync(gh, args, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8' });
+  process.stdout.write(r.stdout || '');
+  if (r.status !== 0) process.exit(r.status ?? 2);
+  const pr = /\/pull\/(\d+)/.exec(r.stdout || '')?.[1];
+  const err = pr ? linkPr(o.repo, Number(pr), body) : 'gh did not print the PR url';
+  if (err) { console.error(`pr-open: the PR is open, but its file links were not expanded: ${err}. Fix and run pr-guide-links.ts ${o.repo} ${pr ?? '<pr-number>'}.`); process.exit(3); }
+}
+
+/** Refuses before creating anything when a `{{file:...}}` token names a path that is not in the diff. */
+function checkLinkPaths(o: OpenArgs, body: string): void {
+  const wanted = [...new Set(tokenPaths(body))];
+  if ((body.match(/\{\{file:/g) ?? []).length !== tokenPaths(body).length) {
+    console.error('pr-open: refused, a {{file:...}} token could not be read. A token is {{file:path}} or {{file:path#R42}} with the closing braces.');
+    process.exit(1);
+  }
+  if (!wanted.length) return;
+  const head = headOf(o) || 'HEAD';
+  const r = spawnSync('git', ['-C', o.repo, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '-M', `${resolveBase(o.repo, o.base)}...${head}`], { encoding: 'utf8' });
+  const changed = new Set((r.stdout || '').split('\0').filter(Boolean));
+  const missing = wanted.filter((p) => !changed.has(p));
+  if (r.status !== 0 || missing.length) {
+    console.error(r.status !== 0 ? `pr-open: cannot list the diff to check the {{file:...}} tokens: ${r.stderr.trim()}` : `pr-open: refused, these {{file:...}} paths are not in the diff: ${missing.join(', ')}. Link only files this PR changes (see reference/git.md#reviewer-guide-links).`);
+    process.exit(r.status !== 0 ? 2 : 1);
+  }
 }
 
 /** Index of a flag among the flag positions of `pass` (even indices), never a value that looks like one. */

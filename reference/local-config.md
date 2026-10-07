@@ -46,6 +46,9 @@ pr_max_code_files: 5           # PR size budget: most code files per PR; default
 pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400
 pr_body_sections: Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally # headings pr-open.ts requires in every PR body; this is the default list
 pr_body_check_risk: on         # also: pr_body_check_verify, pr_body_check_forbidden, pr_body_check_diagram; each on by default, off turns it off
+pr_body_private_words: ledger, vault # words refused outside code in a PR title or body; default ledger, vault, Podium, orchestrator; `none` empties the list
+pr_body_private_patterns: \bX-\d+\b # extra regexes for private ids a PR must not carry (comma-separated, no commas inside); checked in title and body
+pr_body_voice_names: Sam, samf # your names or logins that must not appear in the third person; also pr_body_check_private and pr_body_check_voice (on/off)
 pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>`; default 3
 review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
@@ -130,7 +133,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |
 | PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`) | git.md, `scripts/pr-size.ts` |
-| PR body rules: required sections (`pr_body_sections`), per-check switches (`pr_body_check_risk`, `_verify`, `_forbidden`, `_diagram`) and the diagram file threshold (`pr_diagram_min_files`) | git.md#pr-body, `scripts/pr-body.ts` |
+| PR body rules: required sections (`pr_body_sections`), per-check switches (`pr_body_check_risk`, `_verify`, `_forbidden`, `_diagram`) the diagram file threshold (`pr_diagram_min_files`), and the private-reference and voice checks (`pr_body_check_private`, `pr_body_private_words`, `pr_body_private_patterns`, `pr_body_check_voice`, `pr_body_voice_names`) | git.md#pr-body, `scripts/pr-body.ts` |
 
 ## Issue tracker
 
