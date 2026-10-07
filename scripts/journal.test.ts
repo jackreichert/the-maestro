@@ -2072,6 +2072,26 @@ test('prime says when a supervisor is set up and not running, with the board sti
     assert.match(run('prime').out, /^Loop supervisor: NOT RUNNING \(installed at .*never seen alive\)/m);
 });
 
+test('the Loop line: silent with nothing set up, NOT INSTALLED when required, then ok, STALLED and DOWN from the heartbeat, in the footer and in prime', () => {
+    run('log', 'an open item', '--kind', 'inflight', '--stream', 'S', '--new-stream', ...MARK);
+    const events = join(vault, 'Events');
+    const beat = (pid: number, ageMin: number, over = {}) => writeFileSync(join(events, 'heartbeat.json'), JSON.stringify({ pid, at: new Date(Date.now() - ageMin * 60_000).toISOString(), tick: 1, watchesLive: 1, sleepingUntil: null, mode: 'run', lastError: '', ...over }));
+    const required = { MAESTRO_LOOP_SUPERVISOR: 'required', MAESTRO_EVENT_DIR: events, MAESTRO_PROJECTS_DIR: projects, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents') };
+    assert.doesNotMatch(run('status', '--footer').out, /Loop:/);
+    assert.doesNotMatch(run('prime').out, /^Loop:/m);
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* NOT INSTALLED/m);
+    mkdirSync(events, { recursive: true });
+    beat(process.pid, 2);
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* ok 2 min$/m);
+    assert.match(runEnv(required, 'prime').out, /^Loop: ok 2 min$/m);
+    beat(process.pid, 30);
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* STALLED 30 min/m);
+    beat(2 ** 22 + 12345, 30);
+    writeFileSync(join(events, 'supervisor.json'), JSON.stringify({ pid: 2 ** 22 + 12345, startedAt: '2026-10-06T10:00:00Z' }));
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* DOWN since /m);
+    assert.match(runEnv(required, 'prime').out, /^Loop: DOWN since /m);
+});
+
 test('prime on an empty ledger says so and creates nothing', () => {
     const out = run('prime');
     assert.equal(out.code, 0, out.err);
@@ -2312,7 +2332,7 @@ test('status and status --footer show the review queue from the stored snapshot,
     mkdirSync(journalDir, { recursive: true });
     const snapshot = (takenAt: string, ...drafts: boolean[]) => writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt, prs: drafts.map((isDraft) => ({ isDraft })) }));
     const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', ...env },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents'), ...env },
     }).stdout;
     snapshot(new Date().toISOString(), false, false, true);
     assert.match(status([]), /\n {2}review queue: 2 of 4\n$/);

@@ -8,7 +8,7 @@
  *    It goes through `event-loop.ts add`, so each type's own validation, singleton rule and default TTL apply. A watch past its
  *    `expires` that the loop has not retired yet is removed first and registered again.
  * 2. Reports the status page's age (the mtime of The-Podium.md). A page older than 15 minutes means nothing is refreshing it.
- * 3. Reports whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
+ * 3. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
  *    run_in_background (its exit wakes the orchestrator), and a detached child would exit unseen. With no loop it prints the exact command.
  *
  * Exit 0 when nothing failed, 1 when a watch could not be registered (or the registry could not be read), 2 on a usage or configuration error (no status directory).
@@ -22,6 +22,7 @@ import { CONTAINER_PROJECT, EVENT_DIR, statusDirFor, WATCH_TZ } from './local-co
 import { PODIUM_FILE } from './lib/status-page/seen.ts';
 import { listWatches, lockHolder, removeWatch } from './lib/watch-registry.ts';
 import type { Watch } from './lib/types.ts';
+import { liveLoopHealth } from './lib/loop-health-live.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 /** The watches a session needs, keyed by the id used when one is missing. */
@@ -44,6 +45,8 @@ export interface StartDeps {
   loopCommand: string;
   /** The command that waits for the supervisor's saved digests. */
   waitCommand: string;
+  /** The `Loop:` verdict line (heartbeat age, STALLED, DOWN...); empty or absent when there is nothing to say. */
+  loopHealth?: () => string;
 }
 
 export interface StartReport { lines: string[]; failed: boolean }
@@ -85,6 +88,8 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
     const age = deps.now - written;
     lines.push(`Status page: updated ${ageText(age)} ago (${clock(written, deps.tz)})${age > STALE_MS ? '; STALE, nothing is refreshing it until the loop runs' : ''}`);
   }
+  const health = deps.loopHealth?.().replace(/\*\*/g, '');
+  if (health) lines.push(health);
   const holder = deps.lockHolder();
   lines.push(holder === null
     ? `Event loop: NOT RUNNING. Start it now with run_in_background: ${deps.loopCommand}`
@@ -112,6 +117,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     pageWrittenAt: (dir) => { const file = join(dir, PODIUM_FILE); return existsSync(file) ? statSync(file).mtimeMs : null; },
     loopCommand: `node ${shq(loop)} run`,
     waitCommand: `node ${shq(loop)} digest-wait`,
+    loopHealth: () => liveLoopHealth(now).line,
   };
 }
 

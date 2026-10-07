@@ -118,3 +118,10 @@ test('a status directory that does not exist fails the registration with the typ
   assert.equal(r.status, 1);
   assert.match(r.stdout, /NOT registered.*must be the status directory/);
 });
+
+test('the loop health verdict prints just before the event loop line, without footer markup, and nothing when it is empty', () => {
+  const said = sessionStart('/s', world({ loopHealth: () => '**Loop:** STALLED 20 min (no heartbeat since 1:40 PM EDT)' }).deps).lines;
+  assert.equal(said[3], 'Loop: STALLED 20 min (no heartbeat since 1:40 PM EDT)');
+  assert.match(said[4], /^Event loop:/);
+  assert.equal(sessionStart('/s', world({ loopHealth: () => '' }).deps).lines.length, 4);
+});
