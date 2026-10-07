@@ -11,6 +11,7 @@ import { buildRoutes, TYPES } from '../../web/serve-static.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
+import { buildHome } from './home.ts';
 
 export interface WebServerOptions {
   web: WebConfig;
@@ -49,6 +50,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
   return [
     { method: 'GET', pattern: /^\/api\/state$/, handler: () => buildState(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
+    { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/link-hosts$/, handler: () => ({ atlassian: o.trustedAtlassianHosts ?? [] }) },
     { method: 'GET', pattern: /^\/api\/charts$/, handler: (u) => buildCharts(o.web, daysParam(u), now()) },
   ];
