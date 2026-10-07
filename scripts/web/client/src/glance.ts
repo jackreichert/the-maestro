@@ -85,3 +85,9 @@ export function oldestFirst<T extends { ageDays: number; ts: string }>(asks: T[]
   const at = (t: string): number => { const n = Date.parse(t); return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; };
   return asks.map((a, i) => ({ a, i })).sort((x, y) => (y.a.ageDays - x.a.ageDays) || (at(x.a.ts) - at(y.a.ts)) || (x.i - y.i)).map((x) => x.a);
 }
+
+/** The text an answer is copied as, for pasting into the orchestrator chat: "<ask id>: <answer>". Null for a blank answer. */
+export function chatAnswer(id: string, answer: string): string | null {
+  const text = answer.trim();
+  return text ? `${id}: ${text}` : null;
+}

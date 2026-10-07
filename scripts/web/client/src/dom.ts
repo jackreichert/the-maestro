@@ -100,6 +100,8 @@ export const UI_CSS = `
   .tone-success .head .glyph { color: var(--success); }
   .tone-accent .head .glyph { color: var(--accent); }
 
+  .section-hint { margin: calc(-1 * var(--space-2)) 0 var(--space-3); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); max-width: 70ch; }
+  kbd { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1; padding: 2px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-1); color: var(--text-secondary); white-space: nowrap; }
   .empty { margin: 0; padding: var(--space-3) 0; color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-sm); border-top: 1px solid var(--border); }
   .asks { border-top: 1px solid var(--border); }
   button.more {

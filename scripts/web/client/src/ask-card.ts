@@ -1,5 +1,5 @@
 import { BASE_CSS, UI_CSS, h, refLink, shadow, streamTag } from './dom.ts';
-import { askAge } from './glance.ts';
+import { askAge, chatAnswer } from './glance.ts';
 import type { AskCard, AskResolveDetail } from './types.ts';
 
 /** Older than this many days an ask is flagged, matching the Markdown page's 3 day threshold. */
@@ -58,9 +58,18 @@ const CSS = `${BASE_CSS}${UI_CSS}
     transition: border-color var(--dur-fast) var(--ease-out);
   }
   textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--focus); }
-  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
-  .hint { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
-  kbd { font-family: var(--font-mono); font-size: var(--text-xs); padding: 0 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-1); color: var(--text-secondary); }
+  textarea[aria-invalid=true] { border-color: var(--critical); }
+  .error { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--critical); }
+  .error[hidden], .copied[hidden] { display: none; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+  button.quiet {
+    font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); color: var(--text-secondary);
+    min-height: 36px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  }
+  @media (hover: hover) { button.quiet:hover { background: var(--surface-2); color: var(--text-primary); } }
+  .copied { margin-left: var(--space-2); font-size: var(--text-sm); font-weight: var(--weight-regular); color: var(--text-secondary); }
+  :host([answered]:not([open])) button.ask-toggle { color: var(--text-secondary); }
 
   .resolved { margin-top: var(--space-4); display: grid; gap: var(--space-1); animation: enter var(--dur-base) var(--ease-out); }
   .resolved:focus { outline: none; }
@@ -68,13 +77,9 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .resolved .unsaved { margin: 0; width: fit-content; padding: 2px var(--space-2); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); }
   .resolved button { justify-self: start; margin-top: var(--space-1); }
   .resolved blockquote { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); overflow-wrap: anywhere; }
-  .note { margin: var(--space-3) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
   .resolved .note { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
   @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
 `;
-
-/** True on Apple platforms, where the submit shortcut is shown with the Command key. */
-const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /**
  * <ask-card>: one decision awaiting Jack, drawn as a single row (id, decision, stream, age). Clicking the row, or Enter
@@ -98,9 +103,9 @@ export class AskCardElement extends HTMLElement {
     this.#render();
   }
 
-  /** True while the page shows sample data: an opened ask has no answer field or Done button. */
+  /** True while the page shows sample data: an opened ask has no answer field or copy button. */
   get locked(): boolean { return this.#locked; }
-  // The lock only leaves the controls out: whatever handles `ask-resolve` must check its data source itself.
+  // The lock only leaves the controls out: whatever handles `ask-resolve` (fired once an answer is copied) must check its data source itself.
   set locked(v: boolean) { this.#locked = v; this.#render(); }
 
   /** Name the card's stream (with a link to its tab), for views that mix streams. */
@@ -118,22 +123,23 @@ export class AskCardElement extends HTMLElement {
     const stale = a.ageDays > STALE_DAYS;
     const links = [...(a.links.note ? [a.links.note] : []), ...a.links.tracker, ...a.links.prs];
     const toggle = h('button', { type: 'button', class: 'ask-toggle', id: `${uid}-h`, 'aria-expanded': 'false', 'aria-controls': `${uid}-b` }, a.needed);
-    // Every ask has a "Your answer" field and a Done button; tie each to its decision so a controls list tells them apart.
-    const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': [`${uid}-h`, a.context ? `${uid}-c` : '', `${uid}-k`].filter(Boolean).join(' ') });
-    const done = h('button', { type: 'button', class: 'primary', 'aria-describedby': `${uid}-h` }, 'Done');
-    // Sample data: no answer field at all, just the reason, so a locked board stays compact and nothing looks pressable.
-    const form = this.#locked
-      ? h('p', { class: 'note' }, 'Sample data: this ask cannot be answered here.')
+    // Every ask has a "Your answer" field and a copy button; tie each to its decision so a controls list tells them apart.
+    const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': [`${uid}-h`, a.context ? `${uid}-c` : ''].filter(Boolean).join(' ') });
+    const copy = h('button', { type: 'button', class: 'secondary', 'aria-describedby': `${uid}-h` }, 'Copy answer for chat');
+    const error = h('p', { class: 'error', id: `${uid}-e`, hidden: true }, 'Write an answer first: there is no approve-as-asked shortcut here.');
+    // Sample data: no answer field at all (the section head says why), so a locked board has nothing that looks pressable.
+    const form = this.#locked ? null
       : h('div', { class: 'form' },
         h('label', { for: `${uid}-t` }, 'Your answer'),
         answer,
-        h('div', { class: 'actions' }, done,
-          h('span', { class: 'hint', id: `${uid}-k` }, h('kbd', {}, APPLE ? '⌘+Enter' : 'Ctrl+Enter'), ' also marks it done. Leave the answer empty to approve as asked.')));
+        error,
+        h('div', { class: 'actions' }, copy));
     const body = h('div', { class: 'body', id: `${uid}-b`, hidden: true },
       a.context ? h('p', { class: 'context', id: `${uid}-c` }, a.context) : null,
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
       links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
       form);
+    const copied = h('span', { class: 'copied', hidden: true }, 'copied');
     const row = h('div', { class: 'row' },
       h('span', { class: 'id' }, h('span', { class: 'vh' }, 'Ask '), a.id),
       h('h3', {}, toggle),
@@ -141,6 +147,7 @@ export class AskCardElement extends HTMLElement {
       h('span', { class: `age${stale ? ' stale' : ''}` },
         h('span', { class: 'vh' }, a.ageDays < 1 ? 'asked ' : 'waiting '), askAge(a.ageDays), stale ? h('span', { class: 'vh' }, ', stale') : null,
         h('span', { class: 'chev', 'aria-hidden': 'true' })));
+    toggle.append(copied);
     const article = h('article', { 'aria-labelledby': `${uid}-h` }, row, body);
 
     let isOpen = false;
@@ -149,7 +156,7 @@ export class AskCardElement extends HTMLElement {
       toggle.setAttribute('aria-expanded', String(open));
       body.hidden = !open;
       this.toggleAttribute('open', open);
-      if (open && focusField && answer.isConnected) answer.focus();
+      if (open && focusField && form?.isConnected) answer.focus();
     };
     toggle.addEventListener('click', () => setOpen(!isOpen, true));
     // The rest of the row opens it too, except the controls inside it (the stream link keeps its own job).
@@ -162,27 +169,48 @@ export class AskCardElement extends HTMLElement {
       if (e.key === 'Escape') { e.preventDefault(); setOpen(false, false); toggle.focus(); }
     });
 
-    const resolve = (): void => {
-      if (this.#locked || !form.isConnected) return;
-      const detail: AskResolveDetail = { id: a.id, answer: answer.value.trim() };
-      this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail, bubbles: true, composed: true }));
-      // Honest optimistic feedback: the ask settles at once, but says plainly that nothing reached the ledger, and offers
-      // the answer for copying into the orchestrator chat. Focus moves here (no live region, so it is read once).
-      const copy = detail.answer ? h('button', { type: 'button', class: 'secondary' }, 'Copy answer') : null;
-      copy?.addEventListener('click', () => {
-        navigator.clipboard?.writeText(detail.answer).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed: select the text instead'; });
-      });
-      const status = h('div', { class: 'resolved', tabindex: '-1', 'aria-label': `Ask ${a.id} marked done on this page` },
-        h('p', { class: 'done' }, 'Marked done on this page'),
-        detail.answer ? h('blockquote', {}, detail.answer) : h('p', { class: 'note' }, 'No answer: approve as asked.'),
-        h('p', { class: 'unsaved' }, h('span', { 'aria-hidden': 'true' }, '⚠︎ '), 'Not saved: this page cannot write to the ledger yet. Tell the orchestrator in chat.'),
-        copy);
-      form.replaceWith(status);
+    // The page cannot write to the ledger yet, so answering is copying: the clipboard gets "<id>: <answer>" for the
+    // orchestrator chat, and the ask says plainly that nothing was saved. Focus moves to that status (read once, no live region).
+    const showStatus = (text: string, ok: boolean): void => {
+      const head = h('p', { class: 'done', id: `${uid}-s` }, ok ? 'Copied for chat' : 'Could not copy');
+      const again = h('button', { type: 'button', class: 'secondary' }, ok ? 'Copy again' : 'Try again');
+      const edit = h('button', { type: 'button', class: 'quiet' }, 'Edit answer');
+      const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s` },
+        head,
+        h('blockquote', { class: ok ? undefined : 'select' }, text),
+        h('p', { class: 'unsaved' }, ok
+          ? 'Not saved: paste it into the orchestrator chat. This page cannot write to the ledger yet.'
+          : 'Select the answer above and copy it by hand. This page cannot write to the ledger yet.'),
+        h('div', { class: 'actions' }, again, edit));
+      again.addEventListener('click', () => { void send(text); });
+      edit.addEventListener('click', () => { status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
+      (form?.isConnected ? form : body.querySelector('.resolved'))?.replaceWith(status);
+      this.toggleAttribute('answered', ok);
+      copied.hidden = !ok;
       status.focus();
     };
-    done.addEventListener('click', resolve);
+    const send = async (text: string): Promise<void> => {
+      let ok = false;
+      try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
+      if (ok) this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer: answer.value.trim() }, bubbles: true, composed: true }));
+      showStatus(text, ok);
+    };
+    const submit = (): void => {
+      if (this.#locked || !form?.isConnected) return;
+      const text = chatAnswer(a.id, answer.value);
+      error.hidden = text !== null;
+      if (text === null) {
+        answer.setAttribute('aria-invalid', 'true');
+        answer.setAttribute('aria-errormessage', error.id);
+        answer.focus();
+        return;
+      }
+      answer.removeAttribute('aria-invalid');
+      void send(text);
+    };
+    copy.addEventListener('click', submit);
     answer.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); resolve(); }
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
     });
     this.#root.replaceChildren(article);
   }

@@ -20,7 +20,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
 export const BOARD_CSS = CSS;
 
 export type Tone = 'accent' | 'critical' | 'success' | 'neutral';
-export interface SectionSpec { title: string; n: number; glyph: string; tone: Tone; empty: string; quiet?: boolean }
+export interface SectionSpec { title: string; n: number; glyph: string; tone: Tone; empty: string; quiet?: boolean; hint?: Node | null }
 
 let sectionSeq = 0;
 
@@ -31,6 +31,7 @@ export function section(spec: SectionSpec, body: Node | null): HTMLElement {
     h('div', { class: 'head' },
       h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph),
       h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null)),
+    body && spec.hint ? h('p', { class: 'section-hint' }, spec.hint) : null,
     body ?? h('p', { class: 'empty' }, spec.empty));
 }
 
@@ -92,6 +93,17 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, ca
   return h('div', {}, list, more);
 }
 
+/** True on Apple platforms, where the copy shortcut is shown with the Command key. */
+const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/** What the asks list says once, under its heading, instead of on every ask: how answering works on this page. */
+export function askHint(live: boolean): Node {
+  if (!live) return document.createTextNode('Sample data: open an ask to read it. Answering needs the Podium server.');
+  const hint = document.createDocumentFragment();
+  hint.append('Open an ask to answer it. ', h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' copies the answer for the orchestrator chat; this page saves nothing yet.');
+  return hint;
+}
+
 /** Open PRs as rows: link and title, branch, then status chips (text and symbol, never colour alone). */
 export function prList(prs: PrCard[]): HTMLElement | null {
   if (prs.length === 0) return null;
@@ -146,7 +158,7 @@ export class StreamBoard extends HTMLElement {
     if (md && frag) md.markdown = frag;
     this.#root.replaceChildren(h('div', { class: 'board' },
       h('div', { class: 'col' },
-        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.' }, askCards(asks, this.#live, false)),
+        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', hint: askHint(this.#live) }, askCards(asks, this.#live, false)),
         section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(blocked, ctx)),
         section({ title: 'Pull requests', n: prs.length, glyph: '⇄', tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
       h('div', { class: 'col' },

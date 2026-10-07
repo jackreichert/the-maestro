@@ -2,7 +2,7 @@ import './stream-board.ts';
 import './podium-chart.ts';
 import './md-fragment.ts';
 import { h, shadow, streamTag } from './dom.ts';
-import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
+import { BOARD_CSS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
@@ -279,7 +279,7 @@ export class PodiumApp extends HTMLElement {
     return h('div', {},
       h('div', { class: 'board' },
         h('div', { class: 'col' },
-          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.' }, askCards(st.asks, this.#sources.state === 'server', true, askPreview())),
+          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', hint: askHint(this.#sources.state === 'server') }, askCards(st.asks, this.#sources.state === 'server', true, askPreview())),
           section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(st.blocked, ctx)),
           section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.' }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },
