@@ -14,7 +14,7 @@
  * A remote branch qualifies when it is the user's own (it has commits of its own, and every one is by one of git_emails,
  * or by the repo's user.email; no commits means not the user's unless a merged PR names the branch and its tip), is not
  * protected, and is merged into every merge target. A worktree qualifies when its branch does, or its upstream (its own
- * name on origin) was deleted with nothing unpushed, and it is clean, holds no ignored file worth keeping, is not a live
+ * name on origin) was deleted with nothing unpushed, and it is clean, holds no environment file (`.env*`, `ssm-*.json`: listed for you, never removed, whatever the settings) and no other ignored file worth keeping, is not a live
  * skill, is unlocked, not under a live claim and idle. "Merged" is ancestry or a merged PR for this branch (head ref and
  * tip), the twin PR (the other target's PR, from the same branch name with a -staging/-develop suffix added or removed, or
  * linked both ways) counts when the branch's own PR into the other target has exactly its tip and the twin was merged on or after that PR, has only the
@@ -352,7 +352,17 @@ function liveSkillTargets(repoPath: string, ctx: SweepContext): string[] {
 /** Worktree rules, in order: the first that fails keeps the worktree. `check` gets { g, w, repoName, ctx, live, status }. */
 interface WorktreeCtx {
   g: Git; w: Worktree; repoName: string; ctx: SweepContext; live: Live; statusError: string; real: string;
-  tracked: string[]; untracked: string[]; keptIgnored: string[]; idle: number;
+  tracked: string[]; untracked: string[]; envFiles: string[]; keptIgnored: string[]; idle: number;
+}
+
+/**
+ * True for an environment or secrets-export file by name (`.env`, `.env.local`, `ssm-*.json`; templates such as `.env.example` are not).
+ * An ignored one may be the only copy of its secrets, so no setting makes a worktree holding one disposable.
+ */
+export function isEnvFile(path: string): boolean {
+  const name = basename(path.replace(/\/+$/, ''));
+  if (/^ssm-.*\.json$/.test(name)) return true;
+  return /^\.env(\..+)?$/.test(name) && !/\.(example|sample|template|dist)$/.test(name);
 }
 
 const WORKTREE_RULES: Rule<[WorktreeCtx], boolean>[] = [
@@ -364,6 +374,8 @@ const WORKTREE_RULES: Rule<[WorktreeCtx], boolean>[] = [
   rule('status readable', (c) => !c.statusError, (c) => `cannot read status: ${c.statusError}`),
   rule('no uncommitted changes', (c) => c.tracked.length === 0, (c) => `uncommitted changes (${c.tracked.length} files)`),
   rule('no untracked files', (c) => c.untracked.length === 0, (c) => `${c.untracked.length} untracked files`),
+  rule('no environment files', (c) => c.envFiles.length === 0,
+    (c) => `${c.envFiles.length} environment files (${c.envFiles.slice(0, 3).join(', ')}${c.envFiles.length > 3 ? ', ...' : ''}): may be the only copy, listed for you to decide`),
   rule('no ignored files worth keeping', (c) => c.keptIgnored.length === 0,
     (c) => `${c.keptIgnored.length} ignored files kept (${c.keptIgnored.slice(0, 3).join(', ')}${c.keptIgnored.length > 3 ? ', ...' : ''}): not disposable`),
   rule('idle', (c) => c.idle >= c.ctx.idleMinutes, (c) => `modified ${Math.round(c.idle)} min ago (idle window ${c.ctx.idleMinutes})`),
@@ -380,7 +392,8 @@ function worktreeBlocker(g: Git, w: Worktree, repoName: string, ctx: SweepContex
   const c: WorktreeCtx = {
     g, w, repoName, ctx, live, statusError: status.ok ? '' : status.err || 'git status failed', real: wg ? realpathSync(w.path) : w.path,
     tracked: lines.filter((l) => !l.startsWith('??') && !l.startsWith('!!')), untracked: lines.filter((l) => l.startsWith('??')),
-    keptIgnored: ignored.filter((p) => !p.split('/').some((seg) => disposable.has(seg))),
+    envFiles: ignored.filter(isEnvFile),
+    keptIgnored: ignored.filter((p) => !isEnvFile(p) && !p.split('/').some((seg) => disposable.has(seg))),
     idle: stamps.length ? (Date.now() - Math.max(...stamps)) / 6e4 : 0, // no timestamps readable: treat as just touched
   };
   const failed = WORKTREE_RULES.find((r) => !r.check(c));
@@ -627,7 +640,9 @@ export function removeWorktree(path: string, item: { id: string; name: string; k
   const status = wg('status', '--porcelain', '--untracked-files=all', '--ignored=matching');
   if (!status.ok) return refuse(`status unreadable (${status.err})`);
   const disposable = new Set(disposableIgnored);
-  const keeps = status.out.split('\n').filter(Boolean).filter((l) => !l.startsWith('!!') || !l.slice(3).split('/').some((seg) => disposable.has(seg)));
+  const lines = status.out.split('\n').filter(Boolean);
+  if (lines.some((l) => l.startsWith('!!') && isEnvFile(l.slice(3)))) return refuse('holds an environment file (may be the only copy)');
+  const keeps = lines.filter((l) => !l.startsWith('!!') || !l.slice(3).split('/').some((seg) => disposable.has(seg)));
   if (keeps.length) return refuse('has uncommitted, untracked or non-disposable ignored files');
   if (item.detached && unpushedCount(wg, 'HEAD') !== 0) return refuse('is detached and not on origin');
   const r = run('git', ['-C', path, 'worktree', 'remove', item.name]);
@@ -686,7 +701,7 @@ export function sweepWorktrees(container: string, ctx: SweepContext, { only, dry
 /** Reason text to a short label, first match wins; work that is in use (claimed, dirty, a live skill) is named before the branch's merge state. */
 const REASON_LABELS: [RegExp, string][] = [
   [/locked/, 'locked'], [/claimed by/, 'repo claimed'], [/live skill/, 'live skill'], [/uncommitted changes/, 'uncommitted changes'],
-  [/untracked files/, 'untracked files'], [/ignored files kept/, 'non-disposable ignored files'], [/modified \d+ min ago/, 'not idle yet'],
+  [/untracked files/, 'untracked files'], [/environment files/, 'environment files'], [/ignored files kept/, 'non-disposable ignored files'], [/modified \d+ min ago/, 'not idle yet'],
   [/not yours/, 'branch not yours'], [/unpushed|not on any origin ref|not pushed or merged|could not count/, 'unpushed or unverifiable commits'],
   [/not merged/, 'branch not merged'], [/patch-equivalent/, 'needs a human look'], [/fetch failed/, 'fetch failed'], [/^refused/, 'refused at removal'],
 ];
