@@ -120,7 +120,7 @@ test('the scripts shelf line is appended only when scripts_dir is set, and is fi
     assert.doesNotMatch(run(VALUES).stdout, /Scripts: before writing/);
     const on = run(`${VALUES}\n\`\`\`maestro-config\nscripts_dir: /shelf\n\`\`\`\n`);
     assert.equal(on.status, 0, on.stderr);
-    assert.match(on.stdout, /Report: at most ~20 lines[^\n]*\n- Scripts: before writing a script, check \/shelf\/README\.md/);
+    assert.match(on.stdout, /Report: write the full report to a file[^\n]*under 150 words[^\n]*\n- Scripts: before writing a script, check \/shelf\/README\.md/);
 });
 
 test('the agent-owned repos line is appended only when agent_owned_repos is set, filled, and keeps the other rules', () => {
@@ -135,7 +135,7 @@ test('the agent-owned repos line is appended only when agent_owned_repos is set,
     assert.doesNotMatch(run(VALUES).stdout, /Agent-owned repos/);
     const on = run(`${VALUES}\n\`\`\`maestro-config\nagent_owned_repos: /work/tools, /work/notes\n\`\`\`\n`);
     assert.equal(on.status, 0, on.stderr);
-    assert.match(on.stdout, /Report: at most ~20 lines[^\n]*\n- Agent-owned repos \(\/work\/tools, \/work\/notes\)/);
+    assert.match(on.stdout, /Report: write the full report to a file[^\n]*under 150 words[^\n]*\n- Agent-owned repos \(\/work\/tools, \/work\/notes\)/);
 });
 
 test('the shipped block forbids polling an output file, and says to run tests under a timeout and report a hanging test', () => {

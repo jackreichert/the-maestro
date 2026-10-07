@@ -118,11 +118,36 @@ node scripts/journal.ts review-queue
 
 It counts your open, non-draft PRs against `review_queue_cap` (default 4) and exits **0** with room, **1** when full, **2** when it cannot answer (GitHub failed and the stored snapshot is missing or over six hours old, or `--cap` is bad; treat that as full). When it exits 1 or 2:
 
-- Dispatch **no new PR-producing work**: no new feature, refactor or follow-up branch. Say so in one line and queue the request (`journal.ts queue`) so it is not lost.
+- Dispatch **no new PR-producing work**: no new feature, refactor or follow-up branch, unless the user asks for that work by name. Say so in one line, queue the request (`journal.ts queue`) so it is not lost, and list the queued work in the reply instead of starting it.
 - Fixes to PRs that are already open still go: review comments, conflicts, failing checks. So does read-only work (scouting, research, review) that opens no PR.
 - Use the freed attention to drive the oldest open PR to merge.
 
 The count is the same PR search the PR scripts share (open, authored by you, org-scoped), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` and the footer show `review queue: N of 4` from the stored snapshot, and the Podium from its own PR cache; the gate itself reads GitHub live, so on a stale board the gate is the authority.
+
+## Picking the next item
+
+The user's ranked priorities live in `priorities.md` in the status directory (`journal.ts priorities show` reads it). The user can reorder or edit that file by hand at any time, so **read it fresh before every pick**, never from memory or from an earlier read in the session.
+
+When a slot frees up, or the user says to pick things up:
+
+1. Run `journal.ts priorities show`.
+2. Take the top unblocked item of the highest-ranked stream. An item that waits on a gate, an ask or a user-only decision is skipped, not forced.
+3. Run the [liveness check](#pre-dispatch-liveness-check) on it.
+4. State the pick in one line, its id and why it is the one, and dispatch. Do not ask which to take; the ranking already answers that.
+
+A stream that is not on the list waits unless the user names it. If the list is missing or stale, say so and ask for it (see `prime`), rather than guessing a ranking.
+
+## Pre-dispatch liveness check
+
+Before any agent goes out, confirm the work is still worth doing. A queue entry can be hours or days old.
+
+- The PR it concerns is still open (not merged or closed).
+- The ticket is not superseded by another and is not already done.
+- No decision that only the user can make is outstanding on it.
+- No agent is already holding that repo (`ListAgents`; see [Concurrency Safety](#concurrency-safety)).
+- The item is sized to a draft PR: one reviewable change, within the [size budget](git.md#pr-size-budget).
+
+An item that fails goes back to the queue with a one-line note saying which check failed, and the next item is considered. Do not dispatch it anyway and let the agent discover the problem.
 
 ## Two-stage dispatch
 
@@ -390,7 +415,8 @@ and cost by about 28%, with output unchanged.
 
 When a notification arrives:
 
-- If the report ran past ~20 lines, relay the essentials and say the brief's cap was missed, so the
+- Every agent writes its full report to a file and hands back a headline paragraph (under 150 words) plus that file's path. Relay the headline and the path, not the full text; the detail stays in the file (a vault note or the ledger), out of your context. Open the file only when a decision needs something the headline does not say.
+- If the reply ran past the headline, relay the essentials and say the brief's cap was missed, so the
   next brief can be tighter. Do not paste it on.
 - Lead with the answer or the outcome, not the process.
 - Keep `file:line` citations — they're clickable.
@@ -487,7 +513,7 @@ long, and at EOD.
   which test hung.
 - Writing a one-off watcher script for a PR, a CI run or an inbox. Register a watch instead, see
   [Waiting on an outside event](#waiting-on-an-outside-event).
-- A report longer than ~20 lines, or raw JSON/logs pasted into one. It stays in context for good.
+- A handback longer than a headline paragraph (about 150 words), or raw JSON/logs pasted into one. It stays in context for good.
 - Restating the standing rules in prose instead of pasting the block once.
 - Grepping at the prompt instead of dispatching a scout. Every tool call you make is a turn the user
   waits through.

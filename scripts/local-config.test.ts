@@ -148,15 +148,15 @@ test('roll_* keys: defaults, file values, environment wins, junk falls back', ()
 
 test('roll_warn_pct / roll_at_pct: defaults, file values, environment wins, invalid values are rejected', () => {
     const pair = (o: Record<string, string> = {}) => { const v = show(o); return [v.ROLL_WARN_PCT, v.ROLL_AT_PCT]; };
-    assert.deepEqual(pair(), ['85', '90']);
+    assert.deepEqual(pair(), ['60', '90']);
     write(join(home, '.config', 'the-maestro', 'config.md'), block('roll_warn_pct: 70\nroll_at_pct: 80'));
     assert.deepEqual(pair(), ['70', '80']);
     assert.deepEqual(pair({ MAESTRO_ROLL_AT_PCT: '95' }), ['70', '95'], 'env overrides one side');
-    assert.deepEqual(pair({ MAESTRO_ROLL_WARN_PCT: '80' }), ['85', '90'], 'warn == roll rejects the pair');
-    assert.deepEqual(pair({ MAESTRO_ROLL_WARN_PCT: '95' }), ['85', '90'], 'warn > roll rejects the pair');
-    assert.deepEqual(pair({ MAESTRO_ROLL_AT_PCT: '60' }), ['85', '90'], 'roll below the file warn rejects the pair');
+    assert.deepEqual(pair({ MAESTRO_ROLL_WARN_PCT: '80' }), ['60', '90'], 'warn == roll rejects the pair');
+    assert.deepEqual(pair({ MAESTRO_ROLL_WARN_PCT: '95' }), ['60', '90'], 'warn > roll rejects the pair');
+    assert.deepEqual(pair({ MAESTRO_ROLL_AT_PCT: '50' }), ['60', '90'], 'roll below the file warn rejects the pair');
     for (const bad of ['0', '101', '-5', 'soon', '85.5', '']) {
-        assert.deepEqual(pair({ MAESTRO_ROLL_WARN_PCT: bad, MAESTRO_ROLL_AT_PCT: '' }), ['85', '90'], `warn ${JSON.stringify(bad)}`);
+        assert.deepEqual(pair({ MAESTRO_ROLL_WARN_PCT: bad, MAESTRO_ROLL_AT_PCT: '' }), ['60', '90'], `warn ${JSON.stringify(bad)}`);
     }
     assert.deepEqual(pair({ MAESTRO_ROLL_AT_PCT: '101' }), ['70', '90'], 'out-of-range roll falls back alone when the pair stays ordered');
     assert.deepEqual(pair({ MAESTRO_ROLL_AT_PCT: '100' }), ['70', '100'], '100 is allowed');

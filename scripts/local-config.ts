@@ -215,11 +215,11 @@ const percent = (text: string, fallback: number): number => (/^\d+$/.test(text.t
 
 /**
  * The Session line's graded thresholds, as a percent of roll_turns / roll_read_per_turn: `roll soon` from
- * roll_warn_pct (default 85), `roll now` from roll_at_pct (default 90). A pair with warn >= roll is rejected
+ * roll_warn_pct (default 60), `roll now` from roll_at_pct (default 90). A pair with warn >= roll is rejected
  * as a pair: both fall back to the defaults, since neither value can be trusted to be the intended one.
  */
-export const [ROLL_WARN_PCT, ROLL_AT_PCT] = ((warn: number, at: number): [number, number] => (warn < at ? [warn, at] : [85, 90]))(
-  percent(pick('MAESTRO_ROLL_WARN_PCT', 'roll_warn_pct'), 85),
+export const [ROLL_WARN_PCT, ROLL_AT_PCT] = ((warn: number, at: number): [number, number] => (warn < at ? [warn, at] : [60, 90]))(
+  percent(pick('MAESTRO_ROLL_WARN_PCT', 'roll_warn_pct'), 60),
   percent(pick('MAESTRO_ROLL_AT_PCT', 'roll_at_pct'), 90),
 );
 
