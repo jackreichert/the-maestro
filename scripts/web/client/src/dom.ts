@@ -64,6 +64,7 @@ export const VISUALLY_HIDDEN = `.vh{position:absolute;width:1px;height:1px;overf
 /** Shared base for every component: type, links, the focus ring, mono and tabular figures. Tokens only, from theme.css. */
 export const BASE_CSS = `
   :host { display: block; color: var(--text-primary); font-family: var(--font-sans); }
+  :host([hidden]) { display: none; }
   *, *::before, *::after { box-sizing: border-box; }
   a {
     color: var(--accent); text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: 0.2em;
@@ -101,6 +102,13 @@ export const UI_CSS = `
 
   .empty { margin: 0; padding: var(--space-3) 0; color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-sm); border-top: 1px solid var(--border); }
   .asks { border-top: 1px solid var(--border); }
+  button.more {
+    font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); color: var(--accent);
+    margin-top: var(--space-2); min-height: 32px; padding: 0 var(--space-3); margin-left: calc(-1 * var(--space-3));
+    border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; font-variant-numeric: tabular-nums;
+    transition: background-color var(--dur-fast) var(--ease-out);
+  }
+  @media (hover: hover) { button.more:hover { background: var(--accent-soft); } }
 
   ul.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.rows > li {

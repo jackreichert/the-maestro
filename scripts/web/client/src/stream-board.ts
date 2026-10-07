@@ -57,16 +57,38 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
   }));
 }
 
-/** Asks as one row each, oldest first; `showStream` tags each row with its stream (the overview mixes streams). */
-export function askCards(asks: AskCard[], live: boolean, showStream: boolean): HTMLElement | null {
+/**
+ * Asks as one row each, oldest first; `showStream` tags each row with its stream (the overview mixes streams). With a
+ * `cap`, only the oldest `cap` rows show until "Show all N" reveals the rest, so the sections below stay in view.
+ */
+export function askCards(asks: AskCard[], live: boolean, showStream: boolean, cap = Number.POSITIVE_INFINITY): HTMLElement | null {
   if (asks.length === 0) return null;
-  return h('div', { class: 'asks', role: 'list' }, ...oldestFirst(asks).map((a) => {
-    const card = h('ask-card', { role: 'listitem' });
+  const id = `asks${++sectionSeq}`;
+  const cards = oldestFirst(asks).map((a, i) => {
+    const card = h('ask-card', { role: 'listitem', hidden: i >= cap });
     card.showStream = showStream;
     card.locked = !live;
     card.ask = a;
     return card;
-  }));
+  });
+  const list = h('div', { class: 'asks', role: 'list', id }, ...cards);
+  const hidden = cards.slice(cap);
+  if (hidden.length === 0) return list;
+  const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', 'aria-controls': id });
+  const label = (open: boolean): void => {
+    more.textContent = open ? `Show the oldest ${cap} only` : `Show all ${asks.length}`;
+    more.setAttribute('aria-expanded', String(open));
+  };
+  label(false);
+  let open = false;
+  more.addEventListener('click', () => {
+    open = !open;
+    for (const c of hidden) c.hidden = !open;
+    label(open);
+    // Revealing moves focus to the first ask that was hidden, so a keyboard user lands on the new rows, not past them.
+    if (open) hidden[0]?.focusToggle();
+  });
+  return h('div', {}, list, more);
 }
 
 /** Open PRs as rows: link and title, branch, then status chips (text and symbol, never colour alone). */

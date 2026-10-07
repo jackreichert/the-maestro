@@ -104,6 +104,12 @@ const CSS = `${BOARD_CSS}
   .problem .detail { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-primary); background: var(--surface-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 `;
 
+/** How many asks the Overview lists before "Show all N": the oldest few, so Blocked and Shipped today stay above the fold. */
+export const ASK_PREVIEW = 4;
+/** On a phone each ask row takes two lines, so the preview is one shorter there. */
+const ASK_PREVIEW_PHONE = 3;
+const askPreview = (): number => (window.matchMedia('(max-width: 640px)').matches ? ASK_PREVIEW_PHONE : ASK_PREVIEW);
+
 /** <podium-app>: header with the cue line, stream tabs plus Overview. The active tab lives in the URL fragment. */
 export class PodiumApp extends HTMLElement {
   #root: ShadowRoot;
@@ -262,7 +268,7 @@ export class PodiumApp extends HTMLElement {
     return h('div', {},
       h('div', { class: 'board' },
         h('div', { class: 'col' },
-          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.' }, askCards(st.asks, this.#sources.state === 'server', true)),
+          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.' }, askCards(st.asks, this.#sources.state === 'server', true, askPreview())),
           section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(st.blocked, ctx)),
           section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.' }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },

@@ -107,6 +107,9 @@ export class AskCardElement extends HTMLElement {
   get showStream(): boolean { return this.#showStream; }
   set showStream(v: boolean) { this.#showStream = v; this.#render(); }
 
+  /** Move focus to the ask's decision (its disclosure button). */
+  focusToggle(): void { this.#root.querySelector<HTMLElement>('button.ask-toggle')?.focus(); }
+
   #render(): void {
     const a = this.#ask;
     this.removeAttribute('open');
