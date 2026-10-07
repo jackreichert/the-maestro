@@ -253,14 +253,20 @@ export function collect(projectsDir: string): { days: Map<string, DayStats>; ses
  * the run since the last compaction marker (the turns from the last one with since === 1 onward), not the whole transcript.
  */
 export function currentSession(dir: string): { session: string; turns: number; readPerTurn: number } | null {
+    const newest = newestSessionFile(dir);
+    if (!newest) return null;
+    const all = scanFile(newest).turns;
+    const turns = all.slice(Math.max(0, all.findLastIndex((t) => t.since === 1)));
+    const read = turns.reduce((n, t) => n + t.read, 0);
+    return { session: basename(newest, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0 };
+}
+
+/** The full path of the most recently modified session transcript in `dir`, or null when there is none. The one place "newest session" is decided. */
+export function newestSessionFile(dir: string): string | null {
     const newest = sessionFiles(dir)
         .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
         .sort((a, b) => b.t - a.t)[0];
-    if (!newest) return null;
-    const all = scanFile(join(dir, newest.f)).turns;
-    const turns = all.slice(Math.max(0, all.findLastIndex((t) => t.since === 1)));
-    const read = turns.reduce((n, t) => n + t.read, 0);
-    return { session: basename(newest.f, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0 };
+    return newest ? join(dir, newest.f) : null;
 }
 
 /** The current session measured against the roll thresholds (see `sessionLine` for the rules). */

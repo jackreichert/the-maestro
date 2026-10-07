@@ -249,7 +249,7 @@ merged branches behind unreviewed. `handoff` itself fills **Cleanup candidates**
 [roll cleanup](#roll-removes-stale-worktrees) would keep, each with its reason (read-only; `--container <dir>`
 picks the directory, default the current one; `--no-worktree-sweep` skips it).
 
-`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, a blocked one with its gate, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (generated from boxes 4 and 5: **Needs Jack**, every open question and pending decision except paste asks, then **Paste blocks for Jack** with each block file; stale ones are marked); **5. Next concrete action** (blank, for the author), then an unnumbered **Cleanup candidates** placeholder that points at `branch-sweep.ts`. Edit it, then set `status:` past `draft`.
+`handoff` writes `Journal/HANDOFF-<date>-<stream>.md` with `status: draft` and appends nothing. It never overwrites without `--force`. Its five headings: **1. Tasks with status** (the stream's open in-flight and blocked items, a blocked one with its gate, then items done since `--since`, default yesterday); **2. Learnings, including what was ruled out** (items matching learned, lesson, ruled out or cause; when nothing matches it prompts the author, because the ledger cannot derive it); **3. Artifacts** (PR numbers, refs, tickets and file paths mentioned by those items, listed once); **4. Decisions awaiting** (generated from boxes 4 and 5: **Needs Jack**, every open question and pending decision except paste asks, then **Paste blocks for Jack** with each block file; stale ones are marked); **5. Next concrete action** (blank, for the author), then an unnumbered **Standing pickups** block (every row, copied unedited), a required unnumbered **Commitments and conditions** section (every standing pickup that is not built in, and every open `decision` ask, each as id, status, due time and kind only, never typed text; `_none_` when there are neither; `prime` prints the same pickups first, overdue ones first, at most six lines), and an unnumbered **Cleanup candidates** placeholder (the `--delta` handoff repeats the Commitments section whole, because it is current state, not a change) that points at `branch-sweep.ts`. Edit it, then set `status:` past `draft`.
 
 **Repeat rolls: `--delta`.** Every handoff carries a `generated_at` marker. `handoff --delta` (stream or `--all`) looks for today's newest `HANDOFF-<date>[b..z]-<stream>.md`: with none it writes the full handoff; with one it writes the next suffix (`HANDOFF-<date>b-<stream>.md`) with only what the ledger gained after that marker (new items, completed items, new asks, PRs mentioned), skips the worktree sweep, and names its predecessor in `delta_of`. It refuses a previous handoff with no marker (use a full one with `--force`) and stops after `z`. `roll` is unchanged and idempotent: it regenerates the day's archive whole.
 
@@ -333,7 +333,7 @@ keeps only the one-line pointer. **One canonical home per fact; everything else 
 ## End of day
 
 When the user wraps up ("end of day", "EOD", "wrap up", "let's call it"), do this in order: PR
-pass, then tracker review, then the cost line and cost loop, then `standup`, then the branch sweep, then `triage` (fix what it flags, then `triage --apply`), then `roll` (use `--strict` to make the blockers stop it). The PR pass runs first because the tracker
+pass, then tracker review, then the cost line and cost loop, then `standup`, then the branch sweep, then the [commitments sweep](#commitments-sweep), then `triage` (fix what it flags, then `triage --apply`), then `roll` (use `--strict` to make the blockers stop it). The PR pass runs first because the tracker
 review needs its findings — Jira and the PRs should agree before either gets written down. Run
 both before `roll`, because a roll moves today's lines into the archive.
 
@@ -386,6 +386,10 @@ reads. This step brings the tracker up to date before the day's context is gone.
 
 Precedent, 2026-09-23: dated comments on four issues and four moved to *In Progress*, logged as
 two ledger lines.
+
+### Commitments sweep
+
+Before `triage` and `roll`, run `node scripts/commitments-sweep.ts`. It reads only the user's own typed messages in the newest session transcript, pulls out sentences that bind the future ("we decided", "before prod", "make sure", "from now on"), and compares them by keywords with the open ledger items and the standing pickups. It prints no typed text, only turn numbers, cue classes, verdicts and carrying ids; the runner reads the turns in the transcript. It is read-only; exit 1 means at least one candidate is UNMATCHED. A decision spoken in conversation and never logged is lost at the roll, which is why this runs first. A cheap runner follows [playbooks/commitments-sweep.md](../playbooks/commitments-sweep.md): each UNMATCHED candidate becomes a standing pickup (a condition on a future action), a `rule` with a memory file, queued or started work, or is skipped as noise with a reason, and the user is asked when a sentence is unclear. Matching is by keywords only, so a model or the user judges the unmatched ones.
 
 ### Branch sweep
 

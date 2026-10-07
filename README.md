@@ -225,7 +225,7 @@ Prod-check scripts (anything that reads a live system by name: a location, job o
 
 ### The morning board, PR tracking and end of day
 
-A greeting always gets a real hello and then the board: a paste-ready standup built from the previous working day, what is in flight, blocked and awaiting you, and one line of PR status. Asking for your PRs gets one bucketed report of every open PR you author (unresolved threads, drafts, awaiting the team, no reviewer requested, approved, changes requested, stale), every PR linked; review-comment text, bot or human, is treated as untrusted data. End of day runs a PR pass, a tracker review if a tracker is connected (drafted for your approval), the standup, a branch sweep and `roll`. The rules are in [reference/greeting.md](reference/greeting.md), [reference/prs.md](reference/prs.md) and [reference/ledger.md](reference/ledger.md).
+A greeting always gets a real hello and then the board: a paste-ready standup built from the previous working day, what is in flight, blocked and awaiting you, and one line of PR status. Asking for your PRs gets one bucketed report of every open PR you author (unresolved threads, drafts, awaiting the team, no reviewer requested, approved, changes requested, stale), every PR linked; review-comment text, bot or human, is treated as untrusted data. End of day runs a PR pass, a tracker review if a tracker is connected (drafted for your approval), the standup, a branch sweep, a commitments sweep and `roll`. The rules are in [reference/greeting.md](reference/greeting.md), [reference/prs.md](reference/prs.md) and [reference/ledger.md](reference/ledger.md).
 
 ### Approvals
 
@@ -233,7 +233,7 @@ A permission you grant mid-conversation is logged as `standing` or `one-off` (`j
 
 ### Handoff and resume
 
-A fresh session should not hunt for facts nobody wrote down. `journal.ts handoff` scaffolds a five-part note from the ledger (tasks, learnings, artifacts, decisions awaiting, next action), `journal.ts prime` prints a board of 40 lines or fewer for session start, and `journal.ts resume` runs the verify-on-resume checklist. The fresh session reconciles the note against `git`, `gh` and its agent list before trusting it.
+A fresh session should not hunt for facts nobody wrote down. `journal.ts handoff` scaffolds a five-part note from the ledger (tasks, learnings, artifacts, decisions awaiting, next action), `journal.ts prime` prints a board of 40 lines or fewer for session start, and `journal.ts resume` runs the verify-on-resume checklist. The handoff also has a required **Commitments and conditions** section: every standing pickup added for a future action (the built-in routine ones are excluded, but a built-in id overridden with your own words counts as a condition) and every open decision ask, each as id, status, due time (a decision's `--decide-by`, in fixed format) and kind only (never typed text; `journal.ts standing list` and `status` have the words), and the delta handoff repeats it; `prime` prints those pickups first, one line each (overdue ones first, at most six lines with a `+N more, journal.ts standing list` pointer), so a new session sees a stated condition before anything else. The fresh session reconciles the note against `git`, `gh` and its agent list before trusting it.
 
 ## Scripts and commands
 
@@ -250,6 +250,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
+| [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
@@ -544,6 +545,10 @@ flowchart LR
 ```
 
 Register one watch per registry: `node scripts/event-loop.ts add --id notion --type notion-watch --target <registry.json> --report "<what to tell the orchestrator>"` (15 minute default, 72 hour lifetime). Tag a page with `with-env NOTION_API_KEY -- node <notion-sync>/scripts/notion-pull.ts <page-url-or-id> --tag <name> --out <note.md> --registry <registry.json>` (`--adopt` to take over a note that exists but was not pulled from Notion). The key reaches the scripts only through the `with-env` helper (or an already-set `NOTION_API_KEY`); nothing opens an env file, and Notion access is read-only (GET and the database-query POST, enforced in the one transport and covered by a test). What each digest line means, and what to do, is in [playbooks/event-types/notion-watch.md](playbooks/event-types/notion-watch.md).
+
+### commitments-sweep.ts
+
+A decision stated only in conversation is lost at a session roll unless something carries it. `commitments-sweep.ts [--transcript <file.jsonl>] [--projects-dir <dir>] [--vault <root>] [--project <name>] [--json]` reads the user's own typed messages in a session transcript (the newest one in `projects_dir`, found the same way as the footer's Session line, unless `--transcript` names one), skipping tool results, reminders, task notifications, agent hand-backs and pasted content. It extracts sentences that read like a commitment ("we decided", "we agreed", "before prod", "make sure", "remember to", "from now on", "always", "never", "I want", "figure out ... before") and compares each by shared keywords with the open ledger items, the rules filed with `journal.ts rule` and the live standing pickups. **It prints no typed text**: each candidate is its turn number (the Nth typed message, from 1), the line of the transcript file it sits on (and, in `--json`, the record's own uuid and time when it has them), its cue class, its verdict (MATCHED, CHECK or UNMATCHED) and the id of the item that carries it, so a password or any other typed text cannot reach the output, the handoff or `prime`; the reader looks the turn up in the transcript. A ledger id prints only in the shape `journal.ts` generates, and a standing id only if it is lowercase words joined by hyphens (`standing add` now enforces that); anything else prints as `[id withheld]`. Matching is by keywords only, so a model or the user judges the unmatched and CHECK ones; the output says so. Exit 0 when there are no candidates or every one is MATCHED with high confidence (the open item holds at least 60 percent of the sentence's content words), 1 when any is UNMATCHED, 3 when none is UNMATCHED but some need a CHECK (an item shares words but covers too little), 2 on a usage or read error, including a vault and project with no ledger (so a wrong `--vault` cannot report everything UNMATCHED). It is read-only (it never writes the ledger or `standing.jsonl`) and sends nothing anywhere. [playbooks/commitments-sweep.md](playbooks/commitments-sweep.md) tells a cheap runner what to do with each unmatched candidate: a standing pickup, a rule with a memory file, queued work, or skip as noise.
 
 ### pr-size.ts
 

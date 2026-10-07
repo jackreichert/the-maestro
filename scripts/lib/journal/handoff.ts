@@ -8,11 +8,15 @@ import { approvalMap } from './approvals.ts';
 import { clip, itemText } from './format.ts';
 import { LEARNING, TICKET_ID } from './retro.ts';
 import type { WorktreeSweep } from '../../branch-sweep.ts';
+import { conditionStates, dueText, printableId } from '../standing.ts';
+import { LEDGER_ID, ID_WITHHELD } from '../commitments.ts';
+import { askBy } from './ask-fields.ts';
+import type { RowState } from '../standing.ts';
 import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
 import type { BoardContext } from './board.ts';
 
 /** What the handoff draft reads from the run: the ledger, its fold, the clock and the transcript directory for the session line. */
-export interface HandoffContext { fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string; /** Every standing pickup with its runtime status, as lines (the same block `prime` prints, whole). */ standing?: () => string[] }
+export interface HandoffContext { fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string; /** Every standing pickup with its runtime status, as lines (the same block `prime` prints, whole). */ standing?: () => string[]; /** Every standing pickup with its status; the non-routine ones are listed under Commitments and conditions. */ states?: () => RowState[] }
 /** A PR, ref, ticket or path an item mentions. */
 export interface Artifact { kind: string; v: string }
 type KeptWorktree = { path: string; repo: string; reason: string };
@@ -45,6 +49,23 @@ export function cleanupWorktreeLines(kept: KeptWorktree[], summary: WorktreeSwee
             ...keptCounts(kept).map((c) => `- ${c.label}: ${c.count}`), ...(summary.skipped?.length ? ['', `Sweep budget reached: skipped ${summary.skipped.join(', ')}.`] : []), ''];
     }
     return kept.length ? ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', ...kept.map((k) => `- \`${k.path}\` (${k.repo}): ${k.reason}`), ''] : [];
+}
+
+/**
+ * The body of the required `## Commitments and conditions` section: every active standing pickup tied to a future action (not a
+ * built-in routine one) and every open decision ask, each as id, status, due time and kind only. No typed text is printed (a title,
+ * trigger or gate could carry a password); `standing list` and the ledger views have the words. `_none_` when there are neither, so
+ * an empty section is a statement rather than an omission.
+ */
+export function commitmentLines(states: RowState[], decisions: LedgerItem[]): string[] {
+    const conditions = conditionStates(states).map((s) => {
+        try { return `- standing \`${printableId(s.row.id)}\` [${s.status}] kind: standing pickup, due ${dueText(s)}`; } catch { return `- standing \`${printableId(s.row.id)}\` [unreadable] kind: standing pickup`; }
+    });
+    const asks = decisions.map((i) => {
+        const due = askBy(i) ?? /^date:(\d{4}-\d{2}-\d{2})$/.exec(i.gate ?? '')?.[1];
+        return `- \`${LEDGER_ID.test(i.id ?? '') ? i.id : ID_WITHHELD}\` [open] kind: decision, due ${due ?? 'when decided'}`;
+    });
+    return conditions.length || asks.length ? [...conditions, ...asks, '', 'Titles and triggers: `journal.ts standing list` and `journal.ts status`.'] : ['_none_'];
 }
 
 /** `stream` is a stream name, or null for every stream (`handoff --all`): items then carry their stream in the meta tail. */
@@ -105,6 +126,9 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
         next || '_Author: one concrete first step for the fresh session._', '',
         '## Standing pickups', '',
         ...((ctx.standing?.() ?? []).length ? ['Duties to pick up without being reminded, checked just now. Copy this block into the handoff unedited.', '', ...(ctx.standing?.() ?? []).map((l) => (l.startsWith('  ') ? `- ${l.trim()}` : `**${l}**`))] : ['_none_']), '',
+        '## Commitments and conditions', '',
+        'Conditions on future actions, and decisions still open. A fresh session reads these before it starts anything. Run `node scripts/commitments-sweep.ts` first so nothing said in conversation is missing.', '',
+        ...commitmentLines(ctx.states?.() ?? [], items.filter((i) => isOpen(i) && i.kind === 'decision')), '',
         '## Cleanup candidates', '',
         '_Run `node scripts/branch-sweep.ts` and paste its table here (remote branches need approval; `roll` removes qualifying worktrees on its own)._', '',
         ...cleanupWorktreeLines(keptWorktrees, sweep && stream === null && !verbose ? sweep : null),
@@ -164,6 +188,7 @@ export function handoffDeltaText(ctx: HandoffContext, stream: string | null, mar
         '## Completed since the previous roll', '', ...list(completed.map((i) => line(i, 'done'))), '',
         '## New asks', '', ...list(asks.map((i) => line(i, i.kind ?? 'ask'))), '',
         '## PRs mentioned', '', prs.length ? prs.join(', ') : '_none_', '',
+        '## Commitments and conditions', '', 'Current state, not a change: a condition added since the previous roll appears nowhere else.', '', ...commitmentLines(ctx.states?.() ?? [], items.filter((i) => isOpen(i) && i.kind === 'decision')), '',
         'Work logged after this roll lands in the ledger as usual; the next roll or `journal.ts prime` picks it up.', '',
     ].join('\n');
 }

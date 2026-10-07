@@ -65,6 +65,8 @@ export const DEFAULT_ROWS: StandingRow[] = [
 ];
 
 export const STANDING_FILE = 'standing.jsonl';
+/** About eleven years: a longer cadence is a typo, and would overflow a date. */
+export const MAX_EVERY_HOURS = 100_000;
 const ID = /^[a-z0-9][a-z0-9._-]{0,47}$/i;
 
 /** The events in a standing file; a corrupt line is skipped, a missing file is empty. */
@@ -90,7 +92,7 @@ export function validRow(row: StandingRow): string | null {
   if (!row.trigger.trim() || !row.action.trim() || !row.who.trim()) return 'a row needs a trigger, an action and a who';
   if (row.check === undefined && row.everyHours === undefined) return 'a row needs a runtime check (--check) or a cadence (--every-hours), or nothing would ever flag it';
   if (row.check !== undefined && !(row.check in CHECKS)) return `unknown check "${row.check}" (known: ${Object.keys(CHECKS).join(', ')})`;
-  if (row.everyHours !== undefined && !(Number.isFinite(row.everyHours) && row.everyHours > 0)) return '--every-hours needs a positive number';
+  if (row.everyHours !== undefined && !(Number.isFinite(row.everyHours) && row.everyHours > 0 && row.everyHours <= MAX_EVERY_HOURS)) return `--every-hours needs a positive number of at most ${MAX_EVERY_HOURS}`;
   return null;
 }
 
@@ -101,16 +103,24 @@ export function appendEvent(file: string, event: StandingEvent): void {
 
 export interface RowState { row: StandingRow; lastRan?: { at: string; evidence: string }; status: 'ok' | 'overdue' | 'failing'; detail: string }
 
+/** The live rows (defaults, then adds, minus retired), without running any check. */
+export function liveRows(events: StandingEvent[]): StandingRow[] {
+  const rows = new Map<string, StandingRow>(DEFAULT_ROWS.map((r) => [r.id, r]));
+  for (const e of events) {
+    if (e.op === 'add') { const { op: _op, at: _at, ...row } = e; rows.set(row.id, row); }
+    else if (e.op === 'retire') rows.delete(e.id);
+  }
+  return [...rows.values()];
+}
+
 /** The live rows (defaults, then adds, minus retired) with their status at `ctx.now`. */
 export function standingState(events: StandingEvent[], ctx: CheckContext): RowState[] {
-  const rows = new Map<string, StandingRow>(DEFAULT_ROWS.map((r) => [r.id, r]));
   const ran = new Map<string, { at: string; evidence: string }>();
   for (const e of events) {
-    if (e.op === 'add') { const { op: _op, at: _at, ...row } = e; rows.set(row.id, row); ran.delete(row.id); }
-    else if (e.op === 'retire') { rows.delete(e.id); ran.delete(e.id); }
+    if (e.op === 'add' || e.op === 'retire') ran.delete(e.id);
     else ran.set(e.id, { at: e.at, evidence: e.evidence });
   }
-  return [...rows.values()].map((row) => {
+  return liveRows(events).map((row) => {
     const lastRan = ran.get(row.id);
     if (row.check !== undefined) {
       const check = CHECKS[row.check];
@@ -142,4 +152,38 @@ export function standingBlock(states: RowState[], { all = false, max = 6 }: { al
   const lines = shown.map(rowLine);
   if (all || lines.length <= max) return [head, ...lines.map((l) => `  ${l}`)];
   return [head, ...lines.slice(0, max - 1).map((l) => `  ${l}`), `  … +${lines.length - (max - 1)} more`];
+}
+
+/** A built-in row exactly as shipped is routine upkeep; any other row, including a built-in id someone overrode with their own words, is a condition. */
+export const isRoutine = (row: StandingRow): boolean => DEFAULT_ROWS.some((d) => d.id === row.id && d.trigger === row.trigger && d.action === row.action && d.who === row.who && d.everyHours === row.everyHours && d.check === row.check);
+
+/** The rows tied to a future action (not built in), overdue or failing ones first. */
+export const conditionStates = (states: RowState[]): RowState[] =>
+  states.filter((s) => !isRoutine(s.row)).sort((a, b) => Number(a.status === 'ok') - Number(b.status === 'ok'));
+
+/** A standing id that cannot carry typed text: lowercase words joined by hyphens. `standing add` enforces it; older ids print as a placeholder here. */
+export const SAFE_ID = /^[a-z]+(?:-[a-z]+){0,5}$/;
+export const ID_WITHHELD = '[id withheld]';
+export const printableId = (id: string): string => (SAFE_ID.test(id) ? id : ID_WITHHELD);
+
+/** When a row is next due, in words made only of digits and fixed text: `ISO time`, `now` (never ran or failing), or `checked: <check name>`. */
+export function dueText(s: RowState): string {
+  if (s.row.check !== undefined) return `checked: ${s.row.check in CHECKS ? s.row.check : 'unknown check'}`;
+  if (!s.lastRan || s.status !== 'ok') return 'now';
+  const due = Date.parse(s.lastRan.at) + (s.row.everyHours ?? 0) * 3600_000;
+  return Number.isFinite(due) && Math.abs(due) < 8.64e15 ? `${new Date(due).toISOString().slice(0, 16)}Z` : 'unknown';
+}
+
+/** One condition as one line for `prime`: id, status, due time and kind only (the text stays in `standing list`). */
+const conditionLineOf = (s: RowState): string => `Condition ${printableId(s.row.id)} [${s.status === 'ok' ? 'due' : s.status.toUpperCase()}] standing pickup, due ${dueText(s)}`;
+
+/** One condition line; a row that cannot be described degrades to its own placeholder line instead of taking the others down. */
+export const conditionLine = (s: RowState): string => {
+  try { return conditionLineOf(s); } catch { return `Condition ${printableId(s.row.id)} [unreadable] standing pickup`; }
+};
+
+/** The lines `prime` prints before anything else: at most `max`, the last being `… +N more, journal.ts standing list` when some were cut. */
+export function conditionLines(states: RowState[], max = 6): string[] {
+  const rows = conditionStates(states).map(conditionLine);
+  return rows.length <= max ? rows : [...rows.slice(0, max - 1), `… +${rows.length - (max - 1)} more, journal.ts standing list`];
 }

@@ -151,7 +151,7 @@ import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween,
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
-import { STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine } from './lib/standing.ts';
+import { STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
 import { listWatches, lockHolder } from './lib/watch-registry.ts';
 
@@ -214,7 +214,7 @@ const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : S
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
 const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
-const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false) });
+const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
 const verifyLedger = () => verifyLedgerIn(verifyCtx());
 const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
@@ -1220,7 +1220,7 @@ function cmdClaims() {
 // ── backfill ────────────────────────────────────────────────────────────────
 
 const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
-const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true) });
+const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true), states: standingStatesSafe });
 const handoffText = (stream: string | null, since: string, keptWorktrees?: Parameters<typeof handoffTextIn>[3], opts?: Parameters<typeof handoffTextIn>[4]) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
 const updateContextLink = (file: string, handoffPath: string) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 
@@ -1491,7 +1491,18 @@ const standingStates = () => standingState(readEvents(standingFile()), standingC
 
 /** The standing-pickups block: rows needing attention (prime), or every row (handoff). Never throws: a broken read must not take prime down. */
 function standingLines(all: boolean): string[] {
-    try { return standingBlock(standingStates(), { all }); } catch (e) { return [`Standing pickups: could not be read (${errorMessage(e)})`]; }
+    // `prime` lists the non-routine rows as conditions, first; the standing block there keeps the routine ones so no row prints twice.
+    try { return standingBlock(all ? standingStates() : standingStates().filter((s) => isRoutine(s.row)), { all }); } catch (e) { return [`Standing pickups: could not be read (${errorMessage(e)})`]; }
+}
+
+/** Every standing pickup with its status, or none when the store cannot be read (the handoff then says `_none_`, and `standing list` shows the error). */
+function standingStatesSafe(): ReturnType<typeof standingStates> {
+    try { return standingStates(); } catch { return []; }
+}
+
+/** The condition lines `prime` prints first; empty when none exist or the store cannot be read. */
+function conditionLinesSafe(): string[] {
+    try { return conditionLines(standingStates()); } catch { return []; }
 }
 
 /**
@@ -1515,6 +1526,8 @@ function cmdStanding() {
         const every = arg('every-hours');
         const row: StandingRow = { id: id ?? '', trigger: arg('trigger', ''), action: arg('action', ''), who: arg('who', ''), ...(every ? { everyHours: Number(every) } : {}), ...(arg('check', '') ? { check: arg('check', '') } : {}) };
         const problem = validRow(row);
+        if (!id) die('standing add needs an id. Usage: journal.ts standing add <id> --trigger "..." --action "..." --who "..." (--check <name> | --every-hours N)');
+        if (!SAFE_ID.test(row.id)) die('standing add: the id must be lowercase words joined by hyphens (letters only, up to six words), so it can never carry typed text. Usage: journal.ts standing add <id> --trigger "..." --action "..." --who "..." (--check <name> | --every-hours N)');
         if (problem) die(`standing add: ${problem}. Usage: journal.ts standing add <id> --trigger "..." --action "..." --who "..." (--check <name> | --every-hours N)`);
         if (dryRun) { console.log('[dry-run]', JSON.stringify(row)); return; }
         appendEvent(file, { op: 'add', at, ...row });
