@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodS
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { bodyProblems, type BodyRules } from './pr-body.ts';
+import { recordSmells, smellsLine } from './pr-smells.ts';
 
 const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
 
@@ -50,8 +51,8 @@ const GOOD_BODY = [
 /** A body file next to the repo; `open` supplies a valid one unless the test passes its own --body-file. */
 const bodyFile = (repo: string, text: string): string => { const p = join(repo, '..', `body-${Math.random().toString(36).slice(2)}.md`); writeFileSync(p, text); return p; };
 
-const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = []) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh },
+const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = [], env: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, ...env },
 });
 
 test('over budget refuses, prints the summary and a split hint, and never calls gh', () => {
@@ -344,4 +345,54 @@ test('bodyProblems: an unedited template, and a diagram that only sits in an HTM
     const stacked = { stacked: true, codeFiles: 1 };
     const hidden = bodyProblems('## Context\nx\n<!--\n```mermaid\nflowchart LR\n```\n-->\n', { ...NONE, diagram: true }, stacked);
     assert.equal(hidden.length, 1, 'a commented-out diagram is not a diagram');
+});
+
+const GATED = { MAESTRO_PR_SMELLS_REPOS: 'example/*' };
+const withOrigin = (f: { repo: string }): void => git(f.repo, 'remote', 'add', 'origin', 'https://github.com/example/widgets.git');
+
+test('smells gate: a gated repo with no recorded run refuses and never calls gh, even on a dry run', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    withOrigin(f);
+    for (const extra of [[], ['--dry-run']]) {
+        const r = open(f, [...extra, '--head', 'feature'], GATED);
+        assert.equal(r.status, 1, extra.join(' '));
+        assert.match(r.stderr, /none is recorded/);
+    }
+    assert.ok(!existsSync(f.log), 'gh must not run');
+});
+
+test('smells gate: a recorded run must also be on its own line in the body, then the PR opens', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    withOrigin(f);
+    const rec = recordSmells(f.repo, 'no findings worth fixing', 'feature');
+    const missing = open(f, ['--head', 'feature'], GATED);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /Smells: no findings worth fixing/);
+    assert.ok(!existsSync(f.log));
+    const body = bodyFile(f.repo, `${GOOD_BODY}\n${smellsLine(rec)}\n`);
+    const ok = open(f, ['--body-file', body, '--head', 'feature'], GATED);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(readFileSync(f.log, 'utf8'), /pr create --draft --assignee @me/);
+});
+
+test('smells gate: a commit after the recorded run invalidates it', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    withOrigin(f);
+    const rec = recordSmells(f.repo, 'clean', 'feature');
+    put(f.repo, 'src/b.py', lines(2));
+    git(f.repo, 'add', '--all');
+    git(f.repo, 'commit', '-q', '-m', 'more');
+    const r = open(f, ['--body-file', bodyFile(f.repo, `${GOOD_BODY}\n${smellsLine(rec)}\n`), '--head', 'feature'], GATED);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /none is recorded/);
+});
+
+test('smells gate: off by default, outside the listed repos, and for a diff with no code', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    withOrigin(f);
+    assert.equal(open(f, ['--dry-run', '--head', 'feature']).status, 0, 'default off');
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_PR_SMELLS_REPOS: 'other/*' }).status, 0, 'repo not listed');
+    const docs = fixture({ 'docs/a.md': lines(10) });
+    withOrigin(docs);
+    assert.equal(open(docs, ['--dry-run', '--head', 'feature'], GATED).status, 0, 'docs only');
 });
