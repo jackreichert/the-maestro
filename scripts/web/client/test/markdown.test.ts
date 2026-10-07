@@ -113,3 +113,29 @@ test('a trusted pull request link gets its own tab name and no rel; an obsidian 
   assert.equal(renderInline('[#7](https://github.com/example-org/example-repo/pull/7)'), '<a href="https://github.com/example-org/example-repo/pull/7" target="podium-pr~example-org~example-repo~7">#7</a>');
   assert.equal(renderInline('[n](obsidian://open?vault=v&file=a)').includes('target='), false);
 });
+
+test('autolink makes bare https and obsidian open URLs clickable, leaving trailing punctuation outside the link', () => {
+  const html = renderMarkdown('See https://example.test/a?b=1, and obsidian://open?vault=V&file=Plans%2Fx.', { autolink: true });
+  assert.match(html, /<a href="https:\/\/example\.test\/a\?b=1"[^>]*>https:\/\/example\.test\/a\?b=1<\/a>, and/);
+  assert.match(html, /<a href="obsidian:\/\/open\?vault=V&#38;file=Plans%2Fx"[^>]*>[^<]*<\/a>\.<\/p>/);
+});
+
+test('autolink never links an unsafe scheme or an obsidian action other than open, and is off by default', () => {
+  const unsafe = renderMarkdown('x obsidian://new?vault=V&file=f&content=z y javascript:alert(1) z', { autolink: true });
+  assert.ok(!unsafe.includes('<a'), unsafe);
+  assert.ok(!renderMarkdown('https://example.test/a').includes('<a'));
+});
+
+test('autolink leaves an explicit Markdown link alone and escapes the text around a URL', () => {
+  const html = renderMarkdown('[label](https://example.test/a) <b>https://example.test/b</b>', { autolink: true });
+  assert.equal(html.match(/<a /g)?.length, 2);
+  assert.ok(!html.includes('<b>'), html);
+  assert.match(html, /^<p><a [^>]*>label<\/a> &#60;b&#62;<a [^>]*>https:\/\/example\.test\/b<\/a>&#60;\/b&#62;<\/p>$/);
+});
+
+test('breaks keeps the line breaks inside a paragraph and a numbered list reads as a list', () => {
+  const html = renderMarkdown('line one\nline two\n\n1. a\n2. b', { breaks: true });
+  assert.match(html, /<p>line one<br>line two<\/p>/);
+  assert.match(html, /<ol><li>a<\/li><li>b<\/li><\/ol>/);
+  assert.match(renderMarkdown('line one\nline two'), /<p>line one line two<\/p>/);
+});

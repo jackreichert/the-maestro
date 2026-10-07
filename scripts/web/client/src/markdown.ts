@@ -7,6 +7,8 @@
  * HTML-escaped before they reach the output, so the only tags emitted are the ones this file writes. A backslash before
  * ASCII punctuation makes that character literal (the generator escapes its own text that way), and it never starts a match.
  * Link targets are limited by url.ts: http, https, and `obsidian://open` with only `vault` and `file`.
+ * Two opt-in options serve free text written by hand: `autolink` turns a bare http(s) or obsidian URL into a link (through the same
+ * target limits), and `breaks` keeps a line break inside a paragraph. Both are off for the generator's own pages.
  * Pure and DOM-free so node:test covers it.
  */
 import { isSafeUrl } from './url.ts';
@@ -29,6 +31,13 @@ const INLINE = new RegExp(
   'g',
 );
 
+/** A bare URL in free text (opt-in): up to whitespace, an angle bracket or a quote. Trailing sentence punctuation is trimmed off the match. */
+const BARE_URL = '((?:https?|obsidian):\\/\\/[^\\s<>"\'`]+)'; // 7
+const TRAILING = /[.,;:!?)\]}]+$/;
+const INLINE_AUTOLINK = new RegExp(`${INLINE.source}|${BARE_URL}`, 'g');
+
+export interface RenderOptions { autolink?: boolean; breaks?: boolean }
+
 /** Escape the characters that matter in HTML text and quoted attributes. */
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -43,17 +52,23 @@ function renderLink(label: string, url: string): string {
 }
 
 /** Render one line of inline Markdown to HTML. */
-export function renderInline(text: string): string {
+export function renderInline(text: string, opts: RenderOptions = {}): string {
   let out = '';
   let last = 0;
-  for (const m of text.matchAll(INLINE)) {
+  for (const m of text.matchAll(opts.autolink ? INLINE_AUTOLINK : INLINE)) {
     out += escapeHtml(text.slice(last, m.index));
     last = m.index + m[0].length;
     if (m[1] !== undefined) out += escapeHtml(m[1]);
-    else if (m[2] !== undefined) out += `<span class="nw">${renderInline(m[2])}</span>`;
+    else if (m[2] !== undefined) out += `<span class="nw">${renderInline(m[2], opts)}</span>`;
     else if (m[3] !== undefined) out += `<code>${escapeHtml(m[3])}</code>`;
-    else if (m[4] !== undefined) out += `<strong>${renderInline(m[4])}</strong>`;
-    else out += renderLink(m[5], m[6]);
+    else if (m[4] !== undefined) out += `<strong>${renderInline(m[4], opts)}</strong>`;
+    else if (m[5] !== undefined) out += renderLink(m[5], m[6]);
+    else {
+      // A bare URL: the sentence punctuation after it stays text (the next match's leading slice picks it up).
+      const url = m[7].replace(TRAILING, '');
+      last = m.index + url.length;
+      out += renderLink(url, url);
+    }
   }
   return out + escapeHtml(text.slice(last));
 }
@@ -86,17 +101,17 @@ function renderTable(lines: string[]): string {
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-function renderItem(text: string, extra: string[]): string {
+function renderItem(text: string, extra: string[], opts: RenderOptions): string {
   const box = BOX.exec(text);
   const open = box?.[1] === ' ';
   const mark = box ? `<span class="box" role="img" aria-label="${open ? 'open' : 'done'}">${open ? '☐' : '☑'}</span> ` : '';
-  const inner = renderInline(box ? text.slice(box[0].length) : text);
+  const inner = renderInline(box ? text.slice(box[0].length) : text, opts);
   const lines = extra.map((l) => l.trim()).filter((l) => l !== '');
-  const tail = lines.map((l) => (l.startsWith('>') ? `<blockquote>${renderInline(l.replace(/^>\s?/, ''))}</blockquote>` : ` ${renderInline(l)}`));
+  const tail = lines.map((l) => (l.startsWith('>') ? `<blockquote>${renderInline(l.replace(/^>\s?/, ''), opts)}</blockquote>` : ` ${renderInline(l, opts)}`));
   return `<li>${mark}${inner}${tail.join('')}</li>`;
 }
 
-function renderList(lines: string[]): string {
+function renderList(lines: string[], opts: RenderOptions): string {
   const tag = LIST_ITEM.exec(lines[0])?.[3] ? 'ol' : 'ul';
   const items: string[] = [];
   let i = 0;
@@ -104,7 +119,7 @@ function renderList(lines: string[]): string {
     const m = LIST_ITEM.exec(lines[i++]);
     const extra: string[] = [];
     while (i < lines.length && !LIST_ITEM.test(lines[i])) extra.push(lines[i++]);
-    items.push(renderItem(m ? m[4] : '', extra));
+    items.push(renderItem(m ? m[4] : '', extra, opts));
   }
   return `<${tag}>${items.join('')}</${tag}>`;
 }
@@ -112,7 +127,7 @@ function renderList(lines: string[]): string {
 const BLOCK_START = /^(#{1,6}\s|\s*```|\s*>|\s*\|)/;
 
 /** Render a Markdown document or fragment to an HTML string. */
-export function renderMarkdown(md: string): string {
+export function renderMarkdown(md: string, opts: RenderOptions = {}): string {
   const lines = md.replace(/\r\n?/g, '\n').split('\n');
   const out: string[] = [];
   let i = 0;
@@ -127,20 +142,20 @@ export function renderMarkdown(md: string): string {
       continue;
     }
     const h = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (h) { out.push(`<h${h[1].length}>${renderInline(h[2])}</h${h[1].length}>`); i++; continue; }
+    if (h) { out.push(`<h${h[1].length}>${renderInline(h[2], opts)}</h${h[1].length}>`); i++; continue; }
     const start = i;
     if (line.trimStart().startsWith('|') && i + 1 < lines.length && SEPARATOR.test(lines[i + 1])) {
       for (i += 2; i < lines.length && lines[i].trimStart().startsWith('|'); i++);
       out.push(renderTable(lines.slice(start, i)));
     } else if (LIST_ITEM.test(line)) {
       for (i++; i < lines.length && lines[i].trim() !== '' && (LIST_ITEM.test(lines[i]) || /^\s+\S/.test(lines[i])); i++);
-      out.push(renderList(lines.slice(start, i)));
+      out.push(renderList(lines.slice(start, i), opts));
     } else if (/^\s*>/.test(line)) {
       for (; i < lines.length && /^\s*>/.test(lines[i]); i++);
-      out.push(`<blockquote>${lines.slice(start, i).map((l) => renderInline(l.replace(/^\s*>\s?/, ''))).join('<br>')}</blockquote>`);
+      out.push(`<blockquote>${lines.slice(start, i).map((l) => renderInline(l.replace(/^\s*>\s?/, ''), opts)).join('<br>')}</blockquote>`);
     } else {
       for (i++; i < lines.length && lines[i].trim() !== '' && !BLOCK_START.test(lines[i]) && !LIST_ITEM.test(lines[i]); i++);
-      out.push(`<p>${lines.slice(start, i).map(renderInline).join(' ')}</p>`);
+      out.push(`<p>${lines.slice(start, i).map((l) => renderInline(l, opts)).join(opts.breaks ? '<br>' : ' ')}</p>`);
     }
   }
   return out.join('\n');
