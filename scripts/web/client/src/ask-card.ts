@@ -14,6 +14,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
     transition: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
   }
   :host([open]) article { background: var(--surface-1); box-shadow: var(--shadow-1); margin-block: var(--space-2); }
+  @media (forced-colors: active) { :host([open]) article { outline: 1px solid CanvasText; } }
 
   /* The row: id, the decision (the disclosure button), stream and age. The whole row is the click target. */
   .row {

@@ -74,6 +74,13 @@ const CSS = `${BOARD_CSS}
   [role=tab][aria-selected=true]::after { content: ''; position: absolute; left: var(--space-3); right: var(--space-3); bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
 
+  @media (forced-colors: active) {
+    [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; bottom: 0; }
+    .fresh, .sk { border: 1px solid CanvasText; }
+    .dot { forced-color-adjust: none; border-color: CanvasText; }
+    .fresh.live .dot { background: CanvasText; }
+    h1::before { forced-color-adjust: none; background: CanvasText; }
+  }
   [role=tabpanel] { padding-block: var(--space-6) var(--space-8); }
   /* The panel takes focus between the tabs and its content: a 2 px focus line under the tab bar, not a frame round the page. */
   [role=tabpanel]:focus-visible { outline: none; border-radius: 0; box-shadow: inset 0 2px 0 var(--focus); }
