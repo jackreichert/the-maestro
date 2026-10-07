@@ -52,7 +52,8 @@ So a "make a PR" request ends like this:
    the change touches auth, permissions, logging, secrets or multi-tenant scoping. Report what it found
    and what you did with each item.
 4. **Within the PR size budget** — `pr-open.ts` runs the `pr-size.ts` gate and refuses otherwise ([below](#pr-size-budget)).
-5. Committed and pushed, then opened as a **draft** PR, assigned to the user (`--assignee @me`).
+5. **A body that explains itself** — a `## Context` and a `## Reviewer guide` section, and `pr-open.ts` refuses without them ([below](#pr-body)).
+6. Committed and pushed, then opened as a **draft** PR, assigned to the user (`--assignee @me`).
    The user promotes it to ready for review; you never do, and a deploy PR (`staging` → `main` or
    equivalent) is not yours to open at all. Copilot review on the draft is handled per
    [prs.md#copilot-on-drafts](prs.md#copilot-on-drafts).
@@ -76,10 +77,31 @@ from the org overlay's repo notes. **An empty list means this rule is off.** In 
 
 The PR board shows the state per PR: [prs.md#twin-prs](prs.md#twin-prs).
 
+## PR body
+
+Every PR body has two sections, written for the person who reviews the diff and has not watched the work happen. `pr-open.ts` enforces them: `--body-file` is required, and it refuses (exit 1, never calls gh, `--dry-run` included) when the file lacks a `## Context` heading or a `## Reviewer guide` heading, or when either has no real content. An empty section or a placeholder such as `TBD`, `_TBD_`, `TODO` or `N/A` does not count; a heading inside a code fence or an HTML comment does not count either.
+
+- **`## Context`** — short: why the change exists, what changed, and where it sits (the ticket, the stack or the twin PR it belongs to).
+- **`## Reviewer guide`** — what to look at (the hunks that carry the real change), the riskiest or least obvious parts, what is mechanical and safe to skim, how it was validated (commands and their real results), and what is out of scope.
+
+```markdown
+## Context
+
+Agents could open a PR with an empty body. This makes the body a gate. Part of the review-quality ticket; no stack.
+
+## Reviewer guide
+
+- Look at: `checkBody` in `pr-open.ts`, the only behaviour change.
+- Riskiest: the placeholder pattern; a false refusal blocks a PR.
+- Skim: the test fixtures and the docs.
+- Validated: `npm test`, 1137 passed, 0 failed.
+- Out of scope: checking the body for anything beyond the two sections.
+```
+
 ## PR size budget
 
-**Open every PR with `node <scripts dir>/pr-open.ts --repo <repo> --base <base> --title "..." [--body-file <f>] [--head <branch>]`, never a bare `gh pr create`.**
-It runs the `pr-size.ts` gate (which reads `git diff --numstat -M <base>...<head>`), and on exit 1 it refuses, prints
+**Open every PR with `node <scripts dir>/pr-open.ts --repo <repo> --base <base> --title "..." --body-file <f> [--head <branch>]`, never a bare `gh pr create`.**
+It checks the [PR body](#pr-body), then runs the `pr-size.ts` gate (which reads `git diff --numstat -M <base>...<head>`), and on exit 1 it refuses, prints
 the summary and a split hint, and never calls gh. On a pass it runs `gh pr create --draft --assignee @me`; draft and
 assignee are always forced and cannot be turned off. `--dry-run` prints the gh command instead. If it refuses,
 **split instead of opening**: stop, and report a split plan (which files and lines go in which PR, in merge order).
