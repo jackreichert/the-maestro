@@ -115,6 +115,7 @@ export const UI_CSS = `
   .tone-success .head .glyph { color: var(--success); }
   .tone-accent .head .glyph { color: var(--accent); }
 
+  .empty .rest { font-family: var(--font-serif); font-size: 1.04em; color: var(--text-secondary); margin-left: 2px; }
   .section-hint { margin: calc(-1 * var(--space-2)) 0 var(--space-3); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); max-width: 70ch; }
   .section-hint .touch { display: none; }
   @media (pointer: coarse), (max-width: 480px) { .section-hint .keys { display: none; } .section-hint .touch { display: inline; } }
@@ -123,11 +124,16 @@ export const UI_CSS = `
   .asks { border-top: 1px solid var(--border); }
   button.more {
     font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); color: var(--accent);
-    margin-top: var(--space-2); min-height: 32px; padding: 0 var(--space-3); margin-left: calc(-1 * var(--space-3));
+    align-self: center; min-height: 28px; padding: 0 var(--space-2); margin: -2px calc(-1 * var(--space-2)) -2px auto;
     border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; font-variant-numeric: tabular-nums;
     transition: background-color var(--dur-fast) var(--ease-out);
   }
   @media (hover: hover) { button.more:hover { background: var(--accent-soft); } }
+  button.more .chev {
+    display: inline-block; width: 6px; height: 6px; margin-left: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0;
+    transform: translateY(-2px) rotate(45deg); transition: transform var(--dur-base) var(--ease-out);
+  }
+  button.more[aria-expanded=true] .chev { transform: translateY(1px) rotate(225deg); }
 
   ul.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.rows > li {

@@ -1,4 +1,4 @@
-import { BASE_CSS, UI_CSS, h, refLink, shadow, streamTag } from './dom.ts';
+import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
 import { askAge, chatAnswer } from './glance.ts';
 import type { AskCard, AskResolveDetail } from './types.ts';
 
@@ -76,12 +76,24 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .resolved { margin-top: var(--space-4); display: grid; gap: var(--space-1); animation: enter var(--dur-base) var(--ease-out); }
   .resolved:focus { outline: none; }
   .resolved .done { margin: 0; color: var(--text-primary); font-weight: var(--weight-semibold); }
+  .bar { display: inline-block; vertical-align: -4px; margin-right: var(--space-2); fill: var(--text-secondary); transform-origin: 50% 100%; }
+  .done .bar { animation: bar-in var(--dur-base) var(--ease-out); }
+  @keyframes bar-in { from { opacity: 0; transform: scaleY(0.6); } }
+  .unresolved { font-family: var(--font-serif); font-weight: var(--weight-regular); font-size: 1.04em; color: var(--text-secondary); }
+  .copied .bar { vertical-align: -3px; height: 14px; margin-right: 6px; }
+  @media (forced-colors: active) { .bar { fill: CanvasText; } }
   .resolved .unsaved { margin: 0; width: fit-content; padding: 2px var(--space-2); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); }
-  .resolved button { justify-self: start; margin-top: var(--space-1); }
-  .resolved blockquote { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); overflow-wrap: anywhere; }
-  .resolved .note { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
+  .resolved .actions { margin-top: var(--space-2); }
+  .resolved blockquote { margin: 0; max-width: 70ch; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .resolved blockquote.select { user-select: all; }
   @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
 `;
+
+/** A single thin barline: an ask answered on this page but not yet resolved in the ledger. Decorative; the words say it. */
+function barline(): SVGSVGElement {
+  return s('svg', { class: 'bar', viewBox: '0 0 4 18', width: '4', height: '18', 'aria-hidden': 'true', focusable: 'false' },
+    s('rect', { x: '1.25', y: '0', width: '1.5', height: '18' }));
+}
 
 /**
  * <ask-card>: one decision awaiting Jack, drawn as a single row (id, decision, stream, age). Clicking the row, or Enter
@@ -128,7 +140,7 @@ export class AskCardElement extends HTMLElement {
     // Every ask has a "Your answer" field and a copy button; tie each to its decision so a controls list tells them apart.
     const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': [`${uid}-h`, a.context ? `${uid}-c` : ''].filter(Boolean).join(' ') });
     const copy = h('button', { type: 'button', class: 'secondary', 'aria-describedby': `${uid}-h` }, 'Copy answer for chat');
-    const error = h('p', { class: 'error', id: `${uid}-e`, hidden: true }, 'Write an answer first: there is no approve-as-asked shortcut here.');
+    const error = h('p', { class: 'error', id: `${uid}-e`, role: 'alert', hidden: true }, 'Write an answer first: there is no approve-as-asked shortcut here.');
     // Sample data: no answer field at all (the section head says why), so a locked board has nothing that looks pressable.
     const form = this.#locked ? null
       : h('div', { class: 'form' },
@@ -141,7 +153,7 @@ export class AskCardElement extends HTMLElement {
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
       links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
       form);
-    const copied = h('span', { class: 'copied', hidden: true }, 'copied');
+    const copied = h('span', { class: 'copied', hidden: true }, barline(), 'copied');
     const row = h('div', { class: 'row' },
       h('span', { class: 'id' }, h('span', { class: 'vh' }, 'Ask '), a.id),
       h('h3', {}, toggle),
@@ -176,42 +188,62 @@ export class AskCardElement extends HTMLElement {
     // The page cannot write to the ledger yet, so answering is copying: the clipboard gets "<id>: <answer>" for the
     // orchestrator chat, and the ask says plainly that nothing was saved. Focus moves to that status (read once, no live region).
     const showStatus = (text: string, ok: boolean): void => {
-      const head = h('p', { class: 'done', id: `${uid}-s` }, ok ? 'Copied for chat' : 'Could not copy');
+      // Copied, not saved: a single barline and unresolved. When the page can write, this becomes a final double barline
+      // and resolved; until then the music does not claim a resolution that has not happened. A failed copy gets no music.
+      const head = h('p', { class: 'done', id: `${uid}-s` }, ...(ok
+        ? [barline(), 'Copied for chat ', h('i', { class: 'unresolved' }, 'unresolved')]
+        : ['Could not copy']));
       const again = h('button', { type: 'button', class: 'secondary' }, ok ? 'Copy again' : 'Try again');
       const edit = h('button', { type: 'button', class: 'quiet' }, 'Edit answer');
-      const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s` },
+      // A focused group reads only its name, so the quote and the not-saved sentence are tied to it as its description.
+      const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s`, 'aria-describedby': `${uid}-q ${uid}-n` },
         head,
-        h('blockquote', { class: ok ? undefined : 'select' }, text),
-        h('p', { class: 'unsaved' }, ok
+        h('blockquote', { class: ok ? undefined : 'select', id: `${uid}-q` }, text),
+        h('p', { class: 'unsaved', id: `${uid}-n` }, ok
           ? 'Not saved: paste it into the orchestrator chat. This page cannot write to the ledger yet.'
           : 'Select the answer above and copy it by hand. This page cannot write to the ledger yet.'),
         h('div', { class: 'actions' }, again, edit));
       again.addEventListener('click', () => { void send(text); });
-      edit.addEventListener('click', () => { status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
+      edit.addEventListener('click', () => { announced = false; status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
       (form?.isConnected ? form : body.querySelector('.resolved'))?.replaceWith(status);
       this.toggleAttribute('answered', ok);
       copied.hidden = !ok;
       status.focus();
     };
+    let announced = false;
     const send = async (text: string): Promise<void> => {
       let ok = false;
       try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
-      if (ok) this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer: answer.value.trim() }, bubbles: true, composed: true }));
+      // Once per answer: Copy again re-copies the same text and must not look like a second decision to a future writer.
+      if (ok && !announced) {
+        announced = true;
+        this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer: answer.value.trim() }, bubbles: true, composed: true }));
+      }
       showStatus(text, ok);
     };
     const submit = (): void => {
       if (this.#locked || !form?.isConnected) return;
       const text = chatAnswer(a.id, answer.value);
-      error.hidden = text !== null;
-      if (text === null) {
-        answer.setAttribute('aria-invalid', 'true');
-        answer.setAttribute('aria-errormessage', error.id);
-        answer.focus();
-        return;
-      }
-      answer.removeAttribute('aria-invalid');
+      showError(text === null);
+      if (text === null) { answer.focus(); return; }
       void send(text);
     };
+    // The error is tied to the field both ways (aria-errormessage, and aria-describedby for screen readers that ignore
+    // it) and is a live alert when it appears; typing clears it.
+    const describedBy = answer.getAttribute('aria-describedby') ?? '';
+    const showError = (on: boolean): void => {
+      error.hidden = !on;
+      answer.toggleAttribute('aria-invalid', on);
+      if (on) {
+        answer.setAttribute('aria-invalid', 'true');
+        answer.setAttribute('aria-errormessage', error.id);
+        answer.setAttribute('aria-describedby', `${describedBy} ${error.id}`.trim());
+      } else {
+        answer.removeAttribute('aria-errormessage');
+        answer.setAttribute('aria-describedby', describedBy);
+      }
+    };
+    answer.addEventListener('input', () => { if (!error.hidden) showError(false); });
     copy.addEventListener('click', submit);
     answer.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }

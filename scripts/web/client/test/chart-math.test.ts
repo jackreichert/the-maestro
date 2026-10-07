@@ -87,3 +87,11 @@ test('a stream named other joins the fold instead of sitting beside a second Oth
   const out = limitSeries(data, 3);
   assert.deepEqual(out.series.map((x) => [x.name, x.values[0]]), [['a', 9], ['b', 8], ['Other', 18]]);
 });
+
+test('a series already named Other, in any case, joins the fold and the limit holds', () => {
+  for (const name of ['Other', 'other', ' OTHER ']) {
+    const data = { labels: ['x'], series: [['a', 9], ['b', 8], ['c', 7], [name, 6], ['d', 5]].map(([n, v]) => ({ name: n as string, values: [v as number] })) };
+    const out = limitSeries(data, 3);
+    assert.deepEqual(out.series.map((x) => [x.name, x.values[0]]), [['a', 9], ['b', 8], ['Other', 18]], name);
+  }
+});

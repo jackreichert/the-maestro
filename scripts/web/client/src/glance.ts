@@ -91,3 +91,38 @@ export function chatAnswer(id: string, answer: string): string | null {
   const text = answer.trim();
   return text ? `${id}: ${text}` : null;
 }
+
+/** The browser tab's title: "(n) Podium" while n asks need you, plain "Podium" otherwise. Blocked never counts: it is not your hand. */
+export function cueTitle(asks: number): string {
+  return Number.isInteger(asks) && asks > 0 ? `(${asks}) Podium` : 'Podium';
+}
+
+/** A tempo marking for the scope the cue line shows, and the language it is in (for `lang`, so it is pronounced right). */
+export interface Tempo { word: 'Tacet' | 'Adagio' | 'Andante' | 'Allegro' | 'Presto'; lang: 'la' | 'it' }
+
+/**
+ * How much is waiting on you, as a tempo: a = open asks, b = blocked, w = in flight. Nothing at all is Tacet (the part
+ * is silent); only work in flight is Adagio; one or two waiting is Andante; three to five is Allegro; six or more, or
+ * three blocked, is Presto. The cue line stays the source of truth; this is the same fact in a word.
+ */
+export function tempoWord(counts: { asks: number; blocked: number; working: number }): Tempo {
+  const waiting = counts.asks + counts.blocked;
+  if (waiting === 0) return counts.working === 0 ? { word: 'Tacet', lang: 'la' } : { word: 'Adagio', lang: 'it' };
+  if (waiting >= 6 || counts.blocked >= 3) return { word: 'Presto', lang: 'it' };
+  return { word: waiting <= 2 ? 'Andante' : 'Allegro', lang: 'it' };
+}
+
+/** The tempo scale in order, each word with what it means: the disclosure under the cue line is built from this. */
+export const TEMPO_SCALE: { word: Tempo['word']; lang: Tempo['lang']; meaning: string }[] = [
+  { word: 'Tacet', lang: 'la', meaning: 'nothing' },
+  { word: 'Adagio', lang: 'it', meaning: 'only work in flight' },
+  { word: 'Andante', lang: 'it', meaning: 'one or two' },
+  { word: 'Allegro', lang: 'it', meaning: 'three to five' },
+  { word: 'Presto', lang: 'it', meaning: 'six or more, or three blocked' },
+];
+
+/** The opening of the tempo disclosure, before the scale. */
+export const TEMPO_LEAD = 'Tempo reads how much is waiting on you: ';
+
+/** What the tempo disclosure says, as one sentence. */
+export const TEMPO_RULE = `${TEMPO_LEAD}${TEMPO_SCALE.map((t) => `${t.word}, ${t.meaning}`).join('; ')}.`;
