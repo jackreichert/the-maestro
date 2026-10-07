@@ -200,6 +200,8 @@ test('PR body private-reference and voice settings: defaults, file values, bad p
     const d = show();
     assert.equal(d.PR_BODY_CHECK_PRIVATE, 'on');
     assert.equal(d.PR_BODY_CHECK_VOICE, 'on');
+    assert.equal(d.PR_BODY_CHECK_COUNTS, 'on');
+    assert.equal(show({ MAESTRO_PR_BODY_CHECK_COUNTS: 'off' }).PR_BODY_CHECK_COUNTS, 'off');
     assert.equal(d.PR_BODY_PRIVATE_PATTERNS, '(unset)');
     assert.equal(d.PR_BODY_VOICE_NAMES, '(unset)');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_private_patterns: \\bX-\\d+\\b, (broken\npr_body_voice_names: Sam Fictional, samf\npr_body_check_voice: off'));
