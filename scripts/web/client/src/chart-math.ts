@@ -74,8 +74,10 @@ export function limitSeries(data: ChartData, limit = MAX_SERIES): ChartData {
   const totals = Object.fromEntries(data.series.map((x) => [x.name, x.values.reduce((a, b) => a + b, 0)]));
   const keep = foldToOther(totals, limit);
   if (keep.length === data.series.length) return data;
-  const kept = data.series.filter((x) => keep.includes(x.name));
-  const rest = data.series.filter((x) => !keep.includes(x.name));
+  // Partition on the real names: a series that is itself a catch-all (Other in any case) always joins the fold, so it
+  // cannot match the appended 'Other' label and survive beside it.
+  const kept = data.series.filter((x) => !isOther(x.name) && keep.includes(x.name));
+  const rest = data.series.filter((x) => isOther(x.name) || !keep.includes(x.name));
   const other = data.labels.map((_, i) => rest.reduce((a, x) => a + (x.values[i] ?? 0), 0));
   return { labels: data.labels, series: [...kept, { name: 'Other', values: other }] };
 }
