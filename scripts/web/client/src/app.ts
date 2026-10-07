@@ -383,13 +383,14 @@ export class PodiumApp extends HTMLElement {
       ? h('ol', { class: 'priorities', role: 'list' }, ...pri.items.map((i) => h('li', {}, h('span', {}, i.text), i.stream ? streamTag(i.stream) : null)))
       : null;
     const priEmpty = pri.state === 'stale' ? `Priorities are from ${longDate(pri.date) || pri.date}: set today's with journal.ts priorities set.` : 'No priorities set for today.';
+    const asks = askCards(st.asks, this.#sources.state === 'server', true, askPreview());
     const frag = fragmentFor(st.fragments, OVERVIEW);
     const md = frag ? h('md-fragment') : null;
     if (md && frag) md.markdown = frag;
     return h('div', {},
       h('div', { class: 'board' },
         h('div', { class: 'col' },
-          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', rest: RESTS.asks, hint: askHint(this.#sources.state === 'server') }, askCards(st.asks, this.#sources.state === 'server', true, askPreview())),
+          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', rest: RESTS.asks, hint: askHint(this.#sources.state === 'server'), action: asks?.more }, asks?.list ?? null),
           section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(st.blocked, ctx)),
           section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },

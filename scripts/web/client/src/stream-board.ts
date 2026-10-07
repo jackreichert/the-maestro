@@ -23,7 +23,7 @@ export const BOARD_CSS = CSS;
 
 export type Tone = 'accent' | 'critical' | 'success' | 'neutral';
 /** A section; only the three status sections (needs you, blocked, shipped) carry a glyph. */
-export interface SectionSpec { title: string; n: number; glyph?: string; tone: Tone; empty: string; rest?: Rest; quiet?: boolean; hint?: Node | null }
+export interface SectionSpec { title: string; n: number; glyph?: string; tone: Tone; empty: string; rest?: Rest; quiet?: boolean; hint?: Node | null; action?: Node | null }
 
 /** A musical word after an empty state's literal sentence; `lang` only when it is not English. */
 export interface Rest { word: string; lang?: 'it' | 'la' }
@@ -47,7 +47,8 @@ export function section(spec: SectionSpec, body: Node | null): HTMLElement {
   return h('section', { 'aria-labelledby': id, class: `tone-${tone}${spec.quiet ? ' quiet' : ''}` },
     h('div', { class: 'head' },
       spec.glyph ? h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph) : null,
-      h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null)),
+      h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null),
+      body ? spec.action : null),
     body && spec.hint ? h('p', { class: 'section-hint' }, spec.hint) : null,
     body ?? h('p', { class: 'empty' }, spec.empty, spec.rest ? ' ' : null, spec.rest ? h('i', { class: 'rest', lang: spec.rest.lang }, spec.rest.word) : null));
 }
@@ -87,7 +88,7 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
  * Asks as one row each, oldest first; `showStream` tags each row with its stream (the overview mixes streams). With a
  * `cap`, only the oldest `cap` rows show until "Show all N" reveals the rest, so the sections below stay in view.
  */
-export function askCards(asks: AskCard[], live: boolean, showStream: boolean, cap = Number.POSITIVE_INFINITY): HTMLElement | null {
+export function askCards(asks: AskCard[], live: boolean, showStream: boolean, cap = Number.POSITIVE_INFINITY): AskList | null {
   if (asks.length === 0) return null;
   const id = `asks${++sectionSeq}`;
   const cards = oldestFirst(asks).map((a, i) => {
@@ -99,10 +100,10 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, ca
   });
   const list = h('div', { class: 'asks', role: 'list', id }, ...cards);
   const hidden = cards.slice(cap);
-  if (hidden.length === 0) return list;
+  if (hidden.length === 0) return { list, more: null };
   const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', 'aria-controls': id });
   const label = (open: boolean): void => {
-    more.textContent = open ? `Show the oldest ${cap} only` : `Show all ${asks.length}`;
+    more.textContent = open ? `Show oldest ${cap}` : `Show all ${asks.length}`;
     more.setAttribute('aria-expanded', String(open));
   };
   label(false);
@@ -114,8 +115,11 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, ca
     // Revealing moves focus to the first ask that was hidden, so a keyboard user lands on the new rows, not past them.
     if (open) hidden[0]?.focusToggle();
   });
-  return h('div', {}, list, more);
+  return { list, more };
 }
+
+/** The asks list, and the Show all control when the list is capped (it sits at the right of the section heading). */
+export interface AskList { list: HTMLElement; more: HTMLElement | null }
 
 /** True on Apple platforms, where the copy shortcut is shown with the Command key. */
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -184,7 +188,7 @@ export class StreamBoard extends HTMLElement {
     if (md && frag) md.markdown = frag;
     this.#root.replaceChildren(h('div', { class: 'board' },
       h('div', { class: 'col' },
-        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false)),
+        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false)?.list ?? null),
         section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(blocked, ctx)),
         section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
       h('div', { class: 'col' },

@@ -124,7 +124,7 @@ export const UI_CSS = `
   .asks { border-top: 1px solid var(--border); }
   button.more {
     font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); color: var(--accent);
-    margin-top: var(--space-2); min-height: 32px; padding: 0 var(--space-3); margin-left: calc(-1 * var(--space-3));
+    align-self: center; min-height: 28px; padding: 0 var(--space-2); margin: -2px calc(-1 * var(--space-2)) -2px auto;
     border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; font-variant-numeric: tabular-nums;
     transition: background-color var(--dur-fast) var(--ease-out);
   }
