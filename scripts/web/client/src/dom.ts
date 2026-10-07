@@ -126,6 +126,8 @@ export const UI_CSS = `
   .row-sub { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
   .gate { color: var(--critical); }
   .gate .glyph { width: auto; margin-right: 4px; }
+  .gate .mono { font-family: var(--font-mono); font-size: 0.92em; }
+  .gate a { color: var(--critical); text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
 
   .id {
     font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-secondary);

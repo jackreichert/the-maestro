@@ -299,7 +299,7 @@ export class PodiumApp extends HTMLElement {
   }
 
   #overview(st: PodiumState): Node {
-    const ctx = { now: st.generatedAt, tz: st.tz, showStream: true };
+    const ctx = { now: st.generatedAt, tz: st.tz, showStream: true, prs: st.prs };
     const pri = st.priorities;
     const priorities = pri.state === 'ok' && pri.items.length > 0
       ? h('ol', { class: 'priorities', role: 'list' }, ...pri.items.map((i) => h('li', {}, h('span', {}, i.text), i.stream ? streamTag(i.stream) : null)))

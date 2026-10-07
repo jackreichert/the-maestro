@@ -4,6 +4,8 @@ import './md-fragment.ts';
 import { fragmentFor } from './contract.ts';
 import { prChips } from './pr-chips.ts';
 import { ago, clockTime, oldestFirst } from './glance.ts';
+import { gateView } from './gate.ts';
+import type { GateView } from './gate.ts';
 import type { AskCard, DoneItem, PodiumState, PrCard, WorkItem } from './types.ts';
 
 const CSS = `${BASE_CSS}${UI_CSS}
@@ -37,7 +39,14 @@ export function section(spec: SectionSpec, body: Node | null): HTMLElement {
 }
 
 /** Where rows are drawn: the reference time and zone for ages, and whether each row names its stream. */
-export interface RowContext { now: string; tz: string; showStream: boolean }
+export interface RowContext { now: string; tz: string; showStream: boolean; prs?: PrCard[] }
+
+/** A blocked row's gate: the words, then its target, linked when the gate names a pull request with a known URL. */
+function gateNode(g: GateView): HTMLElement {
+  const target = g.url ? refLink({ label: g.label, url: g.url }) : h('span', { class: g.mono ? 'mono' : undefined }, g.label);
+  if (g.url && target instanceof HTMLElement) target.classList.add('mono');
+  return h('span', { class: 'gate' }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, '⊘'), `${g.lead} `, target);
+}
 
 /** One row per item: id, text and ticket, a right-aligned age (or closing time), then stream, gate and model. */
 export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElement | null {
@@ -48,7 +57,7 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
     const gate = 'gate' in x && typeof x.gate === 'string' && x.gate ? x.gate : '';
     const sub = [
       ctx.showStream ? streamTag(x.stream) : null,
-      gate ? h('span', { class: 'gate' }, h('span', { class: 'glyph', 'aria-hidden': 'true' }, '⊘'), `Waiting on ${gate}`) : null,
+      gate ? gateNode(gateView(gate, ctx.prs ?? [])) : null,
       x.model ? h('span', {}, x.model) : null,
     ].filter((n): n is HTMLElement => n !== null);
     return h('li', {},
@@ -146,7 +155,7 @@ export class StreamBoard extends HTMLElement {
     const stream = this.getAttribute('stream') ?? '';
     if (!st) { this.#root.replaceChildren(); return; }
     const inStream = <T extends { stream: string }>(xs: T[]): T[] => xs.filter((x) => x.stream === stream);
-    const ctx: RowContext = { now: st.generatedAt, tz: st.tz, showStream: false };
+    const ctx: RowContext = { now: st.generatedAt, tz: st.tz, showStream: false, prs: st.prs };
     const asks = inStream(st.asks);
     const working = inStream(st.working);
     const queued = inStream(st.queued);
