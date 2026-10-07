@@ -9,6 +9,8 @@ import { installGhStub, prNode } from './lib/gh-stub.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
+// ...nor the user's event loop: `prime` and `handoff` read the standing pickups' runtime checks from it.
+process.env.MAESTRO_EVENT_DIR = mkdtempSync(join(tmpdir(), 'journal-events-'));
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
