@@ -145,3 +145,8 @@ test('the shipped block forbids polling an output file, and says to run tests un
     assert.match(block, /if one hangs, stop and report which test/);
     assert.ok(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems.length === 0, 'no new slot');
 });
+
+test('the shipped block tells an agent to locate a credential by name before calling it missing', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    assert.match(block, /^- Missing credential: .*`env-where`.*never a value/m);
+});

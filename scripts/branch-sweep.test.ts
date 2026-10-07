@@ -10,7 +10,7 @@ import { join } from 'node:path';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
 import type { CmdResult, ExcludedItem, Git, GhJson, ListedItem, PrInfo, SweepContext } from './branch-sweep.ts';
-const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.ts');
+const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts, isEnvFile } = await import('./branch-sweep.ts');
 
 const ME = 'me@example.com';
 type World = ReturnType<typeof world>;
@@ -217,6 +217,41 @@ test('a worktree with ignored files that are not disposable is kept, with the re
     assert.deepEqual(names(r, 'worktree'), []);
     assert.match(r.excluded[0].reason, /2 ignored files kept \(.*secret\.key.*\): not disposable/);
     assert.equal(names(scanRepo(w.repo, ctxFor({ disposableIgnored: ['secret.key', 'local.db', 'node_modules', '__pycache__'] })), 'worktree').length, 1);
+});
+
+test('a worktree holding an ignored environment file is kept and listed, even when the settings call its path disposable', () => {
+    const w = world();
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/envf', 'main');
+    writeFileSync(join(w.repo, '.gitignore'), '.env*\nssm-*.json\nnode_modules/\n'); sh(w.repo, 'add', '.gitignore');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'ignore'); sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/envf'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/envf');
+    const wt = join(w.root, 'envf'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/envf');
+    assert.equal(names(scanRepo(w.repo, ctxFor()), 'worktree').length, 1, 'clean: it qualifies');
+    writeFileSync(join(wt, '.env.local'), 'KEY=placeholder\n');
+    for (const disposableIgnored of [undefined, ['.env.local', '.env', 'node_modules']]) {
+        const r = scanRepo(w.repo, ctxFor(disposableIgnored ? { disposableIgnored } : {}));
+        assert.deepEqual(names(r, 'worktree'), []);
+        assert.match(r.excluded[0].reason, /1 environment files \(\.env\.local\): may be the only copy/);
+    }
+    rmSync(join(wt, '.env.local'));
+    writeFileSync(join(wt, 'ssm-fake.json'), '{}\n');
+    assert.match(scanRepo(w.repo, ctxFor()).excluded[0].reason, /environment files \(ssm-fake\.json\)/);
+});
+
+test('isEnvFile names env and secrets-export files, not templates or lookalikes', () => {
+    for (const p of ['.env', '.env.local', '.env.production', 'app/.env', 'ssm-prod.json']) assert.equal(isEnvFile(p), true, p);
+    for (const p of ['.env.example', '.env.sample', '.env.template', 'environment.ts', 'env', '.envrc', 'ssm.json', 'notes/ssm-x.txt', '']) assert.equal(isEnvFile(p), false, p);
+});
+
+test('removeWorktree refuses a worktree holding an environment file, even when the caller passes it as disposable', () => {
+    const w = world();
+    writeFileSync(join(w.repo, '.gitignore'), '.env\n'); sh(w.repo, 'add', '.gitignore');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'ignore'); sh(w.repo, 'push', '-q', 'origin', 'main');
+    const wt = join(w.root, 'envrm'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/main');
+    const [item] = scanRepo(w.repo, ctxFor({ gh: () => [] })).items.filter((i) => i.name === wt);
+    writeFileSync(join(wt, '.env'), 'KEY=placeholder\n');
+    assert.match(removeWorktree(w.repo, item, item.id, ['.env']).message, /holds an environment file/);
+    assert.equal(existsSync(join(wt, '.env')), true);
 });
 
 test('a worktree whose upstream is gone qualifies only with nothing unpushed; claimed or recently touched ones are kept', () => {
