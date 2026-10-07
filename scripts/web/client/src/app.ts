@@ -341,7 +341,7 @@ export class PodiumApp extends HTMLElement {
     const scale = TEMPO_SCALE.flatMap((x, i) => [i > 0 ? '; ' : '', h('i', { lang: x.lang, class: x.word === t.word ? 'now' : undefined }, x.word), `, ${x.meaning}`]);
     const rule = h('p', { class: 'tempo-rule', id: 'tempo-rule', hidden: !this.#tempoOpen }, TEMPO_LEAD, ...scale, '.');
     const tempo = h('button', { type: 'button', class: 'tempo', 'aria-expanded': String(this.#tempoOpen), 'aria-controls': 'tempo-rule' },
-      h('i', { lang: t.lang }, t.word));
+      h('i', { lang: t.lang }, t.word), h('span', { class: 'vh' }, ', what the tempo means'));
     tempo.addEventListener('click', () => {
       this.#tempoOpen = !this.#tempoOpen;
       tempo.setAttribute('aria-expanded', String(this.#tempoOpen));
