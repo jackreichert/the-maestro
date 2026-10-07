@@ -10,6 +10,7 @@
 export class AskState {
   readonly #drafts = new Map<string, string>();
   readonly #resolved = new Map<string, string>();
+  readonly #open = new Set<string>();
 
   draft(id: string): string { return this.#drafts.get(id) ?? ''; }
 
@@ -20,6 +21,14 @@ export class AskState {
 
   /** The answer the card was copied for chat with, or null while it is still open. */
   resolvedAnswer(id: string): string | null { return this.#resolved.get(id) ?? null; }
+
+  /** Whether the user has the ask unfolded; kept so a redraw does not fold a row someone is reading. */
+  isOpen(id: string): boolean { return this.#open.has(id); }
+
+  setOpen(id: string, open: boolean): void {
+    if (open) this.#open.add(id);
+    else this.#open.delete(id);
+  }
 
   /** Settle the ask. True the first time only: a second call for an ask already settled changes nothing, so it cannot announce twice. */
   resolve(id: string, answer: string): boolean {
@@ -40,6 +49,7 @@ export class AskState {
     const keep = new Set(liveIds);
     for (const id of [...this.#drafts.keys()]) if (!keep.has(id)) this.#drafts.delete(id);
     for (const id of [...this.#resolved.keys()]) if (!keep.has(id)) this.#resolved.delete(id);
+    for (const id of [...this.#open]) if (!keep.has(id)) this.#open.delete(id);
   }
 }
 

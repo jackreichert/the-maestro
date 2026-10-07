@@ -287,7 +287,19 @@ export class PodiumApp extends HTMLElement {
     this.#dropped = f.dropped;
     askState.prune(f.state.asks.map((a) => a.id));
     if (!this.#ids().includes(this.#active)) this.#active = OVERVIEW;   // the stream behind the open tab is gone
+    const focused = this.#focusKey();
     this.#safeRender();
+    if (focused) findByKey(this.#root, focused)?.focus();   // the redraw destroyed the element that had focus; put it back on its twin
+  }
+
+  /** A stable name for the control that has focus inside the page (tab, ask toggle, link), or null when focus is elsewhere. */
+  #focusKey(): FocusKey | null {
+    if (document.activeElement !== this) return null;
+    let el: Element | null = this.#root.activeElement;
+    while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+    if (!el) return null;
+    if (el.id) return { id: el.id };
+    return el instanceof HTMLAnchorElement ? { href: el.href } : null;
   }
 
   #release(input: GateInput): void {
@@ -558,6 +570,19 @@ function showCue(asks: number): void {
   const icon = document.querySelector<HTMLLinkElement>('link[rel=icon]');
   const href = asks > 0 ? '/favicon-cue.svg' : '/favicon.svg';
   if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
+}
+
+interface FocusKey { id?: string; href?: string }
+
+/** The first element under `root` (through nested shadow roots) matching the key. */
+function findByKey(root: ShadowRoot | Element, key: FocusKey): HTMLElement | null {
+  for (const el of root.querySelectorAll<HTMLElement>('*')) {
+    if (el.id && el.id === key.id) return el;
+    if (key.href && el instanceof HTMLAnchorElement && el.href === key.href) return el;
+    const inner = el.shadowRoot ? findByKey(el.shadowRoot, key) : null;
+    if (inner) return inner;
+  }
+  return null;
 }
 
 /** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed there. */

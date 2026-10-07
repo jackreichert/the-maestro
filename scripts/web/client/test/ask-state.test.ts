@@ -91,3 +91,15 @@ test('a copy in flight holds an update that lands during the press, and releases
   assert.equal(g.set({ pointer: false }), null, 'the press ending is not enough: the copy has not settled');
   assert.equal(g.set({ busy: false }), 'd1');
 });
+
+test('an unfolded ask stays unfolded across redraws until it is folded or leaves the board', () => {
+  const s = new AskState();
+  assert.equal(s.isOpen('a1'), false);
+  s.setOpen('a1', true);
+  s.setOpen('a2', true);
+  assert.equal(s.isOpen('a1'), true);
+  s.setOpen('a1', false);
+  assert.equal(s.isOpen('a1'), false);
+  s.prune(['a1']);
+  assert.equal(s.isOpen('a2'), false);
+});

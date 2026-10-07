@@ -172,6 +172,7 @@ export class AskCardElement extends HTMLElement {
     let isOpen = false;
     const setOpen = (open: boolean, focusField: boolean): void => {
       isOpen = open;
+      askState.setOpen(a.id, open);
       toggle.setAttribute('aria-expanded', String(open));
       body.hidden = !open;
       this.toggleAttribute('open', open);
@@ -265,6 +266,7 @@ export class AskCardElement extends HTMLElement {
     } else if (!this.#locked && answer.value !== '') {
       setOpen(true, false);
     }
+    if (askState.isOpen(a.id)) setOpen(true, false);   // unfolded before the redraw: still unfolded, without taking focus
     this.#root.replaceChildren(article);
   }
 }
