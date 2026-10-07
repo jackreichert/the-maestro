@@ -1,4 +1,4 @@
-import { BASE_CSS, UI_CSS, h, refLink, shadow, streamTag } from './dom.ts';
+import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
 import { askAge, chatAnswer } from './glance.ts';
 import type { AskCard, AskResolveDetail } from './types.ts';
 
@@ -76,12 +76,24 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .resolved { margin-top: var(--space-4); display: grid; gap: var(--space-1); animation: enter var(--dur-base) var(--ease-out); }
   .resolved:focus { outline: none; }
   .resolved .done { margin: 0; color: var(--text-primary); font-weight: var(--weight-semibold); }
+  .bar { display: inline-block; vertical-align: -4px; margin-right: var(--space-2); fill: var(--text-secondary); transform-origin: 50% 100%; }
+  .done .bar { animation: bar-in var(--dur-base) var(--ease-out); }
+  @keyframes bar-in { from { opacity: 0; transform: scaleY(0.6); } }
+  .unresolved { font-family: var(--font-serif); font-weight: var(--weight-regular); font-size: 1.04em; color: var(--text-secondary); }
+  .copied .bar { vertical-align: -3px; height: 14px; margin-right: 6px; }
+  @media (forced-colors: active) { .bar { fill: CanvasText; } }
   .resolved .unsaved { margin: 0; width: fit-content; padding: 2px var(--space-2); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); }
   .resolved .actions { margin-top: var(--space-2); }
   .resolved blockquote { margin: 0; max-width: 70ch; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
   .resolved blockquote.select { user-select: all; }
   @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
 `;
+
+/** A single thin barline: an ask answered on this page but not yet resolved in the ledger. Decorative; the words say it. */
+function barline(): SVGSVGElement {
+  return s('svg', { class: 'bar', viewBox: '0 0 4 18', width: '4', height: '18', 'aria-hidden': 'true', focusable: 'false' },
+    s('rect', { x: '1.25', y: '0', width: '1.5', height: '18' }));
+}
 
 /**
  * <ask-card>: one decision awaiting Jack, drawn as a single row (id, decision, stream, age). Clicking the row, or Enter
@@ -141,7 +153,7 @@ export class AskCardElement extends HTMLElement {
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
       links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
       form);
-    const copied = h('span', { class: 'copied', hidden: true }, 'copied');
+    const copied = h('span', { class: 'copied', hidden: true }, barline(), 'copied');
     const row = h('div', { class: 'row' },
       h('span', { class: 'id' }, h('span', { class: 'vh' }, 'Ask '), a.id),
       h('h3', {}, toggle),
@@ -176,7 +188,11 @@ export class AskCardElement extends HTMLElement {
     // The page cannot write to the ledger yet, so answering is copying: the clipboard gets "<id>: <answer>" for the
     // orchestrator chat, and the ask says plainly that nothing was saved. Focus moves to that status (read once, no live region).
     const showStatus = (text: string, ok: boolean): void => {
-      const head = h('p', { class: 'done', id: `${uid}-s` }, ok ? 'Copied for chat' : 'Could not copy');
+      // Copied, not saved: a single barline and unresolved. When the page can write, this becomes a final double barline
+      // and resolved; until then the music does not claim a resolution that has not happened. A failed copy gets no music.
+      const head = h('p', { class: 'done', id: `${uid}-s` }, ...(ok
+        ? [barline(), 'Copied for chat ', h('i', { class: 'unresolved' }, 'unresolved')]
+        : ['Could not copy']));
       const again = h('button', { type: 'button', class: 'secondary' }, ok ? 'Copy again' : 'Try again');
       const edit = h('button', { type: 'button', class: 'quiet' }, 'Edit answer');
       const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s` },
