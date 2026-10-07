@@ -230,3 +230,67 @@ test('add refuses a second pr-watch watch, under either name', () => {
   assert.match(add('b', 'pr-watch').stderr, /watch "a" already runs pr-watch \(as pr-review\)/);
   assert.match(add('c', 'pr-review').stderr, /already runs/);
 });
+
+// Merge conflicts: a PR turning CONFLICTING speaks once; GitHub's UNKNOWN (still computing) is never a verdict.
+const merge = (mergeable: string, n = 9) => prNode(n, { mergeable, baseRefName: 'develop', headRefName: 'feat/x' });
+const CONFLICT_LINE = 'CONFLICT org/repo#9 develop <- feat/x https://github.com/org/repo/pull/9';
+
+/** Serves each state in turn through check/diff, chaining the snapshot the way the loop does; returns the events of every tick. */
+function walk(states: (string | null)[], first = prWatch.check('open-prs:baseline', world({ pages: [[merge('MERGEABLE')]] }).ctx())): string[][] {
+  const w = world({ pages: [[merge('MERGEABLE')]], prState: 'MERGED' });
+  let prev: prWatch.Snapshot = first;
+  return states.map((s) => {
+    w.serve({ pages: [s === null ? [] : [merge(s)]], prState: 'MERGED' });
+    const next = prWatch.check('open-prs', w.ctx({ prev }));
+    const lines = summaries(prWatch.diff(prev, next));
+    prev = next;
+    return lines;
+  });
+}
+
+test('conflict: a clean PR turning CONFLICTING raises one CONFLICT line with base, head and url', () => {
+  assert.deepEqual(walk(['CONFLICTING']), [[CONFLICT_LINE]]);
+});
+
+test('conflict: it does not re-fire on later ticks, even when the head moves while still conflicting', () => {
+  assert.deepEqual(walk(['CONFLICTING', 'CONFLICTING', 'CONFLICTING']), [[CONFLICT_LINE], [], []]);
+});
+
+test('conflict: clearing is a silent reset, and a later conflict speaks again', () => {
+  assert.deepEqual(walk(['CONFLICTING', 'MERGEABLE', 'MERGEABLE', 'CONFLICTING']), [[CONFLICT_LINE], [], [], [CONFLICT_LINE]]);
+});
+
+test('conflict: UNKNOWN is no change, in either direction, and never a conflict', () => {
+  assert.deepEqual(walk(['UNKNOWN', 'UNKNOWN', 'MERGEABLE']), [[], [], []], 'UNKNOWN on a clean PR stays quiet');
+  assert.deepEqual(walk(['CONFLICTING', 'UNKNOWN', 'CONFLICTING']), [[CONFLICT_LINE], [], []], 'UNKNOWN between two CONFLICTING ticks is not a fresh transition');
+  assert.deepEqual(walk(['CONFLICTING', 'UNKNOWN', 'MERGEABLE', 'UNKNOWN', 'CONFLICTING']), [[CONFLICT_LINE], [], [], [], [CONFLICT_LINE]], 'once cleared, a new conflict speaks');
+});
+
+test('conflict: UNKNOWN to CONFLICTING speaks, and a field GitHub did not return counts as UNKNOWN', () => {
+  assert.deepEqual(walk(['UNKNOWN', 'CONFLICTING']), [[], [CONFLICT_LINE]]);
+  const w = world({ pages: [[{ ...prNode(9), mergeable: undefined }]] });
+  const first = prWatch.check('open-prs', w.ctx());
+  assert.equal(first.board['org/repo#9']?.mergeable, 'UNKNOWN');
+  assert.deepEqual(summaries(prWatch.diff(null, first)), []);
+});
+
+test('conflict: a PR that closes while conflicting reports only that it left the open set', () => {
+  assert.deepEqual(walk(['CONFLICTING', null]), [[CONFLICT_LINE], ['LEFT-OPEN-SET org/repo#9 (merged or closed) https://github.com/org/repo/pull/9']]);
+});
+
+test('conflict: a first check tells a PR already conflicting once; a baseline tells nobody', () => {
+  const w = world({ pages: [[merge('CONFLICTING')]] });
+  assert.deepEqual(summaries(prWatch.diff(null, prWatch.check('open-prs', w.ctx()))), [CONFLICT_LINE]);
+  const base = prWatch.check('open-prs:baseline', w.ctx());
+  assert.deepEqual(prWatch.diff(null, base), []);
+  assert.deepEqual(summaries(prWatch.diff(base, prWatch.check('open-prs', w.ctx({ prev: base })))), [], 'the baseline already holds it, so the next tick stays quiet');
+});
+
+test('conflict: a snapshot saved before this field existed tells an already-conflicting PR once, then goes quiet', () => {
+  const w = world({ pages: [[merge('CONFLICTING')]] });
+  const { mergeable: _drop, ...old } = prWatch.check('open-prs', world({ pages: [[merge('MERGEABLE')]] }).ctx()).board['org/repo#9'] as prWatch.BoardPr;
+  const prev = { board: { 'org/repo#9': old as prWatch.BoardPr }, reported: {} };
+  const next = prWatch.check('open-prs', w.ctx({ prev }));
+  assert.deepEqual(summaries(prWatch.diff(prev, next)), [CONFLICT_LINE]);
+  assert.deepEqual(summaries(prWatch.diff(next, prWatch.check('open-prs', w.ctx({ prev: next })))), []);
+});

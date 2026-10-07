@@ -54,6 +54,7 @@ export function prNode(number: number, overrides: Record<string, unknown> = {}) 
     baseRefName: 'develop',
     updatedAt: '2026-09-24T00:00:00Z',
     reviewDecision: 'REVIEW_REQUIRED',
+    mergeable: 'MERGEABLE',
     headRefOid: 'sha-a',
     repository: { nameWithOwner: 'org/repo' },
     reviewRequests: { nodes: [] },
