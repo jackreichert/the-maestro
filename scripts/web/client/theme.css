@@ -74,12 +74,13 @@
   --shadow-1: 0 0 0 1px rgb(18 42 46 / 0.07), 0 1px 2px rgb(18 42 46 / 0.06);
   --shadow-2: 0 0 0 1px rgb(18 42 46 / 0.09), 0 8px 24px -10px rgb(18 42 46 / 0.22);
 
-  /* Chart series: light */
+  /* Chart series: light. Slots 2 to 5 are the palette hues with OKLCH lightness lowered (hue and chroma kept) until each
+     marks 3:1 against the chart and page surfaces (WCAG 1.4.11); the test checks every slot in both modes. */
   --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
-  --series-5: #e87ba4;
+  --series-2: #e86531;
+  --series-3: #03a16e;
+  --series-4: #be8109;
+  --series-5: #d56a93;
   --series-6: #008300;
   --series-7: #4a3aa7;
   --series-8: #e34948;
