@@ -146,7 +146,7 @@ export function gatherInputs(opts: GatherOptions, deps: GenerateDeps): GatheredI
   const ticketMap = readJson<Record<string, string[]>>(join(statusDir, 'ticket-map.json'));
   const status = deps.journal('status') as BoardStatus;
   const triage = deps.journal('triage') as Triage;
-  const items = [...status.inflight, ...status.queued, ...status.blocked, ...status.awaiting, ...status.done];
+  const items = [...status.inflight, ...status.queued, ...status.blocked, ...status.awaiting, ...(status.paste ?? []), ...status.done];
   const { raw, data: prData } = readPrs(statusDir, deps, opts.dryRun, !!opts.cachedPrsOnly);
   const prs = loadPrs(raw, { items, ticketMap, overrides, repoStreams: config.repoStreams, keyPattern: config.trackerKeyPattern });
   const now = deps.now();

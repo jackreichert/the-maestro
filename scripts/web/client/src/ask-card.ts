@@ -1,6 +1,7 @@
 import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
 import { askAge, chatAnswer } from './glance.ts';
 import { askState } from './ask-state.ts';
+import './md-fragment.ts';
 import type { AskBusyDetail, AskCard, AskResolveDetail } from './types.ts';
 
 /** Older than this many days an ask is flagged, matching the Markdown page's 3 day threshold. */
@@ -49,7 +50,12 @@ const CSS = `${BASE_CSS}${UI_CSS}
   /* The opened ask: context, links, then the answer form, indented to the decision's left edge. */
   .body { grid-column: 2 / -1; padding: 0 var(--space-3) var(--space-4) 0; }
   .body[hidden] { display: none; }
-  .context { margin: 0; color: var(--text-secondary); max-width: 70ch; text-wrap: pretty; }
+  .context { display: block; margin: 0; color: var(--text-secondary); max-width: 70ch; text-wrap: pretty; overflow-wrap: anywhere; }
+  .decide { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: var(--space-3) 0 0; max-width: 70ch; font-size: var(--text-sm); line-height: var(--leading-sm); }
+  .decide dt { color: var(--text-muted); font-weight: var(--weight-medium); }
+  .decide dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+  .paste { margin: var(--space-3) 0 0; max-width: 70ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
+  .paste code { font-family: var(--font-mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
   .stale-note { margin: var(--space-1) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--warning); }
   .links { display: flex; flex-wrap: wrap; gap: 0 var(--space-3); margin: var(--space-2) 0 0; padding: 0; list-style: none; font-size: var(--text-sm); line-height: var(--leading-sm); }
 
@@ -89,6 +95,26 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .resolved blockquote.select { user-select: all; }
   @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
 `;
+
+/** The ask's body: the writer's line breaks, lists and bare https or obsidian URLs (as links, within the link policy) kept. */
+function context(text: string, id: string): HTMLElement {
+  const frag = h('md-fragment', { class: 'context', id });
+  frag.options = { autolink: true, breaks: true };
+  frag.markdown = text;
+  return frag;
+}
+
+/** What the ask recommends, how reversible it is, what silence does and by when, as a list of labelled lines; null when it carries none. */
+function decisionFields(a: AskCard): HTMLElement | null {
+  const rows: [string, string][] = [
+    ...(a.recommend ? [['Recommend', a.recommend] as [string, string]] : []),
+    ...(a.door ? [['Door', a.door === 'one-way' ? 'one-way (silence never decides it)' : 'two-way (reversible)'] as [string, string]] : []),
+    ...(a.default ? [['If silent', a.default] as [string, string]] : []),
+    ...(a.by ? [['Decide by', a.by] as [string, string]] : []),
+    ...(a.class ? [['Class', a.class] as [string, string]] : []),
+  ];
+  return rows.length ? h('dl', { class: 'decide', 'aria-label': 'Decision details' }, ...rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])) : null;
+}
 
 /** A single thin barline: an ask answered on this page but not yet resolved in the ledger. Decorative; the words say it. */
 function barline(): SVGSVGElement {
@@ -152,7 +178,9 @@ export class AskCardElement extends HTMLElement {
         error,
         h('div', { class: 'actions' }, copy));
     const body = h('div', { class: 'body', id: `${uid}-b`, hidden: true },
-      a.context ? h('p', { class: 'context', id: `${uid}-c` }, a.context) : null,
+      a.context ? context(a.context, `${uid}-c`) : null,
+      a.paste ? h('p', { class: 'paste' }, 'Run this block, then answer with what it printed: ', h('code', {}, a.paste)) : null,
+      decisionFields(a),
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
       links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
       form);
