@@ -44,7 +44,7 @@ test('a document for a child ticket lands on its epic, across projects, and leav
   };
   const h = buildStreamHome({
     stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: { Avonlea: { epics: ['avonlea-api-042'] } } }, STREAMS), ledger: [], prs: [],
-    prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => ({ docs: docs[p] ?? [], notes: [] }),
+    prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => ({ docs: docs[p] ?? [], notes: [] }), readBrief: () => ({ ok: false, reason: 'missing' }),
   });
   const e = h.epics.find((x) => x.id === 'avonlea-api-042');
   assert.ok(e);
@@ -66,6 +66,6 @@ test('outside links come only from the epic ticket Links section and only as htt
 test('a real vault reads every folder and a document naming a missing ticket is shown nowhere', () => {
   const real = loadDocs(READER, 'avonlea-api');
   assert.ok(real.docs.every((d) => d.project === 'avonlea-api' && Array.isArray(d.tickets)));
-  const h = buildStreamHome({ stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: { Avonlea: { epics: ['avonlea-api-042'] } } }, STREAMS), ledger: [], prs: [], prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => loadDocs(READER, p) });
+  const h = buildStreamHome({ stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: { Avonlea: { epics: ['avonlea-api-042'] } } }, STREAMS), ledger: [], prs: [], prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => loadDocs(READER, p), readBrief: () => ({ ok: false, reason: 'missing' }) });
   assert.ok(h.epics.every((e) => e.docs.groups.every((g) => g.items.every((i) => i.ticket !== 'ghost-999'))));
 });

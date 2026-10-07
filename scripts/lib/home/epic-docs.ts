@@ -46,8 +46,8 @@ export interface EpicDocsInput {
   now: Date;
 }
 
-/** The documents attributed to one epic, grouped by kind, with the paths used so the caller can take them off the rail. */
-export function epicDocs(inp: EpicDocsInput): { docs: EpicDocs; paths: Set<string> } {
+/** The documents attributed to one epic, grouped by kind, with their paths (so the caller can take them off the rail) and dates (for brief freshness). */
+export function epicDocs(inp: EpicDocsInput): { docs: EpicDocs; paths: Set<string>; dates: (string | undefined)[] } {
   const mine = inp.docs.filter((d) => d.tickets.some((t) => inp.tree.has(t)));
   const projects = new Set(inp.docs.map((d) => d.project));
   const items: DocItem[] = mine.map((d) => ({
@@ -63,5 +63,5 @@ export function epicDocs(inp: EpicDocsInput): { docs: EpicDocs; paths: Set<strin
     const of = items.filter((i) => i.kind === kind).sort(newestFirst);
     return of.length ? [{ kind, items: of.slice(0, GROUP_CAP), more: Math.max(0, of.length - GROUP_CAP) }] : [];
   });
-  return { docs: { groups, unattributedRecent }, paths: new Set(mine.map((d) => d.path)) };
+  return { docs: { groups, unattributedRecent }, paths: new Set(mine.map((d) => d.path)), dates: mine.map((d) => d.updated) };
 }

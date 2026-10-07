@@ -24,7 +24,7 @@ const pr = (number: number, head: string, title: string, over: Partial<Pr> = {})
 const home = (over: Partial<HomeInput> & { config?: object } = {}) => {
   const { config, ...rest } = over;
   return buildStreamHome({ stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: config ?? { Avonlea: { epics: ['avonlea-api-042'], projects: ['avonlea-api'] } } }, STREAMS),
-    ledger: [], prs: [], prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => loadDocs(READER, p), ...rest });
+    ledger: [], prs: [], prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => loadDocs(READER, p), readBrief: () => ({ ok: false, reason: 'missing' }), ...rest });
 };
 
 test('prsNaming matches an id or key at a token boundary and caps at three', () => {

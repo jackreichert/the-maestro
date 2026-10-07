@@ -18,6 +18,8 @@ import type { LedgerLink } from './mapping.ts';
 import { buildRail } from './rail.ts';
 import { prsNaming } from './prs.ts';
 import { epicDocs } from './epic-docs.ts';
+import { briefUnknown, judgeBrief, noteIndex } from './brief.ts';
+import type { BriefRead } from './brief.ts';
 import type { Doc, Docs } from './docs.ts';
 import type { EpicSummary, Ref, StreamHome, TicketRow, Unknown } from './types.ts';
 
@@ -38,6 +40,8 @@ export interface HomeInput {
   page: PageConfig;
   /** The documents of one project; called only for the projects this stream maps. */
   readDocs: (project: string) => Docs;
+  /** The brief note of an epic, read through the guarded reader. */
+  readBrief: (epic: Ticket) => BriefRead;
 }
 
 const ROW_CAP = 200;
@@ -113,6 +117,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   // Documents attributed to an epic may sit in any project its tickets live in; those projects are read for the epic's shelf only, so they add nothing to the rail unless the stream maps them.
   const read = new Map<string, Doc[]>(docs);
   const attributed = new Set<string>();
+  const docDates = new Map<string, (string | undefined)[]>();
   for (const e of epics) {
     const tree = new Set(own(e.id));
     for (const project of new Set([...tree].map((x) => forest.byId.get(x)?.project).filter((p): p is string => !!p))) {
@@ -123,7 +128,22 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
     }
     const found = epicDocs({ epic: e.id, tree, epicBody: (forest.byId.get(e.id) as Ticket).body, docs: [...tree].flatMap((x) => forest.byId.get(x)?.project ?? []).filter((p, i, a) => a.indexOf(p) === i).flatMap((p) => read.get(p) ?? []), vaultName: page.vaultName, now });
     e.docs = found.docs;
+    docDates.set(e.id, found.dates);
     for (const p of found.paths) attributed.add(p);
+  }
+  const notes: { id?: string; path: string }[] = [...forest.byId.values()].map((t) => ({ id: t.id, path: t.path }));
+  for (const d of [...read.values()].flat()) notes.push({ path: d.path });
+  const index = noteIndex(notes);
+  for (const e of epics) {
+    const t = forest.byId.get(e.id) as Ticket;
+    const done = section(t.body, /^## What done looks like\s*$/i)?.trim();
+    e.brief = judgeBrief({
+      epic: e.id, read: inp.readBrief(t), now: { closed: e.closed, total: e.total, blocked: e.blocked, status: e.status },
+      ticketDates: own(e.id).map((x) => forest.byId.get(x)?.updated), docDates: docDates.get(e.id) ?? [], doneMeans: done ? clip(done, DONE_MEANS_MAX) : null,
+      link: { vaultName: page.vaultName, index }, ref: { label: `${e.id} brief`, ...(page.vaultName ? { url: obsidianUri(page.vaultName, `Projects/${t.project}/Briefs/${e.id}`) } : {}) },
+    });
+    if (e.brief.state === 'fresh' || e.status === 'closed') continue;
+    unknowns.push({ kind: e.brief.state === 'missing' ? 'brief-missing' : 'brief-stale', epic: e.id, text: briefUnknown(e.id, e.brief) as string });
   }
   const railDocs = new Map([...docs].map(([project, ds]) => [project, ds.filter((d) => !attributed.has(d.path))] as const));
   const rail = buildRail({ page, cfg, stream, epics, prs: inp.prs, docs: railDocs }, unknowns);
@@ -213,7 +233,7 @@ function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
     points: pointed ? { done: roll.ptsDone, total: roll.ptsTotal, pointedOpen, open: open.length } : null,
     ...(next ? { next: row(ctx, next) } : {}),
     awaiting: [...tree, id].reduce((n, x) => n + (ctx.facts.get(x) ?? []).filter((f) => f.state === 'ask').length, 0),
-    docs: { groups: [], unattributedRecent: 0 }, unknowns: 0, quietDays: quiet(daysSince(newest(ctx, id), inp.now)),
+    docs: { groups: [], unattributedRecent: 0 }, brief: { state: 'missing' }, unknowns: 0, quietDays: quiet(daysSince(newest(ctx, id), inp.now)),
   };
 }
 
