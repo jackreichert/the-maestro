@@ -141,3 +141,14 @@ test('describeSources says Live only when both endpoints are live, and names whi
   assert.match(describeSources('server', 'server', 2, 'T'), /2 malformed rows were skipped/);
   assert.match(describeSources('server', 'server', 1, 'T'), /1 malformed row was skipped/);
 });
+
+test('an ask may carry decision fields and a paste path, and a wrongly typed one drops the row', () => {
+  const good = state();
+  Object.assign(good.asks[0], { recommend: 'yes', door: 'two-way', default: 'ship', by: '2026-10-09', class: 'expedite', paste: '/tmp/fake.sh' });
+  assert.equal(sanitizeState(good)?.dropped, 0);
+  for (const [field, value] of [['recommend', 7], ['default', {}], ['by', 3], ['paste', []], ['door', 'sideways'], ['class', 'urgent']] as const) {
+    const bad = state();
+    bad.asks[0][field] = value;
+    assert.equal(sanitizeState(bad)?.state.asks.length, 2, field);
+  }
+});

@@ -77,7 +77,7 @@ function readFragments(statusDir: string, tabs: string[]): Record<string, string
 /** The reducer's state in the client's contract, with fragments and the content hash. */
 function toWire(cfg: WebConfig, s: ReducedState): PodiumState {
   const work = (w: ReducedWork): WorkItem => wireWork(cfg.page, w);
-  const footer: FooterRow[] = s.footer.map((r) => ({ stream: r.name ?? 'all', asks: r.awaiting, working: r.inflight, queued: r.queued, blocked: r.blocked, done: r.done }));
+  const footer: FooterRow[] = s.footer.map((r) => ({ stream: r.name ?? 'all', asks: r.awaiting + r.paste, working: r.inflight, queued: r.queued, blocked: r.blocked, done: r.done }));
   const asks: AskCard[] = s.asks.map((a) => ({ ...a, ts: a.ts ?? '' }));
   const blocked: BlockedItem[] = s.blocked.map((b) => ({ ...work(b), ...(b.gate ? { gate: b.gate } : {}) }));
   const done: DoneItem[] = s.done.map((d) => ({ ...work(d), closedAt: d.closedAt ?? '' }));
@@ -105,5 +105,5 @@ export function buildStream(cfg: WebConfig, name: string, now: Date = new Date()
 /** The chart data for the last `days` days (the caller clamps the range). */
 export function buildCharts(cfg: WebConfig, days: number, now: Date = new Date()): ChartsData {
   const { inputs, g } = readBoard(cfg, now);
-  return reduceCharts({ items: g.items, awaiting: g.awaiting, prs: inputs.prs, now, tz: cfg.page.tz, days });
+  return reduceCharts({ items: g.items, awaiting: [...g.awaiting, ...g.paste], prs: inputs.prs, now, tz: cfg.page.tz, days });
 }

@@ -16,7 +16,9 @@ import { askBits, asksNote } from '../journal/ask-fields.ts';
 
 export interface Item { id: string; date: string; ts?: string; stateTs?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string;
   /** An ask's decision fields as the ledger stores them; unchecked here, `askBits` reads each one defensively. */
-  recommend?: unknown; default?: unknown; door?: unknown; by?: unknown; class?: unknown }
+  recommend?: unknown; default?: unknown; door?: unknown; by?: unknown; class?: unknown;
+  /** A paste ask's block file: set only on `status.paste` rows. */
+  paste?: unknown }
 export interface Pr {
   number: number; title: string; url: string; isDraft: boolean; baseRefName: string; headRefName: string;
   mergeable: string; mergeStateStatus: string; reviewDecision: string | null;
@@ -25,7 +27,7 @@ export interface Pr {
 /** The numbers `journal.ts status --footer` prints, as `status --json` carries them: one row per stream, and the session. */
 export interface FooterData { ledger: FooterRow[]; session: SessionStatus }
 /** `journal.ts status --json`, the part the page reads. */
-export interface BoardStatus { inflight: Item[]; queued: Item[]; blocked: Item[]; awaiting: Item[]; done: Item[]; footer?: FooterData }
+export interface BoardStatus { inflight: Item[]; queued: Item[]; blocked: Item[]; awaiting: Item[]; /** Run-this asks; older boards omit it. */ paste?: Item[]; done: Item[]; footer?: FooterData }
 /** `journal.ts triage --json`, the part the page reads. */
 export interface Triage { items: (Item & { gate?: string; deferredUntil?: string })[] }
 
