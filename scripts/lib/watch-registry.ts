@@ -2,7 +2,7 @@
  * Watch registry for the event loop: an append-only JSON lines file plus a state file.
  *
  * watches.jsonl holds three kinds of line: {op:'add', id, type, target, done_when, report, created, expires,
- * notify_overnight, notify, interval, renew?}, {op:'remove', id, at, reason} and {op:'renew', id, expires, at}. The live set is the adds
+ * notify_overnight, notify, interval, renew?}, {op:'remove', id, at, reason} and {op:'renew', id, expires, at, renew?}. A renew line with `renew: true` also marks the watch standing. The live set is the adds
  * with no later remove, each with the expiry of its latest renew, so the file is never rewritten. state.json holds each watch's last checked state and the event timestamps the
  * cadence reads; digest.jsonl holds events nobody has read yet.
  */
@@ -38,7 +38,7 @@ export function listWatches(dir: string): Watch[] {
     else if (rec?.op === 'remove' && rec.id !== undefined) live.delete(rec.id);
     else if (rec?.op === 'renew' && rec.id !== undefined && typeof rec.expires === 'string' && Number.isFinite(Date.parse(rec.expires))) {
       const watch = live.get(rec.id);
-      if (watch) live.set(rec.id, { ...watch, expires: rec.expires });
+      if (watch) live.set(rec.id, { ...watch, expires: rec.expires, ...((rec as { renew?: unknown }).renew === true ? { renew: true } : {}) });
     }
   }
   return [...live.values()];
@@ -78,6 +78,17 @@ export function removeWatch(dir: string, id: string, reason = 'removed', now: nu
 export function renewWatch(dir: string, id: string, expiresAt: number, now: number = Date.now()): boolean {
   if (!Number.isFinite(expiresAt) || !listWatches(dir).some((w) => w.id === id)) return false;
   append(paths(dir).watches, { op: 'renew', id, expires: new Date(expiresAt).toISOString(), at: new Date(now).toISOString() });
+  return true;
+}
+
+/**
+ * Marks a live watch standing (`renew: true`) without touching its expiry, for watches added before their type could renew.
+ * Returns false when the id is not live or the watch is already marked.
+ */
+export function markStanding(dir: string, id: string, now: number = Date.now()): boolean {
+  const watch = listWatches(dir).find((w) => w.id === id);
+  if (!watch || watch.renew) return false;
+  append(paths(dir).watches, { op: 'renew', id, expires: watch.expires, at: new Date(now).toISOString(), renew: true });
   return true;
 }
 
