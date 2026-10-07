@@ -23,7 +23,19 @@ export const BOARD_CSS = CSS;
 
 export type Tone = 'accent' | 'critical' | 'success' | 'neutral';
 /** A section; only the three status sections (needs you, blocked, shipped) carry a glyph. */
-export interface SectionSpec { title: string; n: number; glyph?: string; tone: Tone; empty: string; quiet?: boolean; hint?: Node | null }
+export interface SectionSpec { title: string; n: number; glyph?: string; tone: Tone; empty: string; rest?: Rest; quiet?: boolean; hint?: Node | null }
+
+/** A musical word after an empty state's literal sentence; `lang` only when it is not English. */
+export interface Rest { word: string; lang?: 'it' | 'la' }
+
+/** The rest marks for the empty sections, after the literal sentence (never on errors). */
+export const RESTS = {
+  asks: { word: 'tacet', lang: 'la' },
+  blocked: { word: 'a tempo', lang: 'it' },
+  shipped: { word: 'before the downbeat' },
+  working: { word: 'rest' },
+  queued: { word: 'rest' },
+} satisfies Record<string, Rest>;
 
 let sectionSeq = 0;
 
@@ -35,7 +47,7 @@ export function section(spec: SectionSpec, body: Node | null): HTMLElement {
       spec.glyph ? h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph) : null,
       h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null)),
     body && spec.hint ? h('p', { class: 'section-hint' }, spec.hint) : null,
-    body ?? h('p', { class: 'empty' }, spec.empty));
+    body ?? h('p', { class: 'empty' }, spec.empty, spec.rest ? ' ' : null, spec.rest ? h('i', { class: 'rest', lang: spec.rest.lang }, spec.rest.word) : null));
 }
 
 /** Where rows are drawn: the reference time and zone for ages, and whether each row names its stream. */
@@ -170,13 +182,13 @@ export class StreamBoard extends HTMLElement {
     if (md && frag) md.markdown = frag;
     this.#root.replaceChildren(h('div', { class: 'board' },
       h('div', { class: 'col' },
-        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', hint: askHint(this.#live) }, askCards(asks, this.#live, false)),
-        section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(blocked, ctx)),
+        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false)),
+        section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(blocked, ctx)),
         section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
       h('div', { class: 'col' },
-        section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(working, ctx)),
-        section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: 'The queue is empty.', quiet: true }, itemRows(queued, ctx)),
-        section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', quiet: true }, itemRows(done, ctx)),
+        section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(working, ctx)),
+        section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: 'The queue is empty.', rest: RESTS.queued, quiet: true }, itemRows(queued, ctx)),
+        section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped, quiet: true }, itemRows(done, ctx)),
         deferred.length ? section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx)) : null,
         md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null)));
   }

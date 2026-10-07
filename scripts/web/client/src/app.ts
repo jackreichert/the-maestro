@@ -2,7 +2,7 @@ import './stream-board.ts';
 import './podium-chart.ts';
 import './md-fragment.ts';
 import { h, s, shadow, streamTag } from './dom.ts';
-import { BOARD_CSS, askCards, askHint, itemRows, section } from './stream-board.ts';
+import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
@@ -358,12 +358,12 @@ export class PodiumApp extends HTMLElement {
     return h('div', {},
       h('div', { class: 'board' },
         h('div', { class: 'col' },
-          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', hint: askHint(this.#sources.state === 'server') }, askCards(st.asks, this.#sources.state === 'server', true, askPreview())),
-          section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(st.blocked, ctx)),
-          section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.' }, itemRows(st.done, ctx))),
+          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', rest: RESTS.asks, hint: askHint(this.#sources.state === 'server') }, askCards(st.asks, this.#sources.state === 'server', true, askPreview())),
+          section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(st.blocked, ctx)),
+          section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },
           section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: priEmpty, quiet: true }, priorities),
-          section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(st.working, ctx)),
+          section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(st.working, ctx)),
           section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
       h('div', { class: 'wide' },
         section({ title: 'Trends', n: 0, tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),

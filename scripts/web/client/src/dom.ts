@@ -115,6 +115,7 @@ export const UI_CSS = `
   .tone-success .head .glyph { color: var(--success); }
   .tone-accent .head .glyph { color: var(--accent); }
 
+  .empty .rest { font-family: var(--font-serif); font-size: 1.04em; color: var(--text-secondary); margin-left: 2px; }
   .section-hint { margin: calc(-1 * var(--space-2)) 0 var(--space-3); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); max-width: 70ch; }
   .section-hint .touch { display: none; }
   @media (pointer: coarse), (max-width: 480px) { .section-hint .keys { display: none; } .section-hint .touch { display: inline; } }
