@@ -139,7 +139,18 @@ const CSS = `${BOARD_CSS}
   .sk { display: block; border-radius: var(--radius-sm); background: var(--surface-2); animation: breathe 1.6s var(--ease-in-out) infinite; }
   @keyframes breathe { 50% { opacity: 0.5; } }
   @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
-  .sk-head { padding-block: var(--space-5) var(--space-7); }
+  /* Offsets match the header's real metrics at rest (brand row, scope line, cue line, tab bar), so nothing jumps on load. */
+  .sk-head { padding-block: 43px 0; }
+  .sk-scope { display: block; margin-top: 47px; }
+  .sk-scope + .staff { margin-top: 14px; }
+  .sk-tabs { margin-top: 29px; border-bottom: 1px solid var(--border); padding-block: 15px; }
+  .sk-tabs .wrap { display: flex; gap: var(--space-6); }
+  .sk-panel { padding-block: var(--space-6); }
+  .sk-rows { display: block; border-top: 1px solid var(--border); }
+  .sk-row { display: flex; align-items: center; gap: var(--space-3); height: 41px; border-bottom: 1px solid var(--border); }
+  .sk-hint { display: block; margin-top: -4px; }
+  .sk-hint .sk-line { height: 8px; max-width: 90%; }
+  .sk-id { width: 36px; height: 16px; flex: none; }
   .sk-line { height: 12px; }
   /* Five hairlines 6 px apart (the cue line's height) and a note head that glides along the middle space. */
   .staff { position: relative; display: block; height: 25px; width: min(560px, 90%); margin-top: var(--space-5); }
@@ -153,8 +164,7 @@ const CSS = `${BOARD_CSS}
   @keyframes glide { to { transform: translateX(calc(100% - 9px)); } }
   @media (prefers-reduced-motion: reduce) { .glide { animation: none; } }
   @media (forced-colors: active) { .staff-line, .note { forced-color-adjust: none; background: CanvasText; } }
-  .sk-card { height: 148px; border-radius: var(--radius-md); }
-  .sk-stack { display: grid; gap: var(--space-4); }
+  .sk-stack { display: grid; gap: var(--space-4); align-content: start; }
 
   .problem { max-width: 60ch; margin: var(--space-8) auto; padding: var(--space-6); background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
   .problem h2 { margin: 0 0 var(--space-2); font-size: var(--text-lg); line-height: var(--leading-lg); }
@@ -466,12 +476,17 @@ function skeleton(): HTMLElement {
   // The live region goes in empty and is filled a moment later, so screen readers announce it.
   const said = h('span', { class: 'vh' });
   setTimeout(() => { said.textContent = 'Loading the board'; }, 50);
-  return h('div', { class: 'wrap', role: 'status' },
+  // Rows like the board's own: an id chip and a line of text over a hairline, so the real rows land where these were.
+  const rows = (widths: string[]): HTMLElement => h('span', { class: 'sk-rows' },
+    ...widths.map((w) => h('span', { class: 'sk-row' }, h('span', { class: 'sk sk-id' }), line(w))));
+  return h('div', { role: 'status' },
     said,
-    h('div', { class: 'sk-head' }, line('160px'), staff()),
-    h('div', { class: 'board', 'aria-hidden': 'true' },
-      h('div', { class: 'sk-stack' }, line('120px'), h('span', { class: 'sk sk-card' }), h('span', { class: 'sk sk-card' })),
-      h('div', { class: 'sk-stack' }, line('140px'), line('100%'), line('85%'), line('92%'))));
+    h('div', { class: 'wrap sk-head', 'aria-hidden': 'true' }, line('150px'), h('span', { class: 'sk-scope' }, line('96px')), staff()),
+    h('div', { class: 'sk-tabs', 'aria-hidden': 'true' }, h('div', { class: 'wrap' }, line('72px'), line('104px'), line('56px'))),
+    h('div', { class: 'wrap sk-panel', 'aria-hidden': 'true' },
+      h('div', { class: 'board' },
+        h('div', { class: 'sk-stack' }, line('120px'), h('span', { class: 'sk-hint' }, line('340px')), rows(['62%', '48%', '55%', '40%']), line('96px'), rows(['44%'])),
+        h('div', { class: 'sk-stack' }, line('110px'), rows(['80%', '66%', '72%'])))));
 }
 
 /** The cue line's placeholder: a five-line staff with one note head gliding along it while the board loads. */
