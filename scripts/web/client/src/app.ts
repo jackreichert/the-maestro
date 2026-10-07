@@ -6,7 +6,7 @@ import { BOARD_CSS, askCards, askHint, itemRows, section } from './stream-board.
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
-import { cueParts, cueTitle, clockTime, freshness, longDate, shortDate } from './glance.ts';
+import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, shortDate, tempoWord } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
@@ -50,6 +50,19 @@ const CSS = `${BOARD_CSS}
   .fresh.stale { background: var(--warning-soft); color: var(--warning); box-shadow: none; }
   .fresh.stale .dot { display: none; }
   .scope { margin: var(--space-5) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .scope span { vertical-align: baseline; }
+  button.tempo {
+    font: italic var(--text-sm) / var(--leading-sm) var(--font-serif); letter-spacing: 0.01em; color: var(--text-secondary);
+    background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 4px; cursor: pointer;
+    text-decoration: underline dotted var(--border-strong); text-underline-offset: 0.25em;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  button.tempo i { font-style: italic; }
+  @media (hover: hover) { button.tempo:hover { color: var(--text-primary); text-decoration-color: currentColor; } }
+  .tempo-rule { margin: var(--space-2) 0 0; max-width: 62ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
+  .tempo-rule[hidden] { display: none; }
+  .tempo-rule i { font-family: var(--font-serif); font-size: 1.04em; }
+  .tempo-rule i.now { color: var(--text-primary); }
   .blk { color: var(--critical); font-size: var(--text-sm); }
   .source { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
 
@@ -148,6 +161,7 @@ export class PodiumApp extends HTMLElement {
   #active = OVERVIEW;
   #tick: number | undefined;
   #tabsObserver: ResizeObserver | null = null;
+  #tempoOpen = false;
   // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
   // tab so keyboard and screen reader users are not left on the destroyed link.
   readonly #onHash = (): void => {
@@ -275,6 +289,7 @@ export class PodiumApp extends HTMLElement {
     const stream = this.#active === OVERVIEW ? null : this.#active;
     const pick = <T extends { stream: string }>(xs: T[]): T[] => (stream === null ? xs : xs.filter((x) => x.stream === stream));
     const scope = stream === null ? 'All streams' : stream;
+    const { tempo, rule } = this.#tempo({ asks: pick(st.asks).length, blocked: pick(st.blocked).length, working: pick(st.working).length });
     const cue = cueParts({ asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) })
       .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
     return h('header', { class: 'wrap' },
@@ -282,8 +297,25 @@ export class PodiumApp extends HTMLElement {
         h('div', { class: 'brand' }, h('h1', {}, baton(st.asks.length > 0), 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
         this.#freshness(st)),
       note ? h('p', { class: 'source' }, note) : null,
-      h('p', { class: 'scope', id: 'scope' }, scope),
-      h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue));
+      h('p', { class: 'scope' }, h('span', { id: 'scope' }, scope), h('span', { 'aria-hidden': 'true' }, ' · '), tempo),
+      h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue),
+      rule);
+  }
+
+  /** The tempo word for the scope's counts, as a button that opens the rule behind it in place (no tooltip, no modal). */
+  #tempo(counts: { asks: number; blocked: number; working: number }): { tempo: HTMLElement; rule: HTMLElement } {
+    const t = tempoWord(counts);
+    // The rule, with each tempo word in the score's italic and the one in force now set in primary ink.
+    const scale = TEMPO_SCALE.flatMap((x, i) => [i > 0 ? '; ' : '', h('i', { lang: x.lang, class: x.word === t.word ? 'now' : undefined }, x.word), `, ${x.meaning}`]);
+    const rule = h('p', { class: 'tempo-rule', id: 'tempo-rule', hidden: !this.#tempoOpen }, TEMPO_LEAD, ...scale, '.');
+    const tempo = h('button', { type: 'button', class: 'tempo', 'aria-expanded': String(this.#tempoOpen), 'aria-controls': 'tempo-rule' },
+      h('i', { lang: t.lang }, t.word));
+    tempo.addEventListener('click', () => {
+      this.#tempoOpen = !this.#tempoOpen;
+      tempo.setAttribute('aria-expanded', String(this.#tempoOpen));
+      rule.hidden = !this.#tempoOpen;
+    });
+    return { tempo, rule };
   }
 
   /** The data-source pill: sample data, or live with its update time, flagged once the data is past STALE_MINUTES. */

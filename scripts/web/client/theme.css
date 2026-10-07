@@ -7,6 +7,8 @@
 
   /* Type */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  /* The score's voice: musical words (tempo, rests, Fine) in the system serif italic. Never labels, buttons or counts. */
+  --font-serif: ui-serif, "New York", Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   --text-xs: 0.75rem;
   --leading-xs: 1rem;

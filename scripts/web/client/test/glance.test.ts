@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, askAge, chatAnswer, clockTime, cueTitle, cueParts, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
+import { TEMPO_RULE, ago, askAge, chatAnswer, clockTime, cueTitle, tempoWord, cueParts, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -89,4 +89,27 @@ test('chatAnswer prefixes the ask id for the chat and refuses a blank answer (no
 test('cueTitle counts the asks that need you, and only those', () => {
   const cases: [number, string][] = [[0, 'Podium'], [1, '(1) Podium'], [2, '(2) Podium'], [45, '(45) Podium'], [-1, 'Podium'], [1.5, 'Podium'], [Number.NaN, 'Podium']];
   for (const [n, title] of cases) assert.equal(cueTitle(n), title, `cueTitle(${n})`);
+});
+
+test('tempoWord follows the stated rule on every boundary', () => {
+  // [asks, blocked, working, word]
+  const table: [number, number, number, string][] = [
+    [0, 0, 0, 'Tacet'],
+    [0, 0, 1, 'Adagio'], [0, 0, 9, 'Adagio'],
+    [1, 0, 0, 'Andante'], [2, 0, 5, 'Andante'], [0, 2, 0, 'Andante'], [1, 1, 0, 'Andante'],
+    [3, 0, 0, 'Allegro'], [1, 2, 0, 'Allegro'], [5, 0, 0, 'Allegro'], [3, 2, 0, 'Allegro'], [4, 1, 7, 'Allegro'],
+    [6, 0, 0, 'Presto'], [4, 2, 0, 'Presto'], [0, 3, 0, 'Presto'], [1, 3, 0, 'Presto'], [0, 3, 4, 'Presto'], [40, 0, 0, 'Presto'],
+  ];
+  for (const [asks, blocked, working, word] of table) {
+    assert.equal(tempoWord({ asks, blocked, working }).word, word, `asks ${asks}, blocked ${blocked}, working ${working}`);
+  }
+});
+
+test('tempoWord tags Tacet as Latin and the rest as Italian, and the rule names every word in order', () => {
+  assert.equal(tempoWord({ asks: 0, blocked: 0, working: 0 }).lang, 'la');
+  assert.equal(tempoWord({ asks: 1, blocked: 0, working: 0 }).lang, 'it');
+  assert.equal(TEMPO_RULE, 'Tempo reads how much is waiting on you: Tacet, nothing; Adagio, only work in flight; Andante, one or two; Allegro, three to five; Presto, six or more, or three blocked.');
+  const at = ['Tacet', 'Adagio', 'Andante', 'Allegro', 'Presto'].map((w) => TEMPO_RULE.indexOf(w));
+  assert.ok(at.every((i, k) => i >= 0 && (k === 0 || i > at[k - 1])), 'each word appears, in order');
+  assert.ok(!/[\u2014]|--/.test(TEMPO_RULE), 'no em dashes in copy');
 });
