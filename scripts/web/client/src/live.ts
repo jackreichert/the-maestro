@@ -10,11 +10,14 @@
 export type LiveStatus = 'live' | 'polling' | 'offline';
 
 export const POLL_MS = 30_000;
+const STREAM_CLOSED = 2;   // EventSource.CLOSED
 
 /** The slice of EventSource this uses. */
 export interface StreamLike {
   onopen: ((ev: Event) => void) | null;
   onerror: ((ev: Event) => void) | null;
+  /** EventSource's: 2 once the browser has given up (a non-stream answer such as 403 or 500) and will not retry. */
+  readonly readyState?: number;
   addEventListener(type: 'changed', listener: () => void): void;
   close(): void;
 }
@@ -53,6 +56,11 @@ export class LiveUpdates<T> {
   start(): void {
     if (!this.#stopped) return;
     this.#stopped = false;
+    this.#attach();
+  }
+
+  /** Open the stream and wire it; without one (no EventSource) the page just polls. */
+  #attach(): void {
     const stream = this.#d.open();
     if (!stream) { this.#poll(); return; }
     this.#stream = stream;
@@ -86,6 +94,8 @@ export class LiveUpdates<T> {
     if (mine !== this.#request || this.#stopped) return;
     if (data === null) { this.#set('offline'); return; }
     this.#set(this.#streaming ? 'live' : 'polling');
+    // The browser stops retrying after a non-stream answer; the server answered this poll, so try the stream again.
+    if (!this.#streaming && this.#stream?.readyState === STREAM_CLOSED) { this.#stream.close(); this.#attach(); }
     const seq = this.#d.seqOf(data);
     if (seq === this.#shown) return;
     this.#shown = seq;

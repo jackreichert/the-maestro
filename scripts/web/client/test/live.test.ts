@@ -8,17 +8,20 @@ class FakeStream implements StreamLike {
   onopen: ((ev: Event) => void) | null = null;
   onerror: ((ev: Event) => void) | null = null;
   closed = false;
+  readyState = 0;
   #changed: Array<() => void> = [];
   addEventListener(_type: 'changed', fn: () => void): void { this.#changed.push(fn); }
   close(): void { this.closed = true; }
   open(): void { this.onopen?.(new Event('open')); }
   fail(): void { this.onerror?.(new Event('error')); }
+  /** The browser gave up on the stream for good (a 403 or 500 instead of an event stream). */
+  die(): void { this.readyState = 2; this.fail(); }
   push(): void { for (const fn of this.#changed) fn(); }
 }
 
 interface Data { seq: string }
 /** A harness with a manual clock and loads that the test settles by hand, so ordering is under its control. */
-function harness(opts: { stream?: FakeStream | null; shown?: string } = {}) {
+function harness(opts: { stream?: FakeStream | null; shown?: string; later?: FakeStream[] } = {}) {
   const stream = opts.stream === undefined ? new FakeStream() : opts.stream;
   const applied: string[] = [];
   const statuses: LiveStatus[] = [];
@@ -26,8 +29,9 @@ function harness(opts: { stream?: FakeStream | null; shown?: string } = {}) {
   let timers: Array<{ id: number; fn: () => void; ms: number }> = [];
   let nextId = 1;
   let fetched = 0;
+  let opened = 0;
   const live = new LiveUpdates<Data>({
-    open: () => stream,
+    open: () => { opened += 1; return (opened > 1 ? opts.later?.shift() : undefined) ?? stream; },
     load: () => { fetched += 1; return new Promise((ok, fail) => { loads.push({ ok, fail: () => fail(new Error('down')) }); }); },
     seqOf: (d) => d.seq,
     apply: (d) => applied.push(d.seq),
@@ -38,7 +42,7 @@ function harness(opts: { stream?: FakeStream | null; shown?: string } = {}) {
   const tick = (): void => { const t = timers.shift(); t?.fn(); };
   const fireAll = (): void => { const due = timers; timers = []; for (const t of due) t.fn(); };
   const settle = (): Promise<void> => new Promise((ok) => setImmediate(ok));
-  return { live, stream, applied, statuses, loads, tick, fireAll, settle, timers: () => timers, fetched: () => fetched };
+  return { live, stream, applied, statuses, loads, tick, fireAll, settle, timers: () => timers, fetched: () => fetched, opened: () => opened };
 }
 
 test('a changed event reloads, and a new seq is applied while the stream is live', async () => {
@@ -197,4 +201,27 @@ test('offline is not downgraded to polling by the stream retrying; a good poll r
   h.loads.shift()?.ok({ seq: 'n' });
   await h.settle();
   assert.equal(h.live.status, 'polling');
+});
+
+test('a stream the browser gave up on is reopened after a poll succeeds, and polling stops once it is up', async () => {
+  const second = new FakeStream();
+  const h = harness({ later: [second] });
+  h.live.start();
+  h.stream?.die();                        // /api/events answered 500: readyState CLOSED, no browser retry
+  h.loads.shift()?.ok({ seq: 's0' });     // the poll that started with it
+  await h.settle();
+  assert.equal(h.opened(), 2, 'reopened as soon as a poll proves the server answers');
+  assert.equal(h.stream?.closed, true, 'the dead stream is released');
+  second.open();
+  assert.equal(h.live.status, 'live');
+  assert.equal(h.timers().length, 0, 'polling stopped');
+});
+
+test('a stream that is only retrying is left alone', async () => {
+  const h = harness();
+  h.live.start();
+  h.stream?.fail();                       // readyState stays CONNECTING: the browser retries it itself
+  h.loads.shift()?.ok({ seq: 's0' });
+  await h.settle();
+  assert.equal(h.opened(), 1);
 });
