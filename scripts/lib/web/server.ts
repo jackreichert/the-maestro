@@ -1,5 +1,6 @@
 /**
  * The read-only Podium server: GET endpoints over buildState/buildCharts and the client's static files.
+ * `GET /api/events` is the one streaming route: Server-Sent Events from a shared watcher (events.ts), so the page updates without a reload.
  * Every request goes through guard.refuse first; every response is written by guard.send, so the security headers
  * are on 404s and 500s too. Nothing here writes the ledger, the priorities file or the page.
  */
@@ -8,6 +9,8 @@ import type { Server } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { buildRoutes, TYPES } from '../../web/serve-static.ts';
+import { boardFiles, createChangeHub, serveEvents } from './events.ts';
+import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
@@ -21,10 +24,16 @@ export interface WebServerOptions {
   /** Time to receive a whole request, and to receive its headers, in ms. */
   requestTimeoutMs?: number;
   headersTimeoutMs?: number;
+  /** How often the live-update watcher looks at the files (default 2000) and how often it sends a keep-alive (default 25000), in ms. */
+  eventsIntervalMs?: number;
+  eventsKeepAliveMs?: number;
+  /** The change hub behind /api/events; tests pass their own to watch subscribers come and go. */
+  hub?: ChangeHub;
 }
 
 const DEFAULT_DAYS = 14;
 const MAX_DAYS = 90;
+const EVENTS_PATH = '/api/events';
 const MAX_HEADER_BYTES = 8 * 1024;
 
 type Handler = (url: URL, match: RegExpMatchArray) => unknown;
@@ -58,12 +67,14 @@ export function createWebServer(o: WebServerOptions): Server {
   const warned = new Set<string>();
   const warn = o.web.warn ?? ((m: string): void => { if (!warned.has(m)) { warned.add(m); log(m.trim()); } });
   const routes = dataRoutes({ ...o, web: { ...o.web, warn } });
+  const hub = o.hub ?? createChangeHub({ files: () => boardFiles(o.web.vault, o.web.project, o.web.statusDir), intervalMs: o.eventsIntervalMs, keepAliveMs: o.eventsKeepAliveMs });
   const files = buildRoutes(o.clientDir);   // a whitelist taken at start: a request path is only ever looked up, never joined onto a path
   const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES, requestTimeout: o.requestTimeoutMs ?? 10_000, headersTimeout: o.headersTimeoutMs ?? 5_000, connectionsCheckingInterval: 1000 }, (req, res) => {
     try {
       const no = refuse(req, req.socket.localPort ?? 0);
       if (no) return sendError(res, no.status, no.headers);
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (url.pathname === EVENTS_PATH) return serveEvents(req, res, hub);
       const route = routes.find((r) => r.pattern.test(url.pathname));
       if (route) {
         const out = route.handler(url, url.pathname.match(route.pattern) as RegExpMatchArray);
