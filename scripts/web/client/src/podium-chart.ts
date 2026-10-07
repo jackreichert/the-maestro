@@ -1,5 +1,5 @@
 import { BASE_CSS, h, s, shadow } from './dom.ts';
-import { MAX_SERIES, barPath, limitSeries, linePath, linearScale, niceTicks, shares, stack } from './chart-math.ts';
+import { barPath, limitSeries, linePath, linearScale, niceTicks, seriesColors, shares, stack } from './chart-math.ts';
 import type { ChartData } from './chart-math.ts';
 
 export type ChartKind = 'bar' | 'line' | 'stacked' | 'share';
@@ -32,11 +32,6 @@ const CSS = `${BASE_CSS}
   th:first-child, td:first-child { text-align: left; }
   thead th { color: var(--text-muted); font-weight: var(--weight-medium); }
 `;
-
-/** The CSS variable for series slot i (0-based); the folded "Other" series gets a neutral. */
-function color(i: number, name: string): string {
-  return name === 'Other' ? 'var(--series-other)' : `var(--series-${(i % MAX_SERIES) + 1})`;
-}
 
 /** <podium-chart kind="bar|line|stacked|share" label="..." desc="..." height="200">; set `.data`. */
 export class PodiumChart extends HTMLElement {
@@ -84,8 +79,9 @@ export class PodiumChart extends HTMLElement {
       else this.#plot(svg, data, kind, W, height);
     }
     const total = data.series.reduce((a, x) => a + (x.values[0] ?? 0), 0);
+    const colors = seriesColors(data.series.map((x) => x.name));
     const legend = data.series.length > 1
-      ? h('ul', { class: 'legend', 'aria-label': 'Legend' }, ...data.series.map((x, i) => h('li', {}, swatch(color(i, x.name)), x.name,
+      ? h('ul', { class: 'legend', 'aria-label': 'Legend' }, ...data.series.map((x, i) => h('li', {}, swatch(colors[i]), x.name,
         share && total > 0 ? h('span', { class: 'v' }, `${Math.round(((x.values[0] ?? 0) / total) * 100)}%`) : null)))
       : null;
     this.#root.replaceChildren(h('figure', {}, h('figcaption', {}, title), svg, legend, table(data)));
@@ -96,6 +92,7 @@ export class PodiumChart extends HTMLElement {
     const row = Object.fromEntries(data.series.map((x) => [x.name, x.values[0] ?? 0]));
     const names = data.series.map((x) => x.name);
     const parts = shares(row);
+    const colors = seriesColors(names);
     const span = W - names.filter((n) => parts[n] > 0).length * GAP + GAP;
     const clip = `${idBase}clip`;
     svg.append(s('defs', {}, s('clipPath', { id: clip }, s('rect', { x: '0', y: '8', width: String(W), height: '24', rx: String(RADIUS) }))));
@@ -104,7 +101,7 @@ export class PodiumChart extends HTMLElement {
     names.forEach((name, i) => {
       const w = parts[name] * span;
       if (w <= 0) return;
-      g.append(s('rect', { class: 'mark', x: String(x), y: '8', width: String(Math.max(0, w)), height: '24', fill: color(i, name) },
+      g.append(s('rect', { class: 'mark', x: String(x), y: '8', width: String(Math.max(0, w)), height: '24', fill: colors[i] },
         s('title', {}, `${name}: ${row[name]} (${Math.round(parts[name] * 100)}%)`)));
       x += w + GAP;
     });
@@ -140,13 +137,14 @@ export class PodiumChart extends HTMLElement {
     const base = y(0);
     data.series[0]?.values.forEach((v, i) => {
       const d = barPath(x(i) - w / 2, y(v), w, base - y(v), RADIUS);
-      if (d) svg.append(s('path', { class: 'mark', d, fill: color(0, '') }, s('title', {}, `${data.labels[i]}: ${v}`)));
+      if (d) svg.append(s('path', { class: 'mark', d, fill: 'var(--series-1)' }, s('title', {}, `${data.labels[i]}: ${v}`)));
     });
   }
 
   /** Stacked columns: a 2 px surface gap between segments, and only the top segment carries the rounded data end. */
   #stacks(svg: SVGSVGElement, rows: Record<string, number>[], names: string[], band: number, x: (i: number) => number, y: (v: number) => number, pct: boolean): void {
     const w = Math.min(BAR_MAX, band * 0.6);
+    const colors = seriesColors(names);
     rows.forEach((row, i) => {
       const vals = pct ? shares(row) : row;
       const segs = stack(vals, names).filter((seg) => seg.value > 0);
@@ -155,16 +153,17 @@ export class PodiumChart extends HTMLElement {
         const y0 = y(seg.start);
         const y1 = y(seg.end) + (top ? 0 : GAP);
         const d = barPath(x(i) - w / 2, y1, w, y0 - y1, top ? RADIUS : 0);
-        if (d) svg.append(s('path', { class: 'mark', d, fill: color(names.indexOf(seg.key), seg.key) }, s('title', {}, `${seg.key}: ${row[seg.key]}`)));
+        if (d) svg.append(s('path', { class: 'mark', d, fill: colors[names.indexOf(seg.key)] }, s('title', {}, `${seg.key}: ${row[seg.key]}`)));
       });
     });
   }
 
   #lines(svg: SVGSVGElement, data: ChartData, x: (i: number) => number, y: (v: number) => number): void {
+    const colors = seriesColors(data.series.map((x) => x.name));
     data.series.forEach((ser, k) => {
       const pts = ser.values.map((v, i): [number, number] => [x(i), y(v)]);
-      svg.append(s('path', { class: 'mark', d: linePath(pts), fill: 'none', stroke: color(k, ser.name), 'stroke-width': '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'stroke-dasharray': DASHES[k % DASHES.length] || undefined }));
-      pts.forEach(([px, py], i) => svg.append(s('circle', { class: 'mark', cx: String(px), cy: String(py), r: '4', fill: color(k, ser.name), stroke: 'var(--surface-1)', 'stroke-width': '2' },
+      svg.append(s('path', { class: 'mark', d: linePath(pts), fill: 'none', stroke: colors[k], 'stroke-width': '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'stroke-dasharray': DASHES[k % DASHES.length] || undefined }));
+      pts.forEach(([px, py], i) => svg.append(s('circle', { class: 'mark', cx: String(px), cy: String(py), r: '4', fill: colors[k], stroke: 'var(--surface-1)', 'stroke-width': '2' },
         s('title', {}, `${ser.name}, ${data.labels[i]}: ${ser.values[i]}`))));
     });
   }
