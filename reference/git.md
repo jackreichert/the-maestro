@@ -83,24 +83,32 @@ A PR body exists to transfer the author's understanding to a reviewer who has no
 
 `pr-open.ts` enforces the cheap, deterministic part and nothing more. `--body-file` is required, and it refuses (exit 1, never calls gh, `--dry-run` included) when a rule below fails. A passing check proves structure, not truth: it cannot tell whether a risk level is honest or a command works.
 
+### Voice and privacy
+
+Titles, bodies and comments are written in the author's own voice, in the first person, and say nothing a stranger cannot resolve. Use PR numbers, tracker keys, commit SHAs, file links and plain words. Leave out ids and links from a private workspace (notes, ledgers, vault ticket ids, `[[wiki-links]]`, `obsidian://` links), and never mention an assistant, an agent, AI-generated work or an orchestrator.
+
+- Before: `Jack decided to cap retries; needs Jack to confirm, see the ledger entry.` After: `I capped retries at 5. I'd like your eyes on whether 5 is right (see PR #12).`
+- Enforced: `pr-open.ts` refuses, naming the line, when the title or body holds a `[[wiki-link]]`, an `obsidian://` link, or the words ledger, vault, Podium or orchestrator, or matches an install-specific id format in `pr_body_private_patterns` (for example a ticket-id regex). It also flags, outside code, the words assistant, agent and AI-generated and any name in `pr_body_voice_names` used in the third person. Both are switchable (`pr_body_check_private`, `pr_body_check_voice`).
+- Advisory: pattern matching cannot catch every private reference, and voice cannot be fully machine-checked. A pass means no known pattern matched, not that the text is clean or in the author's voice.
+
 ### The template
 
 Each section is one to three lines. Write `n/a, <reason>` rather than deleting a section; a bare `n/a`, `TBD`, `TODO` or an empty section does not count, and a heading inside a code fence or an HTML comment does not count either. Put the sections in this order:
 
 ````markdown
 ## Context
-<why this change exists, 2-4 lines; the ticket; where it sits in a stack>
+<why I made this change, 2-4 lines; the tracker key; where it sits in a stack>
 
 ## Reviewer guide
-- Review order: 1. `path/core.ts` (the logic) 2. `path/core.test.ts` 3. `path/wiring.ts`
-- Skim-safe: <generated or mechanical files>
-- Validated: <commands and their real results>
-- Out of scope / deferred: <thing> (ticket id or "will not do", reason)
+- Review order: 1. {{file:path/core.ts}} (the logic) 2. {{file:path/core.test.ts}} 3. {{file:path/wiring.ts}}
+- Skim-safe: <generated or mechanical files I changed>
+- Validated: <commands I ran and their real results>
+- Out of scope / deferred: <what I left out> (tracker key or "will not do", reason)
 
 ## Risk and blast radius
 Risk: low | medium | high - <one-line reason>
 Affects: <service, job, endpoint, tenant scope>
-Worst case: <what breaks and how you would notice>
+Worst case: <what breaks and how I would notice>
 Irreversible steps: none | <migration, backfill, external write>
 
 ## Rollback / flag
@@ -111,7 +119,7 @@ Irreversible steps: none | <migration, backfill, external write>
 <exact command>
 ```
 Expected: <one line of output>
-Not tested: <what you did not run, and why>
+Not tested: <what I did not run, and why>
 
 ## Evidence
 <trimmed log line, response body or before/after numbers; placeholder data only>
@@ -120,7 +128,7 @@ Not tested: <what you did not run, and why>
 Position: 2 of 4. Base: #<n>. Above: #<n>. Assumes from below: <...>. Left for above: <...>. Standalone review: yes | no
 
 ## Questions for reviewers
-- question (blocking): <...>
+- question (blocking): <what I would like your eyes on>
 
 Diagram: <a mermaid block, or "n/a, <reason>">
 ````
@@ -134,10 +142,28 @@ Diagram: <a mermaid block, or "n/a, <reason>">
 | Verify commands | Enforced | a fenced block with a non-blank line, unless the section is `n/a, <reason>` | `pr_body_check_verify` |
 | Diagram | Enforced only when stacked or wide | a stacked PR (base is not a `protected_branches` entry), or one over `pr_diagram_min_files` code files (default 3), needs a fenced mermaid block or a `Diagram: n/a, <reason>` line. Elsewhere it is advisory | `pr_body_check_diagram`, `pr_diagram_min_files` |
 | Attribution, key, token and PHI-shaped content | Enforced, best effort | regexes for attribution lines, private keys, cloud and GitHub tokens, credential assignments, SSN and MRN shapes; the match is named, never printed. A pass is not a guarantee | `pr_body_check_forbidden` |
+| Private references | Enforced, best effort | no wiki-links, `obsidian://` links or private-workspace words in the title or body; extra install-specific id patterns from config. Cannot catch every private reference | `pr_body_check_private`, `pr_body_private_patterns` |
+| First-person voice | Enforced, best effort | flags assistant, agent, AI-generated wording and the author's own name in the third person, outside code. Voice cannot be fully machine-checked | `pr_body_check_voice`, `pr_body_voice_names` |
+| File links | Enforced | a `{{file:path}}` token for a path outside the diff refuses before the PR is created; see below | none |
 | Evidence, Questions for reviewers, Stack | Advisory | nothing; write them when they help, skip when nothing applies (Stack only when stacked). A fake question is worse than none | none |
 | Review order being the best order, skim-safe files really being safe, risk level honest, blast radius complete, deferred items legitimate, verify output real | Advisory | nothing; this is review's job | none |
 
 Why each: review order, annotations and verify commands save the reviewer reading time ([Google, navigating a CL](https://google.github.io/eng-practices/review/reviewer/navigate.html); [awesomecodereviews template](https://www.awesomecodereviews.com/pull-request-template/)); risk, rollback and flags let a reviewer approve a medium-risk change because the exit is cheap ([Google, small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html)); the stack position stops reviewers flagging as missing what lives upstack ([Graphite on reviewing stacks](https://graphite.com/docs/best-practices-for-reviewing-stacks)); out-of-scope notes pre-empt scope comments, and a generic author checklist is left out because CI should enforce it. Keep the template short: long checklists become box ticking.
+
+### Reviewer guide links
+
+A reviewer should land on the file a guide points at, not hunt for it. Write `{{file:path/core.ts}}` in the body (or `{{file:path/core.ts#R42}}` to name a line). The PR number is unknown until the PR exists, so `pr-open.ts` expands each token to a markdown link to that file in the PR's Files changed tab right after `gh pr create`, using `gh pr edit --body-file`. A token whose path is not in the diff refuses before anything is created, so a guide cannot point at a file the PR does not change. Re-running leaves expanded links alone. To backfill an open PR: `node scripts/pr-guide-links.ts <repo> <pr-number>`.
+
+```mermaid
+flowchart LR
+  token["{{file:path}} in body"] --> check{path in the diff?}
+  check -->|no| refuse[refuse, nothing created]
+  check -->|yes| create[gh pr create]
+  create --> expand[expand to a files-tab link]
+  expand --> edit[gh pr edit --body-file]
+```
+
+What was verified: the link is `<pr url>/files#diff-<sha256 hex of the path>`, and the hash of a changed path was matched against the diff ids on a real, public PR's rendered files page. A line suffix (`R42`) was not verified, so a token with a line links to the file and shows the line as text (`path:42`). Renamed files use the new path, which was not tested against a real rename.
 
 ### Diagrams when they help
 

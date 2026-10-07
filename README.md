@@ -196,7 +196,7 @@ flowchart LR
 
 ### PRs: draft only, sized, linked
 
-Pull requests open as drafts, assigned to you, through `pr-open.ts`, which checks the body and runs the size gate. Every PR body carries Context, Reviewer guide, Risk and blast radius, Rollback / flag and How to verify locally sections, plus a small mermaid diagram when the PR is stacked or wide; `pr-open.ts` refuses without them (`n/a, <reason>` is allowed, a bare placeholder is not). It checks structure, not truth: the risk line format, a fenced verify command and secret or attribution-shaped content are machine-checked, while whether the risk is honest or the review order is best stays a reviewer's call. The template, the enforced-versus-advisory table and the settings are in [reference/git.md](reference/git.md#pr-body). In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
+Pull requests open as drafts, assigned to you, through `pr-open.ts`, which checks the body and runs the size gate. Every PR body carries Context, Reviewer guide, Risk and blast radius, Rollback / flag and How to verify locally sections, plus a small mermaid diagram when the PR is stacked or wide, all written in the author's own voice and free of private-workspace references; `pr-open.ts` refuses without them (`n/a, <reason>` is allowed, a bare placeholder is not). It checks structure, not truth: the risk line format, a fenced verify command and secret or attribution-shaped content are machine-checked, while whether the risk is honest or the review order is best stays a reviewer's call. `{{file:path}}` tokens in the body become links to that file in the PR's Files changed tab once the PR exists (`pr-guide-links.ts` backfills an open PR). The template, the enforced-versus-advisory table and the settings are in [reference/git.md](reference/git.md#pr-body). In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
 
 ```mermaid
 flowchart LR
@@ -249,6 +249,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [session-start.ts](#session-startts) | First command of a session: registers the status watches, reports the page age and whether a loop is running |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
+| [pr-guide-links.ts](#pr-guide-linksts) | Expand `{{file:path}}` tokens in an open PR's body into Files changed links |
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
@@ -558,6 +559,10 @@ The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <r
 
 The only way agents and the orchestrator open a PR: `pr-open.ts --repo <path> --base <branch> --title <t> --body-file <f> [--head <branch>] [--dry-run]`. It first checks that the body file exists and passes the body rules (required sections with real content, a Risk line, a fenced verify command, a diagram on stacked or wide PRs, no forbidden content; all configurable), and refuses (exit 1) otherwise. It then runs the size gate, refuses with a split hint (exit 1) when it fails, and otherwise runs `gh pr create --draft --assignee @me`. Draft and assignee are always added and cannot be turned off; no other `gh` flag passes through. `--dry-run` prints the command. Exit 0 opened, 1 refused by the body check or the gate, 2 usage, an unreadable body file, or a git or `gh` error.
 
+### pr-guide-links.ts
+
+`pr-guide-links.ts <repo-path> <pr-number>` expands `{{file:path}}` tokens in an open PR's body into links to that file in the PR's Files changed tab, the same expansion `pr-open.ts` runs after creating a PR. Re-running changes nothing, and a token naming a path outside the diff is an error that writes nothing. The link is the PR URL plus `/files#diff-<sha256 hex of the path>`; a line in a token is shown as text because a line anchor has not been verified. Exit 0 done or nothing to do, 1 an unknown path or a `gh` failure, 2 usage.
+
 ### branch-sweep.ts
 
 Lists, across a container's repos, the worktrees and remote branches that are safe to delete, for you to approve in a batch.
@@ -674,6 +679,8 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `pr_max_code_lines` | `MAESTRO_PR_MAX_CODE_LINES` | 400 | PR size budget: most changed code lines (additions plus deletions) |
 | `pr_body_sections` | `MAESTRO_PR_BODY_SECTIONS` | Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally | PR body: the `##` sections `pr-open.ts` requires, comma-separated |
 | `pr_body_check_risk`, `pr_body_check_verify`, `pr_body_check_forbidden`, `pr_body_check_diagram` | `MAESTRO_PR_BODY_CHECK_RISK`, `_VERIFY`, `_FORBIDDEN`, `_DIAGRAM` | on | PR body: a Risk line (and a real rollback when high), a fenced verify command, no attribution or secret-shaped content, a diagram on stacked or wide PRs. `off`, `false`, `no` or `0` turns one off |
+| `pr_body_check_private`, `pr_body_check_voice` | `MAESTRO_PR_BODY_CHECK_PRIVATE`, `_VOICE` | on | PR title and body: refuse private-workspace references; flag third-person or assistant wording. Best effort |
+| `pr_body_private_patterns`, `pr_body_voice_names` | `MAESTRO_PR_BODY_PRIVATE_PATTERNS`, `MAESTRO_PR_BODY_VOICE_NAMES` | none | Comma-separated: extra regexes for private ids, and the author's names or logins that must not appear in the third person |
 | `pr_diagram_min_files` | `MAESTRO_PR_DIAGRAM_MIN_FILES` | 3 | PR body: a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>` |
 | `review_queue_cap` | `MAESTRO_REVIEW_QUEUE_CAP` | 4 | Review queue cap: most open non-draft PRs awaiting human review before `journal.ts review-queue` says full and dispatch holds new PR-producing work |
 | `pr_test_globs`, `pr_config_globs`, `pr_docs_globs`, `pr_mechanical_globs` | `MAESTRO_PR_TEST_GLOBS`, `MAESTRO_PR_CONFIG_GLOBS`, `MAESTRO_PR_DOCS_GLOBS`, `MAESTRO_PR_MECHANICAL_GLOBS` | built-in patterns | Comma-separated path globs counted as tests, config, docs, or mechanical files (lockfiles, generated, vendored) |
