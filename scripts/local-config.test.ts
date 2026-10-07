@@ -224,6 +224,17 @@ test('review_queue_cap: default 4, file value, env wins, bad values fall back', 
     assert.equal(show({ MAESTRO_REVIEW_QUEUE_CAP: 'many' }).REVIEW_QUEUE_CAP, '4');
 });
 
+test('stack_max_depth and stack_max_age_days: defaults 3 and 5, file value, env wins, bad values fall back', () => {
+    assert.equal(show().STACK_MAX_DEPTH, '3');
+    assert.equal(show().STACK_MAX_AGE_DAYS, '5');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('stack_max_depth: 2\nstack_max_age_days: 9'));
+    assert.equal(show().STACK_MAX_DEPTH, '2');
+    assert.equal(show().STACK_MAX_AGE_DAYS, '9');
+    assert.equal(show({ MAESTRO_STACK_MAX_DEPTH: '4' }).STACK_MAX_DEPTH, '4');
+    assert.equal(show({ MAESTRO_STACK_MAX_DEPTH: '0' }).STACK_MAX_DEPTH, '3');
+    assert.equal(show({ MAESTRO_STACK_MAX_AGE_DAYS: 'weeks' }).STACK_MAX_AGE_DAYS, '5');
+});
+
 test('twin_flow_repos: empty by default, list from the file, environment wins', () => {
     assert.equal(show().TWIN_FLOW_REPOS, '(unset)');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('twin_flow_repos: repo_a, repo_b'));

@@ -340,6 +340,7 @@ Mid-day PR snapshot and diff, stored under the ledger root.
 
 - `prs-snapshot.ts [--diff] [--dry-run] --vault <path>` fetches the live board; with `--diff` it first prints the actionable changes since the last snapshot (a new human review, a review decision flip, a new human-opened thread, a merge or close, a draft promoted to ready), then overwrites the snapshot unless `--dry-run`. Bot activity is summarised as one count line.
 - `prs-snapshot.ts --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo until two known answers agree (a stale cached MERGEABLE is not trusted). `prs-snapshot.ts ready <snapshot.json>` prints it for a file, offline, with the file's age (it is not a merge gate).
+- `prs-snapshot.ts --stacks` adds the stack report: a stack is a PR whose base is another open PR's branch in the same repo, and any stack deeper than `stack_max_depth` (default 3) or whose oldest PR is older than `stack_max_age_days` (default 5) is named with its chain and the bottom PR to drive to merge. `prs-snapshot.ts stacks <snapshot.json>` prints it offline. A snapshot taken before creation times were recorded reports depth only. The limits are a judgement, not a measured optimum.
 - `prs-snapshot.ts diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
 
 ### status-page.ts
@@ -493,7 +494,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 |---|---|---|
 | `pr-checks` | `owner/repo#123` or the PR URL | CI moving into failing or passing (`done_when` `settled`, the default, or `passing`) |
 | `pr-merged` | `owner/repo#123` or the PR URL | The merge: repo, PR and the tracker keys found in its title and branch (`tracker_key_pattern`); the orchestrator then runs the merge checklist |
-| `pr-watch` | `open-prs`, or `open-prs:baseline` to record the first snapshot without reporting it | Review activity on your open PRs: new threads, replies, comments, review bodies, decision flips, PRs that merged or closed, approved-but-unmerged PRs (once), and a Copilot review request on drafts in a `copilot_orgs` owner. `pr-review` is the old name and still works |
+| `pr-watch` | `open-prs`, or `open-prs:baseline` to record the first snapshot without reporting it | Review activity on your open PRs: new threads, replies, comments, review bodies, decision flips, PRs that turned into a merge conflict (`CONFLICT`: once per conflict, with base, head and link; a conflict GitHub is still computing is not reported, and one that clears resets silently), PRs that merged or closed, approved-but-unmerged PRs (once), and a Copilot review request on drafts in a `copilot_orgs` owner. `pr-review` is the old name and still works |
 | `gh-run` | `owner/repo:<run id>` | A GitHub Actions run completing |
 | `inbox` | ignored (`inbox`) | A count of new messages from you, read through `inbox_command`. Only a hash of each line is kept |
 | `reminder` | an ISO 8601 UTC time | A one-time wake-up at that time, carrying the `--report` text. A clock check with no network; a malformed or past target is refused |
@@ -739,6 +740,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `pr_body_private_patterns`, `pr_body_voice_names` | `MAESTRO_PR_BODY_PRIVATE_PATTERNS`, `MAESTRO_PR_BODY_VOICE_NAMES` | none | Comma-separated: extra regexes for private ids, and the author's names or logins that must not appear in the third person |
 | `pr_diagram_min_files` | `MAESTRO_PR_DIAGRAM_MIN_FILES` | 3 | PR body: a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>` |
 | `review_queue_cap` | `MAESTRO_REVIEW_QUEUE_CAP` | 4 | Review queue cap: most open non-draft PRs awaiting human review before `journal.ts review-queue` says full and dispatch holds new PR-producing work |
+| `stack_max_depth`, `stack_max_age_days` | `MAESTRO_STACK_MAX_DEPTH`, `MAESTRO_STACK_MAX_AGE_DAYS` | 3, 5 | Stack cap: most PRs in one stack, and most days since its oldest PR was opened; `prs-snapshot.ts --stacks` flags any stack over either |
 | `pr_test_globs`, `pr_config_globs`, `pr_docs_globs`, `pr_mechanical_globs` | `MAESTRO_PR_TEST_GLOBS`, `MAESTRO_PR_CONFIG_GLOBS`, `MAESTRO_PR_DOCS_GLOBS`, `MAESTRO_PR_MECHANICAL_GLOBS` | built-in patterns | Comma-separated path globs counted as tests, config, docs, or mechanical files (lockfiles, generated, vendored) |
 | `twin_flow_repos` | `MAESTRO_TWIN_FLOW_REPOS` | none (rule off) | Comma-separated repos that use the integration and release-candidate twin-PR flow |
 | `copilot_orgs` | `MAESTRO_COPILOT_ORGS` | none (nowhere) | Comma-separated owners whose draft PRs the `pr-watch` event type requests Copilot review on |
