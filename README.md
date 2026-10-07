@@ -196,7 +196,7 @@ flowchart LR
 
 ### PRs: draft only, sized, linked
 
-Pull requests open as drafts, assigned to you, through `pr-open.ts`, which checks the body and runs the size gate. Every PR body carries a `## Context` section (why, what changed, where it sits in a stack) and a `## Reviewer guide` section (what to look at, the riskiest parts, what is safe to skim, how it was validated, what is out of scope); `pr-open.ts` refuses without them. In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
+Pull requests open as drafts, assigned to you, through `pr-open.ts`, which checks the body and runs the size gate. Every PR body carries Context, Reviewer guide, Risk and blast radius, Rollback / flag and How to verify locally sections, plus a small mermaid diagram when the PR is stacked or wide; `pr-open.ts` refuses without them (`n/a, <reason>` is allowed, a bare placeholder is not). It checks structure, not truth: the risk line format, a fenced verify command and secret or attribution-shaped content are machine-checked, while whether the risk is honest or the review order is best stays a reviewer's call. The template, the enforced-versus-advisory table and the settings are in [reference/git.md](reference/git.md#pr-body). In repos that promote work through an integration branch and then a release-candidate branch, both PRs open together and the release-candidate twin waits for the integration twin.
 
 ```mermaid
 flowchart LR
@@ -556,7 +556,7 @@ The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <r
 
 ### pr-open.ts
 
-The only way agents and the orchestrator open a PR: `pr-open.ts --repo <path> --base <branch> --title <t> --body-file <f> [--head <branch>] [--dry-run]`. It first checks that the body file exists and holds a `## Context` and a `## Reviewer guide` section, each with real content (empty or a placeholder like `TBD` or `TODO` does not count), and refuses (exit 1) otherwise. It then runs the size gate, refuses with a split hint (exit 1) when it fails, and otherwise runs `gh pr create --draft --assignee @me`. Draft and assignee are always added and cannot be turned off; no other `gh` flag passes through. `--dry-run` prints the command. Exit 0 opened, 1 refused by the body check or the gate, 2 usage, an unreadable body file, or a git or `gh` error.
+The only way agents and the orchestrator open a PR: `pr-open.ts --repo <path> --base <branch> --title <t> --body-file <f> [--head <branch>] [--dry-run]`. It first checks that the body file exists and passes the body rules (required sections with real content, a Risk line, a fenced verify command, a diagram on stacked or wide PRs, no forbidden content; all configurable), and refuses (exit 1) otherwise. It then runs the size gate, refuses with a split hint (exit 1) when it fails, and otherwise runs `gh pr create --draft --assignee @me`. Draft and assignee are always added and cannot be turned off; no other `gh` flag passes through. `--dry-run` prints the command. Exit 0 opened, 1 refused by the body check or the gate, 2 usage, an unreadable body file, or a git or `gh` error.
 
 ### branch-sweep.ts
 
@@ -672,6 +672,9 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `inbox_command` | `MAESTRO_INBOX_COMMAND` | none | `inbox` type: a JSON argv array printing one line per unread message, without marking them read |
 | `pr_max_code_files` | `MAESTRO_PR_MAX_CODE_FILES` | 5 | PR size budget: most code files per PR |
 | `pr_max_code_lines` | `MAESTRO_PR_MAX_CODE_LINES` | 400 | PR size budget: most changed code lines (additions plus deletions) |
+| `pr_body_sections` | `MAESTRO_PR_BODY_SECTIONS` | Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally | PR body: the `##` sections `pr-open.ts` requires, comma-separated |
+| `pr_body_check_risk`, `pr_body_check_verify`, `pr_body_check_forbidden`, `pr_body_check_diagram` | `MAESTRO_PR_BODY_CHECK_RISK`, `_VERIFY`, `_FORBIDDEN`, `_DIAGRAM` | on | PR body: a Risk line (and a real rollback when high), a fenced verify command, no attribution or secret-shaped content, a diagram on stacked or wide PRs. `off`, `false`, `no` or `0` turns one off |
+| `pr_diagram_min_files` | `MAESTRO_PR_DIAGRAM_MIN_FILES` | 3 | PR body: a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>` |
 | `review_queue_cap` | `MAESTRO_REVIEW_QUEUE_CAP` | 4 | Review queue cap: most open non-draft PRs awaiting human review before `journal.ts review-queue` says full and dispatch holds new PR-producing work |
 | `pr_test_globs`, `pr_config_globs`, `pr_docs_globs`, `pr_mechanical_globs` | `MAESTRO_PR_TEST_GLOBS`, `MAESTRO_PR_CONFIG_GLOBS`, `MAESTRO_PR_DOCS_GLOBS`, `MAESTRO_PR_MECHANICAL_GLOBS` | built-in patterns | Comma-separated path globs counted as tests, config, docs, or mechanical files (lockfiles, generated, vendored) |
 | `twin_flow_repos` | `MAESTRO_TWIN_FLOW_REPOS` | none (rule off) | Comma-separated repos that use the integration and release-candidate twin-PR flow |
@@ -768,7 +771,7 @@ The honest question for every rule is whether it is **enforced at runtime** (a s
 | The ledger is consistent | `journal.ts verify` checks parsing, unique ids and dangling references and exits 1 on any problem; `roll` runs it before an autocommit |
 | Two sessions cannot hold one repo claim | `claim` hard-links a fully written temp file into place; exactly one racing process wins and a reader never sees a partial claim |
 | A stream is not archived half-finished | `archive` refuses while it has open items, an unfinished retro or unfilled promotions |
-| PRs are drafts, assigned to you, within budget and carry a reviewer guide | `pr-open.ts` refuses a body without `## Context` and `## Reviewer guide` sections, runs the `pr-size.ts` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
+| PRs are drafts, assigned to you, within budget and carry a reviewer guide | `pr-open.ts` refuses a body that fails the body rules (required sections, risk, verify, diagram, forbidden content), runs the `pr-size.ts` gate and forces `--draft --assignee @me` with no way to turn them off. This holds for every PR opened through it |
 | Branch deletion cannot take someone else's work or a moved branch | `branch-sweep.ts --apply` re-scans first, never uses `--force`, never deletes a local branch, checks authorship, and pushes with a lease on the listed tip |
 | The PR watcher cannot be set to flood GitHub | `cadence.ts` raises any `--interval` or `watch_min_interval` below 300s to 300s |
 | A notification cannot inject commands | `notify_command` runs as an argv array with no shell; the summary is one line of at most 150 characters |

@@ -44,6 +44,9 @@ watch_quiet_weekends: off      # on: Saturday and Sunday count as quiet hours; d
 watch_tz: America/New_York     # time zone for the quiet hours; default the system time zone
 pr_max_code_files: 5           # PR size budget: most code files per PR; default 5
 pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400
+pr_body_sections: Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally # headings pr-open.ts requires in every PR body; this is the default list
+pr_body_check_risk: on         # also: pr_body_check_verify, pr_body_check_forbidden, pr_body_check_diagram; each on by default, off turns it off
+pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>`; default 3
 review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
@@ -127,6 +130,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |
 | PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`) | git.md, `scripts/pr-size.ts` |
+| PR body rules: required sections (`pr_body_sections`), per-check switches (`pr_body_check_risk`, `_verify`, `_forbidden`, `_diagram`) and the diagram file threshold (`pr_diagram_min_files`) | git.md#pr-body, `scripts/pr-body.ts` |
 
 ## Issue tracker
 
