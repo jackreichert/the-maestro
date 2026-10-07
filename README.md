@@ -659,7 +659,7 @@ The rework rate and corrections from the user are not computed from transcripts.
 
 ### brief-block.ts
 
-Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. The block tells a worker to look a credential up with `env-where` (names only) before reporting it missing. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
+Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. The block tells a worker to look a credential up with `env-where` (names only) before reporting it missing. Its PR text rule tells workers to link files with `{{file:path}}` and to add a line anchor (`{{file:path#R42-R50}}`) found with `pr-guide-links.ts --hunks`. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
 
 ### env-store-move.ts
 
