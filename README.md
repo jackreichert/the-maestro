@@ -81,6 +81,14 @@ node $J status --project my-workspace
 
 Every new ledger entry needs `--model` and `--used`, so the record says which model did the work with what. Unknown history is `unrecorded`, unmeasured tokens are `unmeasured`; do not invent either.
 
+Decide whether the skill keeps itself current. Until you answer, `prime` ends its first lines with `auto_pull is not set` each session (unset is different from off, so a new install is asked once rather than silently opted out). Answer it now, or let your agent ask:
+
+```bash
+node ~/.claude/skills/the-maestro/scripts/journal.ts autopull on    # fast-forward the checkout at session start when it is clean and only behind; or: off
+```
+
+See [Updating](#updating) for what `on` does and never does.
+
 Optional next steps: install xenophon against the same `VAULT_ROOT` for tickets, write a config file ([Configuration](#configuration)), and set `ledger_root` if you want the day-to-day ledger outside your vault so it stays out of vault search.
 
 ## Updating
