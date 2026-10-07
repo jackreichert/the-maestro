@@ -23,6 +23,7 @@ const statusDir = join(vault, 'Status');
 for (const d of ['dist', 'fixtures']) mkdirSync(join(client, d), { recursive: true });
 writeFileSync(join(client, 'index.html'), '<p>home</p>');
 writeFileSync(join(client, 'theme.css'), 'body{}');
+writeFileSync(join(client, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
 writeFileSync(join(client, 'dist', 'app.js'), 'export {}');
 writeFileSync(join(client, 'dist', 'notes.txt'), 'not served');
 writeFileSync(join(client, 'fixtures', 'state.json'), '{}');
@@ -142,7 +143,7 @@ test('a cross-origin request is refused and the server never sends CORS headers'
 });
 
 test('static files: whitelist only, with content types and nosniff', async () => {
-  const types: [string, string][] = [['/', 'text/html; charset=utf-8'], ['/index.html', 'text/html; charset=utf-8'], ['/theme.css', 'text/css; charset=utf-8'], ['/dist/app.js', 'text/javascript; charset=utf-8'], ['/fixtures/state.json', 'application/json; charset=utf-8']];
+  const types: [string, string][] = [['/', 'text/html; charset=utf-8'], ['/index.html', 'text/html; charset=utf-8'], ['/theme.css', 'text/css; charset=utf-8'], ['/dist/app.js', 'text/javascript; charset=utf-8'], ['/fixtures/state.json', 'application/json; charset=utf-8'], ['/favicon.svg', 'image/svg+xml']];
   for (const [path, type] of types) {
     const r = await hit(path);
     assert.equal(r.status, 200, path);

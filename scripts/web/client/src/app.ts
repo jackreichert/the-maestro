@@ -6,7 +6,7 @@ import { BOARD_CSS, askCards, askHint, itemRows, section } from './stream-board.
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
-import { cueParts, clockTime, freshness, longDate, shortDate } from './glance.ts';
+import { cueParts, cueTitle, clockTime, freshness, longDate, shortDate } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
@@ -233,6 +233,7 @@ export class PodiumApp extends HTMLElement {
     const tabbar = h('div', { class: 'tabbar' }, tablist);
     this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
     this.#watchTabOverflow(tabbar, tablist);
+    showCue(st.asks.length);
   }
 
   /**
@@ -355,6 +356,17 @@ export class PodiumApp extends HTMLElement {
       mk('bar', 'Pull requests by CI state', prMixChart(c)),
       mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
   }
+}
+
+/**
+ * Put the needs-you count where a glance at the browser's tab strip finds it: the title reads "(n) Podium", and the
+ * favicon swaps to the one with an accent tip. Counts every stream, whichever tab is open.
+ */
+function showCue(asks: number): void {
+  document.title = cueTitle(asks);
+  const icon = document.querySelector<HTMLLinkElement>('link[rel=icon]');
+  const href = asks > 0 ? '/favicon-cue.svg' : '/favicon.svg';
+  if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
 }
 
 /** A DOM id for a tab: stream names are data and may hold spaces, which would split an IDREF list. */

@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, askAge, chatAnswer, clockTime, cueParts, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
+import { ago, askAge, chatAnswer, clockTime, cueTitle, cueParts, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -84,4 +84,9 @@ test('chatAnswer prefixes the ask id for the chat and refuses a blank answer (no
   assert.equal(chatAnswer('ab12', 'line one\nline two'), 'ab12: line one\nline two');
   assert.equal(chatAnswer('ab12', ''), null);
   assert.equal(chatAnswer('ab12', ' \n\t '), null);
+});
+
+test('cueTitle counts the asks that need you, and only those', () => {
+  const cases: [number, string][] = [[0, 'Podium'], [1, '(1) Podium'], [2, '(2) Podium'], [45, '(45) Podium'], [-1, 'Podium'], [1.5, 'Podium'], [Number.NaN, 'Podium']];
+  for (const [n, title] of cases) assert.equal(cueTitle(n), title, `cueTitle(${n})`);
 });

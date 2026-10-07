@@ -91,3 +91,8 @@ export function chatAnswer(id: string, answer: string): string | null {
   const text = answer.trim();
   return text ? `${id}: ${text}` : null;
 }
+
+/** The browser tab's title: "(n) Podium" while n asks need you, plain "Podium" otherwise. Blocked never counts: it is not your hand. */
+export function cueTitle(asks: number): string {
+  return Number.isInteger(asks) && asks > 0 ? `(${asks}) Podium` : 'Podium';
+}
