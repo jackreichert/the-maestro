@@ -110,6 +110,6 @@ test('an escaped pipe stays in its cell, and an escaped backslash before a pipe 
 });
 
 test('a trusted pull request link gets its own tab name and no rel; an obsidian link gets no target', () => {
-  assert.equal(renderInline('[#7](https://github.com/example-org/example-repo/pull/7)'), '<a href="https://github.com/example-org/example-repo/pull/7" target="podium-pr-example-org-example-repo-7">#7</a>');
+  assert.equal(renderInline('[#7](https://github.com/example-org/example-repo/pull/7)'), '<a href="https://github.com/example-org/example-repo/pull/7" target="podium-pr~example-org~example-repo~7">#7</a>');
   assert.equal(renderInline('[n](obsidian://open?vault=v&file=a)').includes('target='), false);
 });

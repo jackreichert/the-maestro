@@ -34,10 +34,14 @@ const TRUSTED_HOSTS: TrustedHost[] = [
 const PULL = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)\/?$/;
 const TICKET = /^\/browse\/([A-Z][A-Z0-9_]*-\d+)\/?$/;
 
-/** Tab names always start `podium-` (never `_`, which the spec reserves) and use only [A-Za-z0-9_.-]. */
+/**
+ * Tab names start `podium-` (never `_`, which the spec reserves). Parts are joined with `~`, which no part can contain, so two different
+ * items never share a name (a-b/c and a/b-c differ). GitHub names are case-insensitive, so they are lowercased; a pull request number
+ * is normalised (007 is 7), and a ticket name carries its tenant so two tenants with the same key stay apart.
+ */
 const TAB_RULES: TabRule[] = [
-  { name: 'pull-request', tab: (u) => { const m = PULL.exec(u.pathname); return m ? `podium-pr-${m[1]}-${m[2]}-${m[3]}` : null; } },
-  { name: 'ticket', tab: (u) => { const m = TICKET.exec(u.pathname); return m ? `podium-ticket-${m[1]}` : null; } },
+  { name: 'pull-request', tab: (u) => { const m = PULL.exec(u.pathname); return m ? `podium-pr~${m[1]!.toLowerCase()}~${m[2]!.toLowerCase()}~${BigInt(m[3]!)}` : null; } },
+  { name: 'ticket', tab: (u) => { const m = TICKET.exec(u.pathname); return m ? `podium-ticket~${u.hostname}~${m[1]}` : null; } },
 ];
 
 const SAFE_REL = 'noopener noreferrer';

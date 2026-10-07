@@ -7,13 +7,13 @@ const PR = 'https://github.com/example-org/example-repo/pull/42';
 const TICKET = 'https://example.atlassian.net/browse/EX-123';
 
 test('a pull request gets a per-item tab name and no rel, so repeat clicks reuse its tab', () => {
-  assert.deepEqual(linkAttrs(PR), { href: PR, target: 'podium-pr-example-org-example-repo-42' });
-  assert.deepEqual(linkAttrs(`${PR}/`), { href: `${PR}/`, target: 'podium-pr-example-org-example-repo-42' });
+  assert.deepEqual(linkAttrs(PR), { href: PR, target: 'podium-pr~example-org~example-repo~42' });
+  assert.deepEqual(linkAttrs(`${PR}/`), { href: `${PR}/`, target: 'podium-pr~example-org~example-repo~42' });
   assert.equal(linkAttrs(PR)?.target, linkAttrs(` ${PR} `)?.target);
 });
 
 test('a ticket gets a per-item tab name', () => {
-  assert.deepEqual(linkAttrs(TICKET), { href: TICKET, target: 'podium-ticket-EX-123' });
+  assert.deepEqual(linkAttrs(TICKET), { href: TICKET, target: 'podium-ticket~example.atlassian.net~EX-123' });
 });
 
 test('different items get different names, and the same number in two repos does not collide', () => {
@@ -23,7 +23,7 @@ test('different items get different names, and the same number in two repos does
 });
 
 test('tab names never start with an underscore and only use safe characters', () => {
-  for (const u of [PR, TICKET]) assert.match(linkAttrs(u)?.target ?? '', /^podium-[A-Za-z0-9_.-]+$/);
+  for (const u of [PR, TICKET]) assert.match(linkAttrs(u)?.target ?? '', /^podium-[A-Za-z0-9_.~-]+$/);
 });
 
 test('a non-allowlisted host opens a new tab with noopener noreferrer, never a reusable name', () => {
@@ -70,4 +70,12 @@ test('every attribute set with a name omits rel, and every one without a name ha
     if (a.target?.startsWith('podium-')) assert.equal('rel' in a, false);
     else assert.match(a.rel ?? '', /noopener/);
   }
+});
+
+test('names are injective: a-b/c and a/b-c differ, case does not matter, and the number is normalised', () => {
+  const t = (u: string): string | undefined => linkAttrs(u)?.target;
+  assert.notEqual(t('https://github.com/a-b/c/pull/1'), t('https://github.com/a/b-c/pull/1'));
+  assert.notEqual(t('https://github.com/a/b_c/pull/1'), t('https://github.com/a_b/c/pull/1'));
+  assert.equal(t('https://github.com/Example-Org/Example-Repo/pull/007'), t('https://github.com/example-org/example-repo/pull/7'));
+  assert.notEqual(t('https://github.com/a/b/pull/1'), t('https://github.com/a/b/pull/10'));
 });
