@@ -83,6 +83,8 @@
  *   journal.ts podium [--snapshot] [--dry-run] [--status-dir <dir>]   regenerate the Podium (The-Podium.md in the status dir; NOW.md stays as a pointer; `status-page` is an alias): priorities, needs-you list, PR board per stream, in flight, queued, blocked, done. --dry-run prints it, --snapshot also writes the dated copy
  *   journal.ts web [--port <n>] [--status-dir <dir>]   serve the Podium as a read-only page on 127.0.0.1 (GET only; prints the URL; build the page first with `npm run build:web`)
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
+ *   journal.ts week set "<goal>" ["<goal> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write this week's goals to <status dir>/week.md (dated by the week's Monday; a ` | Stream` suffix maps one to a stream)
+ *   journal.ts week show [--status-dir <dir>] [--json]   read them back; a missing or out-of-week file prints the not-set line
  *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
  *
  * Workstreams: pass --stream <name> to log/start/ask (or `tag` an existing item)
@@ -150,6 +152,7 @@ import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue } from './lib/review-queue.ts';
 import { fetchLive, snapshotPath } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
+import { readWeek, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
@@ -1521,6 +1524,21 @@ function cmdPriorities() {
     } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show');
 }
 
+/** `week set "<goal> | <Stream>" ...` and `week show`: this week's goals in <status dir>/week.md. */
+function cmdWeek() {
+    const [sub, ...words] = positional;
+    const dirPath = statusDir();
+    if (!dirPath) die('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
+    const day = arg('date', priorityDay());
+    if (sub === 'set') {
+        if (dryRun) { console.log('[dry-run]', JSON.stringify(words.map(parsePriority))); return; }
+        try { console.log(`wrote ${writeWeek(dirPath, day, words.map(parsePriority))}`); } catch (e) { die(errorMessage(e)); }
+    } else if (sub === 'show') {
+        const state = readWeek(dirPath, day);
+        if (asJson) console.log(JSON.stringify(state, null, 2)); else weekLines(state).forEach((l) => console.log(l));
+    } else die('Usage: journal.ts week set "<goal>" ["<goal> | <Stream>" ...] | week show');
+}
+
 // ── standing pickups ────────────────────────────────────────────────────────
 
 const standingFile = (): string => join(dir, STANDING_FILE);
@@ -1657,6 +1675,7 @@ switch (cmd) {
     case 'handoff': cmdHandoff(); break;
     case 'resume': cmdResume(); break;
     case 'priorities': cmdPriorities(); break;
+    case 'week': cmdWeek(); break;
     case 'standing': cmdStanding(); break;
     case 'podium':
     case 'status-page': cmdStatusPage(); break;

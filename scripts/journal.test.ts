@@ -2278,6 +2278,16 @@ test('priorities set and show round-trip through the status dir, with a stream s
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
 
+test('week set and show round-trip through the status dir; a missing file prints the not-set line', () => {
+    const sd = join(vault, 'Status');
+    assert.match(run('week', 'show', '--status-dir', sd).out, /^Week goals not set/);
+    const set = run('week', 'set', 'Ship the widget | Alpha', 'Second goal', '--date', '2026-10-07', '--status-dir', sd);
+    assert.equal(set.code, 0, set.err);
+    assert.match(run('week', 'show', '--date', '2026-10-09', '--status-dir', sd).out, /^Goals for the week of 2026-10-05:\n1\. Ship the widget \[Alpha\]\n2\. Second goal\n/);
+    assert.match(run('week', 'show', '--date', '2026-10-12', '--status-dir', sd).out, /^Week goals not set.*week of 2026-10-05/);
+    assert.equal(run('week', 'set', '--status-dir', sd).code, 1, 'no goals is refused');
+});
+
 test('priorities set refuses more than priorities_max and the error names the cap; the env setting moves it', () => {
     const sd = join(vault, 'Status');
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
