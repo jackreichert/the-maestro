@@ -287,3 +287,19 @@ test('bodyProblems: voice check flags the author in the third person and assista
     assert.deepEqual(p('```\nagent run\n```'), [], 'fenced code is skipped for voice');
     assert.deepEqual(bodyProblems('## Context\nthe agent\n', NONE), [], 'switched off');
 });
+
+test('bodyProblems: an unedited template, and a diagram that only sits in an HTML comment, do not pass', () => {
+    const template = [
+        '## Context', '<why this change exists, 2-4 lines>', '## Reviewer guide', '- Review order: 1. a.ts',
+        '## Risk and blast radius', 'Risk: low | medium | high - <one-line reason>',
+        '## Rollback / flag', 'Plain revert.', '## How to verify locally', '```bash', '<exact command>', '```', '',
+    ].join('\n');
+    const rules = { ...NONE, sections: ['Context', 'Reviewer guide', 'Risk and blast radius', 'Rollback / flag', 'How to verify locally'], risk: true, verify: true };
+    const p = bodyProblems(template, rules);
+    assert.ok(p.some((x) => /"## Context" has no content/.test(x)), p.join('; '));
+    assert.ok(p.some((x) => /no "Risk: low/.test(x)));
+    assert.ok(p.some((x) => /verify section has no fenced/.test(x)));
+    const stacked = { stacked: true, codeFiles: 1 };
+    const hidden = bodyProblems('## Context\nx\n<!--\n```mermaid\nflowchart LR\n```\n-->\n', { ...NONE, diagram: true }, stacked);
+    assert.equal(hidden.length, 1, 'a commented-out diagram is not a diagram');
+});
