@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PRIORITIES_UNSET_LINE, formatPriorities, localDate, parsePriorities, parsePriority, readPriorities, showLines, writePriorities } from './priorities.ts';
+import { DEFAULT_PRIORITIES_MAX, PRIORITIES_UNSET_LINE, capRefusal, formatPriorities, localDate, parsePriorities, parsePriority, readPriorities, showLines, writePriorities } from './priorities.ts';
 
 const dir = (): string => mkdtempSync(join(tmpdir(), 'prio-'));
 
@@ -53,4 +53,20 @@ test('localDate follows the zone, not UTC', () => {
   const late = new Date('2026-10-06T02:30:00Z');
   assert.equal(localDate(late, 'America/New_York'), '2026-10-05');
   assert.equal(localDate(late, 'UTC'), '2026-10-06');
+});
+
+test('capRefusal names the cap and how many to drop, and is null at or under it', () => {
+  assert.equal(DEFAULT_PRIORITIES_MAX, 5);
+  assert.equal(capRefusal(5, 5), null);
+  assert.equal(capRefusal(0, 5), null);
+  assert.match(capRefusal(6, 5) ?? '', /at most 5 priorities \(priorities_max\); got 6: drop 1/);
+});
+
+test('writePriorities refuses a list over the cap and leaves the file alone', () => {
+  const d = dir();
+  writePriorities(d, '2026-10-05', [{ text: 'keep' }], 2);
+  const before = readFileSync(join(d, 'priorities.md'), 'utf8');
+  assert.throws(() => writePriorities(d, '2026-10-05', [{ text: 'a' }, { text: 'b' }, { text: 'c' }], 2), /at most 2 priorities/);
+  assert.equal(readFileSync(join(d, 'priorities.md'), 'utf8'), before);
+  writePriorities(d, '2026-10-05', [{ text: 'a' }, { text: 'b' }], 2);
 });

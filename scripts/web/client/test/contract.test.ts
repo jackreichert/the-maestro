@@ -152,3 +152,11 @@ test('an ask may carry decision fields and a paste path, and a wrongly typed one
     assert.equal(sanitizeState(bad)?.state.asks.length, 2, field);
   }
 });
+
+test('prioritiesMax is the server number when it is a whole number of at least 1, else 5', () => {
+  for (const [given, want] of [[3, 3], [12, 12], [undefined, 5], [0, 5], [-1, 5], [2.5, 5], ['4', 5], [null, 5]] as [unknown, number][]) {
+    const s = state();
+    s.prioritiesMax = given;
+    assert.equal(sanitizeState(s)?.state.prioritiesMax, want, String(given));
+  }
+});

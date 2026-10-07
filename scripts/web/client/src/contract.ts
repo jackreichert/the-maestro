@@ -52,7 +52,8 @@ function validRows(v: unknown, rule: Shape): unknown[] {
 /** How many entries of a list were left out of its filtered copy; a non-array list has none to lose. */
 const lost = (v: unknown, kept: unknown[]): number => (Array.isArray(v) ? v.length - kept.length : 0);
 
-function priorities(v: unknown): { value: PrioritiesState; dropped: number } {
+/** A priorities state from an untrusted value: rows that fail the rules are dropped and counted, anything unrecognised is `missing`. */
+export function sanitizePriorities(v: unknown): { value: PrioritiesState; dropped: number } {
   if (isObj(v) && v.state === 'ok' && str(v.date)) {
     const items = validRows(v.items, PRIORITY_RULES) as { text: string; stream?: string }[];
     return { value: { state: 'ok', date: v.date as string, items }, dropped: lost(v.items, items) };
@@ -68,6 +69,11 @@ function priorities(v: unknown): { value: PrioritiesState; dropped: number } {
 export function fragmentFor(fragments: Record<string, string> | undefined, stream: string): string | undefined {
   return fragments !== undefined && Object.hasOwn(fragments, stream) ? fragments[stream] : undefined;
 }
+
+/** A whole number of at least 1, else the fallback. */
+const wholeAtLeastOne = (v: unknown, fallback: number): number => (typeof v === 'number' && Number.isInteger(v) && v >= 1 ? v : fallback);
+/** The cap when the server names none (an older server, or the bundled sample data). */
+const DEFAULT_PRIORITIES_MAX = 5;
 
 const text = (v: unknown): string => (typeof v === 'string' ? v : '');
 
@@ -86,14 +92,14 @@ export function sanitizeState(x: unknown): { state: PodiumState; dropped: number
   const kept = isObj(x.fragments) ? Object.entries(x.fragments).filter(([, v]) => str(v)) : undefined;
   if (kept) dropped += Object.keys(x.fragments as object).length - kept.length;
   const fragments = kept ? Object.fromEntries(kept) as Record<string, string> : undefined;
-  const pri = priorities(x.priorities);
+  const pri = sanitizePriorities(x.priorities);
   dropped += pri.dropped;
   const prData = isObj(x.prData) && bool(x.prData.stale) && (x.prData.fetchedAt === null || str(x.prData.fetchedAt))
     ? { fetchedAt: x.prData.fetchedAt as string | null, stale: x.prData.stale as boolean }
     : { fetchedAt: null, stale: true };
   const state: PodiumState = {
     generatedAt: text(x.generatedAt), today: text(x.today), tz: text(x.tz), seq: text(x.seq),
-    streams: x.streams as string[], priorities: pri.value, prData, fragments,
+    streams: x.streams as string[], priorities: pri.value, prioritiesMax: wholeAtLeastOne(x.prioritiesMax, DEFAULT_PRIORITIES_MAX), prData, fragments,
     asks: rows.asks as AskCard[], working: rows.working as WorkItem[], queued: rows.queued as WorkItem[], blocked: rows.blocked as BlockedItem[],
     done: rows.done as DoneItem[], deferred: rows.deferred as DeferredItem[], prs: rows.prs as PrCard[], footer: rows.footer as FooterRow[],
   };

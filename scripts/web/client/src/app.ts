@@ -1,5 +1,6 @@
 import './stream-board.ts';
 import './podium-chart.ts';
+import './priority-list.ts';
 import './md-fragment.ts';
 import { h, s, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
@@ -115,10 +116,6 @@ const CSS = `${BOARD_CSS}
   [role=tabpanel]:focus-visible { outline: none; border-radius: 0; box-shadow: inset 0 2px 0 var(--focus); }
   @media (forced-colors: active) { [role=tabpanel]:focus-visible { outline: 2px solid CanvasText; outline-offset: -2px; } }
 
-  ol.priorities { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); counter-reset: p; }
-  ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 1.5em minmax(0, 1fr); gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
-  ol.priorities li::before { content: counter(p); color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
-  ol.priorities .tag { grid-column: 2; justify-self: start; padding-block: 2px; margin-block: -2px; }
 
   .table-wrap { overflow-x: auto; }
   .table-wrap:focus-visible { outline-offset: 4px; }
@@ -490,10 +487,13 @@ export class PodiumApp extends HTMLElement {
   #overview(st: PodiumState): Node {
     const ctx = { now: st.generatedAt, tz: st.tz, showStream: true, prs: st.prs };
     const pri = st.priorities;
-    const priorities = pri.state === 'ok' && pri.items.length > 0
-      ? h('ol', { class: 'priorities', role: 'list' }, ...pri.items.map((i) => h('li', {}, h('span', {}, i.text), i.stream ? streamTag(i.stream) : null)))
-      : null;
-    const priEmpty = pri.state === 'stale' ? `Priorities are from ${longDate(pri.date) || pri.date}: set today's with journal.ts priorities set.` : 'No priorities set for today.';
+    const editable = this.#sources.state === 'server';
+    const stale = pri.state === 'stale' && pri.date !== st.today;
+    const note = stale
+      ? `Priorities are from ${longDate(pri.date) || pri.date}. ${editable ? `Add one to start today's list.` : `Set today's with journal.ts priorities set.`}`
+      : 'No priorities set for today.';
+    const priorities = h('priority-list');
+    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note };
     const asks = askCards(st.asks, this.#sources.state === 'server', true, askPreview());
     const frag = fragmentFor(st.fragments, OVERVIEW);
     const md = frag ? h('md-fragment') : null;
@@ -505,7 +505,7 @@ export class PodiumApp extends HTMLElement {
           section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(st.blocked, ctx)),
           section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },
-          section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: priEmpty, quiet: true }, priorities),
+          section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: note, quiet: true }, priorities),
           section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(st.working, ctx)),
           section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
       h('div', { class: 'wide' },

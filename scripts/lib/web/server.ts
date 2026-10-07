@@ -1,9 +1,12 @@
 /**
- * The read-only Podium server: GET endpoints over buildState/buildCharts and the client's static files.
+ * The Podium server: GET endpoints over buildState/buildCharts and the client's static files, plus one narrow write surface.
  * `GET /api/events` is the one streaming route: Server-Sent Events from a shared watcher (events.ts), so the page updates without a reload.
+ * The write surface is three POST routes that reorder, add and delete today's priorities (priorities-write.ts) and nothing else:
+ * they need a per-start token the page reads from `GET /api/edit-token`, and guard.ts only lets them through from the page's own origin.
  * Every request goes through guard.refuse first; every response is written by guard.send, so the security headers
- * are on 404s and 500s too. Nothing here writes the ledger, the priorities file or the page.
+ * are on 404s and 500s too. Every GET is read-only: nothing on a GET path writes the ledger, the priorities file or the page.
  */
+import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -16,6 +19,8 @@ import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { buildHome } from './home.ts';
+import { TOKEN_PATH, WRITE_PATHS, handleWrite } from './priorities-write.ts';
+import { DEFAULT_PRIORITIES_MAX } from '../status-page/priorities.ts';
 
 export interface WebServerOptions {
   web: WebConfig;
@@ -33,6 +38,8 @@ export interface WebServerOptions {
   eventsKeepAliveMs?: number;
   /** The change hub behind /api/events; tests pass their own to watch subscribers come and go. */
   hub?: ChangeHub;
+  /** The write token. Default: 32 random bytes, new on every start; tests pass a known one. */
+  token?: string;
 }
 
 const DEFAULT_DAYS = 14;
@@ -75,12 +82,19 @@ export function createWebServer(o: WebServerOptions): Server {
   const routes = dataRoutes({ ...o, web: { ...o.web, warn } });
   const vault = o.web.vaultRoot ? vaultWatch(o.web.vaultRoot) : null;
   const hub = o.hub ?? createChangeHub({ files: () => [...boardFiles(o.web.vault, o.web.project, o.web.statusDir), ...(vault ? vault.files() : [])], intervalMs: o.eventsIntervalMs, keepAliveMs: o.eventsKeepAliveMs });
+  const token = o.token ?? randomBytes(32).toString('hex');
+  const writes = { web: o.web, max: o.web.prioritiesMax ?? DEFAULT_PRIORITIES_MAX, token, now: (): Date => o.now?.() ?? new Date(), log };
   const files = buildRoutes(o.clientDir);   // a whitelist taken at start: a request path is only ever looked up, never joined onto a path
   const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES, requestTimeout: o.requestTimeoutMs ?? 10_000, headersTimeout: o.headersTimeoutMs ?? 5_000, connectionsCheckingInterval: 1000 }, (req, res) => {
     try {
-      const no = refuse(req, req.socket.localPort ?? 0);
+      const no = refuse(req, req.socket.localPort ?? 0, WRITE_PATHS);
       if (no) return sendError(res, no.status, no.headers);
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (req.method === 'POST') {   // the guard let a POST through only for a write path
+        handleWrite(writes, url.pathname, req, res).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
+        return;
+      }
+      if (url.pathname === TOKEN_PATH) return sendJson(res, 200, { token, max: writes.max });
       if (url.pathname === EVENTS_PATH) return serveEvents(req, res, hub);
       const route = routes.find((r) => r.pattern.test(url.pathname));
       if (route) {
