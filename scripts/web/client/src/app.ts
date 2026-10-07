@@ -208,6 +208,7 @@ export class PodiumApp extends HTMLElement {
     window.addEventListener('hashchange', this.#onHash);
     this.#root.replaceChildren(skeleton());
     Promise.all([loadState(), loadCharts(), loadLinkHosts()]).then(([s, c]) => {
+      if (!this.isConnected) return;   // removed while loading: start nothing that disconnectedCallback has already missed
       this.#state = s.data;
       this.#charts = c.data;
       this.#sources = { state: s.source, charts: c.source };
