@@ -11,7 +11,7 @@ const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro'];
 function cli(world: { ledger: string; vault: string; events: string }, ...args: string[]) {
   const r = spawnSync(process.execPath, [JOURNAL, ...args, '--vault', world.ledger, '--project', 'test-proj'], {
     encoding: 'utf8', cwd: tmpdir(),
-    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: world.vault, MAESTRO_EVENT_DIR: world.events, MAESTRO_LAUNCH_AGENTS_DIR: join(world.events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
+    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: world.vault, MAESTRO_STATUS_DIR: join(world.vault, 'Projects', 'test-proj', 'Status'), MAESTRO_EVENT_DIR: world.events, MAESTRO_LAUNCH_AGENTS_DIR: join(world.events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
