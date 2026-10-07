@@ -281,7 +281,7 @@ export class PodiumApp extends HTMLElement {
     const tabbar = h('div', { class: 'tabbar' }, tablist);
     this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
     this.#watchTabOverflow(tabbar, tablist);
-    showCue(st.asks.length);
+    showCue(this.#waiting(st));
   }
 
   /**
@@ -309,6 +309,9 @@ export class PodiumApp extends HTMLElement {
     this.#tabsObserver.observe(tablist);
   }
 
+  /** Asks that really need you: on sample data none do, so the tab title, favicon and baton tip never cue from a fixture. */
+  #waiting(st: PodiumState): number { return this.#sources.state === 'server' ? st.asks.length : 0; }
+
   get #live(): boolean { return this.#sources.state === 'server' && this.#sources.charts === 'server'; }
 
   #header(st: PodiumState): HTMLElement {
@@ -322,7 +325,7 @@ export class PodiumApp extends HTMLElement {
       .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
-        h('div', { class: 'brand' }, h('h1', {}, baton(st.asks.length > 0), 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
+        h('div', { class: 'brand' }, h('h1', {}, baton(this.#waiting(st) > 0), 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
         this.#freshness(st)),
       note ? h('p', { class: 'source' }, note) : null,
       h('p', { class: 'scope' }, h('span', { id: 'scope' }, scope), h('span', { 'aria-hidden': 'true' }, ' · '), tempo),
