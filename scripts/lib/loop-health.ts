@@ -10,6 +10,7 @@
  *   absent           nothing is set up and nothing is required: no line, so an install that does not use a loop is not nagged
  */
 import type { Heartbeat } from './heartbeat.ts';
+import { CHUNK_SECONDS } from './wall-sleep.ts';
 import type { SupervisorStatus } from './supervisor-state.ts';
 
 /** How long past its planned wake time a heartbeat may be before the writer counts as stalled. */
@@ -23,7 +24,9 @@ export interface HealthInput {
   heartbeat: Heartbeat | null;
   /** The pid holding the loop lock, or null. */
   lockPid: number | null;
-  supervisor: Pick<SupervisorStatus, 'state'>;
+  supervisor: Pick<SupervisorStatus, 'state' | 'pid'>;
+  /** When the machine last woke from sleep (epoch ms), or null when unknown. */
+  wokeAt?: number | null;
   /** `loop_supervisor: required` in the config. */
   required: boolean;
   alive: (pid: number) => boolean;
@@ -40,16 +43,27 @@ const stamp = (at: number, tz: string): string => `${clock(at, tz)} ${tzName(at,
 const line = (state: LoopState, text: string): LoopHealth => ({ state, line: `**Loop:** ${text}` });
 
 /** The verdict for the inputs above. Pure: every read is passed in. */
-export function loopHealth({ now, heartbeat: hb, lockPid, supervisor, required, alive, tz }: HealthInput): LoopHealth {
-  if (hb && alive(hb.pid)) {
+export function loopHealth({ now, heartbeat, lockPid, supervisor, required, alive, tz, wokeAt = null }: HealthInput): LoopHealth {
+  // A heartbeat counts only from the process that owns it: the lock holder for `run`, the supervisor record's pid (with no loop holding the lock) for the rest.
+  // A pid that merely looks alive (reused after a reboot, or another runner) must not vouch for the loop.
+  const owned = heartbeat && alive(heartbeat.pid)
+    && (heartbeat.mode === 'run' ? heartbeat.pid === lockPid : lockPid === null && supervisor.state === 'running' && heartbeat.pid === supervisor.pid);
+  const hb = owned ? heartbeat : null;
+  if (hb) {
     const at = Date.parse(hb.at);
     const wake = hb.sleepingUntil ? Date.parse(hb.sleepingUntil) : at;
-    if (now > Math.max(at, wake) + STALL_GRACE_MS) return line('stalled', `STALLED ${minutes(now - at)} (no heartbeat since ${stamp(at, tz)})`);
+    const lateBy = now - Math.max(at, wake);
+    if (hb.mode === 'backoff') return line('down', `DOWN, the loop will not start (${hb.lastError || 'no reason recorded'}); retrying, last try ${minutes(now - at)} ago`);
+    if (lateBy > STALL_GRACE_MS) {
+      // The lid was closed: the writer's timers did not run, and it needs up to one chunk after waking to beat again.
+      if (wokeAt !== null && wokeAt > at && now - wokeAt < CHUNK_SECONDS * 1000 + STALL_GRACE_MS) return line('ok', 'ok, waking after sleep');
+      return line('stalled', `STALLED ${minutes(now - at)} (no heartbeat since ${stamp(at, tz)})`);
+    }
     if (hb.mode === 'quiet') return line('quiet', `quiet until ${stamp(wake, tz)}`);
     return line('ok', `ok ${minutes(now - at)}`);
   }
   if (lockPid !== null) return line('running', 'running, no heartbeat yet');
-  if (supervisor.state !== 'absent') return line('down', hb ? `DOWN since ${stamp(Date.parse(hb.at), tz)}` : 'DOWN');
+  if (supervisor.state !== 'absent') return line('down', heartbeat ? `DOWN since ${stamp(Date.parse(heartbeat.at), tz)}` : 'DOWN');
   if (required) return line('not-installed', 'NOT INSTALLED (loop_supervisor is required; run scripts/install-loop-supervisor.ts)');
   return { state: 'absent', line: '' };
 }

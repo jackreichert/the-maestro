@@ -517,18 +517,21 @@ With launchd holding the lock, a session cannot run the loop itself. It starts `
 
 ### Loop health (is it actually running?)
 
-A held lock does not mean a working loop, so the loop and the supervisor leave a heartbeat. `event-loop.ts run` (not `--once`) rewrites `<event_dir>/heartbeat.json` (`{ pid, at, tick, watchesLive, sleepingUntil, mode, lastError }`, written by temp file and rename) on each tick and each sleep chunk; the supervisor does the same, with mode `idle` or `quiet`, while it waits between launches. The file holds no event text.
+A held lock does not mean a working loop, so the loop and the supervisor leave a heartbeat. `event-loop.ts run` (not `--once`) rewrites `<event_dir>/heartbeat.json` (`{ pid, at, tick, watchesLive, sleepingUntil, mode, lastError }`, written by temp file and rename) on each tick and each sleep chunk; the supervisor does the same, with mode `idle`, `quiet` or `backoff`, while it waits between launches. The file holds no event text.
 
 `lib/loop-health.ts` is the one reader. It turns the heartbeat, the loop lock and the supervisor record into a `Loop:` line, shown in `journal.ts status --footer` (bold label), `prime`, `session-start.ts` and the `loop-alive` standing row:
 
 | Line | Meaning |
 | --- | --- |
-| `ok 2 min` | A live writer's heartbeat is within its own planned wake time plus 5 minutes |
+| `ok 2 min` | The owning writer's heartbeat is within its own planned wake time plus 5 minutes. `ok, waking after sleep` right after the machine wakes, before the first new beat |
 | `quiet until 07:00 EDT` | The supervisor is waiting out quiet hours, as it said it would |
 | `running, no heartbeat yet` | A loop holds the lock but started before heartbeats existed |
 | `STALLED 20 min (no heartbeat since ...)` | The writer's process is alive but its heartbeat is past that deadline: it is hung |
 | `DOWN since 13:58 EDT` | A supervisor is set up and nothing alive is writing a heartbeat |
+| `DOWN, the loop will not start (<reason>)` | The supervisor is alive but the loop refuses to start or keeps crashing (its `backoff` beat carries the last error) |
 | `NOT INSTALLED` | `loop_supervisor: required` and no supervisor is set up and no loop is running |
+
+A heartbeat counts only from its owner: the process holding the loop lock for the loop's beats, the supervisor's recorded pid (with no loop holding the lock) for the supervisor's. A beat from any other live pid, such as a reused one, is ignored, so it can neither vouch for a hung loop nor raise a false alarm.
 
 With nothing set up and nothing required the line is empty, so an install that does not use a loop is not nagged. Set `loop_supervisor: required` to make a missing supervisor loud.
 

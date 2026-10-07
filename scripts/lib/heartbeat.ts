@@ -6,8 +6,11 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** `run`: the loop is ticking or sleeping to its next due watch. `quiet`: the supervisor is waiting out quiet hours. `idle`: the supervisor is waiting to relaunch the loop. */
-export type HeartbeatMode = 'run' | 'quiet' | 'idle';
+/**
+ * `run`: the loop is ticking or sleeping to its next due watch. `quiet`: the supervisor is waiting out quiet hours. `idle`: the supervisor is waiting to relaunch
+ * the loop. `backoff`: the supervisor is waiting after the loop refused to start or crashed (`lastError` says why).
+ */
+export type HeartbeatMode = 'run' | 'quiet' | 'idle' | 'backoff';
 
 export interface Heartbeat {
   pid: number;
@@ -40,7 +43,7 @@ export function readHeartbeat(eventDir: string): Heartbeat | null {
     const raw: unknown = JSON.parse(readFileSync(heartbeatPath(eventDir), 'utf8'));
     if (typeof raw !== 'object' || raw === null) return null;
     const b = raw as Partial<Heartbeat>;
-    const modeOk = b.mode === 'run' || b.mode === 'quiet' || b.mode === 'idle';
+    const modeOk = b.mode === 'run' || b.mode === 'quiet' || b.mode === 'idle' || b.mode === 'backoff';
     if (!(typeof b.pid === 'number' && Number.isInteger(b.pid) && b.pid > 0 && isTime(b.at) && modeOk)) return null;
     return {
       pid: b.pid, at: b.at, mode: b.mode as HeartbeatMode, tick: Number.isInteger(b.tick) ? Number(b.tick) : 0, watchesLive: Number.isInteger(b.watchesLive) ? Number(b.watchesLive) : 0,

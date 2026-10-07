@@ -141,9 +141,9 @@ test('SIGTERM to the supervisor is forwarded to the loop and the supervisor exit
   assert.match(readFileSync(marker, 'utf8'), /term/);
 });
 
-test('a quiet-hours stop sleeps in quiet mode and every other wait in idle mode', async () => {
-  const r = await drive([{ code: 3, stdout: 'QUIET-HOURS stop until 07:00 UTC' }, { code: 0 }, { code: 1 }]);
-  assert.deepEqual(r.modes, ['quiet', undefined, undefined]);
+test('a quiet-hours stop sleeps in quiet mode, a crash or refusal in backoff mode, and a clean exit in idle mode', async () => {
+  const r = await drive([{ code: 3, stdout: 'QUIET-HOURS stop until 07:00 UTC' }, { code: 0 }, { code: 2, stderr: 'another event loop is running' }]);
+  assert.deepEqual(r.modes, ['quiet', undefined, 'backoff']);
 });
 
 test('the real supervisor heartbeats while it waits, as itself, in idle mode', async () => {

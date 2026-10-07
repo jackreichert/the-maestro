@@ -2081,11 +2081,13 @@ test('the Loop line: silent with nothing set up, NOT INSTALLED when required, th
     assert.doesNotMatch(run('prime').out, /^Loop:/m);
     assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* NOT INSTALLED/m);
     mkdirSync(events, { recursive: true });
+    writeFileSync(join(events, 'loop.lock'), String(process.pid));
     beat(process.pid, 2);
     assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* ok 2 min$/m);
     assert.match(runEnv(required, 'prime').out, /^Loop: ok 2 min$/m);
     beat(process.pid, 30);
     assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* STALLED 30 min/m);
+    rmSync(join(events, 'loop.lock'));
     beat(2 ** 22 + 12345, 30);
     writeFileSync(join(events, 'supervisor.json'), JSON.stringify({ pid: 2 ** 22 + 12345, startedAt: '2026-10-06T10:00:00Z' }));
     assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* DOWN since /m);

@@ -12,7 +12,7 @@
  * While it runs it keeps <event dir>/supervisor.json ({ pid, startedAt }); a stop by SIGTERM or SIGINT removes it, so `prime` can tell a
  * supervisor that was stopped from one that died (lib/supervisor-state.ts).
  * While it waits (idle, quiet hours or crash back-off) it sleeps in chunks of at most 60 s against the wall clock, so a closed lid costs
- * under a minute, and rewrites <event dir>/heartbeat.json each chunk with mode `idle` or `quiet`, so a supervisor between loop launches
+ * under a minute, and rewrites <event dir>/heartbeat.json each chunk with mode `idle`, `quiet` or `backoff`, so a supervisor between loop launches
  * still reads as alive (lib/loop-health.ts). The loop writes its own heartbeat while it runs.
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches.
  */
@@ -37,8 +37,8 @@ export interface LoopResult { code: number | null; stdout: string; stderr: strin
 /** Everything `supervise` touches outside itself, so tests can fake it. */
 export interface SuperviseDeps {
   runLoop: () => Promise<LoopResult>;
-  /** `mode` says why: `quiet` for a quiet-hours stop, `idle` for every other wait (the heartbeat records it). */
-  sleep: (seconds: number, mode?: HeartbeatMode) => Promise<void>;
+  /** `mode` says why: `quiet` for a quiet-hours stop, `backoff` (with `lastError`) after a refusal, a crash or an unsaved digest, `idle` for every other wait (the heartbeat records it). */
+  sleep: (seconds: number, mode?: HeartbeatMode, lastError?: string) => Promise<void>;
   save: (digest: string) => void;
   log: (line: string) => void;
   now?: () => number;
@@ -75,7 +75,7 @@ export async function supervise({ runLoop, sleep, save, log, now = Date.now, max
   for (let runs = 0; runs < maxRuns; runs += 1) {
     const { code, stdout, stderr } = await runLoop();
     if (code === 10) {
-      try { save(stdout); } catch (err) { log(`could not save digest: ${err instanceof Error ? err.message : String(err)}`); log(`unsaved digest follows:\n${stdout.trimEnd()}`); await sleep(DELAYS.crash); }
+      try { save(stdout); } catch (err) { log(`could not save digest: ${err instanceof Error ? err.message : String(err)}`); log(`unsaved digest follows:\n${stdout.trimEnd()}`); await sleep(DELAYS.crash, 'backoff', 'could not save digest'); }
     } else if (code === 3) {
       const seconds = quietSleepSeconds(stdout, now());
       if (seconds === null) log(`quiet-hours stop with no readable time: ${lastLine(stdout)}`);
@@ -84,10 +84,10 @@ export async function supervise({ runLoop, sleep, save, log, now = Date.now, max
       await sleep(DELAYS.idle);
     } else if (code === 2) {
       log(`event-loop refused to run: ${lastLine(stderr)}`);
-      await sleep(DELAYS.usage);
+      await sleep(DELAYS.usage, 'backoff', lastLine(stderr));
     } else {
       log(`event-loop exited ${code}: ${lastLine(stderr)}`);
-      await sleep(DELAYS.crash);
+      await sleep(DELAYS.crash, 'backoff', `exited ${code}: ${lastLine(stderr)}`);
     }
   }
 }
@@ -123,8 +123,8 @@ function stopOnSignals(eventDir: string): void {
 const stamped = (line: string): string => `${new Date().toISOString()} loop-supervisor: ${line}`;
 
 /** The supervisor's own heartbeat while it waits. Never throws: it is advisory. */
-function beat(mode: HeartbeatMode, until: number): void {
-  try { writeHeartbeat(EVENT_DIR, { pid: process.pid, at: new Date().toISOString(), tick: 0, watchesLive: 0, sleepingUntil: new Date(until).toISOString(), mode, lastError: '' }); } catch { /* advisory */ }
+function beat(mode: HeartbeatMode, until: number, lastError: string): void {
+  try { writeHeartbeat(EVENT_DIR, { pid: process.pid, at: new Date().toISOString(), tick: 0, watchesLive: 0, sleepingUntil: new Date(until).toISOString(), mode, lastError: lastError.slice(0, 200) }); } catch { /* advisory */ }
 }
 
 async function main(): Promise<number> {
@@ -136,9 +136,9 @@ async function main(): Promise<number> {
   stopOnSignals(EVENT_DIR);
   await supervise({
     runLoop: launch,
-    sleep: (s, mode = 'idle') => sleepUntil(Date.now() + s * 1000, {
+    sleep: (s, mode = 'idle', error = '') => sleepUntil(Date.now() + s * 1000, {
       sleep: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
-      onChunk: (until) => beat(mode, until),
+      onChunk: (until) => beat(mode, until, error),
     }),
     save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); },
     log: (line) => console.error(stamped(line)),
