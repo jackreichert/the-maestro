@@ -29,3 +29,9 @@ test('anything off the gate grammar is free text, and a token that only looks li
     assert.equal(gateView(bad, prs).url, undefined, bad);
   }
 });
+
+test('dot-only owner or repo segments are free text, never a link', () => {
+  for (const bad of ['gh:pr:../x#1', 'gh:pr:./x#1', 'gh:pr:a/..#1', 'gh:pr:...#2']) {
+    assert.deepEqual(gateView(bad, prs), { lead: 'Waiting on', label: bad, mono: false }, bad);
+  }
+});

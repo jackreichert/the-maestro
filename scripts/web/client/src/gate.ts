@@ -19,6 +19,8 @@ export function gateView(gate: string, prs: Pick<PrCard, 'repo' | 'short' | 'num
   const [, repo, num, day, ticket] = m;
   if (day) return { lead: 'Waiting until', label: longDate(day) || day, mono: false };
   if (ticket) return { lead: 'Waiting on', label: ticket, mono: true };
+  // `.` and `..` fit the character class but are not repo names; they would only resolve to the wrong github.com path.
+  if (repo!.split('/').some((seg) => /^\.+$/.test(seg))) return { lead: 'Waiting on', label: gate.trim(), mono: false };
   const n = Number(num);
   const name = repo!.toLowerCase();
   const short = name.slice(name.lastIndexOf('/') + 1);
