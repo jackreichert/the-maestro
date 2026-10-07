@@ -3,17 +3,19 @@
  * No I/O here, so every rule is unit-testable on a string.
  */
 import {
-  PR_BODY_SECTIONS, PR_BODY_CHECK_RISK, PR_BODY_CHECK_VERIFY, PR_BODY_CHECK_FORBIDDEN, PR_BODY_CHECK_DIAGRAM, PR_DIAGRAM_MIN_FILES,
+  PR_BODY_SECTIONS, PR_BODY_CHECK_PRIVATE, PR_BODY_PRIVATE_PATTERNS, PR_BODY_CHECK_VOICE, PR_BODY_VOICE_NAMES, PR_BODY_CHECK_RISK, PR_BODY_CHECK_VERIFY, PR_BODY_CHECK_FORBIDDEN, PR_BODY_CHECK_DIAGRAM, PR_DIAGRAM_MIN_FILES,
 } from './local-config.ts';
 
 /** Which rules run. Each switch maps to a local-config key (`pr_body_*`); the defaults are the configured values. */
-export interface BodyRules { sections: string[]; risk: boolean; verify: boolean; forbidden: boolean; diagram: boolean; diagramMinFiles: number }
+export interface BodyRules { sections: string[]; risk: boolean; verify: boolean; forbidden: boolean; diagram: boolean; diagramMinFiles: number;
+  private: boolean; privatePatterns: string[]; voice: boolean; voiceNames: string[] }
 /** What the diff says about the PR, for the rules that need it. */
-export interface BodyContext { stacked: boolean; codeFiles: number }
+export interface BodyContext { stacked: boolean; codeFiles: number; title?: string }
 
 export const DEFAULT_RULES: BodyRules = {
   sections: PR_BODY_SECTIONS, risk: PR_BODY_CHECK_RISK, verify: PR_BODY_CHECK_VERIFY, forbidden: PR_BODY_CHECK_FORBIDDEN,
   diagram: PR_BODY_CHECK_DIAGRAM, diagramMinFiles: PR_DIAGRAM_MIN_FILES,
+  private: PR_BODY_CHECK_PRIVATE, privatePatterns: PR_BODY_PRIVATE_PATTERNS, voice: PR_BODY_CHECK_VOICE, voiceNames: PR_BODY_VOICE_NAMES,
 };
 
 const PLACEHOLDER = /^(?:[-*_\s.]*(?:tbd|todo|n\/a|none|fill (?:me )?in|wip)[-*_\s.]*|[-*_\s.]*)$/i;
@@ -29,6 +31,38 @@ const FORBIDDEN: [string, RegExp][] = [
   ['an SSN-shaped number', /\b\d{3}-\d{2}-\d{4}\b/],
   ['a medical record number', /\bMRN\s*[:#]?\s*\d{4,}/i],
 ];
+
+/** References to a private workspace that a reader of the PR cannot resolve. Install-specific id formats come from `pr_body_private_patterns`. */
+const PRIVATE: [string, RegExp][] = [
+  ['a [[wiki-link]]', /\[\[[^\]\n]+\]\]/],
+  ['an obsidian:// link', /obsidian:\/\//i],
+  ['a private-workspace word (ledger, vault, Podium, orchestrator)', /\b(?:ledger|vault|podium|orchestrator)\b/i],
+];
+
+/** Words that make a body read as written by someone else. The author's own names come from `pr_body_voice_names`. */
+const NOT_FIRST_PERSON = /\b(?:assistants?|agents?|ai[- ]generated)\b/i;
+
+const clip = (line: string): string => (line.trim().length > 80 ? `${line.trim().slice(0, 77)}...` : line.trim());
+
+/** Lines (outside code fences, for voice) that match one of the patterns, as "<where> line: <text>". */
+function lineProblems(text: string, where: string, rules: BodyRules): string[] {
+  const out: string[] = [];
+  const custom = rules.privatePatterns.map((r): [string, RegExp] => [`a private id (${r})`, new RegExp(r, 'i')]);
+  const names = rules.voiceNames.map((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'));
+  let fence = false;
+  for (const line of text.split('\n')) {
+    if (FENCE_LINE.test(line)) { fence = !fence; continue; }
+    if (rules.private) {
+      const hit = [...PRIVATE, ...custom].find(([, re]) => re.test(line));
+      if (hit) out.push(`${where} has ${hit[0]}, which a reader cannot resolve (line: ${clip(line)})`);
+    }
+    if (rules.voice && !fence) {
+      const plain = line.replace(/`[^`]*`/g, '');
+      if (NOT_FIRST_PERSON.test(plain) || names.some((re) => re.test(plain))) out.push(`${where} is not in the author's own voice (line: ${clip(line)})`);
+    }
+  }
+  return out;
+}
 
 /** The text under each `##` title, to the next `#` or `##` heading; headings in fenced code or HTML comments are ignored. Fence lines stay in the text. */
 function sectionsOf(body: string): Map<string, string> {
@@ -106,5 +140,7 @@ export function bodyProblems(body: string, rules: BodyRules = DEFAULT_RULES, ctx
     ...(rules.verify ? verifyProblems(sections) : []),
     ...(rules.diagram ? diagramProblems(body, ctx, rules.diagramMinFiles) : []),
     ...(rules.forbidden ? forbiddenProblems(body) : []),
+    ...lineProblems(body, 'the body', rules),
+    ...(ctx.title ? lineProblems(ctx.title, 'the title', rules) : []),
   ];
 }

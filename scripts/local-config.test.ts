@@ -196,6 +196,20 @@ test('PR body settings: defaults on, file values, env wins, bad values fall back
     assert.equal(e.PR_DIAGRAM_MIN_FILES, '3', 'a bad number falls back to the default, not the file value');
 });
 
+test('PR body private-reference and voice settings: defaults, file values, bad patterns dropped', () => {
+    const d = show();
+    assert.equal(d.PR_BODY_CHECK_PRIVATE, 'on');
+    assert.equal(d.PR_BODY_CHECK_VOICE, 'on');
+    assert.equal(d.PR_BODY_PRIVATE_PATTERNS, '(unset)');
+    assert.equal(d.PR_BODY_VOICE_NAMES, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_private_patterns: \\bX-\\d+\\b, (broken\npr_body_voice_names: Sam Fictional, samf\npr_body_check_voice: off'));
+    const f = show();
+    assert.equal(f.PR_BODY_PRIVATE_PATTERNS, '\\bX-\\d+\\b', 'an invalid regex is dropped');
+    assert.equal(f.PR_BODY_VOICE_NAMES, 'Sam Fictional, samf');
+    assert.equal(f.PR_BODY_CHECK_VOICE, 'off');
+    assert.equal(show({ MAESTRO_PR_BODY_CHECK_PRIVATE: 'off' }).PR_BODY_CHECK_PRIVATE, 'off');
+});
+
 test('review_queue_cap: default 4, file value, env wins, bad values fall back', () => {
     assert.equal(show().REVIEW_QUEUE_CAP, '4');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('review_queue_cap: 6'));

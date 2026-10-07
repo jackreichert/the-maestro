@@ -37,7 +37,7 @@ function fixture(files: Record<string, string>) {
     return { repo, log, gh };
 }
 
-const NONE: BodyRules = { sections: [], risk: false, verify: false, forbidden: false, diagram: false, diagramMinFiles: 3 };
+const NONE: BodyRules = { sections: [], risk: false, verify: false, forbidden: false, diagram: false, diagramMinFiles: 3, private: false, privatePatterns: [], voice: false, voiceNames: [] };
 const TWO: BodyRules = { ...NONE, sections: ['Context', 'Reviewer guide'] };
 const GOOD_BODY = [
     '## Context', 'Why this exists and what changed.',
@@ -256,4 +256,30 @@ test('pr-open runs the structural rules end to end: a stacked base needs a diagr
     assert.equal(noRisk.status, 1);
     assert.match(noRisk.stderr, /no "Risk: low \| medium \| high" line/);
     assert.ok(!existsSync(f.log));
+});
+
+test('bodyProblems: private references are refused in the body and the title, naming the line', () => {
+    const rules = { ...NONE, private: true, privatePatterns: ['\\bX-\\d{3}\\b'] };
+    const p = (text: string, title = '') => bodyProblems(`## Context\n${text}\n`, rules, { stacked: false, codeFiles: 0, title });
+    assert.deepEqual(p('Fixes the retry bug in PR #12 (see abc1234).'), []);
+    assert.match(p('See [[Some Note]] for more')[0], /\[\[wiki-link\]\].*line: See \[\[Some Note\]\] for more/);
+    assert.match(p('open obsidian://open?vault=x')[0], /obsidian:\/\//);
+    assert.match(p('logged in the ledger')[0], /private-workspace word/);
+    assert.match(p('the Vault note')[0], /private-workspace word/);
+    assert.match(p('tracked as X-123')[0], /private id \(/);
+    assert.match(p('fine', 'fix: the orchestrator retry')[0], /the title has/);
+    assert.deepEqual(bodyProblems('## Context\nthe ledger\n', NONE), [], 'switched off');
+});
+
+test('bodyProblems: voice check flags the author in the third person and assistant or agent words, outside code', () => {
+    const rules = { ...NONE, voice: true, voiceNames: ['Sam Fictional', 'samf'] };
+    const p = (text: string) => bodyProblems(`## Context\n${text}\n`, rules);
+    assert.deepEqual(p('I changed the retry cap and I would like your eyes on the backoff.'), []);
+    assert.match(p('Sam Fictional decided to cap retries')[0], /not in the author's own voice/);
+    assert.match(p('needs samf to look')[0], /own voice/);
+    assert.match(p('an assistant wrote this')[0], /own voice/);
+    assert.match(p('an AI-generated change')[0], /own voice/);
+    assert.deepEqual(p('run `agent --help` first'), [], 'inline code is skipped');
+    assert.deepEqual(p('```\nagent run\n```'), [], 'fenced code is skipped for voice');
+    assert.deepEqual(bodyProblems('## Context\nthe agent\n', NONE), [], 'switched off');
 });
