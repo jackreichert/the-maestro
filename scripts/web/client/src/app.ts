@@ -59,6 +59,9 @@ const CSS = `${BOARD_CSS}
   .tabbar { position: sticky; top: 0; z-index: 2; background: var(--surface-page); border-bottom: 1px solid var(--border); }
   [role=tablist] { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; padding-top: var(--space-2); }
   [role=tablist]::-webkit-scrollbar { display: none; }
+  .more-end [role=tablist] { mask-image: linear-gradient(to right, black calc(100% - 56px), transparent); }
+  .more-start [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px); }
+  .more-start.more-end [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px, black calc(100% - 56px), transparent); }
   [role=tab] {
     position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 40px;
     padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: none; cursor: pointer;
@@ -128,6 +131,7 @@ export class PodiumApp extends HTMLElement {
   #dropped = 0;
   #active = OVERVIEW;
   #tick: number | undefined;
+  #tabsObserver: ResizeObserver | null = null;
   // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
   // tab so keyboard and screen reader users are not left on the destroyed link.
   readonly #onHash = (): void => {
@@ -162,6 +166,7 @@ export class PodiumApp extends HTMLElement {
   disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.#onHash);
     window.clearInterval(this.#tick);
+    this.#tabsObserver?.disconnect();
   }
 
   #ids(): string[] { return tabIds(this.#state?.streams ?? []); }
@@ -214,10 +219,35 @@ export class PodiumApp extends HTMLElement {
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
       this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active));
-    this.#root.replaceChildren(
-      this.#header(st),
-      h('div', { class: 'tabbar' }, h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs)),
-      h('main', {}, panel));
+    const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
+    const tabbar = h('div', { class: 'tabbar' }, tablist);
+    this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
+    this.#watchTabOverflow(tabbar, tablist);
+  }
+
+  /**
+   * On a narrow screen the tabs scroll sideways. Keep the selected tab in view, and fade whichever edge has more tabs
+   * past it, so it is visible that the row scrolls (the scrollbar itself is hidden).
+   */
+  #watchTabOverflow(tabbar: HTMLElement, tablist: HTMLElement): void {
+    this.#tabsObserver?.disconnect();
+    const selected = tablist.querySelector<HTMLElement>('[aria-selected=true]');
+    const update = (): void => {
+      const max = tablist.scrollWidth - tablist.clientWidth;
+      tabbar.classList.toggle('more-start', max > 1 && tablist.scrollLeft > 1);
+      tabbar.classList.toggle('more-end', max > 1 && tablist.scrollLeft < max - 1);
+    };
+    const reveal = (): void => {
+      if (!selected) return;
+      const pad = 48;   // clear of the faded edge
+      const left = selected.offsetLeft - tablist.offsetLeft;
+      const right = left + selected.offsetWidth;
+      if (left - pad < tablist.scrollLeft) tablist.scrollLeft = Math.max(0, left - pad);
+      else if (right + pad > tablist.scrollLeft + tablist.clientWidth) tablist.scrollLeft = right + pad - tablist.clientWidth;
+    };
+    tablist.addEventListener('scroll', update, { passive: true });
+    this.#tabsObserver = new ResizeObserver(() => { reveal(); update(); });
+    this.#tabsObserver.observe(tablist);
   }
 
   get #live(): boolean { return this.#sources.state === 'server' && this.#sources.charts === 'server'; }
