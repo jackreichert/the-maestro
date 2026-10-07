@@ -204,16 +204,21 @@ export class AskCardElement extends HTMLElement {
           : 'Select the answer above and copy it by hand. This page cannot write to the ledger yet.'),
         h('div', { class: 'actions' }, again, edit));
       again.addEventListener('click', () => { void send(text); });
-      edit.addEventListener('click', () => { status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
+      edit.addEventListener('click', () => { announced = false; status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
       (form?.isConnected ? form : body.querySelector('.resolved'))?.replaceWith(status);
       this.toggleAttribute('answered', ok);
       copied.hidden = !ok;
       status.focus();
     };
+    let announced = false;
     const send = async (text: string): Promise<void> => {
       let ok = false;
       try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
-      if (ok) this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer: answer.value.trim() }, bubbles: true, composed: true }));
+      // Once per answer: Copy again re-copies the same text and must not look like a second decision to a future writer.
+      if (ok && !announced) {
+        announced = true;
+        this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer: answer.value.trim() }, bubbles: true, composed: true }));
+      }
       showStatus(text, ok);
     };
     const submit = (): void => {
