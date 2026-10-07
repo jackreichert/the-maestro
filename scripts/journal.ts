@@ -763,6 +763,7 @@ function cmdRoll() {
     triageBeforeRoll(d);
     rollArchive(d);
     printEpicBriefs(d);
+    printNotesReachability();
     if (!has('fast')) sweepWorktreesForRoll();
 }
 
@@ -796,6 +797,16 @@ function notesCheck(since: string | undefined) {
         notesMemo.set(key, notesReachability({ vault, project, statusDir: dirPath, page: pageConfig(project, dirPath), vaultRoot: VAULT_ROOT }, since));
     }
     return notesMemo.get(key) ?? null;
+}
+
+/** The roll prints the unreachable notes beside the epic briefs; like them it never blocks the roll, and the standing row stays failing until they are fixed. */
+function printNotesReachability(): void {
+    try {
+        const r = notesCheck(undefined);
+        if (!r) { console.log(`Notes reachability: ${NO_VAULT_DETAIL}.`); return; }
+        reachabilityLines(r.report).forEach((l) => console.log(l));
+        r.unreadable.forEach((u) => console.log(`  could not be checked: ${u}`));
+    } catch (e) { console.log(`Notes reachability: could not be checked (${errorMessage(e)})`); }
 }
 
 /** `--since 30d` (days back) or `--since YYYY-MM-DD`, as a day; undefined when not given. */
@@ -1623,6 +1634,7 @@ function standingContext(): CheckContext {
         queue: () => { const g = groups(); return { inflight: g.inflight.length, queued: g.queued.length }; },
         pendingTransitions: () => pendingTransitions(defaultPendingSince()).map((r) => r.key),
         epicBriefs: () => { const r = epicBriefsToday(today()); return r ? { epics: r.epics.length, failures: r.failures } : null; },
+        notesReachable: () => { const r = notesCheck(undefined); return r ? { checked: r.report.checked, failures: [...r.unreadable, ...r.report.unreachable.map((u) => `${u.path} ${u.reason}`)] } : null; },
     };
 }
 

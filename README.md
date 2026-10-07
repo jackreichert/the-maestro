@@ -483,6 +483,11 @@ flowchart LR
 
 The agent brief carries one line for this: attach a note you write to its ticket (or mark it `ticket: none`), and refresh the epic's brief when you change the epic's state.
 
+
+#### Unreachable notes at the roll
+
+The built-in standing row `notes-reachable` runs `journal.ts notes-check` as its runtime check, so it cannot be marked done on a claim: `standing done notes-reachable` refuses while any note under an active stream is listed on no stream tab, and `prime` shows the row as failing with the first note. `journal.ts roll` prints the same list (`Notes reachability: N of M notes ...`, each note with its reason and fix) beside the epic-briefs lines and never blocks the roll; nothing here blocks a PR. With no `vault_root` the row fails and the roll says the check could not run.
+
 #### Stream mapping (`stream-homes.json`)
 
 An optional `stream-homes.json` in the status directory maps a stream to its work: `projects`, `epics`, `exclude`, `done` (an epic id mapped to `verified`), `docs`, `runbooks` and `pins` (a label with either an http or https `url` or a vault-relative `note`). It is checked by rule tables: a bad entry (a `..` path, a `javascript:` URL, an unknown stream, a wrong type) is dropped and shown as an unknown on the page, never a failed page. Without the file, streams are mapped automatically. Each root ticket (an epic when it has children) goes to exactly one stream by the first rule that decides: the config lists it; the stream has the most ledger items linked to a ticket in its tree (a tie is ambiguous and shown on both streams, claimed by neither); it carries a `stream-<name>` label; its project is listed under exactly one stream. A stream's `exclude` removes an epic from that stream under every rule. Epics are rolled up recursively and every number states what it counts; the page never estimates a date or a velocity.

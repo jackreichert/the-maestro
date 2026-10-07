@@ -47,3 +47,13 @@ test('notes-check --json carries the report, and an unset vault root is exit 2, 
   assert.equal(blind.code, 2);
   assert.match(blind.err, /no vault root is configured/);
 });
+
+test('the standing row notes-reachable refuses done while a note is unreachable, and the roll prints the list without failing', () => {
+  const w = world('# Harvest plan\n');
+  const done = cli(w, 'standing', 'done', 'notes-reachable', '--evidence', 'trust me');
+  assert.equal(done.code, 1);
+  assert.match(done.err, /not done: its check says 1 to fix, first: Projects\/orchard\/Plans\/harvest\.md/);
+  const roll = cli(w, 'roll', '--fast', '--allow-unmarked');
+  assert.equal(roll.code, 0, roll.err);
+  assert.match(roll.out, /Notes reachability: 1 of 2 notes/);
+});
