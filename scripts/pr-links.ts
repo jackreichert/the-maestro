@@ -4,7 +4,7 @@
  * known until the PR exists, so authors write tokens and `pr-open.ts` (or `pr-guide-links.ts` for an existing PR)
  * expands them afterwards. See reference/git.md#reviewer-guide-links.
  *
- * Anchor format: `<pr url>/files#diff-<sha256 hex of the file path>`. The hash was checked against a real PR page
+ * Anchor format: `<pr url>/changes#diff-<sha256 hex of the file path>`. The hash was checked against a real PR page
  * (the hex of a changed path appears as a diff id on the rendered files page). A line suffix (`R42`) was NOT
  * verified, so a token with a line links to the file and shows the line as text (`path:42`).
  */
@@ -33,7 +33,7 @@ export function expandTokens(body: string, prUrl: string, changed: string[]): Ex
   const out = body.replace(TOKEN, (token, path: string, _side: string | undefined, line: string | undefined) => {
     if (!known.has(path)) { unknown.push(path); return token; }
     expanded += 1;
-    return `[${path}${line ? `:${line}` : ''}](${prUrl.replace(/\/$/, '')}/files#${diffAnchor(path)})`;
+    return `[${path}${line ? `:${line}` : ''}](${prUrl.replace(/\/$/, '')}/changes#${diffAnchor(path)})`;
   });
   return { body: out, unknown: [...new Set(unknown)], expanded };
 }

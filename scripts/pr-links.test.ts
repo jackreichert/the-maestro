@@ -22,8 +22,8 @@ test('expandTokens links known paths, shows a line as text, and leaves unknown p
     const r = expandTokens(body, `${PR}/`, ['src/widgets/alpha.ts', 'src/widgets/beta.ts']);
     assert.equal(r.expanded, 2);
     assert.deepEqual(r.unknown, ['src/gone.ts']);
-    assert.ok(r.body.includes(`[src/widgets/alpha.ts](${PR}/files#${diffAnchor('src/widgets/alpha.ts')})`));
-    assert.ok(r.body.includes(`[src/widgets/alpha.ts:42](${PR}/files#${diffAnchor('src/widgets/alpha.ts')})`), 'a line is text, not an unverified anchor');
+    assert.ok(r.body.includes(`[src/widgets/alpha.ts](${PR}/changes#${diffAnchor('src/widgets/alpha.ts')})`));
+    assert.ok(r.body.includes(`[src/widgets/alpha.ts:42](${PR}/changes#${diffAnchor('src/widgets/alpha.ts')})`), 'a line is text, not an unverified anchor');
     assert.ok(r.body.includes('{{file:src/gone.ts}}') && r.body.endsWith('Plain text stays.'));
 });
 
@@ -77,7 +77,7 @@ test('pr-open expands file tokens after creating the PR, with the checked body',
     assert.match(calls[0], /^pr create --draft --assignee @me/);
     assert.equal(calls[1], 'pr view 7 --json url,body,files');
     assert.match(calls[2], /^pr edit 7 --body-file /);
-    assert.ok(readFileSync(f.edited, 'utf8').includes(`[src/widgets/alpha.ts](${PR}/files#${diffAnchor('src/widgets/alpha.ts')})`));
+    assert.ok(readFileSync(f.edited, 'utf8').includes(`[src/widgets/alpha.ts](${PR}/changes#${diffAnchor('src/widgets/alpha.ts')})`));
 });
 
 test('pr-open refuses before creating anything when a token names a path outside the diff', () => {
@@ -98,7 +98,7 @@ test('pr-guide-links backfills an open PR, is a no-op when nothing is left, and 
     const f = fixture();
     const run = () => spawnSync(process.execPath, [LINKS, f.repo, '7'], { encoding: 'utf8', env: f.env });
     assert.equal(run().status, 0);
-    assert.ok(readFileSync(f.edited, 'utf8').includes('/files#diff-'));
+    assert.ok(readFileSync(f.edited, 'utf8').includes('/changes#diff-'));
     writeFileSync(f.view, JSON.stringify({ url: PR, body: readFileSync(f.edited, 'utf8'), files: [{ path: 'src/widgets/alpha.ts' }] }));
     const before = readFileSync(f.log, 'utf8').split('\n').filter((l) => l.startsWith('pr edit')).length;
     assert.equal(run().status, 0);
