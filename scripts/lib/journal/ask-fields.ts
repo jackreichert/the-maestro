@@ -27,6 +27,7 @@ export type RawAskFlags = Record<'recommend' | 'default' | 'door' | 'decide-by' 
 export const TEXT_MAX = 300;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const RELATIVE = /^(\d+)([hdw])$/;
 const DAY_MS = 86_400_000;
 
@@ -65,7 +66,7 @@ const REFUSALS: Rule[] = [
     { name: 'paste', refuse: (c) => (c.paste && (Object.keys(c.flags) as (keyof RawAskFlags)[]).some((f) => given(c, f)) ? 'A --paste ask is a run-this block, not a decision: it takes no --recommend, --default, --door, --decide-by or --class.' : null) },
     ...(['recommend', 'default'] as const).map((f): Rule => ({
         name: f,
-        refuse: (c) => (!given(c, f) ? null : !isText(c.flags[f].value) ? `--${f} needs text.` : value(c, f).trim().length > TEXT_MAX ? `--${f} is over ${TEXT_MAX} characters: say it shorter.` : null),
+        refuse: (c) => (!given(c, f) ? null : !isText(c.flags[f].value) ? `--${f} needs text.` : CONTROL.test(value(c, f)) ? `--${f} has a control character: plain text only.` : value(c, f).trim().length > TEXT_MAX ? `--${f} is over ${TEXT_MAX} characters: say it shorter.` : null),
     })),
     { name: 'door', refuse: (c) => (given(c, 'door') && !(DOORS as readonly string[]).includes(value(c, 'door')) ? `--door must be one-way or two-way, got "${value(c, 'door')}".` : null) },
     { name: 'class', refuse: (c) => (given(c, 'class') && !(CLASSES as readonly string[]).includes(value(c, 'class')) ? `--class must be one of: ${CLASSES.join(', ')}; got "${value(c, 'class')}".` : null) },
@@ -155,7 +156,7 @@ export function askBits(r: AskRow, max = 60): string[] {
     if (askClass(r) !== 'standard') bits.push(askClass(r));
     if (isText(r.recommend)) bits.push(`rec: ${clipText(r.recommend.replace(/\s+/g, ' ').trim(), max)}`);
     const d = autoDefault(r);
-    if (d) bits.push(`if silent: ${clipText(d.replace(/\s+/g, ' ').trim(), max)}`);
+    if (d) bits.push(`if silent: ${d.replace(/\s+/g, ' ').trim()}`);   // never clipped: it is the part that acts
     return bits;
 }
 
@@ -178,6 +179,10 @@ export function askFieldProblems(r: AskRow): string[] {
     if (r.door !== undefined && !(DOORS as readonly string[]).includes(String(r.door))) out.push(`door "${String(r.door)}" is not one-way or two-way`);
     if (r.class !== undefined && !(CLASSES as readonly string[]).includes(String(r.class))) out.push(`class "${String(r.class)}" is not one of: ${CLASSES.join(', ')}`);
     if (r.by !== undefined && askBy(r) === undefined) out.push(`by "${String(r.by)}" is not YYYY-MM-DD or an ISO time with a zone`);
+    for (const f of ['recommend', 'default'] as const) {
+        const v = r[f];
+        if (v !== undefined && (typeof v !== 'string' || v.trim().length > TEXT_MAX || CONTROL.test(v))) out.push(`${f} is not plain text of ${TEXT_MAX} characters or fewer`);
+    }
     if (r.default !== undefined && askDoor(r) !== 'two-way') out.push('carries a default but is not a two-way door: the default will never fire');
     return out;
 }

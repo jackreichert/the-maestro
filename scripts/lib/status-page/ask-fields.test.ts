@@ -45,3 +45,9 @@ test('the status table notes one-way asks and the soonest decide-by', () => {
   assert.match(page([ask({ door: 'one-way', by: '2026-10-09' })], { oneWay: 1, nextBy: '2026-10-09' }), /\| Avonlea \| 0 \| 0 \| 0 \| 1 \(1 one-way · next by 2026-10-09\) \| 0 \| 0 \|/);
   assert.match(page([ask({})]), /^## Needs attention now \(1\)/m);
 });
+
+test('URLs and obsidian targets in a field are dropped, so no autolink or vault link appears', () => {
+  const p = page([ask({ door: 'two-way', recommend: 'see https://evil.example/x and obsidian://new?vault=v&file=f then www.evil.example' })]);
+  const line = lineOf(p, 'ab12');
+  assert.doesNotMatch(line, /https?:|obsidian:|www\./i);
+});

@@ -111,3 +111,12 @@ test('askFieldProblems flags hand edits the write path would have refused', () =
     assert.equal(askFieldProblems({ door: 'maybe', class: 'urgent', by: 'soon' }).length, 3);
     assert.deepEqual(askFieldProblems({ door: 'two-way', default: 'x', by: '2026-10-09', class: 'intangible' }), []);
 });
+
+test('control characters are refused in text fields, and a default is shown whole', () => {
+    assert.match(parse({ recommend: 'a\u001b[31mred' }).errors[0], /control character/);
+    assert.deepEqual(parse({ recommend: 'two\nlines\tok' }).errors, []);
+    const long = 'z'.repeat(200);
+    assert.equal(askBits({ door: 'two-way', default: long }).at(-1), `if silent: ${long}`);
+    assert.equal(askFieldProblems({ recommend: 5 }).length, 1);
+    assert.equal(askFieldProblems({ default: 'x'.repeat(301), door: 'two-way' }).length, 1);
+});

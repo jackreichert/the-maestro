@@ -325,7 +325,7 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
       const bold = linkNotePaths(needed, env, escBold);
       const text = [boldSafe(needed) ? `**${bold}**` : '', linkNotePaths(plain(context), env, escLinkChars)].filter(Boolean).join(' ');
-      const fields = askBits(a).map((b) => boldSafe(b)).join(' · ');
+      const fields = askBits(a).map((b) => boldSafe(dropLinks(b).replace(/\bwww\.\S*/gi, ''))).join(' · ');
       out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
     }
     out.push('');
