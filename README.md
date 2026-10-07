@@ -280,10 +280,10 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `rule "<text>" --ref <file>` | Record a decision already made. Refuses unless every `--ref` is an existing file; never shows as open |
 | `log ... --kind blocked --gate <gate>` | Name what a blocked item waits for: `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. `resume` reports whether it cleared |
 | `defer <id> --until YYYY-MM-DD` | Hide an open item from the board until that date |
-| `status` | Open items and done today; queued items are listed and counted apart from in-flight ones. `--json` also carries a `queued` list and a `footer` object (the per-stream footer counts and the session figures) for the Podium. `--full`; text status ends with `review queue: N of 4` from the stored PR snapshot (flagged when over an hour old; absent with no snapshot); `--footer` (the reply-footer Ledger lines, a `**Review queue:**` line when a snapshot exists, and a Session line, then `**Podium:** <uri>` when a status page is configured). An ask with decision fields prints them compactly after its text (`two-way · by 2026-10-09 · rec: ... · if silent: ...`; a one-way ask never names a default), and the footer adds `(2 one-way · next by 2026-10-09)` after the awaiting count when any awaiting ask carries them. A plain ask or a legacy row prints as before, and is not counted as one-way in the footer note |
+| `status` | Open items and done today; queued items are listed and counted apart from in-flight ones. `--json` also carries a `queued` list and a `footer` object (the per-stream footer counts and the session figures) for the Podium. `--full`; text status ends with `review queue: N of 4` from the stored PR snapshot (flagged when over an hour old; absent with no snapshot); `--footer` (the reply-footer Ledger lines, a `**Review queue:**` line when a snapshot exists, a `**Loop:**` line (see [Loop health](#loop-health-is-it-actually-running)), and a Session line, then `**Podium:** <uri>` when a status page is configured). An ask with decision fields prints them compactly after its text (`two-way · by 2026-10-09 · rec: ... · if silent: ...`; a one-way ask never names a default), and the footer adds `(2 one-way · next by 2026-10-09)` after the awaiting count when any awaiting ask carries them. A plain ask or a legacy row prints as before, and is not counted as one-way in the footer note |
 | `review-queue` | The dispatch gate: counts your open non-draft PRs against `review_queue_cap` (default 4, `--cap N` overrides). Exit 0 with room, 1 full, 2 cannot answer (a bad `--cap`, or GitHub failed with no stored snapshot under six hours old; treat as full). Prefers a live read, falls back to a fresh stored snapshot and says so. `--json`. See [reference/dispatch.md](reference/dispatch.md#review-queue-cap) |
 | `autopull on\|off` | Write `auto_pull` into the user config file (`MAESTRO_LOCAL_CONFIG` honoured): edits or adds the line in the `maestro-config` block, keeps everything else, idempotent. Needs no ledger |
-| `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch. Once a status directory exists it also prints `Priorities not set for today — orchestrator will ask` when today's priorities are missing or out of date, and the orchestrator asks you |
+| `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch. It prints the `Loop:` line ([loop health](#loop-health-is-it-actually-running)) when one is set up or required. Once a status directory exists it also prints `Priorities not set for today — orchestrator will ask` when today's priorities are missing or out of date, and the orchestrator asks you |
 | `standup [--date D]` | End-of-day summary for pasting |
 | `triage` | Box every open item, flag the stale, unpromoted and unticketed; an ask's decision fields print beside it in brackets. `--date`, `--since`, `--apply` (closes recorded rules), `--json` |
 | `roll` | Archive finished work to a dated note, keep open items; also removes stale worktrees, but only inside the configured `container_root` (it refuses and the roll goes on when none is set or you are outside it). Archives and commits first, then sweeps; kept worktrees print as counts by reason. `--strict` refuses on triage blockers, `--fast` skips the sweep and scratch review, `--verbose` lists every kept worktree, `--container`, `--no-worktree-sweep`, `--dry-run` |
@@ -515,6 +515,27 @@ The installer refuses while any loop holds the lock. Run it from the main checko
 
 With launchd holding the lock, a session cannot run the loop itself. It starts `node scripts/event-loop.ts digest-wait` in the background instead: it blocks until a saved digest is unseen, prints it, marks it seen and exits 10 (the same contract as `run`), so the session is woken as before. `--timeout-hours N` (default 6) exits 0 quietly. Delivery is at-least-once: a waiter claims a digest by renaming it, prints it, then marks it seen, so a crash in between shows it again (never zero times), and two waiters never both take one. `node scripts/event-loop.ts digests [--mark-seen]` prints the unseen digests without waiting.
 
+### Loop health (is it actually running?)
+
+A held lock does not mean a working loop, so the loop and the supervisor leave a heartbeat. `event-loop.ts run` (not `--once`) rewrites `<event_dir>/heartbeat.json` (`{ pid, at, tick, watchesLive, sleepingUntil, mode, lastError }`, written by temp file and rename) on each tick and each sleep chunk; the supervisor does the same, with mode `idle` or `quiet`, while it waits between launches. The file holds no event text.
+
+`lib/loop-health.ts` is the one reader. It turns the heartbeat, the loop lock and the supervisor record into a `Loop:` line, shown in `journal.ts status --footer` (bold label), `prime`, `session-start.ts` and the `loop-alive` standing row:
+
+| Line | Meaning |
+| --- | --- |
+| `ok 2 min` | A live writer's heartbeat is within its own planned wake time plus 5 minutes |
+| `quiet until 07:00 EDT` | The supervisor is waiting out quiet hours, as it said it would |
+| `running, no heartbeat yet` | A loop holds the lock but started before heartbeats existed |
+| `STALLED 20 min (no heartbeat since ...)` | The writer's process is alive but its heartbeat is past that deadline: it is hung |
+| `DOWN since 13:58 EDT` | A supervisor is set up and nothing alive is writing a heartbeat |
+| `NOT INSTALLED` | `loop_supervisor: required` and no supervisor is set up and no loop is running |
+
+With nothing set up and nothing required the line is empty, so an install that does not use a loop is not nagged. Set `loop_supervisor: required` to make a missing supervisor loud.
+
+Both processes sleep in chunks of at most 60 seconds and re-read the wall clock after each. A Node timer stops while macOS sleeps, so one long timer would resume late by however long the lid was closed; chunking bounds that to about a minute. Neither process holds the machine awake.
+
+The standing watches (`renews` types such as the PR and inbox watches) keep themselves alive through the loop. A watch added before its type could renew carries no `renew` flag and would still expire; `session-start.ts` marks any such live watch of a standing type as renewing, once, and says so.
+
 ### session-start.ts
 
 The first command of every session, and the first thing to run after a compaction. It is idempotent, so running it twice changes nothing.
@@ -527,12 +548,14 @@ node scripts/session-start.ts [--status-dir <dir>] [--project <name>]
 status-watch: registered (added status-watch (status-watch /vault/Projects/my-workspace/Status), expires 2026-10-09T15:00:00.000Z)
 status-refresh: already registered (status-refresh, expires 2026-10-08T09:30:00.000Z)
 Status page: updated 4 min ago (3:01 PM EDT)
+Loop: ok 2 min
 Event loop: NOT RUNNING. Start it now with run_in_background: node '/path/to/scripts/event-loop.ts' run
 ```
 
 - **Watches.** For each of `status-watch` and `status-refresh`, a live, unexpired watch of that type is left alone; otherwise one is registered through `event-loop.ts add` with the status directory as target, so each type's own validation, singleton rule and default TTL apply. A watch past its expiry that the loop has not retired yet is removed and registered again. A refused registration is printed as `NOT registered (<reason>)` and the exit code is 1, unless another session registered that type in the meantime, which counts as success. An existing watch whose target differs from the resolved status directory is kept but flagged with a `WARNING` line.
+- **Standing watches.** A live watch of a standing type that lacks the `renew` flag is marked as renewing, with a `Standing watches:` line saying which.
 - **Page age.** The age is the modification time of `The-Podium.md`. Past 15 minutes the line ends `STALE`: the refresh ticks every 10 minutes, so nothing is refreshing it.
-- **Loop.** Reported from the loop lock. The script never starts the loop: the loop must be launched by the orchestrator with `run_in_background` so its exit wakes the session, and a detached child would exit unseen. With no loop it prints the exact command. A fresh session cannot have started a loop that already holds the lock, so that is the launchd supervisor's ([loop-supervisor.ts](#loop-supervisorts-keep-the-loop-alive-without-a-session)); the line then also prints the `event-loop.ts digest-wait` command to wait on it.
+- **Loop.** The `Loop:` verdict line first ([loop health](#loop-health-is-it-actually-running); silent when no loop is set up or required), then the loop lock state. The script never starts the loop: the loop must be launched by the orchestrator with `run_in_background` so its exit wakes the session, and a detached child would exit unseen. With no loop it prints the exact command. A fresh session cannot have started a loop that already holds the lock, so that is the launchd supervisor's ([loop-supervisor.ts](#loop-supervisorts-keep-the-loop-alive-without-a-session)); the line then also prints the `event-loop.ts digest-wait` command to wait on it.
 - Exit codes: 0 done, 1 a watch could not be registered or the registry could not be read, 2 no status directory (set `status_dir` or `vault_root`, or pass `--status-dir`).
 
 ### notion-watch (tagged Notion pages)
@@ -668,6 +691,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `podium_trusted_atlassian_hosts` | `PODIUM_TRUSTED_ATLASSIAN_HOSTS` | none | Comma-separated `<label>.atlassian.net` hosts whose ticket links in the Podium reuse one tab per ticket. Unset, every ticket link opens a fresh tab |
 | `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.ts resume` checks |
 | `update_check` | `MAESTRO_UPDATE_CHECK` | on | `off`, `false`, `no` or `0` stops `prime` from fetching the skill's own repo and reporting when it is behind, ahead, diverged or dirty. A checkout that is not a git repository, is on a detached HEAD or has no upstream is never reported |
+| `loop_supervisor` | `MAESTRO_LOOP_SUPERVISOR` | optional | `required` (or `on`, `true`, `yes`, `1`) makes the `Loop:` line say `NOT INSTALLED` or `DOWN` when no supervisor is set up or alive, instead of staying silent |
 | `auto_pull` | `MAESTRO_AUTO_PULL` | off (unset until answered) | `on`, `true`, `yes` or `1`: when `prime` finds the skill's checkout clean and purely behind its upstream, it runs `git merge --ff-only` and says so. Nothing else is ever run (no merge, rebase or reset), and a dirty, ahead or diverged checkout is only reported. While neither `on` nor `off` (or `false`, `no`, `0`) is set anywhere, `prime` adds a line asking you to choose; `journal.ts autopull on\|off` answers it |
 | `resume_gh` | `MAESTRO_RESUME_GH` | on | `off`, `false`, `no` or `0` stops `resume` from calling `gh` |
 | `ledger_git_autocommit` | `MAESTRO_LEDGER_GIT_AUTOCOMMIT` | off | `on`, `true`, `yes` or `1`: `roll` commits the ledger root after a clean `verify` |
