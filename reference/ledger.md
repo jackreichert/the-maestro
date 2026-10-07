@@ -51,7 +51,7 @@ crashed session cannot lose entries.
 | Work you intend to do but have not started (a to-do) | `queue` (see [Queued items](#queued-items)) |
 | That work lands, or the agent reports success | `done` |
 | You hit something you cannot proceed past | `log --kind blocked` |
-| A question only the user can answer | `ask` |
+| A question only the user can answer | `ask`, with `--recommend` (what you would do), `--door one-way\|two-way` and, for a two-way door only, `--default` (what happens if the user stays silent) and `--decide-by` (`2d`, `2026-10-09`). No door means one-way, and a one-way ask is refused a default. `--class expedite\|fixed-date\|standard\|intangible` (default standard) |
 | A decision that is genuinely still pending | `ask --kind decision` (stays on the board until `resolve`d) |
 | A rule or decision the user already made, once it is saved in a memory file or DECISIONS.md | `rule "<text>" --ref <file>` (see [Rules](#rules-are-records-not-asks)) |
 | They answer it | `resolve --answer "..."` |

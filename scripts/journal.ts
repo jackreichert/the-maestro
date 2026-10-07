@@ -28,6 +28,8 @@
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
+ *   journal.ts ask "<question>" [--recommend "<what you would do>"] [--door one-way|two-way] [--default "<what happens if silent>"] [--decide-by 2026-10-09|2d|6h] [--class expedite|fixed-date|standard|intangible]
+ *                                             a decision made cheap to answer. No --door means one-way; a one-way ask is refused a --default; no --recommend warns. `ask --help` prints this
  *   journal.ts ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
  *   journal.ts triage [--date D] [--since D] [--apply] [--json]   box every open item and the day's decisions and notes, flag stale/unpromoted/unticketed, print the don't-miss
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
@@ -127,6 +129,8 @@ import { openStore } from './lib/journal/store.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
+import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
@@ -178,6 +182,12 @@ if (cmd === 'autopull') {
         console.error(`${e instanceof Error ? e.message : String(e)} Usage: journal.ts autopull on|off`);
         process.exit(1);
     }
+    process.exit(0);
+}
+
+// `ask --help` prints its usage and needs no ledger.
+if (cmd === 'ask' && has('help')) {
+    ASK_USAGE.forEach((l) => console.log(l));
     process.exit(0);
 }
 
@@ -405,6 +415,28 @@ function transitionedFlag(): string[] | undefined {
     return keys;
 }
 
+/**
+ * The decision fields of an `ask` (--recommend, --default, --door, --decide-by, --class), parsed and checked by the
+ * rule tables in ask-fields.ts. Refusals exit 1 before anything is written; warnings go to stderr and the ask is written.
+ * Any other command that is given one of these flags refuses rather than ignore it.
+ */
+function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
+    const flag = (names: string[]): RawFlag => {
+        const name = names.find((n) => has(n));
+        return { given: name !== undefined, value: name ? arg(name) : null };
+    };
+    const flags: RawAskFlags = { recommend: flag(['recommend']), default: flag(['default']), door: flag(['door']), 'decide-by': flag(['decide-by', 'by']), class: flag(['class']) };
+    if (!ask) {
+        const stray = (Object.keys(flags) as (keyof RawAskFlags)[]).filter((f) => flags[f].given);
+        if (stray.length) die(`--${stray.join(', --')} only go on \`ask\`.`);
+        return {};
+    }
+    const { fields, errors, warnings } = parseAskFields(flags, { paste, now: new Date() });
+    if (errors.length) die(errors.join('\n'));
+    warnings.forEach((w) => console.error(w));
+    return fields;
+}
+
 function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false } = {}) {
     const text = arg('text') || positional.join(' ');
     if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
@@ -415,6 +447,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const refs = rule ? ruleRefs() : refsFromArgs();
     const paste = ask ? pasteFile(kind) : undefined;
     const gate = gateFlag(kind);
+    const askFields = askFieldsFromArgs(ask, Boolean(paste));
 
     const entries = readLedger();
     const entry = {
@@ -433,6 +466,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         paste,
         gate,
         transitioned: transitionedFlag(),
+        ...askFields,
         ...approvalFor(kind),
         ...usageFromArgs(),
     };

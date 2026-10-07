@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { ledgerLines, type LedgerRow } from '../ledger-core.ts';
+import { askFieldProblems } from './ask-fields.ts';
 
 /** What verify and the backup commit read from the run. The sets are the values `--approval` accepts and the kinds an approval can point at. */
 export interface VerifyContext {
@@ -42,6 +43,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         if (row.kind === 'approval-tag' && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: 'approval-tag row has no valid approval' });
         const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
         if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
+        if (row.kind === 'question' || row.kind === 'decision') for (const p of askFieldProblems(row)) problems.push({ line, id: row.id, problem: `ask field: ${p}` });
         for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
