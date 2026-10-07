@@ -82,7 +82,7 @@ const CSS = `${BOARD_CSS}
   ol.priorities { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); counter-reset: p; }
   ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 1.5em minmax(0, 1fr); gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
   ol.priorities li::before { content: counter(p); color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
-  ol.priorities .tag { grid-column: 2; }
+  ol.priorities .tag { grid-column: 2; justify-self: start; padding-block: 2px; margin-block: -2px; }
 
   .table-wrap { overflow-x: auto; }
   table.counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); line-height: var(--leading-sm); font-variant-numeric: tabular-nums; }

@@ -123,7 +123,10 @@ export const UI_CSS = `
   }
   .row-text { min-width: 0; overflow-wrap: anywhere; }
   .row-meta { color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .row-sub { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
+  /* A link that is a flex or grid item is blockified, so the inline padding above would add height: there it trades 2 px of
+     padding for 2 px of negative margin instead, a 24 px target on a 20 px line with the row's rhythm unchanged. */
+  .row-sub > a { padding-block: 2px; margin-block: -2px; }
+  .row-sub { align-items: baseline; grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
   .gate { color: var(--critical); }
   .gate .glyph { width: auto; margin-right: 4px; }
   .gate .mono { font-family: var(--font-mono); font-size: 0.92em; }
