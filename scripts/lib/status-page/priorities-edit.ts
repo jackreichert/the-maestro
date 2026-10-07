@@ -73,57 +73,51 @@ function slotsOf(lines: string[]): Slot[] {
   return out;
 }
 
-/** An item line for entry number `n` (0-based) in the style of `slot`: numbered markers are renumbered, bullets are kept. */
-function lineFor(slot: Slot, n: number, entry: { check: string; body: string }): string {
-  const numbered = /^\d+([.)])$/.exec(slot.marker);
-  const marker = numbered ? `${n + 1}${numbered[1]}` : slot.marker;
-  return `${slot.indent}${marker}${slot.gap}${entry.check}${entry.body}`;
+/** Numbered markers (`1.`, `2)`) renumbered in file order, so a move or delete leaves the list counting 1, 2, 3. */
+function renumber(lines: string[]): void {
+  slotsOf(lines).forEach((s, k) => {
+    const numbered = /^\d+([.)])$/.exec(s.marker);
+    if (numbered) lines[s.index] = `${s.indent}${k + 1}${numbered[1]}${s.gap}${s.check}${s.body}`;
+  });
 }
 
-/** Applies `edit` to the file text: the new text and a one-line summary, or a refusal. Pure. */
+/**
+ * Applies `edit` to the file text: the new text and a one-line summary, or a refusal. Pure. Works on whole lines: a move or
+ * delete takes the item's own line (with its bullet, indent and checkbox) and leaves every other line where it was.
+ */
 function plan(raw: string, today: string, edit: Edit, max: number): { text: string; summary: string } {
   const lines = raw === '' ? [] : raw.split('\n');
   const isToday = parsePriorities(raw).date === today;
-  const slots = slotsOf(lines);
-  let entries = isToday ? slots.map((s) => ({ check: s.check, body: s.body })) : [];
-  const at = (i: number): Priority | undefined => (Number.isInteger(i) && entries[i] ? parsePriority(entries[i]?.body ?? '') : undefined);
+  const all = slotsOf(lines);
+  // A list dated another day is not today's: its item lines go, and only an add can start the new one.
+  const work = isToday ? [...lines] : lines.filter((_, i) => !all.some((s) => s.index === i));
+  const dateAt = work.findIndex((l) => DATE_LINE.test(l));
+  if (dateAt === -1) work.unshift(`date: ${today}`);
+  else work[dateAt] = (work[dateAt] ?? '').replace(/^(\s*date\s*:\s*)\S+/i, `$1${today}`);
+  const slots = slotsOf(work);
+  const at = (i: number): Priority | undefined => (Number.isInteger(i) && slots[i] ? parsePriority(slots[i]?.body ?? '') : undefined);
   const stale = 'the list on disk is not what this page showed; it has been reloaded';
   let summary = '';
   if (edit.op === 'add') {
     const p = checkPriority(edit.text, edit.stream);
-    if (entries.length >= max) return refuse('cap', `Priorities are full (${entries.length} of ${max}): remove one first.`);
-    entries.push({ check: '', body: bodyOf(p) });
-    summary = `added priority ${entries.length}: ${p.text}`;
+    if (slots.length >= max) return refuse('cap', `Priorities are full (${slots.length} of ${max}): remove one first.`);
+    const last = slots[slots.length - 1];
+    const line = `${last?.indent ?? ''}${last?.marker ?? '-'}${last?.gap ?? ' '}${bodyOf(p)}`;
+    work.splice(last ? last.index + 1 : work.findIndex((l) => DATE_LINE.test(l)) + 1, 0, line);
+    summary = `added priority ${slots.length + 1}: ${p.text}`;
   } else if (edit.op === 'delete') {
     if (at(edit.index)?.text !== edit.text) return refuse('conflict', stale);
-    entries.splice(edit.index, 1);
+    work.splice(slots[edit.index]?.index ?? 0, 1);
     summary = `removed priority ${edit.index + 1}: ${edit.text}`;
   } else {
-    if (at(edit.from)?.text !== edit.text || !Number.isInteger(edit.to) || edit.to < 0 || edit.to >= entries.length) return refuse('conflict', stale);
-    const [moved] = entries.splice(edit.from, 1);
-    entries.splice(edit.to, 0, moved ?? { check: '', body: '' });
+    if (at(edit.from)?.text !== edit.text || !Number.isInteger(edit.to) || edit.to < 0 || edit.to >= slots.length) return refuse('conflict', stale);
+    const [line] = work.splice(slots[edit.from]?.index ?? 0, 1);
+    work.splice(slots[edit.to]?.index ?? 0, 0, line ?? '');   // the target's old position: before it going up, after it going down
     summary = `moved priority ${edit.from + 1} to ${edit.to + 1}: ${edit.text}`;
   }
-  const last = slots[slots.length - 1];
-  const style = last ?? { index: -1, indent: '', marker: '-', gap: ' ', check: '', body: '' };
-  const out: string[] = [];
-  let k = 0;
-  let afterLast = -1;
-  let dateAt = -1;
-  lines.forEach((line, i) => {
-    const slot = slots.find((s) => s.index === i);
-    if (slot) {
-      if (k < entries.length) { out.push(lineFor(slot, k, entries[k] ?? { check: '', body: '' })); k += 1; afterLast = out.length; }
-    } else if (DATE_LINE.test(line)) {
-      dateAt = out.length;
-      out.push(line.replace(/^(\s*date\s*:\s*)\S+/i, `$1${today}`));
-    } else out.push(line);
-  });
-  const extra = entries.slice(k).map((e, j) => lineFor(style, k + j, e));
-  if (dateAt === -1) { out.unshift(`date: ${today}`); dateAt = 0; if (afterLast !== -1) afterLast += 1; }
-  out.splice(afterLast === -1 ? dateAt + 1 : afterLast, 0, ...extra);
-  if (out[out.length - 1] !== '') out.push('');
-  return { text: out.join('\n'), summary };
+  renumber(work);
+  if (work[work.length - 1] !== '') work.push('');
+  return { text: work.join('\n'), summary };
 }
 
 /** Writes `text` over `path` through a temp file beside it and a rename, keeping the file's mode and following a symlink. */

@@ -21,7 +21,7 @@ test('move reorders in place and keeps every line the editor does not own', () =
   const d = dir('# my list\ndate: 2026-10-07\n- one | Alpha\n<!-- keep me -->\n- two\n- three | Beta\n\ntrailing prose\n');
   const r = editPriorities(d, TODAY, { op: 'move', from: 2, to: 0, text: 'three' }, opts);
   assert.deepEqual(texts(r), ['three', 'one', 'two']);
-  assert.equal(read(d), '# my list\ndate: 2026-10-07\n- three | Beta\n<!-- keep me -->\n- one | Alpha\n- two\n\ntrailing prose\n');
+  assert.equal(read(d), '# my list\ndate: 2026-10-07\n- three | Beta\n- one | Alpha\n<!-- keep me -->\n- two\n\ntrailing prose\n');
 });
 
 test('numbered lists are renumbered, bullets and checkboxes travel with their item', () => {
@@ -121,4 +121,16 @@ test('checkPriority normalises and refuses text that would not survive the file 
     assert.throws(() => checkPriority(bad, undefined), refused('invalid'), JSON.stringify(bad));
   for (const bad of ['', 'x'.repeat(41), 'a | b', '<s>', 'new\nline', ' lead'])
     assert.throws(() => checkPriority('ok', bad), refused('invalid'), JSON.stringify(bad));
+});
+
+test('an item takes its own line with it: nested detail, notes and headings between items are never re-homed', () => {
+  const nested = dir('date: 2026-10-07\n- A\n  - A detail\n- B\n');
+  editPriorities(nested, TODAY, { op: 'move', from: 2, to: 0, text: 'B' }, opts);   // an indented bullet is an item line too, so B is the third item
+  assert.equal(read(nested), 'date: 2026-10-07\n- B\n- A\n  - A detail\n');
+  const note = dir('date: 2026-10-07\n- A\n<!-- why B -->\n- B\n- C\n');
+  editPriorities(note, TODAY, { op: 'delete', index: 0, text: 'A' }, opts);
+  assert.equal(read(note), 'date: 2026-10-07\n<!-- why B -->\n- B\n- C\n');
+  const head = dir('date: 2026-10-07\n## Priorities\n- A\n- B\n## Notes\n- note1\n');
+  editPriorities(head, TODAY, { op: 'delete', index: 0, text: 'A' }, opts);
+  assert.equal(read(head), 'date: 2026-10-07\n## Priorities\n- B\n## Notes\n- note1\n', 'no line crosses the heading');
 });
