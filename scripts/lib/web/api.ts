@@ -28,17 +28,21 @@ import type { PodiumState as ReducedState, WorkItem as ReducedWork } from './sta
 import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, PodiumState, WorkItem } from '../../web/client/src/types.ts';
 
 /** Where the data lives and how to read it: the ledger root and project, the status directory, and the page settings. */
-export interface WebConfig { vault: string; project: string; statusDir: string; page: PageConfig; warn?: (message: string) => void }
+export interface WebConfig {
+  vault: string; project: string; statusDir: string; page: PageConfig; warn?: (message: string) => void;
+  /** The notes vault the stream home base reads tickets from (`vault_root`); absent means no tickets are read. */
+  vaultRoot?: string;
+}
 
 const MAX_FRAGMENT_BYTES = 64 * 1024;
 const FRAGMENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** Not a real session: the reducers read only `footer.ledger`, and this keeps the server from reading the user's session files. */
 const NO_SESSION = { available: false, unavailable: 'not read by the web server' } as const;
 
-interface Board { inputs: GatheredInputs; g: Groups }
+export interface Board { inputs: GatheredInputs; g: Groups }
 
 /** One consistent read of everything a response needs. The "day" is the UTC date, as `journal.ts status` uses for done-today. */
-function readBoard(cfg: WebConfig, now: Date): Board {
+export function readBoard(cfg: WebConfig, now: Date): Board {
   const day = now.toISOString().slice(0, 10);
   const store = openStore({ vault: cfg.vault, project: cfg.project, dryRun: false, warn: cfg.warn ?? (() => {}) });
   const entries = store.readLedger();   // read once: the board and the triage metadata see the same rows
