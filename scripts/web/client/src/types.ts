@@ -65,5 +65,7 @@ export interface ChartsData {
   modelMix: { byFamily: Record<string, number>; source: 'ledger' | 'tokens' };
 }
 
+/** `ask-busy`: a card is partway through an action (true) or has finished it (false); the page holds redraws until it has. */
+export interface AskBusyDetail { busy: boolean }
 /** What `ask-resolve` carries; this slice writes nothing to the network. */
 export interface AskResolveDetail { id: string; answer: string }

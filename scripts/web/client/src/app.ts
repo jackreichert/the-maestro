@@ -5,13 +5,19 @@ import { h, s, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
+import { UpdateGate, askState } from './ask-state.ts';
+import type { GateInput } from './ask-state.ts';
+import { LiveUpdates, liveLabel } from './live.ts';
+import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, shortDate, tempoWord } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
-import type { ChartsData, PodiumState } from './types.ts';
+import type { AskBusyDetail, ChartsData, PodiumState } from './types.ts';
+
+interface Fresh { state: PodiumState; charts: ChartsData; dropped: number }
 
 const CSS = `${BOARD_CSS}
   :host { --pad: var(--space-4); }
@@ -45,6 +51,8 @@ const CSS = `${BOARD_CSS}
     background: var(--surface-1); box-shadow: var(--shadow-1); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
   }
+  .link { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .link.offline { color: var(--critical); }
   .dot { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--text-muted); }
   .fresh.live .dot { border-color: var(--success); background: var(--success); }
   .fresh.stale { background: var(--warning-soft); color: var(--warning); box-shadow: none; }
@@ -190,6 +198,11 @@ export class PodiumApp extends HTMLElement {
   #tick: number | undefined;
   #tabsObserver: ResizeObserver | null = null;
   #tempoOpen = false;
+  #liveUpdates: LiveUpdates<Fresh> | null = null;
+  #liveStatus: LiveStatus | null = null;
+  // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
+  // cards live in askState, so the redraw that follows puts them back.
+  readonly #gate = new UpdateGate<Fresh>();
   // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
   // tab so keyboard and screen reader users are not left on the destroyed link.
   readonly #onHash = (): void => {
@@ -206,6 +219,13 @@ export class PodiumApp extends HTMLElement {
 
   connectedCallback(): void {
     window.addEventListener('hashchange', this.#onHash);
+    this.addEventListener('focusin', this.#onFocusMove);
+    this.addEventListener('focusout', this.#onFocusMove);
+    this.addEventListener('input', this.#onFocusMove);
+    this.addEventListener('pointerdown', this.#onPress);
+    this.addEventListener('ask-busy', this.#onBusy);
+    window.addEventListener('pointerup', this.#onRelease);
+    window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
     Promise.all([loadState(), loadCharts(), loadLinkHosts()]).then(([s, c]) => {
       if (!this.isConnected) return;   // removed while loading: start nothing that disconnectedCallback has already missed
@@ -217,6 +237,7 @@ export class PodiumApp extends HTMLElement {
       this.#safeRender();
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
+      if (this.#live) this.#startLive(s.data.seq);   // sample data has no server to follow
     }).catch((e: unknown) => {
       this.#root.replaceChildren(problem(`Can't reach the Podium server`, e, 'Start it with node scripts/journal.ts web (or npm run web:static for sample data), then reload.'));
     });
@@ -224,9 +245,82 @@ export class PodiumApp extends HTMLElement {
 
   disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.#onHash);
+    this.removeEventListener('focusin', this.#onFocusMove);
+    this.removeEventListener('focusout', this.#onFocusMove);
+    this.removeEventListener('input', this.#onFocusMove);
+    this.removeEventListener('pointerdown', this.#onPress);
+    this.removeEventListener('ask-busy', this.#onBusy);
+    window.removeEventListener('pointerup', this.#onRelease);
+    window.removeEventListener('pointercancel', this.#onRelease);
     window.clearInterval(this.#tick);
+    this.#liveUpdates?.stop();
+    this.#liveUpdates = null;
     this.#tabsObserver?.disconnect();
   }
+
+  /** Follow the server: the event stream, or polling when there is none. Only ever with data from a real server. */
+  #startLive(seq: string): void {
+    this.#liveUpdates = new LiveUpdates<Fresh>({
+      open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
+      load: async () => {
+        const [s, c] = await Promise.all([loadState(), loadCharts()]);
+        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, dropped: s.dropped + c.dropped } : null;
+      },
+      seqOf: (f) => f.state.seq,
+      apply: (f) => this.#adopt(f),
+      onStatus: (st) => { this.#liveStatus = st; this.#updateLink(); },
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (id) => window.clearTimeout(id as number),
+    }, seq);
+    this.#liveUpdates.start();
+  }
+
+  /** Show newer data, unless the user is mid-press or typing: a redraw then would swallow the click or the caret. */
+  #adopt(f: Fresh): void {
+    const now = this.#gate.offer(f);
+    if (now) this.#show(now);
+    else this.#updateLink();   // held: the label says an update is waiting
+  }
+
+  #show(f: Fresh): void {
+    this.#state = f.state;
+    this.#charts = f.charts;
+    this.#dropped = f.dropped;
+    askState.prune(f.state.asks.map((a) => a.id));
+    if (!this.#ids().includes(this.#active)) this.#active = OVERVIEW;   // the stream behind the open tab is gone
+    const focused = this.#focusKey();
+    this.#safeRender();
+    if (focused) findByKey(this.#root, focused)?.focus();   // the redraw destroyed the element that had focus; put it back on its twin
+  }
+
+  /** A stable name for the control that has focus inside the page (tab, ask toggle, link), or null when focus is elsewhere. */
+  #focusKey(): FocusKey | null {
+    if (document.activeElement !== this) return null;
+    let el: Element | null = this.#root.activeElement;
+    while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+    if (!el) return null;
+    if (el.id) return { id: el.id };
+    return el instanceof HTMLAnchorElement ? { href: el.href } : null;
+  }
+
+  #release(input: GateInput): void {
+    const held = this.#gate.set(input);
+    if (held) this.#show(held);
+  }
+
+  // A press holds updates from pointerdown (before focus moves off a field) until the click has been delivered.
+  readonly #onPress = (): void => { this.#gate.set({ pointer: true }); };
+  // A card is mid-action (copying): hold until it says it is done, however long the browser takes to answer.
+  readonly #onBusy = (e: Event): void => {
+    if (e instanceof CustomEvent) this.#release({ busy: (e.detail as AskBusyDetail).busy });
+  };
+  readonly #onRelease = (): void => {
+    setTimeout(() => this.#release({ pointer: false }), 0);   // the click fires after pointerup; let it run first
+  };
+  // Focus is mid-move during focusin/focusout; look once it has landed.
+  readonly #onFocusMove = (): void => {
+    setTimeout(() => this.#release({ typing: typingAnAnswer() }), 0);
+  };
 
   #ids(): string[] { return tabIds(this.#state?.streams ?? []); }
 
@@ -236,6 +330,7 @@ export class PodiumApp extends HTMLElement {
       if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
       return;
     }
+    this.#release({ busy: false });   // this render replaces any card still copying, and its busy=false would never arrive
     this.#active = id;
     if (location.hash !== formatFragment(id)) history.replaceState(null, '', formatFragment(id));
     this.#safeRender();
@@ -328,7 +423,7 @@ export class PodiumApp extends HTMLElement {
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
         h('div', { class: 'brand' }, h('h1', {}, baton(this.#waiting(st) > 0), 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
-        this.#freshness(st)),
+        h('div', { class: 'brand' }, this.#freshness(st), this.#link())),
       note ? h('p', { class: 'source' }, note) : null,
       h('p', { class: 'scope' }, h('span', { id: 'scope' }, scope), h('span', { 'aria-hidden': 'true' }, ' · '), tempo),
       h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue),
@@ -372,6 +467,17 @@ export class PodiumApp extends HTMLElement {
     const st = this.#state;
     const old = this.#root.querySelector('.fresh');
     if (st && old) old.replaceWith(this.#freshness(st, true));
+  }
+
+  /** Whether updates arrive by the live stream, by polling, or not at all; hidden for sample data and before the first answer. */
+  #link(): HTMLElement {
+    const st = this.#liveStatus;
+    return h('span', { class: `link${st === 'offline' ? ' offline' : ''}`, role: 'status' }, liveLabel(st, this.#gate.held));
+  }
+
+  #updateLink(): void {
+    const old = this.#root.querySelector('.link');
+    if (old) old.replaceWith(this.#link());
   }
 
   #board(st: PodiumState, stream: string): Node {
@@ -465,6 +571,26 @@ function showCue(asks: number): void {
   const icon = document.querySelector<HTMLLinkElement>('link[rel=icon]');
   const href = asks > 0 ? '/favicon-cue.svg' : '/favicon.svg';
   if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
+}
+
+interface FocusKey { id?: string; href?: string }
+
+/** The first element under `root` (through nested shadow roots) matching the key. */
+function findByKey(root: ShadowRoot | Element, key: FocusKey): HTMLElement | null {
+  for (const el of root.querySelectorAll<HTMLElement>('*')) {
+    if (el.id && el.id === key.id) return el;
+    if (key.href && el instanceof HTMLAnchorElement && el.href === key.href) return el;
+    const inner = el.shadowRoot ? findByKey(el.shadowRoot, key) : null;
+    if (inner) return inner;
+  }
+  return null;
+}
+
+/** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed there. */
+function typingAnAnswer(): boolean {
+  let el: Element | null = document.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) && el.value !== '';
 }
 
 /** A DOM id for a tab: stream names are data and may hold spaces, which would split an IDREF list. */

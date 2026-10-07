@@ -1,6 +1,7 @@
 import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
 import { askAge, chatAnswer } from './glance.ts';
-import type { AskCard, AskResolveDetail } from './types.ts';
+import { askState } from './ask-state.ts';
+import type { AskBusyDetail, AskCard, AskResolveDetail } from './types.ts';
 
 /** Older than this many days an ask is flagged, matching the Markdown page's 3 day threshold. */
 export const STALE_DAYS = 3;
@@ -139,7 +140,9 @@ export class AskCardElement extends HTMLElement {
     const toggle = h('button', { type: 'button', class: 'ask-toggle', id: `${uid}-h`, 'aria-expanded': 'false', 'aria-controls': `${uid}-b` }, a.needed);
     // Every ask has a "Your answer" field and a copy button; tie each to its decision so a controls list tells them apart.
     const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': [`${uid}-h`, a.context ? `${uid}-c` : ''].filter(Boolean).join(' ') });
-    const copy = h('button', { type: 'button', class: 'secondary', 'aria-describedby': `${uid}-h` }, 'Copy answer for chat');
+    answer.value = this.#locked ? '' : askState.draft(a.id);   // a redraw rebuilds the card; the half-typed answer comes back with it
+    answer.addEventListener('input', () => askState.setDraft(a.id, answer.value));
+    const copy = h('button', { type: 'button', class: 'secondary', id: `${uid}-copy`, 'aria-describedby': `${uid}-h` }, 'Copy answer for chat');
     const error = h('p', { class: 'error', id: `${uid}-e`, role: 'alert', hidden: true }, 'Write an answer first: there is no approve-as-asked shortcut here.');
     // Sample data: no answer field at all (the section head says why), so a locked board has nothing that looks pressable.
     const form = this.#locked ? null
@@ -169,6 +172,7 @@ export class AskCardElement extends HTMLElement {
     let isOpen = false;
     const setOpen = (open: boolean, focusField: boolean): void => {
       isOpen = open;
+      askState.setOpen(a.id, open);
       toggle.setAttribute('aria-expanded', String(open));
       body.hidden = !open;
       this.toggleAttribute('open', open);
@@ -187,16 +191,16 @@ export class AskCardElement extends HTMLElement {
 
     // The page cannot write to the ledger yet, so answering is copying: the clipboard gets "<id>: <answer>" for the
     // orchestrator chat, and the ask says plainly that nothing was saved. Focus moves to that status (read once, no live region).
-    const showStatus = (text: string, ok: boolean): void => {
+    const showStatus = (text: string, ok: boolean, focus = true): void => {
       // Copied, not saved: a single barline and unresolved. When the page can write, this becomes a final double barline
       // and resolved; until then the music does not claim a resolution that has not happened. A failed copy gets no music.
       const head = h('p', { class: 'done', id: `${uid}-s` }, ...(ok
         ? [barline(), 'Copied for chat ', h('i', { class: 'unresolved' }, 'unresolved')]
         : ['Could not copy']));
-      const again = h('button', { type: 'button', class: 'secondary' }, ok ? 'Copy again' : 'Try again');
-      const edit = h('button', { type: 'button', class: 'quiet' }, 'Edit answer');
+      const again = h('button', { type: 'button', class: 'secondary', id: `${uid}-again` }, ok ? 'Copy again' : 'Try again');
+      const edit = h('button', { type: 'button', class: 'quiet', id: `${uid}-edit` }, 'Edit answer');
       // A focused group reads only its name, so the quote and the not-saved sentence are tied to it as its description.
-      const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s`, 'aria-describedby': `${uid}-q ${uid}-n` },
+      const status = h('div', { class: 'resolved', id: `${uid}-r`, role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s`, 'aria-describedby': `${uid}-q ${uid}-n` },
         head,
         h('blockquote', { class: ok ? undefined : 'select', id: `${uid}-q` }, text),
         h('p', { class: 'unsaved', id: `${uid}-n` }, ok
@@ -204,22 +208,26 @@ export class AskCardElement extends HTMLElement {
           : 'Select the answer above and copy it by hand. This page cannot write to the ledger yet.'),
         h('div', { class: 'actions' }, again, edit));
       again.addEventListener('click', () => { void send(text); });
-      edit.addEventListener('click', () => { announced = false; status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
-      (form?.isConnected ? form : body.querySelector('.resolved'))?.replaceWith(status);
+      edit.addEventListener('click', () => { askState.reopen(a.id, answer.value); status.replaceWith(form ?? ''); this.toggleAttribute('answered', false); copied.hidden = true; answer.focus(); });
+      (form?.parentNode ? form : body.querySelector('.resolved'))?.replaceWith(status);   // parentNode, not isConnected: this also runs before the card is attached
       this.toggleAttribute('answered', ok);
       copied.hidden = !ok;
-      status.focus();
+      if (focus) status.focus();
     };
-    let announced = false;
+    const busy = (on: boolean): void => {
+      this.dispatchEvent(new CustomEvent<AskBusyDetail>('ask-busy', { detail: { busy: on }, bubbles: true, composed: true }));
+    };
     const send = async (text: string): Promise<void> => {
+      busy(true);   // the page holds redraws until the copy has settled, or the card would be replaced mid-await
       let ok = false;
       try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
-      // Once per answer: Copy again re-copies the same text and must not look like a second decision to a future writer.
-      if (ok && !announced) {
-        announced = true;
+      // Once per answer, kept in askState so a rebuilt card cannot announce it again: Copy again re-copies the same text
+      // and must not look like a second decision to a future writer.
+      if (ok && askState.resolve(a.id, answer.value.trim())) {
         this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer: answer.value.trim() }, bubbles: true, composed: true }));
       }
       showStatus(text, ok);
+      busy(false);
     };
     const submit = (): void => {
       if (this.#locked || !form?.isConnected) return;
@@ -248,6 +256,17 @@ export class AskCardElement extends HTMLElement {
     answer.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
     });
+    // Rebuilt by a live update: put back what the user had. A copied answer stays settled (no focus grab, the user did
+    // not just act); a half-typed one reopens its ask so it is not hidden behind a folded row.
+    const prior = this.#locked ? null : askState.resolvedAnswer(a.id);
+    if (prior !== null) {
+      answer.value = prior;
+      setOpen(true, false);
+      showStatus(chatAnswer(a.id, prior) ?? prior, true, false);
+    } else if (!this.#locked && answer.value !== '') {
+      setOpen(true, false);
+    }
+    if (askState.isOpen(a.id)) setOpen(true, false);   // unfolded before the redraw: still unfolded, without taking focus
     this.#root.replaceChildren(article);
   }
 }

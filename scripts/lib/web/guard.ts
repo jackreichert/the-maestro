@@ -51,6 +51,12 @@ export function send(res: ServerResponse, status: number, body: string | Buffer,
   res.writeHead(status, { ...SECURITY_HEADERS, 'content-type': type, 'content-length': Buffer.byteLength(body), ...extra }).end(body);
 }
 
+/** Start an event stream: the security headers and the SSE content type, no length, the connection left open. `retry` tells the browser how long to wait before it reconnects. */
+export function openStream(res: ServerResponse): void {
+  res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'text/event-stream; charset=utf-8', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+  res.write('retry: 5000\n\n');
+}
+
 export const sendJson = (res: ServerResponse, status: number, value: unknown): void => send(res, status, JSON.stringify(value), 'application/json; charset=utf-8');
 
 /** An error response with fixed text for its status: never an exception message, a path or a stack. */
