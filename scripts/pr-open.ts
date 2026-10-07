@@ -17,7 +17,9 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bodyProblems } from './pr-body.ts';
+import { bodyProblems, type BodyContext } from './pr-body.ts';
+import { PROTECTED_BRANCHES } from './local-config.ts';
+import { globToRegExp } from './pr-size.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -54,18 +56,27 @@ export const ghArgs = ({ base, pass }: Pick<OpenArgs, 'base' | 'pass'>): string[
 function checkBody(o: OpenArgs): void {
   const i = flagIndex(o.pass, '--body-file');
   if (i < 0 || !o.pass[i + 1]) {
-    console.error('pr-open: refused, --body-file is required. The body needs a "## Context" and a "## Reviewer guide" section (see reference/git.md#pr-body).');
+    console.error('pr-open: refused, --body-file is required. The body needs the sections in pr_body_sections, by default Context, Reviewer guide, Risk and blast radius, Rollback / flag and How to verify locally (see reference/git.md#pr-body).');
     process.exit(1);
   }
   const path = resolve(o.pass[i + 1]);
   let body: string;
   try { body = readFileSync(path, 'utf8'); } catch (e) { console.error(`pr-open: cannot read --body-file ${path}: ${(e as Error).message}`); process.exit(2); }
-  const problems = bodyProblems(body);
+  const problems = bodyProblems(body, undefined, diffContext(o));
   if (problems.length) {
-    console.error(`pr-open: refused, the PR body ${problems.join('; ')}. Add a "## Context" and a "## Reviewer guide" section with real content (see reference/git.md#pr-body).`);
+    console.error(`pr-open: refused, the PR body ${problems.join('; ')}. Fix the body (see reference/git.md#pr-body); the rules are configurable in local-config.`);
     process.exit(1);
   }
   o.pass[i + 1] = path;
+}
+
+/** What the diff says about the PR: whether it targets a non-default branch (stacked) and how many code files it changes. */
+function diffContext(o: OpenArgs): BodyContext {
+  const head = headOf(o);
+  const r = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, '--json', ...(head ? ['--head', head] : [])], { encoding: 'utf8' });
+  let codeFiles = 0;
+  try { codeFiles = (JSON.parse(r.stdout) as { code: { files: number } }).code.files; } catch { /* the size gate reports the real error next */ }
+  return { stacked: !PROTECTED_BRANCHES.some((g) => globToRegExp(g).test(o.base)), codeFiles };
 }
 
 function main(): void {
