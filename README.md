@@ -283,7 +283,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `status` | Open items and done today; queued items are listed and counted apart from in-flight ones. `--json` also carries a `queued` list and a `footer` object (the per-stream footer counts and the session figures) for the Podium. `--full`; text status ends with `review queue: N of 4` from the stored PR snapshot (flagged when over an hour old; absent with no snapshot); `--footer` (the reply-footer Ledger lines, a `**Review queue:**` line when a snapshot exists, and a Session line, then `**Podium:** <uri>` when a status page is configured). An ask with decision fields prints them compactly after its text (`two-way · by 2026-10-09 · rec: ... · if silent: ...`; a one-way ask never names a default), and the footer adds `(2 one-way · next by 2026-10-09)` after the awaiting count when any awaiting ask carries them. A plain ask or a legacy row prints as before, and is not counted as one-way in the footer note |
 | `review-queue` | The dispatch gate: counts your open non-draft PRs against `review_queue_cap` (default 4, `--cap N` overrides). Exit 0 with room, 1 full, 2 cannot answer (a bad `--cap`, or GitHub failed with no stored snapshot under six hours old; treat as full). Prefers a live read, falls back to a fresh stored snapshot and says so. `--json`. See [reference/dispatch.md](reference/dispatch.md#review-queue-cap) |
 | `autopull on\|off` | Write `auto_pull` into the user config file (`MAESTRO_LOCAL_CONFIG` honoured): edits or adds the line in the `maestro-config` block, keeps everything else, idempotent. Needs no ledger |
-| `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch. Once a status directory exists it also prints `Priorities not set for today — orchestrator will ask` when today's priorities are missing or out of date, and the orchestrator asks you |
+| `prime` | The 40-line-or-less board for session start and after a compaction. Its first line is the skill's update notice (see `auto_pull`) when the skill's own repo is behind, ahead, diverged or dirty, and absent when it is current; `--no-update-check` or `update_check: off` skips the fetch. Once a status directory exists it also prints `Priorities not set for today — orchestrator will ask` when today's priorities are missing or out of date, and the orchestrator asks you. With `--source startup` or `compact` it ends with a short "After a compact" checklist (seven lines, always printed, after the board so the 40-line cap is untouched); any other source, or none, prints no checklist |
 | `standup [--date D]` | End-of-day summary for pasting |
 | `triage` | Box every open item, flag the stale, unpromoted and unticketed; an ask's decision fields print beside it in brackets. `--date`, `--since`, `--apply` (closes recorded rules), `--json` |
 | `roll` | Archive finished work to a dated note, keep open items; also removes stale worktrees, but only inside the configured `container_root` (it refuses and the roll goes on when none is set or you are outside it). Archives and commits first, then sweeps; kept worktrees print as counts by reason. `--strict` refuses on triage blockers, `--fast` skips the sweep and scratch review, `--verbose` lists every kept worktree, `--container`, `--no-worktree-sweep`, `--dry-run` |
@@ -879,6 +879,12 @@ The scripts themselves have no runtime dependencies.
     ]
   }
 }
+```
+
+To get the post-compact checklist, give `prime` the hook's source: use one entry per source, each with `--source` (`startup` and `compact` print the checklist; `resume` and `clear` keep their context and get none). The flag is read from the command line, not from the hook's input, so a session that runs `journal.ts prime --source compact` by hand after a compaction gets it too.
+
+```json
+{ "matcher": "compact", "hooks": [{ "type": "command", "command": "node /path/to/the-maestro/scripts/journal.ts prime --source compact --project <container-folder-name> --vault <ledger-root>" }] }
 ```
 
 ## In review
