@@ -12,11 +12,13 @@ Division of labour (the user, 2026-09-25): **Haiku gathers what can be checked; 
 or writes code; the orchestrator (Opus) analyses, plans, and picks each worker's model by
 difficulty.** The three tiers:
 
-- **Haiku** — verifiable mechanical gathering: status sweeps, counts, test runs that report numbers,
-  formatting, file-finding. Its output is checked, never trusted for a judgement call.
-- **Sonnet** — mechanical code changes, well-specified implementation, conflict resolution, scouts
-  that need to read and size code.
-- **Opus** — design, root cause, security, and anything near PHI.
+- **Haiku** — read-only listings, sweeps, ticket closes, relays and playbooks, plus verifiable
+  mechanical gathering: counts, test runs that report numbers, formatting, file-finding. Its output
+  is checked, never trusted for a judgement call.
+- **Sonnet** — builds and any write: code changes, well-specified implementation, conflict
+  resolution, scouts that need to read and size code.
+- **Opus** — only for executing reviews and decisions that find real bugs: design, root cause,
+  security, and anything near PHI. It is not the default for routine work.
 
 Always pass `model`
 explicitly. An omitted model inherits the orchestrator's Opus, and a subagent's every tool call
@@ -89,7 +91,7 @@ turn is about 160k in a session's first 100 turns, 350k in turns 100–199, and 
 **Roll to a fresh session** at end of day, or earlier once the Session line says so. `token-metrics.ts`
 and `journal.ts status --footer` measure two things against two limits: turns against `roll_turns`
 (default 180) and mean cache-read per turn against `roll_read_per_turn` (default 350000). Either one
-reaching a percentage of its limit trips the level: **`roll soon` at `roll_warn_pct` (default 85)**
+reaching a percentage of its limit trips the level: **`roll soon` at `roll_warn_pct` (default 60)**
 and **`roll now` at `roll_at_pct` (default 90)**. You cannot start the fresh session yourself;
 only Jack can compact or open one.
 

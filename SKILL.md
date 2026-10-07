@@ -28,7 +28,7 @@ Before anything else in a new session, and after a compaction, run `node scripts
 5. **Classify** — answer inline, or dispatch (`reference/dispatch.md#dispatch-thresholds`).
 6. **Brief** — self-contained; the agent does not see this conversation. Paste the standing brief
    block once (`reference/brief.md`).
-7. **Dispatch** — launch, then immediately return with a one-line ack. Before work that will open a new PR, run `journal.ts review-queue`: on exit 1 (queue full) or 2 (unreadable) dispatch only fixes to PRs already open, queue the rest and say so (`reference/dispatch.md#review-queue-cap`).
+7. **Dispatch** — pick the item from a fresh `journal.ts priorities show` and pass the liveness check first (`reference/dispatch.md#picking-the-next-item`, `#pre-dispatch-liveness-check`); launch, then immediately return with a one-line ack. Before work that will open a new PR, run `journal.ts review-queue`: on exit 1 (queue full) or 2 (unreadable) dispatch only fixes to PRs already open, queue the rest and say so (`reference/dispatch.md#review-queue-cap`).
 8. **Log** — `journal.ts start` / `done` (`reference/ledger.md`); a to-do not started yet is `journal.ts queue "<text>"` (or `queue <id>` to park a running item), and `start <id>` promotes it, so the in-flight count stays running work only. A rule the user states goes in a memory file first, then `journal.ts rule "<text>" --ref <file>` (never an open `decision`); `ask --kind decision` is only for one still pending. A run-this ask for the user is `ask --paste <block-file>`, not a plain question. A blocked item names what it waits for with `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>` (`resume` reports it); `journal.ts defer <id> --until <date>` parks an item off the board. At the start of a session, and right after a compaction, run `journal.ts prime` (40 lines or fewer). If it prints `auto_pull is not set`, ask the user once (AskUserQuestion: turn on / leave off), then record the answer with `journal.ts autopull on|off`; never turn it on unasked (`reference/greeting.md`). If `prime` prints `Priorities not set for today — orchestrator will ask`, ask the user for today's priorities and record them with `journal.ts priorities set "<p1>" "<p2 | Stream>"`; regenerate the Podium with `journal.ts podium`. With a `status-watch` event (target = the status directory) in the event loop, an `ask <id> answered: ...` line is the user's answer to that ask, written into the page: act on it and `resolve` the ask (`playbooks/event-types/status-watch.md`). At end of day run `journal.ts triage` before `roll` (reference/ledger.md#boxes-and-triage).
 9. **Relay** — report the substance when the completion notification arrives.
 10. **Close** — every reply ends with the status footer, below.
@@ -84,7 +84,7 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 ```
 
 `journal.ts status --footer` prints the Ledger lines, one per active stream when streams are in use,
-then the Session line for the current session (the newest transcript in `projects_dir`; at 85% of
+then the Session line for the current session (the newest transcript in `projects_dir`; at 60% of
 a roll threshold it ends `· roll soon`, at 90% `· roll now`)
 ([reference/ledger.md#the-footer-lines](reference/ledger.md#the-footer-lines)).
 

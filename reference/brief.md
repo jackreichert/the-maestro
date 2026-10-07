@@ -23,7 +23,7 @@ A field you cannot fill means scout again, not dispatch.
 
 Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
-paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. PR text line added 2026-10-07; the user should confirm it. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it.
+paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. PR text line added 2026-10-07; Report line changed to a file plus a headline 2026-10-07; the user should confirm both. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it.
 
 Print it with its slots filled by `node scripts/brief-block.ts`. It exits non-zero, printing
 nothing, if a slot has no value, so never paste a block you wrote by hand.
@@ -42,7 +42,7 @@ Standing rules (hard limits):
 - PHI: counts and ids only. No names, DOBs, addresses, MRNs, or contact details, anywhere.
 - Waits: foreground only. Never run_in_background, background watchers, or Monitor, and never poll an output file in an until/sleep loop (that is how an agent hangs). Run tests in the foreground under a hard timeout (e.g. `timeout 600 npm test`); if one hangs, stop and report which test, do not wait it out. To wait on an outside condition, use one blocking check sized to fit the tool timeout.
 - Tool output: request only the fields you need (Jira `fields=`, `gh ... --json a,b --jq ...`). Never paste raw logs or whole files; grep for counts and markers. Wrap long jobs in a script that prints a summary.
-- Report: at most ~20 lines — outcome, numbers, links, decisions needed, what is left open. Put longer detail in a file (vault note, ticket, or report path) and link it. If tests failed or a step was skipped, say so.
+- Report: write the full report to a file (a vault note or report path the brief names) and hand back only a headline paragraph, under 150 words, plus that file path: outcome, numbers, links, decisions needed, what is left open. If tests failed or a step was skipped, say so in the headline.
 ```
 
 ### Scripts shelf line — appended when `scripts_dir` is set
