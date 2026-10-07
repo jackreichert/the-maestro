@@ -39,7 +39,8 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
+import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, REREVIEW_GATE, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
+import { loadVerdicts, verdictFor, type VerdictRow } from './review-verdict.ts';
 import { searchAllPages } from './lib/gh-search.ts';
 
 /** A review as the snapshot keeps it (the latest one per reviewer). */
@@ -49,18 +50,18 @@ export interface SnapshotThread { id: string; isResolved: boolean; isOutdated: b
 export interface SnapshotPr {
     key: string; repo: string; number: number; title: string; url: string; isDraft: boolean;
     headRefName: string; baseRefName: string; updatedAt: string; reviewDecision: string; mergeable: string;
-    threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
+    headSha?: string; threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
 }
 export interface Snapshot { takenAt?: string; prs: SnapshotPr[] }
 /** A PR in the older snapshot being diffed against: it may predate the reviews and threads fields. */
 export type PrevPr = Omit<SnapshotPr, 'reviews' | 'threads'> & Partial<Pick<SnapshotPr, 'reviews' | 'threads'>>;
 /** A PR as an older snapshot file may hold it: readiness and the sibling re-query tolerate a missing mergeable, threads or threadsComplete. */
-export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'> & Partial<Pick<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'>>;
+export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'> & Partial<Pick<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete' | 'headSha'>>;
 
 /** The fields QUERY selects. gh's JSON is not validated against this; it is only as right as the query. */
 interface SearchNodePr {
     number: number; title: string; isDraft: boolean; url: string; headRefName: string; baseRefName: string; updatedAt: string;
-    reviewDecision: string | null; mergeable: string | null; repository: { nameWithOwner: string };
+    reviewDecision: string | null; mergeable: string | null; headRefOid?: string; repository: { nameWithOwner: string };
     reviewRequests: { nodes: { requestedReviewer?: { login?: string; name?: string } | null }[] };
     latestReviews: { nodes: { author?: { login?: string } | null; state: string; submittedAt: string }[] };
     reviewThreads: { pageInfo?: { hasNextPage?: boolean }; nodes: { id: string; isResolved: boolean; isOutdated: boolean; comments: { nodes: { author?: { login?: string } | null }[] } }[] };
@@ -110,6 +111,7 @@ const QUERY = `query($after: String) {
         updatedAt
         reviewDecision
         mergeable
+        headRefOid
         repository { nameWithOwner }
         reviewRequests(first: 10) {
           nodes { requestedReviewer { ... on User { login } ... on Team { name } ... on Bot { login } } }
@@ -140,6 +142,7 @@ const toSnapshotPr = (n: SearchNodePr): SnapshotPr => ({
     updatedAt: n.updatedAt,
     reviewDecision: n.reviewDecision || 'NONE',
     mergeable: n.mergeable || 'UNKNOWN',
+    headSha: n.headRefOid,
     threadsComplete: !n.reviewThreads.pageInfo?.hasNextPage,
     reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login ?? r.requestedReviewer?.name).filter((x) => x != null),
     reviews: n.latestReviews.nodes.map((r) => ({ author: r.author?.login, state: r.state, submittedAt: r.submittedAt })),
@@ -217,8 +220,10 @@ const RELEASE_BRANCH = 'staging';
  * Why a PR is not ready to merge, from data alone: { ready, reasons }. Ready means not a draft, approved, zero unresolved
  * review threads (and all threads read), GitHub says MERGEABLE, and, in a twin-flow repo, a release-candidate PR has no open
  * integration twin (same repo and head branch, another base). A conflict or open thread never reads as ready.
+ * With the re-review gate on, a PR holding a resolved review-bot thread also needs a SHIP IT from a fresh agent recorded
+ * for its current head commit (`verdicts`, from review-verdict.ts): whoever fixed the threads does not judge the fix.
  */
-export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS): { ready: boolean; reasons: string[] } {
+export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): { ready: boolean; reasons: string[] } {
     const reasons: string[] = [];
     if (pr.isDraft) reasons.push('draft');
     if (pr.reviewDecision !== 'APPROVED') reasons.push(`not approved (${pr.reviewDecision})`);
@@ -227,6 +232,12 @@ export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[
     if (pr.threadsComplete === false) reasons.push('more than 100 review threads, not all read');
     if (pr.mergeable === 'CONFLICTING') reasons.push('merge conflict');
     else if (pr.mergeable !== 'MERGEABLE') reasons.push(`mergeable state ${pr.mergeable || 'unknown'}`);
+    if (REREVIEW_GATE && (pr.threads || []).some((t) => t.isResolved && isBot(t.author))) {
+        const v = verdictFor(verdicts, pr.key, pr.headSha);
+        if (!pr.headSha) reasons.push('bot threads resolved, head commit unknown, so no re-review can match (take a fresh snapshot)');
+        else if (!v) reasons.push(`bot threads resolved, no fresh-agent re-review recorded for ${pr.headSha.slice(0, 7)} (review-verdict.ts record)`);
+        else if (v.verdict !== 'SHIP IT') reasons.push(`bot threads resolved, and the re-review said ${v.verdict} for ${pr.headSha.slice(0, 7)}`);
+    }
     if (twinRepos.includes(pr.repo) && pr.baseRefName === RELEASE_BRANCH) {
         const twin = all.find((o) => o.repo === pr.repo && o.headRefName === pr.headRefName && o.baseRefName !== RELEASE_BRANCH);
         if (twin) reasons.push(`blocked on ${twin.baseRefName} twin #${twin.number}`);
@@ -235,8 +246,8 @@ export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[
 }
 
 /** Lines for the ready bucket, and for every approved PR that is not ready with its reasons (so none vanishes). */
-export function readyLines(snapshot: { prs: StoredPr[] }, twinRepos: string[] = TWIN_FLOW_REPOS): string[] {
-    const rows = snapshot.prs.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos) }));
+export function readyLines(snapshot: { prs: StoredPr[] }, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): string[] {
+    const rows = snapshot.prs.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos, verdicts) }));
     const ready = rows.filter((r) => r.ready);
     const held = rows.filter((r) => !r.ready && r.p.reviewDecision === 'APPROVED');
     return [
@@ -312,7 +323,7 @@ function cmdSnapshot(): void {
         }
     }
 
-    if (has('ready')) readyLines(curr).forEach((l) => console.log(l));
+    if (has('ready')) readyLines(curr, TWIN_FLOW_REPOS, loadVerdicts(vault)).forEach((l) => console.log(l));
 
     if (!has('dry-run')) {
         mkdirSync(dir, { recursive: true });
@@ -337,7 +348,7 @@ function cmdReadyFile(): void {
     const snapshot = JSON.parse(readFileSync(positional[0], 'utf8')) as Snapshot;
     const ageMin = snapshot.takenAt ? Math.round((Date.now() - Date.parse(snapshot.takenAt)) / 6e4) : null;
     console.log(`Snapshot taken ${snapshot.takenAt || 'at an unknown time'}${ageMin !== null && ageMin > 60 ? ` (${ageMin} minutes ago: STALE)` : ''}. Not a merge gate: run \`prs-snapshot.ts --ready\` for a live answer.`);
-    readyLines(snapshot).forEach((l) => console.log(l));
+    readyLines(snapshot, TWIN_FLOW_REPOS, loadVerdicts(arg('vault', LEDGER_ROOT || VAULT_ROOT))).forEach((l) => console.log(l));
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────────

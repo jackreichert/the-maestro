@@ -10,6 +10,7 @@ import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
 import type { StoredPr } from './prs-snapshot.ts';
+import type { VerdictRow } from './review-verdict.ts';
 const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.ts');
 
 const SCRIPT = new URL('./prs-snapshot.ts', import.meta.url).pathname;
@@ -213,6 +214,33 @@ test('readyLines never puts a PR with an open thread or a conflict in the ready 
     assert.match(lines, /o\/r#2 — 1 unresolved review thread\(s\)/);
     assert.match(lines, /o\/r#3 — merge conflict/);
     assert.doesNotMatch(lines, /o\/r#4/, 'an unapproved PR is neither ready nor held');
+});
+
+const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
+const botFixed = (o: Partial<StoredPr> = {}): StoredPr => good({ headSha: HEAD, threads: [{ id: 'b', isResolved: true, isOutdated: false, author: 'copilot-pull-request-reviewer' }], ...o });
+const verdict = (v: 'SHIP IT' | 'NEEDS WORK', over: Partial<VerdictRow> = {}): VerdictRow => ({ pr: 'org/repo#1', head: HEAD, verdict: v, reviewer: 'a', fixer: 'b', at: 't', ...over });
+
+test('a PR with resolved bot threads is held until a fresh agent recorded SHIP IT for its current head', () => {
+    const why = (p: StoredPr, rows?: VerdictRow[]) => readiness(p, [], [], rows).reasons.join('|');
+    assert.match(why(botFixed()), /bot threads resolved, no fresh-agent re-review/);
+    assert.match(why(botFixed(), []), /no fresh-agent re-review/);
+    assert.deepEqual(readiness(botFixed(), [], [], [verdict('SHIP IT')]), { ready: true, reasons: [] });
+    assert.match(why(botFixed(), [verdict('NEEDS WORK')]), /re-review said NEEDS WORK/);
+    assert.match(why(botFixed(), [verdict('SHIP IT', { head: 'f'.repeat(40) })]), /no fresh-agent re-review/, 'a push after the verdict needs a new one');
+    assert.match(why(botFixed({ headSha: undefined }), [verdict('SHIP IT')]), /head commit unknown/);
+});
+
+test('human-resolved threads, and PRs with no resolved bot thread, need no re-review', () => {
+    assert.equal(readiness(good({ headSha: HEAD, threads: [thread('a', true)] })).ready, true);
+    assert.equal(readiness(good({ headSha: HEAD, threads: [{ id: 'b', isResolved: false, isOutdated: false, author: 'copilot-pull-request-reviewer' }] })).ready, false, 'an open bot thread still blocks');
+    assert.equal(readiness(good()).ready, true);
+});
+
+test('readyLines carries the re-review reason into the held list', () => {
+    const lines = readyLines({ prs: [botFixed({ key: 'org/repo#1' })] }, [], []).join('\n');
+    assert.match(lines, /Ready to merge \(0\)/);
+    assert.match(lines, /org\/repo#1 — bot threads resolved/);
+    assert.match(readyLines({ prs: [botFixed({ key: 'org/repo#1' })] }, [], [verdict('SHIP IT')]).join('\n'), /Ready to merge \(1\)/);
 });
 
 test('ready <snapshot> prints the report offline, and a missing argument prints usage', () => {
