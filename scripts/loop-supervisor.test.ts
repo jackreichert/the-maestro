@@ -18,18 +18,19 @@ const NOON = Date.parse('2026-10-01T12:00:00Z');
 /** Runs supervise over scripted results; returns what it slept, saved and logged. */
 async function drive(results: Partial<LoopResult>[]) {
   const slept: number[] = [];
+  const modes: (string | undefined)[] = [];
   const saved: string[] = [];
   const logs: string[] = [];
   let launches = 0;
   await supervise({
     runLoop: async () => ({ code: 0, stdout: '', stderr: '', ...results[launches++] }),
-    sleep: async (s) => { slept.push(s); },
+    sleep: async (s, mode) => { slept.push(s); modes.push(mode); },
     save: (d) => { saved.push(d); },
     log: (l) => { logs.push(l); },
     now: () => NOON,
     maxRuns: results.length,
   });
-  return { slept, saved, logs, launches };
+  return { slept, modes, saved, logs, launches };
 }
 
 test('exit 10 saves the digest and relaunches without sleeping', async () => {
@@ -138,4 +139,26 @@ test('SIGTERM to the supervisor is forwarded to the loop and the supervisor exit
   p.kill('SIGTERM');
   assert.equal(await closed, 0);
   assert.match(readFileSync(marker, 'utf8'), /term/);
+});
+
+test('a quiet-hours stop sleeps in quiet mode, a crash or refusal in backoff mode, and a clean exit in idle mode', async () => {
+  const r = await drive([{ code: 3, stdout: 'QUIET-HOURS stop until 07:00 UTC' }, { code: 0 }, { code: 2, stderr: 'another event loop is running' }]);
+  assert.deepEqual(r.modes, ['quiet', undefined, 'backoff']);
+});
+
+test('the real supervisor heartbeats while it waits, as itself, in idle mode', async () => {
+  const ledger = tempDir();
+  const bin = join(tempDir(), 'exit0.sh');
+  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  chmodSync(bin, 0o755);
+  const p = spawn(process.execPath, [SUPERVISOR], { env: envFor(ledger, { MAESTRO_LOOP_BIN: bin }) });
+  const closed = new Promise<number | null>((resolve) => p.on('close', resolve));
+  const file = join(ledger, 'Events', 'heartbeat.json');
+  for (let i = 0; i < 100 && !existsSync(file); i += 1) await new Promise((r) => setTimeout(r, 50));
+  p.kill('SIGTERM');
+  await closed;
+  const beat = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(beat.pid, p.pid);
+  assert.equal(beat.mode, 'idle');
+  assert.ok(Date.parse(beat.sleepingUntil) > Date.parse(beat.at));
 });

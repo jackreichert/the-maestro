@@ -1,5 +1,6 @@
 import { BASE_CSS, h, shadow } from './dom.ts';
 import { renderMarkdown } from './markdown.ts';
+import type { RenderOptions } from './markdown.ts';
 
 const CSS = `${BASE_CSS}
   :host { font-size: var(--text-md); line-height: var(--leading-md); color: var(--text-primary); }
@@ -16,22 +17,26 @@ const CSS = `${BASE_CSS}
   li { margin: var(--space-1) 0; }
 `;
 
-/** <md-fragment>: shows Markdown for a section not yet converted to JSON. Set `.markdown`. */
+/** <md-fragment>: shows Markdown for a section not yet converted to JSON, or free text written by hand (set `.options` first). Set `.markdown`. */
 export class MdFragment extends HTMLElement {
   #root: ShadowRoot;
   #md = '';
+  #options: RenderOptions = {};
 
   constructor() {
     super();
     this.#root = shadow(this, CSS);
   }
 
+  /** How the text is read: `autolink` for bare URLs and `breaks` for the writer's line breaks. Takes effect on the next `.markdown`. */
+  set options(o: RenderOptions) { this.#options = o; }
+
   get markdown(): string { return this.#md; }
   set markdown(md: string) {
     this.#md = md;
     // renderMarkdown escapes all input and emits only its own tags (see markdown.test.ts); this is the one innerHTML.
     const body = h('div');
-    body.innerHTML = renderMarkdown(md);
+    body.innerHTML = renderMarkdown(md, this.#options);
     this.#root.replaceChildren(body);
   }
 }
