@@ -109,3 +109,26 @@ test('pr-guide-links backfills an open PR, is a no-op when nothing is left, and 
     assert.match(bad.stderr, /nope\.ts/);
     assert.equal(spawnSync(process.execPath, [LINKS], { encoding: 'utf8' }).status, 2);
 });
+
+test('paths with spaces or non-ASCII letters link, and an unreadable token refuses before creating', () => {
+    const r = expandTokens('See {{file:src/my file.ts}} and {{file:src/café.ts#R3}}.', PR, ['src/my file.ts', 'src/café.ts']);
+    assert.equal(r.expanded, 2);
+    assert.deepEqual(r.unknown, []);
+    const f = fixture();
+    mkdirSync(join(f.repo, 'src'), { recursive: true });
+    writeFileSync(join(f.repo, 'src/café.ts'), 'export const c = 1;\n');
+    git(f.repo, 'add', 'src/café.ts'); git(f.repo, 'commit', '-q', '-m', 'accent');
+    writeFileSync(f.view, JSON.stringify({ url: PR, body: '', files: [{ path: 'src/café.ts' }] }));
+    assert.equal(create(f, BODY('Start at {{file:src/café.ts}}.')).status, 0, 'a quoted-by-git path still matches');
+    const broken = create(fixture(), BODY('Start at {{file:src/widgets/alpha.ts'));
+    assert.equal(broken.status, 1);
+    assert.match(broken.stderr, /could not be read/);
+});
+
+test('a PR that opens but cannot expand its links exits 3, not the refusal code', () => {
+    const f = fixture();
+    writeFileSync(f.view, 'not json');
+    const r = create(f, BODY('Start at {{file:src/widgets/alpha.ts}}.'));
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /PR is open, but its file links were not expanded/);
+});

@@ -14,7 +14,10 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const TOKEN = /\{\{file:([^#}\s]+)(?:#([RL])(\d+))?\}\}/g;
+const TOKEN = /\{\{file:([^#}]+?)(?:#([RL])(\d+))?\}\}/g;
+
+/** Any `{{file:` left in a body: after expansion it means a token that could not be read, which must not slip through. */
+export const hasLooseToken = (body: string): boolean => /\{\{file:/.test(body);
 
 /** The anchor id GitHub gives a file's diff on the Files changed tab. */
 export const diffAnchor = (path: string): string => `diff-${createHash('sha256').update(path).digest('hex')}`;
@@ -48,7 +51,8 @@ const gh = (): string => process.env.MAESTRO_GH_BIN || 'gh';
 export function linkPr(repo: string, pr: number, body?: string): string {
   const view = spawnSync(gh(), ['pr', 'view', String(pr), '--json', 'url,body,files'], { cwd: repo, encoding: 'utf8' });
   if (view.status !== 0) return `gh pr view ${pr} failed: ${view.stderr.trim()}`;
-  const info = JSON.parse(view.stdout) as { url: string; body: string; files: { path: string }[] };
+  let info: { url: string; body: string; files: { path: string }[] };
+  try { info = JSON.parse(view.stdout); } catch { return `gh pr view ${pr} returned something that is not JSON`; }
   const result = expandTokens(body ?? info.body, info.url, info.files.map((f) => f.path));
   if (result.unknown.length) return `these {{file:...}} paths are not in the PR's diff, so nothing was linked: ${result.unknown.join(', ')}`;
   if (!result.expanded) return '';

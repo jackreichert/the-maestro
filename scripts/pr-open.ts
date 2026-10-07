@@ -14,7 +14,8 @@
  * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
  * never calls gh. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
  * be turned off; no other gh flag passes through. --dry-run prints the gh command instead of running it.
- * Exit 0 opened (or dry run), 1 refused by the gate, 2 bad usage or a git/gh error.
+ * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
+ * opened but its file links could not be expanded (run pr-guide-links.ts).
  * The gh binary is `gh`, or the path in MAESTRO_GH_BIN (tests use a fake).
  */
 import { spawnSync } from 'node:child_process';
@@ -24,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
 import { PROTECTED_BRANCHES } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
-import { linkPr, tokenPaths } from './pr-links.ts';
+import { linkPr, tokenPaths, hasLooseToken } from './pr-links.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -100,21 +101,26 @@ function main(): void {
   const gh = process.env.MAESTRO_GH_BIN || 'gh';
   const args = ghArgs(o);
   if (o.dryRun) { console.log(`${gh} ${args.join(' ')}`); return; }
+  if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit' }).status ?? 2);
   const r = spawnSync(gh, args, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8' });
   process.stdout.write(r.stdout || '');
   if (r.status !== 0) process.exit(r.status ?? 2);
   const pr = /\/pull\/(\d+)/.exec(r.stdout || '')?.[1];
-  const err = pr && /\{\{file:/.test(body) ? linkPr(o.repo, Number(pr), body) : '';
-  if (err) { console.error(`pr-open: the PR is open, but its file links were not expanded: ${err}. Fix and run pr-guide-links.ts ${o.repo} ${pr}.`); process.exit(1); }
+  const err = pr ? linkPr(o.repo, Number(pr), body) : 'gh did not print the PR url';
+  if (err) { console.error(`pr-open: the PR is open, but its file links were not expanded: ${err}. Fix and run pr-guide-links.ts ${o.repo} ${pr ?? '<pr-number>'}.`); process.exit(3); }
 }
 
 /** Refuses before creating anything when a `{{file:...}}` token names a path that is not in the diff. */
 function checkLinkPaths(o: OpenArgs, body: string): void {
   const wanted = [...new Set(tokenPaths(body))];
+  if ((body.match(/\{\{file:/g) ?? []).length !== tokenPaths(body).length) {
+    console.error('pr-open: refused, a {{file:...}} token could not be read. A token is {{file:path}} or {{file:path#R42}} with the closing braces.');
+    process.exit(1);
+  }
   if (!wanted.length) return;
   const head = headOf(o) || 'HEAD';
-  const r = spawnSync('git', ['-C', o.repo, 'diff', '--name-only', '-M', `${resolveBase(o.repo, o.base)}...${head}`], { encoding: 'utf8' });
-  const changed = new Set((r.stdout || '').split('\n').filter(Boolean));
+  const r = spawnSync('git', ['-C', o.repo, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '-M', `${resolveBase(o.repo, o.base)}...${head}`], { encoding: 'utf8' });
+  const changed = new Set((r.stdout || '').split('\0').filter(Boolean));
   const missing = wanted.filter((p) => !changed.has(p));
   if (r.status !== 0 || missing.length) {
     console.error(r.status !== 0 ? `pr-open: cannot list the diff to check the {{file:...}} tokens: ${r.stderr.trim()}` : `pr-open: refused, these {{file:...}} paths are not in the diff: ${missing.join(', ')}. Link only files this PR changes (see reference/git.md#reviewer-guide-links).`);
