@@ -250,7 +250,7 @@ export class PodiumApp extends HTMLElement {
     // Live and fresh: "Live · updated 2:05 pm", with "updated" dropped on a phone so the pill shares the brand's line.
     const body: (Node | string)[] = text !== null ? [text] : updated ? ['Live · ', h('span', { class: 'short-hide' }, 'updated '), updated] : ['Live'];
     return h('p', { class: `fresh${live ? (stale ? ' stale' : ' live') : ''}` },
-      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, ...body);
+      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, h('span', {}, ...body));
   }
 
   #updateFreshness(): void {
