@@ -53,6 +53,7 @@ pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid 
 pr_body_check_stack: on         # stacked PR needs a Stack section naming its base PR; also pr_body_check_order (Review order line over pr_review_order_min_files code files, default 3); on by default
 pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off
 review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
+rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
 stack_max_depth: 3           # most PRs in one stack; the PR board flags a deeper stack; default 3
 stack_max_age_days: 5         # most days since a stack's oldest PR was opened; the PR board flags an older stack; default 5
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults

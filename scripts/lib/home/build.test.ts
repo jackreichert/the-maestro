@@ -20,7 +20,7 @@ const vault = loadTickets(READER, fx.root);
 
 function input(over: Partial<HomeInput> & { config?: object; ledger?: LedgerFact[] } = {}): HomeInput {
   const { config, ...rest } = over;
-  return { stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: config ?? { Avonlea: { epics: ['avonlea-api-042'] } } }, STREAMS), ledger: [], prs: [], prData: { fetchedAt: new Date('2026-10-07T11:55:00Z') }, page: PAGE, readDocs: (p) => loadDocs(READER, p), ...rest };
+  return { stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: config ?? { Avonlea: { epics: ['avonlea-api-042'] } } }, STREAMS), ledger: [], prs: [], prData: { fetchedAt: new Date('2026-10-07T11:55:00Z') }, page: PAGE, readDocs: (p) => loadDocs(READER, p), readBrief: () => ({ ok: false, reason: 'missing' }), ...rest };
 }
 
 test('an epic reports honest counts with their units, and the numbers add up to its total', () => {
