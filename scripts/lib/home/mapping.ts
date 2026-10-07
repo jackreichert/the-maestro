@@ -20,14 +20,14 @@ export interface Mapping { claims: Map<string, Claim>; ambiguous: Map<string, Am
 
 export const slugOf = (stream: string): string => stream.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-/** The ids of `id` and everything below it. */
-export function subtree(forest: Forest, id: string): string[] {
+/** The ids of `id` and everything below it, not descending into any id in `stop` (those are other units' trees). */
+export function subtree(forest: Forest, id: string, stop: ReadonlySet<string> = new Set()): string[] {
   const out: string[] = [];
   const stack = [id];
   while (stack.length) {
     const cur = stack.pop() as string;
     out.push(cur);
-    for (const c of forest.children(cur)) stack.push(c.id);
+    for (const c of forest.children(cur)) if (!stop.has(c.id)) stack.push(c.id);
   }
   return out;
 }

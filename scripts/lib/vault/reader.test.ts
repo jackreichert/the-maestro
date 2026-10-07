@@ -2,6 +2,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { createReader, cleanPath } from './reader.ts';
 import { isSecretName, hasSecretSegment } from './secret-names.ts';
@@ -87,4 +88,17 @@ test('a denied name is never lstat-ed, listed or opened, and the vault is byte-i
   assert.deepEqual(bad, []);
   assert.ok(touched.length > 0);
   assert.equal(snapshot(fx.root), before);
+});
+
+test('a named pipe called like a note is refused without blocking, in a read and in a listing', () => {
+  const fx = buildFixture();
+  const fifo = `${fx.root}/Projects/avonlea-api/Tickets/pipe.md`;
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  const r = make(fx.root);
+  const started = Date.now();
+  const x = r.read(`${A}/Tickets/pipe.md`, 1000);
+  assert.deepEqual(x, { ok: false, reason: 'not-file' });
+  assert.ok(Date.now() - started < 2000);
+  const ls = r.list(`${A}/Tickets`);
+  assert.ok(ls.ok && !ls.files.includes('pipe.md'), 'a listing leaves out anything that is not a regular file');
 });

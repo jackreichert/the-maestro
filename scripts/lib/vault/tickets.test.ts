@@ -55,3 +55,11 @@ test('a second load of an unchanged vault serves parsed notes from the cache, an
   fx.write('Projects/avonlea-api/Tickets/avonlea-api-060.md', '---\nid: "avonlea-api-060"\ntitle: "A loose fix"\nstatus: "closed"\n---\nlonger body now\n');
   assert.equal(load(fx.root).tickets.find((t) => t.id === 'avonlea-api-060')?.status, 'closed');
 });
+
+test('a note with a long run of blank lines under the estimate heading is parsed in linear time', () => {
+  const body = `## Estimate\n${'\n'.repeat(200_000)}no number here\n`;
+  const t0 = Date.now();
+  assert.equal(pointsOf(body), 0);
+  assert.ok(Date.now() - t0 < 1000, 'the points pattern has no overlapping quantifiers');
+  assert.equal(pointsOf('## Estimate\n\n \n  3 story points\n'), 3);
+});

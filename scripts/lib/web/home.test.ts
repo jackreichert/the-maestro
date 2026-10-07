@@ -50,6 +50,8 @@ test('GET /api/streams/:name/home returns the epic, what is left and the unknown
   assert.deepEqual([e.total, e.closed, e.inProgress, e.blocked, e.notStarted, e.awaiting], [10, 4, 1, 2, 3, 1], 'the ask is linked through ticket-map.json');
   assert.ok(h.unknowns.some((u: { kind: string; text: string }) => u.kind === 'config-invalid' && /docs\[0\]/.test(u.text)));
   assert.ok(h.unknowns.some((u: { kind: string; text: string }) => u.kind === 'config-invalid' && /pins\[0\]/.test(u.text)));
+  assert.deepEqual(h.links.map((g: { group: string }) => g.group), ['pinned', 'epics', 'docs', 'runbooks']);
+  assert.ok(h.links.flatMap((g: { items: { url: string }[] }) => g.items).every((l: { url: string }) => !l.url.startsWith('javascript:')));
   assertNoCanary(r.body);
   assert.ok(!r.body.includes(fx.root) && !r.body.includes(fx.outside) && !r.body.includes(ledgerRoot), 'no absolute path in the response');
   assert.deepEqual(roots.map(snapshot), before, 'vault, ledger and status dir are byte-identical');
