@@ -141,7 +141,18 @@ const CSS = `${BOARD_CSS}
   @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
   .sk-head { padding-block: var(--space-5) var(--space-7); }
   .sk-line { height: 12px; }
-  .sk-cue { height: 28px; width: min(560px, 90%); margin-top: var(--space-5); }
+  /* Five hairlines 6 px apart (the cue line's height) and a note head that glides along the middle space. */
+  .staff { position: relative; display: block; height: 25px; width: min(560px, 90%); margin-top: var(--space-5); }
+  .staff-line { position: absolute; left: 0; right: 0; height: 1px; background: var(--border-strong); opacity: 0.45; }
+  .staff-line:nth-child(2) { top: 6px; }
+  .staff-line:nth-child(3) { top: 12px; }
+  .staff-line:nth-child(4) { top: 18px; }
+  .staff-line:nth-child(5) { top: 24px; }
+  .glide { position: absolute; inset: 0; animation: glide 1.6s var(--ease-in-out) infinite alternate; }
+  .note { position: absolute; left: 0; top: 12.5px; width: 9px; height: 6px; border-radius: 50%; background: var(--text-muted); transform: rotate(-20deg); }
+  @keyframes glide { to { transform: translateX(calc(100% - 9px)); } }
+  @media (prefers-reduced-motion: reduce) { .glide { animation: none; } }
+  @media (forced-colors: active) { .staff-line, .note { forced-color-adjust: none; background: CanvasText; } }
   .sk-card { height: 148px; border-radius: var(--radius-md); }
   .sk-stack { display: grid; gap: var(--space-4); }
 
@@ -457,10 +468,17 @@ function skeleton(): HTMLElement {
   setTimeout(() => { said.textContent = 'Loading the board'; }, 50);
   return h('div', { class: 'wrap', role: 'status' },
     said,
-    h('div', { class: 'sk-head' }, line('160px'), h('span', { class: 'sk sk-cue', 'aria-hidden': 'true' })),
+    h('div', { class: 'sk-head' }, line('160px'), staff()),
     h('div', { class: 'board', 'aria-hidden': 'true' },
       h('div', { class: 'sk-stack' }, line('120px'), h('span', { class: 'sk sk-card' }), h('span', { class: 'sk sk-card' })),
       h('div', { class: 'sk-stack' }, line('140px'), line('100%'), line('85%'), line('92%'))));
+}
+
+/** The cue line's placeholder: a five-line staff with one note head gliding along it while the board loads. */
+function staff(): HTMLElement {
+  return h('span', { class: 'staff', 'aria-hidden': 'true' },
+    ...[0, 1, 2, 3, 4].map(() => h('span', { class: 'staff-line' })),
+    h('span', { class: 'glide' }, h('span', { class: 'note' })));
 }
 
 /** The error state: what failed, what to do, the detail, and a way to retry. */
