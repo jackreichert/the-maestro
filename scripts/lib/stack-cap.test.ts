@@ -57,3 +57,8 @@ test('stackLines names the over-cap stack and the PR to merge first, or says non
     assert.match(lines[1], /org\/a: 4 deep, 9 days old: #1 <- #2 <- #3 <- #4\. Stop adding to the top; drive org\/a#1 to merge: https:\/\/github\.com\/org\/a\/pull\/1/);
     assert.deepEqual(stackLines([pr(1, 'f1', 'develop')], NOW, LIMITS), ['Stacks over the cap (3 deep, 5 days): none']);
 });
+
+test('stackLines says when ages could not be checked', () => {
+    const old = [pr(1, 'f1', 'develop'), pr(2, 'f2', 'f1')].map((p) => ({ ...p, createdAt: undefined }));
+    assert.match(stackLines(old, NOW, LIMITS)[0], /none \(age unknown for some stacks/);
+});

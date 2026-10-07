@@ -294,12 +294,12 @@ function printDiff({ changes, botEvents }: SnapshotDiff): void {
     }
 }
 
-/** Where the snapshot lives under a ledger root. */
 /** Lines naming every stack over the depth or age cap (lib/stack-cap.ts), for the PR board. */
 export function stackReport(snapshot: { prs: StoredPr[] }, now: Date = new Date()): string[] {
     return stackLines(snapshot.prs, now, { maxDepth: STACK_MAX_DEPTH, maxAgeDays: STACK_MAX_AGE_DAYS });
 }
 
+/** Where the snapshot lives under a ledger root. */
 export const snapshotPath = (root: string): string => join(root, 'Projects', CONTAINER_PROJECT, 'Journal', 'prs-snapshot.json');
 
 function cmdSnapshot(): void {

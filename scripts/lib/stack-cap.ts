@@ -45,10 +45,12 @@ export function findStacks(prs: StackPr[], now: Date, limits: StackLimits): Stac
 
 /** Lines for the PR board: one per stack over a limit, saying what to do; a single "none" line when all are within it. */
 export function stackLines(prs: StackPr[], now: Date, limits: StackLimits): string[] {
-    const over = findStacks(prs, now, limits).filter((s) => s.overDepth || s.overAge);
-    if (!over.length) return [`Stacks over the cap (${limits.maxDepth} deep, ${limits.maxAgeDays} days): none`];
+    const all = findStacks(prs, now, limits);
+    const over = all.filter((s) => s.overDepth || s.overAge);
+    const unknown = all.some((s) => s.ageDays === null) ? ' (age unknown for some stacks: snapshot has no creation times)' : '';
+    if (!over.length) return [`Stacks over the cap (${limits.maxDepth} deep, ${limits.maxAgeDays} days): none${unknown}`];
     return [
-        `Stacks over the cap (${limits.maxDepth} deep, ${limits.maxAgeDays} days): ${over.length}`,
+        `Stacks over the cap (${limits.maxDepth} deep, ${limits.maxAgeDays} days): ${over.length}${unknown}`,
         ...over.map((s) => {
             const why = [s.overDepth ? `${s.depth} deep` : '', s.overAge ? `${Math.floor(s.ageDays ?? 0)} days old` : ''].filter(Boolean).join(', ');
             return `  ${s.repo}: ${why}: ${s.chain.map((p) => `#${p.number}`).join(' <- ')}. Stop adding to the top; drive ${s.chain[0].key} to merge: ${s.chain[0].url}`;
