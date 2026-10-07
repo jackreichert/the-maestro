@@ -14,6 +14,14 @@ test('stale lists only in-flight items past the cutoff, oldest first; fresh ones
     assert.deepEqual(r.stale.map((a) => a.id), ['old', 'mid']);
 });
 
+test('queued items are not stale, and a promoted item ages from its promotion', () => {
+    const r = retro([
+        row('q', '2026-09-01T00:00:00Z', 'wip', { queued: true }),
+        row('p', '2026-09-01T00:00:00Z', 'wip', { queued: true }), row('pr', '2026-10-08T00:00:00Z', 'promote', { promotes: 'p' }),
+    ]);
+    assert.deepEqual(r.stale, []);
+});
+
 test('blocked, dropped and done this week are counted apart', () => {
     const r = retro([
         row('b', '2026-10-05T00:00:00Z', 'blocked'),

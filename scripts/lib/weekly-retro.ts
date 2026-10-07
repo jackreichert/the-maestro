@@ -8,7 +8,7 @@
  * The experiment is a plain note: `journal.ts note "Retro experiment: <what we try this week>"`. The next draft shows
  * the latest one and whether a later `Retro verdict: keep|drop <why>` note settled it.
  */
-import { isOpen } from './ledger-core.ts';
+import { isInFlight, isOpen } from './ledger-core.ts';
 import type { LedgerItem, LedgerRow } from './ledger-core.ts';
 
 export const EXPERIMENT = /^\s*retro experiment:\s*(.+)$/i;
@@ -21,8 +21,9 @@ export interface Retro { from: string; to: string; days: number; done: number; s
 const DAY = 86_400_000;
 const ms = (ts: unknown): number => (typeof ts === 'string' ? Date.parse(ts) : NaN);
 
-const aged = (i: LedgerRow, now: number): Aged[] => {
-    const age = (now - ms(i.ts)) / DAY;
+const aged = (i: LedgerItem, now: number): Aged[] => {
+    const started = i.queued !== true && i.stateTs ? i.stateTs : i.ts;
+    const age = (now - ms(started)) / DAY;
     return Number.isFinite(age) ? [{ id: String(i.id), stream: i.stream, text: String(i.text ?? ''), ageDays: Math.round(Math.max(0, age) * 10) / 10 }] : [];
 };
 
@@ -48,7 +49,7 @@ export function weeklyRetro(entries: LedgerRow[], items: LedgerItem[], now: Date
     return {
         from: new Date(begin).toISOString().slice(0, 10), to: now.toISOString().slice(0, 10), days,
         done: items.filter((i) => i.kind === 'wip' && i.state === 'done' && within(i.closedBy?.ts)).length,
-        stale: open.filter((i) => i.kind === 'wip').flatMap((i) => aged(i, end)).filter((a) => a.ageDays >= staleDays).sort((a, b) => b.ageDays - a.ageDays),
+        stale: open.filter((i) => isInFlight(i)).flatMap((i) => aged(i, end)).filter((a) => a.ageDays >= staleDays).sort((a, b) => b.ageDays - a.ageDays),
         blocked: open.filter((i) => i.kind === 'blocked').flatMap((i) => aged(i, end)).sort((a, b) => b.ageDays - a.ageDays),
         dropped: items.filter((i) => i.closedBy && i.state === 'dropped' && within(i.closedBy.ts)).flatMap((i) => aged(i, end)),
         experiment: lastExperiment(entries),

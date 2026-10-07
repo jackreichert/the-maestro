@@ -33,7 +33,8 @@ export function main(argv: string[]): number {
     }
     const store = openStore({ vault, project, dryRun: true });
     const entries = store.readLedger();
-    const retro = weeklyRetro(entries, fold(entries, store.loadRegistry()).items, now, days, staleDays);
+    const { items, hidden } = fold(entries, store.loadRegistry());
+    const retro = weeklyRetro(entries, items.filter((i) => !hidden.has(String(i.id))), now, days, staleDays);
     console.log(has('json') ? JSON.stringify(retro, null, 2) : renderRetro(retro));
     return 0;
 }
