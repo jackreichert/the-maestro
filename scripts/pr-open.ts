@@ -11,6 +11,9 @@
  * File tokens: `{{file:<path>}}` in the body become links to that file in the PR's Files changed tab once the PR
  * exists (pr-links.ts); a path outside the diff refuses before anything is created.
  *
+ * In a repo listed in pr_smells_repos it also refuses unless a smells run is recorded for the head commit
+ * (pr-smells.ts record) and the body carries its `Smells:` line; docs-only diffs are exempt.
+ *
  * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
  * never calls gh. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
  * be turned off; no other gh flag passes through. --dry-run prints the gh command instead of running it.
@@ -26,6 +29,7 @@ import { bodyProblems, type BodyContext } from './pr-body.ts';
 import { PROTECTED_BRANCHES } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
+import { smellsProblems } from './pr-smells.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -68,13 +72,19 @@ function checkBody(o: OpenArgs): string {
   const path = resolve(o.pass[i + 1]);
   let body: string;
   try { body = readFileSync(path, 'utf8'); } catch (e) { console.error(`pr-open: cannot read --body-file ${path}: ${(e as Error).message}`); process.exit(2); }
-  const problems = bodyProblems(body, undefined, diffContext(o));
+  const ctx = diffContext(o);
+  const problems = [...bodyProblems(body, undefined, ctx), ...smellsGate(o, body, ctx)];
   if (problems.length) {
     console.error(`pr-open: refused, the PR body ${problems.join('; ')}. Fix the body (see reference/git.md#pr-body); the rules are configurable in local-config.`);
     process.exit(1);
   }
   o.pass[i + 1] = path;
   return body;
+}
+
+/** The smells gate (reference/git.md#smells-gate); a git failure reading the head refuses rather than passing silently. */
+function smellsGate(o: OpenArgs, body: string, ctx: BodyContext): string[] {
+  try { return smellsProblems(o.repo, headOf(o), body, ctx.codeFiles); } catch (e) { return [(e as Error).message]; }
 }
 
 /** What the diff says about the PR: whether it targets a non-default branch (stacked) and how many code files it changes. */
