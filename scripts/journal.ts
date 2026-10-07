@@ -35,7 +35,7 @@
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
  *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
  *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
- *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise
+ *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop:` line (same verdict as the footer), then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise
  *   journal.ts standing list|check|add <id>|done <id>|retire <id>   duties to pick up without a reminder, read from data and checked at runtime; `prime` prints the ones needing attention, `handoff` the whole list.
  *                                             add: --trigger --action --who and (--check <name> | --every-hours N). done: runs the row's check and refuses if it fails; a row with no check needs --evidence. check exits 1 when any row needs attention
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
@@ -45,7 +45,7 @@
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
  *   journal.ts usage [--open]                counts of model and used marks across items
  *   journal.ts status [--full]               what is open + done today, with usage marks
- *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the Session line
+ *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the review queue, the `Loop:` line (running, quiet, STALLED, DOWN or NOT INSTALLED, with age; silent when no loop is set up or required) and the Session line
  * (with the Podium configured, --footer ends with `**Podium:** <uri>`)
  *   journal.ts review-queue [--cap N] [--json]   the dispatch gate: open non-draft PRs awaiting review against review_queue_cap (default 4). Exit 0 room, 1 full, 2 cannot answer or bad --cap (treat as full)
  *   journal.ts standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
@@ -120,6 +120,7 @@ import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, EVENT_DIR } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
+import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
@@ -142,6 +143,8 @@ import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/ba
 import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
+import type { EnvAsk } from './branch-sweep.ts';
+import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue } from './lib/review-queue.ts';
 import { fetchLive, snapshotPath } from './prs-snapshot.ts';
@@ -624,7 +627,7 @@ function cmdStatus() {
     }
 
     const queueFooter = boardReviewQueue()?.footer;
-    if (has('footer')) { [...footerLines(g, done), ...(queueFooter ? [queueFooter] : []), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
+    if (has('footer')) { [...footerLines(g, done), ...(queueFooter ? [queueFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
 
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
@@ -713,7 +716,24 @@ function sweepRootRefusal(root: string, from: string): string | null {
  */
 function sweepWorktreesForRoll() {
     const result = runWorktreeSweep(dryRun);
-    if (result) console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
+    if (!result) return;
+    console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
+    raiseEnvAsks(result.envAsks);
+}
+
+/** One question per worktree the sweep would remove but for real env files in it (names only), unless the same question is already open. */
+function raiseEnvAsks(asks: EnvAsk[]): void {
+    const entries = readLedger();
+    const open = fold(entries).items.filter((i) => i.kind === 'question' && isOpen(i)).map((i) => i.text ?? '');
+    for (const { ask, text } of envAsksToRaise(asks, open)) {
+        append({
+            id: newId(readLedger()), ts: now(), date: today(), kind: 'question', text, repo: ask.repo, refs: [],
+            recommend: 'Move them now; the next roll then removes the worktree and the files stay in the env store.', door: 'two-way',
+            model: 'unrecorded', used: ['skill:the-maestro', 'tool:branch-sweep'],
+        });
+        if (!dryRun) render(true);
+        console.log(`asked  ${ask.worktree}: move ${ask.files.join(', ')} into the env store`);
+    }
 }
 
 /**
@@ -1431,9 +1451,12 @@ function prioritiesNotice(): string[] {
 /** The supervisor line when one is set up and not running (read from its liveness record and the installed plist); silent otherwise. */
 const supervisorNotice = (): string[] => [supervisorStatus(EVENT_DIR).line].filter(Boolean);
 
+/** The `Loop:` line (heartbeat verdict) without its footer markup; empty when nothing is set up and nothing is required. */
+const loopNotice = (): string[] => [liveLoopHealth().line.replace(/\*\*/g, '')].filter(Boolean);
+
 function cmdPrime() {
     refreshBoard();
-    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
 }
 
 // ── status page ─────────────────────────────────────────────────────────────
@@ -1481,6 +1504,7 @@ function standingContext(): CheckContext {
     return {
         now: at,
         loopPid: () => lockHolder(EVENT_DIR),
+        health: () => liveLoopHealth(at),
         watches: () => { const live = listWatches(EVENT_DIR); return { live: live.length, expired: live.filter((w) => Date.parse(w.expires) <= at).map((w) => w.id) }; },
         queue: () => { const g = groups(); return { inflight: g.inflight.length, queued: g.queued.length }; },
         pendingTransitions: () => pendingTransitions(defaultPendingSince()).map((r) => r.key),

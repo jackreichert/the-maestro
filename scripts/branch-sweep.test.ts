@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,7 +10,7 @@ import { join } from 'node:path';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
 import type { CmdResult, ExcludedItem, Git, GhJson, ListedItem, PrInfo, SweepContext } from './branch-sweep.ts';
-const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts } = await import('./branch-sweep.ts');
+const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts, isEnvFile } = await import('./branch-sweep.ts');
 
 const ME = 'me@example.com';
 type World = ReturnType<typeof world>;
@@ -217,6 +217,145 @@ test('a worktree with ignored files that are not disposable is kept, with the re
     assert.deepEqual(names(r, 'worktree'), []);
     assert.match(r.excluded[0].reason, /2 ignored files kept \(.*secret\.key.*\): not disposable/);
     assert.equal(names(scanRepo(w.repo, ctxFor({ disposableIgnored: ['secret.key', 'local.db', 'node_modules', '__pycache__'] })), 'worktree').length, 1);
+});
+
+test('a worktree holding an ignored environment file is kept and listed, even when the settings call its path disposable', () => {
+    const w = world();
+    sh(w.repo, 'checkout', '-q', '-b', 'feat/envf', 'main');
+    writeFileSync(join(w.repo, '.gitignore'), '.env*\nssm-*.json\nnode_modules/\n'); sh(w.repo, 'add', '.gitignore');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'ignore'); sh(w.repo, 'push', '-q', '-u', 'origin', 'feat/envf'); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', 'feat/envf');
+    const wt = join(w.root, 'envf'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/envf');
+    assert.equal(names(scanRepo(w.repo, ctxFor()), 'worktree').length, 1, 'clean: it qualifies');
+    writeFileSync(join(wt, '.env.local'), 'KEY=placeholder\n');
+    for (const disposableIgnored of [undefined, ['.env.local', '.env', 'node_modules']]) {
+        const r = scanRepo(w.repo, ctxFor(disposableIgnored ? { disposableIgnored } : {}));
+        assert.deepEqual(names(r, 'worktree'), []);
+        assert.match(r.excluded[0].reason, /1 environment files \(\.env\.local\): may be the only copy/);
+    }
+    rmSync(join(wt, '.env.local'));
+    writeFileSync(join(wt, 'ssm-fake.json'), '{}\n');
+    assert.match(scanRepo(w.repo, ctxFor()).excluded[0].reason, /environment files \(ssm-fake\.json\)/);
+});
+
+test('isEnvFile names env and secrets-export files, not templates or lookalikes', () => {
+    for (const p of ['.env', '.env.local', '.env.production', 'app/.env', 'ssm-prod.json']) assert.equal(isEnvFile(p), true, p);
+    for (const p of ['.env.example', '.env.sample', '.env.template', 'environment.ts', 'env', '.envrc', 'ssm.json', 'notes/ssm-x.txt', '']) assert.equal(isEnvFile(p), false, p);
+});
+
+test('removeWorktree refuses a worktree holding an environment file, even when the caller passes it as disposable', () => {
+    const w = world();
+    writeFileSync(join(w.repo, '.gitignore'), '.env\n'); sh(w.repo, 'add', '.gitignore');
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'ignore'); sh(w.repo, 'push', '-q', 'origin', 'main');
+    const wt = join(w.root, 'envrm'); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/main');
+    const [item] = scanRepo(w.repo, ctxFor({ gh: () => [] })).items.filter((i) => i.name === wt);
+    writeFileSync(join(wt, '.env'), 'KEY=placeholder\n');
+    assert.match(removeWorktree(w.repo, item, item.id, ['.env']).message, /holds an environment file/);
+    assert.equal(existsSync(join(wt, '.env')), true);
+});
+
+/** A merged feature branch whose worktree ignores env files, with an env store beside it: { w, wt, store }. All file contents are obviously fake. */
+function envWorld(branch = 'feat/envs', ignore = true) {
+    const w = world();
+    sh(w.repo, 'checkout', '-q', '-b', branch, 'main');
+    const file = ignore ? '.gitignore' : 'other.txt'; // without a .gitignore the env files show up as untracked
+    writeFileSync(join(w.repo, file), '.env*\nssm-*.json\n'); sh(w.repo, 'add', file);
+    sh(w.repo, '-c', `user.email=${ME}`, '-c', 'user.name=T', 'commit', '-q', '-m', 'ignore'); sh(w.repo, 'push', '-q', '-u', 'origin', branch); sh(w.repo, 'checkout', '-q', 'main');
+    mergeInto(w, 'develop', branch);
+    const wt = join(w.root, 'envwt'); sh(w.repo, 'worktree', 'add', '-q', wt, branch);
+    const store = join(w.root, 'store'); mkdirSync(join(store, w.name, 'alpha'), { recursive: true });
+    return { w, wt, store };
+}
+const FAKE = 'FAKE_KEY=not-a-secret\n';
+
+test('a worktree whose env files are symlinks into the env store qualifies, and removing it leaves the store file untouched', () => {
+    const { w, wt, store } = envWorld();
+    const target = join(store, w.name, 'alpha', '.env'); writeFileSync(target, FAKE);
+    symlinkSync(target, join(wt, '.env'));
+    const ctx = ctxFor({ envStoreRoot: store });
+    const r = scanRepo(w.repo, ctx);
+    assert.deepEqual(names(r, 'worktree'), [wt]);
+    assert.deepEqual(r.envAsks, []);
+    const item = must(r.items.find((i) => i.kind === 'worktree'));
+    assert.equal(removeWorktree(w.repo, item, item.id, ctx.disposableIgnored, store).done, true);
+    assert.equal(existsSync(wt), false);
+    assert.equal(readFileSync(target, 'utf8'), FAKE, 'the link target is never deleted');
+});
+
+test('the roll sweep removes a store-linked worktree and keeps the store file', () => {
+    const { w, wt, store } = envWorld();
+    const target = join(store, w.name, 'alpha', '.env.local'); writeFileSync(target, FAKE);
+    symlinkSync(target, join(wt, '.env.local'));
+    const out = sweepWorktrees(w.container, ctxFor({ envStoreRoot: store }));
+    assert.deepEqual(out.removed.map((x) => x.path), [wt]);
+    assert.deepEqual(out.envAsks, []);
+    assert.equal(readFileSync(target, 'utf8'), FAKE);
+});
+
+test('a store link that git does not ignore is untracked, so the worktree is kept as for any untracked file (git refuses to remove it without --force)', () => {
+    const { w, wt, store } = envWorld('feat/envs', false);
+    const target = join(store, w.name, 'alpha', '.env.local'); writeFileSync(target, FAKE);
+    symlinkSync(target, join(wt, '.env.local'));
+    const out = sweepWorktrees(w.container, ctxFor({ envStoreRoot: store }));
+    assert.deepEqual(out.removed, []);
+    assert.match(out.kept[0]?.reason ?? '', /1 untracked files/);
+    assert.equal(existsSync(wt), true);
+});
+
+test('a dangling link into the store is removable; a link pointing outside the store is a real env file and keeps the worktree', () => {
+    const { w, wt, store } = envWorld();
+    symlinkSync(join(store, w.name, 'alpha', '.env'), join(wt, '.env')); // target not there yet
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ envStoreRoot: store })), 'worktree'), [wt]);
+    rmSync(join(wt, '.env'));
+    const elsewhere = join(w.root, 'elsewhere.txt'); writeFileSync(elsewhere, FAKE);
+    symlinkSync(elsewhere, join(wt, '.env'));
+    const r = scanRepo(w.repo, ctxFor({ envStoreRoot: store }));
+    assert.deepEqual(names(r, 'worktree'), []);
+    assert.match(r.excluded[0].reason, /1 environment files \(\.env\)/);
+    // a sibling directory whose name merely starts with the store's name is not inside it
+    rmSync(join(wt, '.env'));
+    const lookalike = join(w.root, 'store-evil'); mkdirSync(lookalike); writeFileSync(join(lookalike, '.env'), FAKE);
+    symlinkSync(join(lookalike, '.env'), join(wt, '.env'));
+    assert.deepEqual(names(scanRepo(w.repo, ctxFor({ envStoreRoot: store })), 'worktree'), []);
+});
+
+test('a real env file keeps the worktree and raises an ask with names only: the project from the branch when the store has it, else unknown', () => {
+    const { w, wt, store } = envWorld('feat/PROJ-1-alpha-fix');
+    writeFileSync(join(wt, '.env'), 'FAKE_SENTINEL=sentinel-not-a-secret\n');
+    const r = scanRepo(w.repo, ctxFor({ envStoreRoot: store }));
+    assert.deepEqual(names(r, 'worktree'), []);
+    assert.deepEqual(r.envAsks, [{ repo: w.name, worktree: wt, files: ['.env'], project: 'alpha', destination: join(store, w.name, 'alpha') }]);
+    assert.doesNotMatch(JSON.stringify(r), /sentinel-not-a-secret/);
+    const unknown = scanRepo(w.repo, ctxFor({ envStoreRoot: join(w.root, 'empty-store') }));
+    assert.equal(unknown.envAsks[0].project, undefined);
+    assert.match(unknown.envAsks[0].destination, /PROJECT$/);
+    assert.equal(existsSync(join(wt, '.env')), true);
+});
+
+test('a worktree kept for another reason (uncommitted change) raises no env ask', () => {
+    const { w, wt, store } = envWorld();
+    writeFileSync(join(wt, '.env'), FAKE); writeFileSync(join(wt, 'notes.txt'), 'x');
+    assert.deepEqual(scanRepo(w.repo, ctxFor({ envStoreRoot: store })).envAsks, []);
+});
+
+test('no env ask when another rule would still keep the worktree: an unignored file, or not idle yet', () => {
+    const { w, wt, store } = envWorld();
+    writeFileSync(join(wt, '.env'), FAKE);
+    assert.equal(scanRepo(w.repo, ctxFor({ envStoreRoot: store })).envAsks.length, 1, 'only the env file blocks: it asks');
+    assert.deepEqual(scanRepo(w.repo, ctxFor({ envStoreRoot: store, idleMinutes: 24 * 60 * 365 })).envAsks, [], 'not idle yet');
+    writeFileSync(join(wt, 'build.log'), 'x');
+    assert.deepEqual(scanRepo(w.repo, ctxFor({ envStoreRoot: store })).envAsks, [], 'an untracked file would keep it too');
+});
+
+test('removeWorktree still refuses a real env file next to a store link', () => {
+    const { w, wt, store } = envWorld();
+    const target = join(store, w.name, 'alpha', '.env'); writeFileSync(target, FAKE);
+    symlinkSync(target, join(wt, '.env'));
+    const ctx = ctxFor({ envStoreRoot: store });
+    const item = must(scanRepo(w.repo, ctx).items.find((i) => i.kind === 'worktree'));
+    writeFileSync(join(wt, '.env.local'), FAKE);
+    assert.match(removeWorktree(w.repo, item, item.id, ctx.disposableIgnored, store).message, /holds an environment file/);
+    assert.equal(existsSync(wt), true);
 });
 
 test('a worktree whose upstream is gone qualifies only with nothing unpushed; claimed or recently touched ones are kept', () => {

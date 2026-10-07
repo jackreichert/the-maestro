@@ -2,9 +2,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
@@ -483,9 +483,9 @@ test('status --footer ends with the Session line for the newest session, and say
     assert.equal(line(), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn');
     assert.equal(line({ MAESTRO_ROLL_TURNS: '4' }), '**Session:** 4 turns (100% of 4 roll) · 100k read/turn · roll now');
     assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '100000' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll now');
-    assert.equal(line({ MAESTRO_ROLL_TURNS: '5' }), '**Session:** 4 turns (80% of 5 roll) · 100k read/turn');
+    assert.equal(line({ MAESTRO_ROLL_TURNS: '5' }), '**Session:** 4 turns (80% of 5 roll) · 100k read/turn · roll soon', '80% is past the 60% default');
     assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll soon', '100k is 87% of 115k');
-    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 85/90 defaults apply');
+    assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 60/90 defaults apply');
     assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
@@ -1434,7 +1434,7 @@ test('a grant that is both resolved with --approval and approve-tagged is listed
 // ── roll sweeps stale worktrees ─────────────────────────────────────────────
 
 /** A container holding one repo cloned from a bare origin, with a clean and a dirty detached worktree outside the container. */
-function sweepWorld() {
+function sweepWorld(ignoreFiles = '') {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'roll-sweep-')));
     const git = (cwd: string, ...a: string[]) => { const r = spawnSync('git', ['-C', cwd, '-c', 'user.email=me@example.com', '-c', 'user.name=T', '-c', 'core.hooksPath=/dev/null', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
     git(root, 'init', '-q', '--bare', '-b', 'main', 'origin.git');
@@ -1442,6 +1442,7 @@ function sweepWorld() {
     git(root, 'clone', '-q', join(root, 'origin.git'), join(root, 'box', 'proj'));
     const repo = join(root, 'box', 'proj');
     writeFileSync(join(repo, 'a.txt'), 'a\n'); git(repo, 'add', 'a.txt'); git(repo, 'commit', '-q', '-m', 'init');
+    if (ignoreFiles) { writeFileSync(join(repo, '.gitignore'), ignoreFiles); git(repo, 'add', '.gitignore'); git(repo, 'commit', '-q', '-m', 'chore: ignore'); }
     git(repo, 'branch', 'develop'); git(repo, 'push', '-q', 'origin', 'main', 'develop'); git(repo, 'remote', 'set-head', 'origin', 'main');
     const clean = join(root, 'clean'); const dirty = join(root, 'dirty');
     git(repo, 'worktree', 'add', '-q', '--detach', clean, 'origin/develop');
@@ -1467,6 +1468,32 @@ test('roll removes a stale worktree without asking, keeps dirty ones with the re
     assert.match(first.out, /worktrees: 1 removed, 0 pruned, 1 kept\./);
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [false, true]);
     assert.match(runEnvIn(w.container, env, 'roll').out, /worktrees: 0 removed, 0 pruned, 1 kept\./);
+});
+
+test('roll asks once to move a real env file into the store, names only, and removes the worktree after it is a store link', () => {
+    const w = sweepWorld('.env*\n');
+    const store = join(dirname(w.container), 'env-store'); mkdirSync(join(store, 'proj', 'alpha'), { recursive: true });
+    const envFile = join(w.clean, '.env'); writeFileSync(envFile, 'FAKE_SENTINEL=sentinel-not-a-secret\n');
+    const aged = new Date(Date.now() - 3 * 36e5); utimesSync(w.clean, aged, aged); // writing the file touched the directory; only the env file may keep it
+    const env = { MAESTRO_CONTAINER_ROOT: w.container, MAESTRO_ENV_STORE_ROOT: store };
+    const first = runEnvIn(w.container, env, 'roll');
+    assert.equal(first.code, 0, first.err);
+    assert.match(first.out, new RegExp(`asked +${w.clean}: move \\.env into the env store`));
+    const asks = ledger().filter((e) => e.kind === 'question');
+    assert.equal(asks.length, 1);
+    assert.match(asks[0].text ?? '', new RegExp(`Env files stop the sweep: proj worktree ${w.clean} holds real env file\\(s\\) \\.env, .*env-store-move\\.ts' '${w.clean}' '\\.env' PROJECT`));
+    assert.equal(asks[0].repo, 'proj');
+    assert.doesNotMatch(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), /sentinel-not-a-secret/);
+    assert.equal(existsSync(w.clean), true);
+    runEnvIn(w.container, env, 'roll');
+    assert.equal(ledger().filter((e) => e.kind === 'question').length, 1, 'the same question is not raised twice');
+    // the user moves it: the worktree now holds a link into the store
+    const target = join(store, 'proj', 'alpha', '.env'); writeFileSync(target, 'FAKE_KEY=not-a-secret\n');
+    rmSync(envFile); symlinkSync(target, envFile);
+    const old = new Date(Date.now() - 3 * 36e5); utimesSync(w.clean, old, old); // the move touched the directory; let the idle window pass again
+    assert.match(runEnvIn(w.container, env, 'roll').out, new RegExp(`removed +${w.clean}`));
+    assert.equal(existsSync(w.clean), false);
+    assert.equal(readFileSync(target, 'utf8'), 'FAKE_KEY=not-a-secret\n');
 });
 
 test('roll sweeps the configured root even when run from a subdirectory of it', () => {
@@ -2045,6 +2072,28 @@ test('prime says when a supervisor is set up and not running, with the board sti
     assert.match(run('prime').out, /^Loop supervisor: NOT RUNNING \(installed at .*never seen alive\)/m);
 });
 
+test('the Loop line: silent with nothing set up, NOT INSTALLED when required, then ok, STALLED and DOWN from the heartbeat, in the footer and in prime', () => {
+    run('log', 'an open item', '--kind', 'inflight', '--stream', 'S', '--new-stream', ...MARK);
+    const events = join(vault, 'Events');
+    const beat = (pid: number, ageMin: number, over = {}) => writeFileSync(join(events, 'heartbeat.json'), JSON.stringify({ pid, at: new Date(Date.now() - ageMin * 60_000).toISOString(), tick: 1, watchesLive: 1, sleepingUntil: null, mode: 'run', lastError: '', ...over }));
+    const required = { MAESTRO_LOOP_SUPERVISOR: 'required', MAESTRO_EVENT_DIR: events, MAESTRO_PROJECTS_DIR: projects, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents') };
+    assert.doesNotMatch(run('status', '--footer').out, /Loop:/);
+    assert.doesNotMatch(run('prime').out, /^Loop:/m);
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* NOT INSTALLED/m);
+    mkdirSync(events, { recursive: true });
+    writeFileSync(join(events, 'loop.lock'), String(process.pid));
+    beat(process.pid, 2);
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* ok 2 min$/m);
+    assert.match(runEnv(required, 'prime').out, /^Loop: ok 2 min$/m);
+    beat(process.pid, 30);
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* STALLED 30 min/m);
+    rmSync(join(events, 'loop.lock'));
+    beat(2 ** 22 + 12345, 30);
+    writeFileSync(join(events, 'supervisor.json'), JSON.stringify({ pid: 2 ** 22 + 12345, startedAt: '2026-10-06T10:00:00Z' }));
+    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* DOWN since /m);
+    assert.match(runEnv(required, 'prime').out, /^Loop: DOWN since /m);
+});
+
 test('prime on an empty ledger says so and creates nothing', () => {
     const out = run('prime');
     assert.equal(out.code, 0, out.err);
@@ -2285,7 +2334,7 @@ test('status and status --footer show the review queue from the stored snapshot,
     mkdirSync(journalDir, { recursive: true });
     const snapshot = (takenAt: string, ...drafts: boolean[]) => writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt, prs: drafts.map((isDraft) => ({ isDraft })) }));
     const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', ...env },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents'), ...env },
     }).stdout;
     snapshot(new Date().toISOString(), false, false, true);
     assert.match(status([]), /\n {2}review queue: 2 of 4\n$/);
