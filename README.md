@@ -435,9 +435,26 @@ What this slice does not have: a per-start token (any process on this machine ca
 
 #### Vault reader and ticket rollups (`scripts/lib/vault/`)
 
-The stream home base reads a notes vault (tickets, project docs) through one guarded reader and nothing else. It reads only the folders it is configured for (`Projects/<project>/Tickets` and its `Archive`, plus the document folders a later slice adds), opens only `.md` files, and refuses everything else with a reason. Before anything is listed, stat-ed or opened it checks, in order: the path is plain and relative (no `..`, backslash or NUL), no segment is a secret-file name (environment files, SSM exports, Terraform variables and state, keys and certificates, SSH keys, registry auth files, `credentials*`, password databases), the path is inside a configured scope, no component is a symlink, and its real path is inside the real root. The file is then opened with `O_NOFOLLOW` and judged on its descriptor (regular file, size cap: 256 KB for a ticket). A denied name is never opened, never listed and never repeated in a response; results carry vault-relative paths only. The server stays read-only.
+The stream home base reads a notes vault (tickets, project docs) through one guarded reader and nothing else. It reads only the folders it is configured for (`Projects/<project>/Tickets` and its `Archive`, the document folders and `Briefs`), opens only `.md` files, and refuses everything else with a reason. Before anything is listed, stat-ed or opened it checks, in order: the path is plain and relative (no `..`, backslash or NUL), no segment is a secret-file name (environment files, SSM exports, Terraform variables and state, keys and certificates, SSH keys, registry auth files, `credentials*`, password databases), the path is inside a configured scope, no component is a symlink, and its real path is inside the real root. The file is then opened with `O_NOFOLLOW` and judged on its descriptor (regular file, size cap: 256 KB for a ticket). A denied name is never opened, never listed and never repeated in a response; results carry vault-relative paths only. The server stays read-only.
 
 Tickets are parsed and rolled up in process (a port of the ticket tool's reader and rollup, so nothing is spawned). `tickets-parity.test.ts` runs the real ticket tool on a throwaway fixture vault and asserts the closed, blocked and points numbers match; set `XENOPHON_TICKET_SCRIPT` to point at another copy of the script. That parity is held by the tests, not checked at runtime. All test vaults are built from code with fictional names, plus decoy secret-pattern files holding canary strings that must never appear in any output.
+
+#### Epic documents and the epic brief
+
+Each epic in the home base response carries `docs` and `brief`. A document belongs to an epic because the note says so: its frontmatter names the ticket it serves with `ticket: <id>` (or `tickets: [a, b]`, or `epic: <id>`), and the server walks that ticket up to the epic whose tree holds it, so a plan written for a child ticket lands on the epic without anyone naming the epic. `ticket: none` marks a note as project-level. The note's kind is its `kind:`, else its `type:`, else its folder; its date is the first of `updated`, `last-updated`, `date` and `created`. Documents may sit in any project the epic's tickets live in. A document shown on an epic is not listed again on the link rail. Documents outside the vault are lines of the form `- [label](https://...) · uat` in the epic ticket's `## Links` section, and only http and https links without credentials are kept. `docs.groups` lists the documents by kind (at most 20 each, `more` counting the rest) and `docs.unattributedRecent` counts notes from the last 30 days in the epic's projects that name no ticket.
+
+The brief is one short note per epic at `Projects/<project>/Briefs/<epic-id>.md` (at most 8 KB; a longer one is reported as too long and not shown). It is parsed into a typed block tree, never Markdown or HTML: headings of level 3 and 4, paragraphs, lists with one level of nesting and quotes, with runs that are plain, bold, italic, code or a link. The server builds every link: a web link must be http or https, and a `[[wikilink]]` becomes a link only when it names exactly one ticket or document it has already read. The "What done looks like" section is filled from the epic ticket, so the brief never carries a second copy.
+
+```mermaid
+flowchart LR
+  N[Note with ticket: id] --> W[Walk to the epic that holds the ticket]
+  W --> D[epic.docs by kind]
+  B[Briefs/epic-id.md] --> J[Judge freshness]
+  T[Ticket tree and attributed docs] --> J
+  J --> F[brief: fresh, stale or missing, with the reasons]
+```
+
+Freshness is computed, never claimed. A brief carries a `basis` line (for example `closed 12 of 37 · blocked 2 · points 20 of 60 · open`, the exact line `ticket.mjs brief` writes) written when it was last revised. It is stale when that line no longer matches the epic, or when any ticket in the epic's tree or any attributed document was updated after the brief's `updated` date, and `staleBecause` says which. An open epic whose brief is missing or not fresh gets one unknown (`brief-missing` or `brief-stale`) with the fix in its text.
 
 #### Stream mapping (`stream-homes.json`)
 

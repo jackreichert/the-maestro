@@ -17,18 +17,58 @@ const MAX_DOC_BYTES = 1024 * 1024;
 const MAX_DOCS_PER_PROJECT = 500;
 const TITLE_MAX = 120;
 
-export interface Doc { path: string; folder: DocFolder; title: string; status?: string; updated?: string }
+export const DOC_KINDS = ['brief', 'plan', 'research', 'review', 'runbook', 'uat', 'decision', 'other'] as const;
+export type DocKind = (typeof DOC_KINDS)[number];
+const FOLDER_KIND: Record<DocFolder, DocKind> = { CONTEXT: 'other', DECISIONS: 'decision', Plans: 'plan', Research: 'research', Reviews: 'review', Runbooks: 'runbook' };
+const TICKET_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const MAX_TICKETS_PER_DOC = 10;
+
+export interface Doc {
+  path: string; folder: DocFolder; title: string; status?: string; updated?: string;
+  /** The project folder the note sits in. */
+  project: string; kind: DocKind;
+  /** The tickets the note names (`ticket`, `tickets` or `epic`), at most ten. */
+  tickets: string[];
+  /** `ticket: none`: the note is marked project-level, so it is never reported as unattributed. */
+  projectLevel: boolean;
+}
 export interface Docs { docs: Doc[]; notes: string[] }
 
 const clean = (s: string): string => s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX);
+const DATE_KEYS = ['updated', 'last-updated', 'date', 'created'] as const;
 
-/** A document's title (frontmatter `title`, else its first `# ` heading, else the file name), status and updated date. */
-export function docHeader(head: string, fileName: string): { title: string; status?: string; updated?: string } {
+/** Ticket ids from a frontmatter value: `id`, `[a, b]` or `"id"`. Anything that is not an id is dropped. */
+function ticketIds(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const inner = raw.trim().replace(/^\[|\]$/g, '');
+  return inner.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter((x) => TICKET_ID.test(x)).slice(0, MAX_TICKETS_PER_DOC);
+}
+
+/** A document's header: title (frontmatter `title`, else its first `# ` heading, else the file name), status, the first date of `updated`, `last-updated`, `date`, `created`, the tickets it names and its kind. */
+export function docHeader(head: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean } {
   const fm = head.match(/^---\n([\s\S]*?)\n---\n?/);
-  const get = (k: string): string | undefined => { const m = fm?.[1]?.match(new RegExp(`^${k}:\\s*(.+)$`, 'm')); return m?.[1] ? clean(m[1].replace(/^"|"$/g, '')) : undefined; };
+  /** The value of a key; a key with no value on its line takes the `- item` lines right under it as a list. */
+  const raw = (k: string): string | undefined => {
+    const lines = fm?.[1]?.split('\n') ?? [];
+    const at = lines.findIndex((l) => l.startsWith(`${k}:`));
+    if (at === -1) return undefined;
+    const inline = (lines[at] as string).slice(k.length + 1).trim();
+    if (inline) return inline;
+    const items: string[] = [];
+    for (const l of lines.slice(at + 1)) { const m = l.match(/^\s*-\s+(.+)$/); if (!m) break; items.push(m[1] as string); }
+    return items.length ? items.join(',') : undefined;
+  };
+  const get = (k: string): string | undefined => { const v = raw(k); return v ? clean(v.replace(/^"|"$/g, '')) || undefined : undefined; };
   const body = fm ? head.slice(fm[0].length) : head;
   const title = get('title') || clean(body.match(/^#\s+(.+)$/m)?.[1] ?? '') || fileName.replace(/\.md$/, '');
-  return { title, ...(get('status') ? { status: get('status') } : {}), ...(get('updated') ? { updated: get('updated') } : {}) };
+  const date = DATE_KEYS.map(get).find((d) => d !== undefined);
+  const named = [...new Set([...ticketIds(raw('ticket')), ...ticketIds(raw('tickets')), ...ticketIds(raw('epic'))])].filter((t) => t.toLowerCase() !== 'none').slice(0, MAX_TICKETS_PER_DOC);
+  const pick = (v: string | undefined): DocKind | undefined => DOC_KINDS.find((k) => k === v?.toLowerCase());
+  return {
+    title, ...(get('status') ? { status: get('status') } : {}), ...(date ? { updated: date } : {}),
+    kind: pick(get('kind')) ?? pick(get('type')) ?? FOLDER_KIND[folder], tickets: named,
+    projectLevel: !named.length && [raw('ticket'), raw('tickets')].some((v) => v?.trim().replace(/^["'\[]|["'\]]$/g, '').toLowerCase() === 'none'),
+  };
 }
 
 /** The documents of one project. A folder or file the reader refuses is a note (vault-relative path and reason), not an error. */
@@ -38,7 +78,7 @@ export function loadDocs(reader: VaultReader, project: string): Docs {
   const add = (folder: DocFolder, path: string): void => {
     const r = reader.head(path, HEAD_BYTES, MAX_DOC_BYTES);
     if (!r.ok) { if (r.reason !== 'denied' && r.reason !== 'missing') notes.push(`${path}: ${r.reason}`); return; }
-    docs.push({ path, folder, ...docHeader(r.text, path.split('/').at(-1) as string) });
+    docs.push({ path, folder, project, ...docHeader(r.text, path.split('/').at(-1) as string, folder) });
   };
   for (const name of ['CONTEXT', 'DECISIONS'] as const) add(name, `Projects/${project}/${name}.md`);
   for (const folder of DOC_FOLDERS) {

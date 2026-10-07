@@ -24,7 +24,7 @@ const pr = (number: number, head: string, title: string, over: Partial<Pr> = {})
 const home = (over: Partial<HomeInput> & { config?: object } = {}) => {
   const { config, ...rest } = over;
   return buildStreamHome({ stream: 'Avonlea', streams: STREAMS, now: NOW, vault, homes: validateHomes({ version: 1, streams: config ?? { Avonlea: { epics: ['avonlea-api-042'], projects: ['avonlea-api'] } } }, STREAMS),
-    ledger: [], prs: [], prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => loadDocs(READER, p), ...rest });
+    ledger: [], prs: [], prData: { fetchedAt: NOW }, page: PAGE, readDocs: (p) => loadDocs(READER, p), readBrief: () => ({ ok: false, reason: 'missing' }), ...rest });
 };
 
 test('prsNaming matches an id or key at a token boundary and caps at three', () => {
@@ -74,7 +74,7 @@ test('groups are capped at 50 with a count of the rest', () => {
 test('a mapped project with no CONTEXT or DECISIONS is an unknown, and docs read only a header', () => {
   const h = home({ config: { Avonlea: { epics: ['avonlea-api-042'], projects: ['avonlea-api', 'green-gables'] } } });
   assert.ok(h.unknowns.some((u) => u.kind === 'missing-context' && /green-gables/.test(u.text)));
-  assert.deepEqual(docHeader('---\ntitle: "T"\nstatus: active\nupdated: 2026-10-01\n---\n# H1\n', 'f.md'), { title: 'T', status: 'active', updated: '2026-10-01' });
+  assert.deepEqual(docHeader('---\ntitle: "T"\nstatus: active\nupdated: 2026-10-01\n---\n# H1\n', 'f.md'), { title: 'T', status: 'active', updated: '2026-10-01', kind: 'plan', tickets: [], projectLevel: false });
   assert.equal(docHeader('# Heading\ntext', 'f.md').title, 'Heading');
   assert.equal(docHeader('no heading', 'file-name.md').title, 'file-name');
   const big = fx.write;

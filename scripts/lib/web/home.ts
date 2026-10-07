@@ -7,6 +7,7 @@ import { DOC_DIR_SCOPES, DOC_FILE_SCOPES, loadDocs } from '../home/docs.ts';
 import { loadTickets, TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from '../vault/tickets.ts';
 import { readHomes } from '../home/config.ts';
 import { buildStreamHome } from '../home/build.ts';
+import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES, readBriefNote } from '../home/brief.ts';
 import type { LedgerFact } from '../home/build.ts';
 import type { StreamHome } from '../home/types.ts';
 import { readBoard } from './api.ts';
@@ -40,11 +41,12 @@ export function buildHome(cfg: WebConfig, name: string, now: Date = new Date()):
   const canon = streams.find((s) => s === name);
   if (!canon) return null;
   const root = cfg.vaultRoot;
-  const reader = root ? createReader({ root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES] }) : null;
+  const reader = root ? createReader({ root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES, ...BRIEF_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES, ...BRIEF_FILE_SCOPES] }) : null;
   const vault = root && reader ? loadTickets(reader, root) : null;
   return buildStreamHome({
     stream: canon, streams, now, vault, homes: readHomes(cfg.statusDir, streams), ledger: factsOf(g.items, inputs.ticketMap),
     readDocs: (project) => (reader ? loadDocs(reader, project) : { docs: [], notes: [] }),
+    readBrief: (epic) => (reader ? readBriefNote(reader, epic.project, epic.id) : { ok: false, reason: 'missing' }),
     prs: inputs.prs, prData: { fetchedAt: inputs.prData.fetchedAt }, page: cfg.page,
   });
 }
