@@ -75,7 +75,9 @@ const CSS = `${BOARD_CSS}
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
 
   [role=tabpanel] { padding-block: var(--space-6) var(--space-8); }
-  [role=tabpanel]:focus-visible { outline-offset: 4px; }
+  /* The panel takes focus between the tabs and its content: a 2 px focus line under the tab bar, not a frame round the page. */
+  [role=tabpanel]:focus-visible { outline: none; border-radius: 0; box-shadow: inset 0 2px 0 var(--focus); }
+  @media (forced-colors: active) { [role=tabpanel]:focus-visible { outline: 2px solid CanvasText; outline-offset: -2px; } }
 
   ol.priorities { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); counter-reset: p; }
   ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 1.5em minmax(0, 1fr); gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
