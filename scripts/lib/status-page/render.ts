@@ -12,8 +12,11 @@ import type { ReviewQueue } from '../review-queue.ts';
 import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
 import type { FooterRow } from '../journal/board.ts';
+import { askBits, asksNote } from '../journal/ask-fields.ts';
 
-export interface Item { id: string; date: string; ts?: string; stateTs?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string }
+export interface Item { id: string; date: string; ts?: string; stateTs?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string;
+  /** An ask's decision fields as the ledger stores them; unchecked here, `askBits` reads each one defensively. */
+  recommend?: unknown; default?: unknown; door?: unknown; by?: unknown; class?: unknown }
 export interface Pr {
   number: number; title: string; url: string; isDraft: boolean; baseRefName: string; headRefName: string;
   mergeable: string; mergeStateStatus: string; reviewDecision: string | null;
@@ -322,7 +325,8 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
       const bold = linkNotePaths(needed, env, escBold);
       const text = [boldSafe(needed) ? `**${bold}**` : '', linkNotePaths(plain(context), env, escLinkChars)].filter(Boolean).join(' ');
-      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
+      const fields = askBits(a).map((b) => boldSafe(b)).join(' · ');
+      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
     }
     out.push('');
   }
@@ -389,7 +393,7 @@ function statusSection(footer: FooterData | undefined, inflight: Item[]): string
   const out = ['## Status', ''];
   if (!footer) return [...out, '**Footer data unavailable:** `journal.ts status --json` carried no `footer`.', ''];
   out.push('| Stream | Done today | In flight | Queued | Awaiting you | To run | Blocked |', '|---|---|---|---|---|---|---|');
-  for (const r of footer.ledger) out.push(`| ${cell(r.name ?? 'all')} | ${r.done} | ${r.inflight} | ${r.queued} | ${r.awaiting} | ${r.paste} | ${r.blocked} |`);
+  for (const r of footer.ledger) out.push(`| ${cell(r.name ?? 'all')} | ${r.done} | ${r.inflight} | ${r.queued} | ${r.awaiting}${asksNote(r)} | ${r.paste} | ${r.blocked} |`);
   return [...out, '',
     `**Agents:** ${inflight.length} in flight on the ledger (the live agent roster is shown in each reply's footer)`, '',
     sessionText(footer.session), ''];
