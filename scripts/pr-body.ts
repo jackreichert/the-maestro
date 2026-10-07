@@ -131,19 +131,33 @@ function stackProblems(sections: Map<string, string>, ctx: BodyContext): string[
   if (!ctx.stacked) return [];
   const text = sectionMatching(sections, /^stack/);
   if (text === undefined) return ['a stacked PR needs a "## Stack" section naming its base PR (or "n/a, <reason>")'];
-  if (naWithReason(text) || /#\d+|\/pull\/\d+/.test(text)) return [];
+  if (naWithReason(text) || /(?:base|on top of|depends on|stacked on)\W{0,12}(?:#\d+|\S*\/pull\/\d+)/i.test(text)) return [];
   return ['the "## Stack" section names no base PR (write "Base: #<n>" or a PR link, or "n/a, <reason>")'];
 }
 
-/** Past a few files, the Reviewer guide says where to start reading: a "Review order:" line that points at files. */
+/** The label line of a bullet plus the lines nested under it (indented deeper), as one string. */
+function bulletSpan(text: string, label: RegExp): string | undefined {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => label.test(l));
+  if (at < 0) return undefined;
+  const indent = (l: string): number => l.length - l.trimStart().length;
+  const rest = [];
+  for (const l of lines.slice(at + 1)) {
+    if (!l.trim() || indent(l) <= indent(lines[at])) break;
+    rest.push(l);
+  }
+  return [lines[at], ...rest].join('\n');
+}
+
+/** Past a few files, the Reviewer guide says where to start reading: a "Review order:" bullet (nested lines count) that points at files. */
 function orderProblems(sections: Map<string, string>, ctx: BodyContext, min: number): string[] {
-  if (ctx.codeFiles < min) return [];
+  if (ctx.codeFiles <= min) return [];
   const guide = sectionMatching(sections, /^reviewer guide/);
   if (guide === undefined) return [];
-  const line = guide.split('\n').find((l) => /review order\s*:/i.test(l));
-  if (line === undefined) return [`a PR of ${min} or more code files needs a "Review order:" line in the Reviewer guide (or "Review order: n/a, <reason>")`];
-  const after = line.replace(/^.*?review order\s*:/i, '');
-  if (/^\s*n\/a\b[\s,:;.-]*\S/i.test(after) || /\{\{file:[^}]+\}\}|`[^`\s]*[/.][^`\s]*`/.test(after)) return [];
+  const span = bulletSpan(guide, /review order\s*:/i);
+  if (span === undefined) return [`a PR over ${min} code files needs a "Review order:" line in the Reviewer guide (or "Review order: n/a, <reason>")`];
+  const after = span.replace(/^[\s\S]*?review order\s*:/i, '');
+  if (/^\s*n\/a\b[\s,:;.-]*\S/i.test(after) || /\{\{file:[^}]+\}\}|`(?:[^`\s]*\/[^`\s]+|[^`\s]+\.[a-z][a-z0-9]{0,5})`/i.test(after)) return [];
   return ['the "Review order:" line names no file (use {{file:path}} or a `path` in code)'];
 }
 

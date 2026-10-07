@@ -250,6 +250,7 @@ test('bodyProblems: a stacked PR names its base PR in a Stack section, or says n
     assert.match(st('')[0], /stacked PR needs a "## Stack" section/);
     assert.match(st('## Stack\n_TBD_\n')[0], /"## Stack" section names no base PR/);
     assert.match(st('## Stack\nPosition: 2 of 4, standalone review: yes\n')[0], /names no base PR/);
+    assert.match(st('## Stack\nPosition: 2 of 4, see ticket #123\n')[0], /names no base PR/, 'a bare number is not a base');
     assert.deepEqual(st('## Stack\nPosition: 2 of 4. Base: #12. Standalone review: yes\n'), []);
     assert.deepEqual(st('## Stack\nBase: https://github.com/o/r/pull/12\n'), []);
     assert.deepEqual(st('## Stack\nn/a, the base is a long-lived release branch\n'), []);
@@ -257,14 +258,17 @@ test('bodyProblems: a stacked PR names its base PR in a Stack section, or says n
 });
 
 test('bodyProblems: a PR over the file threshold gives a review order that points at files', () => {
-    const rg = (text: string, ctx = { stacked: false, codeFiles: 3 }) => bodyProblems(`## Context\nx\n## Reviewer guide\n${text}\n`, { ...NONE, order: true }, ctx);
-    assert.deepEqual(rg('- Validated: ran it', { stacked: false, codeFiles: 2 }), [], 'under the threshold');
+    const rg = (text: string, ctx = { stacked: false, codeFiles: 4 }) => bodyProblems(`## Context\nx\n## Reviewer guide\n${text}\n`, { ...NONE, order: true }, ctx);
+    assert.deepEqual(rg('- Validated: ran it', { stacked: false, codeFiles: 3 }), [], 'at the threshold: only over it');
     assert.match(rg('- Validated: ran it')[0], /needs a "Review order:" line in the Reviewer guide/);
     assert.match(rg('- Review order: read the core first')[0], /names no file/);
     assert.deepEqual(rg('- Review order: 1. {{file:src/core.ts}} 2. {{file:src/core.test.ts}}'), []);
     assert.deepEqual(rg('- Review order: 1. `src/core.ts` then the tests'), []);
     assert.deepEqual(rg('- Review order: n/a, the files are independent'), []);
-    assert.deepEqual(bodyProblems('## Context\nx\n', { ...NONE, order: true, orderMinFiles: 9 }, { stacked: false, codeFiles: 8 }), []);
+    assert.deepEqual(rg('- Review order:\n  1. {{file:src/core.ts}}\n  2. {{file:src/b.ts}}\n- Skim-safe: none'), [], 'files nested under the label count');
+    assert.match(rg('- Review order:\n- Skim-safe: {{file:src/x.ts}}')[0], /names no file/, 'a sibling bullet does not count');
+    assert.match(rg('- Review order: start with the `e.g.` part and `v1.2`')[0], /names no file/, 'a backtick token must look like a path');
+    assert.deepEqual(bodyProblems('## Context\nx\n', { ...NONE, order: true, orderMinFiles: 9 }, { stacked: false, codeFiles: 9 }), []);
     assert.deepEqual(bodyProblems('## Context\nx\n', NONE, { stacked: false, codeFiles: 8 }), [], 'switched off');
 });
 
