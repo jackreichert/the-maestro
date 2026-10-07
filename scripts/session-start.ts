@@ -7,8 +7,9 @@
  * 1. Registers the `status-watch` and `status-refresh` watches (target = the status directory) when no live watch of that type exists.
  *    It goes through `event-loop.ts add`, so each type's own validation, singleton rule and default TTL apply. A watch past its
  *    `expires` that the loop has not retired yet is removed first and registered again.
- * 2. Reports the status page's age (the mtime of The-Podium.md). A page older than 15 minutes means nothing is refreshing it.
- * 3. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
+ * 2. Marks live watches of a standing type that lack the `renew` flag (see `repairStandingWatches`).
+ * 3. Reports the status page's age (the mtime of The-Podium.md). A page older than 15 minutes means nothing is refreshing it.
+ * 4. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
  *    run_in_background (its exit wakes the orchestrator), and a detached child would exit unseen. With no loop it prints the exact command.
  *
  * Exit 0 when nothing failed, 1 when a watch could not be registered (or the registry could not be read), 2 on a usage or configuration error (no status directory).
@@ -20,7 +21,9 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CONTAINER_PROJECT, EVENT_DIR, statusDirFor, WATCH_TZ } from './local-config.ts';
 import { PODIUM_FILE } from './lib/status-page/seen.ts';
-import { listWatches, lockHolder, removeWatch } from './lib/watch-registry.ts';
+import { listWatches, lockHolder, markStanding, removeWatch } from './lib/watch-registry.ts';
+import { BUILTIN_TYPES } from './event-types/index.ts';
+import type { TypeRegistry } from './event-types/index.ts';
 import type { Watch } from './lib/types.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 
@@ -45,6 +48,8 @@ export interface StartDeps {
   loopCommand: string;
   /** The command that waits for the supervisor's saved digests. */
   waitCommand: string;
+  /** Marks live watches of a standing type that lack the flag; returns their ids. Absent where nothing repairs. */
+  repairStanding?: () => string[];
   /** The `Loop:` verdict line (heartbeat age, STALLED, DOWN...); empty or absent when there is nothing to say. */
   loopHealth?: () => string;
 }
@@ -82,6 +87,8 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
     failed ||= !added.ok && !raced;
     lines.push(raced ? existing(need.id, raced, statusDir) : added.ok ? `${need.id}: registered (${added.message})` : `${need.id}: NOT registered (${added.message})`);
   }
+  const repaired = deps.repairStanding?.() ?? [];
+  if (repaired.length) lines.push(`Standing watches: marked ${repaired.join(', ')} as renewing (added before their type could renew, so they would have expired); the loop now keeps them alive`);
   const written = deps.pageWrittenAt(statusDir);
   if (written === null) lines.push(`Status page: none yet (no ${PODIUM_FILE} in ${statusDir}); run \`journal.ts podium\` once`);
   else {
@@ -95,6 +102,15 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
     ? `Event loop: NOT RUNNING. Start it now with run_in_background: ${deps.loopCommand}`
     : `Event loop: running (pid ${holder}). A loop this session did not start is the launchd supervisor's: wait on it with run_in_background: ${deps.waitCommand}`);
   return { lines, failed };
+}
+
+/**
+ * Marks every live watch whose type `renews` but that carries no `renew` flag (the `prs` and `texts` watches predate the flag) so the loop
+ * pushes their expiry out instead of retiring them. A watch added with an explicit --ttl-hours is not told apart from one added before
+ * the flag existed, so it is marked too: a standing type is meant to stand. Returns the ids marked.
+ */
+export function repairStandingWatches(dir: string, types: TypeRegistry, now: number = Date.now()): string[] {
+  return listWatches(dir).filter((w) => !w.renew && types[w.type]?.renews && markStanding(dir, w.id, now)).map((w) => w.id);
 }
 
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
@@ -117,6 +133,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     pageWrittenAt: (dir) => { const file = join(dir, PODIUM_FILE); return existsSync(file) ? statSync(file).mtimeMs : null; },
     loopCommand: `node ${shq(loop)} run`,
     waitCommand: `node ${shq(loop)} digest-wait`,
+    repairStanding: () => repairStandingWatches(EVENT_DIR, BUILTIN_TYPES, now),
     loopHealth: () => liveLoopHealth(now).line,
   };
 }
