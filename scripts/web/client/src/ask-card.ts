@@ -1,4 +1,5 @@
 import { BASE_CSS, UI_CSS, h, refLink, shadow, streamTag } from './dom.ts';
+import { askState } from './ask-state.ts';
 import type { AskCard, AskResolveDetail } from './types.ts';
 
 /** Older than this many days an ask is flagged, matching the Markdown page's 3 day threshold. */
@@ -90,6 +91,8 @@ export class AskCardElement extends HTMLElement {
     const heading = h('h3', { id: `${uid}-h`, tabindex: '-1' }, a.needed);
     // Every card has a "Your answer" field and a Done button; tie each to its decision so a controls list tells them apart.
     const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': `${uid}-h ${uid}-k` });
+    answer.value = askState.draft(a.id);   // a redraw rebuilds the card; the half-typed answer comes back with it
+    answer.addEventListener('input', () => askState.setDraft(a.id, answer.value));
     const done = h('button', { type: 'button', class: 'primary', 'aria-describedby': `${uid}-h` }, 'Done');
     // Sample data: no answer field at all, just the reason, so a locked board stays compact and nothing looks pressable.
     const form = this.#locked
@@ -111,21 +114,25 @@ export class AskCardElement extends HTMLElement {
       links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
       form);
 
+    // The confirmation: nothing reached the ledger, so it says so and offers the answer for copying into the orchestrator chat.
+    const settled = (answerText: string): HTMLElement => {
+      const copy = answerText ? h('button', { type: 'button', class: 'secondary' }, 'Copy answer') : null;
+      copy?.addEventListener('click', () => {
+        navigator.clipboard?.writeText(answerText).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed: select the text instead'; });
+      });
+      return h('div', { class: 'resolved', tabindex: '-1', 'aria-label': `Ask ${a.id} marked done on this page` },
+        h('p', { class: 'done' }, 'Marked done on this page'),
+        answerText ? h('blockquote', {}, answerText) : h('p', { class: 'note' }, 'No answer: approve as asked.'),
+        h('p', { class: 'unsaved' }, h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E '), 'Not saved: this page cannot write to the ledger yet. Tell the orchestrator in chat.'),
+        copy);
+    };
     const resolve = (): void => {
       if (this.#locked || !form.isConnected) return;
       const detail: AskResolveDetail = { id: a.id, answer: answer.value.trim() };
+      askState.resolve(a.id, detail.answer);   // remembered, so a redraw keeps the card settled
       this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail, bubbles: true, composed: true }));
-      // Honest optimistic feedback: the card settles at once, but says plainly that nothing reached the ledger, and offers
-      // the answer for copying into the orchestrator chat. Focus moves here (no live region, so it is read once).
-      const copy = detail.answer ? h('button', { type: 'button', class: 'secondary' }, 'Copy answer') : null;
-      copy?.addEventListener('click', () => {
-        navigator.clipboard?.writeText(detail.answer).then(() => { copy.textContent = 'Copied'; }, () => { copy.textContent = 'Copy failed: select the text instead'; });
-      });
-      const status = h('div', { class: 'resolved', tabindex: '-1', 'aria-label': `Ask ${a.id} marked done on this page` },
-        h('p', { class: 'done' }, 'Marked done on this page'),
-        detail.answer ? h('blockquote', {}, detail.answer) : h('p', { class: 'note' }, 'No answer: approve as asked.'),
-        h('p', { class: 'unsaved' }, h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E '), 'Not saved: this page cannot write to the ledger yet. Tell the orchestrator in chat.'),
-        copy);
+      // Honest optimistic feedback: the card settles at once. Focus moves here (no live region, so it is read once).
+      const status = settled(detail.answer);
       article.classList.add('answered');
       form.replaceWith(status);
       status.focus();
@@ -134,6 +141,11 @@ export class AskCardElement extends HTMLElement {
     answer.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); resolve(); }
     });
+    const prior = this.#locked ? null : askState.resolvedAnswer(a.id);
+    if (prior !== null) {   // rebuilt after it was marked done: stay settled (no focus grab, the user did not just act)
+      article.classList.add('answered');
+      form.replaceWith(settled(prior));
+    }
     this.#root.replaceChildren(article);
   }
 }

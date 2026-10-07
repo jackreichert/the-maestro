@@ -5,6 +5,7 @@ import { h, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
+import { UpdateGate, askState } from './ask-state.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
@@ -121,7 +122,9 @@ export class PodiumApp extends HTMLElement {
   #tick: number | undefined;
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
-  #pending: Fresh | null = null;   // newer data held back while someone is typing an answer, shown once they leave the field
+  // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
+  // cards live in askState, so the redraw that follows puts them back.
+  readonly #gate = new UpdateGate<Fresh>();
   // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
   // tab so keyboard and screen reader users are not left on the destroyed link.
   readonly #onHash = (): void => {
@@ -138,7 +141,12 @@ export class PodiumApp extends HTMLElement {
 
   connectedCallback(): void {
     window.addEventListener('hashchange', this.#onHash);
-    this.addEventListener('focusout', this.#onFocusOut);
+    this.addEventListener('focusin', this.#onFocusMove);
+    this.addEventListener('focusout', this.#onFocusMove);
+    this.addEventListener('input', this.#onFocusMove);
+    this.addEventListener('pointerdown', this.#onPress);
+    window.addEventListener('pointerup', this.#onRelease);
+    window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
     Promise.all([loadState(), loadCharts()]).then(([s, c]) => {
       this.#state = s.data;
@@ -157,7 +165,12 @@ export class PodiumApp extends HTMLElement {
 
   disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.#onHash);
-    this.removeEventListener('focusout', this.#onFocusOut);
+    this.removeEventListener('focusin', this.#onFocusMove);
+    this.removeEventListener('focusout', this.#onFocusMove);
+    this.removeEventListener('input', this.#onFocusMove);
+    this.removeEventListener('pointerdown', this.#onPress);
+    window.removeEventListener('pointerup', this.#onRelease);
+    window.removeEventListener('pointercancel', this.#onRelease);
     window.clearInterval(this.#tick);
     this.#liveUpdates?.stop();
     this.#liveUpdates = null;
@@ -180,20 +193,34 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates.start();
   }
 
-  /** Show newer data, unless an answer is half-typed: a redraw would throw it away, so hold the data until the field is left. */
+  /** Show newer data, unless the user is mid-press or typing: a redraw then would swallow the click or the caret. */
   #adopt(f: Fresh): void {
-    if (typingAnAnswer()) { this.#pending = f; return; }
-    this.#pending = null;
+    const now = this.#gate.offer(f);
+    if (now) this.#show(now);
+  }
+
+  #show(f: Fresh): void {
     this.#state = f.state;
     this.#charts = f.charts;
     this.#dropped = f.dropped;
+    askState.prune(f.state.asks.map((a) => a.id));
     if (!this.#ids().includes(this.#active)) this.#active = OVERVIEW;   // the stream behind the open tab is gone
     this.#safeRender();
   }
 
-  readonly #onFocusOut = (): void => {
-    // Focus is mid-move during focusout; look once it has landed.
-    setTimeout(() => { if (this.#pending && !typingAnAnswer()) this.#adopt(this.#pending); }, 0);
+  #release(input: { pointer?: boolean; typing?: boolean }): void {
+    const held = this.#gate.set(input);
+    if (held) this.#show(held);
+  }
+
+  // A press holds updates from pointerdown (before focus moves off a field) until the click has been delivered.
+  readonly #onPress = (): void => { this.#gate.set({ pointer: true }); };
+  readonly #onRelease = (): void => {
+    setTimeout(() => this.#release({ pointer: false }), 0);   // the click fires after pointerup; let it run first
+  };
+  // Focus is mid-move during focusin/focusout; look once it has landed.
+  readonly #onFocusMove = (): void => {
+    setTimeout(() => this.#release({ typing: typingAnAnswer() }), 0);
   };
 
   #ids(): string[] { return tabIds(this.#state?.streams ?? []); }
@@ -357,7 +384,7 @@ export class PodiumApp extends HTMLElement {
   }
 }
 
-/** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed. */
+/** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed there. */
 function typingAnAnswer(): boolean {
   let el: Element | null = document.activeElement;
   while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
