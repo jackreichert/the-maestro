@@ -44,38 +44,42 @@ export function createReader(opts: ReaderOptions): VaultReader {
   try { realRoot = realpathSync(opts.root); } catch { realRoot = null; }
 
   /** The checks every path passes before any open or listing. Returns the absolute path to use, or the refusal. */
-  function admit(path: string, scopes: readonly Scope[]): { abs: string } | { reason: Refusal } {
+  function admit(path: string, scopes: readonly Scope[], want: 'file' | 'dir'): { abs: string; ino: number; dev: number } | { reason: Refusal } {
     if (realRoot === null) return { reason: 'root-unavailable' };
     const segs = cleanPath(path);
     if (!segs) return { reason: 'invalid-path' };
     if (hasSecretSegment(path)) return { reason: 'denied' };
     if (!scopes.some((s) => s.pattern.test(path))) return { reason: 'out-of-scope' };
     let cur = realRoot;
+    let last: { ino: number; dev: number; isFile: boolean; isDir: boolean } = { ino: 0, dev: 0, isFile: false, isDir: true };
     for (const seg of segs) {
       cur = join(cur, seg);
       try {
         const st = lstatSync(cur);
         if (st.isSymbolicLink()) return { reason: 'symlink' };
+        last = { ino: st.ino, dev: st.dev, isFile: st.isFile(), isDir: st.isDirectory() };
       } catch (e) { return { reason: (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable' }; }
     }
     try {
       const real = realpathSync(cur);
       if (real !== cur || !(real === realRoot || real.startsWith(`${realRoot}${sep}`))) return { reason: 'symlink' };
     } catch { return { reason: 'unreadable' }; }
-    return { abs: cur };
+    if (want === 'file' ? !last.isFile : !last.isDir) return { reason: want === 'file' ? 'not-file' : 'not-dir' };   // a FIFO or device named like a note is refused before it is opened
+    return { abs: cur, ino: last.ino, dev: last.dev };
   }
 
   function open(path: string, bytes: number, maxBytes: number): ReadResult {
     if (!cleanPath(path)) return { ok: false, reason: 'invalid-path' };
     if (hasSecretSegment(path)) return { ok: false, reason: 'denied' };
     if (!path.endsWith('.md')) return { ok: false, reason: 'not-markdown' };
-    const a = admit(path, opts.fileScopes);
+    const a = admit(path, opts.fileScopes, 'file');
     if ('reason' in a) return { ok: false, reason: a.reason };
     let fd: number | null = null;
     try {
-      fd = openSync(a.abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+      fd = openSync(a.abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const st = fstatSync(fd);
       if (!st.isFile()) return { ok: false, reason: 'not-file' };
+      if (st.ino !== a.ino || st.dev !== a.dev) return { ok: false, reason: 'symlink' };   // the file opened is not the one that was checked
       if (st.size > maxBytes) return { ok: false, reason: 'too-large' };
       const want = Math.min(st.size, bytes);
       const buf = Buffer.alloc(want);
@@ -94,10 +98,9 @@ export function createReader(opts: ReaderOptions): VaultReader {
 
   return {
     list(dir) {
-      const a = admit(dir, opts.dirScopes);
+      const a = admit(dir, opts.dirScopes, 'dir');
       if ('reason' in a) return { ok: false, reason: a.reason };
       try {
-        if (!lstatSync(a.abs).isDirectory()) return { ok: false, reason: 'not-dir' };
         const dirs: string[] = [];
         const files: string[] = [];
         for (const e of readdirSync(a.abs, { withFileTypes: true })) {
@@ -105,6 +108,8 @@ export function createReader(opts: ReaderOptions): VaultReader {
           if (e.isDirectory()) dirs.push(e.name);
           else if (e.isFile() && e.name.endsWith('.md')) files.push(e.name);
         }
+        const again = lstatSync(a.abs);
+        if (!again.isDirectory() || again.ino !== a.ino || again.dev !== a.dev || realpathSync(a.abs) !== a.abs) return { ok: false, reason: 'symlink' };   // swapped while it was read
         return { ok: true, dirs: dirs.sort(), files: files.sort() };
       } catch { return { ok: false, reason: 'unreadable' }; }
     },

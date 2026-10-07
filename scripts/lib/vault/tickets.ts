@@ -56,8 +56,8 @@ function parseScalar(raw: string): Scalar {
 const str = (v: Scalar | undefined): string | undefined => (v === undefined || v === '' ? undefined : String(v));
 const list = (v: Scalar | undefined): string[] => (Array.isArray(v) ? v : []);
 
-/** The `## Estimate` points of a body: `N story point(s)` directly under the heading; 0 when absent. */
-export const pointsOf = (body: string): number => Number(body.match(/^## Estimate\s*\n+\s*(\d+) story points?/m)?.[1] ?? 0);
+/** The `## Estimate` points of a body: `N story point(s)` directly under the heading; 0 when absent. Written without overlapping quantifiers: the ticket tool's own pattern is cubic on a long run of blank lines. */
+export const pointsOf = (body: string): number => Number(body.match(/^## Estimate[ \t]*\n(?:[ \t]*\n)*[ \t]*(\d+) story points?/m)?.[1] ?? 0);
 
 /** A ticket from a note's text, or null when it has no frontmatter or no id. */
 export function parseTicket(text: string, path: string): Ticket | null {
