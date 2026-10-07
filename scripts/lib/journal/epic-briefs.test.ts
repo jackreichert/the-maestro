@@ -18,7 +18,7 @@ const setup = () => {
   const reader = createReader({ root: fx.root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES, ...BRIEF_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES, ...BRIEF_FILE_SCOPES] });
   const write = (rel: string, text: string): void => { mkdirSync(join(fx.root, rel, '..'), { recursive: true }); writeFileSync(join(fx.root, rel), text); };
   const basis = forestBasis(buildForest(loadTickets(reader, fx.root).tickets), EPIC);
-  const run = (rows: { id?: string; ticket?: string; date?: string }[], over: { ticketMap?: Record<string, string[]>; dateOf?: (ms: number) => string } = {}) =>
+  const run = (rows: { id?: string; ticket?: string; closes?: string; date?: string }[], over: { ticketMap?: Record<string, string[]>; dateOf?: (ms: number) => string } = {}) =>
     epicBriefsReport({ reader, date: DAY, rows, ticketMap: over.ticketMap ?? {}, dateOf: over.dateOf ?? (() => '2000-01-01'), cacheKey: `t-${Math.random()}` });
   return { write, basis, run, root };
 };
@@ -65,4 +65,11 @@ test('a note written today that names no ticket is listed, ticket: none and an a
   assert.deepEqual(run(rows, { dateOf: () => '2000-01-01' }).failures, [], 'a note not written on the day is not owed');
   assert.match(epicBriefsLines(r).join('\n'), /Epic briefs and documents \(1 to fix, 1 epic touched today\)/);
   assert.deepEqual(epicBriefsLines({ epics: [], failures: [] }), []);
+});
+
+test('a close row of an item linked only through the ticket map counts, and an unreadable vault fails instead of passing', () => {
+  const { run } = setup();
+  assert.deepEqual(run([{ id: 'closing-row', closes: 'ask1', date: DAY }], { ticketMap: { 'avonlea-api-046': ['ask1'] } }).epics, [EPIC]);
+  const empty = epicBriefsReport({ reader: createReader({ root: '/nonexistent-vault-root', dirScopes: TICKET_DIR_SCOPES, fileScopes: TICKET_FILE_SCOPES }), date: DAY, rows: [{ id: 'a', ticket: EPIC, date: DAY }], ticketMap: {}, dateOf: () => DAY, cacheKey: 'none' });
+  assert.match(empty.failures[0] ?? '', /could not be checked/);
 });

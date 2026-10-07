@@ -20,7 +20,7 @@ export interface EpicBriefsInput {
   /** The roll date, `YYYY-MM-DD`. */
   date: string;
   /** Ledger rows: the ticket each names and the day it was written. */
-  rows: { id?: string; ticket?: string; date?: string }[];
+  rows: { id?: string; ticket?: string; closes?: string; date?: string }[];
   /** `ticket-map.json`: a ticket key to the ledger item ids it covers. */
   ticketMap: Record<string, string[]>;
   /** The vault-relative date of a file's mtime. */
@@ -45,12 +45,19 @@ function rootOf(forest: Forest, id: string): string {
 
 /** Open epics touched on `date`, with a failure line for each fresh-brief or attribution gap. */
 export function epicBriefsReport(inp: EpicBriefsInput): EpicBriefsReport {
-  const forest = buildForest(loadTickets(inp.reader, inp.cacheKey).tickets);
+  const loaded = loadTickets(inp.reader, inp.cacheKey);
+  const forest = buildForest(loaded.tickets);
   const mapped = new Map<string, string>();
   for (const [ticket, ids] of Object.entries(inp.ticketMap)) for (const id of ids) mapped.set(id, ticket);
-  const touched = inp.rows.filter((r) => r.date === inp.date).map((r) => r.ticket ?? mapped.get(r.id ?? '')).filter((t): t is string => !!t && forest.byId.has(t));
+  // A close row is its own row with a fresh id: it names the item it closes, so a map-only item closed today still counts.
+  const named = inp.rows.filter((r) => r.date === inp.date).map((r) => r.ticket ?? mapped.get(r.id ?? '') ?? mapped.get(r.closes ?? '')).filter((t): t is string => !!t);
+  const touched = named.filter((t) => forest.byId.has(t));
   const epics = [...new Set(touched.map((t) => rootOf(forest, t)))].filter((id) => forest.children(id).length > 0 && forest.byId.get(id)?.status !== 'closed').sort();
   const failures: string[] = [];
+  // A check that could not look must say so: an unreadable vault is a failure, never an empty pass.
+  const unreadable = loaded.issues.filter((i) => i.kind === 'unreadable-folder');
+  if (unreadable.length) failures.push(`could not be checked: ${unreadable.slice(0, 3).map((i) => i.text).join('; ')}.`);
+  else if (named.length && !loaded.projects.length) failures.push('could not be checked: the vault has no readable Projects folder, but work today names tickets. Check vault_root.');
   for (const id of epics) {
     const epic = forest.byId.get(id) as Ticket;
     const tree = subtree(forest, id);
