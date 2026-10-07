@@ -38,15 +38,19 @@ export function parsePriority(raw: string): Priority {
   return stream ? { text, stream } : { text };
 }
 
+/** A `date:` line, and an item line split into indent, marker, spacing, optional checkbox and body. The editor and the reader share them, so they cannot disagree on what a line is. */
+export const DATE_LINE = /^\s*date\s*:\s*(\S+)\s*$/i;
+export const ITEM_LINE = /^(\s*)([-*]|\d+[.)])(\s+)(\[[ xX]\]\s+)?(\S.*?)\s*$/;
+
 /** Reads the file's text: a `date:` line and one priority per `- ` or `1. ` line. Anything else is ignored. */
 export function parsePriorities(text: string): { date: string; items: Priority[] } {
   let date = '';
   const items: Priority[] = [];
   for (const line of text.split('\n')) {
-    const d = line.match(/^\s*date\s*:\s*(\S+)\s*$/i);
+    const d = line.match(DATE_LINE);
     if (d) { date = d[1] ?? ''; continue; }
-    const item = line.match(/^\s*(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(\S.*?)\s*$/);
-    if (item) items.push(parsePriority(item[1] ?? ''));
+    const item = line.match(ITEM_LINE);
+    if (item) items.push(parsePriority(item[5] ?? ''));
   }
   return { date: DATE.test(date) ? date : '', items };
 }
