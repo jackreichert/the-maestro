@@ -6,7 +6,7 @@ import type { LedgerRow } from '../ledger-core.ts';
 import { parseArgs } from './args.ts';
 import { groups } from './board.ts';
 import type { BoardContext } from './board.ts';
-import { defaultPendingSince, gateReport, ghPrState, pendingTransitions, primeLines, trackerKeys } from './prime.ts';
+import { defaultPendingSince, gateReport, ghPrState, pendingTransitions, primeLines, startHereLines, trackerKeys } from './prime.ts';
 import type { PrimeContext, TryRun } from './prime.ts';
 
 const TODAY = '2026-10-03';
@@ -84,4 +84,17 @@ test('primeLines lists Queued after In flight and keeps queued items out of In f
     assert.match(lines.slice(at('In flight (1)'), at('Queued (2)')).join('\n'), /qqq3 running job/);
     assert.doesNotMatch(lines.slice(at('In flight (1)'), at('Queued (2)')).join('\n'), /aaaa|qqq1/);
     assert.match(lines.slice(at('Queued (2)')).join('\n'), /aaaa build widget[^]*qqq1 later job/);
+});
+
+test('primeLines puts the Start-here pointer and the week line right after the Board line, inside the cap', () => {
+    const lines = primeLines(ctxFor({ start: () => startHereLines('http://127.0.0.1:47700/', 'This week: ship the widget [Alpha]') }));
+    assert.match(lines[0] ?? '', /^Board /);
+    assert.equal(lines[1], 'Start here: journal.ts start-here · http://127.0.0.1:47700/#tab=start');
+    assert.equal(lines[2], 'This week: ship the widget [Alpha]');
+    assert.ok(lines.length <= 40);
+});
+
+test('startHereLines drops the link when no web URL is configured, and the week line when there is none', () => {
+    assert.deepEqual(startHereLines('', null), ['Start here: journal.ts start-here']);
+    assert.deepEqual(startHereLines('http://127.0.0.1:1/#tab=old', 'w'), ['Start here: journal.ts start-here · http://127.0.0.1:1/#tab=start', 'w']);
 });

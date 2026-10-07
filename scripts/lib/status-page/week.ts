@@ -50,6 +50,12 @@ export function writeWeek(statusDir: string, day: string, items: Priority[]): st
   return path;
 }
 
+/** The goals on one line (`This week: ship it [Alpha]; fix it`), or the not-set line; what `prime` prints. */
+export function weekLine(state: WeekState): string {
+  if (state.state !== 'ok') return weekLines(state)[0] ?? WEEK_UNSET_LINE;
+  return `This week: ${state.items.map((p) => `${p.text}${p.stream ? ` [${p.stream}]` : ''}`).join('; ')}`;
+}
+
 /** The lines `week show` prints. */
 export function weekLines(state: WeekState): string[] {
   if (state.state === 'ok') return [`Goals for the week of ${state.start}:`, ...state.items.map((p, i) => `${i + 1}. ${p.text}${p.stream ? ` [${p.stream}]` : ''}`)];

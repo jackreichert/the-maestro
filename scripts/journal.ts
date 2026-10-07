@@ -140,7 +140,7 @@ import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, 
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
-import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
+import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
@@ -152,8 +152,8 @@ import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue } from './lib/review-queue.ts';
 import { fetchLive, snapshotPath } from './prs-snapshot.ts';
-import { statusPageUri, statusPageFooter } from './lib/status-page/links.ts';
-import { readWeek, weekLines, writeWeek } from './lib/status-page/week.ts';
+import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
+import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { buildStart, homeCounts, startLines } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
 import { buildHome } from './lib/web/home.ts';
@@ -1487,9 +1487,15 @@ const supervisorNotice = (): string[] => [supervisorStatus(EVENT_DIR).line].filt
 /** The `Loop:` line (heartbeat verdict) without its footer markup; empty when nothing is set up and nothing is required. */
 const loopNotice = (): string[] => [liveLoopHealth().line.replace(/\*\*/g, '')].filter(Boolean);
 
+/** The Start-here pointer and, once a status directory exists, the week line (the not-set line when the goals are missing or stale). */
+function startPointer(): string[] {
+    const dirPath = statusDir();
+    return startHereLines(podiumWebUrl(configuredStatusPageUri()), dirPath && existsSync(dirPath) ? weekLine(readWeek(dirPath, priorityDay())) : null);
+}
+
 function cmdPrime() {
     refreshBoard();
-    primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
     // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
     compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(l));
 }
