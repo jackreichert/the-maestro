@@ -93,14 +93,15 @@ test('a legacy row has no fields, no bits and the standard class', () => {
 test('askBits is compact and ordered, names no default for a one-way ask, and clips long text', () => {
     assert.deepEqual(askBits({ door: 'two-way', by: '2026-10-09', class: 'expedite', recommend: 'Yes', default: 'apply it' }), ['two-way', 'by 2026-10-09', 'expedite', 'rec: Yes', 'if silent: apply it']);
     assert.deepEqual(askBits({ door: 'one-way', default: 'sneaky', class: 'standard' }), ['one-way']);
-    assert.deepEqual(askBits({ class: 'standard' }), ['door not set: one-way']);
+    assert.deepEqual(askBits({ class: 'standard' }), [], 'the class every new ask carries does not make it field-bearing');
+    assert.deepEqual(askBits({ class: 'intangible' }), ['door not set: one-way', 'intangible']);
     assert.deepEqual(askBits({ door: 'two-way', by: '2026-10-09T14:00:00.000Z' }), ['two-way', 'by 2026-10-09 14:00Z']);
     const long = askBits({ recommend: 'a'.repeat(200) }, 20);
     assert.equal(long[1].length, 'rec: '.length + 20);
 });
 
 test('askSummary counts one-way asks among those with fields and finds the soonest decide-by', () => {
-    const rows = [{ door: 'one-way', by: '2026-10-12' }, { door: 'two-way', by: '2026-10-09' }, { class: 'standard' }, { kind: 'question' }];
+    const rows = [{ door: 'one-way', by: '2026-10-12' }, { door: 'two-way', by: '2026-10-09' }, { recommend: 'wait' }, { class: 'standard' }, { kind: 'question' }];
     assert.deepEqual(askSummary(rows), { oneWay: 2, nextBy: '2026-10-09' });
 });
 

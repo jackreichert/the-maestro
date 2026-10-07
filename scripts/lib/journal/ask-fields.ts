@@ -118,8 +118,11 @@ export function parseAskFields(flags: RawAskFlags, opts: { paste: boolean; now: 
 
 // ── reading a row back ──────────────────────────────────────────────────────
 
-/** True when the row carries any of the ask fields; a legacy ask carries none, and is shown and counted as before. */
-export const hasAskFields = (r: AskRow): boolean => ['recommend', 'default', 'door', 'by', 'class'].some((k) => r[k as keyof AskRow] !== undefined);
+/**
+ * True when the row carries a decision field. A class of `standard` alone does not count: every new ask is written with
+ * it, so a plain ask reads and prints like a legacy one until it says something about its door, default, date or class.
+ */
+export const hasAskFields = (r: AskRow): boolean => ['recommend', 'default', 'door', 'by'].some((k) => r[k as keyof AskRow] !== undefined) || (r.class !== undefined && r.class !== 'standard');
 
 /** The door of an ask. Anything that is not exactly `two-way` (missing, misspelt, hand-edited) is one-way. */
 export const askDoor = (r: AskRow): Door => (r.door === 'two-way' ? 'two-way' : 'one-way');
@@ -162,6 +165,12 @@ export function askSummary(rows: AskRow[]): { oneWay: number; nextBy?: string } 
     const bys = withFields.map(askBy).filter((b): b is string => b !== undefined).sort();
     return { oneWay: withFields.filter((r) => askDoor(r) === 'one-way').length, ...(bys.length ? { nextBy: bys[0] } : {}) };
 }
+
+/** `(2 one-way · next by 2026-10-09)` after the awaiting count, only when an ask carries decision fields. */
+export const asksNote = (r: { oneWay?: number; nextBy?: string }): string => {
+    const bits = [r.oneWay ? `${r.oneWay} one-way` : '', r.nextBy ? `next by ${byLabel(r.nextBy)}` : ''].filter(Boolean);
+    return bits.length ? ` (${bits.join(' · ')})` : '';
+};
 
 /** Problems with the fields of one stored row, for `verify`: a hand-edit that the write-time rules would have refused. */
 export function askFieldProblems(r: AskRow): string[] {
