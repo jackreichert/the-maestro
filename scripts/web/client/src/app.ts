@@ -5,6 +5,8 @@ import { h, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
+import { LiveUpdates, liveLabel } from './live.ts';
+import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { cueParts, clockTime, freshness, longDate } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
@@ -12,6 +14,8 @@ import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
 import type { ChartsData, PodiumState } from './types.ts';
+
+interface Fresh { state: PodiumState; charts: ChartsData; dropped: number }
 
 const CSS = `${BOARD_CSS}
   :host { --pad: var(--space-4); }
@@ -30,6 +34,8 @@ const CSS = `${BOARD_CSS}
     background: var(--surface-1); box-shadow: var(--shadow-1); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
   }
+  .link { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .link.offline { color: var(--critical); }
   .dot { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--text-muted); }
   .fresh.live .dot { border-color: var(--success); background: var(--success); }
   .fresh.stale { background: var(--warning-soft); color: var(--warning); box-shadow: none; }
@@ -113,6 +119,9 @@ export class PodiumApp extends HTMLElement {
   #dropped = 0;
   #active = OVERVIEW;
   #tick: number | undefined;
+  #liveUpdates: LiveUpdates<Fresh> | null = null;
+  #liveStatus: LiveStatus | null = null;
+  #pending: Fresh | null = null;   // newer data held back while someone is typing an answer, shown once they leave the field
   // A stream tag link (or Back) changed the fragment: switch tabs, start the new tab at the top, and put focus on its
   // tab so keyboard and screen reader users are not left on the destroyed link.
   readonly #onHash = (): void => {
@@ -129,6 +138,7 @@ export class PodiumApp extends HTMLElement {
 
   connectedCallback(): void {
     window.addEventListener('hashchange', this.#onHash);
+    this.addEventListener('focusout', this.#onFocusOut);
     this.#root.replaceChildren(skeleton());
     Promise.all([loadState(), loadCharts()]).then(([s, c]) => {
       this.#state = s.data;
@@ -139,6 +149,7 @@ export class PodiumApp extends HTMLElement {
       this.#safeRender();
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
+      if (this.#live) this.#startLive(s.data.seq);   // sample data has no server to follow
     }).catch((e: unknown) => {
       this.#root.replaceChildren(problem(`Can't reach the Podium server`, e, 'Start it with node scripts/journal.ts web (or npm run web:static for sample data), then reload.'));
     });
@@ -146,8 +157,44 @@ export class PodiumApp extends HTMLElement {
 
   disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.#onHash);
+    this.removeEventListener('focusout', this.#onFocusOut);
     window.clearInterval(this.#tick);
+    this.#liveUpdates?.stop();
+    this.#liveUpdates = null;
   }
+
+  /** Follow the server: the event stream, or polling when there is none. Only ever with data from a real server. */
+  #startLive(seq: string): void {
+    this.#liveUpdates = new LiveUpdates<Fresh>({
+      open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
+      load: async () => {
+        const [s, c] = await Promise.all([loadState(), loadCharts()]);
+        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, dropped: s.dropped + c.dropped } : null;
+      },
+      seqOf: (f) => f.state.seq,
+      apply: (f) => this.#adopt(f),
+      onStatus: (st) => { this.#liveStatus = st; this.#updateLink(); },
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (id) => window.clearTimeout(id as number),
+    }, seq);
+    this.#liveUpdates.start();
+  }
+
+  /** Show newer data, unless an answer is half-typed: a redraw would throw it away, so hold the data until the field is left. */
+  #adopt(f: Fresh): void {
+    if (typingAnAnswer()) { this.#pending = f; return; }
+    this.#pending = null;
+    this.#state = f.state;
+    this.#charts = f.charts;
+    this.#dropped = f.dropped;
+    if (!this.#ids().includes(this.#active)) this.#active = OVERVIEW;   // the stream behind the open tab is gone
+    this.#safeRender();
+  }
+
+  readonly #onFocusOut = (): void => {
+    // Focus is mid-move during focusout; look once it has landed.
+    setTimeout(() => { if (this.#pending && !typingAnAnswer()) this.#adopt(this.#pending); }, 0);
+  };
 
   #ids(): string[] { return tabIds(this.#state?.streams ?? []); }
 
@@ -218,7 +265,7 @@ export class PodiumApp extends HTMLElement {
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
         h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, longDate(st.today))),
-        this.#freshness(st)),
+        h('div', { class: 'brand' }, this.#freshness(st), this.#link())),
       note ? h('p', { class: 'source' }, note) : null,
       h('p', { class: 'scope', id: 'scope' }, scope),
       h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue));
@@ -240,6 +287,17 @@ export class PodiumApp extends HTMLElement {
     const st = this.#state;
     const old = this.#root.querySelector('.fresh');
     if (st && old) old.replaceWith(this.#freshness(st));
+  }
+
+  /** Whether updates arrive by the live stream, by polling, or not at all; hidden for sample data and before the first answer. */
+  #link(): HTMLElement {
+    const st = this.#liveStatus;
+    return h('span', { class: `link${st === 'offline' ? ' offline' : ''}`, role: 'status' }, liveLabel(st));
+  }
+
+  #updateLink(): void {
+    const old = this.#root.querySelector('.link');
+    if (old) old.replaceWith(this.#link());
   }
 
   #board(st: PodiumState, stream: string): Node {
@@ -297,6 +355,13 @@ export class PodiumApp extends HTMLElement {
       mk('bar', 'Pull requests by CI state', prMixChart(c)),
       mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
   }
+}
+
+/** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed. */
+function typingAnAnswer(): boolean {
+  let el: Element | null = document.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) && el.value !== '';
 }
 
 /** A DOM id for a tab: stream names are data and may hold spaces, which would split an IDREF list. */
