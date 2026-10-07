@@ -51,6 +51,7 @@ pr_body_private_patterns: \bX-\d+\b # extra regexes for private ids a PR must no
 pr_body_voice_names: Sam, samf # your names or logins that must not appear in the third person; also pr_body_check_private, pr_body_check_voice and pr_body_check_counts (on/off)
 pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>`; default 3
 review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
+rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off

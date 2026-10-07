@@ -90,7 +90,7 @@ Run every open PR through these, in order. A PR can only land in the first bucke
 4. **Ready for review, no human reviewer requested.** Not draft, no request for a `User` — only a
    `Team`, only a `Bot`, some mix of the two, or nothing at all. Flag these explicitly: nobody is
    going to pick them up without a nudge.
-5. **Approved and ready to merge.** `reviewDecision: APPROVED`, not a draft, zero unresolved review threads, and GitHub's `mergeable` is `MERGEABLE`. `node scripts/prs-snapshot.ts --ready` computes this from the board query (`reviewThreads.isResolved` and `mergeable`) and lists every approved PR that is *not* ready with the reason (open threads, merge conflict, mergeable state unknown, more than 100 threads, blocked on a twin), so a PR with an open thread or a conflict is never called ready. After a merge it re-asks `mergeable` for the open PRs in the same repo until two known answers agree, because GitHub serves a cached answer from before the merge and UNKNOWN until asked again; one that never settles stays UNKNOWN and is not ready. `prs-snapshot.ts ready <file>` is offline, states the file's age and is not a merge gate. Twin-flow repos: a PR into `staging` is held while an open PR with the same head branch targets another base.
+5. **Approved and ready to merge.** `reviewDecision: APPROVED`, not a draft, zero unresolved review threads, and GitHub's `mergeable` is `MERGEABLE` (and, when review bots' threads were resolved, a fresh-agent SHIP IT is recorded for the head commit, see [Re-review before ready](#re-review-before-ready)). `node scripts/prs-snapshot.ts --ready` computes this from the board query (`reviewThreads.isResolved` and `mergeable`) and lists every approved PR that is *not* ready with the reason (open threads, merge conflict, mergeable state unknown, more than 100 threads, blocked on a twin), so a PR with an open thread or a conflict is never called ready. After a merge it re-asks `mergeable` for the open PRs in the same repo until two known answers agree, because GitHub serves a cached answer from before the merge and UNKNOWN until asked again; one that never settles stays UNKNOWN and is not ready. `prs-snapshot.ts ready <file>` is offline, states the file's age and is not a merge gate. Twin-flow repos: a PR into `staging` is held while an open PR with the same head branch targets another base.
 6. **Changes requested, no open threads.** `reviewDecision: CHANGES_REQUESTED` but the threads that
    caused it are already resolved — usually means a re-review is overdue, not that work remains.
 7. **Stale.** `updatedAt` more than 30 days ago. Nudge-or-close candidates — surface them, don't
@@ -184,6 +184,21 @@ Never curt, and never a verdict. Human top-level feedback, such as a PR comment 
 
 Everything else about the git side of this — authorship, branch protection, commit
 slicing — is [reference/git.md](git.md); don't restate it here.
+
+### Re-review before ready
+
+The agent that fixed a bot's threads also judges its own fix, and a per-PR fix cannot see a break at the seam between two PRs of a stack. So a fix is not trusted until a second, fresh agent has looked.
+
+After a thread-fixing agent pushes and resolves bot threads, dispatch a read-only reviewer that has not worked on the PR. It re-reviews only the fix commits and the stack seams they touch, runs the tests (and a merge simulation where PRs stack), and reports **SHIP IT** or **NEEDS WORK**. Record the verdict for the head commit it reviewed:
+
+```bash
+node <scripts dir>/review-verdict.ts record --pr <owner/repo#N> --head <sha> --verdict "SHIP IT" --reviewer <reviewer id> --fixer <fixer id>
+```
+
+- Enforced: `review-verdict.ts` refuses a verdict whose reviewer is the fixer, and `prs-snapshot.ts --ready` lists a PR holding a resolved review-bot thread under "not ready" until a SHIP IT is recorded for its current head commit. A push after the verdict, a NEEDS WORK, or an unknown head commit all hold it. Threads resolved by people do not trigger it.
+- Not enforced: that the reviewer was really fresh beyond the id differing, or that the review was good. The id is self-reported.
+- On NEEDS WORK the fixing agent (or a new one) fixes, and the cycle repeats on the new head; the loop stops when a round finds only nitpicks, not on a fixed count.
+- Switch: `rereview_gate`, on by default.
 
 ## Copilot on drafts
 
