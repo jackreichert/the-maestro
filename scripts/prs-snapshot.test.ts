@@ -270,3 +270,14 @@ test('ready <file> says how old the snapshot is, warns when it is stale, and tol
     const fresh = run('ready', fixture(dir, 'new.json', { takenAt: new Date().toISOString(), prs: [] }));
     assert.doesNotMatch(fresh.out, /STALE/);
 });
+
+test('stacks <snapshot> flags a stack over the depth cap offline, and a missing argument prints usage', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prs-snap-test-'));
+    const chain = [1, 2, 3, 4].map((n) => pr({ key: `o/r#${n}`, repo: 'o/r', number: n, url: `https://github.com/o/r/pull/${n}`, headRefName: `f${n}`, baseRefName: n === 1 ? 'develop' : `f${n - 1}`, createdAt: new Date().toISOString() }));
+    const r = run('stacks', fixture(dir, 's.json', { prs: chain }));
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Stacks over the cap \(3 deep, 5 days\): 1/);
+    assert.match(r.out, /o\/r: 4 deep: #1 <- #2 <- #3 <- #4\. Stop adding to the top; drive o\/r#1 to merge/);
+    assert.match(run('stacks', fixture(dir, 'flat.json', { prs: [chain[0]] })).out, /: none/);
+    assert.match(run('stacks').err, /Usage: prs-snapshot\.ts stacks/);
+});

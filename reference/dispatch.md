@@ -121,6 +121,7 @@ It counts your open, non-draft PRs against `review_queue_cap` (default 4) and ex
 - Dispatch **no new PR-producing work**: no new feature, refactor or follow-up branch, unless the user asks for that work by name. Say so in one line, queue the request (`journal.ts queue`) so it is not lost, and list the queued work in the reply instead of starting it.
 - Fixes to PRs that are already open still go: review comments, conflicts, failing checks. So does read-only work (scouting, research, review) that opens no PR.
 - Use the freed attention to drive the oldest open PR to merge.
+- **Stacks have a cap too.** Never base a new PR on the top of a stack already `stack_max_depth` deep (default 3) or older than `stack_max_age_days` (default 5); `prs-snapshot.ts --stacks` lists them. Drive the bottom PR of that stack to merge first.
 
 The count is the same PR search the PR scripts share (open, authored by you, org-scoped), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` and the footer show `review queue: N of 4` from the stored snapshot, and the Podium from its own PR cache; the gate itself reads GitHub live, so on a stale board the gate is the authority.
 

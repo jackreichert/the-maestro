@@ -12,6 +12,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const str: Check = (v) => typeof v === 'string';
 const num: Check = (v) => typeof v === 'number' && Number.isFinite(v);
 const bool: Check = (v) => typeof v === 'boolean';
+const oneOf = (...values: string[]): Check => (v) => typeof v === 'string' && values.includes(v);
 const opt = (c: Check): Check => (v) => v === undefined || c(v);
 const arrOf = (c: Check): Check => (v) => Array.isArray(v) && v.every(c);
 const recordOf = (c: Check): Check => (v) => isObj(v) && Object.values(v).every(c);
@@ -22,7 +23,10 @@ const links = shape({ note: opt(ref), tracker: arrOf(ref), prs: arrOf(ref) });
 
 const WORK: Shape = { id: str, stream: str, text: str, since: str, ticket: opt(ref), links, model: opt(str) };
 const ROW_RULES = {
-  asks: { id: str, stream: str, needed: str, context: str, date: str, ts: str, ageDays: num, links } satisfies Shape,
+  asks: {
+    id: str, stream: str, needed: str, context: str, date: str, ts: str, ageDays: num, links,
+    recommend: opt(str), door: opt(oneOf('one-way', 'two-way')), default: opt(str), by: opt(str), class: opt(oneOf('expedite', 'fixed-date', 'standard', 'intangible')), paste: opt(str),
+  } satisfies Shape,
   working: WORK,
   queued: WORK,
   blocked: { ...WORK, gate: opt(str) },

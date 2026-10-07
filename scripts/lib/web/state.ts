@@ -3,8 +3,10 @@
  * JSON the page needs. Links are data ({ label, url }), never HTML, and every URL is built here from the page settings, so
  * the client never makes one out of ledger text. No file, clock or process access; the caller passes the inputs.
  */
-import { askRefs, keysIn, pairTwins, prFlagNames, splitAsk, stackParent, streamOrder, ticketNoteRef, trackerRef } from '../status-page/render.ts';
+import { askRefs, keysIn, pairTwins, prFlagNames, stackParent, streamOrder, ticketNoteRef, trackerRef } from '../status-page/render.ts';
 import type { BoardStatus, FooterData, Item, PageConfig, PageInput, Pr, Ref } from '../status-page/render.ts';
+import { askBy, askClass, askDoor, autoDefault, byLabel, hasAskFields, TEXT_MAX } from '../journal/ask-fields.ts';
+import type { AskClass, Door } from '../journal/ask-fields.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { askAgeDays } from './charts.ts';
 import type { PrioritiesState } from '../status-page/priorities.ts';
@@ -19,7 +21,15 @@ export const PR_STALE_MS = 15 * 60_000;
 
 export interface LinkData { label: string; url?: string }
 export interface AskLinks { note?: LinkData; tracker: LinkData[]; prs: LinkData[] }
-export interface AskCard { id: string; stream: string; needed: string; context: string; ageDays: number; date: string; ts?: string; links: AskLinks }
+/**
+ * One decision awaiting the user. `context` is everything after the headline with its line breaks and URLs intact (the client
+ * decides what becomes a link). The decision fields appear only on an ask that carries any; `default` only on a two-way door.
+ * `paste` is a run-this ask's block file, named and never read here.
+ */
+export interface AskCard {
+  id: string; stream: string; needed: string; context: string; ageDays: number; date: string; ts?: string; links: AskLinks;
+  recommend?: string; door?: Door; default?: string; by?: string; class?: AskClass; paste?: string;
+}
 export interface WorkItem { id: string; stream: string; text: string; ticket?: string; links: LinkData[]; model?: string; since?: string }
 export interface BlockedItem extends WorkItem { gate?: string }
 export interface DoneItem extends WorkItem { closedAt?: string }
@@ -63,7 +73,7 @@ export function buildState(input: GatheredInputs): PodiumState {
   for (const [t, list] of Object.entries(ticketMap)) for (const id of list) tickets.set(id, t);
   const meta = new Map(triage.items.map((i) => [i.id, i]));
   const priorityStreams = priorities.state === 'ok' ? priorities.items.map((p) => p.stream) : [];
-  const streams = streamOrder(config, [...status.awaiting.map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...priorityStreams]);
+  const streams = streamOrder(config, [...status.awaiting.map((a) => a.stream), ...(status.paste ?? []).map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...priorityStreams]);
   const streamOf = (i: { stream?: string }): string => (streams.includes(i.stream ?? '') ? i.stream! : OTHER);
   const noteOf = (i: Item): string | undefined => i.ticket || meta.get(i.id)?.ticket || tickets.get(i.id) || undefined;
   const work = (i: Item): WorkItem => {
@@ -76,7 +86,7 @@ export function buildState(input: GatheredInputs): PodiumState {
     generatedAt: now.toISOString(), today, tz: config.tz, streams, priorities: structuredClone(priorities),
     footer: structuredClone(status.footer?.ledger ?? []),
     prData: prDataState(prData, now),
-    asks: status.awaiting.map((a) => askCard(config, a, prs, noteOf(a), streamOf(a), now)),
+    asks: [...status.awaiting, ...(status.paste ?? [])].map((a) => askCard(config, a, prs, noteOf(a), streamOf(a), now)),
     working: status.inflight.map(work),
     queued: status.queued.map(work),
     blocked: status.blocked.map((b) => ({ ...work(b), ...(meta.get(b.id)?.gate ? { gate: meta.get(b.id)?.gate } : {}) })),
@@ -96,13 +106,51 @@ function closedAt(d: BoardStatus['done'][number]): string | undefined {
   return (d as { closedBy?: { ts?: string } | null }).closedBy?.ts ?? d.ts;
 }
 
+const PULL_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d{1,6})(?!\d)/g;
+
+/**
+ * The decision and the rest of the ask. Text with line breaks gives its first line as the decision; a single line is cut after its
+ * first question mark. Either way the rest is kept whole: nothing is dropped, and the line breaks are the writer's.
+ */
+export function splitAskBody(text: string): { needed: string; context: string } {
+  const clean = text.replace(/\r\n?/g, '\n').trim();
+  const nl = clean.indexOf('\n');
+  if (nl !== -1) return { needed: clean.slice(0, nl).trim(), context: clean.slice(nl + 1).trim() };
+  const q = clean.indexOf('?');
+  return q === -1 ? { needed: clean, context: '' } : { needed: clean.slice(0, q + 1), context: clean.slice(q + 1).trim() };
+}
+
+/** The decision fields a row carries, each read defensively (`askDoor`, `autoDefault` and friends accept anything a hand edit left). A paste ask has none. */
+function decisionFields(a: Item): Pick<AskCard, 'recommend' | 'door' | 'default' | 'by' | 'class'> {
+  if (a.paste !== undefined || !hasAskFields(a)) return {};
+  const rec = typeof a.recommend === 'string' ? a.recommend.trim().slice(0, TEXT_MAX) : '';
+  const def = autoDefault(a);
+  const by = askBy(a);
+  return {
+    ...(rec ? { recommend: rec } : {}), door: askDoor(a), ...(def ? { default: def.slice(0, TEXT_MAX) } : {}),
+    ...(by ? { by: byLabel(by) } : {}), ...(askClass(a) !== 'standard' ? { class: askClass(a) } : {}),
+  };
+}
+
+/** `#N (not open)` made a link when the ask's own text names that pull request by its github.com URL; no GitHub call is made. */
+function withPullUrls(text: string, prs: Ref[]): Ref[] {
+  const urls = new Map<number, string>();
+  for (const m of text.matchAll(PULL_URL)) if (!urls.has(Number(m[1]))) urls.set(Number(m[1]), m[0]);
+  return prs.map((r) => {
+    const n = /^#(\d+) \(not open\)$/.exec(r.label)?.[1];
+    const url = n === undefined ? undefined : urls.get(Number(n));
+    return url ? { ...r, url } : r;
+  });
+}
+
 /** The decision, its context and its links, with the age in whole page days (`askAgeDays`, the same figure the age chart buckets). */
 function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefined, stream: string, now: Date): AskCard {
   const refs = askRefs(config, a, prs, ticket);
-  const { needed, context } = splitAsk(a.text);
+  const { needed, context } = splitAskBody(a.text);
   return {
     id: a.id, stream, needed, context, ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
-    links: { ...(refs.note ? { note: link(refs.note) } : {}), tracker: refs.tracker.map(link), prs: refs.prs.map(link) },
+    ...decisionFields(a), ...(typeof a.paste === 'string' && a.paste ? { paste: a.paste } : {}),
+    links: { ...(refs.note ? { note: link(refs.note) } : {}), tracker: refs.tracker.map(link), prs: withPullUrls(a.text, refs.prs).map(link) },
   };
 }
 
