@@ -56,7 +56,7 @@ test('PR data is stale when old or never read, and carries the failure text when
 test('an ask splits into the decision and its context, with the age, the triage ticket note and tracker and PR links as data', () => {
   const [ask, old] = buildState(inputs()).asks;
   assert.equal(ask?.needed, 'Merge widgets #12 now?');
-  assert.equal(ask?.context, 'See FAKE-12 and for context');
+  assert.equal(ask?.context, 'See FAKE-12 and https://x.test/y for context');
   assert.equal(ask?.ageDays, 1);
   assert.equal(ask?.stream, 'Alpha');
   assert.equal(ask?.links.note?.label, 'proj-7');
@@ -113,4 +113,58 @@ test('state is JSON-safe plain data and a pure function of its input (no HTML, n
   assert.deepEqual(JSON.parse(JSON.stringify(a)), a);
   assert.deepEqual(buildState(inputs()), a);
   assert.equal(JSON.stringify(a).includes('<span'), false);
+});
+
+test('an ask with line breaks takes its first line as the decision and keeps every later line, blank lines and URLs included', () => {
+  const text = 'Pick the plan? Answer by number.\n\n1. cut now (a) yes? (b) no\n2. wait\nSource: https://example.test/p and obsidian://open?vault=V&file=Plans%2Fx';
+  const [ask] = buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'ml01', date: '2026-10-06', text, stream: 'Alpha' }] } })).asks;
+  assert.equal(ask?.needed, 'Pick the plan? Answer by number.');
+  assert.equal(ask?.context, '1. cut now (a) yes? (b) no\n2. wait\nSource: https://example.test/p and obsidian://open?vault=V&file=Plans%2Fx');
+});
+
+test('an ask on one line is cut after its first question mark, and nothing after it is lost', () => {
+  const [ask] = buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'ml02', date: '2026-10-06', text: 'Which one? (1) a? (2) b', stream: 'Alpha' }] } })).asks;
+  assert.deepEqual([ask?.needed, ask?.context], ['Which one?', '(1) a? (2) b']);
+});
+
+test('paste asks reach the state as asks that carry their block path and no decision fields', () => {
+  const base = inputs();
+  const s = buildState(inputs({ status: { ...base.status, paste: [{ id: 'ps01', date: '2026-10-06', text: 'Run the block: it checks gates', stream: 'Beta', paste: '/tmp/fake-block.sh' }] } }));
+  const card = s.asks.find((a) => a.id === 'ps01');
+  assert.equal(card?.paste, '/tmp/fake-block.sh');
+  assert.equal(card?.stream, 'Beta');
+  assert.equal(card?.needed, 'Run the block: it checks gates');
+  assert.equal(card?.door, undefined);
+  assert.deepEqual(s.asks.map((a) => a.id), ['bb22', 'cc33', 'ps01'], 'plain asks first, then paste asks');
+  assert.ok(buildState(inputs()).asks.every((a) => a.paste === undefined));
+});
+
+test('an ask carries its recommendation, door, decide-by and class, and a default only on a two-way door', () => {
+  const ask = (over: object) => buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'df01', date: '2026-10-06', text: 'Go?', stream: 'Alpha', ...over }] } })).asks[0];
+  const two = ask({ recommend: 'yes, ship it', door: 'two-way', default: 'ship Friday', by: '2026-10-09T14:00:00Z', class: 'expedite' });
+  assert.deepEqual([two?.recommend, two?.door, two?.default, two?.by, two?.class], ['yes, ship it', 'two-way', 'ship Friday', '2026-10-09 14:00Z', 'expedite']);
+  const one = ask({ recommend: 'no', door: 'one-way', default: 'hand-edited default' });
+  assert.deepEqual([one?.door, one?.default], ['one-way', undefined]);
+  const noDoor = ask({ recommend: 'maybe' });
+  assert.equal(noDoor?.door, 'one-way', 'a missing door reads as one-way');
+  const legacy = ask({});
+  assert.deepEqual([legacy?.recommend, legacy?.door, legacy?.default, legacy?.by, legacy?.class], [undefined, undefined, undefined, undefined, undefined]);
+  const plain = ask({ class: 'standard', recommend: 'r', door: 'two-way' });
+  assert.equal(plain?.class, undefined, 'the default class is not shown');
+});
+
+test('hand-edited decision fields cannot smuggle non-text or oversize values into the state', () => {
+  const [ask] = buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'df02', date: '2026-10-06', text: 'Go?', stream: 'Alpha', recommend: { x: 1 }, door: 'sideways', by: 'tomorrow', class: 'urgent' }] } })).asks;
+  assert.deepEqual([ask?.recommend, ask?.by, ask?.class], [undefined, undefined, undefined]);
+  assert.equal(ask?.door, 'one-way');
+  const [long] = buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'df03', date: '2026-10-06', text: 'Go?', stream: 'Alpha', recommend: 'x'.repeat(5000), door: 'one-way' }] } })).asks;
+  assert.equal(long?.recommend?.length, 300);
+});
+
+test('a PR that is no longer open links to the GitHub pull URL the ask text names, and only a github.com one', () => {
+  const ask = (text: string) => buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'pl01', date: '2026-10-06', text, stream: 'Alpha' }] } })).asks[0];
+  const merged = ask('Is #99 done? See https://github.com/org/acme-widgets/pull/99.');
+  assert.deepEqual(merged?.links.prs, [{ label: '#99 (not open)', url: 'https://github.com/org/acme-widgets/pull/99' }]);
+  assert.deepEqual(ask('Is #99 done? See https://evil.test/org/x/pull/99')?.links.prs, [{ label: '#99 (not open)' }]);
+  assert.deepEqual(ask('Is #99 done?')?.links.prs, [{ label: '#99 (not open)' }]);
 });
