@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { buildRoutes, TYPES } from '../../web/serve-static.ts';
 import { boardFiles, createChangeHub, serveEvents } from './events.ts';
+import { vaultWatch } from './vault-watch.ts';
 import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
@@ -72,7 +73,8 @@ export function createWebServer(o: WebServerOptions): Server {
   const warned = new Set<string>();
   const warn = o.web.warn ?? ((m: string): void => { if (!warned.has(m)) { warned.add(m); log(m.trim()); } });
   const routes = dataRoutes({ ...o, web: { ...o.web, warn } });
-  const hub = o.hub ?? createChangeHub({ files: () => boardFiles(o.web.vault, o.web.project, o.web.statusDir), intervalMs: o.eventsIntervalMs, keepAliveMs: o.eventsKeepAliveMs });
+  const vault = o.web.vaultRoot ? vaultWatch(o.web.vaultRoot) : null;
+  const hub = o.hub ?? createChangeHub({ files: () => [...boardFiles(o.web.vault, o.web.project, o.web.statusDir), ...(vault ? vault.files() : [])], intervalMs: o.eventsIntervalMs, keepAliveMs: o.eventsKeepAliveMs });
   const files = buildRoutes(o.clientDir);   // a whitelist taken at start: a request path is only ever looked up, never joined onto a path
   const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES, requestTimeout: o.requestTimeoutMs ?? 10_000, headersTimeout: o.headersTimeoutMs ?? 5_000, connectionsCheckingInterval: 1000 }, (req, res) => {
     try {
