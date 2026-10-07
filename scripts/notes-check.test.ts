@@ -57,3 +57,12 @@ test('the standing row notes-reachable refuses done while a note is unreachable,
   assert.equal(roll.code, 0, roll.err);
   assert.match(roll.out, /Notes reachability: 1 of 2 notes/);
 });
+
+test('notes-check --json is not cut off when the report is larger than a pipe buffer', () => {
+  const w = world('# Harvest plan\n');
+  for (let n = 0; n < 300; n += 1) put(w.vault, `Projects/orchard/Research/topic/${'long-note-name-'.repeat(6)}${n}.md`, '# A note\n');
+  const out = cli(w, 'notes-check', '--json');
+  assert.equal(out.code, 1);
+  const report = JSON.parse(out.out).report;
+  assert.equal(report.unreachable.length, 301);
+});

@@ -822,7 +822,8 @@ function cmdNotesCheck() {
     const r = notesCheck(sinceDay(arg('since') || undefined));
     if (!r) { console.error(`notes-check: ${NO_VAULT_DETAIL}`); process.exit(2); }
     if (asJson) console.log(JSON.stringify(r, null, 2)); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
-    process.exit(r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0);
+    // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
+    process.exitCode = r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0;
 }
 
 /**
