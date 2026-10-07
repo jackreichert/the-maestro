@@ -45,6 +45,7 @@ test('longDate names the weekday and month and rejects anything but YYYY-MM-DD',
   assert.equal(longDate('2026-10-06'), 'Tuesday 6 October');
   assert.equal(longDate('2026-13-45'), '');
   assert.equal(longDate('06/10/2026'), '');
+  assert.equal(longDate('2026-02-30'), '', 'an impossible day is rejected, not rolled into March');
 });
 
 test('freshness flags data older than 15 minutes and gives its age', () => {
@@ -71,3 +72,4 @@ test('oldestFirst puts the longest wait first, breaks ties by the earlier ask, a
   assert.deepEqual(oldestFirst(input).map((a) => a.id), ['old', 'mid-early', 'mid-late', 'tie-a', 'tie-b', 'new']);
   assert.equal(input[0].id, 'new', 'the input is not reordered');
 });
+

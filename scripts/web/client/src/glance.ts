@@ -43,15 +43,24 @@ export function clockTime(iso: string, tz: string): string {
   return text.replace(/\s?([AP])M$/, (_, x: string) => ` ${x.toLowerCase()}m`);
 }
 
-/** A calendar date like "Tuesday 6 October" for a `YYYY-MM-DD` day; empty when it is not one. */
-export function longDate(day: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
+/** Noon UTC on a real `YYYY-MM-DD` day, or NaN: the date must survive a round trip, so 2026-02-30 is rejected, not rolled into March. */
+function calendarNoon(day: string): number {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return Number.NaN;
   const t = Date.parse(`${day}T12:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day ? t : Number.NaN;
+}
+
+/** `day` formatted as "<weekday> <day> <month>" with the given name lengths; empty when it is not a real day. */
+function dayMonth(day: string, names: 'long' | 'short'): string {
+  const t = calendarNoon(day);
   if (!Number.isFinite(t)) return '';
-  const parts = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).formatToParts(t);
+  const parts = new Intl.DateTimeFormat('en-GB', { weekday: names, day: 'numeric', month: names, timeZone: 'UTC' }).formatToParts(t);
   const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
   return `${get('weekday')} ${get('day')} ${get('month')}`;
 }
+
+/** A calendar date like "Tuesday 6 October" for a `YYYY-MM-DD` day; empty when it is not one. */
+export const longDate = (day: string): string => dayMonth(day, 'long');
 
 /** Past this many minutes a live page is flagged stale: the Markdown Podium refreshes every 10, so 15 means a missed refresh. */
 export const STALE_MINUTES = 15;
