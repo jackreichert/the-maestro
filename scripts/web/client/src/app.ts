@@ -315,12 +315,12 @@ export class PodiumApp extends HTMLElement {
           section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(st.blocked, ctx)),
           section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.' }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },
-          section({ title: `Today's priorities`, n: 0, glyph: '↑', tone: 'neutral', empty: priEmpty, quiet: true }, priorities),
-          section({ title: 'In flight', n: st.working.length, glyph: '◐', tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(st.working, ctx)),
-          section({ title: 'Streams', n: 0, glyph: '≡', tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
+          section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: priEmpty, quiet: true }, priorities),
+          section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(st.working, ctx)),
+          section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
       h('div', { class: 'wide' },
-        section({ title: 'Trends', n: 0, glyph: '▥', tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),
-        md ? section({ title: 'Notes', n: 0, glyph: '¶', tone: 'neutral', empty: '', quiet: true }, md) : null));
+        section({ title: 'Trends', n: 0, tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),
+        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null));
   }
 
   #counts(st: PodiumState): Node | null {

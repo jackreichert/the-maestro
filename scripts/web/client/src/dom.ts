@@ -98,6 +98,8 @@ export const UI_CSS = `
   .quiet .head h2 { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); letter-spacing: 0.02em; }
   .glyph { display: inline-block; width: 1.1em; text-align: center; }
   .head .glyph { color: var(--text-muted); }
+  /* Wide screens hang the status glyph in the margin, so every heading's text starts on the same edge as its rows. */
+  @media (min-width: 1100px) { .head .glyph { margin-left: calc(-1.1em - var(--space-2)); } }
   .tone-critical .head .glyph { color: var(--critical); }
   .tone-success .head .glyph { color: var(--success); }
   .tone-accent .head .glyph { color: var(--accent); }

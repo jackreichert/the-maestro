@@ -20,7 +20,8 @@ const CSS = `${BASE_CSS}${UI_CSS}
 export const BOARD_CSS = CSS;
 
 export type Tone = 'accent' | 'critical' | 'success' | 'neutral';
-export interface SectionSpec { title: string; n: number; glyph: string; tone: Tone; empty: string; quiet?: boolean; hint?: Node | null }
+/** A section; only the three status sections (needs you, blocked, shipped) carry a glyph. */
+export interface SectionSpec { title: string; n: number; glyph?: string; tone: Tone; empty: string; quiet?: boolean; hint?: Node | null }
 
 let sectionSeq = 0;
 
@@ -29,7 +30,7 @@ export function section(spec: SectionSpec, body: Node | null): HTMLElement {
   const id = `s${++sectionSeq}`;
   return h('section', { 'aria-labelledby': id, class: `tone-${spec.tone}${spec.quiet ? ' quiet' : ''}` },
     h('div', { class: 'head' },
-      h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph),
+      spec.glyph ? h('span', { class: 'glyph', 'aria-hidden': 'true' }, spec.glyph) : null,
       h('h2', { id }, spec.title, spec.n > 0 ? h('span', { class: 'count' }, h('span', { class: 'vh' }, ', '), String(spec.n)) : null)),
     body && spec.hint ? h('p', { class: 'section-hint' }, spec.hint) : null,
     body ?? h('p', { class: 'empty' }, spec.empty));
@@ -160,13 +161,13 @@ export class StreamBoard extends HTMLElement {
       h('div', { class: 'col' },
         section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', hint: askHint(this.#live) }, askCards(asks, this.#live, false)),
         section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.' }, itemRows(blocked, ctx)),
-        section({ title: 'Pull requests', n: prs.length, glyph: '⇄', tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
+        section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
       h('div', { class: 'col' },
-        section({ title: 'In flight', n: working.length, glyph: '◐', tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(working, ctx)),
-        section({ title: 'Queued', n: queued.length, glyph: '○', tone: 'neutral', empty: 'The queue is empty.', quiet: true }, itemRows(queued, ctx)),
+        section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'Nothing in flight.', quiet: true }, itemRows(working, ctx)),
+        section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: 'The queue is empty.', quiet: true }, itemRows(queued, ctx)),
         section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', quiet: true }, itemRows(done, ctx)),
-        deferred.length ? section({ title: 'Deferred', n: deferred.length, glyph: '↷', tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx)) : null,
-        md ? section({ title: 'Notes', n: 0, glyph: '¶', tone: 'neutral', empty: '', quiet: true }, md) : null)));
+        deferred.length ? section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx)) : null,
+        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null)));
   }
 }
 
