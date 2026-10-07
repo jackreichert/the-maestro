@@ -32,6 +32,7 @@ export interface StatusRefreshState {
 }
 
 export const interval = 30;
+export const renews = true;
 export const network = false;
 export const backoff = false;
 export const singleton = true;
