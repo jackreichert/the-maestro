@@ -62,6 +62,9 @@ function dayMonth(day: string, names: 'long' | 'short'): string {
 /** A calendar date like "Tuesday 6 October" for a `YYYY-MM-DD` day; empty when it is not one. */
 export const longDate = (day: string): string => dayMonth(day, 'long');
 
+/** A short calendar date like "Tue 6 Oct" for a `YYYY-MM-DD` day, for narrow screens; empty when it is not one. */
+export const shortDate = (day: string): string => dayMonth(day, 'short');
+
 /** Past this many minutes a live page is flagged stale: the Markdown Podium refreshes every 10, so 15 means a missed refresh. */
 export const STALE_MINUTES = 15;
 

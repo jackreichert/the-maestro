@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, askAge, clockTime, cueParts, freshness, longDate, oldestFirst } from '../src/glance.ts';
+import { ago, askAge, clockTime, cueParts, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -73,3 +73,8 @@ test('oldestFirst puts the longest wait first, breaks ties by the earlier ask, a
   assert.equal(input[0].id, 'new', 'the input is not reordered');
 });
 
+test('shortDate abbreviates weekday and month and rejects anything but YYYY-MM-DD', () => {
+  assert.equal(shortDate('2026-10-06'), 'Tue 6 Oct');
+  assert.equal(shortDate('2026-02-30'), '');
+  assert.equal(shortDate('Oct 6'), '');
+});

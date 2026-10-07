@@ -6,7 +6,7 @@ import { BOARD_CSS, askCards, itemRows, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
-import { cueParts, clockTime, freshness, longDate } from './glance.ts';
+import { cueParts, clockTime, freshness, longDate, shortDate } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
@@ -25,6 +25,15 @@ const CSS = `${BOARD_CSS}
   h1 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-bold); letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: var(--space-2); }
   h1::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--accent); transform: rotate(45deg); }
   .date { font-size: var(--text-sm); color: var(--text-secondary); }
+  .date .short, .fresh .short-hide { display: inline; }
+  .date .short { display: none; }
+  @media (max-width: 480px) {
+    .top { flex-wrap: nowrap; }
+    .date .long, .fresh .short-hide { display: none; }
+    .date .short { display: inline; }
+    .scope { margin-top: var(--space-4); }
+    [role=tabpanel] { padding-top: var(--space-5); }
+  }
   .fresh {
     display: inline-flex; align-items: center; gap: var(--space-2); padding: 2px var(--space-3); border-radius: var(--radius-pill);
     background: var(--surface-1); box-shadow: var(--shadow-1); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary);
@@ -223,7 +232,7 @@ export class PodiumApp extends HTMLElement {
       .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
-        h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, longDate(st.today))),
+        h('div', { class: 'brand' }, h('h1', {}, 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
         this.#freshness(st)),
       note ? h('p', { class: 'source' }, note) : null,
       h('p', { class: 'scope', id: 'scope' }, scope),
@@ -237,9 +246,11 @@ export class PodiumApp extends HTMLElement {
     const live = this.#live;
     const text = !live ? `Sample data${updated ? ` · as of ${updated}` : ''}`
       : stale ? `Stale · updated ${updated}${age ? `, ${age} ago` : ''}. Reload for current data.`
-        : `Live${updated ? ` · updated ${updated}` : ''}`;
+        : null;
+    // Live and fresh: "Live · updated 2:05 pm", with "updated" dropped on a phone so the pill shares the brand's line.
+    const body: (Node | string)[] = text !== null ? [text] : updated ? ['Live · ', h('span', { class: 'short-hide' }, 'updated '), updated] : ['Live'];
     return h('p', { class: `fresh${live ? (stale ? ' stale' : ' live') : ''}` },
-      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, text);
+      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, ...body);
   }
 
   #updateFreshness(): void {
