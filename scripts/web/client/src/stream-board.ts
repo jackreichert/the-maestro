@@ -3,7 +3,7 @@ import './ask-card.ts';
 import './md-fragment.ts';
 import { fragmentFor } from './contract.ts';
 import { prChips } from './pr-chips.ts';
-import { ago, clockTime } from './glance.ts';
+import { ago, clockTime, oldestFirst } from './glance.ts';
 import type { AskCard, DoneItem, PodiumState, PrCard, WorkItem } from './types.ts';
 
 const CSS = `${BASE_CSS}${UI_CSS}
@@ -57,11 +57,11 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
   }));
 }
 
-/** Ask cards; `showStream` tags each card with its stream (the overview mixes streams). */
+/** Asks as one row each, oldest first; `showStream` tags each row with its stream (the overview mixes streams). */
 export function askCards(asks: AskCard[], live: boolean, showStream: boolean): HTMLElement | null {
   if (asks.length === 0) return null;
-  return h('div', { class: 'cards' }, ...asks.map((a) => {
-    const card = h('ask-card');
+  return h('div', { class: 'asks', role: 'list' }, ...oldestFirst(asks).map((a) => {
+    const card = h('ask-card', { role: 'listitem' });
     card.showStream = showStream;
     card.locked = !live;
     card.ask = a;

@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ago, clockTime, cueParts, freshness, longDate } from '../src/glance.ts';
+import { ago, askAge, clockTime, cueParts, freshness, longDate, oldestFirst } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -57,4 +57,17 @@ test('freshness flags data older than 15 minutes and gives its age', () => {
 test('freshness never calls unreadable data stale', () => {
   assert.deepEqual(freshness('', Date.parse('2026-10-06T14:00:00Z')), { age: '', stale: false });
   assert.deepEqual(freshness('2026-10-06T14:00:00Z', Number.NaN), { age: '', stale: false });
+});
+
+test('askAge reads today under one day, then whole days', () => {
+  const cases: [number, string][] = [[0, 'today'], [0.9, 'today'], [1, '1 d'], [1.6, '1 d'], [5, '5 d'], [-2, 'today'], [Number.NaN, 'today']];
+  for (const [days, text] of cases) assert.equal(askAge(days), text, `askAge(${days})`);
+});
+
+test('oldestFirst puts the longest wait first, breaks ties by the earlier ask, and keeps input order last', () => {
+  const ask = (id: string, ageDays: number, ts: string) => ({ id, ageDays, ts });
+  const input = [ask('new', 0, '2026-10-06T10:00:00Z'), ask('old', 5, '2026-10-01T09:00:00Z'), ask('mid-late', 2, '2026-10-04T12:00:00Z'),
+    ask('mid-early', 2, '2026-10-04T08:00:00Z'), ask('tie-a', 1, 'bad time'), ask('tie-b', 1, 'bad time')];
+  assert.deepEqual(oldestFirst(input).map((a) => a.id), ['old', 'mid-early', 'mid-late', 'tie-a', 'tie-b', 'new']);
+  assert.equal(input[0].id, 'new', 'the input is not reordered');
 });

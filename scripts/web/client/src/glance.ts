@@ -62,3 +62,14 @@ export function freshness(generatedAt: string, nowMs: number): { age: string; st
   if (!Number.isFinite(t) || !Number.isFinite(nowMs)) return { age: '', stale: false };
   return { age: ago(generatedAt, new Date(nowMs).toISOString()), stale: nowMs - t > STALE_MINUTES * MINUTE };
 }
+
+/** An ask's age for its row: "today", then whole days ("1 d", "5 d"). Negative or unreadable ages read as today. */
+export function askAge(days: number): string {
+  return Number.isFinite(days) && days >= 1 ? `${Math.floor(days)} d` : 'today';
+}
+
+/** Asks oldest first (most days waiting, then earliest asked), so the longest wait leads the list. A copy; stable for ties. */
+export function oldestFirst<T extends { ageDays: number; ts: string }>(asks: T[]): T[] {
+  const at = (t: string): number => { const n = Date.parse(t); return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; };
+  return asks.map((a, i) => ({ a, i })).sort((x, y) => (y.a.ageDays - x.a.ageDays) || (at(x.a.ts) - at(y.a.ts)) || (x.i - y.i)).map((x) => x.a);
+}

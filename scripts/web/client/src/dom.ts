@@ -100,7 +100,7 @@ export const UI_CSS = `
   .tone-accent .head .glyph { color: var(--accent); }
 
   .empty { margin: 0; padding: var(--space-3) 0; color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-sm); border-top: 1px solid var(--border); }
-  .cards { display: grid; gap: var(--space-4); }
+  .asks { border-top: 1px solid var(--border); }
 
   ul.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.rows > li {
