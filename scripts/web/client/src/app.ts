@@ -109,9 +109,10 @@ const CSS = `${BOARD_CSS}
   @keyframes fade-in { from { opacity: 0; } }
   @keyframes grow { from { transform: scaleX(0.4); opacity: 0; } }
 
-  .sk { display: block; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--surface-2) 30%, var(--surface-1) 50%, var(--surface-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.6s linear infinite; }
-  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
-  @media (prefers-reduced-motion: reduce) { .sk { animation: none; background: var(--surface-2); } }
+  /* Placeholder blocks breathe in opacity (composited, no repaint per frame), not a moving gradient. */
+  .sk { display: block; border-radius: var(--radius-sm); background: var(--surface-2); animation: breathe 1.6s var(--ease-in-out) infinite; }
+  @keyframes breathe { 50% { opacity: 0.5; } }
+  @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
   .sk-head { padding-block: var(--space-5) var(--space-7); }
   .sk-line { height: 12px; }
   .sk-cue { height: 28px; width: min(560px, 90%); margin-top: var(--space-5); }
