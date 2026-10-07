@@ -23,14 +23,14 @@ export interface Subscriber { changed(seq: string): void; keepAlive(): void }
 export interface ChangeHub { subscribe(s: Subscriber): () => void; readonly size: number; readonly running: boolean }
 export interface HubOptions { files: () => string[]; intervalMs?: number; keepAliveMs?: number }
 
-/** The files the board depends on: the ledger and its registry, priorities, the PR cache and dirty marker, the page, the stream maps and the tab fragments. */
+/** The files the board depends on: the ledger and its registry, priorities, the PR cache and dirty marker, the page, the stream maps, the stream-homes mapping and the tab fragments. */
 export function boardFiles(vault: string, project: string, statusDir: string): string[] {
   const root = join(vault, 'Projects', project);
   let fragments: string[] = [];
   try { fragments = readdirSync(join(statusDir, 'fragments')).filter((n) => n.endsWith('.md')).sort().map((n) => join(statusDir, 'fragments', n)); } catch { /* no fragments directory yet */ }
   return [
     join(root, 'Journal', 'ledger.jsonl'), join(root, 'streams.json'),
-    ...['priorities.md', PRS_CACHE, DIRTY_PRS, PODIUM_FILE, 'ticket-map.json', 'stream-overrides.json'].map((n) => join(statusDir, n)),
+    ...['priorities.md', PRS_CACHE, DIRTY_PRS, PODIUM_FILE, 'ticket-map.json', 'stream-overrides.json', 'stream-homes.json'].map((n) => join(statusDir, n)),
     ...fragments,
   ];
 }

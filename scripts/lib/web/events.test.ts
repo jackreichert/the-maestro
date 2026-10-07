@@ -35,7 +35,7 @@ test('boardFiles names every file the board reads, including the fragments that 
   const names = boardFiles(vault, 'p', statusDir).map((f) => f.slice(vault.length + 1));
   assert.deepEqual(names, [
     'Projects/p/Journal/ledger.jsonl', 'Projects/p/streams.json', 'Status/priorities.md', 'Status/.now-prs.json', 'Status/.now-dirty-prs',
-    'Status/The-Podium.md', 'Status/ticket-map.json', 'Status/stream-overrides.json', 'Status/fragments/overview.md',
+    'Status/The-Podium.md', 'Status/ticket-map.json', 'Status/stream-overrides.json', 'Status/stream-homes.json', 'Status/fragments/overview.md',
   ]);
 });
 
