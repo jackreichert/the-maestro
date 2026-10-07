@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { bodyProblems } from './pr-open.ts';
 
 const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
 
@@ -36,7 +37,12 @@ function fixture(files: Record<string, string>) {
     return { repo, log, gh };
 }
 
-const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = []) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...extra], {
+const GOOD_BODY = '## Context\n\nWhy this exists and what changed.\n\n## Reviewer guide\n\n- Look at pr-open.ts first; the rest is mechanical.\n';
+
+/** A body file next to the repo; `open` supplies a valid one unless the test passes its own --body-file. */
+const bodyFile = (repo: string, text: string): string => { const p = join(repo, '..', `body-${Math.random().toString(36).slice(2)}.md`); writeFileSync(p, text); return p; };
+
+const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = []) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
     encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh },
 });
 
@@ -59,10 +65,11 @@ test('code mixed with a lockfile refuses and never calls gh', () => {
 
 test('under budget calls gh with --draft and --assignee @me plus the passthrough flags', () => {
     const f = fixture({ 'src/a.py': lines(10) });
-    const r = open(f, ['--body-file', 'body.md', '--head', 'feature']);
+    const body = bodyFile(f.repo, GOOD_BODY);
+    const r = open(f, ['--body-file', body, '--head', 'feature']);
     assert.equal(r.status, 0, r.stderr);
     const call = readFileSync(f.log, 'utf8').trim();
-    assert.equal(call, 'pr create --draft --assignee @me --base main --title T --body-file body.md --head feature');
+    assert.equal(call, `pr create --draft --assignee @me --base main --title T --body-file ${body} --head feature`);
 });
 
 test('draft and assignee cannot be turned off or overridden', () => {
@@ -92,4 +99,60 @@ test('inherited object keys are unknown arguments, not passthrough flags', () =>
         assert.match(r.stderr, new RegExp(`unknown argument ${key}`));
     }
     assert.ok(!existsSync(f.log), 'gh must not run');
+});
+
+test('a missing --body-file refuses and never calls gh, even on a dry run', () => {
+    const f = fixture({ 'src/a.py': lines(3) });
+    for (const extra of [['--no-body'], ['--no-body', '--dry-run']]) {
+        const r = open(f, extra);
+        assert.equal(r.status, 1, extra.join(' '));
+        assert.match(r.stderr, /--body-file is required/);
+    }
+    assert.ok(!existsSync(f.log), 'gh must not run');
+});
+
+test('an unreadable --body-file is a usage error and never calls gh', () => {
+    const f = fixture({ 'src/a.py': lines(3) });
+    const r = open(f, ['--body-file', join(f.repo, 'nope.md')]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /cannot read --body-file/);
+    assert.ok(!existsSync(f.log));
+});
+
+test('a body without both sections refuses, names what is missing, and never calls gh', () => {
+    const f = fixture({ 'src/a.py': lines(3) });
+    const cases: [string, RegExp][] = [
+        ['just prose\n', /missing a "## Context" section; missing a "## Reviewer guide" section/],
+        ['## Context\n\nWhy.\n', /missing a "## Reviewer guide" section/],
+        ['## Reviewer guide\n\nLook here.\n', /missing a "## Context" section/],
+        ['## Context\n\nWhy.\n\n## Reviewer guide\n\n_TBD_\n', /"## Reviewer guide" has no content/],
+    ];
+    for (const [text, expected] of cases) {
+        const r = open(f, ['--body-file', bodyFile(f.repo, text)]);
+        assert.equal(r.status, 1, text);
+        assert.match(r.stderr, expected);
+    }
+    assert.ok(!existsSync(f.log), 'gh must not run');
+});
+
+test('a body-less PR also refuses on --dry-run, and a valid body passes it', () => {
+    const f = fixture({ 'src/a.py': lines(3) });
+    assert.equal(open(f, ['--dry-run', '--body-file', bodyFile(f.repo, '## Context\n')]).status, 1);
+    const ok = open(f, ['--dry-run']);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /--body-file .*body-/);
+});
+
+test('bodyProblems: placeholders, comments, fences, heading level and case', () => {
+    const filled = (ctx: string, guide = 'Look at the gate.') => `## Context\n${ctx}\n## Reviewer guide\n${guide}\n`;
+    assert.deepEqual(bodyProblems(filled('Why it exists.')), []);
+    assert.deepEqual(bodyProblems('## context\nWhy.\n## REVIEWER GUIDE\nHere.\n'), []);
+    for (const ph of ['', 'TBD', '_TBD_', 'TODO', 'todo.', 'N/A', '-', '<!-- fill in -->', '...']) {
+        assert.equal(bodyProblems(filled(ph)).length, 1, `placeholder ${JSON.stringify(ph)}`);
+    }
+    assert.deepEqual(bodyProblems(filled('### Sub\nWhy it exists.')), [], 'a subheading is content');
+    assert.equal(bodyProblems('### Context\nWhy.\n### Reviewer guide\nHere.\n').length, 2, 'only ## headings count');
+    assert.equal(bodyProblems('```\n## Context\nWhy.\n## Reviewer guide\nHere.\n```\n').length, 2, 'headings in a fence do not count');
+    assert.equal(bodyProblems('## Context\nWhy.\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 0);
+    assert.equal(bodyProblems('## Context\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 1, 'a section ends at the next heading');
 });
