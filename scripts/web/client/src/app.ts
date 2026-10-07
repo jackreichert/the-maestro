@@ -48,7 +48,9 @@ const CSS = `${BOARD_CSS}
   .dot { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--text-muted); }
   .fresh.live .dot { border-color: var(--success); background: var(--success); }
   .fresh.stale { background: var(--warning-soft); color: var(--warning); box-shadow: none; }
-  .fresh.stale .dot { display: none; }
+  .fresh.stale .dot { border-color: var(--warning); background: var(--warning); }
+  .dot.tick { animation: tick calc(var(--dur-base) * 2.7) var(--ease-out); }
+  @keyframes tick { 30% { opacity: 0.35; } }
   .scope { margin: var(--space-5) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
   .scope span { vertical-align: baseline; }
   button.tempo {
@@ -324,7 +326,7 @@ export class PodiumApp extends HTMLElement {
   }
 
   /** The data-source pill: sample data, or live with its update time, flagged once the data is past STALE_MINUTES. */
-  #freshness(st: PodiumState): HTMLElement {
+  #freshness(st: PodiumState, tick = false): HTMLElement {
     const updated = clockTime(st.generatedAt, st.tz);
     const { age, stale } = freshness(st.generatedAt, Date.now());
     const live = this.#live;
@@ -333,14 +335,17 @@ export class PodiumApp extends HTMLElement {
         : null;
     // Live and fresh: "Live · updated 2:05 pm", with "updated" dropped on a phone so the pill shares the brand's line.
     const body: (Node | string)[] = text !== null ? [text] : updated ? ['Live · ', h('span', { class: 'short-hide' }, 'updated '), updated] : ['Live'];
+    // The dot is a metronome: it ticks once each time this pill is redrawn while the data is fresh, and stops (warning
+    // colour, no tick) once it is stale. Not a live region: a once-a-minute announcement would nag.
+    const ticking = tick && live && !stale;
     return h('p', { class: `fresh${live ? (stale ? ' stale' : ' live') : ''}` },
-      h('span', { class: 'dot', 'aria-hidden': 'true' }), stale && live ? h('span', { 'aria-hidden': 'true' }, '⚠\uFE0E') : null, h('span', {}, ...body));
+      h('span', { class: `dot${ticking ? ' tick' : ''}`, 'aria-hidden': 'true' }), h('span', {}, ...body));
   }
 
   #updateFreshness(): void {
     const st = this.#state;
     const old = this.#root.querySelector('.fresh');
-    if (st && old) old.replaceWith(this.#freshness(st));
+    if (st && old) old.replaceWith(this.#freshness(st, true));
   }
 
   #board(st: PodiumState, stream: string): Node {
