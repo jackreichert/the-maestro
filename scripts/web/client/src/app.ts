@@ -110,7 +110,8 @@ const CSS = `${BOARD_CSS}
   ol.priorities li::before { content: counter(p); color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
   ol.priorities .tag { grid-column: 2; justify-self: start; padding-block: 2px; margin-block: -2px; }
 
-  .table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
+  .table-wrap { overflow-x: auto; }
+  .table-wrap:focus-visible { outline-offset: 4px; }
   table.counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); line-height: var(--leading-sm); font-variant-numeric: tabular-nums; }
   table.counts th, table.counts td { padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
   table.counts thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: 1px solid var(--border); white-space: normal; vertical-align: bottom; }
