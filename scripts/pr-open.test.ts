@@ -156,3 +156,15 @@ test('bodyProblems: placeholders, comments, fences, heading level and case', () 
     assert.equal(bodyProblems('## Context\nWhy.\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 0);
     assert.equal(bodyProblems('## Context\n# Other\nstuff\n## Reviewer guide\nHere.\n').length, 1, 'a section ends at the next heading');
 });
+
+test('a repeated flag is a usage error, so the checked body is the one gh gets', () => {
+    const f = fixture({ 'src/a.py': lines(3) });
+    const good = bodyFile(f.repo, GOOD_BODY);
+    const bad = bodyFile(f.repo, 'nothing here\n');
+    const r = open(f, ['--body-file', good, '--body-file', bad, '--dry-run']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--body-file given more than once/);
+    const sneaky = open(f, ['--title', '--body-file', good, '--dry-run']);
+    assert.equal(sneaky.status, 2, 'a flag name used as a value is not the body file');
+    assert.ok(!existsSync(f.log));
+});

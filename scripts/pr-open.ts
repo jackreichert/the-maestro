@@ -36,7 +36,10 @@ export function parseArgs(argv: string[]): OpenArgs {
     const a = argv[i];
     if (a === '--dry-run') o.dryRun = true;
     else if (a === '--repo' || a === '--base') o[a === '--repo' ? 'repo' : 'base'] = argv[++i] ?? '';
-    else if (Object.hasOwn(PASSTHROUGH, a)) o.pass.push(PASSTHROUGH[a], argv[++i] ?? '');
+    else if (Object.hasOwn(PASSTHROUGH, a)) {
+      if (flagIndex(o.pass, a) >= 0) usage(`${a} given more than once`);
+      o.pass.push(PASSTHROUGH[a], argv[++i] ?? '');
+    }
     else usage(`unknown argument ${a} (draft and assignee are always set; use --repo, --base, --title, --body-file, --head, --dry-run)`);
   }
   if (!o.repo || !o.base) usage('--repo and --base are required');
@@ -80,7 +83,7 @@ export function bodyProblems(body: string): string[] {
 
 /** Read and check the --body-file; the gh argument is rewritten to the absolute path that was checked. */
 function checkBody(o: OpenArgs): void {
-  const i = o.pass.indexOf('--body-file');
+  const i = flagIndex(o.pass, '--body-file');
   if (i < 0 || !o.pass[i + 1]) {
     console.error('pr-open: refused, --body-file is required. The body needs a "## Context" and a "## Reviewer guide" section (see reference/git.md#pr-body).');
     process.exit(1);
@@ -113,7 +116,10 @@ function main(): void {
   process.exit(r.status ?? 2);
 }
 
-const headOf = (o: OpenArgs): string => { const i = o.pass.indexOf('--head'); return i >= 0 ? o.pass[i + 1] : ''; };
+/** Index of a flag among the flag positions of `pass` (even indices), never a value that looks like one. */
+const flagIndex = (pass: string[], flag: string): number => pass.findIndex((v, j) => j % 2 === 0 && v === flag);
+
+const headOf = (o: OpenArgs): string => { const i = flagIndex(o.pass, '--head'); return i >= 0 ? o.pass[i + 1] : ''; };
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
 
