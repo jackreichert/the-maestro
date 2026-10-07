@@ -5,8 +5,9 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, write
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_ROWS, STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow } from './lib/standing.ts';
+import { DEFAULT_ROWS, STANDING_FILE, appendEvent, conditionLines, conditionStates, isRoutine, readEvents, standingBlock, standingState, validRow } from './lib/standing.ts';
 import type { CheckContext, StandingEvent } from './lib/standing.ts';
+import { commitmentLines } from './lib/journal/handoff.ts';
 import { addWatch } from './lib/watch-registry.ts';
 
 const NOON = Date.parse('2026-10-06T12:00:00Z');
@@ -183,4 +184,152 @@ test('cli: prime carries the rows needing attention inside its 40 lines; handoff
   cli(vault, events, 'standing', 'done', 'merge-sweep', '--evidence', 'x');
   assert.match(cli(vault, events, 'handoff', '--stream', 'S', '--dry-run', '--no-worktree-sweep').out, /ok      merge-sweep:/, 'handoff keeps ok rows, prime drops them');
   assert.doesNotMatch(cli(vault, events, 'prime').out, /merge-sweep/);
+});
+
+// ── conditions: non-routine pickups tied to a future action ────────────────
+
+const added = (id: string, trigger: string, hours = 24): StandingEvent => ({ op: 'add', id, trigger, action: `act on ${id}`, who: 'orchestrator', everyHours: hours, at: new Date(NOON - 100 * HOUR).toISOString() });
+
+test('conditions are the rows that are not built in, overdue ones first; built-in rows are routine', () => {
+  const states = standingState([added('proxy-first', 'before prod'), added('docs-later', 'when docs merge'), ran('proxy-first', 1)], healthy());
+  assert.ok(DEFAULT_ROWS.every(isRoutine));
+  assert.deepEqual(conditionStates(states).map((s) => s.row.id), ['docs-later', 'proxy-first'], 'overdue docs-later before ok proxy-first');
+  assert.deepEqual(conditionStates(standingState([], healthy())), [], 'a fresh install has none');
+});
+
+const LETTERS = 'abcdefghij';
+
+test('conditionLines: id, status, due time and kind only, capped with a +N more pointer to standing list', () => {
+  const events = Array.from({ length: 9 }, (_, i) => added(`cond-${LETTERS[i]}`, `before launch ${i}`));
+  const lines = conditionLines(standingState(events, healthy()), 4);
+  assert.equal(lines.length, 4);
+  assert.equal(lines[0], 'Condition cond-a [OVERDUE] standing pickup, due now');
+  assert.equal(lines[3], '… +6 more, journal.ts standing list');
+  assert.deepEqual(conditionLines(standingState([], healthy())), []);
+  const fresh = conditionLines(standingState([added('docs-later', 'when docs merge'), ran('docs-later', 1)], healthy()));
+  assert.match(fresh[0], /^Condition docs-later \[due\] standing pickup, due \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/);
+});
+
+test('standing ids that could carry typed text print as a placeholder; text is never printed', () => {
+  const states = standingState([added('db-Tr0ub4dor.3', 'before prod: use Bruno-1987!'), { op: 'add', id: 'smtp', trigger: 'x', action: 'SMTP_PASS fakeHunter2 admin / hunter2', who: 'orchestrator', everyHours: 24, at: new Date(NOON - 100 * HOUR).toISOString() }], healthy());
+  const out = [...conditionLines(states), ...commitmentLines(states, [])].join('\n');
+  assert.match(out, /Condition \[id withheld\] \[OVERDUE\] standing pickup, due now/);
+  assert.match(out, /standing `\[id withheld\]` \[overdue\] kind: standing pickup, due now/);
+  assert.doesNotMatch(out, /Tr0ub4dor|Bruno|SMTP_PASS|hunter2|Hunter2|before prod/i);
+});
+
+test('commitmentLines: open decisions by id and kind, with a date only from a strict date gate; text is never printed', () => {
+  const decision = (id: string, text: string, gate?: string) => ({ id, kind: 'decision', pending: true, text, gate, closedBy: null, state: undefined });
+  const out = commitmentLines([], [decision('k1x9', 'keep wifi on Mithril-2026! for the booth?', 'date:2026-10-20'), decision('k2y8', 'ship admin / hunter2?', 'gh:pr:x/Hunter2#1'), decision('Hunter2-1', 'x')]).join('\n');
+  assert.match(out, /- `k1x9` \[open\] kind: decision, due 2026-10-20/);
+  assert.match(out, /- `k2y8` \[open\] kind: decision, due when decided/);
+  assert.match(out, /- `\[id withheld\]` \[open\] kind: decision/);
+  assert.doesNotMatch(out, /Mithril|hunter2|Hunter2|wifi/i);
+});
+
+test('cli: standing add refuses an id with digits or punctuation, and accepts lowercase words', () => {
+  const { vault, events } = setup();
+  for (const id of ['db-Tr0ub4dor.3', 'Hunter2-1', 'a1', 'proxy_first', 'Proxy', 'a-b-c-d-e-f-g']) {
+    const r = cli(vault, events, 'standing', 'add', id, '--trigger', 't', '--action', 'a', '--who', 'w', '--every-hours', '1');
+    assert.equal(r.code, 1, id);
+    assert.match(r.err, /lowercase words joined by hyphens/, id);
+  }
+  assert.equal(existsSync(standingFile(vault)), false);
+  assert.equal(cli(vault, events, 'standing', 'add', 'proxy-first', '--trigger', 't', '--action', 'a', '--who', 'w', '--every-hours', '1').code, 0);
+});
+
+test('cli: prime prints conditions first, once each, inside its 40 lines; handoff has the required section', () => {
+  const { vault, events } = setup();
+  for (let i = 0; i < 30; i += 1) assert.equal(cli(vault, events, 'log', `open item number ${i}`, '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
+  assert.equal(cli(vault, events, 'standing', 'add', 'proxy-first', '--trigger', 'before prod, Bruno-1987!', '--action', 'work out the proxy, admin / hunter2', '--who', 'orchestrator', '--every-hours', '24').code, 0);
+  assert.equal(cli(vault, events, 'ask', 'ship the proxy with Mithril-2026! on Friday?', '--kind', 'decision', '--stream', 'S', ...MARK).code, 0);
+  const prime = cli(vault, events, 'prime');
+  assert.equal(prime.code, 0, prime.err);
+  const lines = prime.out.trimEnd().split('\n');
+  assert.equal(lines[0], 'Condition proxy-first [OVERDUE] standing pickup, due now');
+  assert.equal(prime.out.match(/proxy-first/g)?.length, 1, 'not repeated in the standing block');
+  assert.ok(lines.length <= 40);
+  const handoff = cli(vault, events, 'handoff', '--stream', 'S', '--dry-run', '--no-worktree-sweep').out;
+  const section = handoff.split('## Commitments and conditions')[1]?.split('\n## ')[0] ?? '';
+  assert.match(section, /standing `proxy-first` \[overdue\] kind: standing pickup, due now/);
+  assert.match(section, /`\w{4}` \[open\] kind: decision, due when decided/);
+  assert.doesNotMatch(section, /merge-sweep/, 'built-in routine rows stay in Standing pickups');
+  assert.doesNotMatch(`${lines.slice(0, 1).join('')}${section}`, /Bruno|hunter2|Mithril|work out the proxy/i, 'no typed text in prime conditions or the section');
+});
+
+test('cli: with no conditions and no open decisions the section says _none_ and prime prints no Condition line', () => {
+  const { vault, events } = setup();
+  assert.equal(cli(vault, events, 'log', 'one item', '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
+  const handoff = cli(vault, events, 'handoff', '--stream', 'S', '--dry-run', '--no-worktree-sweep').out;
+  assert.match(handoff, /## Commitments and conditions\n[\s\S]*\n_none_\n/);
+  assert.doesNotMatch(cli(vault, events, 'prime').out, /^Condition /m);
+});
+
+test('cli: many conditions are truncated in prime with a pointer, and the cap holds', () => {
+  const { vault, events } = setup();
+  for (let i = 0; i < 9; i += 1) assert.equal(cli(vault, events, 'standing', 'add', `cond-${LETTERS[i]}`, '--trigger', `before launch ${i}`, '--action', `do ${i}`, '--who', 'orchestrator', '--every-hours', '24').code, 0);
+  const lines = cli(vault, events, 'prime').out.trimEnd().split('\n');
+  assert.equal(lines.filter((l) => l.startsWith('Condition ')).length, 5);
+  assert.ok(lines.includes('… +4 more, journal.ts standing list'));
+  assert.ok(lines.length <= 40);
+});
+
+test('cli: a delta handoff carries a condition added after the full handoff, which no other section would show', () => {
+  const { vault, events } = setup();
+  const day = new Date().toISOString().slice(0, 10);
+  const journal = join(vault, 'Projects', 'test-proj', 'Journal');
+  assert.equal(cli(vault, events, 'log', 'one item', '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
+  assert.equal(cli(vault, events, 'handoff', '--stream', 'S', '--delta', '--no-worktree-sweep').code, 0);
+  assert.doesNotMatch(readFileSync(join(journal, `HANDOFF-${day}-S.md`), 'utf8'), /standing `late-rule`/);
+  assert.equal(cli(vault, events, 'standing', 'add', 'late-rule', '--trigger', 'before launch', '--action', 'check the demo proxy', '--who', 'orchestrator', '--every-hours', '24').code, 0);
+  assert.equal(cli(vault, events, 'handoff', '--stream', 'S', '--delta', '--no-worktree-sweep').code, 0);
+  const delta = readFileSync(join(journal, `HANDOFF-${day}b-S.md`), 'utf8');
+  assert.match(delta, /## Commitments and conditions[^]*standing `late-rule` \[overdue\] kind: standing pickup, due now/);
+});
+
+test('overriding a built-in id makes it a condition, so its typed text never reaches prime', () => {
+  const { vault, events } = setup();
+  assert.equal(cli(vault, events, 'log', 'one item', '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
+  assert.equal(cli(vault, events, 'standing', 'add', 'merge-sweep', '--trigger', 'pw is hunter2', '--action', 'use sk-FAKEKEY', '--who', 'agent', '--every-hours', '24').code, 0);
+  const prime = cli(vault, events, 'prime').out;
+  assert.doesNotMatch(prime, /hunter2|sk-FAKEKEY/);
+  assert.match(prime, /^Condition merge-sweep \[OVERDUE\] standing pickup, due now$/m);
+  const section = cli(vault, events, 'handoff', '--stream', 'S', '--dry-run', '--no-worktree-sweep').out.split('## Commitments and conditions')[1]?.split('\n## ')[0] ?? '';
+  assert.match(section, /standing `merge-sweep` \[overdue\]/);
+  assert.doesNotMatch(section, /hunter2|sk-FAKEKEY/);
+  assert.equal(isRoutine(DEFAULT_ROWS[2]), true, 'a built-in row exactly as shipped is still routine');
+});
+
+test('a decision shows its decide-by date, in fixed format only', () => {
+  const decision = (id: string, by: string, extra: object = {}) => ({ id, kind: 'decision', pending: true, text: 'x', by, closedBy: null, state: undefined, ...extra });
+  const out = commitmentLines([], [decision('k1x9', '2026-10-09'), decision('k2y8', '2026-10-09T14:00:00Z'), decision('k3z7', 'hunter2 Bruno-1987!'), decision('k4w6', 'x', { by: undefined, gate: 'date:2026-11-01' })]).join('\n');
+  assert.match(out, /`k1x9` \[open\] kind: decision, due 2026-10-09$/m);
+  assert.match(out, /`k2y8` \[open\] kind: decision, due 2026-10-09T14:00:00Z$/m);
+  assert.match(out, /`k3z7` \[open\] kind: decision, due when decided$/m);
+  assert.match(out, /`k4w6` \[open\] kind: decision, due 2026-11-01$/m);
+  assert.doesNotMatch(out, /hunter2|Bruno/);
+});
+
+test('one bad standing row degrades alone: an absurd cadence is refused, and an already-stored one does not take prime or the handoff down', () => {
+  const { vault, events } = setup();
+  assert.equal(cli(vault, events, 'standing', 'add', 'yearly-thing', '--trigger', 't', '--action', 'a', '--who', 'w', '--every-hours', '1e12').code, 1);
+  assert.equal(validRow({ id: 'x', trigger: 't', action: 'a', who: 'w', everyHours: 1e12 }) !== null, true);
+  const huge: StandingEvent = { op: 'add', id: 'yearly-thing', trigger: 't', action: 'a', who: 'w', everyHours: 1e12, at: new Date(NOON - 100 * HOUR).toISOString() };
+  const states = standingState([huge, added('proxy-first', 'before prod'), ran('yearly-thing', 1)], healthy());
+  const lines = conditionLines(states);
+  assert.equal(lines.length, 2);
+  assert.ok(lines.some((l) => /^Condition yearly-thing .*due unknown$/.test(l)));
+  assert.ok(lines.some((l) => l.startsWith('Condition proxy-first ')));
+  assert.equal(commitmentLines(states, []).filter((l) => l.startsWith('- standing')).length, 2);
+});
+
+test('cli: the standing add refusals do not echo the id, and a missing id gets a usage line', () => {
+  const { vault, events } = setup();
+  const bad = cli(vault, events, 'standing', 'add', 'Bruno-1987', '--trigger', 't', '--action', 'a', '--who', 'w', '--every-hours', '1');
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /the id must be lowercase words joined by hyphens/);
+  assert.doesNotMatch(bad.err, /Bruno|1987/);
+  const none = cli(vault, events, 'standing', 'add', '--trigger', 't', '--action', 'a', '--who', 'w', '--every-hours', '1');
+  assert.equal(none.code, 1);
+  assert.match(none.err, /standing add needs an id\. Usage:/);
 });
