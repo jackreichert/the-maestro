@@ -140,7 +140,7 @@ export class AskCardElement extends HTMLElement {
     // Every ask has a "Your answer" field and a copy button; tie each to its decision so a controls list tells them apart.
     const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': [`${uid}-h`, a.context ? `${uid}-c` : ''].filter(Boolean).join(' ') });
     const copy = h('button', { type: 'button', class: 'secondary', 'aria-describedby': `${uid}-h` }, 'Copy answer for chat');
-    const error = h('p', { class: 'error', id: `${uid}-e`, hidden: true }, 'Write an answer first: there is no approve-as-asked shortcut here.');
+    const error = h('p', { class: 'error', id: `${uid}-e`, role: 'alert', hidden: true }, 'Write an answer first: there is no approve-as-asked shortcut here.');
     // Sample data: no answer field at all (the section head says why), so a locked board has nothing that looks pressable.
     const form = this.#locked ? null
       : h('div', { class: 'form' },
@@ -195,10 +195,11 @@ export class AskCardElement extends HTMLElement {
         : ['Could not copy']));
       const again = h('button', { type: 'button', class: 'secondary' }, ok ? 'Copy again' : 'Try again');
       const edit = h('button', { type: 'button', class: 'quiet' }, 'Edit answer');
-      const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s` },
+      // A focused group reads only its name, so the quote and the not-saved sentence are tied to it as its description.
+      const status = h('div', { class: 'resolved', role: 'group', tabindex: '-1', 'aria-labelledby': `${uid}-s`, 'aria-describedby': `${uid}-q ${uid}-n` },
         head,
-        h('blockquote', { class: ok ? undefined : 'select' }, text),
-        h('p', { class: 'unsaved' }, ok
+        h('blockquote', { class: ok ? undefined : 'select', id: `${uid}-q` }, text),
+        h('p', { class: 'unsaved', id: `${uid}-n` }, ok
           ? 'Not saved: paste it into the orchestrator chat. This page cannot write to the ledger yet.'
           : 'Select the answer above and copy it by hand. This page cannot write to the ledger yet.'),
         h('div', { class: 'actions' }, again, edit));
@@ -218,16 +219,26 @@ export class AskCardElement extends HTMLElement {
     const submit = (): void => {
       if (this.#locked || !form?.isConnected) return;
       const text = chatAnswer(a.id, answer.value);
-      error.hidden = text !== null;
-      if (text === null) {
-        answer.setAttribute('aria-invalid', 'true');
-        answer.setAttribute('aria-errormessage', error.id);
-        answer.focus();
-        return;
-      }
-      answer.removeAttribute('aria-invalid');
+      showError(text === null);
+      if (text === null) { answer.focus(); return; }
       void send(text);
     };
+    // The error is tied to the field both ways (aria-errormessage, and aria-describedby for screen readers that ignore
+    // it) and is a live alert when it appears; typing clears it.
+    const describedBy = answer.getAttribute('aria-describedby') ?? '';
+    const showError = (on: boolean): void => {
+      error.hidden = !on;
+      answer.toggleAttribute('aria-invalid', on);
+      if (on) {
+        answer.setAttribute('aria-invalid', 'true');
+        answer.setAttribute('aria-errormessage', error.id);
+        answer.setAttribute('aria-describedby', `${describedBy} ${error.id}`.trim());
+      } else {
+        answer.removeAttribute('aria-errormessage');
+        answer.setAttribute('aria-describedby', describedBy);
+      }
+    };
+    answer.addEventListener('input', () => { if (!error.hidden) showError(false); });
     copy.addEventListener('click', submit);
     answer.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
