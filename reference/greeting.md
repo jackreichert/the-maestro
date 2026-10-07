@@ -12,9 +12,12 @@ follow up with "…and status?"
 
 ```bash
 node $J prime
-node $J status
+node $J start-here
+node $J status --footer
 node $J standup --date <previous working day>
 ```
+
+**Read the Podium's Start-here first.** `start-here` (the same block that tops `The-Podium.md`) is the front page: this week's goals, today's priorities, the top asks with their stakes, conditions, what is in flight, yesterday and recent answers, and where each stream's notes live. Build the board from it; `status` is still there for the full ledger counts. For a question about one stream, read that stream's tab as text (`node $J start-here --stream <Stream>`, or `/api/streams/<Stream>/home` when the Podium web server is up) before grepping the vault or asking, and only then fall back to the ledger. When a fact had to be found anywhere else, attach it so it is on the tab next time. If `session-start.ts` printed `Podium web: down`, say so in one line and offer to restart it; the text view still works.
 
 `prime` opens with the skill's update check: if its first line says the-maestro is behind, ahead, diverged or dirty (or that `auto_pull` just fast-forwarded it), pass that line on in the greeting in one short sentence, and say nothing when there is no such line.
 
