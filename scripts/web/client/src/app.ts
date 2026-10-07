@@ -278,7 +278,8 @@ export class PodiumApp extends HTMLElement {
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
       this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
-    const tabbar = h('div', { class: 'tabbar' }, tablist);
+    // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
+    const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
     this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
     this.#watchTabOverflow(tabbar, tablist);
     showCue(this.#waiting(st));
