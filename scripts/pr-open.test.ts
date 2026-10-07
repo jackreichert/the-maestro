@@ -37,7 +37,7 @@ function fixture(files: Record<string, string>) {
     return { repo, log, gh };
 }
 
-const NONE: BodyRules = { sections: [], risk: false, verify: false, forbidden: false, diagram: false, diagramMinFiles: 3, private: false, privateWords: [], privatePatterns: [], voice: false, voiceNames: [] };
+const NONE: BodyRules = { sections: [], risk: false, verify: false, forbidden: false, diagram: false, diagramMinFiles: 3, private: false, privateWords: [], privatePatterns: [], voice: false, voiceNames: [], counts: false };
 const TWO: BodyRules = { ...NONE, sections: ['Context', 'Reviewer guide'] };
 const GOOD_BODY = [
     '## Context', 'Why this exists and what changed.',
@@ -286,6 +286,20 @@ test('bodyProblems: voice check flags the author in the third person and assista
     assert.deepEqual(p('run `agent --help` first'), [], 'inline code is skipped');
     assert.deepEqual(p('```\nagent run\n```'), [], 'fenced code is skipped for voice');
     assert.deepEqual(bodyProblems('## Context\nthe agent\n', NONE), [], 'switched off');
+});
+
+test('bodyProblems: counts the PR page already shows are refused outside code; a code span is the escape', () => {
+    const rules = { ...NONE, counts: true };
+    const p = (text: string) => bodyProblems(`## Context\n${text}\n`, rules);
+    for (const stale of ['This is 3 commits.', 'The 13 commits + lint fixes', 'touches 12 files changed', '1 file', 'about 40 lines', 'diff is +120 -40', 'diff is +120 \u221240', 'Two commits: 2 commits']) assert.match(p(stale)[0], /count the PR page already shows/, stale);
+    assert.match(p('3 commits')[0], /line: 3 commits/);
+    assert.deepEqual(p('The first commit adds the parser; the second wires it into `pr-open.ts`.'), []);
+    assert.deepEqual(p('Ran `npm test` on 4f04517: all pass.'), [], 'what was run and against which commit is fine');
+    assert.deepEqual(p('Review order 1. a.ts 2. b.ts; position 2 of 4; ran 5 tests'), [], 'list numbers, stack position and test counts are not the counted nouns');
+    assert.deepEqual(p('the limit is `2 files` per call'), [], 'a number in a code span is the escape');
+    assert.deepEqual(bodyProblems('## Context\n```\n3 commits +1 -2\n```\n', rules), [], 'fenced code is skipped');
+    assert.match(bodyProblems('## Context\nfine\n', rules, { stacked: false, codeFiles: 0, title: 'fix: 3 files' })[0], /the title states a count/);
+    assert.deepEqual(bodyProblems('## Context\n3 commits\n', NONE), [], 'switched off');
 });
 
 test('bodyProblems: an unedited template, and a diagram that only sits in an HTML comment, do not pass', () => {
