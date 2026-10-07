@@ -35,7 +35,7 @@
  *                                             checklist. Read-only; --apply appends `resolved` rows ("recorded → <ref>") for rules and approvals whose ref is an existing file
  *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
  *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
- *   journal.ts prime [--no-update-check]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop:` line (same verdict as the footer), then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise
+ *   journal.ts prime [--no-update-check] [--source startup|compact]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop:` line (same verdict as the footer), then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise. With `--source startup` or `compact` (a SessionStart hook's source) it ends with the short "After a compact" checklist; any other source prints none
  *   journal.ts standing list|check|add <id>|done <id>|retire <id>   duties to pick up without a reminder, read from data and checked at runtime; `prime` prints the ones needing attention, `handoff` the whole list.
  *                                             add: --trigger --action --who and (--check <name> | --every-hours N). done: runs the row's check and refuses if it fails; a row with no check needs --evidence. check exits 1 when any row needs attention
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
@@ -136,6 +136,7 @@ import { statusJson } from './lib/journal/status-json.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
+import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { primeLines as primeLinesIn, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
@@ -1457,6 +1458,8 @@ const loopNotice = (): string[] => [liveLoopHealth().line.replace(/\*\*/g, '')].
 function cmdPrime() {
     refreshBoard();
     primeLinesIn({ ...primeCtx(), notices: [...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
+    compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(l));
 }
 
 // ── status page ─────────────────────────────────────────────────────────────
