@@ -54,6 +54,9 @@ const TEXT_ON_FILLS: [string, string][] = [
   ['--text-secondary', '--critical-soft'], ['--text-secondary', '--success-soft'], ['--text-secondary', '--warning-soft'],
 ];
 const NON_TEXT = ['--focus', '--border-strong'];
+/** Chart marks are drawn on --surface-1 inside a panel on --surface-page; a series colour is a graphical object (1.4.11). */
+const SERIES = ['--series-1', '--series-2', '--series-3', '--series-4', '--series-5', '--series-6', '--series-7', '--series-8', '--series-other'];
+const CHART_SURFACES = ['--surface-1', '--surface-page'];
 
 for (const [mode, tokens] of Object.entries(modes())) {
   const get = (name: string): string => {
@@ -81,6 +84,15 @@ for (const [mode, tokens] of Object.entries(modes())) {
   test(`${mode}: the focus ring and control outlines meet 3:1 on every surface`, () => {
     for (const fg of NON_TEXT) {
       for (const bg of SURFACES) {
+        const r = contrast(get(fg), get(bg));
+        assert.ok(r >= 3, `${mode}: ${fg} on ${bg} is ${r.toFixed(2)}:1`);
+      }
+    }
+  });
+
+  test(`${mode}: every chart series colour meets 3:1 on the chart and page surfaces`, () => {
+    for (const fg of SERIES) {
+      for (const bg of CHART_SURFACES) {
         const r = contrast(get(fg), get(bg));
         assert.ok(r >= 3, `${mode}: ${fg} on ${bg} is ${r.toFixed(2)}:1`);
       }

@@ -1,9 +1,9 @@
 /**
  * Watch registry for the event loop: an append-only JSON lines file plus a state file.
  *
- * watches.jsonl holds two kinds of line: {op:'add', id, type, target, done_when, report, created, expires,
- * notify_overnight, notify, interval} and {op:'remove', id, at, reason}. The live set is the adds with no later remove, so the
- * file is never rewritten. state.json holds each watch's last checked state and the event timestamps the
+ * watches.jsonl holds three kinds of line: {op:'add', id, type, target, done_when, report, created, expires,
+ * notify_overnight, notify, interval, renew?}, {op:'remove', id, at, reason} and {op:'renew', id, expires, at}. The live set is the adds
+ * with no later remove, each with the expiry of its latest renew, so the file is never rewritten. state.json holds each watch's last checked state and the event timestamps the
  * cadence reads; digest.jsonl holds events nobody has read yet.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -36,6 +36,10 @@ export function listWatches(dir: string): Watch[] {
     try { rec = JSON.parse(line); } catch { continue; }
     if (rec?.op === 'add' && rec.id) live.set(rec.id, rec as Watch);
     else if (rec?.op === 'remove' && rec.id !== undefined) live.delete(rec.id);
+    else if (rec?.op === 'renew' && rec.id !== undefined && typeof rec.expires === 'string' && Number.isFinite(Date.parse(rec.expires))) {
+      const watch = live.get(rec.id);
+      if (watch) live.set(rec.id, { ...watch, expires: rec.expires });
+    }
   }
   return [...live.values()];
 }
@@ -45,9 +49,11 @@ export function listWatches(dir: string): Watch[] {
 export interface NewWatch {
   id?: string; type?: string; target?: string; done_when?: string; report?: string; ttlMs?: number;
   notify_overnight?: boolean; interval?: number | string | null; notify?: boolean;
+  /** Standing watch: the loop keeps pushing `expires` out (see EventType.renews). */
+  renew?: boolean;
 }
 
-export function addWatch(dir: string, { id, type, target, done_when = '', report = '', ttlMs = DEFAULT_TTL_MS, notify_overnight = false, interval = null, notify = false }: NewWatch, now: number = Date.now()): Watch {
+export function addWatch(dir: string, { id, type, target, done_when = '', report = '', ttlMs = DEFAULT_TTL_MS, notify_overnight = false, interval = null, notify = false, renew = false }: NewWatch, now: number = Date.now()): Watch {
   if (id === undefined || !ID.test(id)) throw new Error(`watch id must match ${ID}, got "${id}"`);
   if (!type || !target) throw new Error('a watch needs --type and --target');
   if (interval !== null && !(Number.isFinite(Number(interval)) && Number(interval) > 0)) throw new Error('a watch --interval needs a positive number of seconds');
@@ -55,6 +61,7 @@ export function addWatch(dir: string, { id, type, target, done_when = '', report
   const watch: Watch = {
     op: 'add', id, type, target, done_when, report, notify_overnight: Boolean(notify_overnight), notify: Boolean(notify), interval: interval === null ? null : Number(interval),
     created: new Date(now).toISOString(), expires: new Date(now + ttlMs).toISOString(),
+    ...(renew ? { renew: true } : {}),
   };
   append(paths(dir).watches, watch);
   return watch;
@@ -64,6 +71,13 @@ export function addWatch(dir: string, { id, type, target, done_when = '', report
 export function removeWatch(dir: string, id: string, reason = 'removed', now: number = Date.now()): boolean {
   if (!listWatches(dir).some((w) => w.id === id)) return false;
   append(paths(dir).watches, { op: 'remove', id, reason, at: new Date(now).toISOString() });
+  return true;
+}
+
+/** Moves a live watch's expiry to `expiresAt` (epoch ms). Returns false when the id is not live or the time is not a finite number. */
+export function renewWatch(dir: string, id: string, expiresAt: number, now: number = Date.now()): boolean {
+  if (!Number.isFinite(expiresAt) || !listWatches(dir).some((w) => w.id === id)) return false;
+  append(paths(dir).watches, { op: 'renew', id, expires: new Date(expiresAt).toISOString(), at: new Date(now).toISOString() });
   return true;
 }
 

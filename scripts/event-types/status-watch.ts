@@ -23,6 +23,7 @@ export interface StatusWatchState { sha: string; fresh: string[] }
 
 // Scheduling: a local file read every minute; no idle back-off, so an answer is noticed within about a minute.
 export const interval = 60;
+export const renews = true;
 export const network = false;
 export const backoff = false;
 export const singleton = true;

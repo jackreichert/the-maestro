@@ -60,3 +60,19 @@ test('the backup commit reports "not a git repository root" for a vault path tha
     } finally { console.error = original; }
     assert.deepEqual(errors, [`ledger_git_autocommit is on but ${vault} is not a git repository root; not committing.`]);
 });
+
+test('verify flags ask fields a hand edit made impossible, and passes legacy and well-formed asks', () => {
+    const { problems } = verifyLedger(ctxFor([
+        JSON.stringify({ id: 'aaaa', kind: 'question', text: 'legacy ask?' }),
+        JSON.stringify({ id: 'bbbb', kind: 'question', text: 'ok?', door: 'two-way', default: 'apply', by: '2026-10-09', class: 'standard' }),
+        JSON.stringify({ id: 'cccc', kind: 'question', text: 'one-way with a default?', door: 'one-way', default: 'merge' }),
+        JSON.stringify({ id: 'dddd', kind: 'question', text: 'bad values?', door: 'maybe', class: 'urgent', by: 'soon' }),
+        JSON.stringify({ id: 'eeee', kind: 'note', text: 'not an ask', door: 'maybe' }),
+    ]));
+    assert.deepEqual(problems.map((p) => [p.line, p.problem]), [
+        [3, 'ask field: carries a default but is not a two-way door: the default will never fire'],
+        [4, 'ask field: door "maybe" is not one-way or two-way'],
+        [4, 'ask field: class "urgent" is not one of: expedite, fixed-date, standard, intangible'],
+        [4, 'ask field: by "soon" is not YYYY-MM-DD or an ISO time with a zone'],
+    ]);
+});

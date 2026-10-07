@@ -12,7 +12,7 @@
  * Each tick runs every live watch's type checker (scripts/event-types/<type>.ts), compares the new state with
  * the stored one, and records an event only when the type's diff() reports one. Events go to a digest file;
  * `run` prints the digest and exits 10 as soon as one is actionable, so the caller (a cheap model) wakes the
- * orchestrator only then. Watches retire when their type says they are done or they pass `expires`.
+ * orchestrator only then. Watches retire when their type says they are done or they pass `expires`; a watch of a standing type (`renews`) added without --ttl-hours has its `expires` pushed out instead.
  * Each type declares `interval` (default seconds between checks) and `network` (false only for local types);
  * a watch may override the interval with `add --interval S`. The loop checks only watches that are due and sleeps
  * until the earliest is due. Floors, enforced in lib/cadence.ts: 120s for network types, 30s for local ones.
@@ -39,7 +39,7 @@ import type { TypeRegistry } from './event-types/index.ts';
 import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult, Watch, WatchEvent, WatchState } from './lib/types.ts';
 import type { NotifyRun } from './lib/notify.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
-import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, saveState } from './lib/watch-registry.ts';
+import { DEFAULT_TTL_MS, acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 
 /** What `tick` is given. Only `dir` and `types` are required. */
 export interface TickDeps {
@@ -109,6 +109,18 @@ function checkWatch(watch: Watch, prev: WatchState | undefined, { types, ctx }: 
 }
 
 /**
+ * A standing watch (marked `renew` at add, its type has `renews`) with under half its default TTL left gets a fresh full TTL from `now`, past expiry included:
+ * a loop that was down for a day must not retire the watches it exists to run. Returns the watch with its new expiry, or the same one.
+ */
+function renewed(dir: string, watch: Watch, type: EventType | undefined, now: number): Watch {
+  if (!watch.renew || !type?.renews) return watch;
+  const asked = type.defaultTtlMs?.(watch.target, now);
+  const ttl = asked !== undefined && Number.isFinite(asked) && asked > 0 ? asked : DEFAULT_TTL_MS;
+  if (Date.parse(watch.expires) - now >= ttl / 2) return watch;
+  return renewWatch(dir, watch.id, now + ttl, now) ? { ...watch, expires: new Date(now + ttl).toISOString() } : watch;
+}
+
+/**
  * One pass over the due watches. Pure of sleeping and printing: returns { events, retired, skipped, waiting }.
  * A watch is due when its stored `nextDue` has passed (a new watch is due at once); `waiting` lists the rest.
  * `deps`: { dir, types, ctx, config, now, notifyCommand, notifyRun }. A watch outside quiet hours checks as usual;
@@ -122,7 +134,8 @@ export function tick(deps: TickDeps): TickResult {
   const retirements: { watch: Watch; reason: string }[] = [];
   const out: Omit<TickResult, 'events'> & { events: PendingEvent[] } = { events: [], retired: [], skipped: [], waiting: [] };
   const ran: Watch[] = [];
-  for (const watch of listWatches(dir)) {
+  for (const listed of listWatches(dir)) {
+    const watch = renewed(dir, listed, types[listed.type], now);
     const meta = state.watches[watch.id] ?? { errors: 0 };
     const make = (e: WatchEvent): DigestEvent => ({ watch: watch.id, type: watch.type, at: new Date(now).toISOString(), summary: oneLine(e.summary, DIGEST_SUMMARY), actionable: e.actionable !== false, report: e.actionable === false ? '' : watch.report });
     const mayNotify = watchNotifies(watch, types[watch.type]) && (!quiet || watch.notify_overnight);
@@ -253,7 +266,7 @@ async function main(argv: string[]): Promise<number> {
       if (type?.singleton) {
         for (const w of listWatches(dir)) if ((await typeNamed(w.type)) === type) throw new Error(`watch "${w.id}" already runs ${v.type}${w.type === v.type ? '' : ` (as ${w.type})`}; keep exactly one`);
       }
-      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target as string, now), notify_overnight: v['notify-overnight'], interval: v.interval, notify: notifyChoice(type, { notify: v.notify, noNotify: v['no-notify'] }) }, now);
+      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target as string, now), notify_overnight: v['notify-overnight'], interval: v.interval, notify: notifyChoice(type, { notify: v.notify, noNotify: v['no-notify'] }), renew: Boolean(type?.renews) && ttl === undefined }, now);
       console.log(`added ${w.id} (${w.type} ${w.target}), expires ${w.expires}`);
     } else if (cmd === 'list') {
       const ws = listWatches(dir);

@@ -4,8 +4,8 @@
  *
  *   node scripts/web/serve-static.ts [--port 8787]
  *
- * Binds 127.0.0.1 only. Serves a whitelist taken from directory listings at start (index.html, theme.css, dist/*,
- * fixtures/*.json), so no request path is ever joined onto a filesystem path. Everything under /api answers 404, which
+ * Binds 127.0.0.1 only. Serves a whitelist taken from directory listings at start (index.html, theme.css, the two favicons,
+ * dist/*, fixtures/*.json), so no request path is ever joined onto a filesystem path. Everything under /api answers 404, which
  * is what makes the client fall back to its bundled fixtures. Run `npm run build:web` first (`npm run web:static` does both).
  */
 import { createServer } from 'node:http';
@@ -17,7 +17,9 @@ import { parseArgs } from 'node:util';
 import { SECURITY_HEADERS, hostAllowed } from '../lib/web/guard.ts';
 
 const CLIENT = fileURLToPath(new URL('./client/', import.meta.url));
-export const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.map': 'application/json; charset=utf-8' };
+export const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.map': 'application/json; charset=utf-8', '.svg': 'image/svg+xml' };
+/** The top-level files served besides index.html: the theme and the two tab icons (the second marks open asks). */
+export const TOP_FILES = ['theme.css', 'favicon.svg', 'favicon-cue.svg'];
 
 /** URL path to absolute file path for every servable file; request paths are only ever looked up here. */
 export function buildRoutes(clientDir: string): Map<string, string> {
@@ -25,7 +27,7 @@ export function buildRoutes(clientDir: string): Map<string, string> {
   const add = (url: string, file: string): void => { if (Object.hasOwn(TYPES, extname(file))) routes.set(url, file); };
   const top = new Set(readdirSync(clientDir));
   if (top.has('index.html')) { add('/', join(clientDir, 'index.html')); add('/index.html', join(clientDir, 'index.html')); }
-  if (top.has('theme.css')) add('/theme.css', join(clientDir, 'theme.css'));
+  for (const name of TOP_FILES) if (top.has(name)) add(`/${name}`, join(clientDir, name));
   for (const dir of ['dist', 'fixtures']) {
     try {
       for (const name of readdirSync(join(clientDir, dir))) add(`/${dir}/${name}`, join(clientDir, dir, name));

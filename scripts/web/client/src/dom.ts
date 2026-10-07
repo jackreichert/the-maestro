@@ -1,7 +1,8 @@
 /** Small DOM helpers shared by the components. Text is always set with textContent, never innerHTML. */
 
-import { safeHref } from './url.ts';
+import { linkAttrs } from './link-policy.ts';
 import { formatFragment } from './tabs.ts';
+import { memoByKey } from './memo.ts';
 
 type Attrs = Record<string, string | boolean | undefined>;
 type Child = Node | string | null | undefined | false;
@@ -33,12 +34,15 @@ export function s<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Attrs = {
   return node;
 }
 
-/** A constructable stylesheet, so the page needs no inline style. */
-export function sheet(css: string): CSSStyleSheet {
+/**
+ * A constructable stylesheet, so the page needs no inline style. One sheet per distinct CSS text, shared by every
+ * shadow root that adopts it: forty ask rows parse their styles once, not forty times.
+ */
+export const sheet = memoByKey((css: string): CSSStyleSheet => {
   const sh = new CSSStyleSheet();
   sh.replaceSync(css);
   return sh;
-}
+});
 
 /** Attach an open shadow root with the given styles and return it. */
 export function shadow(host: HTMLElement, css: string): ShadowRoot {
@@ -49,8 +53,8 @@ export function shadow(host: HTMLElement, css: string): ShadowRoot {
 
 /** A link (or plain text when the ref has no safe URL) for a server-built Ref. */
 export function refLink(ref: { label: string; url?: string }): Node {
-  const href = safeHref(ref.url);
-  return href ? h('a', { href, rel: 'noreferrer noopener' }, ref.label) : document.createTextNode(ref.label);
+  const attrs = linkAttrs(ref.url);
+  return attrs ? h('a', attrs, ref.label) : document.createTextNode(ref.label);
 }
 
 /** A link to a stream's tab, for rows and cards shown outside that tab. The href is built here, never taken from data. */
@@ -64,8 +68,11 @@ export const VISUALLY_HIDDEN = `.vh{position:absolute;width:1px;height:1px;overf
 /** Shared base for every component: type, links, the focus ring, mono and tabular figures. Tokens only, from theme.css. */
 export const BASE_CSS = `
   :host { display: block; color: var(--text-primary); font-family: var(--font-sans); }
+  :host([hidden]) { display: none; }
   *, *::before, *::after { box-sizing: border-box; }
+  /* Inline padding grows each link's hit area to at least 24 px tall (WCAG 2.2 target size) without moving the line box. */
   a {
+    padding-block: max(4.5px, 0.35em);
     color: var(--accent); text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: 0.2em;
     text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
     transition: text-decoration-color var(--dur-fast) var(--ease-out);
@@ -75,6 +82,12 @@ export const BASE_CSS = `
   code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
   .num { font-variant-numeric: tabular-nums; }
   ${VISUALLY_HIDDEN}
+  /* Forced colours (Windows contrast themes) drop backgrounds and shadows: shapes that were only a fill get a border. */
+  @media (forced-colors: active) {
+    .chip, .id, kbd, .badge, .unsaved { border: 1px solid CanvasText; }
+    .swatch { forced-color-adjust: none; outline: 1px solid CanvasText; }
+    button.more, button.quiet { border: 1px solid ButtonText; }
+  }
 `;
 
 /**
@@ -87,6 +100,7 @@ export const UI_CSS = `
   @media (min-width: 960px) { .board { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); } }
   @media (min-width: 1280px) { .board { grid-template-columns: minmax(0, 1fr) 360px; } }
   .col { display: grid; gap: var(--space-6); min-width: 0; }
+  @media (max-width: 480px) { .board { row-gap: var(--space-6); } .col { gap: var(--space-5); } }
   section { container-type: inline-size; min-width: 0; }
 
   .head { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); }
@@ -95,12 +109,31 @@ export const UI_CSS = `
   .quiet .head h2 { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); letter-spacing: 0.02em; }
   .glyph { display: inline-block; width: 1.1em; text-align: center; }
   .head .glyph { color: var(--text-muted); }
+  /* Wide screens hang the status glyph in the margin, so every heading's text starts on the same edge as its rows. */
+  @media (min-width: 1100px) { .head .glyph { margin-left: calc(-1.1em - var(--space-2)); } }
   .tone-critical .head .glyph { color: var(--critical); }
   .tone-success .head .glyph { color: var(--success); }
   .tone-accent .head .glyph { color: var(--accent); }
 
+  .empty .rest { font-family: var(--font-serif); font-size: 1.04em; color: var(--text-secondary); margin-left: 2px; }
+  .section-hint { margin: calc(-1 * var(--space-2)) 0 var(--space-3); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); max-width: 70ch; }
+  .section-hint .touch { display: none; }
+  @media (pointer: coarse), (max-width: 480px) { .section-hint .keys { display: none; } .section-hint .touch { display: inline; } }
+  kbd { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1; padding: 2px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-1); color: var(--text-secondary); white-space: nowrap; }
   .empty { margin: 0; padding: var(--space-3) 0; color: var(--text-muted); font-size: var(--text-sm); line-height: var(--leading-sm); border-top: 1px solid var(--border); }
-  .cards { display: grid; gap: var(--space-4); }
+  .asks { border-top: 1px solid var(--border); }
+  button.more {
+    font: inherit; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-medium); color: var(--accent);
+    align-self: center; min-height: 28px; padding: 0 var(--space-2); margin: -2px calc(-1 * var(--space-2)) -2px auto;
+    border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; font-variant-numeric: tabular-nums;
+    transition: background-color var(--dur-fast) var(--ease-out);
+  }
+  @media (hover: hover) { button.more:hover { background: var(--accent-soft); } }
+  button.more .chev {
+    display: inline-block; width: 6px; height: 6px; margin-left: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0;
+    transform: translateY(-2px) rotate(45deg); transition: transform var(--dur-base) var(--ease-out);
+  }
+  button.more[aria-expanded=true] .chev { transform: translateY(1px) rotate(225deg); }
 
   ul.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
   ul.rows > li {
@@ -109,13 +142,14 @@ export const UI_CSS = `
   }
   .row-text { min-width: 0; overflow-wrap: anywhere; }
   .row-meta { color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .row-sub { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
+  /* A link that is a flex or grid item is blockified, so the inline padding above would add height: there it trades 2 px of
+     padding for 2 px of negative margin instead, a 24 px target on a 20 px line with the row's rhythm unchanged. */
+  .row-sub > a { padding-block: 2px; margin-block: -2px; }
+  .row-sub { align-items: baseline; grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-sm); }
   .gate { color: var(--critical); }
   .gate .glyph { width: auto; margin-right: 4px; }
-  @container (max-width: 420px) {
-    ul.rows > li { grid-template-columns: auto minmax(0, 1fr); }
-    .row-meta { grid-column: 2; }
-  }
+  .gate .mono { font-family: var(--font-mono); font-size: 0.92em; }
+  .gate a { color: var(--critical); text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
 
   .id {
     font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-secondary);

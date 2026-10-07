@@ -43,15 +43,27 @@ export function clockTime(iso: string, tz: string): string {
   return text.replace(/\s?([AP])M$/, (_, x: string) => ` ${x.toLowerCase()}m`);
 }
 
-/** A calendar date like "Tuesday 6 October" for a `YYYY-MM-DD` day; empty when it is not one. */
-export function longDate(day: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
+/** Noon UTC on a real `YYYY-MM-DD` day, or NaN: the date must survive a round trip, so 2026-02-30 is rejected, not rolled into March. */
+function calendarNoon(day: string): number {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return Number.NaN;
   const t = Date.parse(`${day}T12:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === day ? t : Number.NaN;
+}
+
+/** `day` formatted as "<weekday> <day> <month>" with the given name lengths; empty when it is not a real day. */
+function dayMonth(day: string, names: 'long' | 'short'): string {
+  const t = calendarNoon(day);
   if (!Number.isFinite(t)) return '';
-  const parts = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).formatToParts(t);
+  const parts = new Intl.DateTimeFormat('en-GB', { weekday: names, day: 'numeric', month: names, timeZone: 'UTC' }).formatToParts(t);
   const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
   return `${get('weekday')} ${get('day')} ${get('month')}`;
 }
+
+/** A calendar date like "Tuesday 6 October" for a `YYYY-MM-DD` day; empty when it is not one. */
+export const longDate = (day: string): string => dayMonth(day, 'long');
+
+/** A short calendar date like "Tue 6 Oct" for a `YYYY-MM-DD` day, for narrow screens; empty when it is not one. */
+export const shortDate = (day: string): string => dayMonth(day, 'short');
 
 /** Past this many minutes a live page is flagged stale: the Markdown Podium refreshes every 10, so 15 means a missed refresh. */
 export const STALE_MINUTES = 15;
@@ -62,3 +74,55 @@ export function freshness(generatedAt: string, nowMs: number): { age: string; st
   if (!Number.isFinite(t) || !Number.isFinite(nowMs)) return { age: '', stale: false };
   return { age: ago(generatedAt, new Date(nowMs).toISOString()), stale: nowMs - t > STALE_MINUTES * MINUTE };
 }
+
+/** An ask's age for its row: "today", then whole days ("1 d", "5 d"). Negative or unreadable ages read as today. */
+export function askAge(days: number): string {
+  return Number.isFinite(days) && days >= 1 ? `${Math.floor(days)} d` : 'today';
+}
+
+/** Asks oldest first (most days waiting, then earliest asked), so the longest wait leads the list. A copy; stable for ties. */
+export function oldestFirst<T extends { ageDays: number; ts: string }>(asks: T[]): T[] {
+  const at = (t: string): number => { const n = Date.parse(t); return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; };
+  return asks.map((a, i) => ({ a, i })).sort((x, y) => (y.a.ageDays - x.a.ageDays) || (at(x.a.ts) - at(y.a.ts)) || (x.i - y.i)).map((x) => x.a);
+}
+
+/** The text an answer is copied as, for pasting into the orchestrator chat: "<ask id>: <answer>". Null for a blank answer. */
+export function chatAnswer(id: string, answer: string): string | null {
+  const text = answer.trim();
+  return text ? `${id}: ${text}` : null;
+}
+
+/** The browser tab's title: "(n) Podium" while n asks need you, plain "Podium" otherwise. Blocked never counts: it is not your hand. */
+export function cueTitle(asks: number): string {
+  return Number.isInteger(asks) && asks > 0 ? `(${asks}) Podium` : 'Podium';
+}
+
+/** A tempo marking for the scope the cue line shows, and the language it is in (for `lang`, so it is pronounced right). */
+export interface Tempo { word: 'Tacet' | 'Adagio' | 'Andante' | 'Allegro' | 'Presto'; lang: 'la' | 'it' }
+
+/**
+ * How much is waiting on you, as a tempo: a = open asks, b = blocked, w = in flight. Nothing at all is Tacet (the part
+ * is silent); only work in flight is Adagio; one or two waiting is Andante; three to five is Allegro; six or more, or
+ * three blocked, is Presto. The cue line stays the source of truth; this is the same fact in a word.
+ */
+export function tempoWord(counts: { asks: number; blocked: number; working: number }): Tempo {
+  const waiting = counts.asks + counts.blocked;
+  if (waiting === 0) return counts.working === 0 ? { word: 'Tacet', lang: 'la' } : { word: 'Adagio', lang: 'it' };
+  if (waiting >= 6 || counts.blocked >= 3) return { word: 'Presto', lang: 'it' };
+  return { word: waiting <= 2 ? 'Andante' : 'Allegro', lang: 'it' };
+}
+
+/** The tempo scale in order, each word with what it means: the disclosure under the cue line is built from this. */
+export const TEMPO_SCALE: { word: Tempo['word']; lang: Tempo['lang']; meaning: string }[] = [
+  { word: 'Tacet', lang: 'la', meaning: 'nothing' },
+  { word: 'Adagio', lang: 'it', meaning: 'only work in flight' },
+  { word: 'Andante', lang: 'it', meaning: 'one or two' },
+  { word: 'Allegro', lang: 'it', meaning: 'three to five' },
+  { word: 'Presto', lang: 'it', meaning: 'six or more, or three blocked' },
+];
+
+/** The opening of the tempo disclosure, before the scale. */
+export const TEMPO_LEAD = 'Tempo reads how much is waiting on you: ';
+
+/** What the tempo disclosure says, as one sentence. */
+export const TEMPO_RULE = `${TEMPO_LEAD}${TEMPO_SCALE.map((t) => `${t.word}, ${t.meaning}`).join('; ')}.`;

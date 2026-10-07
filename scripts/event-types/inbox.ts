@@ -11,6 +11,7 @@ export interface InboxState { ids: string[] }
 
 // Scheduling: default seconds between checks, and whether a check calls the network (decides the floor).
 export const interval = 60;
+export const renews = true;
 export const network = false;
 // Notification: never sent to notify_command, whatever the watch says.
 export const notifies = 'never' as const;

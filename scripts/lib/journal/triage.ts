@@ -2,6 +2,7 @@ import { activeDeferrals, isOpen } from '../ledger-core.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween } from '../boxes.ts';
 import { clip } from './format.ts';
+import { askBits } from './ask-fields.ts';
 import { approvalMap } from './approvals.ts';
 import { defaultPendingSince, pendingTransitions } from './prime.ts';
 import type { PendingContext, PendingRow } from './prime.ts';
@@ -12,6 +13,8 @@ export interface TriageContext extends PendingContext { today: () => string; res
 export interface TriageItem {
     id?: string; kind?: string; box: number; date?: string; text?: string; stream?: string; ticket?: string; paste?: string; gate?: string;
     deferredUntil: string | undefined; queued?: true; ref: string | null; ageDays: number; stale: boolean;
+    /** The decision fields of an ask in compact words (door, decide-by, class, recommendation, default); absent for any other item and for an ask that carries none. */
+    ask?: string[];
 }
 export interface Blocker { id?: string; box: number; why: string }
 export interface TriageReport {
@@ -34,7 +37,8 @@ export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'to
         const box = classify(i, approvals.get(i.id ?? ''));
         const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
         const until = deferred.get(i.id ?? '');
-        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ...(i.queued ? { queued: true as const } : {}), ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d) };
+        const ask = (i.kind === 'question' || i.kind === 'decision') && !i.paste ? askBits(i) : [];
+        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ...(i.queued ? { queued: true as const } : {}), ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d), ...(ask.length ? { ask } : {}) };
     });
 }
 
@@ -83,7 +87,7 @@ export function triageLines(t: TriageReport): string[] {
         if (box === BOX.NOISE) { out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`); continue; }
         out.push(`\nBox ${box} ${BOX_TITLES[box]} (${list.length}): ${ACTIONS[box]}`);
         for (const i of list) {
-            const tail = [i.queued ? 'queued: not started' : null, RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.deferredUntil ? `deferred until ${i.deferredUntil}` : null, i.gate ? `gate ${i.gate}` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
+            const tail = [...(i.ask ?? []), i.queued ? 'queued: not started' : null, RECORD_BOXES.includes(box) ? (i.ref ? `ref ${i.ref}` : 'NO REF') : null, i.stale ? `STALE ${i.ageDays}d` : null, i.deferredUntil ? `deferred until ${i.deferredUntil}` : null, i.gate ? `gate ${i.gate}` : null, i.paste ? `block ${i.paste}` : null].filter(Boolean);
             out.push(`  ${i.id}  ${clip(i.text, 110)}${tail.length ? `  [${tail.join('; ')}]` : ''}`);
         }
     }

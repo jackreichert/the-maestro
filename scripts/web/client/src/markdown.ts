@@ -10,6 +10,7 @@
  * Pure and DOM-free so node:test covers it.
  */
 import { isSafeUrl } from './url.ts';
+import { linkAttrs } from './link-policy.ts';
 
 export { isSafeUrl };
 
@@ -33,6 +34,14 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
+/** An anchor with the link policy's attributes, or just the label when the URL is unsafe. */
+function renderLink(label: string, url: string): string {
+  const attrs = linkAttrs(url);
+  if (attrs === undefined) return renderInline(label);
+  const html = Object.entries(attrs).map(([k, v]) => ` ${k}="${escapeHtml(v)}"`).join('');
+  return `<a${html}>${renderInline(label)}</a>`;
+}
+
 /** Render one line of inline Markdown to HTML. */
 export function renderInline(text: string): string {
   let out = '';
@@ -44,8 +53,7 @@ export function renderInline(text: string): string {
     else if (m[2] !== undefined) out += `<span class="nw">${renderInline(m[2])}</span>`;
     else if (m[3] !== undefined) out += `<code>${escapeHtml(m[3])}</code>`;
     else if (m[4] !== undefined) out += `<strong>${renderInline(m[4])}</strong>`;
-    else if (isSafeUrl(m[6])) out += `<a href="${escapeHtml(m[6].trim())}" rel="noreferrer noopener">${renderInline(m[5])}</a>`;
-    else out += renderInline(m[5]);
+    else out += renderLink(m[5], m[6]);
   }
   return out + escapeHtml(text.slice(last));
 }

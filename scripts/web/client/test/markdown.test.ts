@@ -29,14 +29,14 @@ test('javascript:, data: and vbscript: links render as plain label text', () => 
 });
 
 test('http, https and obsidian links render with a safe rel', () => {
-  assert.equal(renderInline('[FAKE-1](https://tracker.test/browse/FAKE-1)'), '<a href="https://tracker.test/browse/FAKE-1" rel="noreferrer noopener">FAKE-1</a>');
+  assert.equal(renderInline('[FAKE-1](https://tracker.test/browse/FAKE-1)'), '<a href="https://tracker.test/browse/FAKE-1" target="_blank" rel="noopener noreferrer">FAKE-1</a>');
   assert.match(renderInline('[note](obsidian://open?vault=v&file=a)'), /href="obsidian:\/\/open\?vault=v&#38;file=a"/);
   assert.ok(isSafeUrl('http://localhost:1/'));
   assert.ok(!isSafeUrl('ftp://x'));
 });
 
 test('the nowrap span the generator writes becomes a class, and other span attributes are escaped', () => {
-  assert.equal(renderInline('<span style="white-space:nowrap">[FAKE-1](https://t.test/FAKE-1)</span>'), '<span class="nw"><a href="https://t.test/FAKE-1" rel="noreferrer noopener">FAKE-1</a></span>');
+  assert.equal(renderInline('<span style="white-space:nowrap">[FAKE-1](https://t.test/FAKE-1)</span>'), '<span class="nw"><a href="https://t.test/FAKE-1" target="_blank" rel="noopener noreferrer">FAKE-1</a></span>');
   const evil = renderInline('<span style="background:url(x)">hi</span>');
   assert.ok(!evil.includes('<span'));
 });
@@ -90,12 +90,12 @@ test('a backslash before ASCII punctuation makes it literal and stops it startin
   assert.equal(renderInline('\\*\\*x\\*\\*'), '**x**');
   assert.equal(renderInline('\\`x\\`'), '`x`');
   assert.equal(renderInline('a\\<b\\>'), 'a&#60;b&#62;');
-  assert.equal(renderInline('\\\\[a](https://ok.test)'), '\\<a href="https://ok.test" rel="noreferrer noopener">a</a>');
+  assert.equal(renderInline('\\\\[a](https://ok.test)'), '\\<a href="https://ok.test" target="_blank" rel="noopener noreferrer">a</a>');
   assert.equal(renderInline('a\\b'), 'a\\b', 'a backslash before a letter stays');
 });
 
 test('an escaped bracket inside a label does not end it, and an escaped star does not close bold', () => {
-  assert.equal(renderInline('[a\\]b](https://ok.test)'), '<a href="https://ok.test" rel="noreferrer noopener">a]b</a>');
+  assert.equal(renderInline('[a\\]b](https://ok.test)'), '<a href="https://ok.test" target="_blank" rel="noopener noreferrer">a]b</a>');
   assert.equal(renderInline('**x\\***'), '<strong>x*</strong>');
 });
 
@@ -107,4 +107,9 @@ test('the generator escape for a link in a table cell renders as text, not a lin
 test('an escaped pipe stays in its cell, and an escaped backslash before a pipe still separates cells', () => {
   assert.deepEqual(splitRow('| a\\|b | c |'), ['a|b', 'c']);
   assert.deepEqual(splitRow('| a\\\\| c |'), ['a\\\\', 'c']);
+});
+
+test('a trusted pull request link gets its own tab name and no rel; an obsidian link gets no target', () => {
+  assert.equal(renderInline('[#7](https://github.com/example-org/example-repo/pull/7)'), '<a href="https://github.com/example-org/example-repo/pull/7" target="podium-pr~example-org~example-repo~7">#7</a>');
+  assert.equal(renderInline('[n](obsidian://open?vault=v&file=a)').includes('target='), false);
 });

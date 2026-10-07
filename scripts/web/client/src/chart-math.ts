@@ -37,11 +37,15 @@ export function stack(values: Record<string, number>, keys: string[]): Segment[]
   });
 }
 
+/** True for a catch-all series ("Other", or a stream literally named other): it gets the neutral, never an identity hue. */
+export const isOther = (name: string): boolean => name.trim().toLowerCase() === 'other';
+
 /** Keep the `limit - 1` largest keys and fold the rest into "Other", so a series never needs a ninth hue. */
 export function foldToOther(totals: Record<string, number>, limit: number): string[] {
   const keys = Object.keys(totals).sort((a, b) => totals[b] - totals[a] || a.localeCompare(b));
   if (keys.length <= limit) return keys;
-  return [...keys.slice(0, limit - 1), 'Other'];
+  // A series already named other joins the fold, so the chart never shows two grey catch-alls.
+  return [...keys.filter((k) => !isOther(k)).slice(0, limit - 1), 'Other'];
 }
 
 /** Each key's share of the total, as fractions that sum to 1 (all zero when the total is zero). */
@@ -56,13 +60,24 @@ export interface ChartData { labels: string[]; series: { name: string; values: n
 /** The most series a chart draws; the dataviz palette has eight validated hues. */
 export const MAX_SERIES = 8;
 
+/**
+ * The CSS colour for each series name, in order: identity hues `--series-1`.. in turn for named series, and the neutral
+ * `--series-other` for a catch-all. Catch-alls do not use up a slot, so the named series keep consecutive hues.
+ */
+export function seriesColors(names: string[]): string[] {
+  let slot = 0;
+  return names.map((n) => (isOther(n) ? 'var(--series-other)' : `var(--series-${(slot++ % MAX_SERIES) + 1})`));
+}
+
 /** Fold series past the limit into one "Other" series so no extra hue is ever generated. */
 export function limitSeries(data: ChartData, limit = MAX_SERIES): ChartData {
   const totals = Object.fromEntries(data.series.map((x) => [x.name, x.values.reduce((a, b) => a + b, 0)]));
   const keep = foldToOther(totals, limit);
   if (keep.length === data.series.length) return data;
-  const kept = data.series.filter((x) => keep.includes(x.name));
-  const rest = data.series.filter((x) => !keep.includes(x.name));
+  // Partition on the real names: a series that is itself a catch-all (Other in any case) always joins the fold, so it
+  // cannot match the appended 'Other' label and survive beside it.
+  const kept = data.series.filter((x) => !isOther(x.name) && keep.includes(x.name));
+  const rest = data.series.filter((x) => isOther(x.name) || !keep.includes(x.name));
   const other = data.labels.map((_, i) => rest.reduce((a, x) => a + (x.values[i] ?? 0), 0));
   return { labels: data.labels, series: [...kept, { name: 'Other', values: other }] };
 }
