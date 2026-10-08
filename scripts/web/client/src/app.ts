@@ -28,6 +28,10 @@ const CSS = `${BOARD_CSS}
   @media (min-width: 1100px) { :host { --pad: var(--space-7); } }
   .wrap { max-width: 1360px; margin: 0 auto; padding-inline: var(--pad); }
 
+  /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
+  .skip { position: fixed; inset-block-start: -100px; inset-inline-start: var(--space-3); z-index: 10; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-weight: var(--weight-semibold); text-decoration: none; }
+  .skip:focus-visible { inset-block-start: var(--space-3); outline: 2px solid var(--focus); outline-offset: 2px; }
+
   header { padding-block: var(--space-5) var(--space-4); }
   .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
   .brand { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
@@ -377,9 +381,19 @@ export class PodiumApp extends HTMLElement {
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
-    this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
+    this.#root.replaceChildren(this.#skipLink(panel), this.#header(st), tabbar, h('main', {}, panel));
     this.#watchTabOverflow(tabbar, tablist);
     showCue(this.#waiting(st));
+  }
+
+  /**
+   * The first tab stop: jumps past the header and tab bar to the open panel. A fragment link cannot reach into a shadow
+   * root (and the fragment holds the active tab), so the click moves focus itself and leaves the URL alone.
+   */
+  #skipLink(panel: HTMLElement): HTMLElement {
+    const skip = h('a', { class: 'skip', href: `#${panel.id}` }, 'Skip to the board');
+    skip.addEventListener('click', (e) => { e.preventDefault(); panel.focus(); });
+    return skip;
   }
 
   /**
