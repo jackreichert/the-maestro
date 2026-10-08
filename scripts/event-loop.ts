@@ -4,7 +4,7 @@
  *
  *   event-loop.ts add --id <id> --type <type> --target <t> [--done-when <rule>] [--report <text>] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
  *   event-loop.ts list [--json] | remove <id> | digest [--peek]
- *   event-loop.ts run [--once] [--interval N]
+ *   event-loop.ts run [--once | --serve] [--interval N]
  *   event-loop.ts digest-wait [--timeout-hours N] | digests [--unseen] [--mark-seen]
  *
  * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
@@ -22,6 +22,11 @@
  * `digest-wait` blocks until the supervisor (loop-supervisor.ts) has saved an unseen digest, prints it, marks it seen and
  * exits 10, so a session that cannot hold the loop lock is still woken; it exits 0 quietly at the timeout (default 6h).
  *
+ * `run --serve` is the daemon mode: it never exits on an event. Each tick's events go to the event inbox (lib/event-inbox.ts,
+ * <event dir>/events.jsonl) instead of the exit-10 digest, quiet hours become an in-process wait, and no registered watches just
+ * means waiting. It ends only on a crash or a signal. Delivery into the inbox is exactly-once: the digest is read, appended to the
+ * inbox (ids dedupe a replay), then cleared, so a crash between the last two repeats an event that the inbox drops.
+ *
  * Heartbeat: unless `--once`, `run` rewrites <event dir>/heartbeat.json on each tick and each sleep chunk (lib/heartbeat.ts), and sleeps in chunks of at most 60 s
  * against the wall clock (lib/wall-sleep.ts), so a lid closed mid-sleep costs under a minute, not the whole lid time.
  *
@@ -36,8 +41,9 @@ import {
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
+import { appendEvents } from './lib/event-inbox.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
-import { sleepUntil } from './lib/wall-sleep.ts';
+import { CHUNK_SECONDS, sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
 import type { TypeRegistry } from './event-types/index.ts';
@@ -222,21 +228,47 @@ function heartbeatWriter(dir: string, enabled: boolean): (over?: { sleepingUntil
   };
 }
 
-async function run({ dir, types, once, pinned }: { dir: string; types: TypeRegistry; once?: boolean; pinned?: number }): Promise<number> {
+/** What `run` is given beyond the registry: `serve` is daemon mode, `sleep` and `signal` exist for tests (an aborted signal ends the loop, with exit 0). */
+interface RunOptions { dir: string; types: TypeRegistry; once?: boolean; serve?: boolean; pinned?: number; sleep?: (seconds: number) => Promise<void>; signal?: AbortSignal }
+
+/** Moves the digest's pending events into the inbox: append first, clear second, so a crash replays into the inbox's dedupe instead of losing events. */
+export function drainDigestToInbox(dir: string): void {
+  const pending = readDigest(dir);
+  if (!pending.length) return;
+  const { added, duplicates, refused } = appendEvents(dir, pending);
+  readDigest(dir, { consume: true });
+  console.error(`inbox: ${added} added, ${duplicates} already there${refused ? `, ${refused} refused` : ''}`);
+}
+
+/** Between ticks. Serve mode waits out quiet hours here (one chunk, then it ticks again) instead of exiting. Returns false when the loop should end. */
+async function wait(next: Interval | Stop, { beat, serve, sleep: nap, signal }: { beat: ReturnType<typeof heartbeatWriter>; serve: boolean; sleep: (s: number) => Promise<void>; signal?: AbortSignal }): Promise<void> {
+  const seconds = 'stop' in next ? CHUNK_SECONDS : next.seconds;
+  if ('stop' in next && serve) console.error(`quiet hours until ${next.until} ${next.tz}`);
+  else console.error(`next check in ${seconds}s (${next.reason})`);
+  const guarded = async (s: number): Promise<void> => { if (signal?.aborted) throw new DOMException('stopped', 'AbortError'); await nap(s); };
+  await sleepUntil(Date.now() + seconds * 1000, { sleep: guarded, onChunk: (until) => beat({ sleepingUntil: until }) });
+}
+
+async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep, signal }: RunOptions): Promise<number> {
   const ctx = { run: defaultRun, config: { inboxCommand: INBOX_COMMAND }, dir };
   const beat = heartbeatWriter(dir, !once);
-  for (;;) {
-    if (!listWatches(dir).length) { console.log('no watches registered'); return EXIT.ok; }
-    try {
-      tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND });
-    } catch (err) { beat({ lastError: errorMessage(err).split('\n')[0] }); throw err; }
-    beat({ lastError: '' });
-    if (finish(dir)) return EXIT.actionable;
-    const next = pace({ dir, types, config: cadenceConfig(pinned) });
-    if ('stop' in next) { console.log(`QUIET-HOURS stop until ${next.until} ${next.tz}`); return EXIT.quietStop; }
-    if (once) { console.log('no actionable events'); return EXIT.ok; }
-    console.error(`next check in ${next.seconds}s (${next.reason})`);
-    await sleepUntil(Date.now() + next.seconds * 1000, { sleep, onChunk: (until) => beat({ sleepingUntil: until }) });
+  try {
+    for (;;) {
+      if (!serve && !listWatches(dir).length) { console.log('no watches registered'); return EXIT.ok; }
+      try {
+        tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND });
+        if (serve) drainDigestToInbox(dir);
+      } catch (err) { beat({ lastError: errorMessage(err).split('\n')[0] }); throw err; }
+      beat({ lastError: '' });
+      if (!serve && finish(dir)) return EXIT.actionable;
+      const next = pace({ dir, types, config: cadenceConfig(pinned) });
+      if ('stop' in next && !serve) { console.log(`QUIET-HOURS stop until ${next.until} ${next.tz}`); return EXIT.quietStop; }
+      if (once) { console.log('no actionable events'); return EXIT.ok; }
+      await wait(next, { beat, serve, sleep: nap, signal });
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return EXIT.ok;
+    throw err;
   }
 }
 
@@ -263,7 +295,7 @@ const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  once: { type: 'boolean' }, interval: { type: 'string' },
+  once: { type: 'boolean' }, serve: { type: 'boolean' }, interval: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
@@ -305,8 +337,9 @@ async function main(argv: string[]): Promise<number> {
       if (pinned !== undefined && !(Number.isFinite(pinned) && pinned > 0)) return usage('--interval needs a positive number of seconds');
       const { loadConfiguredTypes } = await import('./event-types/index.ts');
       const types = await loadConfiguredTypes();
+      if (v.once && v.serve) return usage('--once and --serve cannot be combined');
       acquireLock(dir);
-      return await run({ dir, types, once: v.once, pinned });
+      return await run({ dir, types, once: v.once, serve: v.serve, pinned });
     } else if (cmd === 'digest-wait' || cmd === 'digests') {
       if (!LEDGER_ROOT) return usage('saved digests live under the ledger root; set LEDGER_ROOT (or ledger_root in the config)');
       const saved = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
@@ -315,7 +348,7 @@ async function main(argv: string[]): Promise<number> {
       const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
       if (!(hours > 0) || !(poll > 0)) return usage('--timeout-hours and --poll-seconds need positive numbers');
       return await digestWait(saved, hours * 3600 * 1000, poll);
-    } else return usage('commands: add | list | remove <id> | digest | run [--once] | digest-wait | digests');
+    } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests');
   } catch (err) {
     return usage(errorMessage(err));
   }

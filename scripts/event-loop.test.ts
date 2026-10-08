@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { EXIT, formatDigest, pace, tick } from './event-loop.ts';
+import { EXIT, drainDigestToInbox, formatDigest, pace, tick } from './event-loop.ts';
 import type { TickDeps } from './event-loop.ts';
 import type { TypeRegistry } from './event-types/index.ts';
 import type { Interval, Stop } from './lib/cadence.ts';
@@ -14,6 +14,7 @@ import * as inbox from './event-types/inbox.ts';
 import * as prChecks from './event-types/pr-checks.ts';
 import * as reminder from './event-types/reminder.ts';
 import { notifyChoice } from './lib/notify.ts';
+import { readInbox } from './lib/event-inbox.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
 
 const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
@@ -512,4 +513,63 @@ test('cli: run --once leaves no heartbeat, so a one-off never reads as a dead lo
   cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
   assert.equal(cli(dir, 'run', '--once').status, EXIT.ok);
   assert.equal(existsSync(join(dir, 'heartbeat.json')), false);
+});
+
+/** Starts `run --serve` over `dir`, polls (up to 10 s) until `ready()` holds, and returns whether the process was still alive at that point; always stops it. */
+async function serveUntil(dir: string, ready: () => boolean): Promise<{ alive: boolean; ready: boolean; code: number | null }> {
+  const p = spawn(process.execPath, [SCRIPT, 'run', '--serve'], { env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' }, stdio: 'ignore' });
+  const closed = new Promise<number | null>((resolve) => p.on('close', resolve));
+  let ok = false;
+  for (let i = 0; i < 200 && !ok && p.exitCode === null; i += 1) {
+    await new Promise((r) => setTimeout(r, 50));
+    ok = ready();
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  const alive = p.exitCode === null;
+  p.kill('SIGTERM');
+  return { alive, ready: ok, code: await closed };
+}
+
+test('cli: run --serve records an actionable event in the inbox and keeps running; the digest is cleared', async () => {
+  const dir = tempDir();
+  addWatch(dir, { id: 'rem', type: 'reminder', target: '2026-01-01T00:00:00Z', report: 'free text that stays out' }, Date.now());
+  const r = await serveUntil(dir, () => readInbox(dir).length > 0);
+  assert.equal(r.ready, true);
+  assert.equal(r.alive, true, 'the loop must not exit on an actionable event');
+  const [e] = readInbox(dir);
+  assert.deepEqual([e.watch, e.type, e.kind, e.actionable, e.seen, e.handled], ['rem', 'reminder', 'reminder', true, false, false]);
+  assert.deepEqual(readDigest(dir), []);
+  assert.equal(readFileSync(join(dir, 'events.jsonl'), 'utf8').includes('free text'), false);
+});
+
+test('cli: run --serve with no watches keeps waiting instead of exiting, and writes a heartbeat', async () => {
+  const dir = tempDir();
+  const r = await serveUntil(dir, () => existsSync(join(dir, 'heartbeat.json')));
+  assert.equal(r.ready, true);
+  assert.equal(r.alive, true);
+});
+
+test('cli: run --serve cannot be combined with --once', () => {
+  const r = cli(tempDir(), 'run', '--once', '--serve');
+  assert.equal(r.status, EXIT.usage);
+  assert.match(r.stderr, /cannot be combined/);
+});
+
+test('draining the digest twice with the same events leaves one inbox entry (a crash replay is a no-op)', () => {
+  const dir = tempDir();
+  const e = { watch: 'prs', type: 'pr-watch', at: '2026-10-01T12:00:00.000Z', summary: 'THREAD acme/w#1 by someone: https://x.test/t', actionable: true, report: '' };
+  appendDigest(dir, [e]);
+  drainDigestToInbox(dir);
+  appendDigest(dir, [e]);
+  drainDigestToInbox(dir);
+  assert.equal(readInbox(dir).length, 1);
+  assert.deepEqual(readDigest(dir), []);
+});
+
+test('non-serve run still exits 10 on an actionable event (the contract --serve leaves alone)', () => {
+  const dir = tempDir();
+  addWatch(dir, { id: 'rem', type: 'reminder', target: '2026-01-01T00:00:00Z', report: 'go' }, Date.now());
+  const r = cli(dir, 'run');
+  assert.equal(r.status, EXIT.actionable, r.stderr);
+  assert.deepEqual(readInbox(dir), []);
 });
