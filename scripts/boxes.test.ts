@@ -26,6 +26,12 @@ test('classify notes: a finding needs no ticket on it, a learning is kept, the r
     assert.equal(classify({ kind: 'note', text: 'skipped because it was late' }), BOX.NOISE);
 });
 
+test('classify: a learned row is a learning whatever its wording, and is never a finding or noise', () => {
+    assert.equal(classify({ kind: 'learned', text: 'The fake page count is the page length.' }), BOX.LEARNING);
+    assert.equal(classify({ kind: 'learned', text: 'follow-up: next session TODO' }), BOX.LEARNING);
+    assert.equal(classify({ kind: 'note', text: 'The fake page count is the page length.' }), BOX.NOISE);
+});
+
 test('staleness: needs-jack and paste after 2 days, in-flight after 1, others never', () => {
     assert.equal(daysBetween('2026-10-01', '2026-10-03'), 2);
     assert.equal(isStale(BOX.NEEDS_JACK, { date: '2026-10-01' }, '2026-10-03'), false);

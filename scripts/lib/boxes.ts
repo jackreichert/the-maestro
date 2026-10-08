@@ -78,6 +78,7 @@ export function classify(item: BoxItem, approval?: Approval): number {
         if (approval === 'standing') return BOX.STANDING;
         if (approval === 'one-off') return BOX.ONE_OFF;
         return BOX.RULE;
+    case 'learned': return BOX.LEARNING;   // a validated fact (journal.ts learned); it needs no wording test
     case 'note':
         if (FINDING.test(text) && !hasTicket) return BOX.FINDING;
         if (LEARNED.test(text)) return BOX.LEARNING;
@@ -105,7 +106,7 @@ export const ACTIONS: Record<number, string> = {
     6: 'carry with its gate written out',
     7: 'carry; confirm it is alive (ListAgents, branch-sweep) or drop it',
     8: 'file a ticket (xenophon), then log a pointer',
-    9: 'copy into the handoff learnings and the repo CONTEXT.md',
+    9: 'copy into the handoff learnings and the repo CONTEXT.md (a `learned` row already carries its evidence and where it applies)',
     10: 'archive (roll)',
     11: 'archive silently',
 };

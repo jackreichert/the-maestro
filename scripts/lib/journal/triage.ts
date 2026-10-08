@@ -23,7 +23,7 @@ export interface TriageReport {
 }
 
 /**
- * Every item triage looks at, boxed: open items of any age, plus decisions and notes dated since..d that nothing
+ * Every item triage looks at, boxed: open items of any age, plus decisions, notes and learned rows dated since..d that nothing
  * has closed. Each carries `ref` (the first --ref that is an existing file, else null) and `stale`.
  */
 export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'today' | 'resolveRefFile'>, d: string, since: string): TriageItem[] {
@@ -32,7 +32,7 @@ export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'to
     const folded = fold(entries);
     const approvals = approvalMap(entries);
     const deferred = activeDeferrals(entries, today());
-    const inScope = (i: LedgerItem): boolean => isOpen(i) || (!i.closedBy && ['decision', 'note'].includes(i.kind ?? '') && (i.date ?? '') >= since && (i.date ?? '') <= d);
+    const inScope = (i: LedgerItem): boolean => isOpen(i) || (!i.closedBy && ['decision', 'note', 'learned'].includes(i.kind ?? '') && (i.date ?? '') >= since && (i.date ?? '') <= d);
     return folded.items.filter((i) => !folded.hidden.has(i.id ?? '') && inScope(i)).map((i) => {
         const box = classify(i, approvals.get(i.id ?? ''));
         const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
