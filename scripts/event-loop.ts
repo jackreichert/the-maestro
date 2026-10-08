@@ -49,7 +49,7 @@ import {
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
-import { appendEvents, formatEntry, mark, readInbox } from './lib/event-inbox.ts';
+import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './lib/event-inbox.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
 import { CHUNK_SECONDS, sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
@@ -324,7 +324,9 @@ async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, n
 /** `events [list|ack|wait]`. Returns the exit code, or a usage message. */
 async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string }): Promise<number | string> {
   if (sub === undefined || sub === 'list') {
-    const shown = readInbox(dir).filter(listFilter(v));
+    const { entries, torn } = readInboxReport(dir);
+    if (torn) console.error(`warning: ${torn} unreadable line(s) in the inbox (a write cut short); the events on them are not shown`);
+    const shown = entries.filter(listFilter(v));
     console.log(v.json ? JSON.stringify(shown) : shown.map(formatEntry).join('\n') || 'no events');
     return EXIT.ok;
   }

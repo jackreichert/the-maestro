@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, drainDigestToInbox, formatDigest, pace, tick } from './event-loop.ts';
@@ -14,7 +14,7 @@ import * as inbox from './event-types/inbox.ts';
 import * as prChecks from './event-types/pr-checks.ts';
 import * as reminder from './event-types/reminder.ts';
 import { notifyChoice } from './lib/notify.ts';
-import { appendEvents, readInbox } from './lib/event-inbox.ts';
+import { appendEvents, inboxPath, readInbox } from './lib/event-inbox.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
 
 const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
@@ -637,4 +637,15 @@ test('cli: events wait wakes on an event appended while it waits', async () => {
   appendEvents(dir, [digestEvent('CONFLICT acme/w#9 main <- f https://x.test')]);
   assert.equal(await closed, EXIT.actionable);
   assert.match(out, /conflict prs \(pr-watch\) repo=acme\/w number=9/);
+});
+
+test('cli: events list after a crash mid-write shows every later event and warns about the torn line', () => {
+  const dir = tempDir();
+  appendEvents(dir, [1, 2, 3].map((n) => digestEvent(`THREAD acme/w#${n} by someone: u`)));
+  truncateSync(inboxPath(dir), statSync(inboxPath(dir)).size - 20);
+  appendEvents(dir, [4, 5].map((n) => digestEvent(`THREAD acme/w#${n} by someone: u`)));
+  const r = cli(dir, 'events', '--all', '--json');
+  assert.equal(r.status, EXIT.ok, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).map((e: { fields: { number: number } }) => e.fields.number), [1, 2, 4, 5]);
+  assert.match(r.stderr, /1 unreadable line/);
 });

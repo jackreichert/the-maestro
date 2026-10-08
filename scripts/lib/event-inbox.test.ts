@@ -1,10 +1,11 @@
 // Run: node --test scripts/lib/event-inbox.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, appendFileSync, truncateSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendEvents, cleanFields, formatEntry, inboxPath, mark, readInbox, toInboxEvent } from './event-inbox.ts';
+import { appendEvents, cleanFields, formatEntry, inboxPath, mark, readInbox, readInboxReport, toInboxEvent } from './event-inbox.ts';
 import type { DigestEvent } from './types.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-inbox-test-'));
@@ -115,4 +116,46 @@ test('a time with trailing free text is re-serialised on write and on read, neve
   assert.equal(entries.length, 2);
   assert.equal(JSON.stringify(entries).includes(SENTINEL), false);
   assert.match(entries[1].at, /^\d{4}-\d\d-\d\dT[\d:.]+Z$/);
+});
+
+const THREADS = (from: number, n: number): DigestEvent[] => Array.from({ length: n }, (_, i) => ev(`THREAD acme/widgets#${from + i} by someone: u`));
+
+test('a torn last line does not swallow the next appends, and is reported rather than hidden', () => {
+  const dir = tempDir();
+  appendEvents(dir, THREADS(1, 3));
+  truncateSync(inboxPath(dir), statSync(inboxPath(dir)).size - 20);
+  assert.deepEqual(readInboxReport(dir), { entries: readInbox(dir), torn: 1 });
+  assert.equal(readInbox(dir).length, 2);
+  assert.deepEqual(appendEvents(dir, THREADS(4, 2)), { added: 2, duplicates: 0, refused: 0 });
+  const report = readInboxReport(dir);
+  assert.deepEqual(report.entries.map((e) => e.fields.number), [1, 2, 4, 5]);
+  assert.equal(report.torn, 1);
+});
+
+test('a mark after a torn tail is kept too', () => {
+  const dir = tempDir();
+  appendEvents(dir, THREADS(1, 2));
+  const [first] = readInbox(dir);
+  truncateSync(inboxPath(dir), statSync(inboxPath(dir)).size - 5);
+  mark(dir, 'handled', [first.id]);
+  assert.equal(readInbox(dir)[0].handled, true);
+});
+
+test('writers racing on a torn file lose nothing', async () => {
+  const dir = tempDir();
+  appendEvents(dir, THREADS(1, 2));
+  truncateSync(inboxPath(dir), statSync(inboxPath(dir)).size - 20);
+  const writers = 6;
+  const each = 25;
+  const code = `import { appendEvents } from ${JSON.stringify(new URL('./event-inbox.ts', import.meta.url).href)};
+    const [dir, w, n] = process.argv.slice(1);
+    for (let i = 0; i < Number(n); i += 1) appendEvents(dir, [{ watch: 'prs', type: 'pr-watch', at: '${AT}', summary: 'THREAD acme/widgets#' + (1000 * Number(w) + i) + ' by someone: u', actionable: true, report: '' }]);`;
+  await Promise.all(Array.from({ length: writers }, (_, w) => new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code, dir, String(w + 1), String(each)], { stdio: 'inherit' });
+    child.on('exit', (status) => (status === 0 ? resolve() : reject(new Error(`writer ${w} exited ${status}`))));
+  })));
+  const report = readInboxReport(dir);
+  assert.equal(report.entries.length, 1 + writers * each);
+  assert.equal(new Set(report.entries.map((e) => e.id)).size, 1 + writers * each);
+  assert.equal(report.torn, 1);
 });

@@ -8,11 +8,12 @@
  * (a title, a comment body, a login, an org name) in front of a reader. The digest keeps the free-text summary; the inbox keeps
  * `{ repo, number, who: bot|human, count }` and a `kind`, which is all an alert or a hook line is built from.
  *
- * Several processes may append at once (the loop, `events ack`, a waiter marking seen). Each row is one `appendFileSync` of a
- * single line, which the OS appends whole; a duplicated `event` id (two writers racing the dedupe check) collapses to the first
+ * Several processes may append at once (the loop, `events ack`, a waiter marking seen). Each row is one `O_APPEND` write of a
+ * single line, which the OS appends whole. A crash can leave the last line without its newline; the next append then starts with
+ * a newline in the same write, so it cannot fuse with the fragment, and `readInboxReport` counts the fragment as torn. A duplicated `event` id (two writers racing the dedupe check) collapses to the first
  * on read, and `seen`/`handled` rows are idempotent, so no lock is needed.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { DigestEvent } from './types.ts';
@@ -117,17 +118,28 @@ function cleanEvent(raw: unknown): InboxEvent | null {
   return { id: r.id as string, watch: r.watch as string, type: r.type as string, kind: r.kind as string, at: isoTime(r.at) as string, actionable: r.actionable === true, fields: cleanFields(r.fields) };
 }
 
-function readRows(eventDir: string): unknown[] {
+/** The parsed rows, and how many non-empty lines were not JSON (a torn write); those are skipped, not hidden: callers report the count. */
+function readRows(eventDir: string): { rows: unknown[]; torn: number } {
   const file = inboxPath(eventDir);
-  if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8').split('\n').flatMap((line) => { try { return line ? [JSON.parse(line)] : []; } catch { return []; } });
+  const rows: unknown[] = [];
+  let torn = 0;
+  if (!existsSync(file)) return { rows, torn };
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line) continue;
+    try { rows.push(JSON.parse(line)); } catch { torn += 1; }
+  }
+  return { rows, torn };
 }
 
 /** Every event with its seen and handled state, oldest first. A repeated id keeps its first row; unknown or malformed rows are skipped. */
-export function readInbox(eventDir: string): InboxEntry[] {
+export const readInbox = (eventDir: string): InboxEntry[] => readInboxReport(eventDir).entries;
+
+/** `readInbox` plus the number of torn (unparseable) lines it skipped, so a reader can say so instead of showing fewer events in silence. */
+export function readInboxReport(eventDir: string): { entries: InboxEntry[]; torn: number } {
+  const { rows, torn } = readRows(eventDir);
   const entries = new Map<string, InboxEntry>();
   const marks: { row: 'seen' | 'handled'; id: string }[] = [];
-  for (const raw of readRows(eventDir)) {
+  for (const raw of rows) {
     const row = (raw as { row?: unknown } | null)?.row;
     if (row === 'event') {
       const e = cleanEvent(raw);
@@ -139,12 +151,30 @@ export function readInbox(eventDir: string): InboxEntry[] {
     if (!entry) continue;
     if (row === 'handled') { entry.handled = true; entry.seen = true; } else entry.seen = true;
   }
-  return [...entries.values()];
+  return { entries: [...entries.values()], torn };
 }
 
+/** True when the open file is non-empty and its last byte is not a newline: a previous write was cut short. */
+function endsMidLine(fd: number): boolean {
+  const size = fstatSync(fd).size;
+  if (size === 0) return false;
+  const last = Buffer.alloc(1);
+  readSync(fd, last, 0, 1, size - 1);
+  return last[0] !== 0x0a;
+}
+
+/**
+ * Appends one row as a single write. On a file that ends mid-line the same write begins with a newline, which closes the torn
+ * fragment. Two writers that both see the torn tail each prefix a newline; the extra blank line is ignored on read, and neither row is lost.
+ */
 const appendRow = (eventDir: string, row: Record<string, unknown>): void => {
   mkdirSync(eventDir, { recursive: true });
-  appendFileSync(inboxPath(eventDir), `${JSON.stringify(row)}\n`);
+  const fd = openSync(inboxPath(eventDir), 'a+');
+  try {
+    writeSync(fd, `${endsMidLine(fd) ? '\n' : ''}${JSON.stringify(row)}\n`);
+  } finally {
+    closeSync(fd);
+  }
 };
 
 /** What `appendEvents` did: rows written, ids already in the inbox, and events refused for a bad watch, type or time. */
