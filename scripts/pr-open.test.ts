@@ -396,3 +396,52 @@ test('smells gate: off by default, outside the listed repos, and for a diff with
     withOrigin(docs);
     assert.equal(open(docs, ['--dry-run', '--head', 'feature'], GATED).status, 0, 'docs only');
 });
+
+const WAIVED = { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner' };
+const originAt = (f: { repo: string }, slug: string): void => git(f.repo, 'remote', 'add', 'origin', `https://github.com/${slug}.git`);
+
+test('size waiver: a repo under a waived owner passes the real gate with a visible note, and gh gets draft and assignee', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'example-owner/widgets');
+    const r = open(f, ['--head', 'feature'], WAIVED);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /verdict:\s+FAIL/, 'the gate still measured the diff');
+    assert.match(r.stdout, /size gate waived for example-owner\/widgets \(waive_size_gate_owners\)/);
+    assert.match(readFileSync(f.log, 'utf8'), /pr create --draft --assignee @me/);
+});
+
+test('size waiver: an unlisted owner still refuses even when another owner is waived', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'other-org/widgets');
+    const r = open(f, ['--head', 'feature'], WAIVED);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /split plan/);
+    assert.ok(!existsSync(f.log), 'gh must not run');
+});
+
+test('size waiver: off by default, and no origin or a non-GitHub origin fails closed', () => {
+    const none = fixture({ 'src/big.py': lines(500) });
+    originAt(none, 'example-owner/widgets');
+    assert.equal(open(none, ['--head', 'feature']).status, 1, 'no setting');
+    const bare = fixture({ 'src/big.py': lines(500) });
+    assert.equal(open(bare, ['--head', 'feature'], WAIVED).status, 1, 'no origin');
+    const other = fixture({ 'src/big.py': lines(500) });
+    git(other.repo, 'remote', 'add', 'origin', 'https://git.example.com/example-owner/widgets.git');
+    assert.equal(open(other, ['--head', 'feature'], WAIVED).status, 1, 'not GitHub');
+    assert.ok(![none, bare, other].some((f) => existsSync(f.log)), 'gh must not run');
+});
+
+test('size waiver: there is no flag to ask for it, and the other checks still apply', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'example-owner/widgets');
+    assert.equal(open(f, ['--head', 'feature', '--waive-size-gate'], WAIVED).status, 2);
+    assert.equal(open(f, ['--no-body', '--head', 'feature'], WAIVED).status, 1, 'body still required');
+    assert.ok(!existsSync(f.log));
+});
+
+test('size waiver: owner matching is case-insensitive and owner/name globs narrow it', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'Example-Owner/widgets');
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/gad*' }).status, 1, 'glob does not match');
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/wid*' }).status, 0);
+});

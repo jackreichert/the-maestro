@@ -230,6 +230,7 @@ assignee are always forced and cannot be turned off. `--dry-run` prints the gh c
   pure renames. A PR that mixes them with code counts the code and fails with "mechanical changes go in
   their own PR". Tests, config and docs riding along with a lockfile do not trigger that failure, so a
   dependency bump can carry its manifest.
+- **Waiver by configuration.** Owners named in `waive_size_gate_owners` (default none, so the gate holds) skip the budget: when the repo's `origin` is a GitHub repo under one of them, `pr-open.ts` prints `size gate waived for <owner/name>` and carries on, and every other check (body, smells, draft, assignee) still applies. A bare owner means `owner/*`; `owner/name` globs narrow it. There is no flag, so a caller cannot ask for it. A repo with no origin, or one that is not on GitHub, is never waived. The setting is read from local-config only; anyone who can edit that file or the repo's remote can change the answer, so it is an install-level choice, not a security boundary.
 - Anything over budget becomes a **stack of PRs**, each passing tests on its own and each cut so the tree
   works if the stack stops there. The slicing rules above apply inside each PR as well.
 

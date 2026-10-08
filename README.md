@@ -660,7 +660,7 @@ The four flow measures, read from the ledger and printed: `flow-report.ts [--day
 
 ### pr-size.ts
 
-The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
+The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error. `pr-open.ts` honours `waive_size_gate_owners`: in a repo whose GitHub owner is listed (default none) it prints a one-line waiver note instead of refusing; there is no flag for it ([details](reference/git.md#pr-size-budget)).
 
 ### pr-open.ts
 

@@ -15,7 +15,8 @@
  * (pr-smells.ts record) and the body carries its `Smells:` line; docs-only diffs are exempt.
  *
  * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
- * never calls gh. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
+ * never calls gh, unless the repo's origin matches `waive_size_gate_owners` (default none): then it prints a
+ * one-line waiver note and carries on. The waiver comes from local-config only; there is no flag for it. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
  * be turned off; no other gh flag passes through. --dry-run prints the gh command instead of running it.
  * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
  * opened but its file links could not be expanded (run pr-guide-links.ts).
@@ -26,10 +27,10 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
-import { PROTECTED_BRANCHES } from './local-config.ts';
+import { PROTECTED_BRANCHES, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
-import { smellsProblems } from './pr-smells.ts';
+import { repoSlug, smellsProblems } from './pr-smells.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -102,11 +103,13 @@ function main(): void {
   const body = checkBody(o);
   const gate = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, ...(headOf(o) ? ['--head', headOf(o)] : [])], { encoding: 'utf8' });
   process.stdout.write(gate.stdout || '');
-  if (gate.status === 1) {
+  const overBudget = gate.status === 1;
+  if (overBudget && sizeGateWaived(o.repo)) {
+    console.log(`pr-open: size gate waived for ${repoSlug(originUrl(o.repo))} (waive_size_gate_owners); the summary above is informational.`);
+  } else if (overBudget) {
     console.error('pr-open: refused, the PR is over the size budget. Report a split plan (which files and lines go in which PR, in merge order) instead of opening; mechanical changes go in their own PR.');
     process.exit(1);
-  }
-  if (gate.status !== 0) { console.error(gate.stderr || 'pr-open: pr-size failed'); process.exit(2); }
+  } else if (gate.status !== 0) { console.error(gate.stderr || 'pr-open: pr-size failed'); process.exit(2); }
   checkLinkPaths(o, body);
   const gh = process.env.MAESTRO_GH_BIN || 'gh';
   const args = ghArgs(o);
@@ -118,6 +121,14 @@ function main(): void {
   const pr = /\/pull\/(\d+)/.exec(r.stdout || '')?.[1];
   const err = pr ? linkPr(o.repo, Number(pr), body) : 'gh did not print the PR url';
   if (err) { console.error(`pr-open: the PR is open, but its file links were not expanded: ${err}. Fix and run pr-guide-links.ts ${o.repo} ${pr ?? '<pr-number>'}.`); process.exit(3); }
+}
+
+const originUrl = (repo: string): string => spawnSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout || '';
+
+/** True when the repo's origin is a GitHub repo matching `waive_size_gate_owners`. Fails closed: no setting, or an origin that is not a readable GitHub url, means the gate holds. */
+export function sizeGateWaived(repo: string, globs: string[] = WAIVE_SIZE_GATE_OWNERS): boolean {
+  const slug = repoSlug(originUrl(repo)).toLowerCase();
+  return slug !== '' && globs.some((g) => globToRegExp(g.toLowerCase()).test(slug));
 }
 
 /** Refuses before creating anything when a `{{file:...}}` token names a path that is not in the diff. */
