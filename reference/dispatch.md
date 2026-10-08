@@ -110,7 +110,7 @@ thing this mode exists to prevent.
 
 ## Review queue cap
 
-Reviewer attention is the limit, not agent capacity. Before dispatching any work that will produce a new PR, run:
+Reviewer attention is the limit, not agent capacity. The cap is per reviewer-attention pool: it counts the PRs one pool of reviewers has to read, and it gates only the **push** of a finished branch as a draft PR. It never gates dispatch and never gates the work itself. Before pushing a branch as a new PR, run:
 
 ```bash
 node scripts/journal.ts review-queue
@@ -118,10 +118,14 @@ node scripts/journal.ts review-queue
 
 It counts your open, non-draft PRs against `review_queue_cap` (default 4), leaving out PRs in a `self_review_repos` repo (only you review those; see [prs.md](prs.md#self-review-repos)), and exits **0** with room, **1** when full, **2** when it cannot answer (GitHub failed and the stored snapshot is missing or over six hours old, or `--cap` is bad; treat that as full). When it exits 1 or 2:
 
-- Dispatch **no new PR-producing work**: no new feature, refactor or follow-up branch, unless the user asks for that work by name. Say so in one line, queue the request (`journal.ts queue`) so it is not lost, and list the queued work in the reply instead of starting it.
-- Fixes to PRs that are already open still go: review comments, conflicts, failing checks. So does read-only work (scouting, research, review) that opens no PR.
+- **Keep building.** Dispatch the work, test it and review it locally on its branch and worktree exactly as if the queue had room. Nothing about the work waits for a slot.
+- **Hold the finished branch as "ready to push".** Record it in the ledger with its head sha (`journal.ts log` or the item's `done` line), so the hold survives a compaction and the sha shows what was reviewed. Do not push it and do not open the PR.
+- **Push when a slot opens.** When a merge frees room, re-run `review-queue`, check the held branch's head still matches the recorded sha (a mismatch means it needs its local review again), push and open the draft.
+- Fixes to PRs that are already open still go: review comments, conflicts, failing checks. So does read-only work (scouting, research, review).
 - Use the freed attention to drive the oldest open PR to merge.
 - **Stacks have a cap too.** Never base a new PR on the top of a stack already `stack_max_depth` deep (default 3) or older than `stack_max_age_days` (default 5); `prs-snapshot.ts --stacks` lists them. Drive the bottom PR of that stack to merge first.
+
+**Self-review repos.** Repos the user reviews alone (config key `self_review_repos`, `owner/repo` or `owner/*`, default empty) draw on no one else's reviewer attention. They are left out of the count, the cap and the footer's queue figure, and `review-queue` never holds a push to them. They are not hidden: the PR digest, `status` and the Podium list them as their own section ([reference/prs.md](prs.md#self-review-repos)).
 
 The count is the same PR search the PR scripts share (open, authored by you, org-scoped), minus drafts. A draft does not count, and a PR approved but not yet merged still does. `status` and the footer show `review queue: N of 4` from the stored snapshot, and the Podium from its own PR cache; the gate itself reads GitHub live, so on a stale board the gate is the authority.
 
