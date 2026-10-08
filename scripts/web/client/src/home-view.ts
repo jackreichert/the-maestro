@@ -1,8 +1,8 @@
 /** The stream home base, drawn: the epic strip, what is left, and what the files cannot tell. Text and counts come from home-text.ts. */
 import { h, refLink } from './dom.ts';
-import { awaitingLabel, barSegments, capRows, epicEnd, epicUnknownsLabel, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, unknownsHeading, verifiedSentence } from './home-text.ts';
+import { awaitingLabel, barSegments, capRows, epicEnd, epicUnknownsLabel, firstSentence, kindWord, noEpicLine, openCounts, progressSentence, quietNote, railCount, railGroups, ticketNotes, unknownsHeading, verifiedSentence } from './home-text.ts';
 import type { LeftGroups } from './home-text.ts';
-import type { HomeEpic, HomeTicket, StreamHome } from './types.ts';
+import type { HomeEpic, HomeTicket, RailLink, StreamHome } from './types.ts';
 
 /** Epics shown before "n more epics"; the most recently active come first, as the server sends them. */
 const EPIC_CAP = 3;
@@ -46,6 +46,15 @@ export const HOME_CSS = `
   details.fold > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
   details.fold ul.rows { border-top: 0; }
   details.fold .fold-body { padding-bottom: var(--space-3); }
+  /* The rail: short labelled entries grouped like a programme's contents column. Every row is at least 24 px tall (WCAG 2.5.8). */
+  .rail { display: grid; gap: var(--space-4); }
+  .rail h3 { margin: var(--space-3) 0 var(--space-1); font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); letter-spacing: 0.02em; }
+  ul.links { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+  ul.links > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); min-block-size: 32px; padding: var(--space-1) 0; border-bottom: 1px solid var(--border); font-size: var(--text-sm); line-height: var(--leading-sm); overflow-wrap: anywhere; }
+  ul.links .kind, ul.links .meta { color: var(--text-muted); }
+  .done-means { margin: 0; max-width: 60ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-primary); }
+  .done-means + details.fold > summary { padding-block: var(--space-1); }
+  .done-epic { color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-xs); }
   ul.unknowns { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
   ul.unknowns li { overflow-wrap: anywhere; max-width: 70ch; }
 `;
@@ -133,4 +142,34 @@ export function unknownsFold(home: StreamHome): HTMLElement | null {
   return h('details', { class: 'fold', id: UNKNOWNS_ID, 'data-fold': UNKNOWNS_ID },
     h('summary', {}, unknownsHeading(home.unknowns.length)),
     h('div', { class: 'fold-body' }, h('ul', { class: 'unknowns', role: 'list' }, ...home.unknowns.map((u) => h('li', {}, u.ref?.url ? refLink({ label: u.text, url: u.ref.url }) : u.text)))));
+}
+
+/** One link: its label (the link), then what it is in words, then the server's note about it. */
+function railRow(l: RailLink): HTMLElement {
+  return h('li', {}, refLink({ label: l.label, url: l.url }), h('span', { class: 'kind' }, kindWord(l.kind)), l.meta ? h('span', { class: 'meta' }, l.meta) : null);
+}
+
+/** A disclosure that is open on a wide screen and closed on a narrow one, where the rail follows What's left. */
+function railFold(summary: string, open: boolean, ...body: (Node | null)[]): HTMLElement {
+  return h('details', { class: 'fold', open }, h('summary', {}, summary), h('div', { class: 'fold-body' }, ...body));
+}
+
+/** "Done means" (the first sentence of each epic's text, the rest behind a disclosure) and the links, or null when the stream has neither. */
+export function railBody(home: StreamHome, wide: boolean): HTMLElement | null {
+  const groups = railGroups(home.links);
+  const done = home.doneMeans.map((d) => {
+    const { head, more } = firstSentence(d.text);
+    return h('div', {}, h('p', { class: 'done-means' }, h('span', { class: 'done-epic' }, `${d.epic} `), head),
+      more ? h('details', { class: 'fold' }, h('summary', {}, 'More'), h('p', { class: 'done-means' }, d.text)) : null);
+  });
+  if (done.length === 0 && groups.length === 0) return null;
+  return h('div', { class: 'rail' },
+    done.length ? railFold('Done means', wide, ...done) : null,
+    groups.length ? railFold(`Links (${railCount(home.links)})`, wide, ...groups.map((g) => {
+      const { shown, rest } = capRows(g.items);
+      return h('div', {}, h('h3', {}, g.title),
+        h('ul', { class: 'links', role: 'list' }, ...shown.map(railRow)),
+        rest.length ? h('details', { class: 'fold' }, h('summary', {}, `Show ${rest.length} more`), h('ul', { class: 'links', role: 'list' }, ...rest.map(railRow))) : null,
+        g.more > 0 ? h('p', { class: 'truncated' }, `${g.more} more not listed.`) : null);
+    })) : null);
 }
