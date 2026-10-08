@@ -191,3 +191,12 @@ test('a bare token with no key word fails the real CLI as high-entropy and is ne
     assert.equal(run(withFact(ok)).status, 0, ok);
   }
 });
+
+test('a page saved with Windows line endings is read like any other: it passes when clean and keeps its real findings when not', () => {
+  const crlf = (t: string) => t.replace(/\n/g, '\r\n');
+  assert.equal(run(vault({ [PAGE]: crlf(frontmatter() + BODY) })).status, 0);
+  const r = run(vault({ [PAGE]: crlf(frontmatter({ kind: 'essay' }) + BODY) }));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /vocabulary {2}kind is not one of/);
+  assert.ok(!/missing required field/.test(r.stdout));
+});

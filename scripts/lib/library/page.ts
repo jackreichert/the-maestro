@@ -24,7 +24,7 @@ export function parseValue(raw: string): FieldValue {
 }
 
 export function parsePage(path: string, text: string): Page {
-  const lines = text.split('\n');
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const fields = new Map<string, FieldValue>();
   if (lines[0]?.trim() !== '---') return { path, fields, hasFrontmatter: false, lines, bodyStart: 0 };
   const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
