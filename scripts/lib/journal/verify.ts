@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { ledgerLines, type LedgerRow } from '../ledger-core.ts';
 import { askFieldProblems } from './ask-fields.ts';
+import { learnedProblems } from './learned.ts';
 
 /** What verify and the backup commit read from the run. The sets are the values `--approval` accepts and the kinds an approval can point at. */
 export interface VerifyContext {
@@ -37,6 +38,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         if (seen.has(row.id)) problems.push({ line, id: row.id, problem: `duplicate id (first on line ${seen.get(row.id)})` });
         else seen.set(row.id, line);
     }
+    const learnedIds = new Set(rows.filter((r) => r.row.kind === 'learned' && typeof r.row.id === 'string').map((r) => r.row.id as string));
     const missing = (line: number, row: LedgerRow, field: string, id: unknown): void => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
     for (const { row, line } of rows) {
         if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
@@ -44,6 +46,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
         if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
         if (row.kind === 'question' || row.kind === 'decision') for (const p of askFieldProblems(row)) problems.push({ line, id: row.id, problem: `ask field: ${p}` });
+        if (row.kind === 'learned') for (const p of learnedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `learned: ${p}` });
         for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
