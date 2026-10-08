@@ -7,6 +7,8 @@ export interface Page {
   hasFrontmatter: boolean;
   /** The whole file split into lines. */
   lines: string[];
+  /** A frontmatter key written a second time (the later value would silently win), with its 1-based file line. */
+  duplicates: { key: string; line: number }[];
   /** Index into `lines` of the first body line (after the frontmatter). */
   bodyStart: number;
 }
@@ -26,14 +28,17 @@ export function parseValue(raw: string): FieldValue {
 export function parsePage(path: string, text: string): Page {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const fields = new Map<string, FieldValue>();
-  if (lines[0]?.trim() !== '---') return { path, fields, hasFrontmatter: false, lines, bodyStart: 0 };
+  if (lines[0]?.trim() !== '---') return { path, fields, hasFrontmatter: false, duplicates: [], lines, bodyStart: 0 };
   const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
-  if (end === -1) return { path, fields, hasFrontmatter: false, lines, bodyStart: 0 };
-  for (const l of lines.slice(1, end)) {
+  if (end === -1) return { path, fields, hasFrontmatter: false, duplicates: [], lines, bodyStart: 0 };
+  const duplicates: Page['duplicates'] = [];
+  lines.slice(1, end).forEach((l, i) => {
     const m = l.match(/^([A-Za-z][\w-]*):\s*(.*)$/);
-    if (m) fields.set(m[1] as string, parseValue(m[2] as string));
-  }
-  return { path, fields, hasFrontmatter: true, lines, bodyStart: end + 1 };
+    if (!m) return;
+    if (fields.has(m[1] as string)) duplicates.push({ key: m[1] as string, line: i + 2 });
+    fields.set(m[1] as string, parseValue(m[2] as string));
+  });
+  return { path, fields, hasFrontmatter: true, duplicates, lines, bodyStart: end + 1 };
 }
 
 /** A field as a string ('' when absent or a list). */

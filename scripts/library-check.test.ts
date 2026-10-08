@@ -200,3 +200,10 @@ test('a page saved with Windows line endings is read like any other: it passes w
   assert.match(r.stdout, /vocabulary {2}kind is not one of/);
   assert.ok(!/missing required field/.test(r.stdout));
 });
+
+test('a frontmatter key written twice fails the real CLI at the second line instead of the last value winning silently', () => {
+  const r = run(vault({ [PAGE]: frontmatter({ kind: 'wizardry' }).replace('\n---\n', '\nkind: how-to\n---\n') + BODY }));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /orchard-sync\.md:11 {2}frontmatter {2}field "kind" is written twice/);
+  assert.equal(run(vault()).status, 0);
+});

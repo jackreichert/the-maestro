@@ -50,8 +50,9 @@ const bullets = (s: { line: number; text: string }[] | undefined): { line: numbe
 export const RULES: readonly Rule[] = [
   {
     id: 'frontmatter',
-    check: (p) => (p.hasFrontmatter
-      ? [...REQUIRED_FIELDS.filter((k) => !text(p, k) && !list(p, k).length).map((k) => found('frontmatter', `missing required field "${k}"`)),
+    check: (p, c) => (p.hasFrontmatter
+      ? [...p.duplicates.map((d) => found('frontmatter', `field ${show(d.key, c.scan)} is written twice; keep one`, d.line)),
+        ...REQUIRED_FIELDS.filter((k) => !text(p, k) && !list(p, k).length).map((k) => found('frontmatter', `missing required field "${k}"`)),
         ...(text(p, 'type') && text(p, 'type') !== 'library' ? [found('frontmatter', '"type" must be "library"')] : [])]
       : [found('frontmatter', 'the page has no frontmatter block')]),
   },
