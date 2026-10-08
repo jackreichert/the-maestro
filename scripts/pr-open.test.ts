@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodS
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { bodyProblems, type BodyRules } from './pr-body.ts';
+import { classifySizeJson } from './pr-open.ts';
 import { recordSmells, smellsLine } from './pr-smells.ts';
 
 const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
@@ -408,6 +409,14 @@ test('size waiver: a repo under a waived owner passes the real gate with a visib
     assert.match(r.stdout, /verdict:\s+FAIL/, 'the gate still measured the diff');
     assert.match(r.stdout, /size limits waived for example-owner\/widgets \(waive_size_gate_owners\)/);
     assert.match(readFileSync(f.log, 'utf8'), /pr create --draft --assignee @me/);
+});
+
+test('size waiver: unreadable pr-size JSON is not reported as a code and mechanical mix', () => {
+    assert.equal(classifySizeJson(''), 'unreadable');
+    assert.equal(classifySizeJson('not json'), 'unreadable');
+    assert.equal(classifySizeJson('{"code":{}}'), 'unreadable');
+    assert.equal(classifySizeJson('{"code":{"files":1},"mechanical":{"files":1}}'), 'mixed');
+    assert.equal(classifySizeJson('{"code":{"files":2},"mechanical":{"files":0}}'), 'clean');
 });
 
 test('size waiver: it lifts the size limits only, so code mixed with a lockfile still refuses', () => {
