@@ -121,7 +121,9 @@ Documented only today, with a script gate worth building later:
 | Every landing records `learned` | Needs `journal.ts learned` first; then `triage` can list landings with none. |
 | Stop only when blocked | The skill cannot tell a real block from a tired loop. A record of what was still moving at each stop would make it auditable. |
 
-Enforced already: the brief block's completeness (`brief-block.ts` exits non-zero on an empty slot), PR size, body sections and draft state (`pr-open.ts`), and the review-queue cap (`journal.ts review-queue`).
+Enforced by a script that refuses: the brief block's completeness (`brief-block.ts` exits non-zero on an empty slot), and PR size, body sections and draft state (`pr-open.ts`).
+
+Documented, and checked by a command the orchestrator runs, not enforced: the review-queue cap. `journal.ts review-queue` reports it, but nothing blocks a dispatch if it is skipped ([SKILL.md:31](../SKILL.md), [reference/dispatch.md:111-126](../reference/dispatch.md)).
 
 ## Worked example
 
