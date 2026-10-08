@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, PodiumState, PrCard, PrioritiesState, WorkItem } from './types.ts';
+import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -144,4 +144,46 @@ export function sanitizeCharts(x: unknown): { data: ChartsData; dropped: number 
     },
     dropped,
   };
+}
+
+const count: Check = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+const orNull = (c: Check): Check => (v) => v === null || c(v);
+
+const HOME_TICKET: Shape = {
+  id: str, title: str, status: str, priority: num, ref, prs: arrOf(ref), awaitsYou: bool,
+  tracker: opt(ref), points: opt(num), prsMore: opt(count), quietDays: orNull(num),
+};
+const HOME_EPIC: Shape = {
+  id: str, title: str, note: ref, status: str, total: count, closed: count, inProgress: count, blocked: count, notStarted: count,
+  verify: shape({ required: bool, verified: count }), awaiting: count, unknowns: count, quietDays: orNull(num),
+  tracker: opt(ref), next: opt(shape(HOME_TICKET)),
+};
+const HOME_UNKNOWN: Shape = { kind: str, text: str, ref: opt(ref), epic: opt(str) };
+
+/**
+ * A StreamHome from an untrusted `GET /api/streams/:name/home` body, or null when it has no usable shape. Epics, tickets and
+ * unknowns that fail their rules are dropped and counted, as sanitizeState does, so one bad row never hides the rest of the tab.
+ * An epic whose counts do not add up is dropped too: its progress sentence would state a denominator the rows contradict.
+ */
+export function sanitizeHome(x: unknown): { home: StreamHome; dropped: number } | null {
+  if (!isObj(x) || typeof x.stream !== 'string' || !Array.isArray(x.epics) || !isObj(x.left)) return null;
+  const left = x.left;
+  const epics = validRows(x.epics, HOME_EPIC).filter((e) => {
+    const c = e as HomeEpic;
+    return c.closed + c.inProgress + c.blocked + c.notStarted === c.total;
+  }) as HomeEpic[];
+  const groups = {
+    inProgress: validRows(left.inProgress, HOME_TICKET) as HomeTicket[],
+    blocked: validRows(left.blocked, HOME_TICKET) as HomeTicket[],
+    notStarted: validRows(left.notStarted, HOME_TICKET) as HomeTicket[],
+  };
+  const loose = validRows(x.loose, HOME_TICKET) as HomeTicket[];
+  const unknowns = validRows(x.unknowns, HOME_UNKNOWN) as HomeUnknown[];
+  const prs = isObj(x.freshness) && isObj(x.freshness.prs) && bool(x.freshness.prs.stale) && orNull(str)(x.freshness.prs.fetchedAt)
+    ? { fetchedAt: x.freshness.prs.fetchedAt as string | null, stale: x.freshness.prs.stale as boolean }
+    : { fetchedAt: null, stale: true };
+  const dropped = lost(x.epics, epics) + lost(x.loose, loose) + lost(x.unknowns, unknowns)
+    + lost(left.inProgress, groups.inProgress) + lost(left.blocked, groups.blocked) + lost(left.notStarted, groups.notStarted);
+  const truncated = count(left.truncated) ? left.truncated as number : 0;
+  return { home: { stream: x.stream, epics, loose, left: { ...groups, truncated }, unknowns, freshness: { prs } }, dropped };
 }
