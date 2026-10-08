@@ -20,6 +20,8 @@ export interface FieldFinding extends Finding { field: string }
 export interface ScanOptions {
     /** Email domains that may appear (for example a documentation domain); compared case-insensitively with the part after the `@`. */
     allowedEmailDomains?: readonly string[];
+    /** Fields (for `scanFields`) whose whole value may be a bare 40-hex git sha, because the field is where a sha belongs (`verified-at`). */
+    shaFields?: readonly string[];
 }
 
 interface Rule {
@@ -53,6 +55,13 @@ function isStructuredName(token: string): boolean {
     if (/[+=]/.test(token) || (token.match(/[/_-]/g)?.length ?? 0) < 3) return false;
     return !token.split(/[/_-]+/).some((w) => w.length >= 12 && /[a-z]/.test(w) && /[A-Z]/.test(w) && /\d/.test(w.replace(/\d+$/, '')));
 }
+
+/** The 24 characters before a match, to see what labels it. */
+const before = (m: RegExpExecArray): string => m.input.slice(Math.max(0, m.index - 24), m.index);
+/** What makes a 40-hex value a git sha: a sha, commit, rev, head, merge or verified-at label, an `@`, or a commit, tree or blob URL. */
+const SHA_LABEL = /(?:\b(?:sha-?1|sha|commits?|verified[- ]at|rev(?:ision)?|head|merge)\b[\s:=#`'"(]{0,4}|@|\/(?:commits?|tree|blob)\/)$/i;
+/** What makes a 64-hex value a digest: a sha256, checksum or digest label. */
+const DIGEST_LABEL = /\b(?:sha-?256|checksum|digest)\b[\s:=#`'"(]{0,4}$/i;
 
 /** Preceded by anything but a letter or digit, so `db_password=` and `access-token:` match as well as `password=`. */
 const SECRET_NAME = '(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth(?:orization)?|credentials?|client[_-]?secret)';
@@ -108,9 +117,9 @@ const RULES: Rule[] = [
         accept: (m) => looksLikeValue(m[1], m[2]),
     },
     {
-        // A bare hex key. A git sha (40, or 64 for sha256) is allowed because verified-at fields carry them.
+        // A bare hex key. A 40-hex value passes only where it reads as a git sha, a 64-hex value only as a sha256 or checksum.
         name: 'hex-key', class: 'secret', pattern: /(?<![0-9A-Za-z])[0-9a-f]{32,}(?![0-9A-Za-z])/g,
-        accept: (m) => m[0].length !== 40 && m[0].length !== 64,
+        accept: (m) => !(m[0].length === 40 && SHA_LABEL.test(before(m))) && !(m[0].length === 64 && DIGEST_LABEL.test(before(m))),
     },
     {
         // A long unbroken mixed-case token with a digit. A git sha (lowercase hex) has no capitals, so it passes, and so
@@ -145,7 +154,10 @@ export function scanText(raw: string, opts: ScanOptions = {}): Finding[] {
 
 /** Scans each named field; findings carry the field name so a refusal can say where, without saying what. */
 export function scanFields(fields: Readonly<Record<string, string | undefined>>, opts: ScanOptions = {}): FieldFinding[] {
-    return Object.entries(fields).flatMap(([field, text]) => (text ? scanText(text, opts).map((f) => ({ ...f, field })) : []));
+    return Object.entries(fields).flatMap(([field, text]) => {
+        if (!text || (opts.shaFields?.includes(field) && /^[0-9a-f]{40}$/.test(text.trim()))) return [];
+        return scanText(text, opts).map((f) => ({ ...f, field }));
+    });
 }
 
 /** One line per finding for an error message: field, rule and class, never the text. */

@@ -52,7 +52,6 @@ test('common accidental pastes are caught: bearer headers, vendor prefixes, hex 
         j('pwd', '=hunter22x'),
         j('pass', 'word: Ab1defg'),
     ]) assert.ok(scanText(t).length > 0, t.slice(0, 20));
-    assert.deepEqual(scanText(`commit ${'3'.repeat(40)} and ${'a'.repeat(64)}`), [], 'sha-1 and sha-256 lengths pass');
 });
 
 test('zero-width and fullwidth characters do not hide a shape', () => {
@@ -161,4 +160,23 @@ test('prose near those shapes still passes', () => {
         'the ssn column is masked',
         'npm tokens are scoped per package',
     ]) assert.deepEqual(scanText(ok), [], ok);
+});
+
+test('a bare 40-hex or 64-hex value is a key unless a label says it is a sha or a digest', () => {
+    const h40 = '5f4dcc3b5aa765d61d8327deb882cf995f4dcc3b';
+    const h64 = 'a1b2c3d4'.repeat(8);
+    for (const bad of [`legacy token ${h40}`, `key ${h64}`, h40, `sha ${h64}`, `checksum ${h40}`]) assert.ok(rules(bad).includes('hex-key'), bad.slice(0, 24));
+    for (const ok of [
+        `sha ${h40}`, `commit ${h40}`, `commit: ${h40}`, `rev ${h40}`, `merged at head ${h40}`, `repo@${h40}`, `SHA-1 ${h40}`,
+        `https://github.com/example-org/example-repo/commit/${h40}`, `https://github.com/example-org/example-repo/blob/${h40}/README.md`,
+        `sha256 ${h64}`, `sha256:${h64}`, `checksum: ${h64}`, `digest ${h64}`,
+        '1727982', `(commit 172798256b14d55d39d43eadaf54dafdb39d27ca, tests green)`,
+    ]) assert.deepEqual(scanText(ok), [], ok);
+});
+
+test('scanFields lets a sha-field hold a bare 40-hex sha and nothing longer', () => {
+    const h40 = '5f4dcc3b5aa765d61d8327deb882cf995f4dcc3b';
+    assert.deepEqual(scanFields({ 'verified-at': h40 }, { shaFields: ['verified-at'] }), []);
+    assert.deepEqual(scanFields({ evidence: h40 }, { shaFields: ['verified-at'] }).map((f) => f.field), ['evidence']);
+    assert.equal(scanFields({ 'verified-at': 'a1b2c3d4'.repeat(8) }, { shaFields: ['verified-at'] }).length, 1, 'only a 40-hex value is exempt');
 });

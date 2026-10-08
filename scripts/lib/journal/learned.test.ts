@@ -105,3 +105,15 @@ test('an over-long field is refused without being scanned, so a hostile row cann
     assert.ok(parse({ extras: { agent: huge } }).errors.some((e) => /agent is over 2000/.test(e)));
     assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
 });
+
+test('a git sha is accepted in verified-at and in labelled evidence, but a bare 40-hex in evidence or the claim is refused', () => {
+    const h40 = '5f4dcc3b5aa765d61d8327deb882cf995f4dcc3b';
+    assert.deepEqual(parse({ verifiedAt: h40 }).errors, []);
+    assert.deepEqual(parse({ evidence: `commit ${h40}` }).errors, []);
+    for (const over of [{ evidence: h40 }, { claim: `The key is ${h40}.` }, { verifiedAt: h40.slice(0, 36) }]) {
+        const r = parse(over);
+        assert.equal(r.fields, undefined, JSON.stringify(Object.keys(over)));
+        assert.ok(r.errors.some((e) => /hex-key/.test(e)), JSON.stringify(r.errors));
+        assert.ok(r.errors.every((e) => !e.includes(h40.slice(0, 20))));
+    }
+});

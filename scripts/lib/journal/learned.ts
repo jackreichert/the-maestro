@@ -118,8 +118,8 @@ const RULES: Rule[] = [
             // A field this long is refused by its own rule or by this one; scanning it would only burn time.
             const long = Object.entries(fields).filter(([, v]) => (v?.length ?? 0) > SCAN_MAX).map(([k]) => k);
             if (long.length) return `${long.join(', ')} is over ${SCAN_MAX} characters: say it shorter.`;
-            const findings = scanFields(fields, c.ctx);
-            return findings.length ? `refused, nothing written (${describeFindings(findings).join('; ')}). Record names and locations, never values; claims are about systems, ids and counts only.` : null;
+            const findings = scanFields(fields, { ...c.ctx, shaFields: ['verified-at'] });
+            return findings.length ? `refused, nothing written (${describeFindings(findings).join('; ')}). Record names and locations, never values; claims are about systems, ids and counts only. A git sha needs a label (sha, commit, @) or a commit URL.` : null;
         },
     },
 ];
