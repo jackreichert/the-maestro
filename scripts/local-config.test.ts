@@ -224,7 +224,7 @@ test('PR body private-reference and voice settings: defaults, file values, bad p
     assert.equal(f.PR_BODY_VOICE_NAMES, 'Sam Fictional, samf');
     assert.equal(f.PR_BODY_CHECK_VOICE, 'off');
     assert.equal(show({ MAESTRO_PR_BODY_CHECK_PRIVATE: 'off' }).PR_BODY_CHECK_PRIVATE, 'off');
-    assert.equal(d.PR_BODY_PRIVATE_WORDS, 'ledger, vault, Podium, orchestrator');
+    assert.equal(d.PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator');
     assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none' }).PR_BODY_PRIVATE_WORDS, '(unset)', 'none empties the word list');
     assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, 'memo');
 });

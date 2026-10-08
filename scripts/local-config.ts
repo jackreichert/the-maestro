@@ -353,11 +353,11 @@ export const PR_SMELLS_REPOS = globList('MAESTRO_PR_SMELLS_REPOS', 'pr_smells_re
 /** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`. Default none, so every repo keeps the gate until it is named here. */
 export const WAIVE_SIZE_GATE_OWNERS = globList('MAESTRO_WAIVE_SIZE_GATE_OWNERS', 'waive_size_gate_owners').map((g) => (g.includes('/') ? g : `${g}/*`));
 
-/** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, Podium, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. */
+/** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pick('MAESTRO_PR_BODY_CHECK_PRIVATE', 'pr_body_check_private'));
 
-/** PR body: words that mark a private workspace and are refused outside code, comma-separated. Default ledger, vault, Podium, orchestrator; `none` turns the word list off (for a repo where they are ordinary vocabulary) while wiki-links and obsidian:// links stay refused. */
-export const PR_BODY_PRIVATE_WORDS = ((l: string[]) => (l.length === 1 && /^none$/i.test(l[0]) ? [] : l.length ? l : ['ledger', 'vault', 'Podium', 'orchestrator']))(globList('MAESTRO_PR_BODY_PRIVATE_WORDS', 'pr_body_private_words'));
+/** PR body: words that mark a private workspace and are refused outside code, comma-separated. Default ledger, vault, orchestrator; `none` turns the word list off (for a repo where they are ordinary vocabulary) while wiki-links and obsidian:// links stay refused. */
+export const PR_BODY_PRIVATE_WORDS = ((l: string[]) => (l.length === 1 && /^none$/i.test(l[0]) ? [] : l.length ? l : ['ledger', 'vault', 'orchestrator']))(globList('MAESTRO_PR_BODY_PRIVATE_WORDS', 'pr_body_private_words'));
 
 /** PR body: extra regexes for install-specific private ids (a vault ticket-id format, a ledger-id format), comma-separated, so a pattern cannot contain a comma. Invalid ones are dropped. Added to the built-in list. */
 export const PR_BODY_PRIVATE_PATTERNS = globList('MAESTRO_PR_BODY_PRIVATE_PATTERNS', 'pr_body_private_patterns').filter((r) => { try { new RegExp(r, 'i'); return true; } catch { return false; } });

@@ -288,7 +288,7 @@ test('pr-open runs the structural rules end to end: a stacked base needs a diagr
 });
 
 test('bodyProblems: private references are refused in the body and the title, naming the line', () => {
-    const rules = { ...NONE, private: true, privateWords: ['ledger', 'vault', 'Podium', 'orchestrator'], privatePatterns: ['\\bX-\\d{3}\\b'] };
+    const rules = { ...NONE, private: true, privateWords: ['ledger', 'vault', 'orchestrator'], privatePatterns: ['\\bX-\\d{3}\\b'] };
     const p = (text: string, title = '') => bodyProblems(`## Context\n${text}\n`, rules, { stacked: false, codeFiles: 0, title });
     assert.deepEqual(p('Fixes the retry bug in PR #12 (see abc1234).'), []);
     assert.match(p('See [[Some Note]] for more')[0], /\[\[wiki-link\]\].*line: See \[\[Some Note\]\] for more/);
@@ -444,4 +444,15 @@ test('size waiver: owner matching is case-insensitive and owner/name globs narro
     originAt(f, 'Example-Owner/widgets');
     assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/gad*' }).status, 1, 'glob does not match');
     assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/wid*' }).status, 0);
+});
+
+test('private words: the default list refuses ledger but lets the public product word Podium through the real CLI', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    const podium = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists'))]);
+    assert.equal(podium.status, 0, podium.stderr);
+    const ledger = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Logged in the ledger. Why this exists'))]);
+    assert.equal(ledger.status, 1);
+    assert.match(ledger.stderr, /private-workspace word/);
+    const custom = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists'))], { MAESTRO_PR_BODY_PRIVATE_WORDS: 'Podium' });
+    assert.equal(custom.status, 1, 'an install can still list it');
 });
