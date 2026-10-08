@@ -163,7 +163,7 @@ export function railBody(home: StreamHome, wide: boolean): HTMLElement | null {
       more ? h('details', { class: 'fold', 'data-fold': `rail-done-${d.epic}` }, h('summary', {}, 'More'), h('p', { class: 'done-means' }, d.text)) : null);
   });
   if (done.length === 0 && groups.length === 0) return null;
-  return h('div', { class: 'rail' },
+  return h('div', { class: 'rail', role: 'group', 'aria-label': 'Done means and links' },
     done.length ? railFold('done', 'Done means', wide, ...done) : null,
     groups.length ? railFold('links', `Links (${railCount(home.links)})`, wide, ...groups.map((g) => {
       const { shown, rest } = capRows(g.items);
