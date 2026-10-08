@@ -39,6 +39,7 @@ export interface CloseRequest {
 export type CloseResult =
     | { kind: 'closed'; target: LedgerItem; row: LedgerRow; note: string | null }
     | { kind: 'already-closed'; target: LedgerItem }
+    | { kind: 'not-closable'; target: LedgerItem; reason: string }
     | { kind: 'ambiguous'; matches: LedgerItem[] }
     | { kind: 'not-found' };
 
@@ -48,6 +49,8 @@ export function closeItem(ctx: CloseContext, req: CloseRequest): CloseResult {
     const found = matchTarget(ctx.fold(entries).items, req.needle);
     if (found.kind !== 'found') return found;
     const { target } = found;
+    // A learned row leaves triage box 9 when a composer pass handles it, not when someone closes it by hand.
+    if (target.kind === 'learned') return { kind: 'not-closable', target, reason: `${target.id} is a learned row: it is closed only by a composer pass, not by ${req.kind}.` };
     if (req.skipIfClosed && !isOpen(target)) return { kind: 'already-closed', target };
     const note = req.note || null;
     const row = ctx.append({

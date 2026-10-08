@@ -89,3 +89,9 @@ test('verify flags a learned row a hand edit stripped of evidence or gave a secr
     assert.match(problems[1]?.problem ?? '', /^learned: refused, nothing written \(claim: looks like a secret/);
     assert.ok(problems.every((p) => !p.problem.includes('hunter2')));
 });
+
+test('verify flags a closing row that points at a learned row', () => {
+    const learned = { id: 'aaaa', kind: 'learned', text: 'The fake page count is the page length.', learnedKind: 'how-it-works', appliesTo: 'fake-repo:fake-api', evidence: 'spec:1', verifiedAt: '342b177', confidence: 'observed' };
+    const { problems } = verifyLedger(ctxFor([JSON.stringify(learned), JSON.stringify({ id: 'bbbb', kind: 'done', closes: 'aaaa', text: 'x' })]));
+    assert.deepEqual(problems.map((p) => [p.line, p.problem]), [[2, 'closes aaaa, a learned row; only a composer pass handles a learned row']]);
+});

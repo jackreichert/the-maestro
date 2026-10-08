@@ -592,6 +592,7 @@ function cmdClose(newKind: string): void {
         extras: () => ({ ...approvalClose(newKind), ...usageFromArgs() }),
     });
     if (result.kind === 'ambiguous') exitAmbiguous(needle, result.matches);
+    if (result.kind === 'not-closable') die(result.reason);
     if (result.kind !== 'closed') { console.error(`No open item matching "${needle}".`); process.exit(1); }
     if (!dryRun) render(true);
     const { target, note } = result;

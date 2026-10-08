@@ -2520,6 +2520,18 @@ test('verify rejects a learned row that carries a field the command never writes
     assert.match(r.out, /learned: unknown field \(extra\)/);
 });
 
+test('done, drop and resolve refuse a learned row, leave it in triage box 9, and write nothing', () => {
+    const id = idOf(run('learned', 'A claim.', ...LEARNED, ...MARK).out);
+    for (const verb of ['done', 'drop', 'resolve']) {
+        const r = run(verb, id, ...MARK);
+        assert.equal(r.code, 1, verb);
+        assert.match(r.err, /is a learned row: it is closed only by a composer pass/);
+    }
+    assert.equal(ledger().length, 1);
+    assert.deepEqual(boxIds(parse(run('triage', '--json').out), 9), ['A claim.']);
+    assert.equal(run('verify').code, 0);
+});
+
 test('learned --help prints its usage and writes nothing', () => {
     const r = run('learned', '--help');
     assert.equal(r.code, 0);

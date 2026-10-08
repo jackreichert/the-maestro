@@ -46,6 +46,8 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         const target = row.kind === 'approval-tag' && row.approves ? rows.find((r) => r.row.id === row.approves)?.row : undefined;
         if (target && !APPROVABLE_KINDS.has(target.kind)) problems.push({ line, id: row.id, problem: `approves ${row.approves}, a ${target.kind} row; only ${[...APPROVABLE_KINDS].join(', ')} can be approved` });
         if (row.kind === 'question' || row.kind === 'decision') for (const p of askFieldProblems(row)) problems.push({ line, id: row.id, problem: `ask field: ${p}` });
+        const closed = typeof row.closes === 'string' ? rows.find((r) => r.row.id === row.closes)?.row : undefined;
+        if (closed?.kind === 'learned') problems.push({ line, id: row.id, problem: `closes ${row.closes}, a learned row; only a composer pass handles a learned row` });
         if (row.kind === 'learned') for (const p of learnedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `learned: ${p}` });
         for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);

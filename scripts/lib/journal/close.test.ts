@@ -96,3 +96,16 @@ test('matchTarget prefers an exact id over text and ignores closed items for tex
     assert.equal(matchTarget(items, 'bbb2').kind, 'found');
     assert.deepEqual(matchTarget(items, 'gadget'), { kind: 'not-found' });
 });
+
+test('closeItem refuses a learned row, whatever the closing kind, and appends nothing', () => {
+    for (const kind of ['done', 'dropped', 'resolved']) {
+        const { ctx, rows } = ctxFor([...seed(), { id: 'lrn1', kind: 'learned', ts: `${DAY}T09:03:00Z`, date: DAY, text: 'A fake fact.' }]);
+        const result = closeItem(ctx, { kind, needle: 'lrn1' });
+        assert.equal(result.kind, 'not-closable', kind);
+        assert.match(result.kind === 'not-closable' ? result.reason : '', /closed only by a composer pass/);
+        assert.equal(rows.length, 4, kind);
+    }
+    const { ctx, rows } = ctxFor([...seed(), { id: 'lrn1', kind: 'learned', ts: `${DAY}T09:03:00Z`, date: DAY, text: 'A unique fake fact.' }]);
+    assert.equal(closeItem(ctx, { kind: 'done', needle: 'unique fake' }).kind, 'not-found', 'a text match never selects a learned row (it is not an open kind)');
+    assert.equal(rows.length, 4);
+});
