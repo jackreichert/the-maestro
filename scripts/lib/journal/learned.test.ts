@@ -117,3 +117,10 @@ test('a git sha is accepted in verified-at and in labelled evidence, but a bare 
         assert.ok(r.errors.every((e) => !e.includes(h40.slice(0, 20))));
     }
 });
+
+test('a key split across the claim and the evidence is refused as the combined fields, without the value', () => {
+    const r = parse({ claim: 'The fake id is AKIAIOSFODNN', evidence: ['7EXAMPLE', 'docs/spec.md:1'].join(' ') });
+    assert.equal(r.fields, undefined);
+    assert.ok(r.errors.some((e) => /\(fields combined\): looks like a secret \(aws-access-key-id\)/.test(e)), JSON.stringify(r.errors));
+    assert.ok(r.errors.every((e) => !e.includes('IOSFODNN')));
+});

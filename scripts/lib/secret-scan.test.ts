@@ -201,3 +201,29 @@ test('decoding is bounded and leaves ordinary percent signs alone', () => {
     scanText('%25'.repeat(50_000) + '%41'.repeat(50_000));
     assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
 });
+
+test('a key split by whitespace or across fields is still seen', () => {
+    for (const t of [j('AKIAIOSFODNN', ' ', '7EXAMPLE'), j('AKIAIOSFODNN', '\n', '7EXAMPLE'), j('gh', 'p_', 'a1B2c3D4 '.repeat(4)), j('s', 'k-ant-', 'abcdefghij', ' ', 'klmnopqrstuvwx')]) {
+        assert.ok(scanText(t).length > 0, t.slice(0, 12));
+    }
+    const split = scanFields({ claim: 'The id is AKIAIOSFODNN', evidence: j('7EXAMPLE', ' in the log'), 'applies-to': 'fake-repo:fake-api' });
+    assert.deepEqual(split.map((f) => [f.field, f.rule]), [['(fields combined)', 'aws-access-key-id']]);
+    const assign = scanFields({ claim: j('set the pass', 'word='), evidence: 'hunter2xyz' });
+    assert.deepEqual(assign.map((f) => [f.field, f.rule]), [['(fields combined)', 'secret-assignment']]);
+    assert.match(describeFindings(split)[0] ?? '', /^\(fields combined\): looks like a secret \(aws-access-key-id\)$/);
+});
+
+test('joining words does not make a key out of prose, and a finding in one field is not repeated for the join', () => {
+    assert.deepEqual(scanFields({ claim: 'risk-adjusted returns on equity are reported nightly', evidence: 'task-queue depth is 12 per shard, see docs/spec.md:3' }), []);
+    const one = scanFields({ claim: j('AKIA', 'IOSFODNN7EXAMPLE'), evidence: 'docs/spec.md:3' });
+    assert.deepEqual(one.map((f) => f.field), ['claim']);
+});
+
+test('a split key is found whichever fields sit between its halves, and many large fields still scan quickly', () => {
+    const f = scanFields({ claim: 'The id is AKIAIOSFODNN', 'applies-to': 'fake-repo:fake-api', evidence: j('7EXAMPLE', ' in the log') });
+    assert.deepEqual(f.map((x) => x.rule), ['aws-access-key-id']);
+    const big = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`f${i}`, 'aB3-x@a.1 pass:'.repeat(133)]));
+    const t0 = Date.now();
+    scanFields(big);
+    assert.ok(Date.now() - t0 < 2000, `took ${Date.now() - t0}ms`);
+});

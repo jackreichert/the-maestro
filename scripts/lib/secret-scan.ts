@@ -30,6 +30,12 @@ interface Rule {
     pattern: RegExp;
     /** Extra test on a match; return false to ignore it. */
     accept?: (match: RegExpExecArray, opts: ScanOptions) => boolean;
+    /**
+     * For a credential with a distinctive prefix: the same shape without word boundaries, matched against the text with
+     * all whitespace removed, so a key split by a space or a line break (or across fields) is still seen. Only prefixes
+     * that do not occur in prose belong here, since joining words can make anything.
+     */
+    squeezed?: RegExp;
 }
 
 /** Values that stand for "a value goes here", so `PASSWORD=<redacted>` and `token=$TOKEN` name a variable without leaking one. */
@@ -73,17 +79,17 @@ const DATE_SHAPES = `\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}|\\d{1,2}[-/.]\\d{1,2}[-/.]
 /** Rules run in order; every match of every rule is reported. */
 const RULES: Rule[] = [
     { name: 'private-key-block', class: 'secret', pattern: /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----/g },
-    { name: 'aws-access-key-id', class: 'secret', pattern: /\b(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}\b/g },
-    { name: 'github-token', class: 'secret', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/g },
-    { name: 'slack-token', class: 'secret', pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/g },
-    { name: 'api-key-prefix', class: 'secret', pattern: /\b(?:(?:sk|pk|rk)-[A-Za-z0-9_-]{20,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,})/g },
+    { name: 'aws-access-key-id', class: 'secret', pattern: /\b(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}\b/g, squeezed: /(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}/g },
+    { name: 'github-token', class: 'secret', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/g, squeezed: /(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/g },
+    { name: 'slack-token', class: 'secret', pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/g, squeezed: /xox[abprs]-[A-Za-z0-9-]{10,}/g },
+    { name: 'api-key-prefix', class: 'secret', pattern: /\b(?:(?:sk|pk|rk)-[A-Za-z0-9_-]{20,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,})/g, squeezed: /(?:sk-(?:ant|proj)-[A-Za-z0-9_-]{20,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,})/g },
     {
         // 16 or more characters of anything, or 8 or more with a letter and a digit (`Bearer abc123def456`); prose such as "bearer tokens" has no digit.
         name: 'bearer-or-basic-credential', class: 'secret', pattern: /(?<![A-Za-z0-9])(?:bearer|basic)\s+([A-Za-z0-9._~+/-]{8,})=*/gi,
         accept: (m) => (m[1] ?? '').length >= 16 || hasLetterAndDigit(m[1] ?? ''),
     },
-    { name: 'npm-token', class: 'secret', pattern: /\bnpm_[A-Za-z0-9]{30,}/g },
-    { name: 'jwt', class: 'secret', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
+    { name: 'npm-token', class: 'secret', pattern: /\bnpm_[A-Za-z0-9]{30,}/g, squeezed: /npm_[A-Za-z0-9]{30,}/g },
+    { name: 'jwt', class: 'secret', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, squeezed: /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
     {
         // scheme://user:password@host covers database DSNs and URLs with embedded credentials.
         name: 'url-credentials', class: 'secret', pattern: /\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/:@]{1,256}:([^\s@]{1,256})@/gi,
@@ -171,15 +177,42 @@ export function scanText(raw: string, opts: ScanOptions = {}): Finding[] {
             out.push({ rule: rule.name, class: rule.class, index: m.index ?? 0 });
         }
     }
+    // A key split by whitespace: look again, with the whitespace gone, for the rules that allow it. Offsets are in the squeezed text.
+    const squeezed = text.replace(/\s+/g, '');
+    if (squeezed.length !== text.length) {
+        for (const rule of RULES) {
+            if (!rule.squeezed || out.some((f) => f.rule === rule.name)) continue;
+            const m = new RegExp(rule.squeezed.source, rule.squeezed.flags).exec(squeezed);
+            if (m) out.push({ rule: rule.name, class: rule.class, index: m.index });
+        }
+    }
     return out;
 }
 
-/** Scans each named field; findings carry the field name so a refusal can say where, without saying what. */
+/**
+ * Scans each named field, then the fields joined, so a value split across fields (`password=` in one and the value in
+ * another, or half a key in each) is seen. The joins are all fields in order and every ordered pair of fields (up to
+ * 16 fields; a value split three ways is not covered). A finding from a join is reported as field `(fields combined)`
+ * and only for a rule that did not already fire on a single field. A field named in `shaFields` that holds just a
+ * 40-hex sha is skipped.
+ */
 export function scanFields(fields: Readonly<Record<string, string | undefined>>, opts: ScanOptions = {}): FieldFinding[] {
-    return Object.entries(fields).flatMap(([field, text]) => {
-        if (!text || (opts.shaFields?.includes(field) && /^[0-9a-f]{40}$/.test(text.trim()))) return [];
-        return scanText(text, opts).map((f) => ({ ...f, field }));
-    });
+    const texts = Object.entries(fields).filter((e): e is [string, string] => !!e[1] && !(opts.shaFields?.includes(e[0]) && /^[0-9a-f]{40}$/.test(e[1].trim())));
+    const single = texts.flatMap(([field, text]) => scanText(text, opts).map((f) => ({ ...f, field })));
+    if (texts.length < 2) return single;
+    const values = texts.map(([, t]) => t);
+    const joins = [values.join(' ')];
+    if (values.length <= 16) for (const a of values) for (const b of values) if (a !== b) joins.push(`${a} ${b}`);
+    const seen = new Set(single.map((f) => f.rule));
+    const combined: FieldFinding[] = [];
+    for (const text of joins) {
+        for (const f of scanText(text, opts)) {
+            if (seen.has(f.rule)) continue;
+            seen.add(f.rule);
+            combined.push({ ...f, field: '(fields combined)' });
+        }
+    }
+    return [...single, ...combined];
 }
 
 /** One line per finding for an error message: field, rule and class, never the text. */
