@@ -43,6 +43,13 @@ test('handoffText scaffolds the five sections for one stream, with the stream fi
     assert.match(all, /## 5\. Next concrete action\n\nship it/);
 });
 
+test('handoffText lists a learned row under Learnings whatever its wording, instead of saying nothing matched', () => {
+    const withLearned: LedgerRow[] = [...rows, { id: 'gggg', kind: 'learned', ts: `${D}T10:00:00Z`, date: D, text: 'The fake page count is the page length.', stream: 'Beta' }];
+    const text = handoffText({ ...ctx, readLedger: () => withLearned }, 'Beta', '2026-10-02', [], {});
+    assert.match(text, /- `gggg` \[learned\] The fake page count is the page length\./);
+    assert.doesNotMatch(text, /None matched learned/);
+});
+
 test('handoffText falls back to the ts day for a missing date, and lists items with neither under Undated', () => {
     const old = '2026-09-01';
     const hand: LedgerRow[] = [

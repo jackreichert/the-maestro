@@ -89,7 +89,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
     const asks = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
     const pasteBlocks = asks.filter((i) => boxOf(i) === BOX.PASTE);
     const needsJack = asks.filter((i) => boxOf(i) !== BOX.PASTE);
-    const learnings = items.filter((i) => recent(i) && LEARNING.test(itemText(i)));
+    const learnings = items.filter((i) => recent(i) && (i.kind === 'learned' || LEARNING.test(itemText(i))));
     const touched = items.filter((i) => isOpen(i) || recent(i));
     const arts = artifactsOf(touched);
     const meta = (i: LedgerItem): string => [stream === null && i.stream && `stream: ${i.stream}`, i.repo, i.ticket && `[[${i.ticket}]]`, i.gate && `gate: ${i.gate}`].filter(Boolean).join(' · ');
