@@ -127,8 +127,8 @@ function main(): void {
   } else if (gate.status !== 0) { console.error(gate.stderr || 'pr-open: pr-size failed'); process.exit(2); }
   checkLinkPaths(o, body);
   const gh = process.env.MAESTRO_GH_BIN || 'gh';
-  // A waiver was decided for the origin's slug, so gh is pinned to that same repo (never GH_REPO, an upstream remote or a gh default).
-  const args = waivedSlug ? [...ghArgs(o), '--repo', waivedSlug] : ghArgs(o);
+  // A waiver was decided for the origin's github.com slug, so gh is pinned to that same repo and host (never GH_REPO, GH_HOST, an upstream remote or a gh default).
+  const args = waivedSlug ? [...ghArgs(o), '--repo', `github.com/${waivedSlug}`] : ghArgs(o);
   const ghEnv = waivedSlug ? { ...process.env, GH_REPO: '' } : process.env;
   if (o.dryRun) { console.log(`${gh} ${args.join(' ')}`); return; }
   if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit', env: ghEnv }).status ?? 2);
