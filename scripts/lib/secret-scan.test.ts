@@ -107,3 +107,22 @@ test('scanning is repeatable: no state leaks between calls', () => {
     const t = j('pass', 'word=hunter2');
     assert.deepEqual(scanText(t), scanText(t));
 });
+
+test('a long path or URL is not a blob, but a random token is, in a path or alone', () => {
+    for (const ok of [
+        'Projects/the-maestro/Plans/2026-10-08-ledger-to-library.md',
+        'https://github.com/Example-Org/example-repo/pull/488/files',
+        'tests/integration/test_ClinicianPageCountSemantics_2026.py:88',
+        'terraform/modules/rds_proxy/RdsProxyStagingSharedSecretsManagerPolicy2.tf:30',
+        'Projects/example-repo/Reviews/2026-10-08-Learned-Entries-Re-Review-v2-Final-Notes.md',
+    ]) assert.deepEqual(scanText(ok), [], ok);
+    const blob = 'aB3dE6gH9jK2mN5pQ8rS1tU4vW7xY0zC';
+    for (const bad of [
+        blob + blob,
+        `https://example.test/files/${blob}${blob}`,
+        `docs/${blob}${blob}/index`,
+        `${blob}/${blob}`,
+        `https://example.test/a/b?sig=${blob}${blob}`,
+        `A${'bC1+dE2/fG3-'.repeat(5)}`,
+    ]) assert.ok(rules(bad).length > 0, bad.slice(0, 30));
+});

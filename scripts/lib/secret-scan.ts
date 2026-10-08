@@ -36,6 +36,18 @@ const unquote = (v: string): string => v.replace(/^["'`]+|["'`,;)\]]+$/g, '');
 const isValue = (v: string | undefined): boolean => !PLACEHOLDER.test(unquote(v ?? ''));
 const hasLetterAndDigit = (v: string): boolean => /[A-Za-z]/.test(v) && /\d/.test(v);
 
+/**
+ * True for a run that is a path, URL tail or hyphenated name rather than a blob: it has at least three `/`, `_` or `-`
+ * separators, no `+` or `=` (base64 padding and alphabet), and no word between separators that looks random (12 or more
+ * characters, both cases, and a digit anywhere but the end, so `PolicyName2` is a word and `aB3dE6gH9jK2` is not).
+ * Credentials in a URL (`user:pass@`, `?token=`) are caught by their own rules before this one is asked.
+ * Residual risk, accepted: a random token whose every run between separators is under 12 characters passes.
+ */
+function isStructuredName(token: string): boolean {
+    if (/[+=]/.test(token) || (token.match(/[/_-]/g)?.length ?? 0) < 3) return false;
+    return !token.split(/[/_-]+/).some((w) => w.length >= 12 && /[a-z]/.test(w) && /[A-Z]/.test(w) && /\d/.test(w.replace(/\d+$/, '')));
+}
+
 /** Preceded by anything but a letter or digit, so `db_password=` and `access-token:` match as well as `password=`. */
 const SECRET_NAME = '(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth(?:orization)?|credentials?|client[_-]?secret)';
 
@@ -79,9 +91,10 @@ const RULES: Rule[] = [
         accept: (m) => m[0].length !== 40 && m[0].length !== 64,
     },
     {
-        // A long unbroken mixed-case token with a digit. A git sha (lowercase hex) has no capitals, so it passes.
+        // A long unbroken mixed-case token with a digit. A git sha (lowercase hex) has no capitals, so it passes, and so
+        // does a path or a hyphenated name made of readable words (see `isStructuredName`).
         name: 'high-entropy-blob', class: 'secret', pattern: /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{40,}={0,2}(?![A-Za-z0-9+/_-])/g,
-        accept: (m) => /[a-z]/.test(m[0]) && /[A-Z]/.test(m[0]) && /\d/.test(m[0]),
+        accept: (m) => /[a-z]/.test(m[0]) && /[A-Z]/.test(m[0]) && /\d/.test(m[0]) && !isStructuredName(m[0]),
     },
     { name: 'ssn', class: 'phi', pattern: /\b\d{3}-\d{2}-\d{4}\b/g },
     { name: 'phone-number', class: 'phi', pattern: /(?<![\d-])(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}(?![\d-])/g },
