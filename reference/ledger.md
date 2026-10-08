@@ -104,6 +104,18 @@ node $J rule "branch from staging, except example-scraper" --ref ~/path/to/memor
 
 `rule` refuses (exit 1, nothing written) unless every `--ref` is an existing file (`~/` and relative paths allowed; the row stores the absolute path), so "promoted" is checked when the row is written, not just described. Any file counts, including an empty one, and a path containing a comma cannot be a ref (refs are comma-separated). It takes `--approval`, `--scope`, `--stream` and the usual flags. Plain `log --kind decision` still works for a decision with no file behind it; it is just never open. Rows written as open decisions before this change read as closed records now.
 
+## Learned facts
+
+`learned` records one fact the moment someone establishes it, so a later session does not re-derive it. It is the one write path for `kind: learned`; `log --kind learned` is refused.
+
+```bash
+node $J learned "The example page count is the page length, not the total." --kind how-it-works --applies-to example-repo:example-api:staging --evidence "docs/spec.md:120" --verified-at "2026-10-08 read the spec" --confidence observed --model ... --used ...
+```
+
+Required: the claim (one line, present tense, at most 400 characters), `--kind` (`how-to`, `how-it-works`, `gotcha`, `decision`, `tool`), `--applies-to repo:component[:env]` (env is `local`, `dev`, `stg02`, `staging` or `prod`; when a container root is set the repo must be a directory in it), `--evidence` (a file:line, PR, note path, or a command and the count it printed), `--verified-at` (a 7 to 40 character sha, or `YYYY-MM-DD` followed by how it was checked) and `--confidence` (`observed`, `told-by-jack`, `inferred`). Optional: `--supersedes <earlier learned id | page path>`, which must name a learned row that exists when it is an id.
+
+Every refusal exits 1 and writes nothing, and a refusal never prints the value that failed. The claim, evidence, location, verified-at and supersedes pass the shared scanner (`scripts/lib/secret-scan.ts`): credential shapes (private key blocks, cloud and token prefixes, JWTs, URL credentials, secret-word assignments, long mixed-case blobs) and fixed-shape PHI (SSNs, phone numbers, emails, dates of birth, MRNs). A clean scan means no known shape, not that the text is safe: write claims about systems, ids and counts only. `verify` runs the same rules over stored learned rows, so a hand edit cannot carry what the write refused. Writing the same claim, location and evidence again reports the existing row.
+
 ## Approvals
 
 Any time the user grants permission, log it with `--approval`, so it can be reviewed later instead of staying buried among other decisions:
@@ -280,7 +292,7 @@ Everything open falls into one of eleven boxes. `triage` sorts them and says wha
 | 6 | Blocked / gated | `blocked` | carry with the gate written out |
 | 7 | In flight | `wip` (queued ones too, never stale) | carry; stale after 1 day: confirm alive (`ListAgents`, branch sweep) or drop |
 | 8 | Incidental findings | a note saying "could not be filed", "follow-up", "next session" or "TODO" with no ticket | file a ticket, then log a pointer |
-| 9 | Learnings | a note with learned, lesson, ruled out or cause | copy into the handoff and the repo's CONTEXT.md |
+| 9 | Learnings | a `learned` row, or a note with learned, lesson, ruled out or cause | copy into the handoff and the repo's CONTEXT.md |
 | 10 | Done | `done`, `dropped` | `roll` archives |
 | 11 | Noise | any other note | archive silently |
 

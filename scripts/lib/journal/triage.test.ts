@@ -40,3 +40,15 @@ test('triageReport lists blockers for unpromoted records and findings, and the c
     assert.match(lines[0] ?? '', /^Triage — 2026-10-03/);
     assert.ok(lines.includes('Blockers (roll --strict refuses): 2'));
 });
+
+test('triage boxes learned rows dated in the window as box 9, shows them under Learnings, and does not block the roll on them', () => {
+    const learned: LedgerRow[] = [
+        { id: 'eeee', kind: 'learned', date: D, text: 'The fake page count is the page length.', appliesTo: 'fake-repo:fake-api', evidence: 'spec:1' },
+        { id: 'ffff', kind: 'learned', date: '2026-09-01', text: 'An older fact outside the window.' },
+    ];
+    const t = triageReport({ ...ctx, readLedger: () => learned }, D);
+    assert.deepEqual(t.items.map((i) => [i.id, i.box]), [['eeee', 9]]);
+    assert.deepEqual(t.blockers, []);
+    assert.ok(triageLines(t).some((l) => /Box 9 Learnings \(1\)/.test(l)));
+    assert.ok(triageLines(t).some((l) => /^\s+eeee  The fake page count/.test(l)));
+});

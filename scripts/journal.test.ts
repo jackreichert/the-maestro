@@ -2386,3 +2386,155 @@ test('status and status --footer show the review queue from the stored snapshot,
     snapshot('2020-01-01T00:00:00Z', false);
     assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
 });
+
+// ── learned ─────────────────────────────────────────────────────────────────
+
+const LEARNED = ['--kind', 'how-it-works', '--applies-to', 'fake-repo:fake-api:staging', '--evidence', 'docs/spec.md:12', '--verified-at', '2026-10-08 read the spec', '--confidence', 'observed'];
+/** The learned rows; none when nothing was ever written, which is the point of the refusal tests. */
+const learnedRows = () => (existsSync(ledgerFile()) ? ledger().filter((r) => r.kind === 'learned') : []);
+/** `LEARNED` with one flag's value replaced, or the flag removed when `value` is null. */
+function without(flag: string, value: string | null = null): string[] {
+    const out = [...LEARNED];
+    const i = out.indexOf(flag);
+    if (value === null) out.splice(i, 2); else out[i + 1] = value;
+    return out;
+}
+
+test('learned writes one validated row carrying every field', () => {
+    const r = run('learned', 'The fake page count is the page length.', ...LEARNED, ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^learned {2}\w{4} {2}The fake page count/);
+    const [row] = learnedRows();
+    assert.deepEqual(
+        [row?.text, row?.learnedKind, row?.appliesTo, row?.evidence, row?.verifiedAt, row?.confidence],
+        ['The fake page count is the page length.', 'how-it-works', 'fake-repo:fake-api:staging', 'docs/spec.md:12', '2026-10-08 read the spec', 'observed'],
+    );
+});
+
+test('learned refuses a row with no evidence or no applies-to, and writes nothing', () => {
+    for (const flag of ['--evidence', '--applies-to', '--verified-at', '--confidence', '--kind']) {
+        const r = run('learned', 'A claim.', ...without(flag), ...MARK);
+        assert.equal(r.code, 1, flag);
+        assert.match(r.err, new RegExp(`${flag} is required|${flag} is required and must be`), flag);
+        assert.equal(learnedRows().length, 0, `${flag}: a row was written`);
+    }
+});
+
+test('learned refuses a claim, evidence or location with a secret shape, never echoes it, and writes nothing', () => {
+    const sentinel = 'hunter2-sentinel-value';
+    const secret = ['pass', `word=${sentinel}`].join('');
+    for (const args of [
+        [`The login is ${secret}`, ...LEARNED],
+        ['A claim.', ...without('--evidence', `ran it with ${secret}`)],
+        ['A claim.', ...without('--evidence', ['postgres', `://svc:${sentinel}@db.internal.test/app`].join(''))],
+    ]) {
+        const r = run('learned', ...args, ...MARK);
+        assert.equal(r.code, 1, args.join(' '));
+        assert.match(r.err, /refused, nothing written.*looks like a secret/s);
+        assert.ok(!r.err.includes(sentinel) && !r.out.includes(sentinel), 'the sentinel was echoed');
+    }
+    assert.equal(run('learned', 'The patient SSN is 123-45-6789.', ...LEARNED, ...MARK).code, 1);
+    assert.equal(existsSync(ledgerFile()), false, 'a refusal must not create or touch the ledger');
+    assert.equal(learnedRows().length, 0);
+});
+
+test('learned refuses a secret shape in --used, --repo or --stream and a malformed --date, and writes nothing', () => {
+    const secret = ['tok', 'en=abc123secret'].join('');
+    for (const extra of [['--used', secret], ['--repo', secret], ['--stream', secret], ['--date', 'yesterday']]) {
+        const marks = extra[0] === '--used' ? ['--model', 'Test Model'] : MARK;
+        const r = run('learned', 'A claim.', ...LEARNED, ...marks, ...extra);
+        assert.equal(r.code, 1, extra.join(' '));
+        assert.ok(!r.err.includes('abc123secret'), 'the value was echoed');
+    }
+    assert.equal(learnedRows().length, 0);
+});
+
+test('learned is idempotent: the same fact, location and evidence is reported, not written twice', () => {
+    run('learned', 'A claim.', ...LEARNED, ...MARK);
+    const again = run('learned', 'A claim.', ...LEARNED, ...MARK);
+    assert.equal(again.code, 0);
+    assert.match(again.out, /already recorded/);
+    assert.equal(learnedRows().length, 1);
+});
+
+test('learned re-checking a fact (a new --verified-at or --confidence) writes a row that supersedes the earlier one', () => {
+    const first = idOf(run('learned', 'A claim.', ...LEARNED, ...MARK).out);
+    const refreshed = run('learned', 'A claim.', ...without('--verified-at', '2026-10-09 read the spec again'), ...MARK);
+    assert.equal(refreshed.code, 0, refreshed.err);
+    assert.match(refreshed.out, new RegExp(`re-checked: supersedes ${first}`));
+    const second = idOf(refreshed.out);
+    assert.notEqual(second, first);
+    assert.deepEqual(learnedRows().map((r) => [r.id, r.verifiedAt, r.supersedes]), [[first, '2026-10-08 read the spec', undefined], [second, '2026-10-09 read the spec again', first]]);
+    const lower = run('learned', 'A claim.', ...without('--confidence', 'inferred'), ...MARK);
+    assert.match(lower.out, new RegExp(`supersedes ${second}`), 'the latest row is the one superseded');
+    assert.match(run('learned', 'A claim.', ...LEARNED, ...MARK).out, /\(already recorded\)/, 'an exact repeat of an earlier check is still the same');
+    assert.equal(learnedRows().length, 3);
+    assert.equal(run('verify').code, 0);
+});
+
+test('learned --supersedes must name a learned row on the ledger', () => {
+    const first = idOf(run('learned', 'Old claim.', ...LEARNED, ...MARK).out);
+    assert.equal(run('learned', 'New claim.', ...LEARNED, '--supersedes', 'zz99', ...MARK).code, 1);
+    assert.equal(run('learned', 'New claim.', ...LEARNED, '--supersedes', first, ...MARK).code, 0);
+    assert.equal(learnedRows()[1]?.supersedes, first);
+});
+
+test('learned checks the repo against the container root when one is set', () => {
+    const container = mkdtempSync(join(tmpdir(), 'journal-container-'));
+    mkdirSync(join(container, 'fake-repo'));
+    const inContainer = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_CONTAINER_ROOT: container, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+    });
+    assert.equal(inContainer('learned', 'A claim.', ...LEARNED, ...MARK).status, 0);
+    const bad = inContainer('learned', 'A claim.', ...without('--applies-to', 'no-such-repo:thing'), ...MARK);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /not a known repo/);
+});
+
+test('log --kind learned is refused: only `learned` writes the kind', () => {
+    const r = run('log', 'an unchecked fact', '--kind', 'learned', ...MARK);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /only by `journal.ts learned`/);
+    assert.equal(learnedRows().length, 0);
+});
+
+test('verify flags a learned row that was hand-edited past the write-time rules', () => {
+    run('learned', 'A claim.', ...LEARNED, ...MARK);
+    assert.equal(run('verify').code, 0);
+    const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    const row = JSON.parse(readFileSync(path, 'utf8').trim());
+    delete row.evidence;
+    writeFileSync(path, `${JSON.stringify(row)}\n`);
+    const r = run('verify');
+    assert.equal(r.code, 1);
+    assert.match(r.out + r.err, /learned: --evidence is required/);
+});
+
+test('verify rejects a learned row that carries a field the command never writes', () => {
+    run('learned', 'A claim.', ...LEARNED, ...MARK);
+    const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    const row = JSON.parse(readFileSync(path, 'utf8').trim());
+    writeFileSync(path, `${JSON.stringify({ ...row, extra: 'anything' })}\n`);
+    const r = run('verify');
+    assert.equal(r.code, 1);
+    assert.match(r.out, /learned: unknown field \(extra\)/);
+});
+
+test('done, drop and resolve refuse a learned row, leave it in triage box 9, and write nothing', () => {
+    const id = idOf(run('learned', 'A claim.', ...LEARNED, ...MARK).out);
+    for (const verb of ['done', 'drop', 'resolve']) {
+        const r = run(verb, id, ...MARK);
+        assert.equal(r.code, 1, verb);
+        assert.match(r.err, /is a learned row: it is closed only by a composer pass/);
+    }
+    assert.equal(ledger().length, 1);
+    assert.deepEqual(boxIds(parse(run('triage', '--json').out), 9), ['A claim.']);
+    assert.equal(run('verify').code, 0);
+});
+
+test('learned --help prints its usage and writes nothing', () => {
+    const r = run('learned', '--help');
+    assert.equal(r.code, 0);
+    assert.match(r.out, /journal\.ts learned "<claim>"/);
+    assert.equal(learnedRows().length, 0);
+});

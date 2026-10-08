@@ -57,6 +57,8 @@
  *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
  *                                             current directory (or --container) is outside it; --dry-run only reports. --fast skips the sweep and the scratch review.
  *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
+ *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
+ *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
  *   journal.ts verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.ts render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.ts tag <id> --stream <name>      file an existing item under a workstream
@@ -135,6 +137,7 @@ import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } 
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
+import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
@@ -176,7 +179,7 @@ import type { EpicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { listWatches, lockHolder } from './lib/watch-registry.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'learned'];
 
 /** The values --approval accepts. Anything else is rejected at write time and flagged by `verify`. */
 const APPROVALS = new Set(['standing', 'one-off']);
@@ -462,6 +465,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
+    if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const refs = rule ? ruleRefs() : refsFromArgs();
@@ -494,6 +498,40 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
     return entry;
+}
+
+/** The repo names `--applies-to` may use: the directories under the container root, plus this project. Undefined when no container is set or readable, so only the shape is checked. */
+function knownRepos(): Set<string> | undefined {
+    if (!CONTAINER_ROOT) return undefined;
+    try {
+        return new Set([...readdirSync(CONTAINER_ROOT, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name), project]);
+    } catch { return undefined; }
+}
+
+/** `learned "<claim>" --kind ... --applies-to ...`: one fact, written only when every rule in learned.ts passes. Idempotent: the same fact, location, evidence, `--verified-at` and confidence is reported, not written twice; the same fact with a new `--verified-at` or confidence is written as a row that supersedes the earlier one. */
+function cmdLearned(): void {
+    if (has('help')) { LEARNED_USAGE.forEach((l) => console.log(l)); return; }
+    const flag = (name: string): string | null => arg(name) || null;
+    const entries = readLedger();
+    const learnedIds = new Set(entries.filter((e) => e.kind === 'learned' && e.id).map((e) => e.id as string));
+    const parsed = parseLearned(
+        { claim: arg('text') || positional.join(' '), kind: flag('kind'), appliesTo: flag('applies-to'), evidence: flag('evidence'), verifiedAt: flag('verified-at'), confidence: flag('confidence'), supersedes: flag('supersedes'),
+            extras: { date: flag('date') ?? today(), repo: flag('repo') ?? undefined, stream: flag('stream') ?? undefined, model: flag('model') ?? undefined, used: flag('used') ?? undefined, tokens: flag('tokens') ?? undefined, harness: flag('harness') ?? undefined, agent: flag('agent') ?? undefined } },
+        { repos: knownRepos(), learnedIds },
+    );
+    if (!parsed.fields) die(`learned: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\n(journal.ts learned --help)`);
+    const { fields } = parsed;
+    const seen = relearn(entries, fields);
+    if (seen.kind === 'same') { console.log(`learned  ${seen.id}  ${fields.text}  (already recorded)`); return; }
+    const entry = {
+        id: newId(entries), ts: now(), date: arg('date', today()), kind: 'learned', ...fields,
+        // The same fact checked again supersedes its latest earlier row; an explicit --supersedes names something else and wins.
+        ...(seen.kind === 'refresh' && fields.supersedes === undefined ? { supersedes: seen.id } : {}),
+        repo: arg('repo') || undefined, stream: streamOrNone(arg('stream')), ...usageFromArgs(),
+    };
+    append(entry);
+    if (!dryRun) render(true);
+    console.log(`learned  ${entry.id}  ${entry.text}${seen.kind === 'refresh' ? `  (re-checked: supersedes ${seen.id})` : ''}`);
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -554,6 +592,7 @@ function cmdClose(newKind: string): void {
         extras: () => ({ ...approvalClose(newKind), ...usageFromArgs() }),
     });
     if (result.kind === 'ambiguous') exitAmbiguous(needle, result.matches);
+    if (result.kind === 'not-closable') die(result.reason);
     if (result.kind !== 'closed') { console.error(`No open item matching "${needle}".`); process.exit(1); }
     if (!dryRun) render(true);
     const { target, note } = result;
@@ -1728,6 +1767,7 @@ switch (cmd) {
     case 'queue': cmdQueue(); break;
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
+    case 'learned': cmdLearned(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
     case 'drop': cmdClose('dropped'); break;

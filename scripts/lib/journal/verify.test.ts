@@ -76,3 +76,22 @@ test('verify flags ask fields a hand edit made impossible, and passes legacy and
         [4, 'ask field: by "soon" is not YYYY-MM-DD or an ISO time with a zone'],
     ]);
 });
+
+test('verify flags a learned row a hand edit stripped of evidence or gave a secret shape, and passes a well-formed one', () => {
+    const ok = { id: 'aaaa', kind: 'learned', text: 'The fake page count is the page length.', learnedKind: 'how-it-works', appliesTo: 'fake-repo:fake-api', evidence: 'spec:1', verifiedAt: '342b177', confidence: 'observed' };
+    const { problems } = verifyLedger(ctxFor([
+        JSON.stringify(ok),
+        JSON.stringify({ ...ok, id: 'bbbb', evidence: undefined }),
+        JSON.stringify({ ...ok, id: 'cccc', text: ['pass', 'word=hunter2'].join('') }),
+    ]));
+    assert.deepEqual(problems.map((p) => p.line), [2, 3]);
+    assert.match(problems[0]?.problem ?? '', /^learned: --evidence is required/);
+    assert.match(problems[1]?.problem ?? '', /^learned: refused, nothing written \(claim: looks like a secret/);
+    assert.ok(problems.every((p) => !p.problem.includes('hunter2')));
+});
+
+test('verify flags a closing row that points at a learned row', () => {
+    const learned = { id: 'aaaa', kind: 'learned', text: 'The fake page count is the page length.', learnedKind: 'how-it-works', appliesTo: 'fake-repo:fake-api', evidence: 'spec:1', verifiedAt: '342b177', confidence: 'observed' };
+    const { problems } = verifyLedger(ctxFor([JSON.stringify(learned), JSON.stringify({ id: 'bbbb', kind: 'done', closes: 'aaaa', text: 'x' })]));
+    assert.deepEqual(problems.map((p) => [p.line, p.problem]), [[2, 'closes aaaa, a learned row; only a composer pass handles a learned row']]);
+});
