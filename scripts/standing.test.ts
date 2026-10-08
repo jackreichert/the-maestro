@@ -13,13 +13,13 @@ import { addWatch } from './lib/watch-registry.ts';
 const NOON = Date.parse('2026-10-06T12:00:00Z');
 const HOUR = 3600_000;
 const healthy = (over: Partial<CheckContext> = {}): CheckContext => ({
-  now: NOON, loopPid: () => 4242, watches: () => ({ live: 3, expired: [] }), queue: () => ({ inflight: 1, queued: 2 }), pendingTransitions: () => [], ...over,
+  now: NOON, loopPid: () => 4242, watches: () => ({ live: 3, expired: [] }), queue: () => ({ inflight: 1, queued: 2 }), pendingTransitions: () => [], epicBriefs: () => ({ epics: 0, failures: [] }), notesReachable: () => ({ checked: 3, failures: [] }), ...over,
 });
 const ran = (id: string, hoursAgo: number): StandingEvent => ({ op: 'ran', id, evidence: 'did it', at: new Date(NOON - hoursAgo * HOUR).toISOString() });
 const statusOf = (events: StandingEvent[], ctx: CheckContext, id: string) => standingState(events, ctx).find((s) => s.row.id === id)?.status;
 
 test('the built-in rows cover the pickups the ticket names, each enforced by a check or a cadence', () => {
-  assert.deepEqual(DEFAULT_ROWS.map((r) => r.id), ['loop-alive', 'chain-next', 'merge-sweep', 'branch-sweep', 'epic-briefs', 'tracker-reconcile']);
+  assert.deepEqual(DEFAULT_ROWS.map((r) => r.id), ['loop-alive', 'chain-next', 'merge-sweep', 'branch-sweep', 'epic-briefs', 'notes-reachable', 'tracker-reconcile']);
   for (const r of DEFAULT_ROWS) assert.equal(validRow(r), null, r.id);
 });
 
@@ -34,8 +34,21 @@ test('checked rows take their status from the machine, not from anyone saying th
   assert.equal(statusOf(fresh, healthy({ pendingTransitions: () => ['ABC-1'] }), 'tracker-reconcile'), 'failing');
 });
 
+test('the notes-reachable row fails while a note is on no stream tab, names it, and cannot be marked done on a claim', () => {
+  const owing = healthy({ notesReachable: () => ({ checked: 9, failures: ['Projects/p/Plans/x.md names no ticket and no stream.', 'Projects/p/Plans/y.md its ticket is in no stream.'] }) });
+  const row = standingState([ran('notes-reachable', 0)], owing).find((x) => x.row.id === 'notes-reachable');
+  assert.equal(row?.status, 'failing', 'a ran row does not clear a failing check');
+  assert.match(row?.detail ?? '', /2 to fix, first: Projects\/p\/Plans\/x\.md/);
+  assert.equal(statusOf([], healthy(), 'notes-reachable'), 'ok');
+  assert.equal(statusOf([], healthy({ notesReachable: undefined }), 'notes-reachable'), 'failing', 'no vault: could not look, so not a pass');
+  assert.equal(statusOf([], healthy({ notesReachable: () => null }), 'notes-reachable'), 'failing');
+});
+
 test('the epic-briefs row fails while an epic touched today owes a brief or a note, and says what', () => {
-  assert.equal(statusOf([], healthy(), 'epic-briefs'), 'ok', 'no vault configured: nothing to check, and it says so');
+  const blind = standingState([], healthy({ epicBriefs: undefined })).find((x) => x.row.id === 'epic-briefs');
+  assert.equal(blind?.status, 'failing', 'no vault configured: the check could not look, so it has not passed');
+  assert.match(blind?.detail ?? '', /could not be checked: no vault root is configured/);
+  assert.equal(standingState([], healthy({ epicBriefs: () => null })).find((x) => x.row.id === 'epic-briefs')?.status, 'failing');
   const owing = healthy({ epicBriefs: () => ({ epics: 2, failures: ['e-1 brief is stale: 1 ticket updated after 2026-10-05.', 'a note names no ticket.'] }) });
   const row = standingState([ran('epic-briefs', 0)], owing).find((x) => x.row.id === 'epic-briefs');
   assert.equal(row?.status, 'failing', 'a recorded run does not clear a failing check');
@@ -92,7 +105,7 @@ test('standingBlock: silent when everything is ok, only rows needing attention f
   assert.equal(standingBlock(all, { all: true }).length, 1 + DEFAULT_ROWS.length);
   const broken = standingState([], healthy({ loopPid: () => null }));
   const prime = standingBlock(broken, { max: 2 });
-  assert.match(prime[0], /Standing pickups \(3 need attention, 6 total\)/);
+  assert.match(prime[0], /Standing pickups \(3 need attention, 7 total\)/);
   assert.equal(prime.length, 1 + 2);
   assert.match(prime[2], /… \+2 more/);
   assert.equal(standingBlock(broken).length, 1 + 3);
@@ -183,7 +196,7 @@ test('cli: prime carries the rows needing attention inside its 40 lines; handoff
   for (let i = 0; i < 30; i += 1) assert.equal(cli(vault, events, 'log', `open item number ${i}`, '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
   const prime = cli(vault, events, 'prime');
   assert.equal(prime.code, 0, prime.err);
-  assert.match(prime.out, /^Standing pickups \(\d need attention, 6 total\)/m);
+  assert.match(prime.out, /^Standing pickups \(\d need attention, 7 total\)/m);
   assert.match(prime.out, /FAILING loop-alive/);
   assert.ok(prime.out.trimEnd().split('\n').length <= 40);
   const handoff = cli(vault, events, 'handoff', '--stream', 'S', '--dry-run', '--no-worktree-sweep');

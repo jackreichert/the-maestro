@@ -407,3 +407,10 @@ test('priorities_max defaults to 5, reads the file and the env, and ignores a no
     assert.equal(show({ MAESTRO_PRIORITIES_MAX: '7' }).PRIORITIES_MAX, '7');
     assert.equal(show({ MAESTRO_PRIORITIES_MAX: '0' }).PRIORITIES_MAX, '5');
 });
+
+test('notes_check_since defaults to 7d and reads the file and the env', () => {
+    assert.equal(show().NOTES_CHECK_SINCE, '7d');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('notes_check_since: 2026-09-01'));
+    assert.equal(show().NOTES_CHECK_SINCE, '2026-09-01');
+    assert.equal(show({ MAESTRO_NOTES_CHECK_SINCE: 'all' }).NOTES_CHECK_SINCE, 'all');
+});

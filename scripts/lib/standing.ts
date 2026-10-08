@@ -35,9 +35,14 @@ export interface CheckContext {
   pendingTransitions: () => string[];
   /** What today did to the epics: how many were touched and what their briefs and notes still owe. Null when no vault is configured. */
   epicBriefs?: () => { epics: number; failures: string[] } | null;
+  /** How many notes were checked for a stream tab and which are on none (or why the vault could not be read). Null when no vault is configured. */
+  notesReachable?: () => { checked: number; failures: string[] } | null;
 }
 export interface CheckResult { ok: boolean; detail: string }
 export type Check = (ctx: CheckContext) => CheckResult;
+
+/** What a vault-reading check says when no vault root is configured. */
+export const NO_VAULT_DETAIL = 'could not be checked: no vault root is configured (set vault_root)';
 
 /** Every runtime check a row may name. A row naming anything else reads as failing, loudly. */
 export const CHECKS: Record<string, Check> = {
@@ -60,8 +65,14 @@ export const CHECKS: Record<string, Check> = {
   },
   'epic-briefs': ({ epicBriefs }) => {
     const r = epicBriefs?.();
-    if (!r) return { ok: true, detail: 'not checked: no vault root is configured' };
+    // A check that cannot look has not passed: with no vault root the row fails and says why, instead of reading as fine.
+    if (!r) return { ok: false, detail: NO_VAULT_DETAIL };
     return r.failures.length ? { ok: false, detail: `${r.failures.length} to fix, first: ${r.failures[0]}` } : { ok: true, detail: `${r.epics} epic${r.epics === 1 ? '' : 's'} touched today, briefs fresh and notes attributed` };
+  },
+  'notes-reachable': ({ notesReachable }) => {
+    const r = notesReachable?.();
+    if (!r) return { ok: false, detail: NO_VAULT_DETAIL };
+    return r.failures.length ? { ok: false, detail: `${r.failures.length} to fix, first: ${r.failures[0]}` } : { ok: true, detail: `${r.checked} notes, every one listed on a stream tab` };
   },
   'tracker-transitions': ({ pendingTransitions }) => {
     const keys = pendingTransitions();
@@ -76,6 +87,7 @@ export const DEFAULT_ROWS: StandingRow[] = [
   { id: 'merge-sweep', trigger: 'a pull request merges', action: 'sweep merged PRs: close their ledger items, sync any overlay branch, delete merged feature branches', who: 'any model (haiku)', everyHours: 24 },
   { id: 'branch-sweep', trigger: 'roll or handoff', action: 'branch and worktree sweep (journal.ts roll removes qualifying worktrees; branch-sweep.ts lists the rest)', who: 'any model (haiku)', everyHours: 36 },
   { id: 'epic-briefs', trigger: 'roll, and when an epic changes state', action: 'refresh each stale or missing epic brief (`ticket.mjs brief <epic> --refresh`) and attach each note written today to its ticket (`ticket.mjs attach`)', who: 'any model (sonnet)', check: 'epic-briefs' },
+  { id: 'notes-reachable', trigger: 'roll, and when a note is written under an active stream', action: 'list every unreachable note (`journal.ts notes-check`) and attach it to a ticket or give it a `stream:` field', who: 'any model (sonnet)', check: 'notes-reachable' },
   { id: 'tracker-reconcile', trigger: 'a done item carries a tracker key', action: 'move the tracker ticket and record it with `log --transitioned KEY`', who: 'any model (haiku)', check: 'tracker-transitions' },
 ];
 
