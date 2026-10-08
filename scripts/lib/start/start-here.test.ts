@@ -1,11 +1,12 @@
 // Run: node --test scripts/lib/start/start-here.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { START_MAX_LINES, buildStart, homeCounts, previousWorkingDay, startLines } from './start-here.ts';
+import { START_MAX_LINES, buildStart, homeCounts, previousWorkingDay, startLines, unreadableHome, viewDay } from './start-here.ts';
 import type { StartOptions } from './start-here.ts';
 import type { Groups } from '../journal/board.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 import type { StreamHome } from '../home/types.ts';
+import { extractFields } from '../status-page/inline.ts';
 
 const NOW = new Date('2026-10-07T15:00:00Z');
 const item = (id: string, stream: string | undefined, over: Record<string, unknown> = {}): LedgerItem => ({ id, stream, text: `text of ${id}`, date: '2026-10-07', ts: '2026-10-05T12:00:00Z', ...over }) as LedgerItem;
@@ -64,6 +65,40 @@ test('the text never passes the line cap, and a hidden row says where the rest i
   assert.ok(lines.length <= START_MAX_LINES, `${lines.length} lines`);
   assert.ok(lines.some((l) => /^… \+\d+ more: journal\.ts status/.test(l)));
   assert.equal(lines.filter((l) => l.startsWith('- `a')).length, 5, 'needs shows its top five');
+});
+
+test('the view date is the local day in the zone, not UTC', () => {
+  const late = new Date('2026-10-06T02:30:00Z');
+  assert.equal(viewDay(late, 'America/New_York'), '2026-10-05');
+  assert.equal(viewDay(late, 'UTC'), '2026-10-06');
+  assert.notEqual(viewDay(late, 'America/New_York'), late.toISOString().slice(0, 10));
+  const lines = startLines(buildStart(groupsOf(), opts({ day: viewDay(late, 'America/New_York'), now: late })), late);
+  assert.match(lines[2] ?? '', /^2026-10-05\./);
+});
+
+test('an unreadable stream is reported, not omitted', () => {
+  const home = { epics: [], links: [{ group: 'docs', items: [{ meta: 'CONTEXT' }] }] } as unknown as StreamHome;
+  const text = startLines(buildStart(groupsOf(), opts({ where: { Alpha: homeCounts(home), Beta: unreadableHome('EACCES') } })), NOW).join('\n');
+  assert.match(text, /- Alpha: CONTEXT/);
+  assert.match(text, /- Beta: notes could not be read \(EACCES\)/);
+  assert.equal(unreadableHome('').unreadable, 'unreadable');
+});
+
+test('the Start block has no asks or answers', () => {
+  const g = groupsOf({
+    awaiting: [item('bb22', 'Alpha', { text: 'Merge widgets?' })],
+    paste: [item('pp11', 'Beta', { text: 'run this' })],
+    decidedOn: (d) => (d === '2026-10-07' ? [item('cc33', 'Alpha', { text: 'ship it?', closedBy: { kind: 'resolved', date: d, text: 'yes' } })] : []),
+  });
+  const lines = startLines(buildStart(g, opts()), NOW);
+  const text = lines.join('\n');
+  assert.match(text, /`bb22`/);
+  assert.match(text, /`cc33`/);
+  const fields = extractFields(text);
+  assert.deepEqual(fields.answers, {});
+  assert.deepEqual(fields.ticks, {});
+  assert.equal(lines.some((l) => /^- \[[ xX]\] `/.test(l)), false);
+  assert.equal(lines.some((l) => />\s*answer\s*:/i.test(l)), false);
 });
 
 test('--stream narrows every block to one stream, matched without regard to case', () => {

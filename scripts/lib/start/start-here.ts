@@ -8,7 +8,7 @@ import { askBits } from '../journal/ask-fields.ts';
 import { clip } from '../journal/format.ts';
 import type { Groups } from '../journal/board.ts';
 import type { LedgerItem } from '../ledger-core.ts';
-import { PRIORITIES_UNSET_LINE } from '../status-page/priorities.ts';
+import { PRIORITIES_UNSET_LINE, localDate } from '../status-page/priorities.ts';
 import type { PrioritiesState } from '../status-page/priorities.ts';
 import { weekLines } from '../status-page/week.ts';
 import type { WeekState } from '../status-page/week.ts';
@@ -18,8 +18,8 @@ export const START_MAX_LINES = 80;
 const OTHER = 'other';
 const NEEDS_TOP = 5;
 
-/** What a stream's tab holds, as counts; the notes themselves live on the tab. */
-export interface HomeCounts { context: boolean; decisions: boolean; plans: number; research: number; reviews: number; runbooks: number; epics: number; prs: number }
+/** What a stream's tab holds, as counts; the notes themselves live on the tab. `unreadable` is set when the notes could not be read, so the stream is reported rather than omitted. */
+export interface HomeCounts { context: boolean; decisions: boolean; plans: number; research: number; reviews: number; runbooks: number; epics: number; prs: number; unreadable?: string }
 export interface NeedRow { id: string; stream: string; text: string; ageDays: number | null; stakes: string }
 export interface FlightRow { id: string; stream: string; text: string; model?: string; since?: string; ticket?: string }
 export interface DoneRow { stream: string; count: number; items: { id: string; text: string }[] }
@@ -33,7 +33,7 @@ export interface StartHere {
   inFlight: FlightRow[]; queued: Record<string, number>;
   blocked: (FlightRow & { gate?: string })[];
   done: DoneRow[]; answered: AnsweredRow[];
-  /** Null when no vault root is set: the notes were not read, which is not the same as none. */
+  /** Null when no vault root is set: the notes were not read, which is not the same as none. A key with `unreadable` set could not be read and is still listed. */
   where: Record<string, HomeCounts> | null;
 }
 
@@ -47,6 +47,19 @@ const shift = (day: string, by: number): string => { const d = new Date(`${day}T
 export function previousWorkingDay(day: string): string {
   const dow = new Date(`${day}T00:00:00Z`).getUTCDay();
   return shift(day, dow === 1 ? -3 : dow === 0 ? -2 : -1);
+}
+
+/** The day the view is for: the local calendar day in `tz`, never the UTC date of `now`. */
+export function viewDay(now: Date, tz: string): string {
+  return localDate(now, tz);
+}
+
+const EMPTY_COUNTS = { context: false, decisions: false, plans: 0, research: 0, reviews: 0, runbooks: 0, epics: 0, prs: 0 };
+
+/** Counts for a stream whose notes could not be read. The reason is one line, so the view can name the stream instead of dropping it. */
+export function unreadableHome(reason: string): HomeCounts {
+  const why = reason.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return { ...EMPTY_COUNTS, unreadable: why || 'unreadable' };
 }
 
 /** What a stream's home base holds, as counts. */
@@ -92,6 +105,7 @@ const ago = (iso: string | undefined, now: Date): string => { const d = ageDays(
 const tag = (stream: string): string => (stream === OTHER ? '' : ` [${stream}]`);
 
 function whereLine(stream: string, c: HomeCounts): string {
+  if (c.unreadable) return `- ${stream}: notes could not be read (${one(c.unreadable, 120)})`;
   const parts = [c.context ? 'CONTEXT' : 'no CONTEXT', c.decisions ? 'DECISIONS' : '', c.epics ? `${c.epics} epic${c.epics === 1 ? '' : 's'}` : '', c.plans ? `${c.plans} plans` : '', c.runbooks ? `${c.runbooks} runbooks` : '', c.research ? `${c.research} research` : '', c.reviews ? `${c.reviews} reviews` : '', c.prs ? `${c.prs} PRs` : ''];
   return `- ${stream}: ${parts.filter(Boolean).join(' · ')}`;
 }

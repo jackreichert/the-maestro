@@ -158,7 +158,7 @@ import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, stale
 import { fetchLive, selfReviewSummary, snapshotPath, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
-import { buildStart, homeCounts, startLines } from './lib/start/start-here.ts';
+import { buildStart, homeCounts, startLines, unreadableHome, viewDay } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
 import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
@@ -1649,7 +1649,10 @@ function homesFor(names: string[], dirPath: string): Record<string, HomeCounts> 
         try {
             const home = buildHome({ vault, project, statusDir: dirPath, page: pageConfig(project, dirPath), vaultRoot: VAULT_ROOT }, name);
             if (home) out[name] = homeCounts(home);
-        } catch { /* a stream whose notes cannot be read is left off the list, not a failed page */ }
+        } catch (e) {
+            // A stream whose notes cannot be read is named, not dropped, and does not fail the page.
+            out[name] = unreadableHome(errorMessage(e));
+        }
     }
     return out;
 }
@@ -1658,12 +1661,13 @@ function homesFor(names: string[], dirPath: string): Record<string, HomeCounts> 
 function cmdStartHere() {
     const g = groups();
     const dirPath = statusDir();
-    const local = priorityDay();
+    const nowAt = new Date();
+    const local = viewDay(nowAt, WATCH_TZ);
     const priorities = dirPath ? readPriorities(dirPath, local) : { state: 'missing' as const };
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
-    const s = buildStart(g, { day: today(), week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), now: new Date() });
+    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), now: nowAt });
     if (asJson) console.log(JSON.stringify(s, null, 2));
-    else startLines(s, new Date(), { stream: arg('stream') || undefined }).forEach((l) => console.log(l));
+    else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(l));
 }
 
 /** `week set "<goal> | <Stream>" ...` and `week show`: this week's goals in <status dir>/week.md. */
