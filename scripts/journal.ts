@@ -47,7 +47,7 @@
  *   journal.ts status [--full]               what is open + done today, with usage marks
  *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the review queue, the `Loop:` line (running, quiet, STALLED, DOWN or NOT INSTALLED, with age; silent when no loop is set up or required) and the Session line
  * (with the Podium configured, --footer ends with `**Podium:** <uri>`)
- *   journal.ts review-queue [--cap N] [--json]   the dispatch gate: open non-draft PRs awaiting review against review_queue_cap (default 4). Exit 0 room, 1 full, 2 cannot answer or bad --cap (treat as full)
+ *   journal.ts review-queue [--cap N] [--json]   the push gate: open non-draft PRs awaiting review against review_queue_cap (default 4). Exit 0 room, 1 full, 2 cannot answer or bad --cap (treat as full)
  *   journal.ts standup [--date YYYY-MM-DD]   end-of-day summary for the team, no usage marks
  *   journal.ts roll [--date YYYY-MM-DD] [--strict] [--container <dir>] [--no-worktree-sweep]
  *                                             first runs triage: plain roll warns about its blockers, --strict refuses (exit 1) before changing anything
@@ -732,7 +732,7 @@ function cmdStatus() {
     if (self) console.log(`  ${self.text}`);
 }
 
-/** The dispatch gate (reference/dispatch.md#review-queue-cap): a live count, the stored snapshot if GitHub fails, and an exit code the orchestrator can test. */
+/** The push gate (reference/dispatch.md#review-queue-cap): a live count, the stored snapshot if GitHub fails, and an exit code the orchestrator can test. */
 function cmdReviewQueue() {
     const capArg = arg('cap');
     if (has('cap') && !(capArg !== null && /^\d+$/.test(capArg) && Number(capArg) > 0)) { console.error('--cap must be a positive whole number.'); process.exit(2); }

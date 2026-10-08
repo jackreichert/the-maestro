@@ -1,6 +1,6 @@
 /**
  * The review queue: open, non-draft PRs of yours waiting on a human. The cap is the most the orchestrator lets pile up
- * before it stops dispatching new PR-producing work (reference/dispatch.md#review-queue-cap).
+ * before a finished branch is held as ready to push, not pushed; the work itself carries on locally (reference/dispatch.md#review-queue-cap).
  * Pure: callers hand in the PR list (a live fetch, the stored snapshot or the status page cache) and the cap (`REVIEW_QUEUE_CAP`, local-config.ts).
  * It reads no configuration, so the page renderer can import it.
  */
@@ -52,7 +52,7 @@ export type QueueReading =
 const MAX_FALLBACK_AGE_MS = 6 * 36e5;
 
 /**
- * The queue for the dispatch gate. A live read is preferred; a failed one falls back to the stored snapshot, and the reading says so,
+ * The queue for the push gate. A live read is preferred; a failed one falls back to the stored snapshot, and the reading says so,
  * and one older than six hours (or undated) is refused, so a stale count is never passed off as current. With neither, the answer is unknown (ok: false), never "empty".
  */
 export function readQueue(src: QueueSources, cap: number, now: Date = new Date(), selfReview: readonly string[] = []): QueueReading {
@@ -70,9 +70,9 @@ export const queueExitCode = (r: QueueReading): number => (!r.ok ? 2 : r.queue.f
 
 /** The one-line answer, plus the instruction when full or unknown. */
 export function queueText(r: QueueReading): string[] {
-  if (!r.ok) return [r.error, 'Treat the queue as full: dispatch only fixes to PRs already open until it can be read.'];
+  if (!r.ok) return [r.error, 'Treat the queue as full: hold pushes of new PRs (keep working locally) until it can be read.'];
   const where = r.source === 'live' ? 'live' : `stored snapshot ${r.takenAt ?? 'of unknown age'}; live read failed: ${r.liveError}`;
-  return [`${reviewQueueLine(r.queue)} (${where})`, ...(r.queue.full ? ['Queue full: dispatch no new PR-producing work except fixes to PRs already open.'] : [])];
+  return [`${reviewQueueLine(r.queue)} (${where})`, ...(r.queue.full ? ['Queue full: hold pushes of new PRs (keep working locally); fixes to PRs already open still go out.'] : [])];
 }
 
 /** `5h`, `3d`: how old a snapshot is, for the board line; empty when it is under an hour old or its time is unknown (the board reads it without a network call, so only a stale one is flagged). */

@@ -57,7 +57,7 @@ test('readQueue prefers the live read and exits 0 with room', () => {
 test('readQueue exits 1 and names the rule when the queue is full', () => {
   const r = readQueue({ fetchLive: live(false, false, false, false), readStored: () => null }, 4);
   assert.equal(queueExitCode(r), 1);
-  assert.match(queueText(r).join('\n'), /review queue: 4 of 4 \(full\) \(live\)\nQueue full: dispatch no new PR-producing work except fixes/);
+  assert.match(queueText(r).join('\n'), /review queue: 4 of 4 \(full\) \(live\)\nQueue full: hold pushes of new PRs \(keep working locally\); fixes/);
 });
 
 test('a failed live read falls back to the stored snapshot and says so', () => {
@@ -115,7 +115,7 @@ test('a PR with no repo is counted even when self-review repos are set', () => {
   assert.equal(reviewQueue([{ isDraft: false }], 4, ['me/*']).count, 1);
 });
 
-test('the dispatch gate and the board line apply the same exclusion', () => {
+test('the push gate and the board line apply the same exclusion', () => {
   const stored = { prs: [inRepo('org/a'), inRepo('me/tool'), inRepo('me/tool')], takenAt: '2026-01-01T00:00:00Z' };
   const now = new Date('2026-01-01T00:30:00Z');
   const fail = { fetchLive: () => { throw new Error('offline'); }, readStored: () => stored };
