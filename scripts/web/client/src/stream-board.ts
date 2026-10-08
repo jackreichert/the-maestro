@@ -104,6 +104,8 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, ca
     return card;
   });
   const list = h('div', { class: 'asks', role: 'list', id }, ...cards);
+  // One answer form open at a time: opening an ask folds the others in this list (their drafts stay).
+  list.addEventListener('ask-open', (e) => { for (const c of cards) if (c !== e.target) c.fold(); });
   const hidden = cards.slice(cap);
   if (hidden.length === 0) return { list, more: null };
   // One name in both states (APG disclosure): aria-expanded carries the state, and the chevron turns to show it.
