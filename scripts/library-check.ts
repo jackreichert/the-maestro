@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * LIBRARY CHECK: the runtime check that a library page keeps the template (reference/library.md): required frontmatter, the controlled
- * vocabulary (kind, status, repo, components), a verified-at date, a dated evidence on every fact, a size budget, links that resolve, and no
+ * vocabulary (kind, status, repo, components), a verified-at date, a dated evidence on every fact, a size budget, links (frontmatter and body wikilinks) that resolve to a note in the vault, and no
  * secret or PHI shape anywhere in the file.
  *
  *   node scripts/library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]
@@ -15,7 +15,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'n
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_ROOT } from './local-config.ts';
-import { list, parsePage } from './lib/library/page.ts';
+import { linkTarget, list, parsePage } from './lib/library/page.ts';
 import { checkPage } from './lib/library/rules.ts';
 import type { Finding } from './lib/library/rules.ts';
 import type { Scanner } from './lib/library/scan.ts';
@@ -70,6 +70,20 @@ export function discover(vault: string, repo?: string): string[] {
   }));
 }
 
+/** Every note and file in the vault outside hidden folders, as the names a link can use: a note by its base name, any other file by its full name. Real directories only. */
+export function vaultNames(vault: string): Set<string> {
+  const names = new Set<string>();
+  const walk = (rel: string): void => {
+    for (const e of readdirSync(join(vault, rel), { withFileTypes: true })) {
+      if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+      if (e.isDirectory()) walk(join(rel, e.name));
+      else if (e.isFile()) names.add(e.name.endsWith('.md') ? basename(e.name, '.md') : e.name);
+    }
+  };
+  walk('');
+  return names;
+}
+
 /** The component list a repo declares in `Projects/<repo>/INDEX.md`, or null when there is none. */
 export function componentsOf(vault: string, repo: string): Set<string> | null {
   const file = join(vault, 'Projects', repo, 'INDEX.md');
@@ -81,11 +95,13 @@ export function componentsOf(vault: string, repo: string): Set<string> | null {
 /** The report for each page. `pages` are vault-relative paths. */
 export function checkVault(vault: string, pages: string[], scan?: Scanner): PageReport[] {
   const repos = new Set(dirs(join(vault, 'Projects')));
-  const names = new Set(discover(vault).map((p) => basename(p, '.md')));
+  let names: Set<string> | undefined;
   const resolves = (raw: string): boolean => {
-    const ref = raw.replace(/^\[\[|\]\]$/g, '').replace(/\|.*$/, '').replace(/\.md$/, '');
-    if (ref.split('/').includes('..') || isAbsolute(ref)) return false;
-    return ref.includes('/') ? insideVault(vault, `${ref}.md`) : names.has(ref);
+    const ref = linkTarget(raw);
+    if (!ref || ref.split('/').includes('..') || isAbsolute(ref)) return false;
+    if (ref.includes('/')) return insideVault(vault, `${ref}.md`) || insideVault(vault, ref);
+    names ??= vaultNames(vault);
+    return names.has(ref);
   };
   return pages.map((path) => {
     const project = path.split('/')[1] ?? '';

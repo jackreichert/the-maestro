@@ -40,3 +40,23 @@ export function parsePage(path: string, text: string): Page {
 export const text = (p: Page, key: string): string => { const v = p.fields.get(key); return typeof v === 'string' ? v : ''; };
 /** A field as a list (a lone string is a one-item list, absent is empty). */
 export const list = (p: Page, key: string): string[] => { const v = p.fields.get(key); return Array.isArray(v) ? v : v ? [v] : []; };
+
+/** A wikilink as written (`[[note#heading|alias]]`, `[[folder/note.md]]`) reduced to what it points at: no alias, no heading or block anchor, no `.md`. Empty for a link to a heading in the same page. */
+export const linkTarget = (raw: string): string => raw.replace(/^\[\[|\]\]$/g, '').replace(/\|.*$/, '').replace(/#.*$/, '').trim().replace(/\.md$/, '');
+
+/** The wikilinks in the body (embeds included) with their 1-based file lines, anchors and aliases removed. Fenced and inline code are not links. */
+export function bodyLinks(p: Page): { line: number; target: string }[] {
+  const out: { line: number; target: string }[] = [];
+  let fence = '';
+  p.lines.forEach((t, i) => {
+    if (i < p.bodyStart) return;
+    const f = t.match(/^\s*(```|~~~)/);
+    if (f) { fence = fence ? (fence === f[1] ? '' : fence) : (f[1] as string); return; }
+    if (fence) return;
+    for (const m of t.replace(/`[^`]*`/g, '').matchAll(/\[\[([^\]\n]+?)\]\]/g)) {
+      const target = linkTarget(m[1] as string);
+      if (target) out.push({ line: i + 1, target });
+    }
+  });
+  return out;
+}

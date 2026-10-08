@@ -1,5 +1,5 @@
 /** The library-check rules, one object per rule, so adding a rule is adding a row. Each returns the problems it finds in one page. */
-import { list, text } from './page.ts';
+import { bodyLinks, list, text } from './page.ts';
 import type { Page } from './page.ts';
 import { scanText } from './scan.ts';
 import type { Scanner } from './scan.ts';
@@ -20,7 +20,7 @@ export interface Context {
   repos: ReadonlySet<string>;
   /** The component list of the page's repo (`Projects/<repo>/INDEX.md`), or null when that file has none. */
   components: ReadonlySet<string> | null;
-  /** Whether a link target (a vault path or a page name) resolves to a page. */
+  /** Whether a link target (a vault path or a note name; the page checks frontmatter links and body wikilinks with it) resolves to a note in the vault. */
   resolves: (ref: string) => boolean;
   scan: Scanner;
 }
@@ -110,6 +110,7 @@ export const RULES: readonly Rule[] = [
     check: (p, c) => [
       ...(text(p, 'status') === 'superseded' && !list(p, 'superseded-by').length ? [found('links', 'status is superseded but superseded-by is empty')] : []),
       ...['supersedes', 'superseded-by', 'depends-on'].flatMap((k) => list(p, k).filter((ref) => !c.resolves(ref)).map((ref) => found('links', `${k} ${show(ref, c.scan)} does not resolve to a page`))),
+      ...bodyLinks(p).filter((l) => !c.resolves(l.target)).map((l) => found('links', `link ${show(l.target, c.scan)} does not resolve to a note in the vault`, l.line)),
     ],
   },
   {

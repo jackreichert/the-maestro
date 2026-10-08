@@ -154,3 +154,16 @@ test('paths and links cannot reach outside the vault', () => {
   assert.equal(run(root, '--repo', '../..').status, 2);
   assert.ok(problems(vault({ [PAGE]: frontmatter({ 'depends-on': '[[../../x]]' }) + BODY })).some((f) => /depends-on .* does not resolve/.test(f.message)));
 });
+
+test('a body wikilink to no note fails the real CLI, naming the line; aliases, anchors, paths and code spans are handled', () => {
+  const link = (l: string) => vault({ [PAGE]: `${frontmatter()}${BODY}\n## Links\n\n${l}\n`, [`Projects/${REPO}/DECISIONS.md`]: '# d\n', [`Projects/${REPO}/Research/orchard.md`]: '# r\n' });
+  const bad = run(link('See [[nowhere-at-all]].'));
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /orchard-sync\.md:\d+ {2}links {2}link "nowhere-at-all" does not resolve/);
+  for (const ok of ['[[DECISIONS]]', '[[DECISIONS#Heading|the log]]', '[[DECISIONS|the log]]', `[[Projects/${REPO}/Research/orchard]]`, `[[Projects/${REPO}/Research/orchard.md#x]]`, '[[#a heading on this page]]', '`[[nowhere-in-code]]`', '```\n[[nowhere-in-fence]]\n```']) {
+    assert.equal(run(link(ok)).status, 0, ok);
+  }
+  for (const nope of ['[[nowhere#Heading|alias]]', '[[../../escape]]', `[[Projects/${REPO}/Research/missing]]`, '![[picture.png]]']) {
+    assert.equal(run(link(nope)).status, 1, nope);
+  }
+});
