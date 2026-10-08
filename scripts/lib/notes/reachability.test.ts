@@ -90,3 +90,14 @@ test('a note with no frontmatter date is dated by its file, and windowStart read
   assert.equal(windowStart('ALL', now), undefined);
   assert.equal(windowStart('soon', now), null);
 });
+
+test('windowStart rejects a future date and an Nd above 3660, using the injected now', () => {
+  const now = new Date('2026-10-07T12:00:00Z');
+  assert.equal(windowStart('2099-01-01', now), null);
+  assert.equal(windowStart('2026-10-08', now), null);
+  assert.equal(windowStart('2026-10-07', now), '2026-10-07');
+  assert.equal(windowStart('365d', now), '2025-10-07');
+  assert.equal(windowStart('3660d', now), '2016-09-29');
+  assert.equal(windowStart('3661d', now), null);
+  assert.equal(windowStart('all', now), undefined);
+});
