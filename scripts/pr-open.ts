@@ -16,7 +16,8 @@
  *
  * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
  * never calls gh, unless the repo's origin matches `waive_size_gate_owners` (default none): then it prints a
- * one-line waiver note and carries on. The waiver comes from local-config only; there is no flag for it. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
+ * one-line waiver note and carries on. The waiver comes from local-config (or its MAESTRO_WAIVE_SIZE_GATE_OWNERS variable, like every other gate
+ * setting); there is no flag for it. When it applies, gh is pinned to the origin repo with --repo. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
  * be turned off; no other gh flag passes through. --dry-run prints the gh command instead of running it.
  * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
  * opened but its file links could not be expanded (run pr-guide-links.ts).
@@ -30,7 +31,7 @@ import { bodyProblems, type BodyContext } from './pr-body.ts';
 import { PROTECTED_BRANCHES, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
-import { repoSlug, smellsProblems } from './pr-smells.ts';
+import { smellsProblems } from './pr-smells.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -104,18 +105,21 @@ function main(): void {
   const gate = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, ...(headOf(o) ? ['--head', headOf(o)] : [])], { encoding: 'utf8' });
   process.stdout.write(gate.stdout || '');
   const overBudget = gate.status === 1;
-  if (overBudget && sizeGateWaived(o.repo)) {
-    console.log(`pr-open: size gate waived for ${repoSlug(originUrl(o.repo))} (waive_size_gate_owners); the summary above is informational.`);
+  const waivedSlug = overBudget ? sizeGateWaiver(o.repo) : '';
+  if (overBudget && waivedSlug) {
+    console.log(`pr-open: size gate waived for ${waivedSlug} (waive_size_gate_owners); the summary above is informational.`);
   } else if (overBudget) {
     console.error('pr-open: refused, the PR is over the size budget. Report a split plan (which files and lines go in which PR, in merge order) instead of opening; mechanical changes go in their own PR.');
     process.exit(1);
   } else if (gate.status !== 0) { console.error(gate.stderr || 'pr-open: pr-size failed'); process.exit(2); }
   checkLinkPaths(o, body);
   const gh = process.env.MAESTRO_GH_BIN || 'gh';
-  const args = ghArgs(o);
+  // A waiver was decided for the origin's slug, so gh is pinned to that same repo (never GH_REPO, an upstream remote or a gh default).
+  const args = waivedSlug ? [...ghArgs(o), '--repo', waivedSlug] : ghArgs(o);
+  const ghEnv = waivedSlug ? { ...process.env, GH_REPO: '' } : process.env;
   if (o.dryRun) { console.log(`${gh} ${args.join(' ')}`); return; }
-  if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit' }).status ?? 2);
-  const r = spawnSync(gh, args, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8' });
+  if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit', env: ghEnv }).status ?? 2);
+  const r = spawnSync(gh, args, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8', env: ghEnv });
   process.stdout.write(r.stdout || '');
   if (r.status !== 0) process.exit(r.status ?? 2);
   const pr = /\/pull\/(\d+)/.exec(r.stdout || '')?.[1];
@@ -125,10 +129,15 @@ function main(): void {
 
 const originUrl = (repo: string): string => spawnSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout || '';
 
-/** True when the repo's origin is a GitHub repo matching `waive_size_gate_owners`. Fails closed: no setting, or an origin that is not a readable GitHub url, means the gate holds. */
-export function sizeGateWaived(repo: string, globs: string[] = WAIVE_SIZE_GATE_OWNERS): boolean {
-  const slug = repoSlug(originUrl(repo)).toLowerCase();
-  return slug !== '' && globs.some((g) => globToRegExp(g.toLowerCase()).test(slug));
+/** `owner/name` from a github.com origin url (https, ssh or scp form), host anchored; '' for anything else. */
+export function githubSlug(url: string): string {
+  return /^(?:https?:\/\/(?:[^@/\s]+@)?|ssh:\/\/git@|git@)github\.com[:/]([^/\s?#]+\/[^/\s?#]+?)(?:\.git)?\/?$/i.exec(url.trim())?.[1] ?? '';
+}
+
+/** The `owner/name` the size gate is waived for, or '' when it is not. Fails closed: no setting, or an origin that is not a github.com url, means the gate holds. */
+export function sizeGateWaiver(repo: string, globs: string[] = WAIVE_SIZE_GATE_OWNERS): string {
+  const slug = githubSlug(originUrl(repo));
+  return slug && globs.some((g) => globToRegExp(g.toLowerCase()).test(slug.toLowerCase())) ? slug : '';
 }
 
 /** Refuses before creating anything when a `{{file:...}}` token names a path that is not in the diff. */

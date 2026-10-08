@@ -456,3 +456,24 @@ test('private words: the default list refuses ledger but lets the public product
     const custom = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists'))], { MAESTRO_PR_BODY_PRIVATE_WORDS: 'Podium' });
     assert.equal(custom.status, 1, 'an install can still list it');
 });
+
+test('size waiver: gh is pinned to the checked origin repo, and a spoofed origin url is not waived', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'example-owner/widgets');
+    git(f.repo, 'remote', 'add', 'upstream', 'https://github.com/other-org/widgets.git');
+    const r = open(f, ['--head', 'feature'], { ...WAIVED, GH_REPO: 'other-org/widgets' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(readFileSync(f.log, 'utf8'), /--repo example-owner\/widgets/);
+    for (const url of ['https://notgithub.com/example-owner/x', 'https://evil.example/github.com/example-owner/x', 'https://github.com/other-org/x?github.com/example-owner/y']) {
+        const s = fixture({ 'src/big.py': lines(500) });
+        git(s.repo, 'remote', 'add', 'origin', url);
+        assert.equal(open(s, ['--head', 'feature'], WAIVED).status, 1, url);
+        assert.ok(!existsSync(s.log), url);
+    }
+});
+
+test('size waiver: an owner wildcard in the setting is ignored, so it cannot waive everything', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'other-org/widgets');
+    assert.equal(open(f, ['--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: '*, */*' }).status, 1);
+});

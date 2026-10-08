@@ -188,7 +188,7 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
 
 test('waive_size_gate_owners: default none, a bare owner means owner/*, env wins over the file', () => {
     assert.equal(show().WAIVE_SIZE_GATE_OWNERS, '(unset)');
-    write(join(home, '.config', 'the-maestro', 'config.md'), block('waive_size_gate_owners: example-owner, other/tools-*'));
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('waive_size_gate_owners: example-owner, other/tools-*, *, */x'));
     assert.equal(show().WAIVE_SIZE_GATE_OWNERS, 'example-owner/*, other/tools-*');
     assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, 'solo/*');
 });

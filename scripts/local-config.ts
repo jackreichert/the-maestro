@@ -350,8 +350,8 @@ export const PR_MECHANICAL_GLOBS = globList('MAESTRO_PR_MECHANICAL_GLOBS', 'pr_m
 /** Smells gate (pr-open.ts, pr-smells.ts): GitHub `owner/name` globs of repos where a PR needs a recorded smells run, comma-separated. Default none, so the gate is off until a repo is named. */
 export const PR_SMELLS_REPOS = globList('MAESTRO_PR_SMELLS_REPOS', 'pr_smells_repos');
 
-/** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`. Default none, so every repo keeps the gate until it is named here. */
-export const WAIVE_SIZE_GATE_OWNERS = globList('MAESTRO_WAIVE_SIZE_GATE_OWNERS', 'waive_size_gate_owners').map((g) => (g.includes('/') ? g : `${g}/*`));
+/** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can waive every repo. Default none, so every repo keeps the gate until it is named here. */
+export const WAIVE_SIZE_GATE_OWNERS = globList('MAESTRO_WAIVE_SIZE_GATE_OWNERS', 'waive_size_gate_owners').filter((g) => !g.split('/')[0]!.includes('*')).map((g) => (g.includes('/') ? g : `${g}/*`));
 
 /** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pick('MAESTRO_PR_BODY_CHECK_PRIVATE', 'pr_body_check_private'));
