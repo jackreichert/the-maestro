@@ -1,5 +1,5 @@
 /** The words and counts of the stream home base: progress sentences, the Clear line, row notes. Pure and DOM-free so node:test covers it. */
-import type { HomeEpic, HomeTicket, StreamHome } from './types.ts';
+import type { HomeEpic, HomeTicket, RailGroup, RailLink, StreamHome } from './types.ts';
 
 /** An epic or ticket this many days without a change is called quiet, as a fact about its note. */
 export const QUIET_DAYS = 14;
@@ -112,4 +112,35 @@ export function epicUnknownsLabel(n: number): string | null {
 /** "1 awaits you" or "2 await you"; null when none. */
 export function awaitingLabel(n: number): string | null {
   return n > 0 ? `${n} ${plural(n, 'awaits', 'await')} you` : null;
+}
+
+/** The first sentence of a "What done looks like" text, and whether more follows it. Cut at a full stop followed by a space; a list marker such as "1." is not a stop. */
+export function firstSentence(text: string): { head: string; more: boolean } {
+  const flat = text.trim().replace(/\s+/g, ' ');
+  const m = /^(.*?(?<!\b\d{1,2})[.!?])(?=\s|$)/.exec(flat);
+  const head = m?.[1] ?? flat;
+  return { head, more: head.length < flat.length };
+}
+
+/** The rail's groups in the order the brief gives them. The PR group is left out: the Pull requests section already lists them with their status. */
+const RAIL_ORDER: { group: RailGroup['group']; title: string }[] = [
+  { group: 'pinned', title: 'Pinned' }, { group: 'epics', title: 'Epics' }, { group: 'docs', title: 'Docs' }, { group: 'runbooks', title: 'Runbooks' },
+];
+
+/** The rail groups to draw, in order, empty ones left out. */
+export function railGroups(groups: RailGroup[]): { title: string; items: RailLink[]; more: number }[] {
+  return RAIL_ORDER.flatMap(({ group, title }) => {
+    const g = groups.find((x) => x.group === group);
+    return g && g.items.length > 0 ? [{ title, items: g.items, more: g.more }] : [];
+  });
+}
+
+/** How many links the rail holds, for its "Links (n)" summary. */
+export function railCount(groups: RailGroup[]): number {
+  return railGroups(groups).reduce((n, g) => n + g.items.length + g.more, 0);
+}
+
+/** What a link is, in words, so an icon never stands alone: "note" opens in Obsidian, "tracker" is the ticket system, "web" is any other site. */
+export function kindWord(kind: RailLink['kind']): string {
+  return kind === 'note' ? 'note' : kind === 'tracker' ? 'tracker' : kind === 'pr' ? 'pull request' : 'web';
 }

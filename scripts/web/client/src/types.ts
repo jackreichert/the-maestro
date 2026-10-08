@@ -100,12 +100,18 @@ export interface HomeEpic {
 /** Something the files cannot tell, with the fix in its text. `epic` names the epic block it counts toward. */
 export interface HomeUnknown { kind: string; text: string; ref?: Ref; epic?: string }
 
+/** One link in the rail. The server builds `url` (http, https or `obsidian://open`); the client re-checks it before it becomes an href. */
+export interface RailLink { label: string; kind: 'note' | 'tracker' | 'pr' | 'web'; url: string; meta?: string }
+export interface RailGroup { group: 'pinned' | 'epics' | 'docs' | 'prs' | 'runbooks'; items: RailLink[]; more: number }
+
 /** The part of `GET /api/streams/:name/home` this client draws; fields it does not read are left out here and ignored on arrival. */
 export interface StreamHome {
   stream: string;
   epics: HomeEpic[];
   loose: HomeTicket[];
   left: { inProgress: HomeTicket[]; blocked: HomeTicket[]; notStarted: HomeTicket[]; truncated: number };
+  doneMeans: { epic: string; text: string }[];
+  links: RailGroup[];
   unknowns: HomeUnknown[];
   freshness: { prs: { fetchedAt: string | null; stale: boolean } };
 }
