@@ -6,8 +6,9 @@ import { prChips } from './pr-chips.ts';
 import { ago, clockTime, oldestFirst } from './glance.ts';
 import { gateView } from './gate.ts';
 import { HOME_CSS, epicStrip, leftBody, unknownsFold } from './home-view.ts';
-import { clearLine, leftGroups, leftHeading } from './home-text.ts';
+import { clearAgainstHome, clearLine, leftGroups, leftHeading } from './home-text.ts';
 import type { GateView } from './gate.ts';
+import type { ClearPart } from './home-text.ts';
 import type { AskCard, DoneItem, PodiumState, PrCard, StreamHome, WorkItem } from './types.ts';
 
 const CSS = `${BASE_CSS}${UI_CSS}
@@ -165,7 +166,9 @@ export class StreamBoard extends HTMLElement {
   #live = false;
   // Where the home base is drawn. It arrives after the board and refreshes on its own, so filling these never rebuilds the ask rows.
   #filled = false;
-  #slots: { stand: HTMLElement; left: HTMLElement; below: HTMLElement } | null = null;
+  #slots: { stand: HTMLElement; left: HTMLElement; below: HTMLElement; clear: HTMLElement } | null = null;
+  // The ledger's empty sections; the Clear line is worded from these once the home says what it lists (see #fillHome).
+  #clearParts: ClearPart[] = [];
 
   constructor() {
     super();
@@ -198,6 +201,10 @@ export class StreamBoard extends HTMLElement {
     slots.stand.replaceChildren(...(home ? [section({ title: 'Where it stands', n: 0, tone: 'neutral', empty: '' }, epicStrip(home))] : []));
     slots.left.replaceChildren(...(home && groups && left ? [section({ title: leftHeading(groups, home.epics), n: 0, tone: 'neutral', empty: '' }, left)] : []));
     slots.below.replaceChildren(...(home ? [unknownsFold(home)].filter((n): n is HTMLElement => n !== null) : []));
+    // The Clear line must not say "nothing blocked" under a What's left that lists blocked tickets.
+    const clear = clearLine(clearAgainstHome(this.#clearParts, groups));
+    slots.clear.textContent = clear ?? '';
+    slots.clear.hidden = clear === null;
   }
 
   #render(): void {
@@ -216,16 +223,16 @@ export class StreamBoard extends HTMLElement {
     const frag = fragmentFor(st.fragments, stream);
     const md = frag ? h('md-fragment') : null;
     if (md && frag) md.markdown = frag;
-    const clear = clearLine([
-      { phrase: 'nothing blocked', empty: blocked.length === 0 },
+    this.#clearParts = [
+      { phrase: 'nothing blocked', empty: blocked.length === 0, group: 'blocked' },
       { phrase: 'no open pull requests', empty: prs.length === 0 },
-      { phrase: 'nothing in flight', empty: working.length === 0 },
+      { phrase: 'nothing in flight', empty: working.length === 0, group: 'inProgress' },
       { phrase: 'nothing queued', empty: queued.length === 0 },
       { phrase: 'nothing shipped today', empty: done.length === 0 },
       { phrase: 'nothing deferred', empty: deferred.length === 0 },
-    ]);
+    ];
     const shown = (n: number, make: () => HTMLElement): HTMLElement | null => (n > 0 ? make() : null);
-    const slots = { stand: h('div', { class: 'stand' }), left: h('div'), below: h('div', { class: 'below' }) };
+    const slots = { stand: h('div', { class: 'stand' }), left: h('div'), below: h('div', { class: 'below' }), clear: h('p', { class: 'clear', hidden: true }) };
     this.#slots = slots;
     this.#filled = false;
     this.#root.replaceChildren(slots.stand, h('div', { class: 'board' },
@@ -234,7 +241,7 @@ export class StreamBoard extends HTMLElement {
         shown(blocked.length, () => section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: '' }, itemRows(blocked, ctx))),
         slots.left,
         shown(prs.length, () => section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: '' }, prList(prs))),
-        clear ? h('p', { class: 'clear' }, clear) : null),
+        slots.clear),
       h('div', { class: 'col' },
         shown(working.length, () => section({ title: 'In flight', n: working.length, tone: 'neutral', empty: '', quiet: true }, itemRows(working, ctx))),
         shown(queued.length, () => section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: '', quiet: true }, itemRows(queued, ctx))),

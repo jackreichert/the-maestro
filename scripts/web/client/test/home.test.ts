@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeHome } from '../src/contract.ts';
-import { awaitingLabel, barSegments, capRows, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence } from '../src/home-text.ts';
+import { awaitingLabel, barSegments, capRows, clearAgainstHome, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence } from '../src/home-text.ts';
 import { home } from './home-fixture.ts';
 
 test('the progress sentence always states its denominator, for every epic shape', () => {
@@ -43,6 +43,20 @@ test('the Clear line folds every empty section into one sentence, and is absent 
   assert.equal(clearLine([{ phrase: 'nothing blocked', empty: true }, { phrase: 'nothing queued', empty: false }, { phrase: 'nothing deferred', empty: true }]), 'Clear: nothing blocked, nothing deferred.');
   assert.equal(clearLine([{ phrase: 'nothing blocked', empty: false }]), null);
   assert.equal(clearLine([]), null);
+});
+
+test('the Clear line never claims nothing where What is left lists tickets of that kind', () => {
+  const parts = [
+    { phrase: 'nothing blocked', empty: true, group: 'blocked' as const },
+    { phrase: 'nothing in flight', empty: true, group: 'inProgress' as const },
+    { phrase: 'nothing deferred', empty: true },
+  ];
+  const base = sanitizeHome(home())!.home;
+  const t = base.left.inProgress[0]!;
+  const g = leftGroups({ ...base, left: { ...base.left, inProgress: [t], blocked: [{ ...t, id: 'avonlea-api-052', status: 'blocked' }] } });
+  assert.equal(clearLine(clearAgainstHome(parts, g)), 'Clear: nothing deferred.');
+  assert.equal(clearLine(clearAgainstHome(parts, { blocked: [], inProgress: [] })), 'Clear: nothing blocked, nothing in flight, nothing deferred.');
+  assert.equal(clearLine(clearAgainstHome(parts, null)), 'Clear: nothing blocked, nothing in flight, nothing deferred.');
 });
 
 test('what is left adds loose tickets to Not started once, and the heading says of how many', () => {

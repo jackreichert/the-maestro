@@ -76,7 +76,15 @@ export function capRows<T>(rows: T[], cap = ROW_CAP): { shown: T[]; rest: T[] } 
 }
 
 /** A section that has nothing in it, named for the Clear line ("nothing blocked"). */
-export interface ClearPart { phrase: string; empty: boolean }
+export interface ClearPart { phrase: string; empty: boolean; group?: 'blocked' | 'inProgress' }
+
+/**
+ * The ledger says a section is empty while the stream's home may still list tickets of that kind under What's left. A part
+ * tied to such a group (`group`) stops claiming "nothing" once the home lists any, so one screen never says both.
+ */
+export function clearAgainstHome(parts: ClearPart[], groups: Pick<LeftGroups, 'blocked' | 'inProgress'> | null): ClearPart[] {
+  return parts.map((p) => (p.group && groups && groups[p.group].length > 0 ? { ...p, empty: false } : p));
+}
 
 /** "Clear: nothing blocked, nothing queued." for the empty sections, or null when none is empty. Every empty list shares this one line. */
 export function clearLine(parts: ClearPart[]): string | null {
