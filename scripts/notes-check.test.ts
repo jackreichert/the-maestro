@@ -1,17 +1,18 @@
 // Run: node --test scripts/notes-check.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const JOURNAL = new URL('./journal.ts', import.meta.url).pathname;
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro'];
-function cli(world: { ledger: string; vault: string; events: string }, ...args: string[]) {
+function cli(world: { ledger: string; vault: string; events: string }, ...args: string[]) { return cliEnv(world, {}, ...args); }
+function cliEnv(world: { ledger: string; vault: string; events: string }, extra: Record<string, string>, ...args: string[]) {
   const r = spawnSync(process.execPath, [JOURNAL, ...args, '--vault', world.ledger, '--project', 'test-proj'], {
     encoding: 'utf8', cwd: tmpdir(),
-    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: world.vault, MAESTRO_STATUS_DIR: join(world.vault, 'Projects', 'test-proj', 'Status'), MAESTRO_EVENT_DIR: world.events, MAESTRO_LAUNCH_AGENTS_DIR: join(world.events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
+    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_NOTES_CHECK_SINCE: '', ...extra, VAULT_ROOT: world.vault, MAESTRO_STATUS_DIR: join(world.vault, 'Projects', 'test-proj', 'Status'), MAESTRO_EVENT_DIR: world.events, MAESTRO_LAUNCH_AGENTS_DIR: join(world.events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -65,4 +66,34 @@ test('notes-check --json is not cut off when the report is larger than a pipe bu
   assert.equal(out.code, 1);
   const report = JSON.parse(out.out).report;
   assert.equal(report.unreachable.length, 301);
+});
+
+test('the roll and the standing row leave notes older than the window alone, and notes-check --all still lists them', () => {
+  const w = world('---\nupdated: 2020-01-01\n---\n# Old plan\n');
+  put(w.vault, 'Projects/orchard/Research/dusty.md', '# Undated, written long ago\n');
+  const long = new Date('2020-01-01T00:00:00Z');
+  utimesSync(join(w.vault, 'Projects/orchard/Research/dusty.md'), long, long);
+  const hand = cli(w, 'notes-check');
+  assert.equal(hand.code, 0, hand.out + hand.err);
+  assert.match(hand.out, /0 of 1 notes .*notes dated before \d{4}-\d{2}-\d{2} are left alone \(notes-check --all/);
+  const all = cli(w, 'notes-check', '--all');
+  assert.equal(all.code, 1);
+  assert.match(all.out, /2 of 3 notes/);
+  assert.match(all.out, /Research\/dusty\.md: names no ticket/);
+  const row = cli(w, 'standing', 'done', 'notes-reachable', '--evidence', 'ran it');
+  assert.doesNotMatch(row.err, /not done: its check says/);
+  const roll = cli(w, 'roll', '--fast', '--allow-unmarked');
+  assert.equal(roll.code, 0, roll.err);
+  assert.match(roll.out, /Notes reachability: 0 of 1 notes/);
+});
+
+test('notes_check_since sets the window: a start date, all, and a bad value falls back to 30d', () => {
+  const w = world('---\nupdated: 2020-01-01\n---\n# Old plan\n');
+  assert.equal(cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: 'all' }, 'notes-check').code, 1);
+  assert.equal(cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: '2019-01-01' }, 'notes-check').code, 1);
+  assert.equal(cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: '2021-01-01' }, 'notes-check').code, 0);
+  const roll = cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: 'all' }, 'roll', '--fast', '--allow-unmarked');
+  assert.match(roll.out, /Notes reachability: 1 of 2 notes/);
+  assert.equal(cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: 'soonish' }, 'notes-check').code, 0);
+  assert.equal(cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: '2019-01-01' }, 'notes-check', '--since', '2021-01-01').code, 0, '--since beats the setting');
 });

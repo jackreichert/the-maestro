@@ -26,6 +26,8 @@ const MAX_TICKETS_PER_DOC = 10;
 
 export interface Doc {
   path: string; folder: DocFolder; title: string; status?: string; updated?: string;
+  /** The day (`YYYY-MM-DD`) the file was last written on disk; the date of a note whose frontmatter carries none. */
+  modified?: string;
   /** The project folder the note sits in. */
   project: string; kind: DocKind;
   /** The tickets the note names (`ticket`, `tickets` or `epic`), at most ten. */
@@ -81,7 +83,7 @@ export function loadDocs(reader: VaultReader, project: string): Docs {
   const add = (folder: DocFolder, path: string): void => {
     const r = reader.head(path, HEAD_BYTES, MAX_DOC_BYTES);
     if (!r.ok) { if (r.reason !== 'denied' && r.reason !== 'missing') notes.push(`${path}: ${r.reason}`); return; }
-    docs.push({ path, folder, project, ...docHeader(r.text, path.split('/').at(-1) as string, folder) });
+    docs.push({ path, folder, project, modified: new Date(r.mtimeMs).toISOString().slice(0, 10), ...docHeader(r.text, path.split('/').at(-1) as string, folder) });
   };
   for (const name of ['CONTEXT', 'DECISIONS'] as const) add(name, `Projects/${project}/${name}.md`);
   for (const folder of DOC_FOLDERS) {

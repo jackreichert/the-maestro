@@ -7,7 +7,7 @@ import { buildFixture } from '../vault/fixture.ts';
 import { validateHomes } from '../home/config.ts';
 import { docHeader } from '../home/docs.ts';
 import type { Doc, DocFolder } from '../home/docs.ts';
-import { reachability, reachabilityLines } from './reachability.ts';
+import { reachability, reachabilityLines, windowStart } from './reachability.ts';
 
 const STREAMS = ['Avonlea', 'Green Gables'];
 const fx = buildFixture();
@@ -75,4 +75,18 @@ test('the lines name the count, each note and its fix, and cap a long list with 
   assert.equal(lines.filter((l) => l.startsWith('  - ')).length, 3);
   assert.match(lines.at(-1) ?? '', /\+22 more/);
   assert.equal(reachabilityLines(run([doc('CONTEXT', [], 'CONTEXT')])).length, 1);
+});
+
+test('a note with no frontmatter date is dated by its file, and windowStart reads days, dates and all', () => {
+  const stale = { ...doc('stale', []), modified: '2020-01-01' };
+  const fresh = { ...doc('fresh', []), modified: '2026-10-01' };
+  const r = run([stale, fresh], { since: '2026-09-01' });
+  assert.deepEqual(r.unreachable.map((u) => u.path.split('/').pop()), ['fresh.md']);
+  assert.equal(r.since, '2026-09-01');
+  assert.equal(run([stale]).since, undefined);
+  const now = new Date('2026-10-07T12:00:00Z');
+  assert.equal(windowStart('30d', now), '2026-09-07');
+  assert.equal(windowStart('2026-01-02', now), '2026-01-02');
+  assert.equal(windowStart('ALL', now), undefined);
+  assert.equal(windowStart('soon', now), null);
 });

@@ -34,6 +34,7 @@ loop_patterns: loop_a, loop_b  # pgrep -f patterns `journal.ts resume` checks; o
 update_check: on               # off stops `prime` fetching this skill's own repo to report behind/ahead/diverged/dirty; default on
 auto_pull: off                 # on: `prime` fast-forwards a clean, purely-behind skill checkout (merge --ff-only only); off: never, and silences the ask; unset (the default) behaves as off but `prime` asks you to choose each session
 resume_gh: on                  # off skips `gh pr list` in `resume`; default on
+notes_check_since: 30d        # how far back the roll and the notes-reachable row look for notes no stream tab lists: 30d, YYYY-MM-DD, or all; default 30d
 ledger_git_autocommit: on      # on: `roll` commits the ledger root (if it is a git repo) after a clean `verify`; default off
 approvals_review_day: friday   # weekday the morning greeting brings the approvals digest; default friday
 watch_min_interval: 300        # PR watcher: fastest poll, seconds; never below 300; default 300
