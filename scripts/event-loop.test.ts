@@ -566,6 +566,16 @@ test('draining the digest twice with the same events leaves one inbox entry (a c
   assert.deepEqual(readDigest(dir), []);
 });
 
+test('drain with no digest file is a no-op, and a claim left by a crash is drained on the next call', () => {
+  const dir = tempDir();
+  assert.doesNotThrow(() => drainDigestToInbox(dir));
+  const e = { watch: 'prs', type: 'pr-watch', at: '2026-10-01T12:00:00.000Z', summary: 'REPLY acme/w#2 by someone: https://x.test/r', actionable: true, report: '' };
+  writeFileSync(join(dir, 'digest.jsonl.99999.drain'), `${JSON.stringify(e)}\n`);
+  drainDigestToInbox(dir);
+  assert.equal(readInbox(dir).length, 1);
+  assert.equal(existsSync(join(dir, 'digest.jsonl.99999.drain')), false);
+});
+
 test('non-serve run still exits 10 on an actionable event (the contract --serve leaves alone)', () => {
   const dir = tempDir();
   addWatch(dir, { id: 'rem', type: 'reminder', target: '2026-01-01T00:00:00Z', report: 'go' }, Date.now());

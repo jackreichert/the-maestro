@@ -25,12 +25,13 @@
  *
  * `run --serve` is the daemon mode: it never exits on an event. Each tick's events go to the event inbox (lib/event-inbox.ts,
  * <event dir>/events.jsonl) instead of the exit-10 digest, quiet hours become an in-process wait, and no registered watches just
- * means waiting. It ends only on a crash or a signal. Delivery into the inbox is exactly-once: the digest is read, appended to the
- * inbox (ids dedupe a replay), then cleared, so a crash between the last two repeats an event that the inbox drops.
+ * means waiting. It ends only on a crash or a signal. The digest is claimed, appended to the inbox (ids dedupe a replay) and then deleted, so a
+ * crash repeats an event that the inbox drops instead of losing it.
  *
  * `events` reads the inbox: `list` shows unhandled events (`--unseen` only the unseen, `--all` every one), `ack` marks them handled, and
  * `wait` blocks until an unseen actionable event exists, prints it, marks it seen and exits 10 (0 quietly at the timeout, default 6h).
- * Two waiters may both print the same event (seen is marked after printing): at-least-once, never lost; `ack` is what ends it.
+ * `wait` offers an event once: after it is printed it is `seen` and no later `wait` returns it, so a session that dies before acting must find it again with
+ * `events list` (unhandled), which is what a session start has to run before it waits. Two waiters may both print the same event (seen is marked after printing).
  *
  * Heartbeat: unless `--once`, `run` rewrites <event dir>/heartbeat.json on each tick and each sleep chunk (lib/heartbeat.ts), and sleeps in chunks of at most 60 s
  * against the wall clock (lib/wall-sleep.ts), so a lid closed mid-sleep costs under a minute, not the whole lid time.
@@ -38,7 +39,8 @@
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
@@ -56,7 +58,7 @@ import type { TypeRegistry } from './event-types/index.ts';
 import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult, Watch, WatchEvent, WatchState } from './lib/types.ts';
 import type { NotifyRun } from './lib/notify.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
-import { DEFAULT_TTL_MS, acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
+import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 
 /** What `tick` is given. Only `dir` and `types` are required. */
 export interface TickDeps {
@@ -237,13 +239,21 @@ function heartbeatWriter(dir: string, enabled: boolean): (over?: { sleepingUntil
 /** What `run` is given beyond the registry: `serve` is daemon mode, `sleep` and `signal` exist for tests (an aborted signal ends the loop, with exit 0). */
 interface RunOptions { dir: string; types: TypeRegistry; once?: boolean; serve?: boolean; pinned?: number; sleep?: (seconds: number) => Promise<void>; signal?: AbortSignal }
 
-/** Moves the digest's pending events into the inbox: append first, clear second, so a crash replays into the inbox's dedupe instead of losing events. */
+/**
+ * Moves the digest's pending events into the inbox. The digest file is claimed first (renamed to `digest.jsonl.<pid>.drain`), appended from there and
+ * only then deleted, so the digest command or another reader that takes the file first cannot make this throw or lose events: whoever wins the rename
+ * has them. A claim left by a crash is drained again on the next call (ids dedupe the replay). Only the loop, under its lock, drains.
+ */
 export function drainDigestToInbox(dir: string): void {
-  const pending = readDigest(dir);
-  if (!pending.length) return;
-  const { added, duplicates, refused } = appendEvents(dir, pending);
-  readDigest(dir, { consume: true });
-  console.error(`inbox: ${added} added, ${duplicates} already there${refused ? `, ${refused} refused` : ''}`);
+  const live = paths(dir).digest;
+  try { renameSync(live, `${live}.${process.pid}.drain`); } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+  const claims = readdirSync(dir).filter((f) => f.startsWith(`${basename(live)}.`) && f.endsWith('.drain')).map((f) => join(dir, f));
+  for (const claim of claims) {
+    const pending = readFileSync(claim, 'utf8').split('\n').flatMap((l) => { try { return l ? [JSON.parse(l) as DigestEvent] : []; } catch { return []; } });
+    const { added, duplicates, refused } = appendEvents(dir, pending);
+    rmSync(claim, { force: true });
+    if (pending.length) console.error(`inbox: ${added} added, ${duplicates} already there${refused ? `, ${refused} refused` : ''}`);
+  }
 }
 
 /** Between ticks. Serve mode waits out quiet hours here (one chunk, then it ticks again) instead of exiting. Returns false when the loop should end. */
