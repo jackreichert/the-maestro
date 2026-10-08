@@ -27,7 +27,7 @@ components: [orchard-sync]  # each one is in the repo's INDEX.md list
 status: current             # current | stale | superseded
 verified-at: 2026-10-08     # YYYY-MM-DD, optionally followed by @<sha>
 verify-how: "read packages/orchard/src/sync.ts:40-52"   # the command or file:line that re-checks it
-composed-by: composer       # who wrote it; the composer is the only writer
+composed-by: composer       # must be exactly `composer`; library-check rejects any other value
 ticket: none
 sources: []                 # optional: learned ids behind the page
 depends-on: []              # optional: pages this one relies on
@@ -70,7 +70,7 @@ A page stays under 150 lines, and its History is never longer than its Facts.
 
 ## What a page never holds
 
-No secret (a key, token, password, connection string with credentials, or an env variable followed by its value: name the variable, never the value), no PHI, and no status ("PR merged"). `library-check` refuses the first two by pattern; the pattern list is a floor, not a proof, so write systems, ids and counts only.
+No secret (a key, token, password, connection string with credentials, or an env variable followed by its value: name the variable, never the value), no PHI, and no status ("PR merged"). `library-check` refuses the first two by pattern (it runs after a page is written, so it flags a page; it does not stop a write); the pattern list is a floor, not a proof, so write systems, ids and counts only.
 
 ## Checking
 

@@ -207,3 +207,9 @@ test('a frontmatter key written twice fails the real CLI at the second line inst
   assert.match(r.stdout, /orchard-sync\.md:11 {2}frontmatter {2}field "kind" is written twice/);
   assert.equal(run(vault()).status, 0);
 });
+
+test('composed-by must be the composer: any other writer fails the real CLI', () => {
+  const r = run(vault({ [PAGE]: frontmatter({ 'composed-by': 'a human' }) + BODY }));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /vocabulary {2}composed-by must be "composer"/);
+});

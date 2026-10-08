@@ -7,6 +7,7 @@ import type { Scanner } from './scan.ts';
 export const KINDS = ['how-to', 'how-it-works', 'runbook', 'decision', 'gotcha', 'tool'] as const;
 export const STATUSES = ['current', 'stale', 'superseded'] as const;
 export const REQUIRED_FIELDS = ['type', 'kind', 'repo', 'stream', 'components', 'status', 'verified-at', 'verify-how', 'composed-by'] as const;
+export const COMPOSER = 'composer';
 export const MAX_LINES = 150;
 const VERIFIED_AT = /^\d{4}-\d{2}-\d{2}(@[0-9a-f]{7,40})?$/;
 const FACT_END = /\(verified \d{4}-\d{2}-\d{2}, [^)]*\S[^)]*\)\.?\s*$/;
@@ -60,6 +61,7 @@ export const RULES: readonly Rule[] = [
     id: 'vocabulary',
     check: (p) => [
       ...(text(p, 'kind') && !oneOf(text(p, 'kind'), KINDS) ? [found('vocabulary', `kind is not one of ${KINDS.join(', ')}`)] : []),
+      ...(text(p, 'composed-by') && text(p, 'composed-by') !== COMPOSER ? [found('vocabulary', `composed-by must be "${COMPOSER}" (the composer is the only writer of a page)`)] : []),
       ...(text(p, 'status') && !oneOf(text(p, 'status'), STATUSES) ? [found('vocabulary', `status is not one of ${STATUSES.join(', ')}`)] : []),
     ],
   },

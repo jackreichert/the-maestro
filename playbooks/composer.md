@@ -35,7 +35,7 @@ node scripts/library-check.ts --vault <vault root> [--repo <repo>]
 node scripts/journal.ts notes-check --all
 ```
 
-`library-check` must exit 0. Every finding is yours to fix; do not weaken a page to pass (a fact with no evidence is removed, not given a vague one). `notes-check` must list none of your pages: a page it names has no `stream:` or names an unknown one. Report both exit codes. If either fails twice for the same reason, stop and report it.
+`library-check` must exit 0. It runs after the write: it rejects a page whose `composed-by` is not `composer` or that breaks a rule, but it cannot stop another writer from editing a page. Every finding is yours to fix; do not weaken a page to pass (a fact with no evidence is removed, not given a vague one). `notes-check` must list none of your pages: a page it names has no `stream:` or names an unknown one. Report both exit codes. If either fails twice for the same reason, stop and report it.
 
 ## 5. Report
 
