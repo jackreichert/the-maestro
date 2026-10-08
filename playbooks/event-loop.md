@@ -20,6 +20,8 @@ node scripts/event-loop.ts run
 
 If a launchd supervisor owns the lock, `run` exits 2 (`another event loop is running`). Start `node scripts/event-loop.ts digest-wait` in the background instead; it exits 10 with the saved digest (same handling as `run`), or 0 quietly after its timeout.
 
+`run --serve` is the daemon form: it never exits on an event, and writes each one to the inbox (`<event_dir>/events.jsonl`). Read it with `node scripts/event-loop.ts events`, wake on the next one with `events wait` (exit 10 with the event lines, same handling as `run`), and when an event is dealt with run `events ack <id>`. Event lines carry a kind, the watch and `repo`/`number`/`who`/`count` only; open the PR or thread yourself for the rest.
+
 For one quick look instead of a long wait, `node scripts/event-loop.ts run --once` does a single pass with the same exit codes.
 
 ## 2. Read the digest
