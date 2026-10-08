@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/journal/learned.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLearned, learnedProblems, parseAppliesTo } from './learned.ts';
+import { parseLearned, learnedProblems, parseAppliesTo, relearn } from './learned.ts';
 import type { RawLearned } from './learned.ts';
 
 const ctx = { learnedIds: new Set(['ab12']) };
@@ -132,4 +132,17 @@ test('learnedProblems rejects a field the write never sets, naming it and not it
     assert.match(problems[0] ?? '', /^unknown fields \(extra, note\)/);
     assert.ok(!problems[0]?.includes('IOSFODNN') && !problems[0]?.includes('Hunter2'));
     assert.deepEqual(learnedProblems({ ...GOOD_STORED, ts: '2026-10-08T00:00:00Z', id: 'ab12', date: '2026-10-08', kind: 'learned', model: 'x', used: ['tool:y'] } as typeof GOOD_STORED, new Set()), [], 'the row bookkeeping and usage marks are known');
+});
+
+test('relearn: an exact repeat is the same, a new verified-at or confidence refreshes the latest row, an unseen fact is new', () => {
+    const f = parse().fields;
+    assert.ok(f);
+    const row = (id: string, over: object = {}) => ({ id, kind: 'learned', ...f, ...over });
+    assert.deepEqual(relearn([], f), { kind: 'new' });
+    assert.deepEqual(relearn([row('aaaa')], f), { kind: 'same', id: 'aaaa' });
+    assert.deepEqual(relearn([row('aaaa', { verifiedAt: '342b177' })], f), { kind: 'refresh', id: 'aaaa' });
+    assert.deepEqual(relearn([row('aaaa', { confidence: 'inferred' })], f), { kind: 'refresh', id: 'aaaa' });
+    assert.deepEqual(relearn([row('aaaa', { verifiedAt: '342b177' }), row('bbbb', { verifiedAt: '2026-10-01 older check' })], f), { kind: 'refresh', id: 'bbbb' }, 'the latest matching row is superseded');
+    assert.deepEqual(relearn([row('aaaa'), row('bbbb', { verifiedAt: '342b177' })], f), { kind: 'same', id: 'aaaa' }, 'repeating an older check is not a refresh');
+    assert.deepEqual(relearn([row('aaaa', { evidence: 'other:2' }), { id: 'cccc', kind: 'note', ...f }], f), { kind: 'new' });
 });

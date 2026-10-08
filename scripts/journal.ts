@@ -137,7 +137,7 @@ import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } 
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
-import { parseLearned, LEARNED_USAGE } from './lib/journal/learned.ts';
+import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
@@ -508,7 +508,7 @@ function knownRepos(): Set<string> | undefined {
     } catch { return undefined; }
 }
 
-/** `learned "<claim>" --kind ... --applies-to ...`: one fact, written only when every rule in learned.ts passes. Idempotent: the same fact, location and evidence is reported, not written twice. */
+/** `learned "<claim>" --kind ... --applies-to ...`: one fact, written only when every rule in learned.ts passes. Idempotent: the same fact, location, evidence, `--verified-at` and confidence is reported, not written twice; the same fact with a new `--verified-at` or confidence is written as a row that supersedes the earlier one. */
 function cmdLearned(): void {
     if (has('help')) { LEARNED_USAGE.forEach((l) => console.log(l)); return; }
     const flag = (name: string): string | null => arg(name) || null;
@@ -521,15 +521,17 @@ function cmdLearned(): void {
     );
     if (!parsed.fields) die(`learned: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\n(journal.ts learned --help)`);
     const { fields } = parsed;
-    const same = entries.find((e) => e.kind === 'learned' && e.text === fields.text && e.appliesTo === fields.appliesTo && e.evidence === fields.evidence);
-    if (same) { console.log(`learned  ${same.id}  ${fields.text}  (already recorded)`); return; }
+    const seen = relearn(entries, fields);
+    if (seen.kind === 'same') { console.log(`learned  ${seen.id}  ${fields.text}  (already recorded)`); return; }
     const entry = {
         id: newId(entries), ts: now(), date: arg('date', today()), kind: 'learned', ...fields,
+        // The same fact checked again supersedes its latest earlier row; an explicit --supersedes names something else and wins.
+        ...(seen.kind === 'refresh' && fields.supersedes === undefined ? { supersedes: seen.id } : {}),
         repo: arg('repo') || undefined, stream: streamOrNone(arg('stream')), ...usageFromArgs(),
     };
     append(entry);
     if (!dryRun) render(true);
-    console.log(`learned  ${entry.id}  ${entry.text}`);
+    console.log(`learned  ${entry.id}  ${entry.text}${seen.kind === 'refresh' ? `  (re-checked: supersedes ${seen.id})` : ''}`);
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */

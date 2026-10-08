@@ -2457,6 +2457,21 @@ test('learned is idempotent: the same fact, location and evidence is reported, n
     assert.equal(learnedRows().length, 1);
 });
 
+test('learned re-checking a fact (a new --verified-at or --confidence) writes a row that supersedes the earlier one', () => {
+    const first = idOf(run('learned', 'A claim.', ...LEARNED, ...MARK).out);
+    const refreshed = run('learned', 'A claim.', ...without('--verified-at', '2026-10-09 read the spec again'), ...MARK);
+    assert.equal(refreshed.code, 0, refreshed.err);
+    assert.match(refreshed.out, new RegExp(`re-checked: supersedes ${first}`));
+    const second = idOf(refreshed.out);
+    assert.notEqual(second, first);
+    assert.deepEqual(learnedRows().map((r) => [r.id, r.verifiedAt, r.supersedes]), [[first, '2026-10-08 read the spec', undefined], [second, '2026-10-09 read the spec again', first]]);
+    const lower = run('learned', 'A claim.', ...without('--confidence', 'inferred'), ...MARK);
+    assert.match(lower.out, new RegExp(`supersedes ${second}`), 'the latest row is the one superseded');
+    assert.match(run('learned', 'A claim.', ...LEARNED, ...MARK).out, /\(already recorded\)/, 'an exact repeat of an earlier check is still the same');
+    assert.equal(learnedRows().length, 3);
+    assert.equal(run('verify').code, 0);
+});
+
 test('learned --supersedes must name a learned row on the ledger', () => {
     const first = idOf(run('learned', 'Old claim.', ...LEARNED, ...MARK).out);
     assert.equal(run('learned', 'New claim.', ...LEARNED, '--supersedes', 'zz99', ...MARK).code, 1);

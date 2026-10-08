@@ -145,6 +145,22 @@ export function parseLearned(raw: RawLearned, ctx: LearnedContext): LearnedParse
     return { fields, errors: [] };
 }
 
+/** What `learned` does when the fact may already be on the ledger: it is the same entry, it re-checks an earlier one, or it is new. */
+export type Relearn = { kind: 'same'; id: string } | { kind: 'refresh'; id: string } | { kind: 'new' };
+
+/**
+ * A fact is its claim, location and evidence. The same fact with the same `verified-at` and confidence is already
+ * recorded. The same fact checked again (a new `verified-at` or confidence) is a new row that supersedes the latest
+ * earlier one, so the freshness the library relies on is never dropped; a repeat of an older check is still the same.
+ */
+export function relearn(rows: readonly (LearnedRow & { id?: unknown; kind?: unknown })[], f: LearnedFields): Relearn {
+    const same = rows.filter((r) => r.kind === 'learned' && typeof r.id === 'string' && r.text === f.text && r.appliesTo === f.appliesTo && r.evidence === f.evidence);
+    const exact = same.find((r) => r.verifiedAt === f.verifiedAt && r.confidence === f.confidence);
+    if (exact) return { kind: 'same', id: exact.id as string };
+    const latest = same[same.length - 1];
+    return latest ? { kind: 'refresh', id: latest.id as string } : { kind: 'new' };
+}
+
 /** Every field a stored `learned` row may carry: the fact, its location and checks, the usage marks, and the row's own bookkeeping. Anything else is not written by `learned`. */
 export const LEARNED_ROW_FIELDS: ReadonlySet<string> = new Set([
     'id', 'ts', 'date', 'kind', 'text', 'learnedKind', 'appliesTo', 'evidence', 'verifiedAt', 'confidence', 'supersedes',
@@ -168,4 +184,5 @@ export const LEARNED_USAGE = [
     '    --confidence observed|told-by-jack|inferred [--supersedes <learned id | page path>] --model "<name>" --used "skill:x,tool:y"',
     '    Every field above is required except --supersedes. The claim is one sentence about a system, in the present tense; ids and counts only.',
     '    A claim, evidence or location that looks like a secret or PHI is refused and nothing is written.',
+    '    The same fact with a new --verified-at or --confidence is written again as a row that supersedes the earlier one; an exact repeat is not.',
 ];
