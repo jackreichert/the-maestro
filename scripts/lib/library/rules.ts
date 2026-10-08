@@ -43,6 +43,8 @@ export function sections(p: Page): Map<string, { line: number; text: string }[]>
   });
   return out;
 }
+/** The fact lines of a section: every non-blank line that is not a heading. A bullet, a numbered item and a prose line are all facts. */
+const factLines = (s: { line: number; text: string }[] | undefined): { line: number; text: string }[] => (s ?? []).filter((l) => l.text.trim() !== '' && !/^\s{0,3}#{1,6}(\s|$)/.test(l.text));
 const bullets = (s: { line: number; text: string }[] | undefined): { line: number; text: string }[] => (s ?? []).filter((l) => /^\s*[-*]\s+\S/.test(l.text));
 
 export const RULES: readonly Rule[] = [
@@ -87,11 +89,11 @@ export const RULES: readonly Rule[] = [
     id: 'facts',
     check: (p) => {
       const s = sections(p);
-      const facts = bullets(s.get('facts'));
+      const facts = factLines(s.get('facts'));
       return [
         ...(p.lines.slice(p.bodyStart).some((l) => /^Read when:\s*\S/.test(l)) ? [] : [found('facts', 'no "Read when:" line')]),
-        ...(facts.length ? [] : [found('facts', 'the "## Facts" section has no bullet')]),
-        ...facts.filter((f) => !FACT_END.test(f.text)).map((f) => found('facts', 'a fact must end "(verified YYYY-MM-DD, <evidence>)"', f.line)),
+        ...(facts.length ? [] : [found('facts', 'the "## Facts" section has no fact')]),
+        ...facts.filter((f) => !FACT_END.test(f.text)).map((f) => found('facts', 'a fact (every non-blank line under Facts that is not a heading) must end "(verified YYYY-MM-DD, <evidence>)"', f.line)),
       ];
     },
   },

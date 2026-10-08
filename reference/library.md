@@ -62,7 +62,7 @@ components: [orchard-sync, harvest-export]
 
 1. A heading with the topic.
 2. A line starting `Read when:` that says in one sentence when to open the page.
-3. A `## Facts` section. Each fact is one bullet, claim first, and ends `(verified YYYY-MM-DD, <evidence>)` where evidence is a file:line, a sha, a PR or a vault path. Never the value of a secret.
+3. A `## Facts` section. Each fact is one bullet on one line, claim first, and ends `(verified YYYY-MM-DD, <evidence>)` where evidence is a file:line, a sha, a PR or a vault path. Never the value of a secret. `library-check` treats every non-blank line under `## Facts` that is not a heading as a fact, so a numbered item or a prose line needs the same ending (or belongs in another section).
 4. Optional `## Links`: one-hop wikilinks to related pages and to the Plans or Research note that established a fact.
 5. Optional `## History`: superseded values with their date and why. Replace a changed fact in place and move the old value here; never append.
 

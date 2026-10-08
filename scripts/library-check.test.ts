@@ -57,7 +57,7 @@ test('a fact with no dated evidence, a bad kind and a missing field are each rep
   const messages = problems(root).map((f) => `${f.rule}: ${f.message}`).join('\n');
   assert.match(messages, /vocabulary: kind is not one of/);
   assert.match(messages, /frontmatter: missing required field "verify-how"/);
-  assert.match(messages, /facts: a fact must end/);
+  assert.match(messages, /facts: a fact .* must end/);
 });
 
 test('a page with no frontmatter, or no Read when line, fails', () => {
@@ -134,7 +134,7 @@ test('named pages are checked instead of discovery, with --json output', () => {
 
 test('a duplicated Facts heading does not hide an undated fact', () => {
   const body = BODY.replace(' (verified 2026-10-08, src/sync.ts:40)', '') + '\n## Facts\n\n- A second section (verified 2026-10-08, notes).\n';
-  assert.ok(problems(vault({ [PAGE]: frontmatter() + body })).some((f) => /a fact must end/.test(f.message)));
+  assert.ok(problems(vault({ [PAGE]: frontmatter() + body })).some((f) => /a fact .* must end/.test(f.message)));
 });
 
 test('a secret-shaped value in a checked field is never echoed in a message or the json output', () => {
@@ -166,4 +166,16 @@ test('a body wikilink to no note fails the real CLI, naming the line; aliases, a
   for (const nope of ['[[nowhere#Heading|alias]]', '[[../../escape]]', `[[Projects/${REPO}/Research/missing]]`, '![[picture.png]]']) {
     assert.equal(run(link(nope)).status, 1, nope);
   }
+});
+
+test('every non-blank line under Facts needs evidence: numbered items, prose, nested bullets and a table row fail the real CLI; headings and blank lines do not', () => {
+  const withFacts = (extra: string) => vault({ [PAGE]: `${frontmatter()}${BODY}${extra}` });
+  for (const bad of ['1. numbered fact with no evidence\n', 'A prose sentence stating a fact.\n', '  - nested bullet, no evidence\n', '| a | table row |\n']) {
+    const r = run(withFacts(bad));
+    assert.equal(r.status, 1, bad);
+    assert.match(r.stdout, /facts {2}a fact .* must end/, bad);
+  }
+  const ok = run(withFacts('\n### A sub-heading\n\n1. A numbered fact (verified 2026-10-08, src/sync.ts:41).\nProse fact (verified 2026-10-08, src/sync.ts:42).\n'));
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.ok(problems(vault({ [PAGE]: `${frontmatter()}# T\n\nRead when: x.\n\n## Facts\n\n` })).some((f) => /no fact/.test(f.message)));
 });
