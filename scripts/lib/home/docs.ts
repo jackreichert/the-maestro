@@ -1,15 +1,15 @@
 /**
  * Project documents for the link rail: `CONTEXT.md`, `DECISIONS.md` and the `*.md` files inside Plans, Research, Reviews and
- * Runbooks, and inside one level of subfolder under each (`Research/notion-acme/x.md`); deeper folders are not read. Only the first 4 KB of each is read (frontmatter and first heading), through the guarded reader.
+ * Runbooks and Knowledge (the library pages), and inside one level of subfolder under each (`Research/notion-acme/x.md`); deeper folders are not read. Only the first 4 KB of each is read (frontmatter and first heading), through the guarded reader.
  */
 import type { Scope, VaultReader } from '../vault/reader.ts';
 
-export const DOC_FOLDERS = ['Plans', 'Research', 'Reviews', 'Runbooks'] as const;
+export const DOC_FOLDERS = ['Plans', 'Research', 'Reviews', 'Runbooks', 'Knowledge'] as const;
 export type DocFolder = 'CONTEXT' | 'DECISIONS' | (typeof DOC_FOLDERS)[number];
-export const DOC_DIR_SCOPES: readonly Scope[] = [{ name: 'doc folder', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks)(\/[^/]+)?$/ }];
+export const DOC_DIR_SCOPES: readonly Scope[] = [{ name: 'doc folder', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks|Knowledge)(\/[^/]+)?$/ }];
 export const DOC_FILE_SCOPES: readonly Scope[] = [
   { name: 'project doc', pattern: /^Projects\/[^/]+\/(CONTEXT|DECISIONS)\.md$/ },
-  { name: 'folder doc', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks)(\/[^/]+)?\/[^/]+\.md$/ },
+  { name: 'folder doc', pattern: /^Projects\/[^/]+\/(Plans|Research|Reviews|Runbooks|Knowledge)(\/[^/]+)?\/[^/]+\.md$/ },
 ];
 
 const HEAD_BYTES = 4096;
@@ -20,7 +20,7 @@ const TITLE_MAX = 120;
 
 export const DOC_KINDS = ['brief', 'plan', 'research', 'review', 'runbook', 'uat', 'decision', 'other'] as const;
 export type DocKind = (typeof DOC_KINDS)[number];
-const FOLDER_KIND: Record<DocFolder, DocKind> = { CONTEXT: 'other', DECISIONS: 'decision', Plans: 'plan', Research: 'research', Reviews: 'review', Runbooks: 'runbook' };
+const FOLDER_KIND: Record<DocFolder, DocKind> = { CONTEXT: 'other', DECISIONS: 'decision', Plans: 'plan', Research: 'research', Reviews: 'review', Runbooks: 'runbook', Knowledge: 'other' };
 const TICKET_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAX_TICKETS_PER_DOC = 10;
 
