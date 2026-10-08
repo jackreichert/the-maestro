@@ -5,8 +5,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DELAYS, quietSleepSeconds, secondsUntilClock, supervise } from './loop-supervisor.ts';
+import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
 import type { LoopResult } from './loop-supervisor.ts';
+import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import { commands, fillTemplate, LABEL, shq } from './install-loop-supervisor.ts';
 
@@ -161,4 +162,64 @@ test('the real supervisor heartbeats while it waits, as itself, in idle mode', a
   assert.equal(beat.pid, p.pid);
   assert.equal(beat.mode, 'idle');
   assert.ok(Date.parse(beat.sleepingUntil) > Date.parse(beat.at));
+});
+
+test('exit 10 queues only after a successful save, and a queue failure does not stop the loop', async () => {
+  const queued: string[] = [];
+  const logs: string[] = [];
+  const slept: number[] = [];
+  let saves = 0;
+  await supervise({
+    runLoop: async () => ({ code: 10, stdout: saves === 0 ? 'first\n' : 'second\n', stderr: '' }),
+    sleep: async (s) => { slept.push(s); },
+    save: () => { saves += 1; if (saves === 1) throw new Error('disk full'); },
+    log: (l) => { logs.push(l); },
+    queueDigest: (d) => { if (d.startsWith('second')) throw new Error('queue down'); queued.push(d); },
+    maxRuns: 2,
+  });
+  assert.deepEqual(queued, []);
+  assert.deepEqual(slept, [DELAYS.crash]);
+  assert.match(logs.join('\n'), /could not save digest: disk full/);
+  assert.match(logs.join('\n'), /could not queue digest fixes: queue down/);
+});
+
+test('an empty allowlist logs and does not queue', () => {
+  const logs: string[] = [];
+  queueSavedDigest('ACTION prs (pr-watch): CONFLICT acme/widget#4 main <- feature https://github.com/acme/widget/pull/4\n', (l) => logs.push(l), {
+    vault: tempDir(),
+    project: 'proj',
+    owners: [],
+    enqueue: () => { throw new Error('should not queue'); },
+  });
+  assert.deepEqual(logs, [NO_OWNER_LOG]);
+});
+
+test('a failed queue is logged and the next fix is still attempted', () => {
+  const logs: string[] = [];
+  const seen: string[] = [];
+  const digest = [
+    'ACTION prs (pr-watch): CONFLICT acme/widget#4 main <- feature https://github.com/acme/widget/pull/4',
+    'ACTION prs (pr-watch): CHECKS-FAILING acme/widget#7 ci https://github.com/acme/widget/pull/7',
+  ].join('\n');
+  queueSavedDigest(digest, (l) => logs.push(l), {
+    vault: tempDir(),
+    project: 'proj',
+    owners: ['acme'],
+    excludeRepos: [],
+    enqueue: (item) => { if (item.kind === 'CONFLICT') throw new Error('nope'); seen.push(item.key); },
+  });
+  assert.deepEqual(seen, ['acme/widget#7|CHECKS-FAILING|https://github.com/acme/widget/pull/7']);
+  assert.match(logs.join('\n'), /could not queue acme\/widget#4\|CONFLICT/);
+});
+
+test('queueSavedDigest writes one journal item and a second pass does not write another', () => {
+  const vault = tempDir();
+  const digest = 'ACTION prs (pr-watch): CONFLICT acme/widget#4 main <- feature https://github.com/acme/widget/pull/4\n';
+  const logs: string[] = [];
+  const opts = { vault, project: 'proj', owners: ['acme'], excludeRepos: [] as string[] };
+  queueSavedDigest(digest, (l) => logs.push(l), opts);
+  queueSavedDigest(digest, (l) => logs.push(l), opts);
+  const ledger = readFileSync(join(vault, 'Projects', 'proj', 'Journal', 'ledger.jsonl'), 'utf8');
+  const fixes = ledger.split('\n').filter((l) => l.includes('fix acme/widget#4 CONFLICT https://github.com/acme/widget/pull/4'));
+  assert.equal(fixes.length, 1, logs.join('\n') || ledger);
 });
