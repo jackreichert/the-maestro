@@ -90,7 +90,7 @@ export function epicStrip(home: StreamHome): HTMLElement {
   const listed = home.unknowns.length > 0;
   return h('div', {},
     h('ul', { class: 'epics', role: 'list' }, ...shown.map((e) => epicBlock(e, listed))),
-    rest.length ? h('details', { class: 'fold' }, h('summary', {}, `${rest.length} more ${rest.length === 1 ? 'epic' : 'epics'}`),
+    rest.length ? h('details', { class: 'fold', 'data-fold': 'epics-more' }, h('summary', {}, `${rest.length} more ${rest.length === 1 ? 'epic' : 'epics'}`),
       h('ul', { class: 'epics', role: 'list' }, ...rest.map((e) => epicBlock(e, listed)))) : null);
 }
 
@@ -113,7 +113,7 @@ function leftGroup(title: string, ts: HomeTicket[], cap: number): HTMLElement | 
   return h('div', { class: 'left-group' },
     h('h3', {}, `${title} (${ts.length})`),
     ticketRows(shown),
-    rest.length ? h('details', { class: 'fold' }, h('summary', {}, `Show ${rest.length} more`), ticketRows(rest)) : null);
+    rest.length ? h('details', { class: 'fold', 'data-fold': `left-${title}` }, h('summary', {}, `Show ${rest.length} more`), ticketRows(rest)) : null);
 }
 
 /** What is left, by group: In progress, Blocked, Not started. Null when nothing is open. */
@@ -130,7 +130,7 @@ export function leftBody(groups: LeftGroups): HTMLElement | null {
 /** The unknowns as a collapsed disclosure carrying its count, or null when there are none. */
 export function unknownsFold(home: StreamHome): HTMLElement | null {
   if (home.unknowns.length === 0) return null;
-  return h('details', { class: 'fold', id: UNKNOWNS_ID },
+  return h('details', { class: 'fold', id: UNKNOWNS_ID, 'data-fold': UNKNOWNS_ID },
     h('summary', {}, unknownsHeading(home.unknowns.length)),
     h('div', { class: 'fold-body' }, h('ul', { class: 'unknowns', role: 'list' }, ...home.unknowns.map((u) => h('li', {}, u.ref?.url ? refLink({ label: u.text, url: u.ref.url }) : u.text)))));
 }
