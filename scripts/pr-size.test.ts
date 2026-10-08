@@ -49,6 +49,8 @@ const checkJson = (repo: string, env?: Record<string, string>) => {
     return { status: r.code, ...parsed };
 };
 
+const many = (n: number, each: number) => (r: string) => { for (let i = 0; i < n; i++) put(r, `src/f${i}.py`, lines(each)); };
+
 test('under budget passes and prints the summary', () => {
     const repo = repoWith({}, (r) => { put(r, 'src/a.py', lines(10)); put(r, 'src/b.py', lines(10)); });
     const r = check(repo);
@@ -63,6 +65,66 @@ test('over on files: six code files fail even when tiny', () => {
     assert.equal(r.status, 1);
     assert.match(r.failures.join('\n'), /6 code files \(max 5\)/);
     assert.doesNotMatch(r.failures.join('\n'), /code lines/);
+});
+
+const WIDE = { MAESTRO_PR_WIDE_MAX_CODE_FILES: '10' };
+
+test('wide tier is off by default: output and verdicts match the two-limit gate', () => {
+    const repo = repoWith({}, many(6, 1));
+    const r = checkJson(repo);
+    assert.equal(r.status, 1);
+    assert.deepEqual(r.failures, ['over budget: 6 code files (max 5)']);
+    assert.deepEqual(r.limits, { maxFiles: 5, maxLines: 400 });
+    assert.equal('tier' in r, false);
+    assert.doesNotMatch(check(repo).out, /tier|wide/);
+    assert.equal(check(repoWith({}, many(6, 22))).code, 1, 'six small files fail with no settings');
+    assert.equal(check(repoWith({}, many(5, 80))).code, 0, 'five files at 400 lines still pass');
+    assert.equal(check(repoWith({}, many(5, 81))).code, 1);
+    // setting only the wide line limit, or a wide file limit at or below the normal one, changes nothing
+    assert.equal(check(repo, { MAESTRO_PR_WIDE_MAX_CODE_LINES: '300' }).code, 1);
+    assert.equal(check(repo, { MAESTRO_PR_WIDE_MAX_CODE_FILES: '5' }).code, 1);
+    assert.equal(check(repo, { MAESTRO_PR_WIDE_MAX_CODE_FILES: '2' }).code, 1);
+});
+
+test('wide tier on: six code files with 132 lines pass as wide', () => {
+    const r = checkJson(repoWith({}, many(6, 22)), WIDE);
+    assert.equal(r.status, 0);
+    assert.equal(r.tier, 'wide');
+    assert.deepEqual(r.limits, { maxFiles: 5, maxLines: 400, wideMaxFiles: 10, wideMaxLines: 400 });
+    assert.equal(checkJson(repoWith({}, many(3, 20)), WIDE).tier, 'normal');
+});
+
+test('wide tier on: too many lines or files still fail, with a message naming both tiers', () => {
+    const lines450 = checkJson(repoWith({}, many(6, 75)), WIDE);
+    assert.equal(lines450.status, 1);
+    assert.equal(lines450.tier, null);
+    assert.match(lines450.failures.join('\n'), /6 code files, 450 code lines/);
+    assert.match(lines450.failures.join('\n'), /up to 5 files and 400 lines, or up to 10 files with at most 400 lines/);
+    assert.equal(check(repoWith({}, many(11, 1)), WIDE).code, 1);
+    assert.equal(check(repoWith({}, many(10, 40)), WIDE).code, 0, 'ten files at 400 lines pass wide');
+});
+
+test('wide line limit can never exceed the normal line limit', () => {
+    const big = repoWith({}, many(7, 70));
+    assert.equal(check(big, { ...WIDE, MAESTRO_PR_WIDE_MAX_CODE_LINES: '9000' }).code, 1, 'capped at the 400 normal limit');
+    assert.equal(check(big, { ...WIDE, MAESTRO_PR_MAX_CODE_LINES: '900', MAESTRO_PR_WIDE_MAX_CODE_LINES: '900' }).code, 0);
+    assert.equal(check(repoWith({}, many(7, 50)), { ...WIDE, MAESTRO_PR_MAX_CODE_LINES: '300', MAESTRO_PR_WIDE_MAX_CODE_LINES: '900' }).code, 1, 'wide capped at the lowered normal limit');
+    assert.equal(check(repoWith({}, many(7, 40)), { ...WIDE, MAESTRO_PR_WIDE_MAX_CODE_LINES: '250' }).code, 1, 'a lower wide limit applies');
+});
+
+test('wide tier on: the printed summary shows the tier, and the wide limits come from the config file', () => {
+    const repo = repoWith({}, many(6, 22));
+    assert.match(check(repo, WIDE).out, /or up to 10 files under 400 lines; tier wide/);
+    const cfg = join(repo, 'cfg.md');
+    writeFileSync(cfg, '```maestro-config\npr_wide_max_code_files: 8\n```\n');
+    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: cfg }).code, 0);
+    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: cfg, MAESTRO_PR_WIDE_MAX_CODE_FILES: '5' }).code, 1, 'env wins');
+});
+
+test('mechanical files plus code still fail in the wide tier', () => {
+    const r = checkJson(repoWith({}, (repo) => { many(6, 10)(repo); put(repo, 'uv.lock', lines(10)); }), WIDE);
+    assert.equal(r.status, 1);
+    assert.deepEqual(r.failures, ['mechanical changes go in their own PR']);
 });
 
 test('over on lines: one big file fails, additions plus deletions both count', () => {
