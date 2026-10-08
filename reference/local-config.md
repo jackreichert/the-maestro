@@ -47,12 +47,13 @@ pr_max_code_files: 5           # PR size budget: most code files per PR; default
 pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400
 pr_body_sections: Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally # headings pr-open.ts requires in every PR body; this is the default list
 pr_body_check_risk: on         # also: pr_body_check_verify, pr_body_check_forbidden, pr_body_check_diagram; each on by default, off turns it off
-pr_body_private_words: ledger, vault # words refused outside code in a PR title or body; default ledger, vault, Podium, orchestrator; `none` empties the list
+pr_body_private_words: ledger, vault # words refused outside code in a PR title or body; default ledger, vault, orchestrator; `none` empties the list
 pr_body_private_patterns: \bX-\d+\b # extra regexes for private ids a PR must not carry (comma-separated, no commas inside); checked in title and body
 pr_body_voice_names: Sam, samf # your names or logins that must not appear in the third person; also pr_body_check_private, pr_body_check_voice and pr_body_check_counts (on/off)
 pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>`; default 3
 pr_body_check_stack: on         # stacked PR needs a Stack section naming its base PR; also pr_body_check_order (Review order line over pr_review_order_min_files code files, default 3); on by default
 pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off
+waive_size_gate_owners: example-owner # GitHub owners (or owner/name globs, comma-separated) whose repos skip the PR size limits in pr-open.ts (not the mixed code/mechanical refusal); a bare owner means owner/*; default none, so the gate holds everywhere
 review_queue_cap: 4           # most open non-draft PRs awaiting review before dispatch stops new PR-producing work; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
 stack_max_depth: 3           # most PRs in one stack; the PR board flags a deeper stack; default 3
@@ -140,7 +141,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |
-| PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`) | git.md, `scripts/pr-size.ts` |
+| PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`), and the owners whose repos are waived from it (`waive_size_gate_owners`) | git.md, `scripts/pr-size.ts`, `scripts/pr-open.ts` |
 | PR body rules: required sections (`pr_body_sections`), per-check switches (`pr_body_check_risk`, `_verify`, `_forbidden`, `_diagram`) the diagram file threshold (`pr_diagram_min_files`), the derivable-counts check (`pr_body_check_counts`), and the private-reference and voice checks (`pr_body_check_private`, `pr_body_private_words`, `pr_body_private_patterns`, `pr_body_check_voice`, `pr_body_voice_names`), and the smells gate (`pr_smells_repos`) | git.md#pr-body, `scripts/pr-body.ts` |
 
 ## Issue tracker

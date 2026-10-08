@@ -15,7 +15,9 @@
  * (pr-smells.ts record) and the body carries its `Smells:` line; docs-only diffs are exempt.
  *
  * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
- * never calls gh. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
+ * never calls gh, unless the repo's origin matches `waive_size_gate_owners` (default none): then it prints a
+ * one-line waiver note and carries on. The waiver comes from local-config (or its MAESTRO_WAIVE_SIZE_GATE_OWNERS variable, like every other gate
+ * setting); there is no flag for it. When it applies, gh is pinned to the origin repo with --repo. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
  * be turned off; no other gh flag passes through. --dry-run prints the gh command instead of running it.
  * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
  * opened but its file links could not be expanded (run pr-guide-links.ts).
@@ -26,7 +28,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
-import { PROTECTED_BRANCHES } from './local-config.ts';
+import { PROTECTED_BRANCHES, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
 import { smellsProblems } from './pr-smells.ts';
@@ -97,27 +99,58 @@ function diffContext(o: OpenArgs): BodyContext {
   return { stacked: !PROTECTED_BRANCHES.some((g) => globToRegExp(g).test(o.base)), codeFiles, title: t >= 0 ? o.pass[t + 1] : '' };
 }
 
+/** True when the diff holds both code and mechanical files: a reviewability rule, so no size waiver lifts it. */
+function mixedWithMechanical(o: OpenArgs): boolean {
+  const head = headOf(o);
+  const r = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, '--json', ...(head ? ['--head', head] : [])], { encoding: 'utf8' });
+  try {
+    const j = JSON.parse(r.stdout) as { code: { files: number }; mechanical: { files: number } };
+    return j.code.files > 0 && j.mechanical.files > 0;
+  } catch { return true; } // unreadable output: fail closed
+}
+
 function main(): void {
   const o = parseArgs(process.argv.slice(2));
   const body = checkBody(o);
   const gate = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, ...(headOf(o) ? ['--head', headOf(o)] : [])], { encoding: 'utf8' });
   process.stdout.write(gate.stdout || '');
-  if (gate.status === 1) {
+  const overBudget = gate.status === 1;
+  const waivedSlug = overBudget ? sizeGateWaiver(o.repo) : '';
+  if (overBudget && waivedSlug && mixedWithMechanical(o)) {
+    console.error('pr-open: refused, the PR mixes code with mechanical files. The waiver (waive_size_gate_owners) lifts the size limits only; mechanical changes (lockfiles, generated files, pure renames) still go in their own PR.');
+    process.exit(1);
+  } else if (overBudget && waivedSlug) {
+    console.log(`pr-open: size limits waived for ${waivedSlug} (waive_size_gate_owners); the summary above is informational. The rule that mechanical changes go in their own PR still applies.`);
+  } else if (overBudget) {
     console.error('pr-open: refused, the PR is over the size budget. Report a split plan (which files and lines go in which PR, in merge order) instead of opening; mechanical changes go in their own PR.');
     process.exit(1);
-  }
-  if (gate.status !== 0) { console.error(gate.stderr || 'pr-open: pr-size failed'); process.exit(2); }
+  } else if (gate.status !== 0) { console.error(gate.stderr || 'pr-open: pr-size failed'); process.exit(2); }
   checkLinkPaths(o, body);
   const gh = process.env.MAESTRO_GH_BIN || 'gh';
-  const args = ghArgs(o);
+  // A waiver was decided for the origin's github.com slug, so gh is pinned to that same repo and host (never GH_REPO, GH_HOST, an upstream remote or a gh default).
+  const args = waivedSlug ? [...ghArgs(o), '--repo', `github.com/${waivedSlug}`] : ghArgs(o);
+  const ghEnv = waivedSlug ? { ...process.env, GH_REPO: '' } : process.env;
   if (o.dryRun) { console.log(`${gh} ${args.join(' ')}`); return; }
-  if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit' }).status ?? 2);
-  const r = spawnSync(gh, args, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8' });
+  if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit', env: ghEnv }).status ?? 2);
+  const r = spawnSync(gh, args, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8', env: ghEnv });
   process.stdout.write(r.stdout || '');
   if (r.status !== 0) process.exit(r.status ?? 2);
   const pr = /\/pull\/(\d+)/.exec(r.stdout || '')?.[1];
   const err = pr ? linkPr(o.repo, Number(pr), body) : 'gh did not print the PR url';
   if (err) { console.error(`pr-open: the PR is open, but its file links were not expanded: ${err}. Fix and run pr-guide-links.ts ${o.repo} ${pr ?? '<pr-number>'}.`); process.exit(3); }
+}
+
+const originUrl = (repo: string): string => spawnSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout || '';
+
+/** `owner/name` from a github.com origin url (https, ssh or scp form), host anchored; '' for anything else. */
+export function githubSlug(url: string): string {
+  return /^(?:https?:\/\/(?:[^@/\s]+@)?|ssh:\/\/git@|git@)github\.com[:/]([^/\s?#]+\/[^/\s?#]+?)(?:\.git)?\/?$/i.exec(url.trim())?.[1] ?? '';
+}
+
+/** The `owner/name` the size gate is waived for, or '' when it is not. Fails closed: no setting, or an origin that is not a github.com url, means the gate holds. */
+export function sizeGateWaiver(repo: string, globs: string[] = WAIVE_SIZE_GATE_OWNERS): string {
+  const slug = githubSlug(originUrl(repo));
+  return slug && globs.some((g) => globToRegExp(g.toLowerCase()).test(slug.toLowerCase())) ? slug : '';
 }
 
 /** Refuses before creating anything when a `{{file:...}}` token names a path that is not in the diff. */

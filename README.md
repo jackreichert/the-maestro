@@ -673,7 +673,7 @@ The four flow measures, read from the ledger and printed: `flow-report.ts [--day
 
 ### pr-size.ts
 
-The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error.
+The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <ref>]`. It sorts each changed file into code, test, config, docs or mechanical, and fails when code exceeds `pr_max_code_files` (default 5) or `pr_max_code_lines` (default 400, additions plus deletions). Tests, config and docs do not count; lockfiles, generated files and pure renames are exempt only in a PR of their own, and migrations count as code. Exit 0 within budget, 1 over budget or mixed, 2 on a usage or git error. `pr-open.ts` honours `waive_size_gate_owners`: in a repo whose GitHub owner is listed (default none) it prints a one-line note and lets an over-budget PR through (the size limits only: code mixed with mechanical files is still refused); there is no flag for it ([details](reference/git.md#pr-size-budget)).
 
 ### pr-open.ts
 
@@ -817,8 +817,9 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `pr_body_check_stack`, `pr_body_check_order` | `MAESTRO_PR_BODY_CHECK_STACK`, `_ORDER` | on | PR body: a stacked PR needs a Stack section naming its base PR; a PR over `pr_review_order_min_files` code files needs a Review order line pointing at files. `off`, `false`, `no` or `0` turns one off |
 | `pr_review_order_min_files` | `MAESTRO_PR_REVIEW_ORDER_MIN_FILES` | 3 | PR body: the code-file count at which a Review order line is required |
 | `pr_body_check_private`, `pr_body_check_voice`, `pr_body_check_counts` | `MAESTRO_PR_BODY_CHECK_PRIVATE`, `_VOICE`, `_COUNTS` | on | PR title and body: refuse private-workspace references; refuse third-person or assistant self-reference wording; refuse commit, file and line counts the PR page already shows (a code span is the escape). Best effort |
+| `waive_size_gate_owners` | `MAESTRO_WAIVE_SIZE_GATE_OWNERS` | none | Size-gate waiver: comma-separated GitHub owners (a bare `owner` means `owner/*`) or `owner/name` globs whose repos `pr-open.ts` lets past the PR size limits (code files and lines), with a one-line note; the mixed code/mechanical refusal still applies. Empty means the gate holds everywhere |
 | `pr_smells_repos` | `MAESTRO_PR_SMELLS_REPOS` | none | Smells gate: comma-separated GitHub `owner/name` globs of repos where `pr-open.ts` refuses a PR with code changes until a smells run is recorded for its head commit. Empty means the gate is off |
-| `pr_body_private_words` | `MAESTRO_PR_BODY_PRIVATE_WORDS` | ledger, vault, Podium, orchestrator | Words refused outside code in a PR title or body; `none` empties the list |
+| `pr_body_private_words` | `MAESTRO_PR_BODY_PRIVATE_WORDS` | ledger, vault, orchestrator | Words refused outside code in a PR title or body; `none` empties the list |
 | `pr_body_private_patterns`, `pr_body_voice_names` | `MAESTRO_PR_BODY_PRIVATE_PATTERNS`, `MAESTRO_PR_BODY_VOICE_NAMES` | none | Comma-separated: extra regexes for private ids, and the author's names or logins that must not appear in the third person |
 | `pr_diagram_min_files` | `MAESTRO_PR_DIAGRAM_MIN_FILES` | 3 | PR body: a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>` |
 | `review_queue_cap` | `MAESTRO_REVIEW_QUEUE_CAP` | 4 | Review queue cap: most open non-draft PRs awaiting human review before `journal.ts review-queue` says full and dispatch holds new PR-producing work |

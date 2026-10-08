@@ -288,7 +288,7 @@ test('pr-open runs the structural rules end to end: a stacked base needs a diagr
 });
 
 test('bodyProblems: private references are refused in the body and the title, naming the line', () => {
-    const rules = { ...NONE, private: true, privateWords: ['ledger', 'vault', 'Podium', 'orchestrator'], privatePatterns: ['\\bX-\\d{3}\\b'] };
+    const rules = { ...NONE, private: true, privateWords: ['ledger', 'vault', 'orchestrator'], privatePatterns: ['\\bX-\\d{3}\\b'] };
     const p = (text: string, title = '') => bodyProblems(`## Context\n${text}\n`, rules, { stacked: false, codeFiles: 0, title });
     assert.deepEqual(p('Fixes the retry bug in PR #12 (see abc1234).'), []);
     assert.match(p('See [[Some Note]] for more')[0], /\[\[wiki-link\]\].*line: See \[\[Some Note\]\] for more/);
@@ -395,4 +395,106 @@ test('smells gate: off by default, outside the listed repos, and for a diff with
     const docs = fixture({ 'docs/a.md': lines(10) });
     withOrigin(docs);
     assert.equal(open(docs, ['--dry-run', '--head', 'feature'], GATED).status, 0, 'docs only');
+});
+
+const WAIVED = { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner' };
+const originAt = (f: { repo: string }, slug: string): void => git(f.repo, 'remote', 'add', 'origin', `https://github.com/${slug}.git`);
+
+test('size waiver: a repo under a waived owner passes the real gate with a visible note, and gh gets draft and assignee', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'example-owner/widgets');
+    const r = open(f, ['--head', 'feature'], WAIVED);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /verdict:\s+FAIL/, 'the gate still measured the diff');
+    assert.match(r.stdout, /size limits waived for example-owner\/widgets \(waive_size_gate_owners\)/);
+    assert.match(readFileSync(f.log, 'utf8'), /pr create --draft --assignee @me/);
+});
+
+test('size waiver: it lifts the size limits only, so code mixed with a lockfile still refuses', () => {
+    const f = fixture({ 'src/big.py': lines(500), 'uv.lock': lines(50) });
+    originAt(f, 'example-owner/widgets');
+    const r = open(f, ['--head', 'feature'], WAIVED);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /mixes code with mechanical files/);
+    assert.ok(!existsSync(f.log), 'gh must not run');
+    const small = fixture({ 'src/a.py': lines(3), 'uv.lock': lines(50) });
+    originAt(small, 'example-owner/widgets');
+    assert.equal(open(small, ['--head', 'feature'], WAIVED).status, 1, 'mixed refuses even when within budget');
+});
+
+test('size waiver: an unlisted owner still refuses even when another owner is waived', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'other-org/widgets');
+    const r = open(f, ['--head', 'feature'], WAIVED);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /split plan/);
+    assert.ok(!existsSync(f.log), 'gh must not run');
+});
+
+test('size waiver: off by default, and no origin or a non-GitHub origin fails closed', () => {
+    const none = fixture({ 'src/big.py': lines(500) });
+    originAt(none, 'example-owner/widgets');
+    assert.equal(open(none, ['--head', 'feature']).status, 1, 'no setting');
+    const bare = fixture({ 'src/big.py': lines(500) });
+    assert.equal(open(bare, ['--head', 'feature'], WAIVED).status, 1, 'no origin');
+    const other = fixture({ 'src/big.py': lines(500) });
+    git(other.repo, 'remote', 'add', 'origin', 'https://git.example.com/example-owner/widgets.git');
+    assert.equal(open(other, ['--head', 'feature'], WAIVED).status, 1, 'not GitHub');
+    assert.ok(![none, bare, other].some((f) => existsSync(f.log)), 'gh must not run');
+});
+
+test('size waiver: there is no flag to ask for it, and the other checks still apply', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'example-owner/widgets');
+    assert.equal(open(f, ['--head', 'feature', '--waive-size-gate'], WAIVED).status, 2);
+    assert.equal(open(f, ['--no-body', '--head', 'feature'], WAIVED).status, 1, 'body still required');
+    assert.ok(!existsSync(f.log));
+});
+
+test('size waiver: owner matching is case-insensitive and owner/name globs narrow it', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'Example-Owner/widgets');
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/gad*' }).status, 1, 'glob does not match');
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/wid*' }).status, 0);
+});
+
+test('private words: the default list refuses ledger but lets the public product word Podium through the real CLI', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    const podium = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists'))]);
+    assert.equal(podium.status, 0, podium.stderr);
+    const ledger = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Logged in the ledger. Why this exists'))]);
+    assert.equal(ledger.status, 1);
+    assert.match(ledger.stderr, /private-workspace word/);
+    const custom = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists'))], { MAESTRO_PR_BODY_PRIVATE_WORDS: 'Podium' });
+    assert.equal(custom.status, 1, 'an install can still list it');
+});
+
+test('size waiver: gh is pinned to the checked origin repo, and a spoofed origin url is not waived', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'example-owner/widgets');
+    git(f.repo, 'remote', 'add', 'upstream', 'https://github.com/other-org/widgets.git');
+    const r = open(f, ['--head', 'feature'], { ...WAIVED, GH_REPO: 'other-org/widgets' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(readFileSync(f.log, 'utf8'), /--repo github\.com\/example-owner\/widgets/);
+    for (const url of ['https://notgithub.com/example-owner/x', 'https://evil.example/github.com/example-owner/x', 'https://github.com/other-org/x?github.com/example-owner/y']) {
+        const s = fixture({ 'src/big.py': lines(500) });
+        git(s.repo, 'remote', 'add', 'origin', url);
+        assert.equal(open(s, ['--head', 'feature'], WAIVED).status, 1, url);
+        assert.ok(!existsSync(s.log), url);
+    }
+});
+
+test('size waiver: GH_HOST in the environment cannot redirect the pinned repo to another host', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'example-owner/widgets');
+    const r = open(f, ['--head', 'feature'], { ...WAIVED, GH_HOST: 'ghe.example.test' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(readFileSync(f.log, 'utf8'), /--repo github\.com\/example-owner\/widgets(\s|$)/);
+    assert.doesNotMatch(readFileSync(f.log, 'utf8'), /ghe\.example\.test/);
+});
+
+test('size waiver: an owner wildcard in the setting is ignored, so it cannot waive everything', () => {
+    const f = fixture({ 'src/big.py': lines(500) });
+    originAt(f, 'other-org/widgets');
+    assert.equal(open(f, ['--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: '*, */*' }).status, 1);
 });

@@ -186,6 +186,13 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
     assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
 });
 
+test('waive_size_gate_owners: default none, a bare owner means owner/*, env wins over the file', () => {
+    assert.equal(show().WAIVE_SIZE_GATE_OWNERS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('waive_size_gate_owners: example-owner, other/tools-*, *, */x'));
+    assert.equal(show().WAIVE_SIZE_GATE_OWNERS, 'example-owner/*, other/tools-*');
+    assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, 'solo/*');
+});
+
 test('PR body settings: defaults on, file values, env wins, bad values fall back', () => {
     const d = show();
     assert.equal(d.PR_BODY_SECTIONS, 'Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally');
@@ -217,7 +224,7 @@ test('PR body private-reference and voice settings: defaults, file values, bad p
     assert.equal(f.PR_BODY_VOICE_NAMES, 'Sam Fictional, samf');
     assert.equal(f.PR_BODY_CHECK_VOICE, 'off');
     assert.equal(show({ MAESTRO_PR_BODY_CHECK_PRIVATE: 'off' }).PR_BODY_CHECK_PRIVATE, 'off');
-    assert.equal(d.PR_BODY_PRIVATE_WORDS, 'ledger, vault, Podium, orchestrator');
+    assert.equal(d.PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator');
     assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none' }).PR_BODY_PRIVATE_WORDS, '(unset)', 'none empties the word list');
     assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, 'memo');
 });
