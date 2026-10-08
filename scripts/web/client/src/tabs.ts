@@ -7,17 +7,33 @@ export function tabIds(streams: string[]): string[] {
   return [OVERVIEW, ...streams.filter((s) => s !== OVERVIEW)];
 }
 
-/** Read the active tab from a `location.hash` value; anything unknown falls back to overview. */
+/** The summary tiles that filter the board: asks (need you), blocked, done (shipped today), working (in flight). */
+export const CUE_KEYS = ['asks', 'blocked', 'done', 'working'] as const;
+export type CueKey = typeof CUE_KEYS[number];
+
+/** A tile's DOM id. A live redraw refocuses the pressed control by id (keep-view's focusKeyOf), so tiles need stable ones. */
+export function tileId(key: CueKey): string { return `tile-${key}`; }
+
+/** The "Show everything" button's id, for the same reason. Only one filtered view is on the page at a time. */
+export const CLEAR_FILTER_ID = 'clear-filter';
+
+/** The `show=` value of a fragment, or null for none or anything that is not a tile key. */
+export function parseFilter(hash: string): CueKey | null {
+  const value = hash.replace(/^#/, '').split('&').find((part) => part.startsWith('show='))?.slice(5);
+  return CUE_KEYS.find((k) => k === value) ?? null;
+}
+
+/** Read the active tab from a `location.hash` value; anything unknown falls back to overview. A `&show=...` part is ignored here. */
 export function parseFragment(hash: string, ids: string[]): string {
-  let raw = hash.replace(/^#/, '');
+  let raw = hash.replace(/^#/, '').split('&')[0];
   if (raw.startsWith('tab=')) raw = raw.slice(4);
   try { raw = decodeURIComponent(raw); } catch { return OVERVIEW; }
   return ids.includes(raw) ? raw : OVERVIEW;
 }
 
-/** The fragment (with the leading #) that selects a tab. */
-export function formatFragment(id: string): string {
-  return `#tab=${encodeURIComponent(id)}`;
+/** The fragment (with the leading #) that selects a tab, and a tile filter when there is one: `#tab=ops&show=blocked`. */
+export function formatFragment(id: string, filter: CueKey | null = null): string {
+  return `#tab=${encodeURIComponent(id)}${filter ? `&show=${filter}` : ''}`;
 }
 
 /** The tab an arrow/Home/End key moves to, or null for any other key. Wraps at the ends. */
