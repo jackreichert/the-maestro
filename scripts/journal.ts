@@ -516,7 +516,7 @@ function cmdLearned(): void {
     const learnedIds = new Set(entries.filter((e) => e.kind === 'learned' && e.id).map((e) => e.id as string));
     const parsed = parseLearned(
         { claim: arg('text') || positional.join(' '), kind: flag('kind'), appliesTo: flag('applies-to'), evidence: flag('evidence'), verifiedAt: flag('verified-at'), confidence: flag('confidence'), supersedes: flag('supersedes'),
-            extras: { date: flag('date') ?? today(), repo: flag('repo') ?? undefined, stream: flag('stream') ?? undefined, model: flag('model') ?? undefined, used: flag('used') ?? undefined } },
+            extras: { date: flag('date') ?? today(), repo: flag('repo') ?? undefined, stream: flag('stream') ?? undefined, model: flag('model') ?? undefined, used: flag('used') ?? undefined, tokens: flag('tokens') ?? undefined, harness: flag('harness') ?? undefined, agent: flag('agent') ?? undefined } },
         { repos: knownRepos(), learnedIds },
     );
     if (!parsed.fields) die(`learned: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\n(journal.ts learned --help)`);

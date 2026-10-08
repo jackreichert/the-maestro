@@ -86,7 +86,7 @@ test('learnedProblems flags a stored row a hand edit made impossible, and passes
 
 test('the usage marks, repo, stream and date on the row are scanned or checked too', () => {
     const secret = ['tok', 'en=abc123secret'].join('');
-    for (const extras of [{ used: secret }, { repo: secret }, { model: secret }, { stream: secret }]) {
+    for (const extras of [{ used: secret }, { repo: secret }, { model: secret }, { stream: secret }, { tokens: secret }, { harness: secret }, { agent: secret }]) {
         const r = parse({ extras });
         assert.equal(r.fields, undefined, JSON.stringify(Object.keys(extras)));
         assert.ok(r.errors.every((e) => !e.includes('abc123secret')));
@@ -95,4 +95,13 @@ test('the usage marks, repo, stream and date on the row are scanned or checked t
     assert.match(parse({ extras: { date: '2026-02-30' } }).errors[0] ?? '', /--date/);
     assert.deepEqual(parse({ extras: { date: '2026-10-08', used: 'skill:x,tool:y', model: 'Test Model' } }).errors, []);
     assert.ok(learnedProblems({ ...GOOD_STORED, used: ['tool:x', secret] }, new Set()).length > 0, 'a stored row is audited too');
+});
+
+test('an over-long field is refused without being scanned, so a hostile row cannot stall verify', () => {
+    const t0 = Date.now();
+    const huge = 'a.'.repeat(60_000);
+    assert.ok(parse({ evidence: huge }).errors.length > 0);
+    assert.ok(learnedProblems({ ...GOOD_STORED, text: huge }, new Set()).some((p) => /over/.test(p)));
+    assert.ok(parse({ extras: { agent: huge } }).errors.some((e) => /agent is over 2000/.test(e)));
+    assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
 });

@@ -21,10 +21,10 @@ export interface LearnedFields {
 }
 
 /** The part of a stored row these helpers read; anything may be there, so each field is checked before it is trusted. */
-export type LearnedRow = Partial<Record<'text' | 'learnedKind' | 'appliesTo' | 'evidence' | 'verifiedAt' | 'confidence' | 'supersedes' | 'date' | 'repo' | 'stream' | 'model' | 'used', unknown>>;
+export type LearnedRow = Partial<Record<'text' | 'learnedKind' | 'appliesTo' | 'evidence' | 'verifiedAt' | 'confidence' | 'supersedes' | 'date' | 'repo' | 'stream' | 'model' | 'used' | 'tokens' | 'harness' | 'agent', unknown>>;
 
 /** The other free text a row carries (usage marks, repo, stream, date). Not part of the fact, but written to the same row, so it is scanned too. */
-export type LearnedExtras = Partial<Record<'date' | 'repo' | 'stream' | 'model' | 'used', string>>;
+export type LearnedExtras = Partial<Record<'date' | 'repo' | 'stream' | 'model' | 'used' | 'tokens' | 'harness' | 'agent', string>>;
 
 /** The flags as the command line gave them (null when absent or valueless). */
 export interface RawLearned { claim: string; kind: string | null; appliesTo: string | null; evidence: string | null; verifiedAt: string | null; confidence: string | null; supersedes: string | null; extras?: LearnedExtras }
@@ -34,6 +34,8 @@ export interface LearnedContext extends ScanOptions { repos?: ReadonlySet<string
 
 export const CLAIM_MAX = 400;
 export const FIELD_MAX = 300;
+/** No field is scanned past this; a longer one is refused outright. */
+const SCAN_MAX = 2000;
 const SLUG = /^[a-z0-9][a-z0-9._-]*$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SHA = /^[0-9a-f]{7,40}$/;
@@ -109,10 +111,14 @@ const RULES: Rule[] = [
         name: 'scanner',
         refuse: (c) => {
             const text = (k: keyof Check['v']): string | undefined => (typeof c.v[k] === 'string' ? (c.v[k] as string) : Array.isArray(c.v[k]) ? (c.v[k] as unknown[]).map(String).join(' ') : undefined);
-            const findings = scanFields({
+            const fields = {
                 claim: text('text'), 'applies-to': text('appliesTo'), evidence: text('evidence'), 'verified-at': text('verifiedAt'), supersedes: text('supersedes'),
-                repo: text('repo'), stream: text('stream'), model: text('model'), used: text('used'),
-            }, c.ctx);
+                repo: text('repo'), stream: text('stream'), model: text('model'), used: text('used'), tokens: text('tokens'), harness: text('harness'), agent: text('agent'),
+            };
+            // A field this long is refused by its own rule or by this one; scanning it would only burn time.
+            const long = Object.entries(fields).filter(([, v]) => (v?.length ?? 0) > SCAN_MAX).map(([k]) => k);
+            if (long.length) return `${long.join(', ')} is over ${SCAN_MAX} characters: say it shorter.`;
+            const findings = scanFields(fields, c.ctx);
             return findings.length ? `refused, nothing written (${describeFindings(findings).join('; ')}). Record names and locations, never values; claims are about systems, ids and counts only.` : null;
         },
     },
@@ -141,7 +147,7 @@ export function parseLearned(raw: RawLearned, ctx: LearnedContext): LearnedParse
 
 /** Problems with one stored `learned` row, for `verify`: whatever the write-time rules would refuse. The repo list is not re-checked (a repo may be renamed later). */
 export function learnedProblems(row: LearnedRow, learnedIds: ReadonlySet<string>, opts: ScanOptions = {}): string[] {
-    return refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes, date: row.date, repo: row.repo, stream: row.stream, model: row.model, used: row.used }, { ...opts, learnedIds });
+    return refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes, date: row.date, repo: row.repo, stream: row.stream, model: row.model, used: row.used, tokens: row.tokens, harness: row.harness, agent: row.agent }, { ...opts, learnedIds });
 }
 
 export const LEARNED_USAGE = [
