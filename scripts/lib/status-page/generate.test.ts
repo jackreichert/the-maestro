@@ -453,3 +453,30 @@ test('gatherInputsCached reads the cached PRs and never calls GitHub, sleeps or 
   assert.deepEqual(gatherInputsCached(empty, CONFIG, guarded).prs, []);
   assert.equal(existsSync(join(empty, '.now-prs.json')), false);
 });
+
+const START = { day: '2026-10-05', yesterday: '2026-10-02', week: { state: 'missing' }, priorities: { state: 'missing' }, needs: { total: 1, byStream: { Alpha: 1 }, top: [{ id: 'bb22', stream: 'Alpha', text: 'Merge widgets?', ageDays: 0, stakes: '' }] },
+  conditions: [], standing: [], inFlight: [], queued: {}, blocked: [], done: [], answered: [], where: null };
+
+test('the Start block sits above the priorities, and the priorities list is still read back from the page', () => {
+  const d = dir();
+  writePriorities(d, '2026-10-05', [{ text: 'Get widgets out', stream: 'Alpha' }]);
+  const page = generate(opts(d), deps([], { start: () => START })).page;
+  const lines = page.split('\n');
+  assert.ok(lines.indexOf('## Start here') > lines.indexOf('# The Podium') && lines.indexOf('## Start here') < lines.indexOf("## Today's priorities"));
+  assert.match(page, /### Needs Jack \(1: Alpha 1\)\n- `bb22` \[Alpha\] Merge widgets\?/);
+  assert.deepEqual(extractFields(page).priorities, ['Get widgets out | Alpha']);
+});
+
+test('a Start view that cannot be read is named on the page and does not stop it; without a reader there is no block', () => {
+  const d = dir();
+  const failed = generate(opts(d, { dryRun: true }), deps([], { start: () => { throw new Error('ledger gone'); } })).page;
+  assert.match(failed, /## Start here\n\nStart view unavailable \(ledger gone\)\./);
+  assert.match(generate(opts(d, { dryRun: true }), deps([], { start: () => ({ nope: 1 }) })).page, /Start view unavailable \(unexpected shape\)/);
+  assert.doesNotMatch(generate(opts(d, { dryRun: true }), deps([])).page, /Start here/);
+});
+
+test('gatherInputsCached never asks for the Start view', () => {
+  const d = dir();
+  const inputs = gatherInputsCached(d, CONFIG, { journal: (sub) => board[sub], now: () => NOW });
+  assert.equal('start' in inputs, false);
+});

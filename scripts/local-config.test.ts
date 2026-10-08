@@ -47,6 +47,13 @@ test('user file at ~/.config/the-maestro/config.md is read', () => {
     assert.equal(v.LEDGER_ROOT, '/led');
 });
 
+test('vault_root and ledger_root expand a leading ~/ like status_dir does', () => {
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('vault_root: ~/notes/vault\nledger_root: ~/notes/ledger'));
+    const v = show();
+    assert.equal(v.VAULT_ROOT, join(home, 'notes', 'vault'));
+    assert.equal(v.LEDGER_ROOT, join(home, 'notes', 'ledger'));
+});
+
 test('MAESTRO_LOCAL_CONFIG beats the default path; empty string disables files', () => {
     write(join(home, '.config', 'the-maestro', 'config.md'), block('gh_org: default-org'));
     const explicit = join(home, 'x', 'mine.md');

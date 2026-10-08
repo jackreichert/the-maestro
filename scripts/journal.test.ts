@@ -2278,6 +2278,36 @@ test('priorities set and show round-trip through the status dir, with a stream s
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
 
+test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
+    seedRegistry();
+    const sd = join(vault, 'Status');
+    run('week', 'set', 'Ship the widget | Maestro', '--status-dir', sd);
+    run('ask', 'which way?', '--stream', 'Maestro', ...MARK);
+    run('start', 'building it', '--stream', 'Maestro', ...MARK);
+    run('start', 'elsewhere', '--stream', 'launch', ...MARK);
+    const r = run('start-here', '--status-dir', sd);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^## Start here\n/);
+    assert.match(r.out, /### This week\n1\. Ship the widget \[Maestro\]/);
+    assert.match(r.out, /### Needs Jack \(1: Maestro 1\)\n- `\w+` \[Maestro\] which way\?/);
+    assert.match(r.out, /Notes not read: vault_root is not set/);
+    assert.ok(r.out.trim().split('\n').length <= 80);
+    const data = parse<{ needs: { total: number }; inFlight: unknown[] }>(run('start-here', '--json', '--status-dir', sd).out);
+    assert.deepEqual([data.needs.total, data.inFlight.length], [1, 2]);
+    const one = run('start-here', '--stream', 'maestro', '--status-dir', sd).out;
+    assert.ok(one.includes('building it') && !one.includes('elsewhere'));
+});
+
+test('week set and show round-trip through the status dir; a missing file prints the not-set line', () => {
+    const sd = join(vault, 'Status');
+    assert.match(run('week', 'show', '--status-dir', sd).out, /^Week goals not set/);
+    const set = run('week', 'set', 'Ship the widget | Alpha', 'Second goal', '--date', '2026-10-07', '--status-dir', sd);
+    assert.equal(set.code, 0, set.err);
+    assert.match(run('week', 'show', '--date', '2026-10-09', '--status-dir', sd).out, /^Goals for the week of 2026-10-05:\n1\. Ship the widget \[Alpha\]\n2\. Second goal\n/);
+    assert.match(run('week', 'show', '--date', '2026-10-12', '--status-dir', sd).out, /^Week goals not set.*week of 2026-10-05/);
+    assert.equal(run('week', 'set', '--status-dir', sd).code, 1, 'no goals is refused');
+});
+
 test('priorities set refuses more than priorities_max and the error names the cap; the env setting moves it', () => {
     const sd = join(vault, 'Status');
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
