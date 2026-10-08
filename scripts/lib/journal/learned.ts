@@ -21,10 +21,13 @@ export interface LearnedFields {
 }
 
 /** The part of a stored row these helpers read; anything may be there, so each field is checked before it is trusted. */
-export type LearnedRow = Partial<Record<'text' | 'learnedKind' | 'appliesTo' | 'evidence' | 'verifiedAt' | 'confidence' | 'supersedes', unknown>>;
+export type LearnedRow = Partial<Record<'text' | 'learnedKind' | 'appliesTo' | 'evidence' | 'verifiedAt' | 'confidence' | 'supersedes' | 'date' | 'repo' | 'stream' | 'model' | 'used', unknown>>;
+
+/** The other free text a row carries (usage marks, repo, stream, date). Not part of the fact, but written to the same row, so it is scanned too. */
+export type LearnedExtras = Partial<Record<'date' | 'repo' | 'stream' | 'model' | 'used', string>>;
 
 /** The flags as the command line gave them (null when absent or valueless). */
-export interface RawLearned { claim: string; kind: string | null; appliesTo: string | null; evidence: string | null; verifiedAt: string | null; confidence: string | null; supersedes: string | null }
+export interface RawLearned { claim: string; kind: string | null; appliesTo: string | null; evidence: string | null; verifiedAt: string | null; confidence: string | null; supersedes: string | null; extras?: LearnedExtras }
 
 /** What the run knows. `repos` is undefined when no container is configured: then only the shape of applies-to is checked. */
 export interface LearnedContext extends ScanOptions { repos?: ReadonlySet<string>; learnedIds: ReadonlySet<string> }
@@ -32,6 +35,7 @@ export interface LearnedContext extends ScanOptions { repos?: ReadonlySet<string
 export const CLAIM_MAX = 400;
 export const FIELD_MAX = 300;
 const SLUG = /^[a-z0-9][a-z0-9._-]*$/i;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SHA = /^[0-9a-f]{7,40}$/;
 const DATE_WITH_HOW = /^(\d{4}-\d{2}-\d{2})\s+\S.*$/;
 const ROW_ID = /^[a-z0-9]{4}$/;
@@ -49,7 +53,7 @@ export function parseAppliesTo(s: string): { repo: string; component: string; en
 }
 
 /** What the rules look at: each field as a value that may be missing or malformed, plus the run's context. */
-interface Check { v: Record<keyof LearnedFields, unknown>; ctx: LearnedContext }
+interface Check { v: Record<keyof LearnedFields | keyof LearnedExtras, unknown>; ctx: LearnedContext }
 /** A rule refuses (returns the message) or passes (null). Every refusal is reported. No message echoes a flag's value: an input that failed may be the secret. */
 interface Rule { name: string; refuse: (c: Check) => string | null }
 
@@ -100,11 +104,15 @@ const RULES: Rule[] = [
             return /\/|\.md$/.test(t) && t.length <= FIELD_MAX && !CONTROL.test(t) ? null : '--supersedes must be an earlier learned id or a page path.';
         },
     },
+    { name: 'date', refuse: (c) => (c.v.date === undefined || (typeof c.v.date === 'string' && DATE.test(c.v.date) && isRealDate(c.v.date)) ? null : '--date must be a real YYYY-MM-DD.') },
     {
         name: 'scanner',
         refuse: (c) => {
-            const text = (k: keyof LearnedFields): string | undefined => (typeof c.v[k] === 'string' ? (c.v[k] as string) : undefined);
-            const findings = scanFields({ claim: text('text'), 'applies-to': text('appliesTo'), evidence: text('evidence'), 'verified-at': text('verifiedAt'), supersedes: text('supersedes') }, c.ctx);
+            const text = (k: keyof Check['v']): string | undefined => (typeof c.v[k] === 'string' ? (c.v[k] as string) : Array.isArray(c.v[k]) ? (c.v[k] as unknown[]).map(String).join(' ') : undefined);
+            const findings = scanFields({
+                claim: text('text'), 'applies-to': text('appliesTo'), evidence: text('evidence'), 'verified-at': text('verifiedAt'), supersedes: text('supersedes'),
+                repo: text('repo'), stream: text('stream'), model: text('model'), used: text('used'),
+            }, c.ctx);
             return findings.length ? `refused, nothing written (${describeFindings(findings).join('; ')}). Record names and locations, never values; claims are about systems, ids and counts only.` : null;
         },
     },
@@ -120,6 +128,7 @@ export function parseLearned(raw: RawLearned, ctx: LearnedContext): LearnedParse
     const v: Check['v'] = {
         text: trimmed(raw.claim), learnedKind: raw.kind ?? undefined, appliesTo: trimmed(raw.appliesTo), evidence: trimmed(raw.evidence),
         verifiedAt: trimmed(raw.verifiedAt), confidence: raw.confidence ?? undefined, supersedes: trimmed(raw.supersedes),
+        ...raw.extras,
     };
     const errors = refusals(v, ctx);
     if (errors.length) return { errors };
@@ -132,7 +141,7 @@ export function parseLearned(raw: RawLearned, ctx: LearnedContext): LearnedParse
 
 /** Problems with one stored `learned` row, for `verify`: whatever the write-time rules would refuse. The repo list is not re-checked (a repo may be renamed later). */
 export function learnedProblems(row: LearnedRow, learnedIds: ReadonlySet<string>, opts: ScanOptions = {}): string[] {
-    return refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes }, { ...opts, learnedIds });
+    return refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes, date: row.date, repo: row.repo, stream: row.stream, model: row.model, used: row.used }, { ...opts, learnedIds });
 }
 
 export const LEARNED_USAGE = [

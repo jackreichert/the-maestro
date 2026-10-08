@@ -2438,6 +2438,17 @@ test('learned refuses a claim, evidence or location with a secret shape, never e
     assert.equal(learnedRows().length, 0);
 });
 
+test('learned refuses a secret shape in --used, --repo or --stream and a malformed --date, and writes nothing', () => {
+    const secret = ['tok', 'en=abc123secret'].join('');
+    for (const extra of [['--used', secret], ['--repo', secret], ['--stream', secret], ['--date', 'yesterday']]) {
+        const marks = extra[0] === '--used' ? ['--model', 'Test Model'] : MARK;
+        const r = run('learned', 'A claim.', ...LEARNED, ...marks, ...extra);
+        assert.equal(r.code, 1, extra.join(' '));
+        assert.ok(!r.err.includes('abc123secret'), 'the value was echoed');
+    }
+    assert.equal(learnedRows().length, 0);
+});
+
 test('learned is idempotent: the same fact, location and evidence is reported, not written twice', () => {
     run('learned', 'A claim.', ...LEARNED, ...MARK);
     const again = run('learned', 'A claim.', ...LEARNED, ...MARK);

@@ -83,3 +83,16 @@ test('learnedProblems flags a stored row a hand edit made impossible, and passes
     assert.ok(learnedProblems({ ...stored, text: ['tok', 'en=abcdef123'].join('') }, new Set()).some((p) => /looks like a secret/.test(p)));
     assert.ok(learnedProblems({ ...stored, confidence: 5 }, new Set()).length > 0);
 });
+
+test('the usage marks, repo, stream and date on the row are scanned or checked too', () => {
+    const secret = ['tok', 'en=abc123secret'].join('');
+    for (const extras of [{ used: secret }, { repo: secret }, { model: secret }, { stream: secret }]) {
+        const r = parse({ extras });
+        assert.equal(r.fields, undefined, JSON.stringify(Object.keys(extras)));
+        assert.ok(r.errors.every((e) => !e.includes('abc123secret')));
+    }
+    assert.match(parse({ extras: { date: 'yesterday' } }).errors[0] ?? '', /--date must be a real YYYY-MM-DD/);
+    assert.match(parse({ extras: { date: '2026-02-30' } }).errors[0] ?? '', /--date/);
+    assert.deepEqual(parse({ extras: { date: '2026-10-08', used: 'skill:x,tool:y', model: 'Test Model' } }).errors, []);
+    assert.ok(learnedProblems({ ...GOOD_STORED, used: ['tool:x', secret] }, new Set()).length > 0, 'a stored row is audited too');
+});
