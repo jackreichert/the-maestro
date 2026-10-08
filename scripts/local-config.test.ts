@@ -186,6 +186,21 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
     assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
 });
 
+test('PR size wide tier is opt-in: defaults follow the normal limits, file and env values apply, line limit is capped', () => {
+    const d = show();
+    assert.equal(d.PR_WIDE_MAX_CODE_FILES, '5', 'default leaves the wide tier off');
+    assert.equal(d.PR_WIDE_MAX_CODE_LINES, '400');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_max_code_lines: 600\npr_wide_max_code_files: 10\npr_wide_max_code_lines: 500'));
+    const f = show();
+    assert.equal(f.PR_WIDE_MAX_CODE_FILES, '10');
+    assert.equal(f.PR_WIDE_MAX_CODE_LINES, '500');
+    const e = show({ MAESTRO_PR_WIDE_MAX_CODE_FILES: '7', MAESTRO_PR_WIDE_MAX_CODE_LINES: 'lots' });
+    assert.equal(e.PR_WIDE_MAX_CODE_FILES, '7');
+    assert.equal(e.PR_WIDE_MAX_CODE_LINES, '600', 'non-numeric env falls back to the default (the normal line limit)');
+    assert.equal(show({ MAESTRO_PR_WIDE_MAX_CODE_LINES: '900' }).PR_WIDE_MAX_CODE_LINES, '600', 'capped at pr_max_code_lines');
+    assert.equal(show({ MAESTRO_PR_WIDE_MAX_CODE_FILES: '2' }).PR_WIDE_MAX_CODE_FILES, '5', 'never below pr_max_code_files');
+});
+
 test('waive_size_gate_owners: default none, a bare owner means owner/*, env wins over the file', () => {
     assert.equal(show().WAIVE_SIZE_GATE_OWNERS, '(unset)');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('waive_size_gate_owners: example-owner, other/tools-*, *, */x'));
