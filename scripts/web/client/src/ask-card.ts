@@ -292,13 +292,13 @@ export class AskCardElement extends HTMLElement {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
     });
     // Rebuilt by a live update: put back what the user had. A copied answer stays settled (no focus grab, the user did
-    // not just act); a half-typed one reopens its ask so it is not hidden behind a folded row.
+    // not just act); a half-typed one reopens its ask so it is not hidden behind a folded row, unless another ask holds the one open form.
     const prior = this.#locked ? null : askState.resolvedAnswer(a.id);
     if (prior !== null) {
       answer.value = prior;
       setOpen(true, false);
       showStatus(chatAnswer(a.id, prior) ?? prior, true, false);
-    } else if (!this.#locked && answer.value !== '') {
+    } else if (!this.#locked && answer.value !== '' && askState.mayReopenForDraft(a.id)) {
       setOpen(true, false);
     }
     if (askState.isOpen(a.id)) setOpen(true, false);   // unfolded before the redraw: still unfolded, without taking focus

@@ -103,3 +103,14 @@ test('an unfolded ask stays unfolded across redraws until it is folded or leaves
   s.prune(['a1']);
   assert.equal(s.isOpen('a2'), false);
 });
+
+test('a draft reopens its ask only when no other ask holds the one open form', () => {
+  const s = new AskState();
+  assert.equal(s.mayReopenForDraft('b'), true);   // nothing open: the drafted ask comes back
+  s.setOpen('a', true);
+  assert.equal(s.mayReopenForDraft('b'), false);   // a is open: b's draft waits folded
+  assert.equal(s.mayReopenForDraft('a'), true);
+  s.setOpen('a', false);
+  s.setOpen('b', true);
+  assert.equal(s.mayReopenForDraft('b'), true);
+});
