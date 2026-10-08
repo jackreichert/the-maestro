@@ -40,6 +40,8 @@ export const inboxPath = (eventDir: string): string => join(eventDir, 'events.js
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const KIND = /^[a-z][a-z0-9-]{0,39}$/;
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+/** A time as canonical ISO text, or null. Re-serialised, never passed through: the date parser accepts trailing free text such as "(note)", so a check alone would let it into the file. */
+const isoTime = (v: unknown): string | null => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null; };
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
 /** Allowlisted fields: a value is kept only when its rule accepts it, and any other key is dropped. */
@@ -96,9 +98,10 @@ export const eventId = (e: Pick<DigestEvent, 'watch' | 'type' | 'summary'>): str
 
 /** Builds the stored form of a digest event, or null when its watch or type is not a plain token (it is refused, not written). The summary is read here and goes no further. */
 export function toInboxEvent(e: DigestEvent): InboxEvent | null {
-  if (!TOKEN.test(String(e.watch)) || !TOKEN.test(String(e.type)) || !Number.isFinite(Date.parse(e.at))) return null;
+  const at = isoTime(e.at);
+  if (!TOKEN.test(String(e.watch)) || !TOKEN.test(String(e.type)) || at === null) return null;
   const raw = Object.assign({}, ...FIELD_EXTRACTORS.map((x) => x(String(e.summary))));
-  return { id: eventId(e), watch: e.watch, type: e.type, kind: kindOf(String(e.summary)), at: e.at, actionable: e.actionable === true, fields: cleanFields(raw) };
+  return { id: eventId(e), watch: e.watch, type: e.type, kind: kindOf(String(e.summary)), at, actionable: e.actionable === true, fields: cleanFields(raw) };
 }
 
 /** Rebuilds an event from a parsed row using only the keys the inbox defines; null when it does not have the shape. */
@@ -106,9 +109,9 @@ function cleanEvent(raw: unknown): InboxEvent | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
   const ok = r.row === 'event' && typeof r.id === 'string' && /^[0-9a-f]{12}$/.test(r.id) && typeof r.watch === 'string' && TOKEN.test(r.watch)
-    && typeof r.type === 'string' && TOKEN.test(r.type) && typeof r.kind === 'string' && KIND.test(r.kind) && typeof r.at === 'string' && Number.isFinite(Date.parse(r.at));
+    && typeof r.type === 'string' && TOKEN.test(r.type) && typeof r.kind === 'string' && KIND.test(r.kind) && isoTime(r.at) !== null;
   if (!ok) return null;
-  return { id: r.id as string, watch: r.watch as string, type: r.type as string, kind: r.kind as string, at: r.at as string, actionable: r.actionable === true, fields: cleanFields(r.fields) };
+  return { id: r.id as string, watch: r.watch as string, type: r.type as string, kind: r.kind as string, at: isoTime(r.at) as string, actionable: r.actionable === true, fields: cleanFields(r.fields) };
 }
 
 function readRows(eventDir: string): unknown[] {

@@ -103,3 +103,14 @@ test('formatEntry prints id, state, kind, watch and fields only', () => {
   assert.match(line, /^[0-9a-f]{12} new ACTION thread prs \(pr-watch\) repo=acme\/w number=3 who=human$/);
   assert.equal(line.includes(SENTINEL), false);
 });
+
+test('a time with trailing free text is re-serialised on write and on read, never stored verbatim', () => {
+  const dir = tempDir();
+  appendEvents(dir, [ev('THREAD acme/w#1 by someone: u', { at: `2026-01-01 (${SENTINEL})` })]);
+  assert.equal(readFileSync(inboxPath(dir), 'utf8').includes(SENTINEL), false);
+  appendFileSync(inboxPath(dir), `${JSON.stringify({ row: 'event', id: 'abcdef012345', watch: 'prs', type: 'pr-watch', kind: 'thread', at: `Jan 1 2026 (${SENTINEL})`, actionable: true, fields: {} })}\n`);
+  const entries = readInbox(dir);
+  assert.equal(entries.length, 2);
+  assert.equal(JSON.stringify(entries).includes(SENTINEL), false);
+  assert.match(entries[1].at, /^\d{4}-\d\d-\d\dT[\d:.]+Z$/);
+});
