@@ -33,3 +33,15 @@ test('loadDocs reads one level of subfolder under a doc folder and no deeper', (
   assert.equal(docs.find((d) => d.path.endsWith('a.md'))?.folder, 'Research');
   assert.deepEqual(notes, []);
 });
+
+test('loadDocs reads library pages from Knowledge, and one subfolder under it, as folder Knowledge', () => {
+  const reader = vaultWith({
+    'Projects/avonlea-api/Knowledge/orchard-sync.md': fm(['type: library', 'stream: Avonlea']),
+    'Projects/avonlea-api/Knowledge/flows/harvest.md': fm(['type: library', 'stream: Avonlea']),
+    'Projects/avonlea-api/Knowledge/flows/deep/x.md': fm(['type: library']),
+  });
+  const { docs, notes } = loadDocs(reader, 'avonlea-api');
+  assert.deepEqual(docs.map((d) => d.path).sort(), ['Projects/avonlea-api/Knowledge/flows/harvest.md', 'Projects/avonlea-api/Knowledge/orchard-sync.md']);
+  assert.ok(docs.every((d) => d.folder === 'Knowledge' && d.stream === 'Avonlea'));
+  assert.deepEqual(notes, []);
+});

@@ -50,7 +50,7 @@ export function buildRail(inp: RailInput, unknowns: Unknown[]): LinkGroup[] {
   const pinnedDocs = (cfg?.docs ?? []).map((path): RailLink | null => { const url = noteUrl(page, path); return url ? { label: baseName(path), kind: 'note', url, meta: 'pinned doc' } : null; });
   for (const [project, ds] of inp.docs) if (!ds.some((d) => d.folder === 'CONTEXT' || d.folder === 'DECISIONS')) unknowns.push({ kind: 'missing-context', text: `Projects/${project} has no CONTEXT.md or DECISIONS.md.` });
   const docs = [...pinnedDocs, ...docsOf(['CONTEXT'], newestFirst).map((d) => docLink(page, d)), ...docsOf(['DECISIONS'], newestFirst).map((d) => docLink(page, d)),
-    ...docsOf(['Plans'], planOrder).map((d) => docLink(page, d)), ...docsOf(['Research', 'Reviews'], newestFirst).map((d) => docLink(page, d))];
+    ...docsOf(['Plans'], planOrder).map((d) => docLink(page, d)), ...docsOf(['Research', 'Reviews', 'Knowledge'], newestFirst).map((d) => docLink(page, d))];
 
   const prs = inp.prs.filter((p) => p.stream === inp.stream && isHttpUrl(p.url)).sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number)
     .map((p): RailLink => ({ label: `${p.short}#${p.number}`, kind: 'pr', url: p.url, meta: [p.isDraft ? 'draft' : 'ready', ...prFlagNames(p)].join(' · ') }));
