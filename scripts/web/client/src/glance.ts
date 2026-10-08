@@ -1,11 +1,21 @@
 /** The cue line (what Jack must see in two seconds), relative ages and clock times. Pure and DOM-free. */
+import type { CueKey } from './tabs.ts';
 import type { PodiumState } from './types.ts';
 
 /** One part of the cue line: a count, the words after it, and the tone it earns when it is not zero. */
-export interface CuePart { key: 'asks' | 'blocked' | 'done' | 'working'; n: number; label: string; tone: 'accent' | 'critical' | 'success' | 'neutral' }
+export interface CuePart { key: CueKey; n: number; label: string; tone: 'accent' | 'critical' | 'success' | 'neutral' }
+
+/** The four buckets the cue line counts. */
+export type Buckets = Pick<PodiumState, CueKey>;
+
+/** The buckets for one scope: every stream when `stream` is null, otherwise that stream's items. The one place a tab scopes them. */
+export function scoped(st: Buckets, stream: string | null): Buckets {
+  const pick = <T extends { stream: string }>(xs: T[]): T[] => (stream === null ? xs : xs.filter((x) => x.stream === stream));
+  return { asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) };
+}
 
 /** The cue line in reading order: what needs you, what is blocked, what shipped today, what is in flight. */
-export function cueParts(st: Pick<PodiumState, 'asks' | 'blocked' | 'done' | 'working'>): CuePart[] {
+export function cueParts(st: Buckets): CuePart[] {
   return [
     { key: 'asks', n: st.asks.length, label: st.asks.length === 1 ? 'needs you' : 'need you', tone: 'accent' },
     { key: 'blocked', n: st.blocked.length, label: 'blocked', tone: 'critical' },

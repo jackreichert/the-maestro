@@ -13,7 +13,7 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
-import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, shortDate, tempoWord } from './glance.ts';
+import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
 import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
@@ -430,10 +430,10 @@ export class PodiumApp extends HTMLElement {
     const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
     // The cue line follows the tab, so its counts always match the panel below it; the scope line says which.
     const stream = this.#active === OVERVIEW ? null : this.#active;
-    const pick = <T extends { stream: string }>(xs: T[]): T[] => (stream === null ? xs : xs.filter((x) => x.stream === stream));
     const scope = stream === null ? 'All streams' : stream;
-    const { tempo, rule } = this.#tempo({ asks: pick(st.asks).length, blocked: pick(st.blocked).length, working: pick(st.working).length });
-    const cue = cueParts({ asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) })
+    const buckets = scoped(st, stream);
+    const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length });
+    const cue = cueParts(buckets)
       .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },

@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TEMPO_RULE, ago, askAge, chatAnswer, clockTime, cueTitle, tempoWord, cueParts, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
+import { TEMPO_RULE, ago, askAge, chatAnswer, clockTime, cueTitle, tempoWord, cueParts, scoped, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -15,6 +15,21 @@ test('cueParts counts asks, blocked, done and working in that order, with singul
 
 test('cueParts gives each part a tone so colour is never the only signal (the words carry it too)', () => {
   assert.deepEqual(cueParts({ asks: [], blocked: [], done: [], working: [] }).map((p) => p.tone), ['accent', 'critical', 'success', 'neutral']);
+});
+
+test('scoped keeps every stream for null and one stream otherwise, and cueParts counts exactly what it returns', () => {
+  const at = (stream: string): typeof row => ({ ...row, stream });
+  const st = {
+    asks: [{ stream: 'a' }, { stream: 'b' }, { stream: 'a' }] as never[],
+    blocked: [at('b')], done: [{ ...at('a'), closedAt: '' }], working: [at('a'), at('b')],
+  };
+  assert.equal(scoped(st, null).asks.length, 3);
+  const a = scoped(st, 'a');
+  assert.deepEqual(cueParts(a).map((p) => p.n), [2, 0, 1, 1]);
+  for (const stream of [null, 'a', 'b', 'none']) {
+    const b = scoped(st, stream);
+    assert.deepEqual(cueParts(b).map((p) => p.n), [b.asks.length, b.blocked.length, b.done.length, b.working.length]);
+  }
 });
 
 test('ago is compact and floors to the unit', () => {
