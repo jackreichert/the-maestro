@@ -37,7 +37,7 @@ const isValue = (v: string | undefined): boolean => !PLACEHOLDER.test(unquote(v 
 const hasLetterAndDigit = (v: string): boolean => /[A-Za-z]/.test(v) && /\d/.test(v);
 
 /** Preceded by anything but a letter or digit, so `db_password=` and `access-token:` match as well as `password=`. */
-const SECRET_NAME = '(?:pass(?:word|wd)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth(?:orization)?|credentials?|client[_-]?secret)';
+const SECRET_NAME = '(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth(?:orization)?|credentials?|client[_-]?secret)';
 
 /** Rules run in order; every match of every rule is reported. */
 const RULES: Rule[] = [
@@ -45,16 +45,17 @@ const RULES: Rule[] = [
     { name: 'aws-access-key-id', class: 'secret', pattern: /\b(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}\b/g },
     { name: 'github-token', class: 'secret', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/g },
     { name: 'slack-token', class: 'secret', pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/g },
-    { name: 'api-key-prefix', class: 'secret', pattern: /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{20,}/g },
+    { name: 'api-key-prefix', class: 'secret', pattern: /\b(?:(?:sk|pk|rk)-[A-Za-z0-9_-]{20,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,})/g },
+    { name: 'bearer-or-basic-credential', class: 'secret', pattern: /(?<![A-Za-z0-9])(?:bearer|basic)\s+[A-Za-z0-9._~+/-]{16,}=*/gi },
     { name: 'jwt', class: 'secret', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
     {
         // scheme://user:password@host covers database DSNs and URLs with embedded credentials.
-        name: 'url-credentials', class: 'secret', pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:([^\s/@]+)@/gi,
+        name: 'url-credentials', class: 'secret', pattern: /\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/:@]{1,256}:([^\s/@]{1,256})@/gi,
         accept: (m) => isValue(m[1]),
     },
     {
         // An all-caps environment variable name that ends in a secret word, then `=` and a value.
-        name: 'env-name-value', class: 'secret', pattern: /\b[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIALS?)\s*=\s*(\S+)/g,
+        name: 'env-name-value', class: 'secret', pattern: /\b[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|PASS|CREDENTIALS?)\s*=\s*(\S+)/g,
         accept: (m) => isValue(m[1]),
     },
     {
@@ -64,8 +65,18 @@ const RULES: Rule[] = [
     },
     {
         // `password: Abc12345` or `"token": "..."`. Prose such as "token: the value" has no digit, so it passes.
-        name: 'secret-colon-value', class: 'secret', pattern: new RegExp(`(?<![A-Za-z0-9])${SECRET_NAME}["']?\\s*:\\s*["']?([^\\s"']{8,})`, 'gi'),
+        name: 'secret-colon-value', class: 'secret', pattern: new RegExp(`(?<![A-Za-z0-9])${SECRET_NAME}["']?\\s*:\\s*["']?([^\\s"']{6,})`, 'gi'),
         accept: (m) => hasLetterAndDigit(unquote(m[1] ?? '')) && isValue(m[1]),
+    },
+    {
+        // A camelCase name: `dbPassword=...`, `apiKey: ...`. The value must carry a letter and a digit.
+        name: 'camel-secret-assignment', class: 'secret', pattern: /[a-z](?:Password|Passwd|Pwd|Secret|Token|ApiKey|AccessKey|PrivateKey|ClientSecret)["']?\s*[=:]\s*["']?([^\s"']{6,})/g,
+        accept: (m) => hasLetterAndDigit(unquote(m[1] ?? '')) && isValue(m[1]),
+    },
+    {
+        // A bare hex key. A git sha (40, or 64 for sha256) is allowed because verified-at fields carry them.
+        name: 'hex-key', class: 'secret', pattern: /(?<![0-9A-Za-z])[0-9a-f]{32,}(?![0-9A-Za-z])/g,
+        accept: (m) => m[0].length !== 40 && m[0].length !== 64,
     },
     {
         // A long unbroken mixed-case token with a digit. A git sha (lowercase hex) has no capitals, so it passes.
@@ -75,7 +86,7 @@ const RULES: Rule[] = [
     { name: 'ssn', class: 'phi', pattern: /\b\d{3}-\d{2}-\d{4}\b/g },
     { name: 'phone-number', class: 'phi', pattern: /(?<![\d-])(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}(?![\d-])/g },
     {
-        name: 'email-address', class: 'phi', pattern: /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\b/g,
+        name: 'email-address', class: 'phi', pattern: /\b[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,10})\b/g,
         accept: (m, opts) => !(opts.allowedEmailDomains ?? []).some((d) => d.toLowerCase() === (m[1] ?? '').toLowerCase()),
     },
     { name: 'date-of-birth', class: 'phi', pattern: /\b(?:dob|d\.o\.b\.?|date of birth|birth ?date|born(?: on)?)\b[^\n]{0,12}?\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/gi },
@@ -83,7 +94,10 @@ const RULES: Rule[] = [
 ];
 
 /** Every finding in `text`, in rule order. Each scan builds fresh regexes, so no lastIndex state leaks between calls. */
-export function scanText(text: string, opts: ScanOptions = {}): Finding[] {
+export function scanText(raw: string, opts: ScanOptions = {}): Finding[] {
+    // Fold fullwidth and compatibility forms, and drop zero-width and other format characters, so they cannot split a shape.
+    // Offsets refer to the folded text.
+    const text = raw.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const out: Finding[] = [];
     for (const rule of RULES) {
         for (const m of text.matchAll(new RegExp(rule.pattern.source, rule.pattern.flags))) {

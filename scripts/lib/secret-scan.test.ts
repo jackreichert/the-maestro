@@ -39,6 +39,36 @@ test('snake_case and kebab-case credential names are caught, not only bare ones'
     }
 });
 
+test('common accidental pastes are caught: bearer headers, vendor prefixes, hex keys, camelCase and pwd names', () => {
+    const hex32 = 'a1b2c3d4'.repeat(4);
+    for (const t of [
+        j('curl -H "Author', 'ization: Bear', 'er ', 'abcDEF123456abcdef7890', '" returned 200'),
+        j('key AI', 'za', 'SyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q'),
+        j('s', 'k_live_', 'abcdefghij1234'),
+        j('gl', 'pat-', 'abcdefghij1234567890'),
+        j('the key is ', hex32),
+        j('db', 'Pass', 'word=hunter2xyz'),
+        j('DB_', 'PWD=hunter22x'),
+        j('pwd', '=hunter22x'),
+        j('pass', 'word: Ab1defg'),
+    ]) assert.ok(scanText(t).length > 0, t.slice(0, 20));
+    assert.deepEqual(scanText(`commit ${'3'.repeat(40)} and ${'a'.repeat(64)}`), [], 'sha-1 and sha-256 lengths pass');
+});
+
+test('zero-width and fullwidth characters do not hide a shape', () => {
+    assert.ok(scanText(j('AK', '\u200b', 'IAABCDEFGHIJKLMNOP')).length > 0);
+    assert.ok(scanText(j('\uff21\uff2b\uff29\uff21', 'ABCDEFGHIJKLMNOP')).length > 0);
+    assert.ok(scanText(j('a', '\uff20', 'clinic.test')).length > 0);
+});
+
+test('long adversarial input scans in well under a second', () => {
+    for (const unit of ['a.', 'x@a.', 'aB3-', '123-', 'a:']) {
+        const t0 = Date.now();
+        scanText(unit.repeat(50_000));
+        assert.ok(Date.now() - t0 < 1000, `${unit} took ${Date.now() - t0}ms`);
+    }
+});
+
 test('clean claims about systems, ids and counts pass', () => {
     for (const ok of [
         'The staging interim DB is reached through the staging Cloud SQL proxy on localhost:5439',
