@@ -35,6 +35,12 @@ const PLACEHOLDER = /^(?:<[^>]*>|\$\{?\w+\}?|\{\{.*\}\}|\*+|x{3,}|\.{3}|…|reda
 const unquote = (v: string): string => v.replace(/^["'`]+|["'`,;)\]]+$/g, '');
 const isValue = (v: string | undefined): boolean => !PLACEHOLDER.test(unquote(v ?? ''));
 const hasLetterAndDigit = (v: string): boolean => /[A-Za-z]/.test(v) && /\d/.test(v);
+/** A value after `name:`: a letter and a digit, or (for a password name only) a single word of 12 or more letters. */
+const looksLikeValue = (name: string | undefined, raw: string | undefined): boolean => {
+    const v = unquote(raw ?? '');
+    if (!isValue(raw)) return false;
+    return hasLetterAndDigit(v) || (/^pass|^pwd/i.test(name ?? '') && /^[A-Za-z]{12,}$/.test(v));
+};
 
 /**
  * True for a run that is a path, URL tail or hyphenated name rather than a blob: it has at least three `/`, `_` or `-`
@@ -51,6 +57,10 @@ function isStructuredName(token: string): boolean {
 /** Preceded by anything but a letter or digit, so `db_password=` and `access-token:` match as well as `password=`. */
 const SECRET_NAME = '(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth(?:orization)?|credentials?|client[_-]?secret)';
 
+/** The ways a date is written: numeric with `-`, `/` or `.`, ISO, `March 3, 1950` and `3 March 1950`. */
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
+const DATE_SHAPES = `\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}|\\d{1,2}[-/.]\\d{1,2}[-/.]\\d{2,4}|${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+\\d{4}|\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH},?\\s+\\d{4}`;
+
 /** Rules run in order; every match of every rule is reported. */
 const RULES: Rule[] = [
     { name: 'private-key-block', class: 'secret', pattern: /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----/g },
@@ -58,12 +68,18 @@ const RULES: Rule[] = [
     { name: 'github-token', class: 'secret', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/g },
     { name: 'slack-token', class: 'secret', pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/g },
     { name: 'api-key-prefix', class: 'secret', pattern: /\b(?:(?:sk|pk|rk)-[A-Za-z0-9_-]{20,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20,})/g },
-    { name: 'bearer-or-basic-credential', class: 'secret', pattern: /(?<![A-Za-z0-9])(?:bearer|basic)\s+[A-Za-z0-9._~+/-]{16,}=*/gi },
+    {
+        // 16 or more characters of anything, or 8 or more with a letter and a digit (`Bearer abc123def456`); prose such as "bearer tokens" has no digit.
+        name: 'bearer-or-basic-credential', class: 'secret', pattern: /(?<![A-Za-z0-9])(?:bearer|basic)\s+([A-Za-z0-9._~+/-]{8,})=*/gi,
+        accept: (m) => (m[1] ?? '').length >= 16 || hasLetterAndDigit(m[1] ?? ''),
+    },
+    { name: 'npm-token', class: 'secret', pattern: /\bnpm_[A-Za-z0-9]{30,}/g },
     { name: 'jwt', class: 'secret', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
     {
         // scheme://user:password@host covers database DSNs and URLs with embedded credentials.
-        name: 'url-credentials', class: 'secret', pattern: /\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/:@]{1,256}:([^\s/@]{1,256})@/gi,
-        accept: (m) => isValue(m[1]),
+        name: 'url-credentials', class: 'secret', pattern: /\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/:@]{1,256}:([^\s@]{1,256})@/gi,
+        // A password may contain `/`; `host:8080/path@x` is a port and a path, not a credential.
+        accept: (m) => isValue(m[1]) && !/^\d{1,5}(?:\/|$)/.test(m[1] ?? ''),
     },
     {
         // An all-caps environment variable name that ends in a secret word, then `=` and a value.
@@ -76,14 +92,20 @@ const RULES: Rule[] = [
         accept: (m) => isValue(m[1]),
     },
     {
-        // `password: Abc12345` or `"token": "..."`. Prose such as "token: the value" has no digit, so it passes.
-        name: 'secret-colon-value', class: 'secret', pattern: new RegExp(`(?<![A-Za-z0-9])${SECRET_NAME}["']?\\s*:\\s*["']?([^\\s"']{6,})`, 'gi'),
-        accept: (m) => hasLetterAndDigit(unquote(m[1] ?? '')) && isValue(m[1]),
+        // `--password hunter2`, `--api-key abc`: a command-line flag that names a secret, then its value.
+        name: 'secret-flag', class: 'secret', pattern: /(?<![A-Za-z0-9-])--(?:pass(?:word|wd|phrase)?|pwd|secret|token|api-?key|access-?key|client-?secret|auth-?token)(?:\s+|=)(?!-)(\S+)/gi,
+        accept: (m) => isValue(m[1]),
     },
     {
-        // A camelCase name: `dbPassword=...`, `apiKey: ...`. The value must carry a letter and a digit.
-        name: 'camel-secret-assignment', class: 'secret', pattern: /[a-z](?:Password|Passwd|Pwd|Secret|Token|ApiKey|AccessKey|PrivateKey|ClientSecret)["']?\s*[=:]\s*["']?([^\s"']{6,})/g,
-        accept: (m) => hasLetterAndDigit(unquote(m[1] ?? '')) && isValue(m[1]),
+        // `password: Abc12345` or `"token": "..."`. Prose such as "token: the value" has no digit, so it passes; a long
+        // single word after a password name (`password: correcthorsebattery`) is a passphrase, not prose.
+        name: 'secret-colon-value', class: 'secret', pattern: new RegExp(`(?<![A-Za-z0-9])(${SECRET_NAME})["']?\\s*:\\s*["']?([^\\s"']{6,})`, 'gi'),
+        accept: (m) => looksLikeValue(m[1], m[2]),
+    },
+    {
+        // A camelCase name: `dbPassword=...`, `apiKey: ...`. The value must carry a letter and a digit, or be a passphrase.
+        name: 'camel-secret-assignment', class: 'secret', pattern: /[a-z](Password|Passwd|Pwd|Secret|Token|ApiKey|AccessKey|PrivateKey|ClientSecret)["']?\s*[=:]\s*["']?([^\s"']{6,})/g,
+        accept: (m) => looksLikeValue(m[1], m[2]),
     },
     {
         // A bare hex key. A git sha (40, or 64 for sha256) is allowed because verified-at fields carry them.
@@ -96,13 +118,13 @@ const RULES: Rule[] = [
         name: 'high-entropy-blob', class: 'secret', pattern: /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{40,}={0,2}(?![A-Za-z0-9+/_-])/g,
         accept: (m) => /[a-z]/.test(m[0]) && /[A-Z]/.test(m[0]) && /\d/.test(m[0]) && !isStructuredName(m[0]),
     },
-    { name: 'ssn', class: 'phi', pattern: /\b\d{3}-\d{2}-\d{4}\b/g },
+    { name: 'ssn', class: 'phi', pattern: /\b\d{3}-\d{2}-\d{4}\b|\b(?:ssn|social security(?: number| no\.?)?)\b\D{0,12}?\b\d{9}\b/gi },
     { name: 'phone-number', class: 'phi', pattern: /(?<![\d-])(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}(?![\d-])/g },
     {
         name: 'email-address', class: 'phi', pattern: /\b[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,10})\b/g,
         accept: (m, opts) => !(opts.allowedEmailDomains ?? []).some((d) => d.toLowerCase() === (m[1] ?? '').toLowerCase()),
     },
-    { name: 'date-of-birth', class: 'phi', pattern: /\b(?:dob|d\.o\.b\.?|date of birth|birth ?date|born(?: on)?)\b[^\n]{0,12}?\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/gi },
+    { name: 'date-of-birth', class: 'phi', pattern: new RegExp(`\\b(?:dob|d\\.o\\.b\\.?|date of birth|birth ?date|born(?: on)?)\\b[^\\n]{0,12}?\\b(?:${DATE_SHAPES})\\b`, 'gi') },
     { name: 'medical-record-number', class: 'phi', pattern: /\b(?:mrn|medical record (?:number|no\.?))\b\s*[:#=]?\s*[A-Za-z0-9-]{4,}/gi },
 ];
 

@@ -126,3 +126,39 @@ test('a long path or URL is not a blob, but a random token is, in a path or alon
         `A${'bC1+dE2/fG3-'.repeat(5)}`,
     ]) assert.ok(rules(bad).length > 0, bad.slice(0, 30));
 });
+
+test('shapes a first pass missed are caught: short bearer values, npm tokens, password flags, passphrases, written-out dates of birth, bare SSNs, slashes in a URL password', () => {
+    for (const t of [
+        j('Author', 'ization: Bear', 'er abc123def456'),
+        j('npm', '_', 'a1B2c3D4'.repeat(5)),
+        j('postgres', '://admin:pa/ss', '1234@db.internal.test/app'),
+        j('run with --pass', 'word x'),
+        j('run with --pass', 'word=correcthorsebattery'),
+        j('run with --api', '-key abc'),
+        j('pass', 'word: correcthorsebattery'),
+        j('db', 'Pass', 'word: correcthorsebattery'),
+        'DOB: 03-03-1950',
+        'dob 3.3.1950',
+        'date of birth: March 3, 1950',
+        'born on 3rd Mar 1950',
+        'SSN 123456789',
+        'social security number: 123456789',
+        'ssn 123-45-6789',
+    ]) assert.ok(scanText(t).length > 0, t.replace(/\S+$/, '<value>'));
+});
+
+// A single long word after `password:` is read as a passphrase, so `password: authentication` is refused: a reword costs less than a leak.
+test('prose near those shapes still passes', () => {
+    for (const ok of [
+        'the bearer tokens are rotated nightly',
+        'Basic authentication is off in staging',
+        'send the bearer header as documented',
+        'run with --password-file /run/secrets/db',
+        'run with --password <redacted>',
+        'the password: rotated monthly',
+        'see http://host:8080/path/to/file@latest',
+        'born in the 1950s; date of birth is not stored',
+        'the ssn column is masked',
+        'npm tokens are scoped per package',
+    ]) assert.deepEqual(scanText(ok), [], ok);
+});
