@@ -19,11 +19,15 @@ A fresh agent sees only what you write. Every brief includes:
 
 A field you cannot fill means scout again, not dispatch.
 
+A rule that is long and stands across many briefs (a policy, a checklist, a style guide) is not retyped into each brief: put it in a file, name the path in the brief and tell the agent to read it. The brief stays short and the file is edited once.
+
+A builder's brief says to review locally before any push, and that a fix is checked by running it; a fresh agent, not the builder, re-reviews it ([reference/prs.md](prs.md#re-review-before-ready)).
+
 ### Standing brief block — paste once into every brief
 
 Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
-paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. PR text line added 2026-10-07; Report line changed to a file plus a headline 2026-10-07; the user should confirm both. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it. Learned line added 2026-10-08 (ledger-to-library slice L1); the user should confirm it.
+paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. PR text line added 2026-10-07; Report line changed to a file plus a headline 2026-10-07; the user should confirm both. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it. Learned line added 2026-10-08 (ledger-to-library slice L1); the user should confirm it. Report line tightened to a few lines 2026-10-08 (context cost); the user should confirm it.
 
 Print it with its slots filled by `node scripts/brief-block.ts`. It exits non-zero, printing
 nothing, if a slot has no value, so never paste a block you wrote by hand.
@@ -45,7 +49,7 @@ Standing rules (hard limits):
 - Docs: a vault note you write for a ticket gets `ticket.mjs attach TICKET NOTE --kind KIND` before you report, or `ticket: none` in its frontmatter when it belongs to no ticket; an outside document gets `attach --url`. If your work changed an epic's state (closed or reopened a child, recorded a decision, found a risk), run `ticket.mjs brief EPIC --refresh` and rewrite its Status paragraph before you report.
 - Tool output: request only the fields you need (Jira `fields=`, `gh ... --json a,b --jq ...`). Never paste raw logs or whole files; grep for counts and markers. Wrap long jobs in a script that prints a summary.
 - Learned: end your report with one line per fact you established that a later agent would otherwise have to re-derive (how something works, a gotcha, how to do a recurring thing), in the form `Learned: claim | kind | applies-to | evidence | verified-at | confidence` (kind how-to, how-it-works, gotcha, decision or tool; applies-to repo:component[:env]; confidence observed, told-by-jack or inferred), or record it yourself with `node <maestro scripts dir>/journal.ts learned --help`. Systems, ids and counts only: evidence is a path, a PR or a command and its count, never a secret or PHI value; a value-shaped claim is refused. Leave out status and restated decisions.
-- Report: write the full report to a file (a vault note or report path the brief names) and hand back only a headline paragraph, under 150 words, plus that file path: outcome, numbers, links, decisions needed, what is left open. If tests failed or a step was skipped, say so in the headline.
+- Report: write the full report to a file (a vault note or report path the brief names) and hand back only a few lines, a headline under 150 words and shorter when it can be, plus that file path: outcome, numbers, links, decisions needed, what is left open. Never paste the report, logs or JSON into the final message. If tests failed or a step was skipped, say so in the headline.
 ```
 
 ### Scripts shelf line — appended when `scripts_dir` is set

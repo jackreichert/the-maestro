@@ -134,6 +134,32 @@ Lesson, 2026-09-27: a session ran to 316 turns without being rolled, and read/tu
 day as a result — see [loop.md#worked-example-2026-09-27](loop.md#worked-example-2026-09-27). The
 threshold above already covers this; the miss was not rolling on time, not a wrong number.
 
+## Hand-back discipline
+
+Every agent's final message is re-read by the orchestrator on every later turn, so its length is paid for many times over. Measured on one orchestrator session on 2026-10-08, only 4 of 46 hand-backs stayed under 150 words (median 241, longest 1,010), and only 24 of 46 briefs carried the cap line at all; each agent also costs about 900 tokens of fixed harness text (launch ack, task notification, hand-back wrapper) that no brief rule can shrink.
+
+- **Every brief ends with the standing block**, whose Report line says: full report to a file, a few lines back, plus the file path ([reference/brief.md](../reference/brief.md)). `brief-block.ts` prints it, so the cap is in a brief when the brief is built with that script. Nothing forces briefs through it yet; building the brief file from `journal.ts brief <id>` (R3 in the plan) is the unbuilt follow-up.
+- **Long standing rules become files.** A brief names the path of a rule file instead of retyping a policy.
+- **Relay the headline only.** The orchestrator passes on the headline and the path, never the report, and opens the file only when a decision needs something the headline lacks ([reference/dispatch.md](../reference/dispatch.md)). When a reply overran, say the cap was missed and tighten the next brief.
+- **Enforcement status:** the cap is described, not enforced. The harness delivers whatever the agent writes, so compliance can only be measured after the fact (the plan proposes a weekly word-count metric in `token-metrics.ts`, not built).
+
+## Compaction is the roll
+
+Claude Code has no way to start a fresh interactive session on its own, so for the orchestrator compaction is the rollover. The design goal is that a compaction at any moment loses nothing: every decision, rule, ask and state change is written to the ledger the same turn it happens, and a hook rebuilds the working picture afterwards. (A docs reading; **none of it has been tried on a live session**.)
+
+**Documented, not yet tried here:**
+
+- `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (1 to 100 percent of the auto-compact window) can only lower the threshold; set it in the settings `env` block or the shell. It applies to the main conversation and to subagents. The window itself is set with `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, `autoCompactWindow`, `/autocompact` or `--autocompact`. With the window variable set, the status line's `used_percentage` still measures against the full window.
+- A `SessionStart` hook with the `compact` matcher (also `startup`, `resume`, `clear`, `fork`) can print text that is added to context: print `journal.ts prime --source compact` and `journal.ts start-here` there, so the fresh context begins from the ledger.
+- `PreCompact` (matchers `manual`, `auto`) can block a compaction; `PostCompact` carries `compact_summary`. Neither is documented to supply custom summary instructions.
+- What survives compaction: the system prompt, project CLAUDE.md and unscoped rules and auto memory (re-read from disk), up to five recently modified files, and invoked skill bodies (5,000 tokens each, 25,000 total). Instructions given only in conversation are lost, and hook-added context is summarized rather than kept verbatim.
+
+**Not available:** a hook cannot trigger `/compact` or `/clear` or open a new session, and hook inputs carry no live context percentage (only the status line script receives it).
+
+**Still unverified:** the percent-to-window arithmetic of the override, whether `PreCompact` output can steer the summary, and whether a status line file plus a `UserPromptSubmit` hook can warn at a chosen percentage. Check these on a live session before relying on a number; until then the manual roll above stays the safety net.
+
+**The success measure** is two orchestrator windows working in tandem on one ledger with no degradation. That has two parts: *cold-start equivalence* (a fresh window given only the hook's injection answers a fixed task set, including the hard-limit refusals, as well as a long-running window) and *tandem safety* (no duplicate dispatch of one item, no lost or overwritten ledger rows or handoffs, every event handled once by the window that owns it, each window's context under the threshold). Both parts depend on the same habit: log every decision the same turn it is made.
+
 ## PR watcher cadence
 
 The `pr-watch` event type costs no tokens between ticks — it runs inside the event loop, a background
