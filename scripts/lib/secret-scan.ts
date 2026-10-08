@@ -36,6 +36,7 @@ const unquote = (v: string): string => v.replace(/^["'`]+|["'`,;)\]]+$/g, '');
 const isValue = (v: string | undefined): boolean => !PLACEHOLDER.test(unquote(v ?? ''));
 const hasLetterAndDigit = (v: string): boolean => /[A-Za-z]/.test(v) && /\d/.test(v);
 
+/** Preceded by anything but a letter or digit, so `db_password=` and `access-token:` match as well as `password=`. */
 const SECRET_NAME = '(?:pass(?:word|wd)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth(?:orization)?|credentials?|client[_-]?secret)';
 
 /** Rules run in order; every match of every rule is reported. */
@@ -58,12 +59,12 @@ const RULES: Rule[] = [
     },
     {
         // A secret word, `=`, and a value that is not a placeholder.
-        name: 'secret-assignment', class: 'secret', pattern: new RegExp(`\\b${SECRET_NAME}["']?\\s*=\\s*["']?([^\\s"']{4,})`, 'gi'),
+        name: 'secret-assignment', class: 'secret', pattern: new RegExp(`(?<![A-Za-z0-9])${SECRET_NAME}["']?\\s*=\\s*["']?([^\\s"']{4,})`, 'gi'),
         accept: (m) => isValue(m[1]),
     },
     {
         // `password: Abc12345` or `"token": "..."`. Prose such as "token: the value" has no digit, so it passes.
-        name: 'secret-colon-value', class: 'secret', pattern: new RegExp(`\\b${SECRET_NAME}["']?\\s*:\\s*["']?([^\\s"']{8,})`, 'gi'),
+        name: 'secret-colon-value', class: 'secret', pattern: new RegExp(`(?<![A-Za-z0-9])${SECRET_NAME}["']?\\s*:\\s*["']?([^\\s"']{8,})`, 'gi'),
         accept: (m) => hasLetterAndDigit(unquote(m[1] ?? '')) && isValue(m[1]),
     },
     {

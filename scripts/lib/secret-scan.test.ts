@@ -33,6 +33,12 @@ for (const [rule, text] of SENTINELS) {
     });
 }
 
+test('snake_case and kebab-case credential names are caught, not only bare ones', () => {
+    for (const t of [j('db_pass', 'word=hunter2xyz'), j('access_tok', 'en=abcdef123456'), j('api-tok', 'en: Abcd1234Efgh'), j('https://h.test/x?access_tok', 'en=abcdef123456')]) {
+        assert.ok(scanText(t).length > 0, t.replace(/=.*/, '='));
+    }
+});
+
 test('clean claims about systems, ids and counts pass', () => {
     for (const ok of [
         'The staging interim DB is reached through the staging Cloud SQL proxy on localhost:5439',
