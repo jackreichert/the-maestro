@@ -132,6 +132,7 @@ export class AskCardElement extends HTMLElement {
   #ask: AskCard | null = null;
   #locked = false;
   #showStream = false;
+  #fold: (() => void) | null = null;
 
   constructor() {
     super();
@@ -152,6 +153,9 @@ export class AskCardElement extends HTMLElement {
   /** Name the card's stream (with a link to its tab), for views that mix streams. */
   get showStream(): boolean { return this.#showStream; }
   set showStream(v: boolean) { this.#showStream = v; this.#render(); }
+
+  /** Fold the ask back to its row, keeping any draft; used when another ask in the same list opens. */
+  fold(): void { this.#fold?.(); }
 
   /** Move focus to the ask's decision (its disclosure button). */
   focusToggle(): void { this.#root.querySelector<HTMLElement>('button.ask-toggle')?.focus(); }
@@ -204,8 +208,11 @@ export class AskCardElement extends HTMLElement {
       toggle.setAttribute('aria-expanded', String(open));
       body.hidden = !open;
       this.toggleAttribute('open', open);
+      // One answer form at a time: the list around this card folds the others (a restored open card on a redraw does not announce itself).
+      if (open && focusField) this.dispatchEvent(new CustomEvent('ask-open', { bubbles: true, composed: true }));
       if (open && focusField && form?.isConnected) answer.focus();
     };
+    this.#fold = () => { if (isOpen) setOpen(false, false); };
     toggle.addEventListener('click', () => setOpen(!isOpen, true));
     // The rest of the row opens it too, except the controls inside it (the stream link keeps its own job).
     row.addEventListener('click', (e) => {
@@ -285,13 +292,13 @@ export class AskCardElement extends HTMLElement {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
     });
     // Rebuilt by a live update: put back what the user had. A copied answer stays settled (no focus grab, the user did
-    // not just act); a half-typed one reopens its ask so it is not hidden behind a folded row.
+    // not just act); a half-typed one reopens its ask so it is not hidden behind a folded row, unless another ask holds the one open form.
     const prior = this.#locked ? null : askState.resolvedAnswer(a.id);
     if (prior !== null) {
       answer.value = prior;
       setOpen(true, false);
       showStatus(chatAnswer(a.id, prior) ?? prior, true, false);
-    } else if (!this.#locked && answer.value !== '') {
+    } else if (!this.#locked && answer.value !== '' && askState.mayReopenForDraft(a.id)) {
       setOpen(true, false);
     }
     if (askState.isOpen(a.id)) setOpen(true, false);   // unfolded before the redraw: still unfolded, without taking focus

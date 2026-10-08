@@ -81,3 +81,31 @@ export interface ChartsData {
 export interface AskBusyDetail { busy: boolean }
 /** What `ask-resolve` carries; this slice writes nothing to the network. */
 export interface AskResolveDetail { id: string; answer: string }
+
+/** One ticket row on the home base: what is left, the next item of an epic. `prs` are at most three; `prsMore` counts the rest. */
+export interface HomeTicket {
+  id: string; title: string; status: string; priority: number; ref: Ref; prs: Ref[]; awaitsYou: boolean;
+  tracker?: Ref; points?: number; prsMore?: number; quietDays: number | null;
+}
+
+/** One epic's progress and what to do next, as the server counted it. */
+export interface HomeEpic {
+  id: string; title: string; note: Ref; status: string;
+  total: number; closed: number; inProgress: number; blocked: number; notStarted: number;
+  verify: { required: boolean; verified: number };
+  awaiting: number; unknowns: number; quietDays: number | null;
+  tracker?: Ref; next?: HomeTicket;
+}
+
+/** Something the files cannot tell, with the fix in its text. `epic` names the epic block it counts toward. */
+export interface HomeUnknown { kind: string; text: string; ref?: Ref; epic?: string }
+
+/** The part of `GET /api/streams/:name/home` this client draws; fields it does not read are left out here and ignored on arrival. */
+export interface StreamHome {
+  stream: string;
+  epics: HomeEpic[];
+  loose: HomeTicket[];
+  left: { inProgress: HomeTicket[]; blocked: HomeTicket[]; notStarted: HomeTicket[]; truncated: number };
+  unknowns: HomeUnknown[];
+  freshness: { prs: { fetchedAt: string | null; stale: boolean } };
+}

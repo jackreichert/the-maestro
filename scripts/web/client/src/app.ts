@@ -4,10 +4,12 @@ import './priority-list.ts';
 import './md-fragment.ts';
 import { h, s, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
+import { describeSources, loadCharts, loadHome, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
+import { findByKey, focusKeyOf, openFolds, reopenFolds } from './keep-view.ts';
+import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
@@ -16,7 +18,7 @@ import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
-import type { AskBusyDetail, ChartsData, PodiumState } from './types.ts';
+import type { AskBusyDetail, ChartsData, PodiumState, StreamHome } from './types.ts';
 
 interface Fresh { state: PodiumState; charts: ChartsData; dropped: number }
 
@@ -25,6 +27,10 @@ const CSS = `${BOARD_CSS}
   @media (min-width: 640px) { :host { --pad: var(--space-5); } }
   @media (min-width: 1100px) { :host { --pad: var(--space-7); } }
   .wrap { max-width: 1360px; margin: 0 auto; padding-inline: var(--pad); }
+
+  /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
+  .skip { position: fixed; inset-block-start: -100px; inset-inline-start: var(--space-3); z-index: 10; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-weight: var(--weight-semibold); text-decoration: none; }
+  .skip:focus-visible { inset-block-start: var(--space-3); outline: 2px solid var(--focus); outline-offset: 2px; }
 
   header { padding-block: var(--space-5) var(--space-4); }
   .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
@@ -195,6 +201,8 @@ export class PodiumApp extends HTMLElement {
   #tick: number | undefined;
   #tabsObserver: ResizeObserver | null = null;
   #tempoOpen = false;
+  // The last home base each stream tab got, so a redraw shows it at once while the fresh one loads.
+  readonly #homes = new Map<string, StreamHome>();
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -286,8 +294,10 @@ export class PodiumApp extends HTMLElement {
     askState.prune(f.state.asks.map((a) => a.id));
     if (!this.#ids().includes(this.#active)) this.#active = OVERVIEW;   // the stream behind the open tab is gone
     const focused = this.#focusKey();
+    const folds = openFolds(this.#root);
     this.#safeRender();
-    if (focused) findByKey(this.#root, focused)?.focus();   // the redraw destroyed the element that had focus; put it back on its twin
+    reopenFolds(this.#root, folds);   // the redraw closed every disclosure the reader had opened; open the same ones again
+    if (focused) findByKey(this.#root, focused)?.focus?.();   // the redraw destroyed the element that had focus; put it back on its twin
   }
 
   /** A stable name for the control that has focus inside the page (tab, ask toggle, link), or null when focus is elsewhere. */
@@ -295,9 +305,7 @@ export class PodiumApp extends HTMLElement {
     if (document.activeElement !== this) return null;
     let el: Element | null = this.#root.activeElement;
     while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
-    if (!el) return null;
-    if (el.id) return { id: el.id };
-    return el instanceof HTMLAnchorElement ? { href: el.href } : null;
+    return el ? focusKeyOf(el) : null;
   }
 
   #release(input: GateInput): void {
@@ -373,9 +381,19 @@ export class PodiumApp extends HTMLElement {
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
-    this.#root.replaceChildren(this.#header(st), tabbar, h('main', {}, panel));
+    this.#root.replaceChildren(this.#skipLink(panel), this.#header(st), tabbar, h('main', {}, panel));
     this.#watchTabOverflow(tabbar, tablist);
     showCue(this.#waiting(st));
+  }
+
+  /**
+   * The first tab stop: jumps past the header and tab bar to the open panel. A fragment link cannot reach into a shadow
+   * root (and the fragment holds the active tab), so the click moves focus itself and leaves the URL alone.
+   */
+  #skipLink(panel: HTMLElement): HTMLElement {
+    const skip = h('a', { class: 'skip', href: `#${panel.id}` }, 'Skip to the board');
+    skip.addEventListener('click', (e) => { e.preventDefault(); panel.focus(); });
+    return skip;
   }
 
   /**
@@ -481,7 +499,17 @@ export class PodiumApp extends HTMLElement {
     const board = h('stream-board', { stream });
     board.live = this.#sources.state === 'server';
     board.state = st;
+    board.home = this.#homes.get(stream) ?? null;
+    if (board.live) void this.#loadHome(stream, board);
     return board;
+  }
+
+  /** Fetch the stream's home base and hand it to the board that asked; a board redrawn in the meantime is a different element and is left alone. */
+  async #loadHome(stream: string, board: HTMLElementTagNameMap['stream-board']): Promise<void> {
+    const got = await loadHome(stream);
+    if (!got) return;
+    this.#homes.set(stream, got.data);
+    if (board.isConnected) board.home = got.data;
   }
 
   #overview(st: PodiumState): Node {
@@ -571,19 +599,6 @@ function showCue(asks: number): void {
   const icon = document.querySelector<HTMLLinkElement>('link[rel=icon]');
   const href = asks > 0 ? '/favicon-cue.svg' : '/favicon.svg';
   if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
-}
-
-interface FocusKey { id?: string; href?: string }
-
-/** The first element under `root` (through nested shadow roots) matching the key. */
-function findByKey(root: ShadowRoot | Element, key: FocusKey): HTMLElement | null {
-  for (const el of root.querySelectorAll<HTMLElement>('*')) {
-    if (el.id && el.id === key.id) return el;
-    if (key.href && el instanceof HTMLAnchorElement && el.href === key.href) return el;
-    const inner = el.shadowRoot ? findByKey(el.shadowRoot, key) : null;
-    if (inner) return inner;
-  }
-  return null;
 }
 
 /** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed there. */

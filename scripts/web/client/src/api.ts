@@ -1,6 +1,6 @@
-import { sanitizeCharts, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeHome, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
-import type { ChartsData, PodiumState } from './types.ts';
+import type { ChartsData, PodiumState, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -50,3 +50,16 @@ export const loadState = (): Promise<Loaded<PodiumState>> => loadWithFallback('/
 export const loadCharts = (): Promise<Loaded<ChartsData>> => loadWithFallback('/api/charts?days=14', '/fixtures/charts.json', (x) => {
   return sanitizeCharts(x);
 });
+
+/**
+ * One stream's home base, or null when the server has none to give (sample data, an unknown stream, an unusable body).
+ * No fixture stands in: a tab without a home base is a complete tab, and an invented epic would be worse than none.
+ */
+export async function loadHome(stream: string): Promise<Loaded<StreamHome> | null> {
+  try {
+    const got = sanitizeHome(await getJson(`/api/streams/${encodeURIComponent(stream)}/home`));
+    return got && { data: got.home, source: 'server', dropped: got.dropped };
+  } catch {
+    return null;
+  }
+}

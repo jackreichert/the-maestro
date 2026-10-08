@@ -25,6 +25,15 @@ export class AskState {
   /** Whether the user has the ask unfolded; kept so a redraw does not fold a row someone is reading. */
   isOpen(id: string): boolean { return this.#open.has(id); }
 
+  /**
+   * Whether a rebuilt card may reopen itself because it holds a draft. One answer form is open at a time, so a draft only
+   * brings its ask back when no other ask is open; the ask the reader unfolded keeps the form, and the draft waits folded.
+   */
+  mayReopenForDraft(id: string): boolean {
+    for (const open of this.#open) if (open !== id) return false;
+    return true;
+  }
+
   setOpen(id: string, open: boolean): void {
     if (open) this.#open.add(id);
     else this.#open.delete(id);
