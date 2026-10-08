@@ -140,7 +140,7 @@ import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
-import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
@@ -683,18 +683,21 @@ function boardSelfReview(): { text: string; footer: string } | null {
 function cmdStatus() {
     refreshBoard();
     const g = groups(has('include-archived'));
-    const d = arg('date', today());
-    const rolledAt = g.rollPointOn(d);
-    const done = g.doneOn(d, { sinceRoll: true });
+    // No --date: the day is WATCH_TZ, and closes match by timestamp in that zone. A passed --date still matches the stored date field.
+    const explicit = arg('date');
+    const tz = explicit === null ? WATCH_TZ : undefined;
+    const d = explicit ?? localDate(new Date(), WATCH_TZ);
+    const view = footerDone(g, d, tz ? { tz } : undefined);
+    const done = view.all;
 
     if (asJson) {
-        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done), null, 2));
+        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll), null, 2));
         return;
     }
 
     const queueFooter = boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
-    if (has('footer')) { [...footerLines(g, done), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
+    if (has('footer')) { [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
 
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
@@ -720,7 +723,7 @@ function cmdStatus() {
     line('Awaiting you', noStream(g.awaiting));
     line('Paste blocks for you', noStream(g.paste));
     line(`Done ${d}`, noStream(done));
-    if (rolledAt) console.log(`\n  (${g.doneOn(d).length - done.length} earlier item(s) archived to ${d}.md)`);
+    if (view.sinceRoll) console.log(`\n  (${done.length - view.sinceRoll.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
     if (!g.inflight.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
