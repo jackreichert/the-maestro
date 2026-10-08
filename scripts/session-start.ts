@@ -9,7 +9,8 @@
  *    `expires` that the loop has not retired yet is removed first and registered again.
  * 2. Marks live watches of a standing type that lack the `renew` flag (see `repairStandingWatches`).
  * 3. Reports the status page's age (the mtime of The-Podium.md). A page older than 15 minutes means nothing is refreshing it.
- * 4. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
+ * 4. Reports `Podium web: down` when the footer link (`status_page_uri`, when it is an http loopback URL) does not answer a short local connect. Silent when the link is up or not an http URL.
+ * 5. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
  *    run_in_background (its exit wakes the orchestrator), and a detached child would exit unseen. With no loop it prints the exact command.
  *
  * Exit 0 when nothing failed, 1 when a watch could not be registered (or the registry could not be read), 2 on a usage or configuration error (no status directory).
@@ -19,7 +20,8 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONTAINER_PROJECT, EVENT_DIR, statusDirFor, WATCH_TZ } from './local-config.ts';
+import { CONTAINER_PROJECT, EVENT_DIR, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
+import { podiumWebUrl } from './lib/status-page/links.ts';
 import { PODIUM_FILE } from './lib/status-page/seen.ts';
 import { listWatches, lockHolder, markStanding, removeWatch } from './lib/watch-registry.ts';
 import { BUILTIN_TYPES } from './event-types/index.ts';
@@ -52,6 +54,8 @@ export interface StartDeps {
   repairStanding?: () => string[];
   /** The `Loop:` verdict line (heartbeat age, STALLED, DOWN...); empty or absent when there is nothing to say. */
   loopHealth?: () => string;
+  /** The Podium web link and whether a connect to it succeeded; absent (or an empty url) where the footer link is not an http URL. */
+  webProbe?: () => { url: string; up: boolean };
 }
 
 export interface StartReport { lines: string[]; failed: boolean }
@@ -95,6 +99,8 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
     const age = deps.now - written;
     lines.push(`Status page: updated ${ageText(age)} ago (${clock(written, deps.tz)})${age > STALE_MS ? '; STALE, nothing is refreshing it until the loop runs' : ''}`);
   }
+  const web = deps.webProbe?.();
+  if (web?.url && !web.up) lines.push(`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open. Restart it: \`journal.ts web\``);
   const health = deps.loopHealth?.().replace(/\*\*/g, '');
   if (health) lines.push(health);
   const holder = deps.lockHolder();
@@ -111,6 +117,15 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
  */
 export function repairStandingWatches(dir: string, types: TypeRegistry, now: number = Date.now()): string[] {
   return listWatches(dir).filter((w) => !w.renew && types[w.type]?.renews && markStanding(dir, w.id, now)).map((w) => w.id);
+}
+
+/** True when something accepts a TCP connection at the URL's host and port within `timeoutMs`. Runs a child so the check stays synchronous and can never hang the caller: the child is killed at the timeout. */
+export function connects(url: string, timeoutMs = 1500): boolean {
+  let u: URL;
+  try { u = new URL(url); } catch { return false; }
+  const script = 'const s=require("node:net").connect({host:process.argv[1],port:+process.argv[2]});s.on("connect",()=>process.exit(0));s.on("error",()=>process.exit(1))';
+  const r = spawnSync(process.execPath, ['-e', script, u.hostname, u.port || (u.protocol === 'https:' ? '443' : '80')], { timeout: timeoutMs + 500, killSignal: 'SIGKILL' });
+  return r.status === 0;
 }
 
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
@@ -135,6 +150,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     waitCommand: `node ${shq(loop)} digest-wait`,
     repairStanding: () => repairStandingWatches(EVENT_DIR, BUILTIN_TYPES, now),
     loopHealth: () => liveLoopHealth(now).line,
+    webProbe: () => { const url = podiumWebUrl(STATUS_PAGE_URI_SETTING); return { url, up: !url || connects(url) }; },
   };
 }
 

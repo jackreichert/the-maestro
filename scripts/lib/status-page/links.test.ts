@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/status-page/links.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { obsidianUri, statusPageFooter, statusPageUri, ticketNotePath } from './links.ts';
+import { obsidianUri, podiumWebUrl, statusPageFooter, statusPageUri, ticketNotePath } from './links.ts';
 
 test('statusPageUri derives an Obsidian URI from a status dir inside the vault, and an explicit URI wins', () => {
   const base = { explicit: '', statusDir: '/v/My Vault/Projects/p/Status', vaultRoot: '/v/My Vault', vaultName: 'My Vault' };
@@ -31,4 +31,10 @@ test('the derived link and the footer label follow the Podium file name, with no
   const uri = statusPageUri({ explicit: '', statusDir: '/v/Projects/p/Status', vaultRoot: '/v', vaultName: 'Other' });
   assert.equal(uri, 'obsidian://open?vault=Other&file=Projects%2Fp%2FStatus%2FThe-Podium');
   assert.deepEqual(statusPageFooter(uri), [`**Podium:** ${uri}`]);
+});
+
+test('podiumWebUrl keeps an http link and drops an obsidian note link', () => {
+  assert.equal(podiumWebUrl('http://127.0.0.1:47700/'), 'http://127.0.0.1:47700/');
+  assert.equal(podiumWebUrl(obsidianUri('V', 'a/The-Podium')), '');
+  assert.equal(podiumWebUrl(''), '');
 });

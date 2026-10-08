@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WEEK_MAX, WEEK_UNSET_LINE, readWeek, weekLines, weekStart, writeWeek } from './week.ts';
+import { WEEK_MAX, WEEK_UNSET_LINE, readWeek, weekLine, weekLines, weekStart, writeWeek } from './week.ts';
 
 const dir = (): string => mkdtempSync(join(tmpdir(), 'week-'));
 
@@ -36,4 +36,10 @@ test('writeWeek refuses no goals, a bad date and more than the cap', () => {
   assert.throws(() => writeWeek(d, '2026-10-07', []), /at least one goal/);
   assert.throws(() => writeWeek(d, 'soon', [{ text: 'x' }]), /YYYY-MM-DD/);
   assert.throws(() => writeWeek(d, '2026-10-07', Array.from({ length: WEEK_MAX + 1 }, (_, i) => ({ text: `g${i}` }))), /at most 7 goals/);
+});
+
+test('weekLine joins the goals on one line and falls back to the not-set line', () => {
+  assert.equal(weekLine({ state: 'ok', start: '2026-10-05', items: [{ text: 'Ship the widget', stream: 'Alpha' }, { text: 'Fix the gadget' }] }), 'This week: Ship the widget [Alpha]; Fix the gadget');
+  assert.equal(weekLine({ state: 'missing' }), WEEK_UNSET_LINE);
+  assert.match(weekLine({ state: 'stale', start: '2026-09-28' }), /^Week goals not set.*2026-09-28/);
 });

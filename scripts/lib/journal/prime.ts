@@ -28,6 +28,13 @@ export interface PrimeContext extends PendingContext {
     standing?: () => string[];
     /** Lines for conditions tied to a future action (non-routine standing pickups); printed first, before anything else, and they count against the cap. */
     conditions?: () => string[];
+    /** The Start-here pointer and the week line (`startHereLines`); printed right after the Board line, and they count against the cap. */
+    start?: () => string[];
+}
+
+/** The two lines that send a fresh session to the Start-here view first: where to read it, then this week's goals. `webUrl` is the Podium web link, when one is configured. */
+export function startHereLines(webUrl: string, week: string | null): string[] {
+    return [clip(`Start here: journal.ts start-here${webUrl ? ` · ${webUrl.replace(/\/?(#.*)?$/, '/')}#tab=start` : ''}`, 200), ...(week ? [clip(week, 240)] : [])];
 }
 /** A done item whose tracker transition nobody recorded, one per key. */
 export interface PendingRow { key: string; id?: string; text?: string; doneOn?: string }
@@ -82,7 +89,7 @@ export function primeLines(ctx: PrimeContext): string[] {
     ].filter((sec) => sec.items.length).map((sec) => ({ ...sec, lines: sec.items.map(label) }));
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
     const pending = pendingTransitions(ctx, defaultPendingSince());
-    const head = [...(ctx.conditions?.() ?? []).map((n) => clip(n, 240)), ...(ctx.notices ?? []).map((n) => clip(n, 320)), ...(ctx.standing?.() ?? []).map((n) => clip(n, 320)), clip(`Board ${today()} · project ${project}`, 120), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
+    const head = [...(ctx.conditions?.() ?? []).map((n) => clip(n, 240)), ...(ctx.notices ?? []).map((n) => clip(n, 320)), ...(ctx.standing?.() ?? []).map((n) => clip(n, 320)), clip(`Board ${today()} · project ${project}`, 120), ...(ctx.start?.() ?? []), clip(`Today's streams: ${streams.length ? streams.join(', ') : 'none'}`, 200),
         ...(pending.length ? [clip(`Pending tracker transitions (${pending.length}): ${pending.map((r) => r.key).join(', ')}. \`journal.ts tickets --pending\``, 200)] : [])];
     const foot = g.deferred.length ? [`${g.deferred.length} deferred item(s) hidden. \`journal.ts status\` and \`triage\` have the rest.`] : ['`journal.ts status` has the rest.'];
     if (!sections.length) return [...head, '(nothing open)', ...foot];

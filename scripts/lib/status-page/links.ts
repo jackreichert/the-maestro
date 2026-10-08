@@ -16,6 +16,9 @@ export function statusPageUri({ explicit, statusDir, vaultRoot, vaultName }: { e
   return obsidianUri(vaultName, `${rel.split(sep).join('/')}/${PODIUM_FILE.replace(/\.md$/, '')}`);
 }
 
+/** The Podium web link inside `uri` (the footer value): the uri itself when it is http(s), else empty (an `obsidian://` note link is not a server). */
+export const podiumWebUrl = (uri: string): string => (/^https?:\/\//i.test(uri) ? uri : '');
+
 /** The reply-footer line, or none. */
 export const statusPageFooter = (uri: string): string[] => (uri ? [`**Podium:** ${uri}`] : []);
 
