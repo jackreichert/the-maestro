@@ -2415,6 +2415,22 @@ test('status and status --footer leave self-review PRs out of the review queue c
     assert.match(status([], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /\n {2}review queue: 2 of 4\n/);
 });
 
+test('status and status --footer survive a truncated snapshot or one with no prs array once self_review_repos is set', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const status = (args: string[]) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' },
+    });
+    for (const body of ['{"takenAt": "2026-01-01T00:00:00Z", "prs": [{"repo": "exam', JSON.stringify({ takenAt: new Date().toISOString() })]) {
+        writeFileSync(join(journalDir, 'prs-snapshot.json'), body);
+        for (const args of [[], ['--footer']]) {
+            const r = status(args);
+            assert.equal(r.status, 0, r.stderr);
+            assert.doesNotMatch(r.stdout, /self-review/);
+        }
+    }
+});
+
 test('status and status --footer show the review queue from the stored snapshot, and stay as they were without one', () => {
     const before = run('status');
     assert.doesNotMatch(before.out, /review queue/);

@@ -155,7 +155,7 @@ import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionLine, sessionStatus } from './token-metrics.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
-import { fetchLive, loadSnapshot, selfReviewSummary, snapshotPath } from './prs-snapshot.ts';
+import { fetchLive, selfReviewSummary, snapshotPath, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { buildStart, homeCounts, startLines } from './lib/start/start-here.ts';
@@ -673,8 +673,8 @@ const boardReviewQueue = () => boardQueue(readSnapshotPrs(snapshotPath(vault)), 
 /** The self-review PRs from the stored snapshot (no network), apart from the review queue: null when none are configured, none are open, or no snapshot was taken. */
 function boardSelfReview(): { text: string; footer: string } | null {
     if (!SELF_REVIEW_REPOS.length) return null;
-    const stored = loadSnapshot(snapshotPath(vault));
-    const summary = stored ? selfReviewSummary(stored.prs, SELF_REVIEW_REPOS) : '';
+    const stored = readSnapshotPrs(snapshotPath(vault));
+    const summary = stored ? selfReviewSummary(stored.prs as StoredPr[], SELF_REVIEW_REPOS) : '';
     if (!stored || !summary) return null;
     const tail = `${summary}${staleSuffix(stored.takenAt, new Date())}`;
     return { text: `maestro PRs (self-review): ${tail}`, footer: `**Maestro PRs (self-review):** ${tail}` };
