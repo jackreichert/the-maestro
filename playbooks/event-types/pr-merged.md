@@ -21,6 +21,7 @@ On every `MERGED` line, do all of these in the same turn (the rule is in [refere
 2. **Tickets.** Transition each key per the overlay's tracker rules, record it with `journal.ts log "moved <KEY> to <status>" --transitioned <KEY>` (so `journal.ts tickets --pending` stays empty), and say which you moved.
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch (the overlay's sync script).
 4. **Ledger.** Log the merge (a note carrying the repo and PR) so the board shows it landed.
+5. **Stack ancestry.** If the merged PR was part of a stack, check that each fix pushed to the PRs above it reached the base: `git merge-base --is-ancestor <fix sha> origin/<base>` for each recorded head. A fix not in the base is a follow-up, not a merged one.
 
 ## Do not
 
