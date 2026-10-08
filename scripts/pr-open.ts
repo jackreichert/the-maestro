@@ -99,6 +99,16 @@ function diffContext(o: OpenArgs): BodyContext {
   return { stacked: !PROTECTED_BRANCHES.some((g) => globToRegExp(g).test(o.base)), codeFiles, title: t >= 0 ? o.pass[t + 1] : '' };
 }
 
+/** True when the diff holds both code and mechanical files: a reviewability rule, so no size waiver lifts it. */
+function mixedWithMechanical(o: OpenArgs): boolean {
+  const head = headOf(o);
+  const r = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, '--json', ...(head ? ['--head', head] : [])], { encoding: 'utf8' });
+  try {
+    const j = JSON.parse(r.stdout) as { code: { files: number }; mechanical: { files: number } };
+    return j.code.files > 0 && j.mechanical.files > 0;
+  } catch { return true; } // unreadable output: fail closed
+}
+
 function main(): void {
   const o = parseArgs(process.argv.slice(2));
   const body = checkBody(o);
@@ -106,8 +116,11 @@ function main(): void {
   process.stdout.write(gate.stdout || '');
   const overBudget = gate.status === 1;
   const waivedSlug = overBudget ? sizeGateWaiver(o.repo) : '';
-  if (overBudget && waivedSlug) {
-    console.log(`pr-open: size gate waived for ${waivedSlug} (waive_size_gate_owners); the summary above is informational.`);
+  if (overBudget && waivedSlug && mixedWithMechanical(o)) {
+    console.error('pr-open: refused, the PR mixes code with mechanical files. The waiver (waive_size_gate_owners) lifts the size limits only; mechanical changes (lockfiles, generated files, pure renames) still go in their own PR.');
+    process.exit(1);
+  } else if (overBudget && waivedSlug) {
+    console.log(`pr-open: size limits waived for ${waivedSlug} (waive_size_gate_owners); the summary above is informational. The rule that mechanical changes go in their own PR still applies.`);
   } else if (overBudget) {
     console.error('pr-open: refused, the PR is over the size budget. Report a split plan (which files and lines go in which PR, in merge order) instead of opening; mechanical changes go in their own PR.');
     process.exit(1);

@@ -406,8 +406,20 @@ test('size waiver: a repo under a waived owner passes the real gate with a visib
     const r = open(f, ['--head', 'feature'], WAIVED);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /verdict:\s+FAIL/, 'the gate still measured the diff');
-    assert.match(r.stdout, /size gate waived for example-owner\/widgets \(waive_size_gate_owners\)/);
+    assert.match(r.stdout, /size limits waived for example-owner\/widgets \(waive_size_gate_owners\)/);
     assert.match(readFileSync(f.log, 'utf8'), /pr create --draft --assignee @me/);
+});
+
+test('size waiver: it lifts the size limits only, so code mixed with a lockfile still refuses', () => {
+    const f = fixture({ 'src/big.py': lines(500), 'uv.lock': lines(50) });
+    originAt(f, 'example-owner/widgets');
+    const r = open(f, ['--head', 'feature'], WAIVED);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /mixes code with mechanical files/);
+    assert.ok(!existsSync(f.log), 'gh must not run');
+    const small = fixture({ 'src/a.py': lines(3), 'uv.lock': lines(50) });
+    originAt(small, 'example-owner/widgets');
+    assert.equal(open(small, ['--head', 'feature'], WAIVED).status, 1, 'mixed refuses even when within budget');
 });
 
 test('size waiver: an unlisted owner still refuses even when another owner is waived', () => {
