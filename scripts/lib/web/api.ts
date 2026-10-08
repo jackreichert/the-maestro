@@ -14,7 +14,7 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openStore } from '../journal/store.ts';
 import { boardContextFor } from '../journal/board-context.ts';
-import { groups } from '../journal/board.ts';
+import { footerDone, groups } from '../journal/board.ts';
 import type { Groups } from '../journal/board.ts';
 import { statusJson } from '../journal/status-json.ts';
 import { triageItems } from '../journal/triage.ts';
@@ -22,7 +22,7 @@ import { ticketNoteRef } from '../status-page/render.ts';
 import type { PageConfig, Ref } from '../status-page/render.ts';
 import { splitSelfReview } from '../self-review.ts';
 import { gatherInputsCached } from '../status-page/generate.ts';
-import { DEFAULT_PRIORITIES_MAX } from '../status-page/priorities.ts';
+import { DEFAULT_PRIORITIES_MAX, localDate } from '../status-page/priorities.ts';
 import type { GatheredInputs } from '../status-page/generate.ts';
 import { buildCharts as reduceCharts } from './charts.ts';
 import { buildState as reduceState } from './state.ts';
@@ -45,17 +45,18 @@ const NO_SESSION = { available: false, unavailable: 'not read by the web server'
 
 export interface Board { inputs: GatheredInputs; g: Groups }
 
-/** One consistent read of everything a response needs. The "day" is the UTC date, as `journal.ts status` uses for done-today. */
+/** One consistent read of everything a response needs. Done-today is the page zone's day, matched on close timestamps, not the UTC date stored on each row. */
 export function readBoard(cfg: WebConfig, now: Date): Board {
-  const day = now.toISOString().slice(0, 10);
+  const utcDay = now.toISOString().slice(0, 10);
+  const day = localDate(now, cfg.page.tz);
   const store = openStore({ vault: cfg.vault, project: cfg.project, dryRun: false, warn: cfg.warn ?? (() => {}) });
   const entries = store.readLedger();   // read once: the board and the triage metadata see the same rows
-  const ctx = boardContextFor({ ...store, readLedger: () => entries }, { has: () => false, today: () => day, dryRun: false });
+  const ctx = boardContextFor({ ...store, readLedger: () => entries }, { has: () => false, today: () => utcDay, dryRun: false });
   const g = groups(ctx);
-  const done = g.doneOn(day, { sinceRoll: true });
+  const view = footerDone(g, day, { tz: cfg.page.tz });
   const journal = (sub: 'status' | 'triage'): unknown => (sub === 'status'
-    ? statusJson(g, day, NO_SESSION, done)
-    : { items: triageItems({ readLedger: ctx.readLedger, fold: ctx.fold, today: ctx.today, resolveRefFile: () => null }, day, day) });
+    ? statusJson(g, day, NO_SESSION, view.all, view.sinceRoll)
+    : { items: triageItems({ readLedger: ctx.readLedger, fold: ctx.fold, today: ctx.today, resolveRefFile: () => null }, utcDay, utcDay) });
   return { inputs: gatherInputsCached(cfg.statusDir, cfg.page, { journal, now: () => now }), g };
 }
 

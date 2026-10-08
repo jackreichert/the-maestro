@@ -41,10 +41,12 @@ test('statusJson is the board for the day, with the footer rows and the session 
     assert.deepEqual(Object.keys(json), ['date', 'inflight', 'queued', 'blocked', 'awaiting', 'paste', 'done', 'footer']);
 });
 
-test('statusJson leaves out work finished before the last roll, and takes an explicit done list', () => {
+test('statusJson counts the full day as done today even after a roll, and takes an explicit done list', () => {
     const { ctx } = boardOver([...rows, { id: 'eee5', kind: 'rolled', ts: `${DAY}T11:00:00Z`, date: DAY, text: 'rolled' }]);
     const g = groups(ctx);
-    assert.deepEqual(statusJson(g, DAY, SESSION).done, []);
+    const json = statusJson(g, DAY, SESSION);
+    assert.deepEqual(json.done.map((i) => i.id), ['ccc3']);
+    assert.equal(json.footer.ledger.find((r) => r.done === 1)?.sinceRoll, 0);
     assert.deepEqual(statusJson(g, DAY, SESSION, g.doneOn(DAY)).done.map((i) => i.id), ['ccc3']);
 });
 

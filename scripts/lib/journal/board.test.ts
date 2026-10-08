@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fold, mapStreamWith } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
+import { localDate } from '../status-page/priorities.ts';
 import { parseArgs } from './args.ts';
-import { activeStreams, archivedRetros, footerLines, footerRows, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
+import { activeStreams, archivedRetros, footerDone, footerLines, footerRows, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
 import type { BoardContext } from './board.ts';
 
 const TODAY = '2026-10-03';
@@ -55,6 +56,36 @@ test('stream helpers keep first-seen order and separate the unstreamed', () => {
     assert.deepEqual(inStream(g.inflight, 'Alpha'), []);
     assert.deepEqual(noStream(g.inflight).map((i) => i.id), ['bbbb']);
     assert.equal(streamPageLink('My Stream'), 'Streams/My-Stream');
+});
+
+test('a roll does not zero the footer done-today count, and a close just after midnight UTC is the previous ET day', () => {
+    const et = 'America/New_York';
+    const etDay = '2026-10-05';
+    const afterMidnightUtc = '2026-10-06T00:30:00Z';
+    assert.equal(localDate(new Date(afterMidnightUtc), et), etDay);
+    assert.equal(localDate(new Date(afterMidnightUtc), 'UTC'), '2026-10-06');
+
+    const rolled = groups(ctxFor());
+    const classic = footerDone(rolled, TODAY);
+    assert.deepEqual(classic.all.map((i) => i.id), ['aaaa']);
+    assert.deepEqual(classic.sinceRoll?.map((i) => i.id), []);
+    assert.match(footerLines(rolled, classic.all, classic.sinceRoll).join('\n'), /\*\*Ledger \(Alpha\):\*\* 1 done today · 0 since last roll · 0 in flight · 0 awaiting you/);
+
+    const late: LedgerRow[] = [
+        { id: 'aaaa', kind: 'wip', ts: '2026-10-05T15:00:00Z', date: '2026-10-05', text: 'morning', stream: 'Alpha' },
+        { id: 'dddd', kind: 'done', ts: '2026-10-05T16:00:00Z', date: '2026-10-05', text: 'shipped before roll', closes: 'aaaa' },
+        { id: 'eeee', kind: 'rolled', ts: '2026-10-05T18:00:00Z', date: '2026-10-05', text: 'rolled' },
+        { id: 'bbbb', kind: 'wip', ts: '2026-10-05T23:00:00Z', date: '2026-10-05', text: 'late', stream: 'Alpha' },
+        { id: 'ffff', kind: 'done', ts: afterMidnightUtc, date: '2026-10-06', text: 'still the previous ET day', closes: 'bbbb' },
+    ];
+    const g = groups(ctxFor({ readLedger: () => late }));
+    assert.deepEqual(g.doneOn('2026-10-06').map((i) => i.id), ['bbbb'], 'stored date still follows the UTC day written on the row');
+    assert.deepEqual(g.doneOn(etDay, { tz: et }).map((i) => i.id), ['aaaa', 'bbbb']);
+    assert.deepEqual(g.doneOn('2026-10-06', { tz: et }).map((i) => i.id), []);
+    const view = footerDone(g, etDay, { tz: et });
+    assert.deepEqual(view.sinceRoll?.map((i) => i.id), ['bbbb']);
+    assert.equal(footerRows(g, view.all, view.sinceRoll)[0]?.done, 2);
+    assert.match(footerLines(g, view.all, view.sinceRoll).join('\n'), /2 done today · 1 since last roll/);
 });
 
 test('footerLines gives one line per stream and an other line', () => {

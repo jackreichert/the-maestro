@@ -6,6 +6,7 @@ import type { Args } from './args.ts';
 import type { Store } from './store.ts';
 import { fmt, slug } from './format.ts';
 import { askSummary, asksNote } from './ask-fields.ts';
+import { localDate } from '../status-page/priorities.ts';
 
 /** What the board reads from the run: the store, the fold, the clock, the stream mapping and the flags. */
 export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | 'loadRegistry' | 'ensureDir' | 'dir'> {
@@ -28,10 +29,31 @@ export interface Groups {
     awaiting: LedgerItem[];
     paste: LedgerItem[];
     decidedOn: (d: string) => LedgerItem[];
-    rollPointOn: (d: string | undefined) => string | null | undefined;
-    doneOn: (d: string, opts?: { sinceRoll?: boolean }) => LedgerItem[];
+    /** Last roll timestamp on `d`. With `tz`, the roll's timestamp is read in that zone instead of its stored date. */
+    rollPointOn: (d: string | undefined, opts?: { tz?: string }) => string | null | undefined;
+    /** Finished `done` on `d`. `sinceRoll` keeps only those after that day's last roll. `tz` matches close timestamps in that zone instead of the stored date field. */
+    doneOn: (d: string, opts?: { sinceRoll?: boolean; tz?: string }) => LedgerItem[];
     notesOn: (d: string) => LedgerItem[];
     dates: (string | undefined)[];
+}
+
+/** Whether `ts` (in `tz`) or, with no zone, the stored date field, is day `d`. An unreadable timestamp falls back to the stored date. */
+function onDay(ts: string | undefined, stored: string | undefined, d: string, tz?: string): boolean {
+    if (tz && ts && Number.isFinite(Date.parse(ts))) return localDate(new Date(ts), tz) === d;
+    return stored === d;
+}
+
+/** The stamp of an item finished done: the closing row, or its own row when it was written already done. */
+function finishedStamp(i: LedgerItem): { ts?: string; date?: string } | null {
+    if (i.closedBy?.kind === 'done') return { ts: i.closedBy.ts, date: i.closedBy.date };
+    if (i.state === 'done' && !i.closedBy) return { ts: i.ts, date: i.date };
+    return null;
+}
+
+/** Last roll whose time falls on `d` in `tz`, or null when that day had none. */
+function lastRollTs(entries: LedgerRow[], d: string, tz: string): string | null {
+    const marks = entries.filter((e) => e.kind === 'rolled' && onDay(e.ts, e.date, d, tz));
+    return marks.length ? marks[marks.length - 1].ts ?? null : null;
 }
 
 export const streamTitle = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
@@ -63,13 +85,14 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
         awaiting: open.filter((i) => (i.kind === 'question' || i.kind === 'decision') && !i.paste),
         paste: open.filter((i) => i.kind === 'question' && i.paste),
         decidedOn: (d: string) => items.filter((i) => i.closedBy?.kind === 'resolved' && i.closedBy.date === d),
-        rollPointOn: (d: string | undefined) => rollPoint(entries, d),
-        doneOn: (d: string, { sinceRoll = false }: { sinceRoll?: boolean } = {}) => {
-            const cut = sinceRoll ? rollPoint(entries, d) : null;
+        rollPointOn: (d: string | undefined, opts?: { tz?: string }) => (opts?.tz && d ? lastRollTs(entries, d, opts.tz) : rollPoint(entries, d)),
+        doneOn: (d: string, { sinceRoll = false, tz }: { sinceRoll?: boolean; tz?: string } = {}) => {
+            const cut = sinceRoll ? (tz ? lastRollTs(entries, d, tz) : rollPoint(entries, d)) : null;
             const after = (ts: string | undefined): boolean => !cut || (ts ?? '') > cut;
-            return items
-                .filter((i) => i.closedBy?.kind === 'done' && i.closedBy.date === d && after(i.closedBy.ts))
-                .concat(items.filter((i) => i.state === 'done' && i.date === d && !i.closedBy && after(i.ts)));
+            return items.filter((i) => {
+                const fin = finishedStamp(i);
+                return !!fin && onDay(fin.ts, fin.date, d, tz) && after(fin.ts);
+            });
         },
         notesOn: (d: string) => items.filter((i) => i.state === 'note' && i.date === d),
         dates: [...new Set(items.map((i) => i.date))].sort(),
@@ -79,22 +102,41 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
 /** One reply-footer Ledger line as numbers: `name` is the stream (`other` for items with none), or null for the single plain line. */
 export interface FooterRow {
     name: string | null; done: number; inflight: number; queued: number; awaiting: number; paste: number; blocked: number;
+    /** Finished after the last roll that day. Present only when a roll happened, so a roll cannot replace the done-today count. */
+    sinceRoll?: number;
     /** Of the awaiting asks that carry decision fields, how many are one-way doors; absent when none carry them. */
     oneWay?: number;
     /** The soonest decide-by among them, as stored; absent when none names one. */
     nextBy?: string;
 }
 
+/** What the footer shows for one day: the full day, plus the since-roll slice only when a roll happened that day. */
+export interface DayDone {
+    all: LedgerItem[];
+    sinceRoll?: LedgerItem[];
+}
+
+/**
+ * Finished on `d` for the reply footer. `all` is the full day — that count is done today, never the since-roll slice.
+ * `sinceRoll` is set only when a roll happened on `d`. With `tz`, close and roll timestamps are read in that zone.
+ */
+export function footerDone(g: Groups, d: string, opts?: { tz?: string }): DayDone {
+    const all = g.doneOn(d, opts);
+    const cut = g.rollPointOn(d, opts);
+    if (!cut) return { all };
+    return { all, sinceRoll: g.doneOn(d, { ...opts, sinceRoll: true }) };
+}
+
 /**
  * The counts behind the reply-footer Ledger lines: one row per active stream (canonical registry names), then `other` for
  * items with no stream. With no streams at all it is the single plain row. The footer text and the status page both read this.
  */
-export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): FooterRow[] {
+export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[]): FooterRow[] {
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     const row = (name: string | null, pick: (i: LedgerItem) => boolean): FooterRow => {
         const n = (arr: LedgerItem[]): number => arr.filter(pick).length;
         const asks = askSummary(g.awaiting.filter(pick));
-        return { name, done: n(done), inflight: n(g.inflight), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
+        return { name, done: n(done), inflight: n(g.inflight), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(sinceRoll ? { sinceRoll: n(sinceRoll) } : {}), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
     };
     if (!streams.length) return [row(null, () => true)];
     const rows = streams.map((s) => row(s, (i) => i.stream === s));
@@ -104,10 +146,10 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
 }
 
 const footerLine = (r: FooterRow): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today · ${r.inflight} in flight${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
 
-/** The reply-footer Ledger lines, one per `footerRows` row. */
-export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[]): string[] => footerRows(g, done).map(footerLine);
+/** The reply-footer Ledger lines, one per `footerRows` row. `sinceRoll` is shown only when the caller passes that day's post-roll slice. */
+export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[]): string[] => footerRows(g, done, sinceRoll).map(footerLine);
 
 export function standupText(ctx: BoardContext, d: string): string {
     const { has } = ctx;
