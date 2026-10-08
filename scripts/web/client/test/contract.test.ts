@@ -160,3 +160,12 @@ test('prioritiesMax is the server number when it is a whole number of at least 1
     assert.equal(sanitizeState(s)?.state.prioritiesMax, want, String(given));
   }
 });
+
+test('a PR row may carry selfReview (a boolean) and is dropped when it is not one', () => {
+  const ok = state();
+  ok.prs[0].selfReview = true;
+  assert.equal(sanitizeState(ok)?.state.prs[0]?.selfReview, true);
+  const bad = state();
+  bad.prs[0].selfReview = 'yes';
+  assert.equal(sanitizeState(bad)?.state.prs.length, bad.prs.length - 1);
+});
