@@ -520,7 +520,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | `list [--json]` | The live watches |
 | `remove <id>` | Retire a watch (its type may clean up its own files) |
 | `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
-| `run [--once | --serve] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error | `--serve` is daemon mode: it never exits on an event (see [the event inbox](#the-event-inbox)).
+| `run [--once \| --serve] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error. `--serve` is daemon mode: it never exits on an event (see [the event inbox](#the-event-inbox)).
 | `events [list] [--unseen \| --all] [--json]` | Show the inbox's unhandled events (`--unseen`: not yet shown to a session; `--all`: every one) |
 | `events ack <id...>` | Mark events handled; ids come from `events list` |
 | `events wait [--timeout-hours N]` | Block until an unseen actionable event exists, print it, mark it seen, exit 10 (0 quietly at the timeout, default 6h). An event is offered once; a session that dies before acting finds it again with `events list` |
