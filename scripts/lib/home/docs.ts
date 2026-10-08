@@ -1,6 +1,6 @@
 /**
  * Project documents for the link rail: `CONTEXT.md`, `DECISIONS.md` and the `*.md` files inside Plans, Research, Reviews and
- * Runbooks, and inside one level of subfolder under each (`Research/notion-bayada/x.md`); deeper folders are not read. Only the first 4 KB of each is read (frontmatter and first heading), through the guarded reader.
+ * Runbooks, and inside one level of subfolder under each (`Research/notion-acme/x.md`); deeper folders are not read. Only the first 4 KB of each is read (frontmatter and first heading), through the guarded reader.
  */
 import type { Scope, VaultReader } from '../vault/reader.ts';
 
@@ -32,7 +32,7 @@ export interface Doc {
   tickets: string[];
   /** `ticket: none`: the note is marked project-level, so it is never reported as unattributed. */
   projectLevel: boolean;
-  /** The stream the note names in frontmatter (`stream: Bayada`), or `none` when it is deliberately off every stream tab. */
+  /** The stream the note names in frontmatter (`stream: Alpha`), or `none` when it is deliberately off every stream tab. */
   stream?: string;
 }
 export interface Docs { docs: Doc[]; notes: string[] }
