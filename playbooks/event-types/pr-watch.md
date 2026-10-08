@@ -12,7 +12,7 @@ Every line is actionable.
 |---|---|
 | `THREAD`, `REPLY`, `COMMENT`, `REVIEW` | The PR key, who, and the link. Do not summarize the comment text. |
 | `DECISION` | The PR and the move (for example into `APPROVED` or `CHANGES_REQUESTED`). |
-| `CONFLICT` | `CONFLICT <PR key> <base> <- <head> <url>`: an open PR now conflicts with its base, once per conflict (the line is not repeated while it stays conflicted, and GitHub's `UNKNOWN` while it computes changes nothing). Report it; the standing rule on the user's own branches is to merge the base in and push, which is the orchestrator's job, not this loop's. When it clears there is no line. |
+| `CONFLICT` | `CONFLICT <PR key> <base> <- <head> <url>`: an open PR now conflicts with its base, once per conflict (the line is not repeated while it stays conflicted, and GitHub's `UNKNOWN` while it computes changes nothing). Report it. Merging the base in and pushing is a merge, so it waits for an explicit ask or a standing approval for that repo; this loop does not do it. When it clears there is no line. |
 | `LEFT-OPEN-SET` | The PR was merged or closed. |
 | `APPROVED-UNMERGED` | An approved PR is waiting. Reported once per approval or moved head. |
 
