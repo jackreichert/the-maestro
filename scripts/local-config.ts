@@ -123,8 +123,8 @@ export const LOOP_PATTERNS = pick('MAESTRO_LOOP_PATTERNS', 'loop_patterns').spli
 /** Whether `journal.ts resume` lists open PRs through `gh`. Anything but off/false/no/0 means on. */
 export const RESUME_GH = !/^(off|false|no|0)$/i.test(pick('MAESTRO_RESUME_GH', 'resume_gh').trim());
 
-/** How far back the roll and the `notes-reachable` row look for unreachable notes: `30d` (days back) or `YYYY-MM-DD` (a start date). `all` looks at every note. Older notes are left alone until they are touched. Default 30d. */
-export const NOTES_CHECK_SINCE = pick('MAESTRO_NOTES_CHECK_SINCE', 'notes_check_since').trim() || '30d';
+/** How far back the roll and the `notes-reachable` row look for unreachable notes: `30d` (days back) or `YYYY-MM-DD` (a start date). `all` looks at every note. Older notes are left alone until they are touched. Default 7d. */
+export const NOTES_CHECK_SINCE = pick('MAESTRO_NOTES_CHECK_SINCE', 'notes_check_since').trim() || '7d';
 
 /** Whether `journal.ts roll` commits the ledger root after a clean `verify`. Off unless set to on/true/yes/1. */
 export const LEDGER_GIT_AUTOCOMMIT = /^(on|true|yes|1)$/i.test(pick('MAESTRO_LEDGER_GIT_AUTOCOMMIT', 'ledger_git_autocommit').trim());

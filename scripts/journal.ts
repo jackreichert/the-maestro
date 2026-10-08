@@ -84,7 +84,7 @@
  *   journal.ts web [--port <n>] [--status-dir <dir>]   serve the Podium as a read-only page on 127.0.0.1 (GET only; prints the URL; build the page first with `npm run build:web`)
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts start-here [--stream <name>] [--json] [--status-dir <dir>]   the first page a fresh reader needs, as text with no server: this week's goals, priorities, the top five asks with their stakes, conditions, in flight, yesterday, answers from the last 2 days and where each stream's notes live (80 lines at most; --stream shows one stream's)
- *   journal.ts notes-check [--since 30d|YYYY-MM-DD|--all] [--json]   durable notes (Plans, Research, Reviews, Runbooks, one subfolder deep) in the projects of every active stream that no stream tab lists: attributed to no ticket in a claimed tree, no `stream:` field, not pinned. Prints each with its reason and fix. Exit 0 none, 1 some, 2 when no vault root is set or the vault could not be read. Only notes dated within `notes_check_since` (default 30d; a note's date is its frontmatter date, else its file's last write) are checked unless `--all` or `--since` is given. The roll prints it and the `notes-reachable` standing row fails while any exist in that window; it blocks neither a roll nor a PR
+ *   journal.ts notes-check [--since 30d|YYYY-MM-DD|--all] [--json]   durable notes (Plans, Research, Reviews, Runbooks, one subfolder deep) in the projects of every active stream that no stream tab lists: attributed to no ticket in a claimed tree, no `stream:` field, not pinned. Prints each with its reason and fix. Exit 0 none, 1 some, 2 when no vault root is set or the vault could not be read. Only notes dated within `notes_check_since` (default 7d; a note's date is its frontmatter date, else its file's last write) are checked unless `--all` or `--since` is given. The roll prints it and the `notes-reachable` standing row fails while any exist in that window; it blocks neither a roll nor a PR
  *   journal.ts week set "<goal>" ["<goal> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write this week's goals to <status dir>/week.md (dated by the week's Monday; a ` | Stream` suffix maps one to a stream)
  *   journal.ts week show [--status-dir <dir>] [--json]   read them back; a missing or out-of-week file prints the not-set line
  *   journal.ts priorities show [--status-dir <dir>] [--json]   read them back; a missing or out-of-date file prints the not-set line `prime` also shows
@@ -799,10 +799,10 @@ function notesCheck(since: string | undefined) {
     return notesMemo.get(key) ?? null;
 }
 
-/** The window the roll and the standing row use (`notes_check_since`, default 30d). A value that does not parse falls back to the default rather than checking every note or stopping the roll. */
+/** The window the roll and the standing row use (`notes_check_since`, default 7d). A value that does not parse falls back to the default rather than checking every note or stopping the roll. */
 function notesWindow(): string | undefined {
     const w = windowStart(NOTES_CHECK_SINCE);
-    return w === null ? windowStart('30d') as string : w;
+    return w === null ? windowStart('7d') as string : w;
 }
 
 /** The roll prints the unreachable notes beside the epic briefs; like them it never blocks the roll, and the standing row stays failing until they are fixed. */
@@ -825,7 +825,7 @@ function sinceDay(raw: string | undefined): string | undefined {
 
 /** `notes-check [--since 30d|YYYY-MM-DD | --all] [--json]`: the configured window by default (the same one the roll uses), `--all` for every note. durable notes under an active stream that no stream tab lists, each with its reason and fix. Exit 0 none, 1 some, 2 when the vault could not be read. Never blocks a roll or a PR. */
 function cmdNotesCheck() {
-    const r = notesCheck(has('all') ? undefined : arg('since') ? sinceDay(arg('since')) : notesWindow());
+    const r = notesCheck(has('all') ? undefined : arg('since') ? sinceDay(arg('since') || undefined) : notesWindow());
     if (!r) { console.error(`notes-check: ${NO_VAULT_DETAIL}`); process.exit(2); }
     if (asJson) console.log(JSON.stringify(r, null, 2)); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
     // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.

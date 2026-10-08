@@ -87,7 +87,7 @@ test('the roll and the standing row leave notes older than the window alone, and
   assert.match(roll.out, /Notes reachability: 0 of 1 notes/);
 });
 
-test('notes_check_since sets the window: a start date, all, and a bad value falls back to 30d', () => {
+test('notes_check_since sets the window: a start date, all, and a bad value falls back to the default', () => {
   const w = world('---\nupdated: 2020-01-01\n---\n# Old plan\n');
   assert.equal(cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: 'all' }, 'notes-check').code, 1);
   assert.equal(cliEnv(w, { MAESTRO_NOTES_CHECK_SINCE: '2019-01-01' }, 'notes-check').code, 1);
