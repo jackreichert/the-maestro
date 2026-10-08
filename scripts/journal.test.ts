@@ -2383,6 +2383,25 @@ test('review-queue: PRs in a self_review_repos repo are not counted, and the ans
     assert.deepEqual([json.queue.count, json.queue.selfReview], [2, 3]);
 });
 
+test('status and status --footer list self-review PRs on their own line, apart from the review queue', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const base = { isDraft: false, reviewDecision: 'REVIEW_REQUIRED', mergeable: 'MERGEABLE', threads: [], threadsComplete: true, baseRefName: 'main', headRefName: 'x' };
+    const prs = [
+        { ...base, key: 'org/a#1', repo: 'org/a', number: 1, url: 'u1' },
+        { ...base, key: 'example-owner/tool#2', repo: 'example-owner/tool', number: 2, url: 'u2', isDraft: true },
+        { ...base, key: 'example-owner/tool#3', repo: 'example-owner/tool', number: 3, url: 'u3' },
+    ];
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: new Date().toISOString(), prs }));
+    const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
+    }).stdout;
+    assert.doesNotMatch(status([]), /self-review/, 'no setting, no section');
+    const on = { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' };
+    assert.match(status([], on), /\n {2}review queue: 1 of 4\n {2}maestro PRs \(self-review\): 2 open: 1 draft, 1 awaiting your review\n/);
+    assert.match(status(['--footer'], on), /^\*\*Review queue:\*\* 1 of 4\n\*\*Maestro PRs \(self-review\):\*\* 2 open: 1 draft, 1 awaiting your review\n/m);
+});
+
 test('status and status --footer leave self-review PRs out of the review queue count', () => {
     const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
     mkdirSync(journalDir, { recursive: true });

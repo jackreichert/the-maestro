@@ -154,8 +154,8 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionLine, sessionStatus } from './token-metrics.ts';
-import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue } from './lib/review-queue.ts';
-import { fetchLive, snapshotPath } from './prs-snapshot.ts';
+import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
+import { fetchLive, loadSnapshot, selfReviewSummary, snapshotPath } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { buildStart, homeCounts, startLines } from './lib/start/start-here.ts';
@@ -670,6 +670,16 @@ const configuredStatusPageUri = (): string => statusPageUri({
 /** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
 const boardReviewQueue = () => boardQueue(readSnapshotPrs(snapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS);
 
+/** The self-review PRs from the stored snapshot (no network), apart from the review queue: null when none are configured, none are open, or no snapshot was taken. */
+function boardSelfReview(): { text: string; footer: string } | null {
+    if (!SELF_REVIEW_REPOS.length) return null;
+    const stored = loadSnapshot(snapshotPath(vault));
+    const summary = stored ? selfReviewSummary(stored.prs, SELF_REVIEW_REPOS) : '';
+    if (!stored || !summary) return null;
+    const tail = `${summary}${staleSuffix(stored.takenAt, new Date())}`;
+    return { text: `maestro PRs (self-review): ${tail}`, footer: `**Maestro PRs (self-review):** ${tail}` };
+}
+
 function cmdStatus() {
     refreshBoard();
     const g = groups(has('include-archived'));
@@ -683,7 +693,8 @@ function cmdStatus() {
     }
 
     const queueFooter = boardReviewQueue()?.footer;
-    if (has('footer')) { [...footerLines(g, done), ...(queueFooter ? [queueFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
+    const selfFooter = boardSelfReview()?.footer;
+    if (has('footer')) { [...footerLines(g, done), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
 
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
@@ -717,6 +728,8 @@ function cmdStatus() {
     console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
     const queue = boardReviewQueue();
     if (queue) console.log(`  ${queue.text}`);
+    const self = boardSelfReview();
+    if (self) console.log(`  ${self.text}`);
 }
 
 /** The dispatch gate (reference/dispatch.md#review-queue-cap): a live count, the stored snapshot if GitHub fails, and an exit code the orchestrator can test. */
