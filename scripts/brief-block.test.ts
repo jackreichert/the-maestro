@@ -155,3 +155,12 @@ test('the shipped block tells an agent to locate a credential by name before cal
     const block = extractBlock(readFileSync(BRIEF, 'utf8'));
     assert.match(block, /^- Missing credential: .*`env-where`.*never a value/m);
 });
+
+test('the shipped block asks for Learned lines in the shape `journal.ts learned` validates, without an unfilled slot', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    const line = block.split('\n').find((l) => l.startsWith('- Learned:')) ?? '';
+    assert.match(line, /`Learned: claim \| kind \| applies-to \| evidence \| verified-at \| confidence`/);
+    assert.match(line, /journal\.ts learned --help/);
+    const { problems } = fillBlock(block, { '<user git emails>': 'dev@example.com', '<tracker key example>': 'FAKE-1' });
+    assert.deepEqual(problems, []);
+});

@@ -23,7 +23,7 @@ A field you cannot fill means scout again, not dispatch.
 
 Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
-paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. PR text line added 2026-10-07; Report line changed to a file plus a headline 2026-10-07; the user should confirm both. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it.
+paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. PR text line added 2026-10-07; Report line changed to a file plus a headline 2026-10-07; the user should confirm both. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it. Learned line added 2026-10-08 (ledger-to-library slice L1); the user should confirm it.
 
 Print it with its slots filled by `node scripts/brief-block.ts`. It exits non-zero, printing
 nothing, if a slot has no value, so never paste a block you wrote by hand.
@@ -44,6 +44,7 @@ Standing rules (hard limits):
 - Waits: foreground only. Never run_in_background, background watchers, or Monitor, and never poll an output file in an until/sleep loop (that is how an agent hangs). Run tests in the foreground under a hard timeout (e.g. `timeout 600 npm test`); if one hangs, stop and report which test, do not wait it out. To wait on an outside condition, use one blocking check sized to fit the tool timeout.
 - Docs: a vault note you write for a ticket gets `ticket.mjs attach TICKET NOTE --kind KIND` before you report, or `ticket: none` in its frontmatter when it belongs to no ticket; an outside document gets `attach --url`. If your work changed an epic's state (closed or reopened a child, recorded a decision, found a risk), run `ticket.mjs brief EPIC --refresh` and rewrite its Status paragraph before you report.
 - Tool output: request only the fields you need (Jira `fields=`, `gh ... --json a,b --jq ...`). Never paste raw logs or whole files; grep for counts and markers. Wrap long jobs in a script that prints a summary.
+- Learned: end your report with one line per fact you established that a later agent would otherwise have to re-derive (how something works, a gotcha, how to do a recurring thing), in the form `Learned: claim | kind | applies-to | evidence | verified-at | confidence` (kind how-to, how-it-works, gotcha, decision or tool; applies-to repo:component[:env]; confidence observed, told-by-jack or inferred), or record it yourself with `node <maestro scripts dir>/journal.ts learned --help`. Systems, ids and counts only: evidence is a path, a PR or a command and its count, never a secret or PHI value; a value-shaped claim is refused. Leave out status and restated decisions.
 - Report: write the full report to a file (a vault note or report path the brief names) and hand back only a headline paragraph, under 150 words, plus that file path: outcome, numbers, links, decisions needed, what is left open. If tests failed or a step was skipped, say so in the headline.
 ```
 
