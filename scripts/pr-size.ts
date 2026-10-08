@@ -219,7 +219,8 @@ function main() {
   const classify = makeClassifier({ mechanical: PR_MECHANICAL_GLOBS, test: PR_TEST_GLOBS, config: PR_CONFIG_GLOBS, docs: PR_DOCS_GLOBS });
   const result = assess(parseNumstat(g.stdout), { maxFiles: PR_MAX_CODE_FILES, maxLines: PR_MAX_CODE_LINES, wideMaxFiles: PR_WIDE_MAX_CODE_FILES, wideMaxLines: PR_WIDE_MAX_CODE_LINES, classify });
   console.log(json ? JSON.stringify(result, null, 2) : render(result));
-  process.exit(result.verdict === 'PASS' ? 0 : 1);
+  // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
+  process.exitCode = result.verdict === 'PASS' ? 0 : 1;
 }
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
