@@ -36,6 +36,41 @@ export const PATTERNS: readonly { rule: string; re: RegExp }[] = [
   { rule: 'phi:birth-date', re: /\b(?:dob|date[_ ]of[_ ]birth|birth[_ ]?date|born)\b["']?\s*[:=]?\s*\d/i },
 ];
 
+/**
+ * A bare token that looks random: 32 or more characters of the base64 and base62 alphabet (so no `.`, `:` or spaces, which rules out URLs and file
+ * names) that pass two tests. (1) At least 4.2 bits of Shannon entropy per character: git shas, md5/sha256 digests and UUIDs are hex, which cannot
+ * reach 4 bits, so they pass. (2) Letters and digits swap class (lower, upper, digit) at least 45% of the time between neighbours: random base62
+ * swaps about 62% of the time, while words, camelCase identifiers, vault paths and slugs swap 0 to 35%, so they pass even when they are long.
+ * Cost: a hex secret of any length reads as a sha; a token split by a `.` or `:` is not seen; a few in 100 random 32-character tokens (fewer
+ * at 64 and more) swap too rarely to be caught. A floor, as the module note says.
+ */
+const TOKEN_MIN = 32;
+const TOKEN_ENTROPY = 4.2;
+const TOKEN_SWAPS = 0.45;
+const TOKEN = /^[A-Za-z0-9+/_=-]+$/;
+function entropy(s: string): number {
+  const n = new Map<string, number>();
+  for (const c of s) n.set(c, (n.get(c) ?? 0) + 1);
+  return -[...n.values()].reduce((h, k) => h + (k / s.length) * Math.log2(k / s.length), 0);
+}
+const charClass = (c: string): number => (/[a-z]/.test(c) ? 0 : /[A-Z]/.test(c) ? 1 : /\d/.test(c) ? 2 : 3);
+/** Share of neighbouring letter or digit pairs whose class (lower, upper, digit) differs. */
+function classSwaps(s: string): number {
+  let pairs = 0;
+  let swaps = 0;
+  for (let i = 1; i < s.length; i += 1) {
+    const a = charClass(s[i - 1] as string);
+    const b = charClass(s[i] as string);
+    if (a < 3 && b < 3) { pairs += 1; if (a !== b) swaps += 1; }
+  }
+  return pairs ? swaps / pairs : 0;
+}
+const looksRandom = (token: string): boolean => token.length >= TOKEN_MIN && TOKEN.test(token) && entropy(token) >= TOKEN_ENTROPY && classSwaps(token) >= TOKEN_SWAPS;
+/** Lines holding a whitespace-delimited word that looks random once the punctuation around it (quotes, brackets, backticks, a trailing stop) is trimmed. */
+function randomTokenHits(lines: string[]): Hit[] {
+  return lines.flatMap((line, i): Hit[] => (line.split(/\s+/).some((w) => looksRandom(w.replace(/^[^A-Za-z0-9+/_=-]+|[^A-Za-z0-9+/_=-]+$/g, ''))) ? [{ rule: 'secret:high-entropy', line: i + 1 }] : []));
+}
+
 const isReal = (v: string | undefined): boolean => v !== undefined && !PLACEHOLDER.test(v.trim());
 
 /** Lines that hold a key=value secret shape (including a key whose value is on the next non-blank line) or credentials in a URL. */
@@ -61,5 +96,5 @@ export const scanText: Scanner = (text) => {
   const long = lines.flatMap((l, i): Hit[] => (l.length > MAX_LINE ? [{ rule: 'scan:line-too-long', line: i + 1 }] : []));
   const short = lines.map((l) => (l.length > MAX_LINE ? '' : l));
   const byPattern = short.flatMap((line, i) => PATTERNS.filter((p) => p.re.test(line)).map((p): Hit => ({ rule: p.rule, line: i + 1 })));
-  return [...long, ...byPattern, ...keyValueHits(short)];
+  return [...long, ...byPattern, ...keyValueHits(short), ...randomTokenHits(short)];
 };

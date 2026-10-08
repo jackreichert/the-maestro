@@ -179,3 +179,15 @@ test('every non-blank line under Facts needs evidence: numbered items, prose, ne
   assert.equal(ok.status, 0, ok.stdout);
   assert.ok(problems(vault({ [PAGE]: `${frontmatter()}# T\n\nRead when: x.\n\n## Facts\n\n` })).some((f) => /no fact/.test(f.message)));
 });
+
+test('a bare token with no key word fails the real CLI as high-entropy and is never printed; a sha, a uuid and a vault path in the same spot pass', () => {
+  const token = 'aB3dE5gH7jK9mN2pQ4sT6vW8xZ1cF3hJ';
+  const withFact = (evidence: string) => vault({ [PAGE]: `${frontmatter()}${BODY}- A claim (verified 2026-10-08, ${evidence}).\n` });
+  const bad = run(withFact(token));
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /secrets {2}secret:high-entropy shape/);
+  assert.ok(!bad.stdout.includes(token) && !bad.stderr.includes(token));
+  for (const ok of ['488b6fe0a1b2c3d4e5f60718293a4b5c6d7e8f90', '3f2b8c1e-5d4a-4b7e-9c10-a1b2c3d4e5f6', `Projects/${REPO}/Research/orchard-sync-nightly-schedule-and-retries`, 'src/sync.ts:40-52']) {
+    assert.equal(run(withFact(ok)).status, 0, ok);
+  }
+});

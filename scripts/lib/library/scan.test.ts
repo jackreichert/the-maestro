@@ -62,3 +62,41 @@ test('a line over the length cap is reported instead of scanned, so the scan sta
   const hits = scanText(`${'a.'.repeat(5000)}\nfine line`);
   assert.deepEqual(hits, [{ rule: 'scan:line-too-long', line: 1 }]);
 });
+
+test('a bare random-looking token is caught: a 96-character base64 blob and a 32-character mixed token', () => {
+  const blob = 'Zm9vYmFyQmF6UXV4MTIzNDU2Nzg5MGFiY2RlZkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo+/w==';
+  assert.ok(blob.length >= 96);
+  const mixed = 'aB3dE5gH7jK9mN2pQ4sT6vW8xZ1cF3hJ';
+  for (const t of [blob, mixed, `the key is ${mixed}.`, `\`${mixed}\``, `"${blob}"`, `(${mixed})`]) {
+    assert.deepEqual(scanText(t).map((h) => h.rule), ['secret:high-entropy'], t.slice(0, 20));
+  }
+});
+
+test('ordinary evidence is not mistaken for a token: shas, digests, uuids, ledger ids, paths, urls, slugs and long identifiers', () => {
+  const evidence = [
+    'commit 488b6fe and 488b6fe0a1b2c3d4e5f60718293a4b5c6d7e8f90 on origin/develop',
+    `sha256 ${'0123456789abcdef'.repeat(4)}`,
+    'md5 9e107d9d372bb6826bd81d3542a419d6',
+    'uuid 3f2b8c1e-5d4a-4b7e-9c10-a1b2c3d4e5f6',
+    'ledger id k7q2 and ticket MAESTRO-149',
+    'src/lib/library/scan.ts:24 and /Users/someone/dev-env/skills/the-maestro/scripts/library-check.ts#L40',
+    'https://github.com/example-org/avonlea-api/blob/0123456789abcdef0123456789abcdef01234567/packages/orchard/src/sync.ts#L40-L52',
+    'packages/orchard/src/harvest-export/HarvestExportHandler',
+    'decision-orchard-row-id-column-added-before-the-harvest-sync-slug',
+    'verifyOrchardSyncScheduleBeforeEveryHarvestExportRun',
+    'Projects/avonlea-api/Knowledge/orchard-sync-nightly-schedule-and-retries',
+    'TEAMSELECT_DB_NAME_FOR_THE_STAGING_INTERIM_DATABASE_CLUSTER',
+    '-'.repeat(40), '='.repeat(40),
+  ].join('\n');
+  assert.deepEqual(scanText(evidence), []);
+});
+
+test('random base62 tokens are caught at the documented rate: at least 90 in 100 32-character ones and 98 in 100 64-character ones', () => {
+  let seed = 12345;
+  const next = (): number => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed; };
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const token = (n: number): string => Array.from({ length: n }, () => alphabet[(next() >> 8) % 62]).join('');
+  const caught = (n: number): number => Array.from({ length: 300 }, () => scanText(token(n)).length).filter(Boolean).length;
+  assert.ok(caught(32) >= 270, `32: ${caught(32)}`);
+  assert.ok(caught(64) >= 294, `64: ${caught(64)}`);
+});
