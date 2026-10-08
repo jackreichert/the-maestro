@@ -67,12 +67,14 @@ test('refuses an event whose watch or type is not a plain token, or whose time i
   assert.deepEqual(readInbox(dir), []);
 });
 
-test('the same watch, type and summary lands once, across batches and inside one batch', () => {
+test('the same digest line replayed lands once; the same words at a later time are a new event, even after an ack', () => {
   const dir = tempDir();
   const e = ev('THREAD acme/w#1 by someone: https://x.test/a');
   assert.deepEqual(appendEvents(dir, [e, e]), { added: 1, duplicates: 1, refused: 0 });
-  assert.deepEqual(appendEvents(dir, [{ ...e, at: '2026-10-02T00:00:00.000Z' }]), { added: 0, duplicates: 1, refused: 0 });
-  assert.equal(readInbox(dir).length, 1);
+  assert.deepEqual(appendEvents(dir, [e]), { added: 0, duplicates: 1, refused: 0 });
+  mark(dir, 'handled', [readInbox(dir)[0].id]);
+  assert.deepEqual(appendEvents(dir, [{ ...e, at: '2026-10-02T00:00:00.000Z' }]), { added: 1, duplicates: 0, refused: 0 });
+  assert.equal(readInbox(dir).length, 2);
 });
 
 test('two writers racing the dedupe check leave one entry on read', () => {

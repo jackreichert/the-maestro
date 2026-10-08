@@ -93,15 +93,18 @@ const kindOf = (summary: string): string => {
   return 'other';
 };
 
-/** A short stable id: the same watch, type and summary always give the same one, which is what makes a replayed event a no-op. */
-export const eventId = (e: Pick<DigestEvent, 'watch' | 'type' | 'summary'>): string => createHash('sha256').update(`${e.watch}|${e.type}|${e.summary}`).digest('hex').slice(0, 12);
+/**
+ * A short stable id from watch, type, time and summary. A digest line replayed after a crash keeps its time, so it gets the same id and is
+ * a no-op; a later occurrence of the same words (a second text, a conflict that returns) has a new time and so is a new event.
+ */
+export const eventId = (e: Pick<DigestEvent, 'watch' | 'type' | 'summary'> & { at: string }): string => createHash('sha256').update(`${e.watch}|${e.type}|${e.at}|${e.summary}`).digest('hex').slice(0, 12);
 
 /** Builds the stored form of a digest event, or null when its watch or type is not a plain token (it is refused, not written). The summary is read here and goes no further. */
 export function toInboxEvent(e: DigestEvent): InboxEvent | null {
   const at = isoTime(e.at);
   if (!TOKEN.test(String(e.watch)) || !TOKEN.test(String(e.type)) || at === null) return null;
   const raw = Object.assign({}, ...FIELD_EXTRACTORS.map((x) => x(String(e.summary))));
-  return { id: eventId(e), watch: e.watch, type: e.type, kind: kindOf(String(e.summary)), at, actionable: e.actionable === true, fields: cleanFields(raw) };
+  return { id: eventId({ ...e, at }), watch: e.watch, type: e.type, kind: kindOf(String(e.summary)), at, actionable: e.actionable === true, fields: cleanFields(raw) };
 }
 
 /** Rebuilds an event from a parsed row using only the keys the inbox defines; null when it does not have the shape. */

@@ -527,7 +527,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 
 #### The event inbox
 
-`run --serve` does not exit when something happens. Each tick's events are appended to `<event_dir>/events.jsonl` and the loop carries on; it ends only on a crash or a signal. Quiet hours and an empty registry become waits in process. The file is append-only: an `event` row, later `seen` and `handled` rows, folded when read. An event's id is a short hash of its watch, type and summary, so a replay after a crash adds nothing.
+`run --serve` does not exit when something happens. Each tick's events are appended to `<event_dir>/events.jsonl` and the loop carries on; it ends only on a crash or a signal. Quiet hours and an empty registry become waits in process. The file is append-only: an `event` row, later `seen` and `handled` rows, folded when read. An event's id is a short hash of its watch, type, time and summary: a line replayed after a crash keeps its time and adds nothing, while the same words at a later time are a new event.
 
 An event row carries a `kind` (`thread`, `reply`, `conflict`, `changes-requested`, `reminder`, ...) and only the allowlisted `fields`: `repo`, `number`, `who` (`bot` or `human`) and `count`. Summaries, report text, titles and logins never enter the file. The allowlist is applied where rows are written and again where they are read, so a hand-edited row cannot carry free text to a reader. The digest still holds the full line.
 
