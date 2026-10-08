@@ -4,7 +4,7 @@ import './priority-list.ts';
 import './md-fragment.ts';
 import { h, s, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadLinkHosts, loadState } from './api.ts';
+import { describeSources, loadCharts, loadHome, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
@@ -16,7 +16,7 @@ import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
-import type { AskBusyDetail, ChartsData, PodiumState } from './types.ts';
+import type { AskBusyDetail, ChartsData, PodiumState, StreamHome } from './types.ts';
 
 interface Fresh { state: PodiumState; charts: ChartsData; dropped: number }
 
@@ -195,6 +195,8 @@ export class PodiumApp extends HTMLElement {
   #tick: number | undefined;
   #tabsObserver: ResizeObserver | null = null;
   #tempoOpen = false;
+  // The last home base each stream tab got, so a redraw shows it at once while the fresh one loads.
+  readonly #homes = new Map<string, StreamHome>();
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -481,7 +483,17 @@ export class PodiumApp extends HTMLElement {
     const board = h('stream-board', { stream });
     board.live = this.#sources.state === 'server';
     board.state = st;
+    board.home = this.#homes.get(stream) ?? null;
+    if (board.live) void this.#loadHome(stream, board);
     return board;
+  }
+
+  /** Fetch the stream's home base and hand it to the board that asked; a board redrawn in the meantime is a different element and is left alone. */
+  async #loadHome(stream: string, board: HTMLElementTagNameMap['stream-board']): Promise<void> {
+    const got = await loadHome(stream);
+    if (!got) return;
+    this.#homes.set(stream, got.data);
+    if (board.isConnected) board.home = got.data;
   }
 
   #overview(st: PodiumState): Node {

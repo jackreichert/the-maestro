@@ -5,8 +5,10 @@ import { fragmentFor } from './contract.ts';
 import { prChips } from './pr-chips.ts';
 import { ago, clockTime, oldestFirst } from './glance.ts';
 import { gateView } from './gate.ts';
+import { HOME_CSS, epicStrip, leftBody, unknownsFold } from './home-view.ts';
+import { clearLine, leftGroups, leftHeading } from './home-text.ts';
 import type { GateView } from './gate.ts';
-import type { AskCard, DoneItem, PodiumState, PrCard, WorkItem } from './types.ts';
+import type { AskCard, DoneItem, PodiumState, PrCard, StreamHome, WorkItem } from './types.ts';
 
 const CSS = `${BASE_CSS}${UI_CSS}
   ul.prs { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
@@ -16,6 +18,9 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .pr-branch { font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-muted); overflow-wrap: anywhere; }
   .pr-rel { color: var(--text-secondary); font-size: var(--text-sm); }
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+  .stand { margin-bottom: var(--space-6); }
+  .below { margin-top: var(--space-6); }
+  ${HOME_CSS}
 `;
 
 /** The shared stylesheet text for anything that draws sections, rows and PR lists (the overview reuses it). */
@@ -154,7 +159,10 @@ export class StreamBoard extends HTMLElement {
   static observedAttributes = ['stream'];
   #root: ShadowRoot;
   #state: PodiumState | null = null;
+  #home: StreamHome | null = null;
   #live = false;
+  // Where the home base is drawn. It arrives after the board and refreshes on its own, so filling these never rebuilds the ask rows.
+  #slots: { stand: HTMLElement; left: HTMLElement; below: HTMLElement } | null = null;
 
   constructor() {
     super();
@@ -167,6 +175,21 @@ export class StreamBoard extends HTMLElement {
   get live(): boolean { return this.#live; }
   set live(v: boolean) { this.#live = v; this.#render(); }
   attributeChangedCallback(): void { this.#render(); }
+
+  /** The stream's home base from the server, or null when there is none; only the home sections are redrawn. */
+  get home(): StreamHome | null { return this.#home; }
+  set home(v: StreamHome | null) { this.#home = v; this.#fillHome(); }
+
+  #fillHome(): void {
+    const slots = this.#slots;
+    if (!slots) return;
+    const home = this.#home;
+    const groups = home ? leftGroups(home) : null;
+    const left = home && groups ? leftBody(groups) : null;
+    slots.stand.replaceChildren(...(home ? [section({ title: 'Where it stands', n: 0, tone: 'neutral', empty: '' }, epicStrip(home))] : []));
+    slots.left.replaceChildren(...(home && groups && left ? [section({ title: leftHeading(groups, home.epics), n: 0, tone: 'neutral', empty: '' }, left)] : []));
+    slots.below.replaceChildren(...(home ? [unknownsFold(home)].filter((n): n is HTMLElement => n !== null) : []));
+  }
 
   #render(): void {
     const st = this.#state;
@@ -184,17 +207,32 @@ export class StreamBoard extends HTMLElement {
     const frag = fragmentFor(st.fragments, stream);
     const md = frag ? h('md-fragment') : null;
     if (md && frag) md.markdown = frag;
-    this.#root.replaceChildren(h('div', { class: 'board' },
+    const clear = clearLine([
+      { phrase: 'nothing blocked', empty: blocked.length === 0 },
+      { phrase: 'no open pull requests', empty: prs.length === 0 },
+      { phrase: 'nothing in flight', empty: working.length === 0 },
+      { phrase: 'nothing queued', empty: queued.length === 0 },
+      { phrase: 'nothing shipped today', empty: done.length === 0 },
+      { phrase: 'nothing deferred', empty: deferred.length === 0 },
+    ]);
+    const shown = (n: number, make: () => HTMLElement): HTMLElement | null => (n > 0 ? make() : null);
+    const slots = { stand: h('div', { class: 'stand' }), left: h('div'), below: h('div', { class: 'below' }) };
+    this.#slots = slots;
+    this.#root.replaceChildren(slots.stand, h('div', { class: 'board' },
       h('div', { class: 'col' },
         section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false)?.list ?? null),
-        section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(blocked, ctx)),
-        section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: 'No open pull requests in this stream.' }, prList(prs))),
+        shown(blocked.length, () => section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: '' }, itemRows(blocked, ctx))),
+        slots.left,
+        shown(prs.length, () => section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: '' }, prList(prs))),
+        clear ? h('p', { class: 'clear' }, clear) : null),
       h('div', { class: 'col' },
-        section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(working, ctx)),
-        section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: 'The queue is empty.', rest: RESTS.queued, quiet: true }, itemRows(queued, ctx)),
-        section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped, quiet: true }, itemRows(done, ctx)),
-        deferred.length ? section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx)) : null,
-        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null)));
+        shown(working.length, () => section({ title: 'In flight', n: working.length, tone: 'neutral', empty: '', quiet: true }, itemRows(working, ctx))),
+        shown(queued.length, () => section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: '', quiet: true }, itemRows(queued, ctx))),
+        shown(done.length, () => section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: '', quiet: true }, itemRows(done, ctx))),
+        shown(deferred.length, () => section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx))),
+        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null)),
+    slots.below);
+    this.#fillHome();
   }
 }
 

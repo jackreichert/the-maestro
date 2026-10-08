@@ -57,6 +57,8 @@ const NON_TEXT = ['--focus', '--border-strong'];
 /** Chart marks are drawn on --surface-1 inside a panel on --surface-page; a series colour is a graphical object (1.4.11). */
 const SERIES = ['--series-1', '--series-2', '--series-3', '--series-4', '--series-5', '--series-6', '--series-7', '--series-8', '--series-other'];
 const CHART_SURFACES = ['--surface-1', '--surface-page'];
+/** The home base's status bar segments (closed, in progress, blocked, and the outline of not started) are graphical objects too. */
+const BAR_MARKS = ['--success', '--accent', '--critical', '--border-strong'];
 
 for (const [mode, tokens] of Object.entries(modes())) {
   const get = (name: string): string => {
@@ -84,6 +86,15 @@ for (const [mode, tokens] of Object.entries(modes())) {
   test(`${mode}: the focus ring and control outlines meet 3:1 on every surface`, () => {
     for (const fg of NON_TEXT) {
       for (const bg of SURFACES) {
+        const r = contrast(get(fg), get(bg));
+        assert.ok(r >= 3, `${mode}: ${fg} on ${bg} is ${r.toFixed(2)}:1`);
+      }
+    }
+  });
+
+  test(`${mode}: every status bar segment meets 3:1 on the surfaces it sits on`, () => {
+    for (const fg of BAR_MARKS) {
+      for (const bg of CHART_SURFACES) {
         const r = contrast(get(fg), get(bg));
         assert.ok(r >= 3, `${mode}: ${fg} on ${bg} is ${r.toFixed(2)}:1`);
       }
