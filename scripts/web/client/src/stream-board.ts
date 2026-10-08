@@ -164,6 +164,7 @@ export class StreamBoard extends HTMLElement {
   #home: StreamHome | null = null;
   #live = false;
   // Where the home base is drawn. It arrives after the board and refreshes on its own, so filling these never rebuilds the ask rows.
+  #filled = false;
   #slots: { stand: HTMLElement; left: HTMLElement; below: HTMLElement } | null = null;
 
   constructor() {
@@ -180,11 +181,17 @@ export class StreamBoard extends HTMLElement {
 
   /** The stream's home base from the server, or null when there is none; only the home sections are redrawn. */
   get home(): StreamHome | null { return this.#home; }
-  set home(v: StreamHome | null) { this.#home = v; this.#fillHome(); }
+  set home(v: StreamHome | null) {
+    // An unchanged home leaves the slots alone: redrawing would close the disclosures a reader opened and drop focus from them.
+    if (this.#slots && JSON.stringify(v) === JSON.stringify(this.#home) && this.#filled) return;
+    this.#home = v;
+    this.#fillHome();
+  }
 
   #fillHome(): void {
     const slots = this.#slots;
     if (!slots) return;
+    this.#filled = true;
     const home = this.#home;
     const groups = home ? leftGroups(home) : null;
     const left = home && groups ? leftBody(groups) : null;
@@ -220,6 +227,7 @@ export class StreamBoard extends HTMLElement {
     const shown = (n: number, make: () => HTMLElement): HTMLElement | null => (n > 0 ? make() : null);
     const slots = { stand: h('div', { class: 'stand' }), left: h('div'), below: h('div', { class: 'below' }) };
     this.#slots = slots;
+    this.#filled = false;
     this.#root.replaceChildren(slots.stand, h('div', { class: 'board' },
       h('div', { class: 'col' },
         section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false)?.list ?? null),

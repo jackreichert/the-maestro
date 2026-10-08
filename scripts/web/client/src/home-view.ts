@@ -51,14 +51,15 @@ export const HOME_CSS = `
 `;
 
 /** One epic: id and title, its progress sentence (with the denominator), the bar, then next action, awaiting and unknowns. */
-function epicBlock(e: HomeEpic): HTMLElement {
+function epicBlock(e: HomeEpic, listed: boolean): HTMLElement {
   const verified = verifiedSentence(e);
   const counts = openCounts(e);
   const unknowns = epicUnknownsLabel(e.unknowns);
   const awaiting = awaitingLabel(e.awaiting);
   const quiet = quietNote(e.quietDays);
   const end = epicEnd(e);
-  const jump = unknowns ? h('button', { type: 'button', class: 'jump', 'aria-controls': UNKNOWNS_ID }, unknowns) : null;
+  // The button only exists when the unknowns list does, so it can never be a live control that opens nothing.
+  const jump = unknowns && listed ? h('button', { type: 'button', class: 'jump', 'aria-controls': UNKNOWNS_ID, 'aria-label': `${unknowns}, epic ${e.id}` }, unknowns) : null;
   jump?.addEventListener('click', () => {
     const fold = jump.getRootNode() instanceof ShadowRoot ? (jump.getRootNode() as ShadowRoot).getElementById(UNKNOWNS_ID) : null;
     if (!(fold instanceof HTMLDetailsElement)) return;
@@ -68,7 +69,7 @@ function epicBlock(e: HomeEpic): HTMLElement {
   return h('li', { class: 'epic' },
     h('h3', {}, h('span', { class: 'id' }, e.id), h('span', { class: 'title' }, refLink({ label: e.title, url: e.note.url }))),
     h('p', { class: 'progress' }, progressSentence(e), verified ? h('span', { class: 'also' }, ` · ${verified}`) : null,
-      end === 'complete' ? h('i', { class: 'epic-end' }, ' Fine') : end === 'unresolved' ? h('i', { class: 'epic-end' }, ' unresolved') : null),
+      end === 'complete' ? h('span', {}, ' ', h('i', { class: 'epic-end', lang: 'it' }, 'Fine'), h('span', { class: 'vh' }, ' (complete)')) : end === 'unresolved' ? h('i', { class: 'epic-end' }, ' unresolved') : null),
     e.total > 0 ? h('div', { class: 'bar-track', 'aria-hidden': 'true' }, ...barSegments(e).map((s) => {
       const seg = h('span', { class: s.key === 'progress' ? 'progress-seg' : s.key });
       seg.style.flexGrow = String(s.n);
@@ -79,17 +80,18 @@ function epicBlock(e: HomeEpic): HTMLElement {
       e.next ? h('span', {}, 'Next: ', h('span', { class: 'mono' }, e.next.id), ' ', refLink({ label: e.next.title, url: e.next.ref.url })) : null,
       awaiting ? h('span', {}, awaiting) : null,
       quiet ? h('span', {}, quiet) : null,
-      jump));
+      jump ?? (unknowns ? h('span', {}, unknowns) : null)));
 }
 
 /** The epics of the stream, newest activity first, at most three shown; with none, one teaching line says how to get progress. */
 export function epicStrip(home: StreamHome): HTMLElement {
   if (home.epics.length === 0) return h('p', { class: 'teach' }, noEpicLine(home));
   const { shown, rest } = capRows(home.epics, EPIC_CAP);
+  const listed = home.unknowns.length > 0;
   return h('div', {},
-    h('ul', { class: 'epics', role: 'list' }, ...shown.map(epicBlock)),
+    h('ul', { class: 'epics', role: 'list' }, ...shown.map((e) => epicBlock(e, listed))),
     rest.length ? h('details', { class: 'fold' }, h('summary', {}, `${rest.length} more ${rest.length === 1 ? 'epic' : 'epics'}`),
-      h('ul', { class: 'epics', role: 'list' }, ...rest.map(epicBlock))) : null);
+      h('ul', { class: 'epics', role: 'list' }, ...rest.map((e) => epicBlock(e, listed)))) : null);
 }
 
 /** A ticket as a row: id, its title (linked), its small facts, and up to three PR links under it. */
