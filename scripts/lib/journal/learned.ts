@@ -55,7 +55,7 @@ export function parseAppliesTo(s: string): { repo: string; component: string; en
 }
 
 /** What the rules look at: each field as a value that may be missing or malformed, plus the run's context. */
-interface Check { v: Record<keyof LearnedFields | keyof LearnedExtras, unknown>; ctx: LearnedContext }
+interface Check { v: Partial<Record<keyof LearnedFields | keyof LearnedExtras, unknown>>; ctx: LearnedContext }
 /** A rule refuses (returns the message) or passes (null). Every refusal is reported. No message echoes a flag's value: an input that failed may be the secret. */
 interface Rule { name: string; refuse: (c: Check) => string | null }
 
