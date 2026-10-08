@@ -137,11 +137,33 @@ const RULES: Rule[] = [
     { name: 'medical-record-number', class: 'phi', pattern: /\b(?:mrn|medical record (?:number|no\.?))\b\s*[:#=]?\s*[A-Za-z0-9-]{4,}/gi },
 ];
 
+/** Letters from other scripts that look like a Latin one (Cyrillic and Greek), folded to the Latin letter so they cannot split a shape. */
+const CONFUSABLE_PAIRS = [
+    'АA', 'ВB', 'ЕE', 'ЅS', 'ІI', 'ЈJ', 'КK', 'МM', 'НH', 'ОO', 'РP', 'СC', 'ТT', 'ХX', 'УY',   // Cyrillic capitals
+    'аa', 'еe', 'ѕs', 'іi', 'јj', 'оo', 'рp', 'сc', 'уy', 'хx', 'ԁd',                              // Cyrillic small
+    'ΑA', 'ΒB', 'ΕE', 'ΖZ', 'ΗH', 'ΙI', 'ΚK', 'ΜM', 'ΝN', 'ΟO', 'ΡP', 'ΤT', 'ΥY', 'ΧX',         // Greek capitals
+    'αa', 'ιi', 'οo', 'νv', 'ρp',                                                                  // Greek small
+];
+const CONFUSABLES = new Map(CONFUSABLE_PAIRS.map((p) => [p[0] as string, p[1] as string]));
+const foldConfusables = (t: string): string => t.replace(/[\u0370-\u03ff\u0400-\u04ff\u0500-\u052f]/g, (c) => CONFUSABLES.get(c) ?? c);
+
+/** Decodes `%XX` escapes of ASCII characters, at most twice (so `%2541` is seen as `A` but nothing loops), leaving the rest as written. */
+function decodePercent(t: string): string {
+    let out = t;
+    for (let pass = 0; pass < 2 && /%[0-7][0-9a-f]/i.test(out); pass++) out = out.replace(/%([0-7][0-9a-f])/gi, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
+    return out;
+}
+
+/**
+ * What the rules read: fullwidth and compatibility forms folded, zero-width and other format characters dropped,
+ * Cyrillic and Greek lookalikes folded to Latin, and `%XX` escapes decoded, so none of them can hide a shape.
+ * Offsets in findings refer to this text.
+ */
+export const normalise = (raw: string): string => decodePercent(foldConfusables(raw.normalize('NFKC').replace(/\p{Cf}/gu, '')));
+
 /** Every finding in `text`, in rule order. Each scan builds fresh regexes, so no lastIndex state leaks between calls. */
 export function scanText(raw: string, opts: ScanOptions = {}): Finding[] {
-    // Fold fullwidth and compatibility forms, and drop zero-width and other format characters, so they cannot split a shape.
-    // Offsets refer to the folded text.
-    const text = raw.normalize('NFKC').replace(/\p{Cf}/gu, '');
+    const text = normalise(raw);
     const out: Finding[] = [];
     for (const rule of RULES) {
         for (const m of text.matchAll(new RegExp(rule.pattern.source, rule.pattern.flags))) {

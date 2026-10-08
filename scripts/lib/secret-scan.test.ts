@@ -180,3 +180,24 @@ test('scanFields lets a sha-field hold a bare 40-hex sha and nothing longer', ()
     assert.deepEqual(scanFields({ evidence: h40 }, { shaFields: ['verified-at'] }).map((f) => f.field), ['evidence']);
     assert.equal(scanFields({ 'verified-at': 'a1b2c3d4'.repeat(8) }, { shaFields: ['verified-at'] }).length, 1, 'only a 40-hex value is exempt');
 });
+
+test('percent-encoded and lookalike-letter shapes are decoded and folded before matching', () => {
+    for (const t of [
+        j('AKIA%49', 'OSFODNN7EXAMPLE'),
+        j('AKIA%2549', 'OSFODNN7EXAMPLE'),
+        j('tok', 'en%3Dabcd1234efgh5678'),
+        j('pass', 'word%3Dhunter2xyz'),
+        j('AKIAIOSFODNN7EXA', 'М', 'PLE'),
+        j('ΑKIAIOSFODNN7EXAMPLE'),
+        j('рassword', '=hunter2xyz'),
+        j('gіthub_pat_', 'a1B2c3D4'.repeat(5)),
+    ]) assert.ok(scanText(t).length > 0, t.slice(0, 16));
+});
+
+test('decoding is bounded and leaves ordinary percent signs alone', () => {
+    assert.deepEqual(scanText('50% of 12 rows; 100% done; %zz and %4 stay as written'), []);
+    assert.deepEqual(scanText('Cyrillic prose is not altered into a shape: Привет, мир'), []);
+    const t0 = Date.now();
+    scanText('%25'.repeat(50_000) + '%41'.repeat(50_000));
+    assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+});
