@@ -11,7 +11,7 @@ const { reviewQueue, reviewQueueLine, readSnapshotPrs, readQueue, queueExitCode,
 const prs = (...drafts: boolean[]) => drafts.map((isDraft) => ({ isDraft }));
 
 test('drafts do not count toward the queue', () => {
-  assert.deepEqual(reviewQueue(prs(false, true, true, false), 4), { count: 2, cap: 4, full: false });
+  assert.deepEqual(reviewQueue(prs(false, true, true, false), 4), { count: 2, cap: 4, full: false, selfReview: 0 });
 });
 
 test('the queue is full at the cap, not above it', () => {
@@ -21,12 +21,12 @@ test('the queue is full at the cap, not above it', () => {
 });
 
 test('an empty list is an empty queue', () => {
-  assert.deepEqual(reviewQueue([], 4), { count: 0, cap: 4, full: false });
+  assert.deepEqual(reviewQueue([], 4), { count: 0, cap: 4, full: false, selfReview: 0 });
 });
 
 test('the board line shows N of cap and marks a full queue', () => {
-  assert.equal(reviewQueueLine({ count: 3, cap: 4, full: false }), 'review queue: 3 of 4');
-  assert.equal(reviewQueueLine({ count: 4, cap: 4, full: true }), 'review queue: 4 of 4 (full)');
+  assert.equal(reviewQueueLine({ count: 3, cap: 4, full: false, selfReview: 0 }), 'review queue: 3 of 4');
+  assert.equal(reviewQueueLine({ count: 4, cap: 4, full: true, selfReview: 0 }), 'review queue: 4 of 4 (full)');
 });
 
 test('readSnapshotPrs reads a snapshot and refuses a malformed one', () => {
@@ -101,4 +101,27 @@ test('a snapshot over six hours old, or undated, is refused as unknown rather th
   assert.equal(queueExitCode(old), 2);
   assert.match(queueText(old)[0] as string, /over 6 hours old/);
   assert.equal(queueExitCode(readQueue({ fetchLive: down, readStored: stored(undefined) }, 4, NOW)), 2);
+});
+
+const inRepo = (repo: string, isDraft = false) => ({ repo, isDraft });
+
+test('PRs in a self-review repo do not count toward the queue or fill it', () => {
+  const list = [inRepo('org/a'), inRepo('org/b'), inRepo('me/tool'), inRepo('me/tool'), inRepo('me/tool'), inRepo('me/tool', true)];
+  assert.deepEqual(reviewQueue(list, 4, ['me/tool']), { count: 2, cap: 4, full: false, selfReview: 3 }, 'self-review drafts are drafts, not queue');
+  assert.deepEqual(reviewQueue(list, 4), { count: 5, cap: 4, full: true, selfReview: 0 }, 'with no self_review_repos nothing changes');
+});
+
+test('a PR with no repo is counted even when self-review repos are set', () => {
+  assert.equal(reviewQueue([{ isDraft: false }], 4, ['me/*']).count, 1);
+});
+
+test('the dispatch gate and the board line apply the same exclusion', () => {
+  const stored = { prs: [inRepo('org/a'), inRepo('me/tool'), inRepo('me/tool')], takenAt: '2026-01-01T00:00:00Z' };
+  const now = new Date('2026-01-01T00:30:00Z');
+  const fail = { fetchLive: () => { throw new Error('offline'); }, readStored: () => stored };
+  const r = readQueue(fail, 4, now, ['me/*']);
+  assert.ok(r.ok && r.queue.count === 1 && r.queue.selfReview === 2);
+  assert.equal(readQueue({ fetchLive: () => stored, readStored: () => null }, 2, now, ['me/*']).ok && queueExitCode(readQueue({ fetchLive: () => stored, readStored: () => null }, 2, now, ['me/*'])), 0);
+  assert.equal(boardQueue(stored, 4, now, ['me/*'])?.text, 'review queue: 1 of 4');
+  assert.equal(boardQueue(stored, 4, now)?.text, 'review queue: 3 of 4');
 });

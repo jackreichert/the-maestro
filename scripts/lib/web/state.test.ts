@@ -168,3 +168,11 @@ test('a PR that is no longer open links to the GitHub pull URL the ask text name
   assert.deepEqual(ask('Is #99 done? See https://evil.test/org/x/pull/99')?.links.prs, [{ label: '#99 (not open)' }]);
   assert.deepEqual(ask('Is #99 done?')?.links.prs, [{ label: '#99 (not open)' }]);
 });
+
+test('a PR in a self_review_repos repo is flagged selfReview on its card, and only that one', () => {
+  const s = buildState(inputs({ prs: [pr(12), pr(21, { repo: 'me/tool', short: 'tool' })], config: { ...CONFIG, selfReviewRepos: ['me/tool'] } }));
+  assert.equal(s.prs.find((p) => p.number === 21)?.selfReview, true);
+  assert.equal(s.prs.find((p) => p.number === 12)?.selfReview, undefined);
+  const off = buildState(inputs({ prs: [pr(21, { repo: 'me/tool', short: 'tool' })] }));
+  assert.equal(off.prs[0]?.selfReview, undefined, 'unconfigured, no flag');
+});

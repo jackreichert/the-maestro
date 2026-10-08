@@ -157,3 +157,10 @@ test('a paste ask counts the same in the asks list, the footer row and the age c
   assert.equal(state.footer.find((f) => f.stream === 'widgets')?.asks, mine);
   assert.equal(buildCharts(cfg, 14, NOW).ageBuckets.reduce((n, b) => n + b.count, 0), state.asks.length);
 });
+
+test('the PR mix chart counts only the org PRs when self_review_repos names a repo', () => {
+  const cfg = fixture();
+  assert.equal(Object.values(buildCharts(cfg, 3, NOW).prMix.byState).reduce((n, c) => n + c, 0), 2);
+  const apart = buildCharts({ ...cfg, page: { ...cfg.page, selfReviewRepos: ['acme/widgets'] } }, 3, NOW);
+  assert.deepEqual(apart.prMix.byState, {}, 'both fixture PRs are in the self-review repo');
+});

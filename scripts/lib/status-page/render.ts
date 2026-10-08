@@ -8,6 +8,7 @@ import type { NoteLinkEnv } from './links.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
 import { reviewQueue } from '../review-queue.ts';
+import { splitSelfReview } from '../self-review.ts';
 import type { ReviewQueue } from '../review-queue.ts';
 import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
@@ -50,6 +51,8 @@ export interface PageConfig {
   noteExists?: (vaultPath: string) => boolean;
   /** The review queue cap (`review_queue_cap`). Absent: the page shows no review queue line. */
   reviewQueueCap?: number;
+  /** `self_review_repos`: PRs in these repos are not counted in the review queue. Absent: none. */
+  selfReviewRepos?: string[];
 }
 
 /** Where the PR list came from: when GitHub was last read (null when never), and why the read just now failed, if it did. */
@@ -240,8 +243,17 @@ function prFlags(p: Pr): string {
 /** `Review queue: 3 of 4 ...`: the non-draft PRs waiting on a review against the cap, and what a full queue means for dispatch. */
 const queueSentence = (q: ReviewQueue): string => `**Review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}**${q.full ? ': dispatch only fixes to PRs already open until it drops.' : ' non-draft PRs awaiting review.'}`;
 
-/** One table per stream: ticket | develop PR (base) | staging twin (base, or none) | tl;dr. Streams with no open PR get no table. */
-function prSection(cfg: PageConfig, prs: Pr[], streams: string[]): string[] {
+/** Where a self-review PR stands for its one reviewer, first match: new comments, draft, ready to merge, approved but held, awaiting review. The same buckets as `prs-snapshot.ts --ready`. */
+export function selfReviewState(p: Pr): string {
+  if (p.unresolved > 0) return 'new comments';
+  if (p.isDraft) return 'draft for you';
+  if (p.reviewDecision === 'APPROVED') return p.mergeable === 'MERGEABLE' ? 'ready to merge' : 'approved, not ready';
+  return 'awaiting your review';
+}
+
+/** One table per stream: ticket | develop PR (base) | staging twin (base, or none) | tl;dr. Streams with no open PR get no table. PRs in a self-review repo are listed apart, after. */
+function prSection(cfg: PageConfig, all: Pr[], streams: string[]): string[] {
+  const { org: prs, self } = splitSelfReview(all, cfg.selfReviewRepos ?? []);
   const tot = (f: (p: Pr) => boolean): number => prs.filter(f).length;
   const out = [`## Open PRs (${prs.length})`, '',
     `${tot((p) => p.isDraft)} draft, ${tot((p) => p.mergeable === 'CONFLICTING')} conflicting, ${tot((p) => p.unresolved > 0)} with unresolved threads, ${tot((p) => p.ci === 'FAILURE' || p.ci === 'ERROR')} failing CI.`, '',
@@ -259,7 +271,14 @@ function prSection(cfg: PageConfig, prs: Pr[], streams: string[]): string[] {
     }
     out.push('');
   }
-  return [...out, ...stackDiagram(prs)];
+  return [...out, ...stackDiagram(prs), ...selfReviewSection(self, all)];
+}
+
+/** The Maestro PRs (self-review) section: PRs only their owner reviews, with where each stands. Empty when there are none. */
+function selfReviewSection(self: Pr[], all: Pr[]): string[] {
+  if (!self.length) return [];
+  return [`## Maestro PRs (self-review) (${self.length})`, '', 'Not counted in the review queue. Only you review these.', '', '| PR | State | TL;DR |', '|---|---|---|',
+    ...self.sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number).map((p) => `| ${[mdLink(prRef(p, all, true)), prFlags(p)].filter(Boolean).join(' ')} | ${selfReviewState(p)} | ${cell(oneLine(p.title.replace(typePrefix, '').replace(twinSuffix, ''), 70))} |`), ''];
 }
 
 function stackDiagram(prs: Pr[]): string[] {

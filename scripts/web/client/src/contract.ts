@@ -34,7 +34,7 @@ const ROW_RULES = {
   deferred: { ...WORK, until: str },
   prs: {
     repo: str, short: str, number: num, title: str, url: str, stream: str, base: str, head: str, isDraft: bool, ci: str,
-    mergeable: str, mergeStateStatus: str, unresolved: num, review: str, flags: arrOf(str), twinOf: opt(num), stackedOn: opt(num),
+    mergeable: str, mergeStateStatus: str, unresolved: num, review: str, flags: arrOf(str), twinOf: opt(num), stackedOn: opt(num), selfReview: opt(bool),
   } satisfies Shape,
   footer: { stream: str, asks: num, working: num, queued: num, blocked: num, done: num } satisfies Shape,
 };

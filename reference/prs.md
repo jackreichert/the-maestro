@@ -122,6 +122,14 @@ Review*). Cross-reference the same way the [tracker review](ledger.md#end-of-day
 The rule and the reminder are described with the buckets above; the git side is in
 [git.md](git.md#twin-prs-integration-and-release-candidate-branches).
 
+## Self-review repos
+
+Some repos have one reviewer: the person who owns them. Name them in local-config `self_review_repos` (comma-separated `owner/name` globs; a bare owner means `owner/*`; default empty, which changes nothing). Their PRs get their own list, never mixed into the org's:
+
+- **A separate section.** The board prints **Maestro PRs (self-review)** after the org buckets, with a count and a link per PR, bucketed the same way (first match wins): new comments (unresolved threads), drafts ready for you, awaiting your review, approved and ready to merge, approved but not ready. `node scripts/prs-snapshot.ts --ready` prints it, and `journal.ts status` (line and footer), the Podium page, the stream board and `pr-watch` lines (marked `[self-review]`) follow. The one-line digest in the greeting gives it its own clause.
+- **Not in the queue.** They do not count toward `review_queue_cap`: the cap models other reviewers' attention, and these have none. `journal.ts review-queue --json` reports how many it left out.
+- **Not in the org numbers.** The org list's counts, the ready and held buckets and the PR mix chart leave them out. A PR whose repo is unknown is treated as an org PR.
+
 ## Links are mandatory
 
 Every PR is a clickable markdown link, `[repo#number](https://github.com/<owner>/<repo>/pull/<n>)`,

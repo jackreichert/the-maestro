@@ -221,13 +221,15 @@ export class StreamBoard extends HTMLElement {
     const blocked = inStream(st.blocked);
     const done = inStream(st.done);
     const deferred = inStream(st.deferred);
-    const prs = inStream(st.prs);
+    const allPrs = inStream(st.prs);
+    const prs = allPrs.filter((p) => !p.selfReview);
+    const selfPrs = allPrs.filter((p) => p.selfReview);
     const frag = fragmentFor(st.fragments, stream);
     const md = frag ? h('md-fragment') : null;
     if (md && frag) md.markdown = frag;
     this.#clearParts = [
       { phrase: 'nothing blocked', empty: blocked.length === 0, group: 'blocked' },
-      { phrase: 'no open pull requests', empty: prs.length === 0 },
+      { phrase: 'no open pull requests', empty: allPrs.length === 0 },
       { phrase: 'nothing in flight', empty: working.length === 0, group: 'inProgress' },
       { phrase: 'nothing queued', empty: queued.length === 0 },
       { phrase: 'nothing shipped today', empty: done.length === 0 },
@@ -243,6 +245,7 @@ export class StreamBoard extends HTMLElement {
         shown(blocked.length, () => section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: '' }, itemRows(blocked, ctx))),
         slots.left,
         shown(prs.length, () => section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: '' }, prList(prs))),
+        shown(selfPrs.length, () => section({ title: 'Maestro PRs (self-review)', n: selfPrs.length, tone: 'neutral', empty: '' }, prList(selfPrs))),
         slots.clear),
       h('div', { class: 'col' },
         shown(working.length, () => section({ title: 'In flight', n: working.length, tone: 'neutral', empty: '', quiet: true }, itemRows(working, ctx))),

@@ -220,3 +220,22 @@ test('the Open PRs section shows the review queue against the cap, and says what
   assert.match(render([pr(1, false), pr(2, false), pr(3, true)], withCap), /\*\*Review queue: 2 of 2 \(full\)\*\*: dispatch only fixes to PRs already open/);
   assert.doesNotMatch(render([pr(1, false)], CONFIG), /Review queue/, 'no cap configured, no line');
 });
+
+test('the Open PRs section lists self-review PRs under their own heading, outside the org counts and the queue', () => {
+  const pr = (number: number, repo: string, over: Record<string, unknown> = {}) => ({
+    number, title: `feat: thing ${number}`, url: `https://example.test/${repo}/pull/${number}`, isDraft: false, baseRefName: 'develop', headRefName: `b${number}`,
+    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo, short: repo.split('/')[1] as string, owner: repo.split('/')[0] as string, unresolved: 0, ci: 'SUCCESS', stream: 'Narnia', ...over,
+  });
+  const prs = [pr(1, 'acme/widgets'), pr(2, 'me/tool', { unresolved: 2 }), pr(3, 'me/tool', { isDraft: true }), pr(4, 'me/tool', { reviewDecision: 'APPROVED' }), pr(5, 'me/tool')];
+  const render = (config: PageConfig): string[] => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page.split('\n');
+  const on = render({ ...CONFIG, reviewQueueCap: 2, selfReviewRepos: ['me/tool'] });
+  assert.ok(on.includes('## Open PRs (1)'), 'the org count leaves the self-review PRs out');
+  assert.ok(on.some((l) => /Review queue: 1 of 2\*\* non-draft/.test(l)));
+  const own = section(on.join('\n'), '## Maestro PRs (self-review) (4)');
+  assert.deepEqual(own.filter((l) => l.startsWith('| ')).slice(1).map((l) => cells(l)[1]), ['new comments', 'draft for you', 'ready to merge', 'awaiting your review']);
+  assert.match(own.join('\n'), /\[tool#2[^\]]*\]\(https:\/\/example\.test\/me\/tool\/pull\/2\)/, 'each is linked, named with its repo');
+  assert.doesNotMatch(section(on.join('\n'), '## Open PRs (1)').join('\n'), /thing [2345]/, 'none of them in the org list');
+  const off = render({ ...CONFIG, reviewQueueCap: 2 });
+  assert.ok(off.includes('## Open PRs (5)'), 'unconfigured, every PR is listed together');
+  assert.ok(!off.some((l) => l.startsWith('## Maestro PRs')));
+});
