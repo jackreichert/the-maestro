@@ -229,7 +229,7 @@ The user's ranked priorities live in `priorities.md` in the status directory and
 
 ### Bolero: working a queue until it is done
 
-Bolero is the mode for handing the orchestrator a whole queue of tickets and having it loop until the queue is done. A read-only scout sizes the queue, the orchestrator groups it into lanes, and each lane gets one writer in its own git worktree. Each time an agent reports, the orchestrator relays the headline, logs it, merges the finished branch on a local integration branch to run the full suite, and dispatches the next slice. It stops only when completely blocked: a decision only the user can make, failing tests nobody can explain, or an external dependency. The name is the musical form, one short theme repeated with voices added each pass. The procedure, a lanes-plan template and a stop checklist are in [bolero/SKILL.md](bolero/SKILL.md).
+Bolero is the mode for handing the orchestrator a whole queue of tickets and having it loop until the queue is done. A read-only scout sizes the queue, the orchestrator groups it into lanes, and each lane gets one writer in its own git worktree. Each time an agent reports, the orchestrator relays the headline, logs it, merges the finished branch on a local integration branch only when that stream has a standing approval to merge locally, runs the full suite, and dispatches the next slice. It stops only when completely blocked: a decision only the user can make, failing tests nobody can explain, or an external dependency. The name is the musical form, one short theme repeated with voices added each pass. The procedure, a lanes-plan template and a stop checklist are in [bolero/SKILL.md](bolero/SKILL.md).
 
 ### The morning board, PR tracking and end of day
 
