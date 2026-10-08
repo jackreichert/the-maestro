@@ -159,6 +159,7 @@ import { fetchLive, selfReviewSummary, snapshotPath, type StoredPr } from './prs
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { buildStart, homeCounts, startLines, unreadableHome, viewDay } from './lib/start/start-here.ts';
+import type { UnreachableNotes } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
 import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
@@ -1657,6 +1658,15 @@ function homesFor(names: string[], dirPath: string): Record<string, HomeCounts> 
     return out;
 }
 
+/** The unreachable-note count for the start view. Null when the check did not run, which is not the same as zero. */
+function unreachableForStart(): UnreachableNotes | null {
+    try {
+        const r = notesCheck(notesWindow());
+        if (!r) return null;
+        return { total: r.report.unreachable.length, byStream: r.report.byStream, ...(r.unreadable.length ? { unchecked: r.unreadable.length } : {}) };
+    } catch { return null; }
+}
+
 /** `start-here [--stream <name>] [--json]`: the Start view as text (or data). Reads the ledger, the status dir and the vault; writes nothing. */
 function cmdStartHere() {
     const g = groups();
@@ -1665,7 +1675,7 @@ function cmdStartHere() {
     const local = viewDay(nowAt, WATCH_TZ);
     const priorities = dirPath ? readPriorities(dirPath, local) : { state: 'missing' as const };
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
-    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), now: nowAt });
+    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), now: nowAt });
     if (asJson) console.log(JSON.stringify(s, null, 2));
     else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(l));
 }
