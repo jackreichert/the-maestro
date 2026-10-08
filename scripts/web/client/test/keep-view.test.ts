@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/keep-view.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findByKey, focusKeyOf, openFolds, reopenFolds } from '../src/keep-view.ts';
+import { findByKey, focusKeyOf, keepAcross, openFolds, reopenFolds } from '../src/keep-view.ts';
 import type { KeepEl, KeepScope } from '../src/keep-view.ts';
 
 /** A tiny stand-in for the DOM: elements with attributes, a parent and an optional shadow root, searched by tag or [data-fold]. */
@@ -44,4 +44,17 @@ test('focus on a disclosure summary survives a redraw; an unnamed control has no
   const page = scope(el('stream-board', {}, { shadowRoot: scope(summaryOf('epics-more'), fresh) }));
   assert.equal(findByKey(page, { fold: 'unknowns' }), fresh);
   assert.equal(findByKey(page, { fold: 'missing' }), null);
+});
+
+test('a partial redraw keeps an open disclosure and focus inside it, as when the stream home changes', () => {
+  const oldFold = el('details', { 'data-fold': 'unknowns' }, { open: true });
+  const oldSummary = summaryOf('unknowns');
+  const slot: KeepEl[] = [oldFold, oldSummary];
+  const root: KeepScope = { querySelectorAll: (sel) => slot.filter((e) => (sel === '*' ? true : e.tagName === 'DETAILS' && e.getAttribute('data-fold') !== null)), activeElement: oldSummary };
+  let focused: KeepEl | null = null;
+  const newFold = el('details', { 'data-fold': 'unknowns' }, { open: false });   // the redraw rebuilds it closed
+  const newSummary = { ...summaryOf('unknowns'), focus: () => { focused = newSummary; } };
+  keepAcross(root, () => { slot.splice(0, slot.length, newFold, newSummary); (root as { activeElement: KeepEl | null }).activeElement = null; });
+  assert.equal(newFold.open, true);
+  assert.equal(focused, newSummary);
 });

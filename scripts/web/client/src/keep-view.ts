@@ -20,7 +20,7 @@ export interface KeepEl {
 }
 
 /** A document, element or shadow root: anything that can be searched, shadow roots included. */
-export interface KeepScope { querySelectorAll(selector: string): Iterable<KeepEl> }
+export interface KeepScope { querySelectorAll(selector: string): Iterable<KeepEl>; activeElement?: KeepEl | null }
 
 /** Every element under `root`, descending through nested shadow roots, that matches `selector`. */
 function deepAll(root: KeepScope, selector: string): KeepEl[] {
@@ -58,4 +58,25 @@ export function findByKey(root: KeepScope, key: FocusKey): KeepEl | null {
     if (inner) return inner;
   }
   return null;
+}
+
+/** The focused element under `root`, found through nested shadow roots, or null. */
+function deepActive(root: KeepScope): KeepEl | null {
+  let el = root.activeElement ?? null;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return el;
+}
+
+/**
+ * Run a partial redraw of `root` and hand back what it would have thrown away: each named disclosure's state and the
+ * focused control (by its key, on its twin in the new content). Any redraw that replaces nodes under an open disclosure
+ * needs this, not only the full-page one.
+ */
+export function keepAcross(root: KeepScope, redraw: () => void): void {
+  const states = openFolds(root);
+  const active = deepActive(root);
+  const key = active ? focusKeyOf(active) : null;
+  redraw();
+  reopenFolds(root, states);
+  if (key) findByKey(root, key)?.focus?.();
 }

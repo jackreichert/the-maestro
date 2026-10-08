@@ -2,6 +2,7 @@ import { BASE_CSS, UI_CSS, h, refLink, shadow, streamTag } from './dom.ts';
 import './ask-card.ts';
 import './md-fragment.ts';
 import { fragmentFor } from './contract.ts';
+import { keepAcross } from './keep-view.ts';
 import { prChips } from './pr-chips.ts';
 import { ago, clockTime, oldestFirst } from './glance.ts';
 import { gateView } from './gate.ts';
@@ -188,7 +189,8 @@ export class StreamBoard extends HTMLElement {
     // An unchanged home leaves the slots alone: redrawing would close the disclosures a reader opened and drop focus from them.
     if (this.#slots && JSON.stringify(v) === JSON.stringify(this.#home) && this.#filled) return;
     this.#home = v;
-    this.#fillHome();
+    // A changed home replaces the slots' children: keep what the reader had open, and where focus was, across it.
+    keepAcross(this.#root, () => this.#fillHome());
   }
 
   #fillHome(): void {
