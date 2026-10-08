@@ -23,7 +23,7 @@ Do not use it for:
 - **A queue the user has not handed over.** Bolero is invoked, never assumed; absent the word, the normal one-pick-at-a-time flow applies.
 - **A queue that is mostly one file or one design question.** Lanes only help when work is independent. A single hard design call is an Opus decision, not a loop.
 - **Work that needs the user's decision on every item.** Each such item is a stop condition, so the loop would stop at once.
-- **PR-producing work while the review queue is over its cap.** `journal.ts review-queue` exits 1 or 2: queue the work and dispatch only fixes to PRs already open ([reference/dispatch.md:111-126](../reference/dispatch.md)).
+- **PR-producing work while the review queue is over its cap.** `journal.ts review-queue` exits 1 or 2: queue the work and dispatch only fixes to PRs already open, unless the user asks for that work by name ([reference/dispatch.md:111-126](../reference/dispatch.md)).
 
 ## The loop
 
@@ -52,7 +52,7 @@ The orchestrator dispatches and decides; scouts only read; writers only write in
 
 ## Lane rules
 
-A lane is a set of items one writer works through, in order, in one worktree.
+A lane is a set of items one writer works through, in order, in one worktree or checkout.
 
 - **One writer per worktree.** Parallel lanes in one repo each get their own worktree under the container's `.worktrees/` folder, cut from the repo's base. A lone lane may use the main checkout, which is the generic default; a worktree is for the busy case: another agent is writing that repo, the main checkout is dirty, or the lane is long-running ([reference/dispatch.md:351-367](../reference/dispatch.md)). Parallel lanes are the busy case. The cost is real: a fresh worktree needs `npm ci` before anything runs ([reference/dispatch.md:351-353](../reference/dispatch.md)), and in a git-crypt repo it cannot decrypt until the user links the keys, a step that is theirs, so ask and wait or the lane stalls silently ([reference/dispatch.md:373-378](../reference/dispatch.md)). Tell the user a worktree is in play and give its path ([reference/dispatch.md:379](../reference/dispatch.md)).
 - **No two lanes on the same files at once.** Never dispatch two agents to edit the same file, even in separate worktrees; sequence those items in one lane or in dependent slices ([reference/dispatch.md:388-389](../reference/dispatch.md)). Two items that touch one shared script go in order, never in parallel.

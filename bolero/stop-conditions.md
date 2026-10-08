@@ -32,6 +32,6 @@ Before calling a credential missing, look it up by name with the env lookup help
 ## Not reasons to stop
 
 - A tired session. Roll instead ([cost/budget.md](../cost/budget.md#session-hygiene)): finish relays, then run the roll, and the fresh session resumes the queue.
-- A failure already on the base branch. Report it separately and ticket it; the lanes keep going unless it makes validation unreliable, and the suite is never skipped to get around it.
+- A failure already on the base branch. Report it separately and ticket it; the lanes keep going unless it makes validation unreliable, and the suite is never skipped to get around it. The integration bench stays red until the failure is fixed in its own PR.
 - A question the code, the docs or the rules already answer.
 - An incidental finding. File it as its own ticket and carry on.
