@@ -14,7 +14,7 @@ import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { OVERVIEW, formatFragment, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { OVERVIEW, formatFragment, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
 import { filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
@@ -468,7 +468,7 @@ export class PodiumApp extends HTMLElement {
     const parts = cueParts(buckets);
     const cue = parts.map((p) => {
       // Each count is a toggle: pressing it shows only that bucket, pressing it again (or "Show everything") shows all.
-      const tile = h('button', { type: 'button', class: 'tile', 'data-key': p.key, 'aria-pressed': String(p.key === this.#filter) },
+      const tile = h('button', { type: 'button', class: 'tile', id: tileId(p.key), 'data-key': p.key, 'aria-pressed': String(p.key === this.#filter) },
         h('span', { class: 'n' }, String(p.n)), ' ', p.label);
       tile.addEventListener('click', () => this.#setFilter(p.key === this.#filter ? null : p.key, p.key));
       return h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, tile);

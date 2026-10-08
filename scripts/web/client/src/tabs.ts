@@ -11,6 +11,12 @@ export function tabIds(streams: string[]): string[] {
 export const CUE_KEYS = ['asks', 'blocked', 'done', 'working'] as const;
 export type CueKey = typeof CUE_KEYS[number];
 
+/** A tile's DOM id. A live redraw refocuses the pressed control by id (keep-view's focusKeyOf), so tiles need stable ones. */
+export function tileId(key: CueKey): string { return `tile-${key}`; }
+
+/** The "Show everything" button's id, for the same reason. Only one filtered view is on the page at a time. */
+export const CLEAR_FILTER_ID = 'clear-filter';
+
 /** The `show=` value of a fragment, or null for none or anything that is not a tile key. */
 export function parseFilter(hash: string): CueKey | null {
   const value = hash.replace(/^#/, '').split('&').find((part) => part.startsWith('show='))?.slice(5);

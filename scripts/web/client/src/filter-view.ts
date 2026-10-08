@@ -3,6 +3,7 @@ import { h } from './dom.ts';
 import { RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import type { RowContext, SectionSpec } from './stream-board.ts';
 import type { Buckets } from './glance.ts';
+import { CLEAR_FILTER_ID } from './tabs.ts';
 import type { CueKey } from './tabs.ts';
 
 /** How each tile's section reads: the same titles, glyphs and empty sentences the unfiltered board uses. */
@@ -23,7 +24,7 @@ export function filteredView(buckets: Buckets, key: CueKey, label: string, o: Fi
   const body = key === 'asks'
     ? askCards(buckets.asks, o.live, o.ctx.showStream)?.list ?? null
     : itemRows(items as Parameters<typeof itemRows>[0], o.ctx);
-  const clear = h('button', { type: 'button', class: 'more' }, 'Show everything');
+  const clear = h('button', { type: 'button', class: 'more', id: CLEAR_FILTER_ID }, 'Show everything');
   clear.addEventListener('click', o.clear);
   // The bar is always there, so an empty result still has its way back; the section below carries the count and the empty sentence.
   return h('div', { class: 'filtered' },
