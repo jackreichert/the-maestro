@@ -221,6 +221,11 @@ assignee are always forced and cannot be turned off. `--dry-run` prints the gh c
 - A PR may change at most `pr_max_code_files` code files (default 5) **and** at most `pr_max_code_lines`
   changed lines of code (default 400, additions plus deletions). Whichever limit is hit first applies.
   Both come from local-config ([local-config.md](local-config.md)).
+- **Optional wide tier, off by default.** Set `pr_wide_max_code_files` above `pr_max_code_files` (say 10) and a PR
+  also passes with up to that many code files, provided it stays within `pr_wide_max_code_lines` changed lines
+  (defaults to `pr_max_code_lines` and can never exceed it). Many small edits across a few more files pass; a big
+  change does not. With the tier on, the gate reports `tier: normal|wide`; with it off, the gate is exactly the
+  two limits above.
 - **Tests, config and docs do not count.** Config means `*.json`, `*.yaml`, `*.yml`, `*.toml`, `*.ini`,
   Dockerfiles and CI workflow files; the test, config, docs and mechanical path patterns are
   local-config settings with defaults in the script.
