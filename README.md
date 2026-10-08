@@ -540,6 +540,21 @@ An org overlay adds types without editing this repo: `<type>.mjs` and its playbo
 
 **Behaviour.** Quiet hours apply (a reminder is held until morning unless `--notify-overnight`): only watches added with `--notify-overnight` keep running through them. A watch expires after its TTL and retires itself when its type says it is done, except a standing watch: one of a type that renews (`pr-watch`, `inbox`, `status-watch`, `status-refresh`, `notion-watch`) added without `--ttl-hours` is marked `renew`, and the loop pushes its expiry out by the type's default TTL whenever less than half is left (even when the loop was down past the expiry), logging it as a `renew` line in `watches.jsonl`. An explicit `--ttl-hours` is honoured and the watch expires as asked; a standing watch registered before this change expires once, and session start registers it again with the flag. Informational events stay in the digest until an actionable one arrives. A failing check keeps its last good state and speaks once after three failures in a row. `run` takes a lock in `event_dir`, so a second loop is refused while the first is alive; the lock is released on exit, Ctrl-C and SIGTERM. Notifications are opt-in per watch: when `notify_command` is set, the actionable events of a watch added with `--notify` are sent to it as one line of at most 150 characters. A reminder notifies by default (`--no-notify` turns that off) and the `inbox` type never does; a watch registered before this option has no flag and does not notify. With `notify_command` unset nothing is sent. State lives in `event_dir`: `watches.jsonl`, `state.json`, `digest.jsonl`.
 
+### install-podium-web.ts (keep the Podium page up without a session)
+
+`journal.ts web` runs in the foreground and nothing restarts it, so a server started from a session dies with that session and the footer link (`status_page_uri`, for example `http://127.0.0.1:47700/`) goes to connection refused. A second LaunchAgent, `com.jackreichert.the-maestro-web`, runs `web.ts` at login and relaunches it whenever it exits (throttled to once per 30 s). The installer only fills the plist and prints the commands; you run them:
+
+```bash
+npm run build:web                                  # the page is built output (dist/ is gitignored); without it / says "page is not built yet"
+node scripts/install-podium-web.ts [--port <n>]   # port defaults to the one in status_page_uri, else 47700
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jackreichert.the-maestro-web.plist
+launchctl print gui/$(id -u)/com.jackreichert.the-maestro-web     # check it is running
+npm run build:web && launchctl kickstart -k gui/$(id -u)/com.jackreichert.the-maestro-web   # rebuild and restart after updating the checkout
+launchctl bootout gui/$(id -u)/com.jackreichert.the-maestro-web   # uninstall
+```
+
+Stop any hand-started server on the port first, or launchd's copy exits on `EADDRINUSE` and retries. Run the installer from the main checkout, not a worktree. The log is `<ledger root>/Projects/<project>/Journal/Supervisor/podium-web.log`.
+
 ### loop-supervisor.ts (keep the loop alive without a session)
 
 A launchd LaunchAgent runs `loop-supervisor.ts`, which relaunches `event-loop.ts run` forever: on exit 10 it saves the digest to `<ledger root>/Projects/<project>/Journal/Digests/<UTC timestamp>.md` (first line `<!-- seen: false -->`) and relaunches at once; on exit 3 it sleeps until the stated quiet-hours end (at most 12h); on exit 0 or 2 it sleeps 300s (exit 2 is logged and the lock is left alone); any other code sleeps 30s. Digests are written only under the ledger root; with no ledger root the supervisor will not start.
