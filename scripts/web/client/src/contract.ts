@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, StreamHome, WorkItem } from './types.ts';
+import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -158,6 +158,9 @@ const HOME_EPIC: Shape = {
   verify: shape({ required: bool, verified: count }), awaiting: count, unknowns: count, quietDays: orNull(num),
   tracker: opt(ref), next: opt(shape(HOME_TICKET)),
 };
+const RAIL_LINK: Shape = { label: str, kind: oneOf('note', 'tracker', 'pr', 'web'), url: str, meta: opt(str) };
+const RAIL_GROUP: Shape = { group: oneOf('pinned', 'epics', 'docs', 'prs', 'runbooks'), more: count };
+const DONE_MEANS: Shape = { epic: str, text: str };
 const HOME_UNKNOWN: Shape = { kind: str, text: str, ref: opt(ref), epic: opt(str) };
 
 /**
@@ -179,11 +182,20 @@ export function sanitizeHome(x: unknown): { home: StreamHome; dropped: number } 
   };
   const loose = validRows(x.loose, HOME_TICKET) as HomeTicket[];
   const unknowns = validRows(x.unknowns, HOME_UNKNOWN) as HomeUnknown[];
+  const doneMeans = validRows(x.doneMeans, DONE_MEANS) as StreamHome['doneMeans'];
+  let linksDropped = lost(x.links, validRows(x.links, RAIL_GROUP));
+  const links = validRows(x.links, RAIL_GROUP).flatMap((g): RailGroup[] => {
+    const grp = g as RailGroup;
+    if (!Array.isArray(grp.items)) { linksDropped += 1; return []; }
+    const items = validRows(grp.items, RAIL_LINK) as RailLink[];
+    linksDropped += lost(grp.items, items);
+    return [{ group: grp.group, items, more: grp.more }];
+  });
   const prs = isObj(x.freshness) && isObj(x.freshness.prs) && bool(x.freshness.prs.stale) && orNull(str)(x.freshness.prs.fetchedAt)
     ? { fetchedAt: x.freshness.prs.fetchedAt as string | null, stale: x.freshness.prs.stale as boolean }
     : { fetchedAt: null, stale: true };
-  const dropped = lost(x.epics, epics) + lost(x.loose, loose) + lost(x.unknowns, unknowns)
+  const dropped = lost(x.epics, epics) + lost(x.loose, loose) + lost(x.unknowns, unknowns) + lost(x.doneMeans, doneMeans) + linksDropped
     + lost(left.inProgress, groups.inProgress) + lost(left.blocked, groups.blocked) + lost(left.notStarted, groups.notStarted);
   const truncated = count(left.truncated) ? left.truncated as number : 0;
-  return { home: { stream: x.stream, epics, loose, left: { ...groups, truncated }, unknowns, freshness: { prs } }, dropped };
+  return { home: { stream: x.stream, epics, loose, left: { ...groups, truncated }, doneMeans, links, unknowns, freshness: { prs } }, dropped };
 }

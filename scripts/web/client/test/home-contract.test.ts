@@ -41,3 +41,17 @@ test('a missing or malformed freshness block reads as stale PR data, never as fr
   delete bad.freshness;
   assert.deepEqual(sanitizeHome(bad)?.home.freshness.prs, { fetchedAt: null, stale: true });
 });
+
+test('rail links that fail their rules are dropped and counted, a group without a list is dropped, and the rest survive', () => {
+  const bad = home();
+  bad.doneMeans = [{ epic: 'avonlea-api-042', text: 'Primary for seven days.' }, { epic: 7, text: 'x' }];
+  bad.links = [
+    { group: 'docs', more: 0, items: [{ label: 'Context', kind: 'note', url: 'obsidian://open?vault=Fictional&file=Context' }, { label: 'Odd', kind: 'script', url: 'x' }] },
+    { group: 'pinned', more: 0 },
+    { group: 'nope', more: 0, items: [] },
+  ];
+  const got = sanitizeHome(bad);
+  assert.equal(got?.dropped, 4);
+  assert.equal(got?.home.doneMeans.length, 1);
+  assert.deepEqual(got?.home.links.map((g) => [g.group, g.items.length]), [['docs', 1]]);
+});
