@@ -7,7 +7,7 @@ description: Bolero, the-maestro's standing iterative mode for working a queue o
 
 **Load when** the user hands over a queue and wants it worked to the end, not one item at a time. Otherwise the generic the-maestro files are enough.
 
-Bolero is a loop: scout the whole queue read-only, group it into lanes, dispatch one writer per worktree per lane, advance each time an agent reports, merge the finished feature branches locally on an integration branch to test them together, then take the next slice, and stop only when nothing is left that can move.
+Bolero is a loop: scout the whole queue read-only, group it into lanes, dispatch one writer per lane (one writer per worktree), advance each time an agent reports, merge the finished feature branches locally on an integration branch to test them together, then take the next slice, and stop only when nothing is left that can move.
 
 The name is the musical form: one short theme repeated, each pass adding voices. Every pass is the same small procedure, and every pass runs more lanes at once than the last.
 
@@ -31,7 +31,7 @@ Do not use it for:
 flowchart TD
   Q[Queue: priorities show] --> S[Scout the queue, read-only]
   S --> L[Group into lanes: lanes plan]
-  L --> D[Dispatch one writer per lane, each in its own worktree]
+  L --> D[Dispatch one writer per lane; parallel lanes each get a worktree]
   D --> W{Agent completion notification}
   W -->|headline relayed, ledger updated| M[Merge the finished branch on the integration branch, run the suite]
   M --> N{Anything left that can move?}
@@ -44,7 +44,7 @@ flowchart TD
 | 1. Pick | Orchestrator | Read `journal.ts priorities show` fresh, take the top unblocked items, run the liveness check on each ([reference/dispatch.md:141-151](../reference/dispatch.md)). An item that fails goes back with a one-line note and is not dispatched. |
 | 2. Scout | Read-only agent: Haiku for listings and sweeps, Sonnet when it must read and size code | One scout per queue or per repo, capped at about 10 tool calls or 5 minutes, recommending the stage-2 shape ([reference/dispatch.md:160-183](../reference/dispatch.md)). The orchestrator never greps the repos itself ([SKILL.md:24](../SKILL.md)). |
 | 3. Lanes | Orchestrator | Turn the scout's findings into the lanes plan ([lanes-template.md](lanes-template.md)): which items share files, which depend on which, which are independent. |
-| 4. Dispatch | Orchestrator launches; Sonnet writes | One writer per worktree per lane, independent lanes launched in a single message so they run concurrently ([cost/budget.md:56-57](../cost/budget.md)). The brief is the eight fields plus the standing block printed by `scripts/brief-block.ts` ([reference/brief.md:8-30](../reference/brief.md)). Opus only for a design call or a bug-finding review ([cost/budget.md:20-21](../cost/budget.md)). |
+| 4. Dispatch | Orchestrator launches; Sonnet writes | One writer per lane (a worktree each when lanes run in parallel), independent lanes launched in a single message so they run concurrently ([cost/budget.md:56-57](../cost/budget.md)). The brief is the eight fields plus the standing block printed by `scripts/brief-block.ts` ([reference/brief.md:8-30](../reference/brief.md)). Opus only for a design call or a bug-finding review ([cost/budget.md:20-21](../cost/budget.md)). |
 | 5. Advance | Orchestrator | On each completion notification, and only then: relay the headline, update the ledger, merge the finished branch on the integration branch, run the suite, and dispatch the next slice that is now unblocked. |
 | 6. Repeat | Orchestrator | Back to step 1 for the next slice, until a stop condition holds. |
 
@@ -54,7 +54,7 @@ The orchestrator dispatches and decides; scouts only read; writers only write in
 
 A lane is a set of items one writer works through, in order, in one worktree.
 
-- **One writer per worktree.** Many agents may work one repo at once, each in its own worktree under the container's `.worktrees/` folder, cut from the repo's base. Only a shared checkout is single-writer ([SKILL.md:67-68](../SKILL.md)). The generic default is the main checkout, with a worktree for the busy case ([reference/dispatch.md:351-367](../reference/dispatch.md)); a lane gets a worktree when another agent is writing that repo, the main checkout is dirty, or the lane is long-running, which parallel lanes usually are. Tell the user a worktree is in play and give its path ([reference/dispatch.md:379](../reference/dispatch.md)).
+- **One writer per worktree.** Parallel lanes in one repo each get their own worktree under the container's `.worktrees/` folder, cut from the repo's base. A lone lane may use the main checkout, which is the generic default; a worktree is for the busy case: another agent is writing that repo, the main checkout is dirty, or the lane is long-running ([reference/dispatch.md:351-367](../reference/dispatch.md)). Parallel lanes are the busy case. The cost is real: a fresh worktree needs `npm ci` before anything runs ([reference/dispatch.md:351-353](../reference/dispatch.md)), and in a git-crypt repo it cannot decrypt until the user links the keys, a step that is theirs, so ask and wait or the lane stalls silently ([reference/dispatch.md:373-378](../reference/dispatch.md)). Tell the user a worktree is in play and give its path ([reference/dispatch.md:379](../reference/dispatch.md)).
 - **No two lanes on the same files at once.** Never dispatch two agents to edit the same file, even in separate worktrees; sequence those items in one lane or in dependent slices ([reference/dispatch.md:388-389](../reference/dispatch.md)). Two items that touch one shared script go in order, never in parallel.
 - **Sequence the dependencies.** Items that stack on one another, take the same migration number or share a file wait for the one before. The lanes plan records the order so it is a decision made once.
 - **Shared external state is a file you cannot see.** Worktrees isolate files only: two suites against one test database or port still corrupt each other ([reference/dispatch.md:381-385](../reference/dispatch.md)). Sequence those lanes.
@@ -68,7 +68,7 @@ A lane is a set of items one writer works through, in order, in one worktree.
 Finished feature branches are merged together locally, so the slices are tested as the set they will become.
 
 - **A local branch in its own worktree**, named for the stream: `local/integration-<stream>`, cut from the base the feature branches were cut from. It is never a lane's worktree.
-- **Merge in dependency order** (the user invoking Bolero is the explicit request for these local integration merges, which [reference/git.md:40](../reference/git.md) requires; nothing wider is covered), one finished branch at a time, running the full suite after each. A failing merge is a finding about the set, not a reason to edit a feature branch from here: send it back to its lane.
+- **Merge in dependency order** (a merge needs the user's explicit ask ([reference/git.md:40](../reference/git.md)), and this skill grants none: when the user has given that standing instruction for this stream, merge locally on the integration branch; otherwise ask once. The instruction is the user's, kept in their own ledger and memory and not in this repo; it covers local integration merges and nothing wider), one finished branch at a time, running the full suite after each. A failing merge is a finding about the set, not a reason to edit a feature branch from here: send it back to its lane.
 - **Never local `main`. Never push the merge. Never merge on GitHub.** The integration branch is a test bench and is thrown away; the feature branches are what ship, and merging them is the user's. Writing a protected branch is out under [reference/git.md:1-6](../reference/git.md), and merging on GitHub stays the user's job.
 - **Where a repo is held local**, the feature branches stay local too: no push and no draft PR until the user says. Say where each one sits (repo, branch, worktree path, head sha, review verdict, diff command) in every reply that mentions local work. This hold is the user's standing instruction for such repos and is not written in this skill's reference files.
 - **Where the repo is the user's own**, feature branches may be pushed and opened as drafts with `scripts/pr-open.ts`, never a bare `gh pr create` ([SKILL.md:63](../SKILL.md)). A branch is pushed only after its name carries the tracker key and it has been reviewed locally ([reference/git.md:44-53](../reference/git.md)).
@@ -131,7 +131,7 @@ A session had two streams of queued tickets: ten slices of one plan for a toolin
 
 1. **Scout first.** One Haiku scout listed the tooling queue and checked each item live (open PR, not superseded, no decision outstanding). One Sonnet scout read the integration stream's tickets, branches and PR states and found that most items were already merged and the rest were blocked on an external allowlist.
 2. **Lanes.** The tooling slices that all touch one script were sequenced into a single lane; the slices on separate files became their own lanes. The integration stream had no lane that could move, only a read-only diagnosis, which was dispatched as a Haiku run.
-3. **Dispatch.** One Sonnet writer per lane, each in its own worktree, each brief carrying the printed standing block and the files other lanes were changing.
+3. **Dispatch.** One Sonnet writer per lane, each parallel lane in its own worktree, each brief carrying the printed standing block and the files other lanes were changing.
 4. **Advance.** Each completion notification produced a headline relay, a ledger `done`, a merge of that branch on `local/integration-<stream>`, a full suite run, and the next unblocked slice. Findings noticed in passing became their own tickets.
 5. **Stop.** The loop paused only on the allowlist, an external dependency, with one question to the user stating what it unlocked, while the tooling lanes kept moving.
 
