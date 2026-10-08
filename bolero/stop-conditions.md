@@ -8,7 +8,7 @@ Read this before ending a Bolero run. The loop stops only when completely blocke
 - Is any finished branch not yet merged on the integration branch and tested?
 - Is any lane waiting only on a notification that has not arrived? That is not a block: end the turn and let it arrive.
 - Is any item blocked only because the work is large? Split it ([PR size budget](../reference/git.md#pr-size-budget)) and dispatch the slices.
-- Is the review queue over its cap? Then new PR-producing work is held, but fixes to open PRs, read-only work and local merges still go ([reference/dispatch.md](../reference/dispatch.md#review-queue-cap)).
+- Is the review queue over its cap? Then new PR-producing work is held, but fixes to open PRs and read-only work still go ([reference/dispatch.md](../reference/dispatch.md#review-queue-cap)).
 
 If any answer is yes, the loop is not stopped.
 

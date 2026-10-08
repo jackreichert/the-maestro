@@ -54,30 +54,30 @@ The orchestrator dispatches and decides; scouts only read; writers only write in
 
 A lane is a set of items one writer works through, in order, in one worktree.
 
-- **One writer per worktree.** Many agents may work one repo at once, each in its own worktree under the container's `.worktrees/` folder, cut from the repo's base. Only a shared checkout is single-writer ([SKILL.md:67-68](../SKILL.md)). The generic default is the main checkout, with a worktree for the busy case ([reference/dispatch.md:351-367](../reference/dispatch.md)); a Bolero run is the busy case by construction, because its lanes run in parallel, so every lane gets a worktree. Tell the user a worktree is in play and give its path ([reference/dispatch.md:379](../reference/dispatch.md)).
+- **One writer per worktree.** Many agents may work one repo at once, each in its own worktree under the container's `.worktrees/` folder, cut from the repo's base. Only a shared checkout is single-writer ([SKILL.md:67-68](../SKILL.md)). The generic default is the main checkout, with a worktree for the busy case ([reference/dispatch.md:351-367](../reference/dispatch.md)); a lane gets a worktree when another agent is writing that repo, the main checkout is dirty, or the lane is long-running, which parallel lanes usually are. Tell the user a worktree is in play and give its path ([reference/dispatch.md:379](../reference/dispatch.md)).
 - **No two lanes on the same files at once.** Never dispatch two agents to edit the same file, even in separate worktrees; sequence those items in one lane or in dependent slices ([reference/dispatch.md:388-389](../reference/dispatch.md)). Two items that touch one shared script go in order, never in parallel.
 - **Sequence the dependencies.** Items that stack on one another, take the same migration number or share a file wait for the one before. The lanes plan records the order so it is a decision made once.
 - **Shared external state is a file you cannot see.** Worktrees isolate files only: two suites against one test database or port still corrupt each other ([reference/dispatch.md:381-385](../reference/dispatch.md)). Sequence those lanes.
 - **The brief block is pasted, not paraphrased.** Print it with `node scripts/brief-block.ts` and paste it once at the end of each brief ([reference/brief.md:28-30](../reference/brief.md)). If it exits non-zero, do not hand-write one.
 - **Each brief names its scope and the files it must not touch.** The lanes plan lists the files other live lanes are changing, so the brief can say so.
 - **Size each item to one reviewable change.** If it will not fit the PR size budget, split it before dispatch ([reference/dispatch.md:149](../reference/dispatch.md)).
-- **Check mergeable state at PR open and again at finish.** A conflicting head gets the base merged in and pushed on the author's own branch.
+- **Check mergeable state at PR open and again at finish.** A conflicting head is reported, and bringing the base into it is a merge, which needs the same explicit word as any other ([reference/git.md:40](../reference/git.md)).
 
 ## The integration branch
 
 Finished feature branches are merged together locally, so the slices are tested as the set they will become.
 
 - **A local branch in its own worktree**, named for the stream: `local/integration-<stream>`, cut from the base the feature branches were cut from. It is never a lane's worktree.
-- **Merge in dependency order**, one finished branch at a time, running the full suite after each. A failing merge is a finding about the set, not a reason to edit a feature branch from here: send it back to its lane.
+- **Merge in dependency order** (the user invoking Bolero is the explicit request for these local integration merges, which [reference/git.md:40](../reference/git.md) requires; nothing wider is covered), one finished branch at a time, running the full suite after each. A failing merge is a finding about the set, not a reason to edit a feature branch from here: send it back to its lane.
 - **Never local `main`. Never push the merge. Never merge on GitHub.** The integration branch is a test bench and is thrown away; the feature branches are what ship, and merging them is the user's. Writing a protected branch is out under [reference/git.md:1-6](../reference/git.md), and merging on GitHub stays the user's job.
-- **Where a repo is held local**, the feature branches stay local too: no push and no draft PR until the user says. Say where each one sits (repo, branch, worktree path, head sha, review verdict, diff command) in every reply that mentions local work.
-- **Where the repo is the user's own**, feature branches may be pushed and opened as drafts with `scripts/pr-open.ts`, never a bare `gh pr create` ([SKILL.md:63](../SKILL.md)). A branch is pushed only after its name carries the tracker key and a fresh agent has reviewed it locally.
+- **Where a repo is held local**, the feature branches stay local too: no push and no draft PR until the user says. Say where each one sits (repo, branch, worktree path, head sha, review verdict, diff command) in every reply that mentions local work. This hold is the user's standing instruction for such repos and is not written in this skill's reference files.
+- **Where the repo is the user's own**, feature branches may be pushed and opened as drafts with `scripts/pr-open.ts`, never a bare `gh pr create` ([SKILL.md:63](../SKILL.md)). A branch is pushed only after its name carries the tracker key and it has been reviewed locally ([reference/git.md:44-53](../reference/git.md)).
 - **Twin-flow repos** keep the order: the release-candidate PR waits for its integration twin ([reference/git.md:61-75](../reference/git.md)).
 - **Clean up.** Remove a worktree once its branch is merged or abandoned ([reference/dispatch.md:386-387](../reference/dispatch.md)); `roll` removes stale ones too.
 
 ## Advancing on completion
 
-- **Advance on the notification, nothing else.** After launching, end the turn. Do not poll, sleep, loop or check on an agent, and do not read its transcript ([SKILL.md:36-47](../SKILL.md)). Agents wait in the foreground and never use background watchers ([cost/budget.md:70-73](../cost/budget.md)).
+- **Advance on the notification, nothing else.** After launching, end the turn. Do not poll, sleep, loop or check on an agent, and do not read its transcript ([SKILL.md:36-47](../SKILL.md)). Agents wait in the foreground and never use background watchers ([reference/brief.md:44](../reference/brief.md), cost reasons at [cost/budget.md:70-73](../cost/budget.md)).
 - **Relay the headline only**, under 150 words, plus the report's path; open the file only when a decision needs something the headline lacks ([reference/dispatch.md:419-421](../reference/dispatch.md)). Hold small completions and relay them together; relay at once only a blocker, a finding the user must act on, a failure or a decision ([reference/dispatch.md:406-413](../reference/dispatch.md)).
 - **Check before you relay.** A status from a subagent report is cross-checked against the code and the ledger first ([SKILL.md:66](../SKILL.md)).
 - **Log as it moves.** `journal.ts start` when a lane is dispatched, `done` when it lands, `log --kind blocked` for a block, and `queue` for slices not yet started ([reference/ledger.md:46-67](../reference/ledger.md), [reference/ledger.md:69-93](../reference/ledger.md)). Log at the moment you would tell the user, never later.
@@ -105,9 +105,9 @@ A decision the user states while the loop runs is recorded in the ledger in the 
 - **Roll early.** `roll soon` is at 60 percent of the limit: finish relays in flight and start no new long dispatch chains. `roll now` is at 90: run the roll, then open every reply asking the user to compact ([cost/budget.md:91-107](../cost/budget.md)). A long Bolero is exactly the session that runs past its limit, so check the Session line on every relay.
 - **No new PRs over the review cap** ([reference/dispatch.md:111-126](../reference/dispatch.md)).
 
-## The composer hook
+## The composer hook (planned)
 
-The library's one writer is the composer: it turns `learned` ledger entries into library pages. Every landing in a Bolero run records what was learned while it was fresh: the fact, the evidence path, where it applies, using `journal.ts learned` when available. Task agents and the orchestrator only append `learned` entries to the ledger; the composer is the only process that writes library pages. Until `learned` exists, put the fact in the item's `done` line and in the report file, so it can be promoted later.
+This section describes a planned convention, not something implemented in this repo today: no `journal.ts learned` command and no composer exist yet. The plan is that a single writer, the composer, turns `learned` ledger entries into library pages, while task agents and the orchestrator only append entries. When `journal.ts learned` is available, every landing in a Bolero run records what was learned while it was fresh: the fact, the evidence path and where it applies. Until then, put the fact in the item's `done` line and in the report file, so it can be promoted later.
 
 ## What is enforced, and what is only described
 
