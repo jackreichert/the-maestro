@@ -66,6 +66,7 @@
  *                                             an approval the user granted; `resolve` takes --approval too
  *   journal.ts approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]   the approvals digest: standing (keep/narrow/revoke), one-off, untagged decisions
  *   journal.ts approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]   mark an existing row as an approval (appends a row; nothing is rewritten)
+ *   journal.ts ref <id> --ref <file> [--ref <file>...]   attach existing ref files to a decision (appends a row; nothing is rewritten)
  *   journal.ts streams [list|add <name> [--alias a,b]|check]   the stream registry
  *   journal.ts models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
  *   journal.ts fact <key>=<value> --stream <name>   a structured metric; not an item, never open
@@ -113,7 +114,7 @@
  * `unmeasured`. --allow-unmarked is only for tests and migrations.
  *
  * Kinds: wip | done | blocked | question | decision (not open, unless `ask --kind decision`) | note | resolved | dropped | rolled | stamp
- *        (rows only written by their own commands: tag | fact | carry | archive | unarchive)
+ *        (rows only written by their own commands: tag | fact | carry | archive | unarchive | ref)
  * Common flags: --vault <path> --project <name> --json --dry-run --include-archived
  * retro/archive read tickets through ledger-index.ts: --tickets-vault <path> (else $VAULT_ROOT),
  * --repo <name> picks Projects/<name>/Archive/ for the retro doc (default dev-env).
@@ -180,7 +181,9 @@ import type { EpicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { listWatches, lockHolder } from './lib/watch-registry.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'learned'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned'];
+// `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
+if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
 /** The values --approval accepts. Anything else is rejected at write time and flagged by `verify`. */
 const APPROVALS = new Set(['standing', 'one-off']);
@@ -290,6 +293,9 @@ function streamOrNone(raw: string | null): string | undefined {
 
 // The board modules read the run through this: the ledger, the registry and the clock.
 const boardCtx = boardContextFor(store, { has, today, dryRun });
+const foldLedger = boardCtx.fold;
+// A `ref` row is append-only. Readers that fold the ledger still see those files on the decision.
+boardCtx.fold = (entries) => withAttachedRefs(foldLedger(entries), entries);
 /** Read-time mapping through the loaded registry. */
 const { fold, mapStream } = boardCtx;
 const groups = (includeArchived?: boolean) => boardGroups(boardCtx, includeArchived);
@@ -645,6 +651,61 @@ function cmdApproveTag() {
     });
     if (!dryRun) render(true);
     console.log(`approval-tag  ${target.id}  -> ${fields.approval}  ${target.text}`);
+}
+
+/** Every `--ref <file>` on the command line, in order. `arg('ref')` keeps only the first. */
+function refFlagValues(): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] !== '--ref') continue;
+        const value = argv[i + 1];
+        if (value && !value.startsWith('--')) out.push(value);
+    }
+    return out;
+}
+
+/** Refs a later `ref` row attached to a decision, so a reader of the fold sees them. The decision row is not rewritten. */
+function withAttachedRefs<F extends { items: LedgerItem[] }>(folded: F, entries: LedgerRow[]): F {
+    const extra = new Map<string, string[]>();
+    for (const e of entries) {
+        if (e.kind !== 'ref' || typeof e.attaches !== 'string') continue;
+        const add = (e.refs || []).filter(Boolean);
+        if (!add.length) continue;
+        extra.set(e.attaches, [...(extra.get(e.attaches) || []), ...add]);
+    }
+    if (!extra.size) return folded;
+    return {
+        ...folded,
+        items: folded.items.map((item) => {
+            const add = item.id ? extra.get(item.id) : undefined;
+            if (!add) return item;
+            return { ...item, refs: [...new Set([...(item.refs || []), ...add])] };
+        }),
+    };
+}
+
+/** Attach one or more existing ref files to a decision without rewriting it: appends a `ref` row. */
+function cmdRef() {
+    const id = positional[0];
+    const given = refFlagValues();
+    if (!id || !given.length) die('Usage: journal.ts ref <id> --ref <file> [--ref <file>...]');
+    const refs = given.map((r) => resolveRefFile(r) || die(`--ref ${r} is not an existing file.`));
+    const entries = readLedger();
+    const target = entries.find((e) => e.id === id && !e.annotates);
+    if (!target) die(`No row with id "${id}".`);
+    if (target.kind !== 'decision') die(`Row ${id} is a ${target.kind ?? 'row'}; only a decision can take a ref.`);
+    append({
+        id: newId(entries),
+        ts: now(),
+        date: today(),
+        kind: 'ref',
+        attaches: target.id,
+        text: `ref ${target.id}`,
+        refs,
+        ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`ref  ${target.id}  ${refs.join(', ')}`);
 }
 
 // approvals digest ----------------------------------------------------------
@@ -1814,6 +1875,7 @@ switch (cmd) {
     case 'render': render(false, has('include-archived')); break;
     case 'tag': cmdTag(); break;
     case 'approve-tag': cmdApproveTag(); break;
+    case 'ref': cmdRef(); break;
     case 'approvals': cmdApprovals(); break;
     case 'streams': cmdStreams(); break;
     case 'models': cmdModels(); break;
