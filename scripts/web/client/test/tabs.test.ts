@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/tabs.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from '../src/tabs.ts';
+import { CUE_KEYS, OVERVIEW, formatFragment, nextTab, parseFilter, parseFragment, tabIds } from '../src/tabs.ts';
 
 const ids = tabIds(['acme-widgets', 'ops', 'other']);
 
@@ -40,4 +40,23 @@ test('nextTab moves right and left with wraparound, and Home/End jump to the end
 test('nextTab ignores other keys and treats an unknown current tab as the first', () => {
   assert.equal(nextTab('Enter', ids, 'ops'), null);
   assert.equal(nextTab('ArrowRight', ids, 'gone'), 'acme-widgets');
+});
+
+test('parseFilter reads &show=<tile> and ignores anything that is not a tile', () => {
+  for (const k of CUE_KEYS) assert.equal(parseFilter(`#tab=ops&show=${k}`), k);
+  assert.equal(parseFilter('#show=blocked'), 'blocked');
+  for (const h of ['', '#tab=ops', '#tab=ops&show=', '#tab=ops&show=nope', '#tab=ops&show=__proto__', '#tab=ops&show=Blocked', '#tab=ops&show=blocked%20']) {
+    assert.equal(parseFilter(h), null, h);
+  }
+});
+
+test('a tile filter rides on the tab fragment without disturbing the tab', () => {
+  assert.equal(formatFragment('ops', 'blocked'), '#tab=ops&show=blocked');
+  assert.equal(formatFragment('ops', null), '#tab=ops');
+  assert.equal(parseFragment('#tab=ops&show=blocked', ids), 'ops');
+  assert.equal(parseFragment('#ops&show=done', ids), 'ops');
+  assert.equal(parseFragment('#tab=nope&show=done', ids), OVERVIEW);
+  const odd = tabIds(['x&y']);
+  assert.equal(parseFragment(formatFragment('x&y', 'asks'), odd), 'x&y');
+  assert.equal(parseFilter(formatFragment('x&y', 'asks')), 'asks');
 });

@@ -116,7 +116,7 @@ Reviewer attention is the limit, not agent capacity. Before dispatching any work
 node scripts/journal.ts review-queue
 ```
 
-It counts your open, non-draft PRs against `review_queue_cap` (default 4) and exits **0** with room, **1** when full, **2** when it cannot answer (GitHub failed and the stored snapshot is missing or over six hours old, or `--cap` is bad; treat that as full). When it exits 1 or 2:
+It counts your open, non-draft PRs against `review_queue_cap` (default 4), leaving out PRs in a `self_review_repos` repo (only you review those; see [prs.md](prs.md#self-review-repos)), and exits **0** with room, **1** when full, **2** when it cannot answer (GitHub failed and the stored snapshot is missing or over six hours old, or `--cap` is bad; treat that as full). When it exits 1 or 2:
 
 - Dispatch **no new PR-producing work**: no new feature, refactor or follow-up branch, unless the user asks for that work by name. Say so in one line, queue the request (`journal.ts queue`) so it is not lost, and list the queued work in the reply instead of starting it.
 - Fixes to PRs that are already open still go: review comments, conflicts, failing checks. So does read-only work (scouting, research, review) that opens no PR.

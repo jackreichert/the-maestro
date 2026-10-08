@@ -57,6 +57,7 @@ What to include after the greeting, in this order:
    Name anything new since yesterday. Full bucketing and the query are in
    [reference/prs.md](../reference/prs.md); this is the one-line digest of it, e.g.:
    `PRs: 3 with new comments · 2 drafts ready for you · [repo#438](https://github.com/org/repo/pull/438) has no reviewer · 1 approved, ready to merge`
+   PRs in `self_review_repos` repos go in their own clause after those, `Maestro PRs (self-review): 1 draft, 1 ready to merge`, with links, never counted with the org's ([prs.md](../reference/prs.md#self-review-repos)).
    As part of this step, take the morning baseline with
    `node scripts/prs-snapshot.ts --vault "$LEDGER_ROOT"` — see
    [reference/prs.md#mid-day-updates](../reference/prs.md#mid-day-updates). It writes the snapshot

@@ -9,6 +9,7 @@ import { askBy, askClass, askDoor, autoDefault, byLabel, hasAskFields, TEXT_MAX 
 import type { AskClass, Door } from '../journal/ask-fields.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { askAgeDays } from './charts.ts';
+import { isSelfReview } from '../self-review.ts';
 import type { PrioritiesState } from '../status-page/priorities.ts';
 import type { GatheredInputs } from '../status-page/generate.ts';
 
@@ -43,6 +44,8 @@ export interface PrCard {
   twinOf?: number;
   /** The open PR this one is stacked on. */
   stackedOn?: number;
+  /** The repo is in `self_review_repos`: only the user reviews it, so the client lists it apart from the org's PRs. Set only when true. */
+  selfReview?: boolean;
 }
 
 export interface PodiumState {
@@ -156,14 +159,14 @@ function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefi
 
 /** One stream's PRs in the Markdown table's order, a staging twin pointing at its develop PR and a stacked PR at its parent. */
 function prCards(config: PageConfig, mine: Pr[], all: Pr[]): PrCard[] {
-  return pairTwins(config, mine).flatMap((row) => [row.dev && prCard(row.dev, all), row.stg && prCard(row.stg, all, row.dev)]).filter((c): c is PrCard => !!c);
+  return pairTwins(config, mine).flatMap((row) => [row.dev && prCard(row.dev, all, config), row.stg && prCard(row.stg, all, config, row.dev)]).filter((c): c is PrCard => !!c);
 }
 
-function prCard(p: Pr, all: Pr[], twinOf?: Pr): PrCard {
+function prCard(p: Pr, all: Pr[], config: PageConfig, twinOf?: Pr): PrCard {
   const parent = stackParent(p, all);
   return {
     repo: p.repo, short: p.short, number: p.number, title: p.title, url: p.url, stream: p.stream, base: p.baseRefName, head: p.headRefName,
     isDraft: p.isDraft, ci: p.ci, mergeable: p.mergeable, mergeStateStatus: p.mergeStateStatus, unresolved: p.unresolved, review: p.reviewDecision,
-    flags: prFlagNames(p), ...(twinOf ? { twinOf: twinOf.number } : {}), ...(parent ? { stackedOn: parent.number } : {}),
+    flags: prFlagNames(p), ...(isSelfReview(p.repo, config.selfReviewRepos ?? []) ? { selfReview: true } : {}), ...(twinOf ? { twinOf: twinOf.number } : {}), ...(parent ? { stackedOn: parent.number } : {}),
   };
 }

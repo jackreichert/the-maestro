@@ -38,7 +38,7 @@ export interface CheckContext {
   now: number;
   /** The registry directory. */
   dir?: string;
-  config?: { inboxCommand?: string[]; ghLogin?: string; copilotOrgs?: string[] };
+  config?: { inboxCommand?: string[]; ghLogin?: string; copilotOrgs?: string[]; selfReviewRepos?: string[] };
   watch?: Watch;
   /** The state `check` returned last time, null on the first check. */
   prev?: unknown;

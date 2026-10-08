@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { findByKey, focusKeyOf, keepAcross, openFolds, reopenFolds } from '../src/keep-view.ts';
+import { CLEAR_FILTER_ID, CUE_KEYS, tileId } from '../src/tabs.ts';
 import type { KeepEl, KeepScope } from '../src/keep-view.ts';
 
 /** A tiny stand-in for the DOM: elements with attributes, a parent and an optional shadow root, searched by tag or [data-fold]. */
@@ -57,4 +58,16 @@ test('a partial redraw keeps an open disclosure and focus inside it, as when the
   keepAcross(root, () => { slot.splice(0, slot.length, newFold, newSummary); (root as { activeElement: KeepEl | null }).activeElement = null; });
   assert.equal(newFold.open, true);
   assert.equal(focused, newSummary);
+});
+
+test('the filter tiles and the clear button have ids, so focus on them survives a live redraw', () => {
+  const ids = [...CUE_KEYS.map(tileId), CLEAR_FILTER_ID];
+  assert.equal(new Set(ids).size, ids.length);
+  for (const id of ids) {
+    assert.match(id, /^[a-z][a-z-]*$/);   // safe in a selector without escaping
+    const old = el('button', { id });
+    const fresh = el('button', { id });
+    assert.deepEqual(focusKeyOf(old), { id });
+    assert.equal(findByKey(scope(el('main'), fresh), { id }), fresh);
+  }
 });

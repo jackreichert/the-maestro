@@ -2368,6 +2368,69 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
 });
 
+test('review-queue: PRs in a self_review_repos repo are not counted, and the answer says how many were left out', () => {
+    const mine = (n: number, isDraft = false) => prNode(n, { isDraft, repository: { nameWithOwner: 'example-owner/tool' } });
+    const stub = installGhStub({ pages: [[prNode(1), prNode(2), mine(3), mine(4), mine(5), mine(6, true)]] });
+    const gate = (extra: NodeJS.ProcessEnv, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, 'review-queue', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...stub, ...extra, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+    });
+    const off = gate({}, '--cap', '4');
+    assert.equal(off.status, 1, 'without the setting all 5 open PRs count and the queue is full');
+    const on = gate({ MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }, '--cap', '4');
+    assert.equal(on.status, 0, on.stderr);
+    assert.match(on.stdout, /review queue: 2 of 4 \(live\)/);
+    const json = parse<{ queue: { count: number; selfReview: number } }>(gate({ MAESTRO_SELF_REVIEW_REPOS: 'example-owner/*' }, '--json').stdout);
+    assert.deepEqual([json.queue.count, json.queue.selfReview], [2, 3]);
+});
+
+test('status and status --footer list self-review PRs on their own line, apart from the review queue', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const base = { isDraft: false, reviewDecision: 'REVIEW_REQUIRED', mergeable: 'MERGEABLE', threads: [], threadsComplete: true, baseRefName: 'main', headRefName: 'x' };
+    const prs = [
+        { ...base, key: 'org/a#1', repo: 'org/a', number: 1, url: 'u1' },
+        { ...base, key: 'example-owner/tool#2', repo: 'example-owner/tool', number: 2, url: 'u2', isDraft: true },
+        { ...base, key: 'example-owner/tool#3', repo: 'example-owner/tool', number: 3, url: 'u3' },
+    ];
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: new Date().toISOString(), prs }));
+    const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
+    }).stdout;
+    assert.doesNotMatch(status([]), /self-review/, 'no setting, no section');
+    const on = { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' };
+    assert.match(status([], on), /\n {2}review queue: 1 of 4\n {2}maestro PRs \(self-review\): 2 open: 1 draft, 1 awaiting your review\n/);
+    assert.match(status(['--footer'], on), /^\*\*Review queue:\*\* 1 of 4\n\*\*Maestro PRs \(self-review\):\*\* 2 open: 1 draft, 1 awaiting your review\n/m);
+});
+
+test('status and status --footer leave self-review PRs out of the review queue count', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const prs = [['org/a', false], ['org/b', false], ['example-owner/tool', false], ['example-owner/tool', false]].map(([repo, isDraft]) => ({ repo, isDraft }));
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: new Date().toISOString(), prs }));
+    const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
+    }).stdout;
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 4 of 4 \(full\)$/m);
+    assert.match(status(['--footer'], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /^\*\*Review queue:\*\* 2 of 4$/m);
+    assert.match(status([], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /\n {2}review queue: 2 of 4\n/);
+});
+
+test('status and status --footer survive a truncated snapshot or one with no prs array once self_review_repos is set', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const status = (args: string[]) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' },
+    });
+    for (const body of ['{"takenAt": "2026-01-01T00:00:00Z", "prs": [{"repo": "exam', JSON.stringify({ takenAt: new Date().toISOString() })]) {
+        writeFileSync(join(journalDir, 'prs-snapshot.json'), body);
+        for (const args of [[], ['--footer']]) {
+            const r = status(args);
+            assert.equal(r.status, 0, r.stderr);
+            assert.doesNotMatch(r.stdout, /self-review/);
+        }
+    }
+});
+
 test('status and status --footer show the review queue from the stored snapshot, and stay as they were without one', () => {
     const before = run('status');
     assert.doesNotMatch(before.out, /review queue/);

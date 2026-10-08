@@ -208,6 +208,13 @@ test('waive_size_gate_owners: default none, a bare owner means owner/*, env wins
     assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, 'solo/*');
 });
 
+test('self_review_repos: default none, a bare owner means owner/*, a wildcard owner is ignored, env wins over the file', () => {
+    assert.equal(show().SELF_REVIEW_REPOS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('self_review_repos: example-owner/tool, other-owner, *, */x'));
+    assert.equal(show().SELF_REVIEW_REPOS, 'example-owner/tool, other-owner/*');
+    assert.equal(show({ MAESTRO_SELF_REVIEW_REPOS: 'solo/*' }).SELF_REVIEW_REPOS, 'solo/*');
+});
+
 test('PR body settings: defaults on, file values, env wins, bad values fall back', () => {
     const d = show();
     assert.equal(d.PR_BODY_SECTIONS, 'Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally');

@@ -42,10 +42,11 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, REREVIEW_GATE, STACK_MAX_AGE_DAYS, STACK_MAX_DEPTH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
+import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, REREVIEW_GATE, STACK_MAX_AGE_DAYS, SELF_REVIEW_REPOS, STACK_MAX_DEPTH, TWIN_FLOW_REPOS, VAULT_ROOT } from './local-config.ts';
 import { loadVerdicts, verdictFor, type VerdictRow } from './review-verdict.ts';
 import { stackLines } from './lib/stack-cap.ts';
 import { searchAllPages } from './lib/gh-search.ts';
+import { isSelfReview, splitSelfReview } from './lib/self-review.ts';
 
 /** A review as the snapshot keeps it (the latest one per reviewer). */
 export interface SnapshotReview { author: string | undefined; state: string; submittedAt: string }
@@ -172,7 +173,7 @@ export function loadSnapshot(path: string): Snapshot | null {
  * actionable lines prs.md#mid-day-updates asks for; everything bot-authored
  * folds into the single `botEvents` count instead of being itemised.
  */
-function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot): SnapshotDiff {
+function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot, selfReview: readonly string[] = SELF_REVIEW_REPOS): SnapshotDiff {
     const prevByKey = new Map<string, PrevPr>((prev?.prs || []).map((p) => [p.key, p]));
     const currKeys = new Set(curr.prs.map((p) => p.key));
     const changes: string[] = [];
@@ -181,12 +182,13 @@ function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot): Snapshot
     for (const p of curr.prs) {
         const old = prevByKey.get(p.key);
         if (!old) continue; // a brand-new PR isn't one of the watched actionable events
+        const tag = isSelfReview(p.repo, selfReview) ? '[self-review] ' : '';
 
         if (old.isDraft && !p.isDraft) {
-            changes.push(`${p.key} draft promoted to ready for review — ${p.url}`);
+            changes.push(`${tag}${p.key} draft promoted to ready for review — ${p.url}`);
         }
         if (old.reviewDecision !== p.reviewDecision) {
-            changes.push(`${p.key} reviewDecision ${old.reviewDecision} -> ${p.reviewDecision} — ${p.url}`);
+            changes.push(`${tag}${p.key} reviewDecision ${old.reviewDecision} -> ${p.reviewDecision} — ${p.url}`);
         }
 
         const oldReviewKeys = new Set((old.reviews ?? []).map((r) => `${r.author}|${r.state}|${r.submittedAt}`));
@@ -194,7 +196,7 @@ function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot): Snapshot
             if (oldReviewKeys.has(`${r.author}|${r.state}|${r.submittedAt}`)) continue;
             if (isBot(r.author)) { botEvents++; continue; }
             if (HUMAN_REVIEW_STATES.has(r.state)) {
-                changes.push(`${p.key} new review: ${r.author} ${r.state} — ${p.url}`);
+                changes.push(`${tag}${p.key} new review: ${r.author} ${r.state} — ${p.url}`);
             }
         }
 
@@ -203,14 +205,14 @@ function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot): Snapshot
             if (oldThreadIds.has(t.id)) continue;
             if (isBot(t.author)) { botEvents++; continue; }
             if (!t.isResolved) {
-                changes.push(`${p.key} new thread opened by ${t.author} — ${p.url}`);
+                changes.push(`${tag}${p.key} new thread opened by ${t.author} — ${p.url}`);
             }
         }
     }
 
     for (const [key, old] of prevByKey) {
         if (!currKeys.has(key)) {
-            changes.push(`${key} no longer open (merged or closed) — ${old.url}`);
+            changes.push(`${isSelfReview(old.repo, selfReview) ? '[self-review] ' : ''}${key} no longer open (merged or closed) — ${old.url}`);
         }
     }
 
@@ -251,14 +253,57 @@ export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[
     return { ready: reasons.length === 0, reasons };
 }
 
-/** Lines for the ready bucket, and for every approved PR that is not ready with its reasons (so none vanishes). */
-export function readyLines(snapshot: { prs: StoredPr[] }, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): string[] {
-    const rows = snapshot.prs.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos, verdicts) }));
+/** Why a PR in the stored snapshot is where it is: the buckets of reference/prs.md that matter to a reviewer working alone. */
+export interface SelfReviewBuckets { threads: StoredPr[]; drafts: StoredPr[]; awaiting: StoredPr[]; ready: StoredPr[]; held: StoredPr[] }
+
+/**
+ * The self-review PRs (repos in `selfReview`) in the first bucket each matches, in prs.md order: unresolved threads (new comments to read),
+ * drafts waiting on you, ready to merge (`readiness`, so the same twin and re-review rules), approved but held, and the rest awaiting your review.
+ * `all` is the whole snapshot, which twin detection needs.
+ */
+export function selfReviewBuckets(all: StoredPr[], selfReview: readonly string[] = SELF_REVIEW_REPOS, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): SelfReviewBuckets {
+    const out: SelfReviewBuckets = { threads: [], drafts: [], awaiting: [], ready: [], held: [] };
+    for (const p of splitSelfReview(all, selfReview).self) {
+        if ((p.threads || []).some((t) => !t.isResolved)) out.threads.push(p);
+        else if (p.isDraft) out.drafts.push(p);
+        else if (readiness(p, all, twinRepos, verdicts).ready) out.ready.push(p);
+        else if (p.reviewDecision === 'APPROVED') out.held.push(p);
+        else out.awaiting.push(p);
+    }
+    return out;
+}
+
+/** The board's own section for self-review PRs, with counts and links; empty when there are none. */
+export function selfReviewLines(all: StoredPr[], selfReview: readonly string[] = SELF_REVIEW_REPOS, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): string[] {
+    const b = selfReviewBuckets(all, selfReview, twinRepos, verdicts);
+    const total = Object.values(b).reduce((n, l) => n + l.length, 0);
+    if (!total) return [];
+    const bucket = (title: string, prs: StoredPr[]): string[] => (prs.length ? [`  ${title} (${prs.length}):`, ...prs.map((p) => `    ${p.key} — ${p.url}`)] : []);
+    return [`Maestro PRs (self-review) (${total}), not counted in the review queue:`,
+        ...bucket('New comments', b.threads), ...bucket('Drafts ready for you', b.drafts), ...bucket('Awaiting your review', b.awaiting),
+        ...bucket('Approved and ready to merge', b.ready), ...bucket('Approved but not ready', b.held)];
+}
+
+/** The one-line count for the status board and footer: `3 open: 1 with new comments, 1 draft, 1 ready to merge`; '' when there are none. */
+export function selfReviewSummary(all: StoredPr[], selfReview: readonly string[] = SELF_REVIEW_REPOS, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): string {
+    const b = selfReviewBuckets(all, selfReview, twinRepos, verdicts);
+    const parts: [number, string][] = [[b.threads.length, 'with new comments'], [b.drafts.length, b.drafts.length === 1 ? 'draft' : 'drafts'], [b.awaiting.length, 'awaiting your review'], [b.ready.length, 'ready to merge'], [b.held.length, 'approved but held']];
+    const total = parts.reduce((n, [c]) => n + c, 0);
+    return total ? `${total} open: ${parts.filter(([c]) => c).map(([c, l]) => `${c} ${l}`).join(', ')}` : '';
+}
+
+/**
+ * Lines for the ready bucket, and for every approved PR that is not ready with its reasons (so none vanishes). Self-review PRs
+ * (`self_review_repos`) are not in those two buckets: they follow as their own section (selfReviewLines).
+ */
+export function readyLines(snapshot: { prs: StoredPr[] }, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = [], selfReview: readonly string[] = SELF_REVIEW_REPOS): string[] {
+    const rows = splitSelfReview(snapshot.prs, selfReview).org.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos, verdicts) }));
     const ready = rows.filter((r) => r.ready);
     const held = rows.filter((r) => !r.ready && r.p.reviewDecision === 'APPROVED');
     return [
         `Ready to merge (${ready.length}):`, ...ready.map((r) => `  ${r.p.key} — ${r.p.url}`),
         `Approved but not ready (${held.length}):`, ...held.map((r) => `  ${r.p.key} — ${r.reasons.join('; ')} — ${r.p.url}`),
+        ...selfReviewLines(snapshot.prs, selfReview, twinRepos, verdicts),
     ];
 }
 

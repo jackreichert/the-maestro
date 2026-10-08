@@ -36,6 +36,8 @@ export interface PrCard {
   repo: string; short: string; number: number; title: string; url: string; stream: string;
   base: string; head: string; isDraft: boolean; ci: string; mergeable: string; mergeStateStatus: string;
   unresolved: number; review: string; flags: string[]; twinOf?: number; stackedOn?: number;
+  /** The repo is in `self_review_repos`: only the user reviews it, so the board lists it apart from the org's PRs. Older servers omit it. */
+  selfReview?: boolean;
 }
 
 export interface Priority { text: string; stream?: string }

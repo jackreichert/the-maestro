@@ -294,3 +294,27 @@ test('conflict: a snapshot saved before this field existed tells an already-conf
   assert.deepEqual(summaries(prWatch.diff(prev, next)), [CONFLICT_LINE]);
   assert.deepEqual(summaries(prWatch.diff(next, prWatch.check('open-prs', w.ctx({ prev: next })))), []);
 });
+
+test('events for a self_review_repos repo are labelled apart from the org ones', () => {
+  const mineNode = (n: number, over: Record<string, unknown> = {}) => prNode(n, { repository: { nameWithOwner: 'me/tool' }, url: `https://github.com/me/tool/pull/${n}`, ...over });
+  const w = world({ pages: [[prNode(1), mineNode(2)]] });
+  const ctx = (prev?: prWatch.PrWatchState) => w.ctx({ prev, config: { ghLogin: 'me', copilotOrgs: [], selfReviewRepos: ['me/*'] } });
+  const first = prWatch.check('open-prs:baseline', ctx());
+  assert.equal(first.board['me/tool#2']?.selfReview, true);
+  assert.equal(first.board['org/repo#1']?.selfReview, false);
+  w.serve({ pages: [[prNode(1, { reviewThreads: { nodes: [thread('t1')] } }), mineNode(2, { reviewThreads: { nodes: [thread('t2')] }, reviewDecision: 'APPROVED' })]] });
+  const second = prWatch.check('open-prs', ctx(first));
+  assert.deepEqual(summaries(prWatch.diff(first, second)).sort(), [
+    'THREAD org/repo#1 by rev: https://x/t1',
+    '[self-review] APPROVED-UNMERGED me/tool#2 https://github.com/me/tool/pull/2',
+    '[self-review] DECISION me/tool#2: REVIEW_REQUIRED -> APPROVED https://github.com/me/tool/pull/2',
+    '[self-review] THREAD me/tool#2 by rev: https://x/t2',
+  ]);
+});
+
+test('with no self_review_repos nothing is labelled', () => {
+  const w = world({ pages: [[prNode(1, { repository: { nameWithOwner: 'me/tool' }, reviewThreads: { nodes: [thread('t1')] } })]] });
+  const first = prWatch.check('open-prs', w.ctx());
+  assert.equal(first.board['me/tool#1']?.selfReview, false);
+  assert.deepEqual(summaries(prWatch.diff(null, first)), []);
+});

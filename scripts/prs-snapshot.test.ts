@@ -11,7 +11,7 @@ import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 import type { StoredPr } from './prs-snapshot.ts';
 import type { VerdictRow } from './review-verdict.ts';
-const { readiness, readyLines, requerySiblings } = await import('./prs-snapshot.ts');
+const { readiness, readyLines, requerySiblings, selfReviewBuckets, selfReviewLines, selfReviewSummary } = await import('./prs-snapshot.ts');
 
 const SCRIPT = new URL('./prs-snapshot.ts', import.meta.url).pathname;
 
@@ -308,4 +308,52 @@ test('stacks <snapshot> flags a stack over the depth cap offline, and a missing 
     assert.match(r.out, /o\/r: 4 deep: #1 <- #2 <- #3 <- #4\. Stop adding to the top; drive o\/r#1 to merge/);
     assert.match(run('stacks', fixture(dir, 'flat.json', { prs: [chain[0]] })).out, /: none/);
     assert.match(run('stacks').err, /Usage: prs-snapshot\.ts stacks/);
+});
+
+const mine = (n: number, o: Partial<StoredPr> = {}): StoredPr => good({ key: `me/tool#${n}`, repo: 'me/tool', number: n, url: `https://github.com/me/tool/pull/${n}`, ...o });
+const SELF = ['me/*'];
+
+test('self-review PRs are bucketed like the rest, first match wins, and never reach the org ready or held lists', () => {
+    const all = [
+        good({ key: 'o/r#1', number: 1 }),
+        mine(2, { threads: [thread('t', false)] }),
+        mine(3, { isDraft: true, reviewDecision: 'NONE' }),
+        mine(4, { reviewDecision: 'REVIEW_REQUIRED' }),
+        mine(5),
+        mine(6, { mergeable: 'CONFLICTING' }),
+    ];
+    const b = selfReviewBuckets(all, SELF, []);
+    assert.deepEqual(Object.fromEntries(Object.entries(b).map(([k, v]) => [k, v.map((p: StoredPr) => p.number)])), { threads: [2], drafts: [3], awaiting: [4], ready: [5], held: [6] });
+    const lines = readyLines({ prs: all }, [], [], SELF).join('\n');
+    assert.match(lines, /Ready to merge \(1\):\n  o\/r#1 /);
+    assert.match(lines, /Approved but not ready \(0\):/);
+    assert.match(lines, /Maestro PRs \(self-review\) \(5\), not counted in the review queue:/);
+    assert.match(lines, /New comments \(1\):\n    me\/tool#2 — https:\/\/github.com\/me\/tool\/pull\/2/);
+    assert.match(lines, /Approved and ready to merge \(1\):\n    me\/tool#5 /);
+    assert.doesNotMatch(lines.split('Maestro PRs')[0] ?? '', /me\/tool/, 'no self-review PR above its own section');
+});
+
+test('with no self_review_repos nothing changes: no section, every PR in the org lists', () => {
+    const all = [good({ key: 'o/r#1', number: 1 }), mine(5)];
+    const lines = readyLines({ prs: all }, [], [], []);
+    assert.match(lines.join('\n'), /Ready to merge \(2\)/);
+    assert.deepEqual(selfReviewLines(all, []), []);
+    assert.equal(selfReviewSummary(all, []), '');
+});
+
+test('the one-line summary counts each bucket and omits the empty ones', () => {
+    assert.equal(selfReviewSummary([mine(1, { threads: [thread('t', false)] }), mine(2, { isDraft: true }), mine(3), mine(4)], SELF, []), '4 open: 1 with new comments, 1 draft, 2 ready to merge');
+});
+
+test('ready <snapshot> prints the self-review section when the setting names the repo, and diff labels its changes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prs-snap-test-'));
+    const env = { ...process.env, MAESTRO_SELF_REVIEW_REPOS: 'me/tool' };
+    const r = runWith(env, 'ready', fixture(dir, 's.json', { prs: [good(), mine(5)] }));
+    assert.match(r.out, /Ready to merge \(1\):\n  org\/repo#1 /);
+    assert.match(r.out, /Maestro PRs \(self-review\) \(1\)/);
+    const oldSnap = { takenAt: 't', prs: [pr(), mine(5, { reviews: [] })] };
+    const newSnap = { takenAt: 't2', prs: [pr({ reviews: [{ author: 'alice', state: 'APPROVED', submittedAt: 'a' }] }), mine(5, { reviews: [{ author: 'jack', state: 'COMMENTED', submittedAt: 'b' }] })] };
+    const d = runWith(env, 'diff', fixture(dir, 'o.json', oldSnap), fixture(dir, 'n.json', newSnap));
+    assert.match(d.out, /^ {2}- org\/repo#1 new review: alice APPROVED/m);
+    assert.match(d.out, /^ {2}- \[self-review\] me\/tool#5 new review: jack COMMENTED/m);
 });
