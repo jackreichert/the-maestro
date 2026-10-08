@@ -48,14 +48,14 @@ test('a secret shape fails the exit code, names the line and never prints the va
   const root = vault({ [PAGE]: `${frontmatter()}${BODY}- The login is ${'password'}: ${secret} (verified 2026-10-08, notes).\n` });
   const r = run(root);
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /secrets {2}secret:named-value shape/);
+  assert.match(r.stdout, /secrets {2}secret:key-value shape/);
   assert.ok(!r.stdout.includes(secret) && !r.stderr.includes(secret));
 });
 
 test('a fact with no dated evidence, a bad kind and a missing field are each reported', () => {
   const root = vault({ [PAGE]: frontmatter({ kind: 'essay', 'verify-how': '' }) + BODY.replace(' (verified 2026-10-08, src/sync.ts:40)', '') });
   const messages = problems(root).map((f) => `${f.rule}: ${f.message}`).join('\n');
-  assert.match(messages, /vocabulary: kind "essay"/);
+  assert.match(messages, /vocabulary: kind is not one of/);
   assert.match(messages, /frontmatter: missing required field "verify-how"/);
   assert.match(messages, /facts: a fact must end/);
 });
@@ -118,6 +118,11 @@ test('usage and read errors exit 2, never a pass', () => {
   assert.equal(run(mkdtempSync(join(tmpdir(), 'empty-'))).status, 2);
   assert.equal(run(vault(), `Projects/${REPO}/Knowledge/missing.md`).status, 2);
   assert.equal(typeof parseOptions(['--vault']), 'string');
+  assert.equal(run(vault(), '--repo', 'no-such-repo').status, 2);
+  assert.equal(run(vault(), `Projects/${REPO}/Knowledge`).status, 2);
+  const empty = mkdtempSync(join(tmpdir(), 'nopages-'));
+  mkdirSync(join(empty, 'Projects', REPO), { recursive: true });
+  assert.equal(run(empty).status, 2);
 });
 
 test('named pages are checked instead of discovery, with --json output', () => {
@@ -125,4 +130,27 @@ test('named pages are checked instead of discovery, with --json output', () => {
   const r = run(root, '--json', PAGE);
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(r.stdout), [{ path: PAGE, findings: [] }]);
+});
+
+test('a duplicated Facts heading does not hide an undated fact', () => {
+  const body = BODY.replace(' (verified 2026-10-08, src/sync.ts:40)', '') + '\n## Facts\n\n- A second section (verified 2026-10-08, notes).\n';
+  assert.ok(problems(vault({ [PAGE]: frontmatter() + body })).some((f) => /a fact must end/.test(f.message)));
+});
+
+test('a secret-shaped value in a checked field is never echoed in a message or the json output', () => {
+  const token = `${'ghp'}_${'a'.repeat(36)}`;
+  const root = vault({ [PAGE]: frontmatter({ 'verified-at': token, kind: token, status: token, 'depends-on': `[${token}]`, components: `[${token}]` }) + BODY });
+  const r = run(root, '--json');
+  assert.equal(r.status, 1);
+  assert.ok(!r.stdout.includes(token) && !r.stderr.includes(token));
+  assert.ok(!run(root).stdout.includes(token));
+});
+
+test('paths and links cannot reach outside the vault', () => {
+  const root = vault();
+  const outside = mkdtempSync(join(tmpdir(), 'outside-'));
+  writeFileSync(join(outside, 'o.md'), frontmatter() + BODY);
+  assert.equal(run(root, join('..', outside.split('/').pop() as string, 'o.md')).status, 2);
+  assert.equal(run(root, '--repo', '../..').status, 2);
+  assert.ok(problems(vault({ [PAGE]: frontmatter({ 'depends-on': '[[../../x]]' }) + BODY })).some((f) => /depends-on .* does not resolve/.test(f.message)));
 });

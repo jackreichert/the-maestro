@@ -27,6 +27,8 @@ export interface Context {
 export interface Rule { id: string; check: (page: Page, ctx: Context) => Finding[] }
 
 const found = (rule: string, message: string, line?: number): Finding => ({ rule, message, ...(line ? { line } : {}) });
+/** A page value as it may appear in a message: only short, plain-looking text the scanner finds nothing in; anything else is not printed, since a field can hold a secret. */
+const show = (v: string, scan: Scanner): string => (/^[A-Za-z0-9._/ -]{1,60}$/.test(v) && !scan(v).length ? `"${v}"` : '(value not shown)');
 const oneOf = (v: string, allowed: readonly string[]): boolean => allowed.includes(v);
 
 /** The body split into sections by `## ` headings: heading text (lowercase) to its lines with 1-based file line numbers. */
@@ -36,7 +38,7 @@ export function sections(p: Page): Map<string, { line: number; text: string }[]>
   p.lines.forEach((t, i) => {
     if (i < p.bodyStart) return;
     const h = t.match(/^##\s+(.+?)\s*$/);
-    if (h) { current = (h[1] as string).toLowerCase(); out.set(current, []); return; }
+    if (h) { current = (h[1] as string).toLowerCase(); out.set(current, out.get(current) ?? []); return; }
     out.get(current)?.push({ line: i + 1, text: t });
   });
   return out;
@@ -48,14 +50,14 @@ export const RULES: readonly Rule[] = [
     id: 'frontmatter',
     check: (p) => (p.hasFrontmatter
       ? [...REQUIRED_FIELDS.filter((k) => !text(p, k) && !list(p, k).length).map((k) => found('frontmatter', `missing required field "${k}"`)),
-        ...(text(p, 'type') && text(p, 'type') !== 'library' ? [found('frontmatter', `"type" must be "library", got "${text(p, 'type')}"`)] : [])]
+        ...(text(p, 'type') && text(p, 'type') !== 'library' ? [found('frontmatter', '"type" must be "library"')] : [])]
       : [found('frontmatter', 'the page has no frontmatter block')]),
   },
   {
     id: 'vocabulary',
     check: (p) => [
-      ...(text(p, 'kind') && !oneOf(text(p, 'kind'), KINDS) ? [found('vocabulary', `kind "${text(p, 'kind')}" is not one of ${KINDS.join(', ')}`)] : []),
-      ...(text(p, 'status') && !oneOf(text(p, 'status'), STATUSES) ? [found('vocabulary', `status "${text(p, 'status')}" is not one of ${STATUSES.join(', ')}`)] : []),
+      ...(text(p, 'kind') && !oneOf(text(p, 'kind'), KINDS) ? [found('vocabulary', `kind is not one of ${KINDS.join(', ')}`)] : []),
+      ...(text(p, 'status') && !oneOf(text(p, 'status'), STATUSES) ? [found('vocabulary', `status is not one of ${STATUSES.join(', ')}`)] : []),
     ],
   },
   {
@@ -63,8 +65,8 @@ export const RULES: readonly Rule[] = [
     check: (p, c) => {
       const repo = text(p, 'repo');
       if (!repo) return [];
-      if (!c.repos.has(repo)) return [found('repo', `repo "${repo}" is not a project in the vault (known: ${[...c.repos].sort().join(', ') || 'none'})`)];
-      return repo === c.project ? [] : [found('repo', `repo "${repo}" does not match the project folder "${c.project}" the page lives in`)];
+      if (!c.repos.has(repo)) return [found('repo', `repo ${show(repo, c.scan)} is not a project in the vault (known: ${[...c.repos].sort().join(', ') || 'none'})`)];
+      return repo === c.project ? [] : [found('repo', `repo ${show(repo, c.scan)} does not match the project folder "${c.project}" the page lives in`)];
     },
   },
   {
@@ -74,12 +76,12 @@ export const RULES: readonly Rule[] = [
       if (!used.length) return [];
       if (!c.components) return [found('components', `Projects/${c.project}/INDEX.md has no components list, so no component can be checked`)];
       const known = c.components;
-      return used.filter((x) => !known.has(x)).map((x) => found('components', `unknown component "${x}" (known for ${c.project}: ${[...known].sort().join(', ')}); adding one is an edit to INDEX.md`));
+      return used.filter((x) => !known.has(x)).map((x) => found('components', `unknown component ${show(x, c.scan)} (known for ${c.project}: ${[...known].sort().join(', ')}); adding one is an edit to INDEX.md`));
     },
   },
   {
     id: 'verified-at',
-    check: (p) => (text(p, 'verified-at') && !VERIFIED_AT.test(text(p, 'verified-at')) ? [found('verified-at', `verified-at "${text(p, 'verified-at')}" must be YYYY-MM-DD, optionally followed by @<sha>`)] : []),
+    check: (p) => (text(p, 'verified-at') && !VERIFIED_AT.test(text(p, 'verified-at')) ? [found('verified-at', `verified-at must be YYYY-MM-DD, optionally followed by @<sha>`)] : []),
   },
   {
     id: 'facts',
@@ -107,7 +109,7 @@ export const RULES: readonly Rule[] = [
     id: 'links',
     check: (p, c) => [
       ...(text(p, 'status') === 'superseded' && !list(p, 'superseded-by').length ? [found('links', 'status is superseded but superseded-by is empty')] : []),
-      ...['supersedes', 'superseded-by', 'depends-on'].flatMap((k) => list(p, k).filter((ref) => !c.resolves(ref)).map((ref) => found('links', `${k} "${ref}" does not resolve to a page`))),
+      ...['supersedes', 'superseded-by', 'depends-on'].flatMap((k) => list(p, k).filter((ref) => !c.resolves(ref)).map((ref) => found('links', `${k} ${show(ref, c.scan)} does not resolve to a page`))),
     ],
   },
   {

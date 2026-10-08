@@ -9,10 +9,10 @@
  * With no page arguments it reads every page under Projects/<repo>/Knowledge (all of it) and Projects/<repo>/Runbooks (only files whose
  * frontmatter says `type: library`), one subfolder deep. Named pages (absolute, or relative to the vault) are checked instead.
  * It prints each finding as `path:line  rule  message`; a secret hit names the shape and the line, never the matched text. It writes nothing.
- * Exit codes: 0 every page passes; 1 any finding; 2 a usage or read error (no vault, a named page that cannot be read), never a silent pass.
+ * Exit codes: 0 every page passes; 1 any finding; 2 a usage or read error (no vault, a named page that cannot be read, a --repo that does not exist, or no pages found at all), never a silent pass.
  */
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, relative } from 'node:path';
+import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_ROOT } from './local-config.ts';
 import { list, parsePage } from './lib/library/page.ts';
@@ -46,8 +46,18 @@ export function parseOptions(argv: string[]): Options | string {
   return { vault, repo, json, pages };
 }
 
-const dirs = (p: string): string[] => (existsSync(p) ? readdirSync(p).filter((n) => statSync(join(p, n)).isDirectory()) : []);
-const markdown = (p: string): string[] => (existsSync(p) ? readdirSync(p).filter((n) => n.endsWith('.md') && statSync(join(p, n)).isFile()) : []);
+/** Real directories and files only: a symlink is skipped, so a link in a library folder cannot lead the check outside the vault. */
+const dirs = (p: string): string[] => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : []);
+const markdown = (p: string): string[] => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.md')).map((e) => e.name) : []);
+
+/** True when `rel` (vault-relative) is a real file whose resolved path stays inside the vault. */
+export function insideVault(vault: string, rel: string): boolean {
+  try {
+    const root = realpathSync(vault);
+    const real = realpathSync(join(vault, rel));
+    return real.startsWith(root + sep) && statSync(real).isFile();
+  } catch { return false; }
+}
 
 /** Vault-relative paths of the library pages: Knowledge and one subfolder of it, and the `type: library` files of Runbooks. */
 export function discover(vault: string, repo?: string): string[] {
@@ -74,7 +84,8 @@ export function checkVault(vault: string, pages: string[], scan?: Scanner): Page
   const names = new Set(discover(vault).map((p) => basename(p, '.md')));
   const resolves = (raw: string): boolean => {
     const ref = raw.replace(/^\[\[|\]\]$/g, '').replace(/\|.*$/, '').replace(/\.md$/, '');
-    return ref.includes('/') ? existsSync(join(vault, `${ref}.md`)) : names.has(ref);
+    if (ref.split('/').includes('..') || isAbsolute(ref)) return false;
+    return ref.includes('/') ? insideVault(vault, `${ref}.md`) : names.has(ref);
   };
   return pages.map((path) => {
     const project = path.split('/')[1] ?? '';
@@ -95,9 +106,13 @@ function main(argv: string[]): number {
   if (typeof o === 'string') { console.error(`library-check: ${o}\n${USAGE}`); return 2; }
   if (!existsSync(join(o.vault, 'Projects'))) { console.error(`library-check: no Projects folder under ${o.vault}`); return 2; }
   const named = o.pages.map((p) => (isAbsolute(p) ? relative(o.vault, p) : p));
-  const unreadable = named.filter((p) => !existsSync(join(o.vault, p)));
-  if (unreadable.length) { console.error(`library-check: cannot read ${unreadable.join(', ')}`); return 2; }
-  const reports = checkVault(o.vault, named.length ? named : discover(o.vault, o.repo));
+  const unreadable = named.filter((p) => !insideVault(o.vault, p));
+  if (unreadable.length) { console.error(`library-check: cannot read, or outside the vault: ${unreadable.join(', ')}`); return 2; }
+  if (o.repo && !/^[\w.-]+$/.test(o.repo)) { console.error('library-check: --repo must be a plain project folder name'); return 2; }
+  if (o.repo && !existsSync(join(o.vault, 'Projects', o.repo))) { console.error(`library-check: no project "${o.repo}" under ${join(o.vault, 'Projects')}`); return 2; }
+  const pages = named.length ? named : discover(o.vault, o.repo);
+  if (!pages.length) { console.error('library-check: no library pages found (a wrong --vault or --repo, or a renamed Knowledge folder); nothing was checked'); return 2; }
+  const reports = checkVault(o.vault, pages);
   if (o.json) console.log(JSON.stringify(reports, null, 2)); else render(reports).forEach((l) => console.log(l));
   return reports.some((r) => r.findings.length) ? 1 : 0;
 }
