@@ -14,7 +14,7 @@ import * as inbox from './event-types/inbox.ts';
 import * as prChecks from './event-types/pr-checks.ts';
 import * as reminder from './event-types/reminder.ts';
 import { notifyChoice } from './lib/notify.ts';
-import { readInbox } from './lib/event-inbox.ts';
+import { appendEvents, readInbox } from './lib/event-inbox.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
 
 const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
@@ -572,4 +572,59 @@ test('non-serve run still exits 10 on an actionable event (the contract --serve 
   const r = cli(dir, 'run');
   assert.equal(r.status, EXIT.actionable, r.stderr);
   assert.deepEqual(readInbox(dir), []);
+});
+
+const SENT = 'SENTINEL-free-text-4c1d';
+const digestEvent = (summary: string, actionable = true) => ({ watch: 'prs', type: 'pr-watch', at: '2026-10-01T12:00:00.000Z', summary, actionable, report: '' });
+
+test('cli: events list shows unhandled events by default, --unseen and --all narrow or widen, --json is parseable', () => {
+  const dir = tempDir();
+  appendEvents(dir, [digestEvent(`THREAD acme/w#1 by someone: ${SENT}`), digestEvent('REPLY acme/w#2 by someone: u')]);
+  const [a, b] = readInbox(dir);
+  assert.equal(cli(dir, 'events', 'ack', a.id).status, EXIT.ok);
+  const shown = (...f: string[]) => cli(dir, 'events', ...f).stdout.trim().split('\n').filter(Boolean);
+  assert.equal(shown().length, 1);
+  assert.match(shown()[0], new RegExp(`^${b.id} new ACTION reply`));
+  assert.equal(shown('list', '--all').length, 2);
+  assert.equal(shown('list', '--unseen').length, 1);
+  assert.equal(JSON.parse(cli(dir, 'events', '--all', '--json').stdout).length, 2);
+  assert.equal(cli(dir, 'events', '--all').stdout.includes(SENT), false);
+});
+
+test('cli: events ack marks handled, is idempotent, and refuses an unknown id or none', () => {
+  const dir = tempDir();
+  appendEvents(dir, [digestEvent('THREAD acme/w#1 by someone: u')]);
+  const [e] = readInbox(dir);
+  assert.equal(cli(dir, 'events', 'ack', e.id).status, EXIT.ok);
+  assert.equal(cli(dir, 'events', 'ack', e.id).status, EXIT.ok);
+  assert.equal(readInbox(dir)[0].handled, true);
+  const unknown = cli(dir, 'events', 'ack', e.id, 'ffffffffffff');
+  assert.equal(unknown.status, EXIT.usage);
+  assert.match(unknown.stderr, /no such event: ffffffffffff/);
+  assert.equal(cli(dir, 'events', 'ack').status, EXIT.usage);
+  assert.equal(cli(dir, 'events', 'bogus').status, EXIT.usage);
+});
+
+test('cli: events wait prints an unseen actionable event, marks it seen and exits 10; then it times out quietly', () => {
+  const dir = tempDir();
+  appendEvents(dir, [digestEvent('THREAD acme/w#1 by someone: u'), digestEvent('info only', false)]);
+  const first = cli(dir, 'events', 'wait', '--poll-seconds', '0.1');
+  assert.equal(first.status, EXIT.actionable, first.stderr);
+  assert.equal(first.stdout.trim().split('\n').length, 1);
+  assert.deepEqual(readInbox(dir).map((e) => e.seen), [true, false]);
+  const second = cli(dir, 'events', 'wait', '--timeout-hours', '0.00003', '--poll-seconds', '0.05');
+  assert.equal(second.status, EXIT.ok);
+  assert.equal(second.stdout, '');
+});
+
+test('cli: events wait wakes on an event appended while it waits', async () => {
+  const dir = tempDir();
+  const p = spawn(process.execPath, [SCRIPT, 'events', 'wait', '--poll-seconds', '0.1'], { env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir }, stdio: ['ignore', 'pipe', 'inherit'] });
+  let out = '';
+  p.stdout.on('data', (d) => { out += d; });
+  const closed = new Promise<number | null>((resolve) => p.on('close', resolve));
+  await new Promise((r) => setTimeout(r, 400));
+  appendEvents(dir, [digestEvent('CONFLICT acme/w#9 main <- f https://x.test')]);
+  assert.equal(await closed, EXIT.actionable);
+  assert.match(out, /conflict prs \(pr-watch\) repo=acme\/w number=9/);
 });

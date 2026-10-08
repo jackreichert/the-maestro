@@ -520,7 +520,16 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | `list [--json]` | The live watches |
 | `remove <id>` | Retire a watch (its type may clean up its own files) |
 | `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
-| `run [--once] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error |
+| `run [--once | --serve] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error | `--serve` is daemon mode: it never exits on an event (see [the event inbox](#the-event-inbox)).
+| `events [list] [--unseen \| --all] [--json]` | Show the inbox's unhandled events (`--unseen`: not yet shown to a session; `--all`: every one) |
+| `events ack <id...>` | Mark events handled; ids come from `events list` |
+| `events wait [--timeout-hours N]` | Block until an unseen actionable event exists, print it, mark it seen, exit 10 (0 quietly at the timeout, default 6h) |
+
+#### The event inbox
+
+`run --serve` does not exit when something happens. Each tick's events are appended to `<event_dir>/events.jsonl` and the loop carries on; it ends only on a crash or a signal. Quiet hours and an empty registry become waits in process. The file is append-only: an `event` row, later `seen` and `handled` rows, folded when read. An event's id is a short hash of its watch, type and summary, so a replay after a crash adds nothing.
+
+An event row carries a `kind` (`thread`, `reply`, `conflict`, `changes-requested`, `reminder`, ...) and only the allowlisted `fields`: `repo`, `number`, `who` (`bot` or `human`) and `count`. Summaries, report text, titles and logins never enter the file. The allowlist is applied where rows are written and again where they are read, so a hand-edited row cannot carry free text to a reader. The digest still holds the full line.
 
 **Exit codes of `run`.** The runner wakes the orchestrator only on 10.
 

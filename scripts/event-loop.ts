@@ -6,6 +6,7 @@
  *   event-loop.ts list [--json] | remove <id> | digest [--peek]
  *   event-loop.ts run [--once | --serve] [--interval N]
  *   event-loop.ts digest-wait [--timeout-hours N] | digests [--unseen] [--mark-seen]
+ *   event-loop.ts events [list] [--unseen | --unhandled | --all] [--json] | events ack <id...> | events wait [--timeout-hours N] [--poll-seconds N]
  *
  * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
  * A type may export `retired(watch, ctx)` to delete its per-watch files when the watch retires or is removed.
@@ -27,6 +28,10 @@
  * means waiting. It ends only on a crash or a signal. Delivery into the inbox is exactly-once: the digest is read, appended to the
  * inbox (ids dedupe a replay), then cleared, so a crash between the last two repeats an event that the inbox drops.
  *
+ * `events` reads the inbox: `list` shows unhandled events (`--unseen` only the unseen, `--all` every one), `ack` marks them handled, and
+ * `wait` blocks until an unseen actionable event exists, prints it, marks it seen and exits 10 (0 quietly at the timeout, default 6h).
+ * Two waiters may both print the same event (seen is marked after printing): at-least-once, never lost; `ack` is what ends it.
+ *
  * Heartbeat: unless `--once`, `run` rewrites <event dir>/heartbeat.json on each tick and each sleep chunk (lib/heartbeat.ts), and sleeps in chunks of at most 60 s
  * against the wall clock (lib/wall-sleep.ts), so a lid closed mid-sleep costs under a minute, not the whole lid time.
  *
@@ -41,7 +46,8 @@ import {
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
-import { appendEvents } from './lib/event-inbox.ts';
+import type { InboxEntry } from './lib/event-inbox.ts';
+import { appendEvents, formatEntry, mark, readInbox } from './lib/event-inbox.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
 import { CHUNK_SECONDS, sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
@@ -291,11 +297,47 @@ async function digestWait(dir: string, timeoutMs: number, pollSeconds: number): 
   }
 }
 
+/** The inbox view `events list` shows: `--unseen`, `--all`, else everything not yet handled. */
+const listFilter = (v: { unseen?: boolean; all?: boolean }): ((e: InboxEntry) => boolean) => (v.unseen ? (e) => !e.seen : v.all ? () => true : (e) => !e.handled);
+
+/** Blocks until an unseen actionable event is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). */
+async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, nap: (s: number) => Promise<void> = sleep): Promise<number> {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const fresh = readInbox(dir).filter((e) => e.actionable && !e.seen);
+    if (fresh.length) { console.log(fresh.map(formatEntry).join('\n')); mark(dir, 'seen', fresh.map((e) => e.id)); return EXIT.actionable; }
+    if (Date.now() >= end) return EXIT.ok;
+    await nap(Math.min(pollSeconds, Math.max(0.05, (end - Date.now()) / 1000)));
+  }
+}
+
+/** `events [list|ack|wait]`. Returns the exit code, or a usage message. */
+async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string }): Promise<number | string> {
+  if (sub === undefined || sub === 'list') {
+    const shown = readInbox(dir).filter(listFilter(v));
+    console.log(v.json ? JSON.stringify(shown) : shown.map(formatEntry).join('\n') || 'no events');
+    return EXIT.ok;
+  }
+  if (sub === 'ack') {
+    if (!ids.length) return 'events ack needs at least one event id';
+    const { unknown } = mark(dir, 'handled', ids);
+    console.log(`handled ${new Set(ids).size - unknown.length}`);
+    return unknown.length ? `no such event: ${unknown.join(' ')}` : EXIT.ok;
+  }
+  if (sub === 'wait') {
+    const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
+    const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
+    if (!(hours > 0) || !(poll > 0)) return '--timeout-hours and --poll-seconds need positive numbers';
+    return eventsWait(dir, hours * 3600 * 1000, poll);
+  }
+  return 'events commands: list | ack <id...> | wait';
+}
+
 const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  once: { type: 'boolean' }, serve: { type: 'boolean' }, interval: { type: 'string' },
+  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
@@ -310,7 +352,7 @@ async function main(argv: string[]): Promise<number> {
   const dir = EVENT_DIR;
   const usage = (msg: string): number => { console.error(`event-loop: ${msg}`); return EXIT.usage; };
   try {
-    const { values: v, positionals: [cmd, arg] } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });
+    const { values: v, positionals: [cmd, arg, ...rest] } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true });
     if (cmd === 'add') {
       const ttl = v['ttl-hours'] === undefined ? undefined : Number(v['ttl-hours']) * 3600 * 1000;
       if (ttl !== undefined && !(ttl > 0)) return usage('--ttl-hours needs a positive number');
@@ -340,6 +382,9 @@ async function main(argv: string[]): Promise<number> {
       if (v.once && v.serve) return usage('--once and --serve cannot be combined');
       acquireLock(dir);
       return await run({ dir, types, once: v.once, serve: v.serve, pinned });
+    } else if (cmd === 'events') {
+      const done = await eventsCommand(dir, arg, rest, v);
+      return typeof done === 'string' ? usage(done) : done;
     } else if (cmd === 'digest-wait' || cmd === 'digests') {
       if (!LEDGER_ROOT) return usage('saved digests live under the ledger root; set LEDGER_ROOT (or ledger_root in the config)');
       const saved = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
@@ -348,7 +393,7 @@ async function main(argv: string[]): Promise<number> {
       const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
       if (!(hours > 0) || !(poll > 0)) return usage('--timeout-hours and --poll-seconds need positive numbers');
       return await digestWait(saved, hours * 3600 * 1000, poll);
-    } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests');
+    } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests | events');
   } catch (err) {
     return usage(errorMessage(err));
   }
