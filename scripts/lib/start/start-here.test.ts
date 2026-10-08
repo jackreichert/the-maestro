@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/start/start-here.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { START_MAX_LINES, buildStart, homeCounts, previousWorkingDay, startLines, unreadableHome, viewDay } from './start-here.ts';
+import { START_MAX_LINES, buildStart, homeCounts, previousWorkingDay, startLines, unreadableHome, unreachableLine, viewDay } from './start-here.ts';
 import type { StartOptions } from './start-here.ts';
 import type { Groups } from '../journal/board.ts';
 import type { LedgerItem } from '../ledger-core.ts';
@@ -65,6 +65,15 @@ test('the text never passes the line cap, and a hidden row says where the rest i
   assert.ok(lines.length <= START_MAX_LINES, `${lines.length} lines`);
   assert.ok(lines.some((l) => /^… \+\d+ more: journal\.ts status/.test(l)));
   assert.equal(lines.filter((l) => l.startsWith('- `a')).length, 5, 'needs shows its top five');
+});
+
+test('the unreachable-note line names a count, and a missing check is not zero', () => {
+  assert.equal(unreachableLine(null), 'Unreachable notes: not checked.');
+  assert.equal(unreachableLine({ total: 0, byStream: { Maestro: 0 } }), 'Unreachable notes: 0.');
+  assert.equal(unreachableLine({ total: 3, byStream: { Maestro: 2, other: 1 }, unchecked: 1 }), 'Unreachable notes: 3 (Maestro 2, other 1). 1 project could not be checked. journal.ts notes-check lists them.');
+  assert.equal(unreachableLine({ total: 3, byStream: { Maestro: 2 } }, 'maestro'), 'Unreachable notes: 2 in maestro. journal.ts notes-check lists them.');
+  const lines = startLines(buildStart(groupsOf(), opts({ unreachableNotes: { total: 4, byStream: { Maestro: 4 } } })), NOW);
+  assert.match(lines.join('\n'), /Unreachable notes: 4 \(Maestro 4\)/);
 });
 
 test('the view date is the local day in the zone, not UTC', () => {

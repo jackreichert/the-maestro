@@ -35,9 +35,14 @@ export interface StartHere {
   done: DoneRow[]; answered: AnsweredRow[];
   /** Null when no vault root is set: the notes were not read, which is not the same as none. A key with `unreadable` set could not be read and is still listed. */
   where: Record<string, HomeCounts> | null;
+  /** Null when the check did not run. `unchecked` is projects that could not be read, so `total` may be short. */
+  unreachableNotes: UnreachableNotes | null;
 }
 
-export interface StartOptions { day: string; week: WeekState; priorities: PrioritiesState; conditions: string[]; standing: string[]; where: Record<string, HomeCounts> | null; now: Date }
+/** Unreachable notes for the start view: a count, not the note list. */
+export interface UnreachableNotes { total: number; byStream: Record<string, number>; unchecked?: number }
+
+export interface StartOptions { day: string; week: WeekState; priorities: PrioritiesState; conditions: string[]; standing: string[]; where: Record<string, HomeCounts> | null; now: Date; unreachableNotes?: UnreachableNotes | null }
 
 const streamOf = (i: { stream?: string }): string => i.stream || OTHER;
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
@@ -96,7 +101,21 @@ export function buildStart(g: Groups, o: StartOptions): StartHere {
     done: doneStreams.map((s) => { const rows = doneRows.filter((d) => streamOf(d) === s); return { stream: s, count: rows.length, items: rows.map((d) => ({ id: d.id ?? '', text: d.text ?? '' })) }; }),
     answered: answered.map((a) => ({ id: a.id ?? '', stream: streamOf(a), asked: a.text ?? '', answer: a.closedBy?.text ?? '', date: a.closedBy?.date ?? '' })),
     where: o.where,
+    unreachableNotes: o.unreachableNotes ?? null,
   };
+}
+
+/** One line for the start view. A missing check is not the same as zero. */
+export function unreachableLine(n: UnreachableNotes | null, stream?: string): string {
+  if (!n) return 'Unreachable notes: not checked.';
+  if (stream) {
+    const hit = Object.entries(n.byStream).find(([k]) => same(k, stream));
+    return `Unreachable notes: ${hit ? hit[1] : 0} in ${stream}. journal.ts notes-check lists them.`;
+  }
+  const by = Object.entries(n.byStream).filter(([, c]) => c > 0).map(([k, c]) => `${k} ${c}`).join(', ');
+  const gap = n.unchecked ? ` ${n.unchecked} project${n.unchecked === 1 ? '' : 's'} could not be checked.` : '';
+  if (!n.total && !n.unchecked) return 'Unreachable notes: 0.';
+  return `Unreachable notes: ${n.total}${by ? ` (${by})` : ''}.${gap} journal.ts notes-check lists them.`;
 }
 
 interface Section { title: string; rows: string[]; more: string; cap?: number }
@@ -140,7 +159,8 @@ export function startLines(s: StartHere, now: Date, opts: { stream?: string; max
   const secs = sections(s, now, opts.stream).filter((x) => x.rows.length || x.title.startsWith('Needs') || x.title.startsWith('In flight'));
   const shown = secs.map((x) => Math.min(x.rows.length, x.cap ?? x.rows.length));
   const head = [opts.stream ? `## Start here: ${opts.stream}` : '## Start here', '',
-    `${s.day}. Read this first; each block names where the full version is. Per stream: \`journal.ts start-here --stream <Stream>\`.`, ''];
+    `${s.day}. Read this first; each block names where the full version is. Per stream: \`journal.ts start-here --stream <Stream>\`.`,
+    unreachableLine(s.unreachableNotes, opts.stream), ''];
   const size = (): number => head.length + secs.reduce((n, x, k) => n + 2 + shown[k]! + (shown[k]! < x.rows.length ? 1 : 0), 0);
   while (size() > max) {
     const k = shown.reduce((best, n, i) => (n > shown[best]! ? i : best), 0);
