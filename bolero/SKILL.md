@@ -92,7 +92,7 @@ Stop only when completely blocked. [stop-conditions.md](stop-conditions.md) is t
 - Failing tests that cannot be explained after a root-cause pass.
 - An external dependency: an access, an allowlist, a credential, another person's review.
 
-Then ask once, with the stakes (what is blocked, what each answer unlocks, what the recommendation is), and say what is still moving. Park the blocked item with a gate (`journal.ts` item `--gate`, [SKILL.md:32](../SKILL.md)) and keep every lane that does not depend on it going. A block on one lane is not a stop for the loop.
+Then ask once, with the stakes (what is blocked, what each answer unlocks, what the recommendation is), and say what is still moving. Park the blocked item and keep every lane that does not depend on it going: a decision only the user can make is an `ask` ([reference/ledger.md:54](../reference/ledger.md)); an external block is `journal.ts log "<what is blocked>" --kind blocked`, adding `--gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>` only when the wait ends on a PR merge, a date or a ticket closing, since a gate cannot express a user decision or an allowlist and `--gate` on any other kind exits 1 (`scripts/journal.ts:414-419`, [reference/ledger.md:314](../reference/ledger.md)). A block on one lane is not a stop for the loop.
 
 A decision the user states while the loop runs is recorded in the ledger in the same turn, tied to the action it gates.
 

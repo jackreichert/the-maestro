@@ -25,7 +25,7 @@ Before calling a credential missing, look it up by name with the env lookup help
 ## When a block holds
 
 1. Ask once, with the stakes: what is blocked, what each answer unlocks, what you recommend.
-2. Park the item with its gate so the board shows what it waits for, and keep every lane that does not depend on it going.
+2. Park the item so the board shows what it waits for (an `ask` for a user decision; `log --kind blocked` for an external block, with `--gate` only for a PR merge, a date or a ticket closing), and keep every lane that does not depend on it going.
 3. Say in one line what is still moving and what comes next.
 4. If every lane is blocked, the loop stops here. Write the lanes plan's Blocked table into the ledger so the next session resumes from it.
 

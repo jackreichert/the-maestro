@@ -46,7 +46,7 @@ Dependency order, one branch at a time, full suite after each ([SKILL.md](SKILL.
 
 ## Blocked
 
-Each blocked item names what it waits for, using `--gate` ([SKILL.md](../SKILL.md)).
+Each blocked item names what it waits for. A user decision is an `ask`; an external block is `log --kind blocked`, with `--gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>` only when the wait ends on one of those ([SKILL.md](SKILL.md#stopping)).
 
 | Item | Kind (decision / unexplained failure / external) | Waits for | Asked on | Lanes still moving |
 |---|---|---|---|---|
