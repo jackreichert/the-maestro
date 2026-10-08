@@ -20,7 +20,8 @@
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH } from '../local-config.ts';
+import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH, SELF_REVIEW_REPOS } from '../local-config.ts';
+import { isSelfReview } from '../lib/self-review.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { markPrsDirty } from '../lib/status-page/dirty.ts';
 import type { CheckContext, Watch, WatchEvent } from '../lib/types.ts';
@@ -44,6 +45,8 @@ export interface BoardPr {
   /** MERGEABLE | CONFLICTING | UNKNOWN: GitHub's last settled answer, carried across ticks while it re-computes. Absent in older snapshots. */
   mergeable?: string;
   needsCopilot: boolean;
+  /** The repo is in self_review_repos: only the user reviews it, so its lines are labelled apart from the org's. Absent in older snapshots. */
+  selfReview?: boolean;
   decision: string;
   threads: Ref[];
   replies: Ref[];
@@ -131,11 +134,15 @@ function settledMergeable(now: string | null | undefined, old: BoardPr | undefin
   return now === 'MERGEABLE' || now === 'CONFLICTING' ? now : old?.mergeable ?? 'UNKNOWN';
 }
 
+/** The label a self-review PR's event lines start with, so a digest keeps them apart from the org's. */
+const label = (pr: Pick<BoardPr, 'selfReview'>): string => (pr.selfReview ? '[self-review] ' : '');
+
 /** Every open PR as a plain board keyed `owner/repo#n`, reduced to what a diff needs. */
 function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
   const owners = new Set((ctx.config?.copilotOrgs ?? COPILOT_ORGS).map((o) => o.toLowerCase()));
   // Fail closed: Copilot is requested only where the repo owner is listed in copilot_orgs (GitHub logins are case-insensitive).
   const copilotAllowed = (nameWithOwner: string) => owners.has((nameWithOwner.split('/')[0] ?? '').toLowerCase());
+  const selfRepos = ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS;
   const board: Board = {};
   // Paginated: the search returns 50 PRs a page, and PRs past the first page must not look closed.
   for (const pr of searchAllPages<PrNode>(QUERY, ctx.run)) {
@@ -152,6 +159,7 @@ function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
       headRef: pr.headRefName || '',
       base: pr.baseRefName || '',
       mergeable: settledMergeable(pr.mergeable, before[key]),
+      selfReview: isSelfReview(pr.repository.nameWithOwner, selfRepos),
       needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
       threads: pr.reviewThreads.nodes.flatMap((t) => {
@@ -199,7 +207,7 @@ const STANDING: { kind: string; applies: (pr: BoardPr) => boolean; signature: (p
 ];
 
 const standingConditions = (board: Board): { id: string; sig: string; line: string }[] => STANDING.flatMap(({ kind, applies, signature }) =>
-  Object.entries(board).filter(([, pr]) => applies(pr)).map(([key, pr]) => ({ id: `${kind} ${key}`, sig: signature(pr), line: `${kind} ${key} ${pr.url}` })));
+  Object.entries(board).filter(([, pr]) => applies(pr)).map(([key, pr]) => ({ id: `${kind} ${key}`, sig: signature(pr), line: `${label(pr)}${kind} ${key} ${pr.url}` })));
 
 /** Everything told so far, pruned to the conditions that still hold: a cleared condition wakes again if it returns. */
 const reportedNow = (board: Board): Record<string, string> => Object.fromEntries(standingConditions(board).map((c) => [c.id, c.sig]));
@@ -242,7 +250,7 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   }
   // Idempotent: GitHub ignores a repeat add-reviewer and the next fetch sees the request, so a failed save only repeats a no-op.
   requestCopilot(board, ctx);
-  const left = prev ? Object.entries(prev.board).filter(([key, pr]) => !board[key] && confirmedClosed(pr, ctx)).map(([key, pr]) => `LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`) : [];
+  const left = prev ? Object.entries(prev.board).filter(([key, pr]) => !board[key] && confirmedClosed(pr, ctx)).map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`) : [];
   // `reported` is what this snapshot's standing conditions look like once told (so the next diff stays quiet about them).
   // A silent (baseline) first check reports nothing at all; a normal first check has told nobody yet, so diff() speaks.
   // `carried` hands diff() the old file's snapshot when that is what this check compared against.
@@ -259,13 +267,13 @@ function changesBetween(prev: Board, next: Board): string[] {
     // NONE <-> REVIEW_REQUIRED flips whenever threads resolve or commits land; only a move into or out of APPROVED / CHANGES_REQUESTED is worth waking for.
     const quiet = new Set(['NONE', 'REVIEW_REQUIRED']);
     // CONFLICT speaks on the way in (a PR we never saw before, or one last settled as anything but CONFLICTING); staying conflicted is silent.
-    if (pr.mergeable === 'CONFLICTING' && old?.mergeable !== 'CONFLICTING') lines.push(`CONFLICT ${key} ${pr.base || '?'} <- ${pr.headRef || '?'} ${pr.url}`);
-    if (old && old.decision !== pr.decision && !(quiet.has(old.decision) && quiet.has(pr.decision))) lines.push(`DECISION ${key}: ${old.decision} -> ${pr.decision} ${pr.url}`);
-    for (const t of pr.threads) if (!seen('threads', t.id)) lines.push(`THREAD ${key} by ${t.who}: ${t.url}`);
+    if (pr.mergeable === 'CONFLICTING' && old?.mergeable !== 'CONFLICTING') lines.push(`${label(pr)}CONFLICT ${key} ${pr.base || '?'} <- ${pr.headRef || '?'} ${pr.url}`);
+    if (old && old.decision !== pr.decision && !(quiet.has(old.decision) && quiet.has(pr.decision))) lines.push(`${label(pr)}DECISION ${key}: ${old.decision} -> ${pr.decision} ${pr.url}`);
+    for (const t of pr.threads) if (!seen('threads', t.id)) lines.push(`${label(pr)}THREAD ${key} by ${t.who}: ${t.url}`);
     const newThreadUrls = new Set(pr.threads.filter((t) => !seen('threads', t.id)).map((t) => t.url));
-    for (const r of pr.replies || []) if (!seen('replies', r.id) && !newThreadUrls.has(r.url)) lines.push(`REPLY ${key} by ${r.who}: ${r.url}`);
-    for (const c of pr.comments) if (!seen('comments', c.id)) lines.push(`COMMENT ${key} by ${c.who}: ${c.url}`);
-    for (const r of pr.reviews) if (!seen('reviews', r.id)) lines.push(`REVIEW ${key} by ${r.who} (${r.state}): ${r.url}`);
+    for (const r of pr.replies || []) if (!seen('replies', r.id) && !newThreadUrls.has(r.url)) lines.push(`${label(pr)}REPLY ${key} by ${r.who}: ${r.url}`);
+    for (const c of pr.comments) if (!seen('comments', c.id)) lines.push(`${label(pr)}COMMENT ${key} by ${c.who}: ${c.url}`);
+    for (const r of pr.reviews) if (!seen('reviews', r.id)) lines.push(`${label(pr)}REVIEW ${key} by ${r.who} (${r.state}): ${r.url}`);
   }
   return lines;
 }
