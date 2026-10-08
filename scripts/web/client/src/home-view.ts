@@ -150,8 +150,8 @@ function railRow(l: RailLink): HTMLElement {
 }
 
 /** A disclosure that is open on a wide screen and closed on a narrow one, where the rail follows What's left. */
-function railFold(summary: string, open: boolean, ...body: (Node | null)[]): HTMLElement {
-  return h('details', { class: 'fold', open }, h('summary', {}, summary), h('div', { class: 'fold-body' }, ...body));
+function railFold(name: string, summary: string, open: boolean, ...body: (Node | null)[]): HTMLElement {
+  return h('details', { class: 'fold', open, 'data-fold': `rail-${name}` }, h('summary', {}, summary), h('div', { class: 'fold-body' }, ...body));
 }
 
 /** "Done means" (the first sentence of each epic's text, the rest behind a disclosure) and the links, or null when the stream has neither. */
@@ -160,16 +160,16 @@ export function railBody(home: StreamHome, wide: boolean): HTMLElement | null {
   const done = home.doneMeans.map((d) => {
     const { head, more } = firstSentence(d.text);
     return h('div', {}, h('p', { class: 'done-means' }, h('span', { class: 'done-epic' }, `${d.epic} `), head),
-      more ? h('details', { class: 'fold' }, h('summary', {}, 'More'), h('p', { class: 'done-means' }, d.text)) : null);
+      more ? h('details', { class: 'fold', 'data-fold': `rail-done-${d.epic}` }, h('summary', {}, 'More'), h('p', { class: 'done-means' }, d.text)) : null);
   });
   if (done.length === 0 && groups.length === 0) return null;
   return h('div', { class: 'rail' },
-    done.length ? railFold('Done means', wide, ...done) : null,
-    groups.length ? railFold(`Links (${railCount(home.links)})`, wide, ...groups.map((g) => {
+    done.length ? railFold('done', 'Done means', wide, ...done) : null,
+    groups.length ? railFold('links', `Links (${railCount(home.links)})`, wide, ...groups.map((g) => {
       const { shown, rest } = capRows(g.items);
       return h('div', {}, h('h3', {}, g.title),
         h('ul', { class: 'links', role: 'list' }, ...shown.map(railRow)),
-        rest.length ? h('details', { class: 'fold' }, h('summary', {}, `Show ${rest.length} more`), h('ul', { class: 'links', role: 'list' }, ...rest.map(railRow))) : null,
+        rest.length ? h('details', { class: 'fold', 'data-fold': `rail-links-${g.title}` }, h('summary', {}, `Show ${rest.length} more`), h('ul', { class: 'links', role: 'list' }, ...rest.map(railRow))) : null,
         g.more > 0 ? h('p', { class: 'truncated' }, `${g.more} more not listed.`) : null);
     })) : null);
 }

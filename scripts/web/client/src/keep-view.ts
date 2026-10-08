@@ -1,7 +1,7 @@
 /**
- * What a full redraw must hand back to the reader: the disclosures they opened and the control that had focus. A live
- * ledger update rebuilds the whole page, so each disclosure carries a stable `data-fold` name, and these helpers read the
- * open ones before the redraw and open the same names after it. They take structural types so they run under node.
+ * What a full redraw must hand back to the reader: the disclosures as they left them and the control that had focus. A live
+ * ledger update rebuilds the whole page, so each disclosure carries a stable `data-fold` name, and these helpers read each
+ * one's state before the redraw and put the same names back after it. They take structural types so they run under node.
  */
 
 /** A name for the control that has focus: an id, a link target, or the summary of a named disclosure. */
@@ -29,15 +29,17 @@ function deepAll(root: KeepScope, selector: string): KeepEl[] {
   return found;
 }
 
-/** The names of the disclosures that are open now. */
-export function openFolds(root: KeepScope): string[] {
-  return deepAll(root, 'details[data-fold]').filter((d) => d.open).map((d) => d.getAttribute('data-fold') as string);
+/** Whether each named disclosure is open now, closed ones included: some start open, so the reader's close is state too. */
+export function foldStates(root: KeepScope): Map<string, boolean> {
+  return new Map(deepAll(root, 'details[data-fold]').map((d) => [d.getAttribute('data-fold') as string, d.open === true]));
 }
 
-/** Open the disclosures with these names; names the new page no longer has are skipped. */
-export function reopenFolds(root: KeepScope, names: string[]): void {
-  const want = new Set(names);
-  for (const d of deepAll(root, 'details[data-fold]')) if (want.has(d.getAttribute('data-fold') as string)) d.open = true;
+/** Put each named disclosure back as it was; names the new page no longer has are skipped, new ones keep their default. */
+export function restoreFolds(root: KeepScope, states: Map<string, boolean>): void {
+  for (const d of deepAll(root, 'details[data-fold]')) {
+    const was = states.get(d.getAttribute('data-fold') as string);
+    if (was !== undefined) d.open = was;
+  }
 }
 
 /** The key for the element that has focus, or null when it has no stable name (it will not be refocused). */
@@ -73,10 +75,10 @@ function deepActive(root: KeepScope): KeepEl | null {
  * needs this, not only the full-page one.
  */
 export function keepAcross(root: KeepScope, redraw: () => void): void {
-  const states = openFolds(root);
+  const states = foldStates(root);
   const active = deepActive(root);
   const key = active ? focusKeyOf(active) : null;
   redraw();
-  reopenFolds(root, states);
+  restoreFolds(root, states);
   if (key) findByKey(root, key)?.focus?.();
 }

@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/keep-view.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findByKey, focusKeyOf, keepAcross, openFolds, reopenFolds } from '../src/keep-view.ts';
+import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from '../src/keep-view.ts';
 import type { KeepEl, KeepScope } from '../src/keep-view.ts';
 
 /** A tiny stand-in for the DOM: elements with attributes, a parent and an optional shadow root, searched by tag or [data-fold]. */
@@ -19,19 +19,21 @@ function summaryOf(fold: string): KeepEl {
   return el('summary', {}, { parentElement: { getAttribute: (n) => (n === 'data-fold' ? fold : null) } });
 }
 
-test('open disclosures are read through nested shadow roots, and only the open ones', () => {
+test('disclosure states are read through nested shadow roots, closed ones included', () => {
   const a = el('details', { 'data-fold': 'unknowns' }, { open: true });
-  const b = el('details', { 'data-fold': 'epics-more' }, { open: false });
+  const b = el('details', { 'data-fold': 'rail-links' }, { open: false });
   const host = el('stream-board', {}, { shadowRoot: scope(a, b) });
-  assert.deepEqual(openFolds(scope(el('main'), host)), ['unknowns']);
+  assert.deepEqual([...foldStates(scope(el('main'), host))], [['unknowns', true], ['rail-links', false]]);
 });
 
-test('after a redraw the same disclosures open again, and names that are gone are skipped', () => {
+test('after a redraw each disclosure goes back as the reader left it, even one that starts open', () => {
   const a = el('details', { 'data-fold': 'unknowns' }, { open: false });
-  const b = el('details', { 'data-fold': 'epics-more' }, { open: false });
-  reopenFolds(scope(el('stream-board', {}, { shadowRoot: scope(a, b) })), ['unknowns', 'left-Blocked']);
+  const rail = el('details', { 'data-fold': 'rail-links' }, { open: true });   // open by default on a wide screen
+  const fresh = el('details', { 'data-fold': 'epics-more' }, { open: false });   // not there before: keeps its default
+  restoreFolds(scope(el('stream-board', {}, { shadowRoot: scope(a, rail, fresh) })), new Map([['unknowns', true], ['rail-links', false], ['gone', true]]));
   assert.equal(a.open, true);
-  assert.equal(b.open, false);
+  assert.equal(rail.open, false);
+  assert.equal(fresh.open, false);
 });
 
 test('focus on a disclosure summary survives a redraw; an unnamed control has no key', () => {
