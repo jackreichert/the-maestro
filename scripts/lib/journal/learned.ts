@@ -145,9 +145,21 @@ export function parseLearned(raw: RawLearned, ctx: LearnedContext): LearnedParse
     return { fields, errors: [] };
 }
 
-/** Problems with one stored `learned` row, for `verify`: whatever the write-time rules would refuse. The repo list is not re-checked (a repo may be renamed later). */
+/** Every field a stored `learned` row may carry: the fact, its location and checks, the usage marks, and the row's own bookkeeping. Anything else is not written by `learned`. */
+export const LEARNED_ROW_FIELDS: ReadonlySet<string> = new Set([
+    'id', 'ts', 'date', 'kind', 'text', 'learnedKind', 'appliesTo', 'evidence', 'verifiedAt', 'confidence', 'supersedes',
+    'repo', 'stream', 'model', 'used', 'tokens', 'harness', 'agent',
+]);
+
+/**
+ * Problems with one stored `learned` row, for `verify`: whatever the write-time rules would refuse, plus any field the
+ * write never sets (it would carry text no rule scanned). The repo list is not re-checked (a repo may be renamed later).
+ * An unknown field is reported by name only, shortened, since the name itself is free text.
+ */
 export function learnedProblems(row: LearnedRow, learnedIds: ReadonlySet<string>, opts: ScanOptions = {}): string[] {
-    return refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes, date: row.date, repo: row.repo, stream: row.stream, model: row.model, used: row.used, tokens: row.tokens, harness: row.harness, agent: row.agent }, { ...opts, learnedIds });
+    const unknown = Object.keys(row).filter((k) => !LEARNED_ROW_FIELDS.has(k)).map((k) => (k.length > 24 ? `${k.slice(0, 24)}...` : k));
+    const unknownProblem = unknown.length ? [`unknown field${unknown.length > 1 ? 's' : ''} (${unknown.join(', ')}): \`learned\` writes only its named fields, so this row was edited by hand.`] : [];
+    return [...unknownProblem, ...refusals({ text: row.text, learnedKind: row.learnedKind, appliesTo: row.appliesTo, evidence: row.evidence, verifiedAt: row.verifiedAt, confidence: row.confidence, supersedes: row.supersedes, date: row.date, repo: row.repo, stream: row.stream, model: row.model, used: row.used, tokens: row.tokens, harness: row.harness, agent: row.agent }, { ...opts, learnedIds })];
 }
 
 export const LEARNED_USAGE = [

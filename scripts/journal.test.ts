@@ -2495,6 +2495,16 @@ test('verify flags a learned row that was hand-edited past the write-time rules'
     assert.match(r.out + r.err, /learned: --evidence is required/);
 });
 
+test('verify rejects a learned row that carries a field the command never writes', () => {
+    run('learned', 'A claim.', ...LEARNED, ...MARK);
+    const path = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    const row = JSON.parse(readFileSync(path, 'utf8').trim());
+    writeFileSync(path, `${JSON.stringify({ ...row, extra: 'anything' })}\n`);
+    const r = run('verify');
+    assert.equal(r.code, 1);
+    assert.match(r.out, /learned: unknown field \(extra\)/);
+});
+
 test('learned --help prints its usage and writes nothing', () => {
     const r = run('learned', '--help');
     assert.equal(r.code, 0);

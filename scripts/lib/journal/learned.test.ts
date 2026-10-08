@@ -124,3 +124,12 @@ test('a key split across the claim and the evidence is refused as the combined f
     assert.ok(r.errors.some((e) => /\(fields combined\): looks like a secret \(aws-access-key-id\)/.test(e)), JSON.stringify(r.errors));
     assert.ok(r.errors.every((e) => !e.includes('IOSFODNN')));
 });
+
+test('learnedProblems rejects a field the write never sets, naming it and not its value', () => {
+    const edited = { ...GOOD_STORED, extra: ['AKIA', 'IOSFODNN7EXAMPLE'].join(''), note: ['pass', 'word=Hunter2Hunter2'].join('') } as typeof GOOD_STORED;
+    const problems = learnedProblems(edited, new Set());
+    assert.equal(problems.length, 1);
+    assert.match(problems[0] ?? '', /^unknown fields \(extra, note\)/);
+    assert.ok(!problems[0]?.includes('IOSFODNN') && !problems[0]?.includes('Hunter2'));
+    assert.deepEqual(learnedProblems({ ...GOOD_STORED, ts: '2026-10-08T00:00:00Z', id: 'ab12', date: '2026-10-08', kind: 'learned', model: 'x', used: ['tool:y'] } as typeof GOOD_STORED, new Set()), [], 'the row bookkeeping and usage marks are known');
+});
