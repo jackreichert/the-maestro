@@ -5,7 +5,7 @@
  *
  *   print-settings-snippet.ts [--project <name>] [--vault <ledger-root>]
  *
- * PreCompact runs precompact.ts (timeout 120 s, above the 100 s the hook gives its own handoff). SessionStart with matcher
+ * PreCompact runs precompact.ts (timeout 120 s, above the 45 s the hook gives its own handoff). SessionStart with matcher
  * `compact|clear` runs session-start-compact.ts (timeout 120 s; each command it runs is capped at 60 s).
  * `--project` and `--vault` are passed through to both hooks.
  */

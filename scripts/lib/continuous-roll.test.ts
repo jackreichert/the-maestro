@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { continuityLines, scanStart, dirtyPaths, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { continuityLines, dirtyPaths, errorLine, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 
 const line = (o: object): string => JSON.stringify(o);
 const T0 = '2026-10-09T12:00:00.000Z';
@@ -24,16 +24,15 @@ test('userMessages keeps typed text and drops tool results, meta rows and inject
 
 test('a decision with no covering row is raised once; a covering row or an earlier hit suppresses it', () => {
   const msgs = [{ ts: at(0), text: 'from now on never merge without a green suite' }, { ts: at(60), text: 'what time is it right now?' }];
-  assert.equal(unledgeredDecisions(msgs, [], '').length, 1);
-  assert.equal(unledgeredDecisions(msgs, [{ kind: 'rule', ts: at(5), text: 'merge needs green' }], '').length, 0);
-  assert.equal(unledgeredDecisions(msgs, [{ kind: 'rule', ts: at(45), text: 'too late to count' }], '').length, 1);
-  assert.equal(unledgeredDecisions(msgs, [{ kind: 'ask', ts: at(70), text: `unledgered decision? ${hitMarker(at(0))} x` }], '').length, 0);
-  assert.equal(unledgeredDecisions(msgs, [], at(0)).length, 0, 'messages at or before the last compaction are not re-raised');
+  assert.equal(unledgeredDecisions(msgs, []).raise.length, 1);
+  assert.equal(unledgeredDecisions(msgs, [{ kind: 'rule', ts: at(5), text: 'merge needs green' }]).raise.length, 0);
+  assert.equal(unledgeredDecisions(msgs, [{ kind: 'rule', ts: at(45), text: 'too late to count' }]).raise.length, 1);
+  assert.equal(unledgeredDecisions(msgs, [{ kind: 'ask', ts: at(70), text: `unledgered decision? ${hitMarker(at(0))} x` }]).raise.length, 0);
 });
 
 test('a decision message that carries a secret shape is withheld, not quoted', () => {
   const key = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
-  const [q] = unledgeredDecisions([{ ts: at(0), text: `always use this key ${key}` }], [], '');
+  const [q] = unledgeredDecisions([{ ts: at(0), text: `always use this key ${key}` }], []).raise;
   assert.match(q, /withheld/);
   assert.ok(!q.includes(key));
 });
@@ -124,25 +123,58 @@ test('continuityLines: silent with no marker or a fresh handoff, loud on an inco
   assert.deepEqual(continuityLines(healed, { name: 'h.md', at: at(29) }), []);
 });
 
-test('scanStart ignores started rows and runs whose decisions step failed', () => {
-  const ok = { kind: 'note', ts: at(10), text: 'precompact: handoff written, 0 file(s)' };
-  const bad = { kind: 'note', ts: at(20), text: 'precompact incomplete: decisions: EACCES (trigger auto)' };
-  const other = { kind: 'note', ts: at(25), text: 'precompact incomplete: snapshot: boom (trigger auto)' };
-  const started = { kind: 'note', ts: at(30), text: 'precompact started (trigger auto)' };
-  assert.equal(scanStart([]), '');
-  assert.equal(scanStart([ok, bad, started]), at(10));
-  assert.equal(scanStart([ok, bad, other, started]), at(25), 'a failure in another step still finished the decision scan');
+test('every pending decision is raised, oldest first, ten per run; the overflow is counted and taken by the next run', () => {
+  const msgs = Array.from({ length: 13 }, (_, n) => ({ ts: at(n), text: `from now on rule number ${n} applies` }));
+  const first = unledgeredDecisions(msgs, []);
+  assert.equal(first.raise.length, 10);
+  assert.equal(first.pending, 3);
+  assert.match(first.raise[0], /rule number 0 /);
+  const rows = first.raise.map((q, n) => ({ kind: 'question', ts: at(100 + n), text: q }));
+  const second = unledgeredDecisions(msgs, rows);
+  assert.deepEqual({ n: second.raise.length, pending: second.pending }, { n: 3, pending: 0 });
+  assert.match(second.raise[0], /rule number 10 /);
 });
 
-test('a started row with no result is loud until a newer handoff or an ack; asks other writers add during the run are not missed work', () => {
+test('another session compacting first cannot hide this transcript: there is no time cutoff, only the per-message marker', () => {
+  const mine = [{ ts: at(0), text: 'from now on session B decides this' }];
+  const otherSessionMark = { kind: 'note', ts: at(5), text: 'precompact: handoff written, 0 file(s) snapshotted from 0 worktree(s), 0 unledgered decision(s) raised (trigger auto, session aaaa1111)' };
+  assert.equal(unledgeredDecisions(mine, [otherSessionMark]).raise.length, 1);
+});
+
+test('errorLine picks the Error line of a crashed child, not the Node banner', () => {
+  assert.equal(errorLine('file:///x.ts:3\nthrow new Error("bad");\n^\n\nError: boom happened\n    at x\n\nNode.js v24.18.0\n'), 'Error: boom happened');
+  assert.equal(errorLine('handoff suffixes b..z for 2026-10-09 are used up; start a fresh session.\n'), 'handoff suffixes b..z for 2026-10-09 are used up; start a fresh session.');
+  assert.equal(errorLine(''), '');
+});
+
+test('a snapshot that hits the file cap says capped', () => {
+  const { container, wt } = repoWithDirt();
+  for (let n = 0; n < 305; n++) writeFileSync(join(wt, `gen${n}.ts`), `export const n${n} = ${n};\n`);
+  const r = snapshotDirty(container, join(container, 'snap'));
+  assert.deepEqual({ files: r.files, capped: r.capped, partial: r.partial }, { files: 300, capped: true, partial: false });
+});
+
+test('a started row with no result of its own run stays loud: a newer handoff, or another session finishing, does not clear it', () => {
   const work = { kind: 'wip', ts: at(10), text: 'work' };
-  const started = { kind: 'note', ts: at(20), text: 'precompact started (trigger auto)' };
-  assert.match(continuityLines([work, started], { name: 'h.md', at: at(5) })[0], /precompact started .* never finished/);
-  assert.deepEqual(continuityLines([work, started], { name: 'h.md', at: at(21) }), []);
-  const ack = { kind: 'note', ts: at(22), text: 'precompact ack' };
-  assert.deepEqual(continuityLines([work, started, ack], null), []);
+  const startedA = { kind: 'note', ts: at(20), text: 'precompact started (trigger auto, session aaaa1111)' };
+  const startedB = { kind: 'note', ts: at(21), text: 'precompact started (trigger auto, session bbbb2222)' };
+  const doneB = { kind: 'note', ts: at(22), text: 'precompact: handoff written, 0 file(s) snapshotted from 0 worktree(s), 0 unledgered decision(s) raised (trigger auto, session bbbb2222)' };
+  assert.match(continuityLines([work, startedA], { name: 'h.md', at: at(5) })[0], /precompact started .*aaaa1111.* never finished/);
+  assert.match(continuityLines([work, startedA], { name: 'h.md', at: at(21) })[0], /never finished/, 'the hook\'s own handoff is written before the snapshot, so it proves nothing');
+  const mixed = continuityLines([work, startedA, startedB, doneB], { name: 'h.md', at: at(21.5) });
+  assert.equal(mixed.length, 1);
+  assert.match(mixed[0], /aaaa1111/);
+  const doneA = { kind: 'note', ts: at(23), text: 'precompact incomplete: snapshot: boom (trigger auto, session aaaa1111)' };
+  assert.equal(continuityLines([work, startedA, startedB, doneB, doneA], { name: 'h.md', at: at(21.5) }).every((l) => !/never finished/.test(l)), true);
+  const ack = { kind: 'note', ts: at(24), text: 'precompact ack' };
+  assert.deepEqual(continuityLines([work, startedA, ack], null), []);
+});
+
+test('rows other writers add while the hook runs are not missed work', () => {
+  const work = { kind: 'wip', ts: at(10), text: 'work' };
+  const started = { kind: 'note', ts: at(20), text: 'precompact started (trigger auto, session aaaa1111)' };
   const lateWriter = { kind: 'wip', ts: at(21), text: 'another agent logged during the hook' };
-  const done = { kind: 'note', ts: at(22), text: 'precompact: handoff written' };
+  const done = { kind: 'note', ts: at(22), text: 'precompact: handoff written (trigger auto, session aaaa1111)' };
   assert.deepEqual(continuityLines([work, started, lateWriter, done], { name: 'h.md', at: at(20.5) }), []);
 });
 

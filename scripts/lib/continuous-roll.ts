@@ -19,7 +19,6 @@ export const PRECOMPACT_STARTED = 'precompact started';
 /** Written by a person (or `journal.ts log`) to dismiss an alarm whose cause needs no handoff. */
 export const PRECOMPACT_ACK = 'precompact ack';
 const DECISION_COVER_MS = 30 * 60_000;
-const MAX_DECISION_HITS = 3;
 const SNAPSHOT_MAX_FILE_BYTES = 1_000_000;
 const SNAPSHOT_MAX_FILES = 300;
 const SNAPSHOT_MAX_TOTAL_BYTES = 20_000_000;
@@ -52,16 +51,29 @@ const covers = (r: LedgerRow): boolean => ['decision', 'rule', 'learned', 'resol
 /** The message's own marker inside a row's text: how a later compaction knows this hit was already raised. */
 export const hitMarker = (ts: string): string => `[msg ${ts}]`;
 
+/** At most this many hits are raised per run, oldest first; the rest stay unraised and the next run takes them. */
+export const MAX_DECISION_HITS_PER_RUN = 10;
+
 /**
- * Messages since `sinceTs` that look like decisions and have no ledger row that could record them within 30 minutes after,
- * and that no earlier hit has already raised. Newest three, text clipped, and withheld when it carries a secret or PHI shape.
+ * Messages that look like decisions, have no ledger row that could record them within 30 minutes after, and that no earlier
+ * run has already raised (the `[msg <ts>]` marker in a ledger row is the only memory; there is no time cutoff, so another
+ * session's compaction can never hide this transcript's decisions). Returns every pending hit, oldest first: `raise` is the
+ * first MAX_DECISION_HITS_PER_RUN of them as ask text (clipped, withheld when the text carries a secret or PHI shape), and
+ * `pending` counts the hits left for the next run.
  */
-export function unledgeredDecisions(messages: UserMessage[], rows: LedgerRow[], sinceTs: string): string[] {
+export function unledgeredDecisions(messages: UserMessage[], rows: LedgerRow[]): { raise: string[]; pending: number } {
     const stamped = rows.filter((r) => r.ts);
-    const hits = messages.filter((m) => m.ts > sinceTs && m.text.length >= 12 && m.text.length <= 1500 && DECISION_RE.test(m.text))
+    const hits = messages.filter((m) => m.text.length >= 12 && m.text.length <= 1500 && DECISION_RE.test(m.text))
         .filter((m) => !stamped.some((r) => (r.text ?? '').includes(hitMarker(m.ts))))
         .filter((m) => !stamped.some((r) => covers(r) && r.ts! >= m.ts && Date.parse(r.ts!) - Date.parse(m.ts) <= DECISION_COVER_MS));
-    return hits.slice(-MAX_DECISION_HITS).map((m) => `unledgered decision? ${hitMarker(m.ts)} ${scanText(m.text).length ? '(text withheld: secret or PHI shape)' : clip(m.text.replace(/\s+/g, ' '), 140)}`);
+    const raise = hits.slice(0, MAX_DECISION_HITS_PER_RUN).map((m) => `unledgered decision? ${hitMarker(m.ts)} ${scanText(m.text).length ? '(text withheld: secret or PHI shape)' : clip(m.text.replace(/\s+/g, ' '), 140)}`);
+    return { raise, pending: hits.length - raise.length };
+}
+
+/** The line of a failed child's stderr that says why: the first `...Error: ...` line, else the last line (never the trailing "Node.js v24" banner). */
+export function errorLine(stderr: string): string {
+    const lines = stderr.split('\n').map((l) => l.trim()).filter(Boolean);
+    return lines.find((l) => /\b\w*Error\b.*:/.test(l)) ?? lines.at(-1) ?? '';
 }
 
 /** Paths (relative) git reports as modified, added or untracked in a worktree; deletions are not files to keep. */
@@ -89,18 +101,18 @@ const SOURCE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py',
 const SOURCE_NAMES = new Set(['package.json', 'tsconfig.json', 'Makefile', 'Dockerfile', 'pyproject.toml']);
 export const isSnapshotSource = (path: string): boolean => SOURCE_EXT.has(extname(path).toLowerCase()) || SOURCE_NAMES.has(basename(path));
 
-export interface SnapshotResult { worktrees: number; files: number; skipped: number; dest: string; /** True when the deadline stopped the scan before every worktree was read. */ partial: boolean }
+export interface SnapshotResult { worktrees: number; files: number; skipped: number; dest: string; /** True when the deadline stopped the scan before every worktree was read. */ partial: boolean; /** True when the file-count or total-size cap left source uncopied. */ capped: boolean }
 
 /**
  * Copies dirty and untracked source of the active worktrees under `container/.worktrees` to `dest/<worktree>/<path>`.
  * Only regular files (never a symlink, whatever it points at) that pass `isSnapshotSource` and not `isSecretName`;
  * skips files over 1 MB and files whose text carries a secret or PHI shape (counted, never named by content). Idempotent.
- * Stops at 300 files, 20 MB or `deadline` (epoch ms; `partial` is then true). `dest`'s parent gets a `.gitignore` of `*`,
+ * Stops at 300 files or 20 MB (`capped` is then true) or at `deadline` (epoch ms; `partial` is then true). `dest`'s parent gets a `.gitignore` of `*`,
  * so a snapshots folder inside a repo can never be committed. Never throws for one bad worktree.
  */
 export function snapshotDirty(container: string, dest: string, now: number = Date.now(), deadline: number = Infinity): SnapshotResult {
     const root = join(container, '.worktrees');
-    const result: SnapshotResult = { worktrees: 0, files: 0, skipped: 0, dest, partial: false };
+    const result: SnapshotResult = { worktrees: 0, files: 0, skipped: 0, dest, partial: false, capped: false };
     let total = 0;
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(join(dirname(dest), '.gitignore'), '*\n');
@@ -116,7 +128,8 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
         for (const p of live) {
             const src = join(wt, p);
             const size = regular(p)?.size ?? Infinity;
-            if (!isSnapshotSource(p) || isSecretName(p) || size > SNAPSHOT_MAX_FILE_BYTES || result.files >= SNAPSHOT_MAX_FILES || total + size > SNAPSHOT_MAX_TOTAL_BYTES) { result.skipped++; continue; }
+            if (!isSnapshotSource(p) || isSecretName(p) || size > SNAPSHOT_MAX_FILE_BYTES) { result.skipped++; continue; }
+            if (result.files >= SNAPSHOT_MAX_FILES || total + size > SNAPSHOT_MAX_TOTAL_BYTES) { result.skipped++; result.capped = true; continue; }
             let hasShape = false;
             try { hasShape = scanText(readFileSync(src, 'utf8')).length > 0; } catch { hasShape = true; }
             if (hasShape) { result.skipped++; continue; }
@@ -147,24 +160,20 @@ export const HOOK_USED = 'hook:precompact';
 const byHook = (r: LedgerRow): boolean => JSON.stringify(r.used ?? '').includes(HOOK_USED);
 const starts = (r: LedgerRow, prefix: string): boolean => (r.text ?? '').startsWith(prefix);
 
-/**
- * Where the next decision scan starts: the newest marker row of a run whose decisions step finished. A run that failed in
- * that step, or was killed before it (a "started" row), must not move the start, or its decisions are never scanned again.
- */
-export function scanStart(rows: LedgerRow[]): string {
-    const done = rows.findLast((r) => isMark(r) && !starts(r, PRECOMPACT_STARTED) && !starts(r, PRECOMPACT_ACK) && !(starts(r, PRECOMPACT_INCOMPLETE) && /\bdecisions: /.test(r.text ?? '')));
-    return done?.ts ?? '';
-}
-
 const REMEDY = '`journal.ts handoff --all --delta` (or `--force --out <file>` once the day\'s suffixes are used up)';
 const ACK = `journal.ts log "${PRECOMPACT_ACK}" --kind note --model <name> --used tool:journal.ts`;
 
+/** The session tag a precompact row carries ("session ab12cd34"), or '' for a row without one. */
+const tagOf = (r: LedgerRow): string => (r.text ?? '').match(/session ([\w-]+)\)/)?.[1] ?? '';
+
 /**
- * What prime says first after a compaction. The newest precompact row says how the hook ended:
- * - "ack": someone dismissed it; nothing is printed.
- * - "started" with no result after it: the hook was killed. A newer handoff or an ack clears it.
- * - "incomplete": printed with its failed steps. When the handoff step failed a newer handoff clears it; a snapshot or
- *   decisions failure needs no handoff and only an ack clears it.
+ * What prime says first after a compaction.
+ * - A "started" row with no result of its own run after it (a later non-started `precompact` row with the same session tag,
+ *   or an ack): the hook was killed. Only its completed row or an ack clears this; a newer handoff does not, since the hook's
+ *   own handoff is written before the snapshot and the decision scan. Other sessions' rows do not hide it.
+ * - The newest row an "incomplete": printed with its failed steps. When the handoff step failed, a newer handoff clears it;
+ *   a snapshot or decisions failure needs no handoff and only an ack clears it.
+ * - An "ack" as the newest row dismisses everything.
  * Separately, when the newest handoff predates the last ledger row written before this compaction began (before the run's
  * "started" row, so rows other writers add while the hook runs are not counted), the handoff missed work and the line says so.
  */
@@ -175,14 +184,15 @@ export function continuityLines(rows: LedgerRow[], handoff: { name: string; at: 
     if (starts(mark, PRECOMPACT_ACK)) return [];
     const lines: string[] = [];
     const handoffNewer = handoff !== null && handoff.at > (mark.ts ?? '');
-    const text = clip(mark.text ?? '', 260);
-    if (starts(mark, PRECOMPACT_STARTED) && !handoffNewer) lines.push(`!! ${text} (${mark.ts}) never finished: the hook was killed or failed before it wrote its result. Run ${REMEDY}, or dismiss with \`${ACK}\`.`);
+    const finished = (i: number): boolean => rows.slice(i + 1).some((r) => isMark(r) && !starts(r, PRECOMPACT_STARTED) && (starts(r, PRECOMPACT_ACK) || tagOf(r) === tagOf(rows[i])));
+    const unfinished = rows.findLastIndex((r, i) => starts(r, PRECOMPACT_STARTED) && !finished(i));
+    if (unfinished >= 0) lines.push(`!! ${clip(rows[unfinished].text ?? '', 200)} (${rows[unfinished].ts}) never finished: the hook was killed or failed before it wrote its result, so the snapshot or the decision scan may not have run. Run ${REMEDY}, then dismiss with \`${ACK}\`.`);
     if (starts(mark, PRECOMPACT_INCOMPLETE)) {
         const needsHandoff = /\bhandoff: /.test(mark.text ?? '');
-        if (!(needsHandoff && handoffNewer)) lines.push(`!! ${text} (${mark.ts}). ${needsHandoff ? `Run ${REMEDY}, or dismiss` : 'A handoff does not fix this; dismiss'} with \`${ACK}\`.`);
+        if (!(needsHandoff && handoffNewer)) lines.push(`!! ${clip(mark.text ?? '', 260)} (${mark.ts}). ${needsHandoff ? `Run ${REMEDY}, or dismiss` : 'A handoff does not fix this; dismiss'} with \`${ACK}\`.`);
     }
-    const started = rows.slice(0, k + 1).findLastIndex((r) => starts(r, PRECOMPACT_STARTED));
-    const cut = started >= 0 && !rows.slice(started + 1, k).some(isMark) ? started : k;
+    const started = rows.slice(0, k + 1).findLastIndex((r) => starts(r, PRECOMPACT_STARTED) && tagOf(r) === tagOf(mark));
+    const cut = started >= 0 ? started : k;
     const before = rows.slice(0, cut).findLast((r) => r.ts && !isMark(r) && !byHook(r));
     if (before?.ts && (!handoff || handoff.at < before.ts)) {
         lines.push(`!! HANDOFF STALE: ${handoff ? `the newest handoff (${handoff.name}, ${handoff.at})` : 'there is no handoff'}, but the last ledger row before the compaction at ${mark.ts} is ${before.ts}. Run ${REMEDY} now.`);

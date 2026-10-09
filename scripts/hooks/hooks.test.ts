@@ -11,18 +11,18 @@ const transcript = JSON.stringify({ type: 'user', timestamp: '2026-10-09T11:00:0
 
 function deps(over: Partial<PrecompactDeps> = {}): { d: PrecompactDeps; calls: string[][] } {
   const calls: string[][] = [];
-  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], readTranscript: () => transcript, handoffPath: (d) => `/j/HANDOFF-${d}-precompact.md`, snapshot: () => ({ worktrees: 2, files: 5, skipped: 1, partial: false }), now: () => new Date(T), ...over } };
+  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], readTranscript: () => transcript, handoffPath: (d) => `/j/HANDOFF-${d}-precompact.md`, snapshot: () => ({ worktrees: 2, files: 5, skipped: 1, partial: false, capped: false }), now: () => new Date(T), ...over } };
 }
 
 test('precompact writes the handoff delta, raises the decision and ends with a marker row', () => {
   const { d, calls } = deps();
   const text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d);
-  assert.deepEqual(calls[0].slice(0, 2), ['log', 'precompact started (trigger auto)'], 'the trace row comes before any slow work');
+  assert.deepEqual(calls[0].slice(0, 2), ['log', 'precompact started (trigger auto, session unknown)'], 'the trace row comes before any slow work');
   assert.deepEqual(calls[1], ['handoff', '--all', '--no-worktree-sweep', '--force', '--out', '/j/HANDOFF-2026-10-09-precompact.md']);
   assert.equal(calls[2][0], 'ask');
   assert.match(calls[2][1], /^unledgered decision\? \[msg 2026-10-09T11:00:00.000Z\]/);
   assert.deepEqual(calls[3].slice(0, 2), ['log', text]);
-  assert.match(text, /^precompact: handoff written, 5 file\(s\) snapshotted from 2 worktree\(s\), 1 unledgered decision\(s\) raised \(trigger auto\)$/);
+  assert.match(text, /^precompact: handoff written, 5 file\(s\) snapshotted from 2 worktree\(s\), 1 unledgered decision\(s\) raised \(trigger auto, session unknown\)$/);
 });
 
 test('precompact fails open: each failing step is named in an "incomplete" row and the others still run', () => {
@@ -32,7 +32,7 @@ test('precompact fails open: each failing step is named in an "incomplete" row a
     readTranscript: () => { throw new Error('ENOENT'); },
   });
   const text = precompact({ transcript_path: '/gone', trigger: 'manual' }, d);
-  assert.match(text, /^precompact incomplete: handoff: boom; snapshot: disk full; decisions: ENOENT \(trigger manual\)$/);
+  assert.match(text, /^precompact incomplete: handoff: boom; snapshot: disk full; decisions: ENOENT \(trigger manual, session unknown\)$/);
   assert.equal(calls.at(-1)?.[0], 'log');
 });
 
@@ -68,11 +68,11 @@ test('the settings snippet names both events with the matchers and passes flags 
 });
 
 test('a partial snapshot (deadline hit) is reported as a failed step, not as success', () => {
-  const { d } = deps({ snapshot: () => ({ worktrees: 3, files: 4, skipped: 0, partial: true }) });
-  assert.match(precompact({ transcript_path: '/t', trigger: 'auto' }, d), /^precompact incomplete: snapshot: time budget reached after 3 worktree\(s\) \(trigger auto\)$/);
+  const { d } = deps({ snapshot: () => ({ worktrees: 3, files: 4, skipped: 0, partial: true, capped: false }) });
+  assert.match(precompact({ transcript_path: '/t', trigger: 'auto' }, d), /^precompact incomplete: snapshot: time budget reached after 3 worktree\(s\) \(trigger auto, session unknown\)$/);
 });
 
-test('a failed decisions step does not move the scan start, so the next run raises the decision', () => {
+test('a failed decisions step does not move the scan memory, so the next run raises the decision', () => {
   const rows: LedgerRow[] = [];
   const log = (a: string[]): void => { if (a[0] === 'log') rows.push({ kind: 'note', ts: `2026-10-09T12:0${rows.length}:00.000Z`, text: a[1], used: ['hook:precompact'] }); };
   const first = deps({ readLedger: () => rows, readTranscript: () => { throw new Error('EACCES'); }, journal: (a) => { log(a); return { ok: true, out: '' }; } });
@@ -80,4 +80,18 @@ test('a failed decisions step does not move the scan start, so the next run rais
   const second = deps({ readLedger: () => rows, journal: (a) => { log(a); second.calls.push(a); return { ok: true, out: '' }; } });
   precompact({ transcript_path: '/t', trigger: 'auto' }, second.d);
   assert.ok(second.calls.some((c) => c[0] === 'ask'), 'the decision from before the failed run is raised now');
+});
+
+test('a capped snapshot is reported as a failed step', () => {
+  const { d } = deps({ snapshot: () => ({ worktrees: 3, files: 300, skipped: 9, partial: false, capped: true }) });
+  assert.match(precompact({ transcript_path: '/t', trigger: 'auto' }, d), /^precompact incomplete: snapshot: file or size cap reached after 300 file\(s\); later source was not copied /);
+});
+
+test('the started and result rows carry the same session tag, and an overflow of decisions is reported as pending', () => {
+  const transcript12 = Array.from({ length: 12 }, (_, n) => JSON.stringify({ type: 'user', timestamp: `2026-10-09T11:${String(10 + n)}:00.000Z`, message: { content: `from now on rule ${n} applies` } })).join('\n');
+  const { d, calls } = deps({ readTranscript: () => transcript12 });
+  const text = precompact({ transcript_path: '/t', trigger: 'auto', session_id: 'abcdef1234567' }, d);
+  assert.equal(calls[0][1], 'precompact started (trigger auto, session abcdef12)');
+  assert.match(text, /10 unledgered decision\(s\) raised, 2 more pending for the next compaction \(trigger auto, session abcdef12\)$/);
+  assert.equal(calls.filter((c) => c[0] === 'ask').length, 10);
 });
