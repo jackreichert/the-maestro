@@ -47,7 +47,8 @@ export const RECORD_BOXES = [BOX.RULE, BOX.STANDING, BOX.ONE_OFF];
 
 const RUN_THIS = /\b(run|paste|yourself|block|jack runs)\b/i;
 const FINDING = /could not be filed|follow[- ]?up|next session|\bTODO\b/i;
-const LEARNED = /learned|lesson|ruled out|\bcause\b/i;
+// Bare "cause" is ordinary wording, not a learning. Keep learned, lesson, and ruled out.
+const LEARNED = /learned|lesson|ruled out/i;
 const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/;
 
 /** Days from YYYY-MM-DD `from` to `to`; 0 when either is missing. */
