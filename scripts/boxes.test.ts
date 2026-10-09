@@ -21,7 +21,10 @@ test('classify notes: a finding needs no ticket on it, a learning is kept, the r
     assert.equal(classify({ kind: 'note', text: 'follow-up: restart the watcher next session' }), BOX.FINDING);
     assert.equal(classify({ kind: 'note', text: 'follow-up filed as the-maestro-016' }), BOX.NOISE);
     assert.equal(classify({ kind: 'note', text: 'follow-up', ticket: 'X-1' }), BOX.NOISE);
-    assert.equal(classify({ kind: 'note', text: 'root cause was the cwd' }), BOX.LEARNING);
+    assert.equal(classify({ kind: 'note', text: 'the outage had a cause in the fixture clock' }), BOX.NOISE);
+    assert.equal(classify({ kind: 'note', text: 'lesson: the clock was wrong' }), BOX.LEARNING);
+    assert.equal(classify({ kind: 'note', text: 'learned the fixture clock was wrong' }), BOX.LEARNING);
+    assert.equal(classify({ kind: 'note', text: 'ruled out the fixture clock' }), BOX.LEARNING);
     assert.equal(classify({ kind: 'note', text: 'posted reply' }), BOX.NOISE);
     assert.equal(classify({ kind: 'note', text: 'skipped because it was late' }), BOX.NOISE);
 });
