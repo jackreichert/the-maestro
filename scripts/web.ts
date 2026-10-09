@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * web.ts: serve the Podium as a local web page. It is read-only except for today's priorities (reorder, add, delete). Normally run as `journal.ts web`, which passes the ledger root and project.
+ * web.ts: serve the Podium as a local web page. It is read-only except for today's priorities (reorder, add, delete) and answering an ask. Normally run as `journal.ts web`, which passes the ledger root and project.
  *
  *   web.ts [--port <n>] [--status-dir <dir>] [--vault <ledger root>] [--project <name>]
  *
@@ -8,7 +8,7 @@
  *   --status-dir DIR  where priorities.md, .now-prs.json, ticket-map.json and fragments/ live (default as for `podium`)
  *
  * Binds 127.0.0.1 only. It answers GET, plus three POST routes that edit today's priorities (priorities.md) and, for each, append
- * one closed note to the ledger. Nothing else is written, and it never calls GitHub.
+ * one closed note to the ledger, and one that answers an ask (closes it in the ledger, as `journal.ts resolve --answer` does, and fills its stub in the note). Nothing else is written, and it never calls GitHub.
  * The page itself is built by `npm run build:web`; without that build the server still answers /api/* and says so.
  */
 import { existsSync, realpathSync } from 'node:fs';
