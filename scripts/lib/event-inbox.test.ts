@@ -176,3 +176,30 @@ test('a seen or handled mark carries the window that made it, free text is strip
   assert.equal(by.get(c)?.seenBy, undefined);
   assert.ok(!readFileSync(inboxPath(dir), 'utf8').includes('bad id'));
 });
+
+test('seen is per window: one window\'s mark does not skip another\'s, and seenWindows lists each', () => {
+  const dir = tempDir();
+  appendEvents(dir, [ev('THREAD acme/w#1 by a: u')]);
+  const [a] = readInbox(dir);
+  mark(dir, 'seen', [a.id], Date.now(), 'w1');
+  mark(dir, 'seen', [a.id], Date.now(), 'w2');
+  mark(dir, 'seen', [a.id], Date.now(), 'w2');
+  const rows = readFileSync(inboxPath(dir), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(rows.filter((r) => r.row === 'seen').map((r) => r.window), ['w1', 'w2'], 'w2 wrote its own mark once; its repeat was a no-op');
+  const [e] = readInbox(dir);
+  assert.deepEqual([e.seen, e.seenBy, e.seenWindows, e.seenAnonymous], [true, 'w1', ['w1', 'w2'], undefined]);
+});
+
+test('a mark that names no window counts as seen by every window, and a windowless caller keeps the old skip-once rule', () => {
+  const dir = tempDir();
+  appendEvents(dir, [ev('THREAD acme/w#1 by a: u'), ev('THREAD acme/w#2 by a: u')]);
+  const [a, b] = readInbox(dir);
+  mark(dir, 'seen', [a.id]);
+  mark(dir, 'seen', [a.id], Date.now(), 'w1');
+  mark(dir, 'seen', [b.id], Date.now(), 'w1');
+  mark(dir, 'seen', [b.id]);
+  const rows = readFileSync(inboxPath(dir), 'utf8').trim().split('\n').map((l) => JSON.parse(l).row);
+  assert.deepEqual(rows, ['event', 'event', 'seen', 'seen'], 'w1 adds nothing to an event an older anonymous mark already covers; the windowless repeat on b is skipped');
+  const [a2, b2] = readInbox(dir);
+  assert.deepEqual([a2.seenAnonymous, a2.seenWindows, b2.seenAnonymous, b2.seenWindows], [true, [], undefined, ['w1']]);
+});
