@@ -11,10 +11,11 @@ import { foldLeases } from './leases.ts';
 
 const WORKER = new URL('./lease-race-worker.ts', import.meta.url).pathname;
 const ITEMS = 25;
+const STEAL_ITEMS = 4;   // wide slots (400 ms) so every stealer reads before any steal lands
 
-function runWorker(vault: string, window: string, startAt: number): Promise<{ window: string; won: string[] }> {
+function runWorker(vault: string, window: string, startAt: number, items = ITEMS, mode?: string): Promise<{ window: string; won: string[] }> {
     return new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [WORKER, vault, window, String(startAt), String(ITEMS)], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const child = spawn(process.execPath, [WORKER, vault, window, String(startAt), String(items), ...(mode ? [mode] : [])], { stdio: ['ignore', 'pipe', 'pipe'] });
         let out = '';
         let err = '';
         child.stdout.on('data', (d) => { out += d; });
@@ -36,4 +37,32 @@ for (const windows of [2, 4, 6]) {
             assert.equal(held.get(`it${i}`)?.holder, winners[0], `the ledger names the process that was told it won it${i}`);
         }
     });
+}
+
+/** Put a live lease held by window `h` on every item, so the racers have something to steal. */
+function seedHolder(vault: string): void {
+    const store = openStore({ vault, project: 'race', dryRun: false, window: 'h' });
+    store.ensureDir();
+    for (let i = 0; i < STEAL_ITEMS; i++) {
+        const ts = new Date().toISOString();
+        store.append({ ts, date: ts.slice(0, 10), kind: 'lease', leases: `it${i}`, window: 'h', ttl: 30, text: `lease it${i}` });
+    }
+}
+
+for (const windows of [2, 4, 6]) {
+    for (let round = 1; round <= 3; round++) {
+        test(`${windows} processes stealing ${STEAL_ITEMS} held items (round ${round}): each item has exactly one winner, and it is the holder the ledger folds to`, async () => {
+            const vault = mkdtempSync(join(tmpdir(), 'lease-steal-'));
+            seedHolder(vault);
+            const startAt = Date.now() + 3000;
+            const names = Array.from({ length: windows }, (_, i) => `s${i}`);
+            const results = await Promise.all(names.map((w) => runWorker(vault, w, startAt, STEAL_ITEMS, 'steal')));
+            const held = foldLeases(openStore({ vault, project: 'race', dryRun: false }).readLedger());
+            for (let i = 0; i < STEAL_ITEMS; i++) {
+                const winners = results.filter((r) => r.won.includes(`it${i}`)).map((r) => r.window);
+                assert.equal(winners.length, 1, `it${i} was reported stolen by ${winners.join(', ') || 'nobody'}`);
+                assert.equal(held.get(`it${i}`)?.holder, winners[0], `the ledger names the process that was told it won it${i}`);
+            }
+        });
+    }
 }

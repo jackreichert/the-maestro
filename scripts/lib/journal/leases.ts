@@ -4,11 +4,11 @@ import type { LedgerRow } from '../ledger-core.ts';
  * Leases: which orchestrator window is working a ledger item, so two windows on one project do not both take it.
  *
  * A lease is two kinds of ledger row, folded in file order (the ledger is the only store):
- *   { kind: 'lease', leases: <item id>, window, ts, ttl: <minutes>, steal?: true }
+ *   { kind: 'lease', leases: <item id>, window, ts, ttl: <minutes>, steal?: true, from?: <holder it takes from> }
  *   { kind: 'unlease', unleases: <item id>, window, force?: true }
  * (and a new in-flight `wip` row with `leaseTtl: <minutes>`, which leases its own id in the same row)
  * The fold decides who holds an item. A `lease` row takes effect only if nobody else held a live lease at that
- * row's own timestamp (or it says `steal`), so a row that lost a race is simply ignored. Rows are appended with
+ * row's own timestamp (or it says `steal` and its `from` names the current holder), so a row that lost a race is simply ignored. Rows are appended with
  * O_APPEND, which orders them totally, so of any number of windows racing for one item the earliest row in the
  * file wins and every later reader folds to the same holder. A closing row (`done`, `drop`, `resolve`) ends the lease.
  * A lease runs for its `ttl` from its last renewal; any row its holder writes renews it, so a working window keeps
@@ -31,7 +31,8 @@ export function foldLeases(entries: readonly LedgerRow[]): Map<string, Lease> {
         const item = e.kind === 'lease' ? e.leases : e.kind === 'wip' && !e.queued && e.leaseTtl !== undefined ? e.id : undefined;
         if (typeof item === 'string') {
             const cur = held.get(item);
-            const free = !cur || cur.until <= at || cur.holder === e.window || e.steal === true;
+            // A steal counts only while its `from` still names the holder, so of several racing stealers the first row wins and later ones are ignored.
+            const free = !cur || cur.until <= at || cur.holder === e.window || (e.steal === true && e.from === cur.holder);
             if (free) {
                 const minutes = Number(e.kind === 'lease' ? e.ttl : e.leaseTtl);
                 const ttlMs = (minutes > 0 ? minutes : 1) * MIN_MS;
@@ -80,7 +81,7 @@ export type Acquired = { ok: true; lease: Lease; wrote: boolean } | { ok: false;
 /**
  * Take (or renew) the lease on `item` for this window. Refused without writing when another window holds a live
  * lease and `steal` is not set. Otherwise it appends a `lease` row and folds the ledger again: the row only counts
- * if it came first, so a window that lost a race to another reads that other window as the holder and is refused.
+ * if it came first (a steal: if no other steal of the same holder came first), so a window that lost a race to another reads that other window as the holder and is refused.
  */
 export function acquireLease(ctx: LeaseContext, item: string, opts: { ttlMinutes: number; steal?: boolean; text?: string }): Acquired {
     const nowMs = Date.parse(ctx.now());

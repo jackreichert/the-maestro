@@ -33,9 +33,42 @@ test('activity after a lease lapsed does not bring it back', () => {
   assert.equal(liveLease(foldLeases(rows), 'it01', T0 + 41 * 60_000), undefined);
 });
 
-test('steal takes a live lease; an unmarked row does not', () => {
-  assert.equal(foldLeases([lease('a', 0), lease('b', 1, { steal: true })]).get('it01')?.holder, 'b');
+test('steal takes a live lease from the holder it names; an unmarked row does not', () => {
+  assert.equal(foldLeases([lease('a', 0), lease('b', 1, { steal: true, from: 'a' })]).get('it01')?.holder, 'b');
   assert.equal(foldLeases([lease('a', 0), lease('b', 1, { steal: false })]).get('it01')?.holder, 'a');
+});
+
+test('of several steals from one holder only the first row counts; a steal naming a stale holder is ignored', () => {
+  const held = foldLeases([lease('a', 0), lease('b', 1, { steal: true, from: 'a' }), lease('c', 1, { steal: true, from: 'a' })]);
+  assert.equal(held.get('it01')?.holder, 'b');
+  assert.equal(foldLeases([lease('a', 0), lease('b', 1, { steal: true })]).get('it01')?.holder, 'a', 'a steal that names nobody takes nothing');
+  // A later steal that names the new holder is a fresh, valid steal.
+  assert.equal(foldLeases([lease('a', 0), lease('b', 1, { steal: true, from: 'a' }), lease('c', 2, { steal: true, from: 'b' })]).get('it01')?.holder, 'c');
+});
+
+test('a steal of a free or lapsed lease behaves as a plain acquire', () => {
+  const free: LedgerRow[] = [];
+  const got = acquireLease(memory('b', free, 0), 'it01', { ttlMinutes: 30, steal: true });
+  assert.ok(got.ok && got.wrote);
+  assert.equal(free[0].steal, undefined, 'nothing was stolen, so the row is not marked');
+  assert.equal(free[0].from, undefined);
+  const lapsed: LedgerRow[] = [lease('a', 0)];
+  const late = acquireLease(memory('b', lapsed, 45), 'it01', { ttlMinutes: 30, steal: true });
+  assert.ok(late.ok && late.wrote);
+  assert.equal(lapsed.at(-1)?.steal, undefined);
+  assert.equal(foldLeases(lapsed).get('it01')?.holder, 'b');
+  // A marked steal row whose target lapsed before it landed also takes it: the lease was free.
+  assert.equal(foldLeases([lease('a', 0), lease('b', 45, { steal: true, from: 'a' })]).get('it01')?.holder, 'b');
+});
+
+test('a stealer that lost to an earlier steal is refused on re-read and told the new holder', () => {
+  const rows: LedgerRow[] = [lease('a', 0), lease('b', 5, { steal: true, from: 'a' })];
+  // c read the ledger while a still held it, then b's steal landed before c's own row.
+  const ctx: LeaseContext = { readLedger: () => rows, append: (r) => { rows.push({ window: 'c', ...r }); }, window: 'c', now: () => at(5), dryRun: false };
+  let first = true;
+  const stale = { ...ctx, readLedger: () => (first ? ((first = false), [lease('a', 0)]) : rows) };
+  const got = acquireLease(stale, 'it01', { ttlMinutes: 30, steal: true });
+  assert.ok(!got.ok && got.lease.holder === 'b');
 });
 
 test('a closing row, or the holder\'s unlease, frees the item; another window\'s unlease needs force', () => {
