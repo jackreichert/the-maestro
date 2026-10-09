@@ -11,6 +11,8 @@
  *   - a reviewDecision flip into or out of APPROVED / CHANGES_REQUESTED: DECISION;
  *   - an open PR that turned CONFLICTING with its base: CONFLICT (once per conflict; GitHub's UNKNOWN, while it computes
  *     mergeability, changes nothing, and a conflict that clears resets silently so the next one speaks);
+ *   - the next concrete fix, when it changes: one steering event naming conflict with base, a failing check, or an open
+ *     review thread, including the PR number. A CONFLICT or THREAD line already emitted for that change is not repeated;
  *   - a PR that left the open set, once GitHub confirms it is no longer open: LEFT-OPEN-SET.
  * Standing conditions (APPROVED-UNMERGED) speak once, when they first appear or their signature (the head) changes.
  *
@@ -48,6 +50,8 @@ export interface BoardPr {
   /** The repo is in self_review_repos: only the user reviews it, so its lines are labelled apart from the org's. Absent in older snapshots. */
   selfReview?: boolean;
   decision: string;
+  /** One label when the head commit's check rollup failed; empty otherwise. The search selects the rollup state, not each check name. */
+  failingChecks?: string[];
   threads: Ref[];
   replies: Ref[];
   comments: Ref[];
@@ -65,6 +69,8 @@ export interface PrWatchState extends Snapshot {
   left: string[];
   /** A baseline first check: report nothing. */
   silent: boolean;
+  /** Steering summary when the next concrete fix changed. Absent when there is nothing new to fix. */
+  steering?: string;
   /** The snapshot adopted from an older pr-review file, when this check compared against it. */
   carried?: Snapshot;
 }
@@ -86,6 +92,7 @@ interface PrNode {
   reviewThreads: { nodes: { id: string; isResolved: boolean; comments: { nodes: { author?: Login | null; url: string }[] }; last: { nodes: { id: string; author?: Login | null; url: string }[] } }[] };
   comments: { nodes: { id: string; author?: Login | null; url: string }[] };
   reviews: { nodes: { id: string; author?: Login | null; state: string; body?: string | null; url: string }[] };
+  commits?: { nodes: { commit?: { statusCheckRollup?: { state?: string | null } | null } | null }[] };
 }
 
 // Scheduling: default seconds between checks (the old watcher's steady pace; idle back-off stretches it), and whether a check calls the network.
@@ -111,6 +118,7 @@ const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE
   reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } url } } last: comments(last: 1) { nodes { id author { login } url } } } }
   comments(last: 20) { nodes { id author { login } url } }
   reviews(last: 20) { nodes { id author { login } state body url } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 } } } }`;
 
 /** Throws unless the target is `open-prs` or `open-prs:baseline` (the loop calls this at `add`). */
@@ -137,6 +145,15 @@ function settledMergeable(now: string | null | undefined, old: BoardPr | undefin
 /** The label a self-review PR's event lines start with, so a digest keeps them apart from the org's. */
 const label = (pr: Pick<BoardPr, 'selfReview'>): string => (pr.selfReview ? '[self-review] ' : '');
 
+/** Rollup states that mean a check did not pass. PENDING and EXPECTED are not a failure. */
+const FAILING_ROLLUP = new Set(['ERROR', 'FAILURE']);
+
+/** One label for a failing rollup: the state itself. The search does not select each check's name. */
+function failingChecksOf(pr: PrNode): string[] {
+  const state = pr.commits?.nodes[0]?.commit?.statusCheckRollup?.state ?? '';
+  return FAILING_ROLLUP.has(state) ? [state] : [];
+}
+
 /** Every open PR as a plain board keyed `owner/repo#n`, reduced to what a diff needs. */
 function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
   const owners = new Set((ctx.config?.copilotOrgs ?? COPILOT_ORGS).map((o) => o.toLowerCase()));
@@ -162,6 +179,7 @@ function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
       selfReview: isSelfReview(pr.repository.nameWithOwner, selfRepos),
       needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
+      failingChecks: failingChecksOf(pr),
       threads: pr.reviewThreads.nodes.flatMap((t) => {
         const first = t.comments.nodes[0];
         const who = first?.author?.login;
@@ -254,8 +272,59 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   // `reported` is what this snapshot's standing conditions look like once told (so the next diff stays quiet about them).
   // A silent (baseline) first check reports nothing at all; a normal first check has told nobody yet, so diff() speaks.
   // `carried` hands diff() the old file's snapshot when that is what this check compared against.
-  const state: PrWatchState = { board, reported: reportedNow(board), left, silent: !prev && target === 'open-prs:baseline' };
+  const silent = !prev && target === 'open-prs:baseline';
+  const steering = silent ? undefined : steeringEvent(comparedBoard(prev?.board, board), board)[0]?.summary;
+  const state: PrWatchState = { board, reported: reportedNow(board), left, silent, ...(steering ? { steering } : {}) };
   return prev && !hasBoard(ctx.prev) ? { ...state, carried: prev } : state;
+}
+
+/** The board a diff compares against. A first check has no previous mergeability, so a conflict already there can speak once. */
+function comparedBoard(prevBoard: Board | undefined, next: Board): Board {
+  return prevBoard ?? Object.fromEntries(Object.entries(next).map(([key, pr]) => [key, { ...pr, mergeable: undefined }]));
+}
+
+interface NextFix { kind: 'conflict' | 'failing-check' | 'thread'; number: number; label: string; phrase: string; sig: string; rank: number; key: string }
+
+/** The next concrete fix: a conflict blocks the merge, then a failing check, then an open thread. Stable by PR key. */
+function nextFix(board: Board): NextFix | null {
+  const found: NextFix[] = [];
+  for (const [key, pr] of Object.entries(board)) {
+    const tag = label(pr);
+    if (pr.mergeable === 'CONFLICTING') found.push({ kind: 'conflict', number: pr.number, label: tag, phrase: 'conflict with base', sig: `conflict:${key}`, rank: 0, key });
+    const failed = [...(pr.failingChecks ?? [])].map((name) => name.trim()).filter(Boolean).sort();
+    if (failed[0]) found.push({ kind: 'failing-check', number: pr.number, label: tag, phrase: `failing check ${failed[0]}`, sig: `check:${key}:${failed.join(',')}`, rank: 1, key });
+    const open = pr.threads?.[0];
+    if (open) found.push({ kind: 'thread', number: pr.number, label: tag, phrase: `open review thread ${open.url || open.id}`, sig: `thread:${key}:${open.id}`, rank: 2, key });
+  }
+  found.sort((a, b) => a.rank - b.rank || a.key.localeCompare(b.key));
+  return found[0] ?? null;
+}
+
+/**
+ * One steering event when the next concrete fix changed. An empty board, or one whose next fix is unchanged, yields none.
+ * The summary names which of the three it is and the PR number. It is not a CONFLICT or THREAD line.
+ */
+export function steeringEvent(before: Board, next: Board): WatchEvent[] {
+  const fix = nextFix(next);
+  if (!fix || nextFix(before)?.sig === fix.sig) return [];
+  return [{ summary: `${fix.label}STEER pr ${fix.number} ${fix.phrase}` }];
+}
+
+/** True when `line` names this PR number after a hash, and not a longer number. */
+function mentionsPr(line: string, n: string): boolean {
+  const at = line.indexOf(`#${n}`);
+  if (at < 0) return false;
+  const after = line[at + n.length + 1];
+  return after === undefined || after < '0' || after > '9';
+}
+
+/** True when this diff already has the fact line for that fix, so a second queue line would only restate it. */
+function steerAlreadyLined(lines: string[], summary: string): boolean {
+  const n = summary.match(/STEER pr (\d+) /)?.[1];
+  if (!n) return false;
+  if (summary.includes('conflict with base')) return lines.some((line) => line.includes('CONFLICT ') && mentionsPr(line, n));
+  if (summary.includes('open review thread')) return lines.some((line) => line.includes('THREAD ') && mentionsPr(line, n));
+  return false;
 }
 
 /** The lines for what changed between two boards, newest state last. */
@@ -293,10 +362,14 @@ function changes(prev: unknown, next: PrWatchState): WatchEvent[] {
   const base: Partial<Snapshot> | undefined = hasBoard(prev) ? prev : next.carried;
   if (next.silent && !base) return [];
   // A first check has nothing to compare, but a conflict already there is news nobody has been told: compare as if it were new.
-  const before = base?.board ?? Object.fromEntries(Object.entries(next.board).map(([key, pr]) => [key, { ...pr, mergeable: undefined }]));
+  const before = comparedBoard(base?.board, next.board);
   const told = base?.reported ?? {};
   const fresh = standingConditions(next.board).filter((c) => told[c.id] !== c.sig).map((c) => c.line);
-  return [...changesBetween(before, next.board), ...(next.left ?? []), ...fresh].map((summary) => ({ summary }));
+  const lines = [...changesBetween(before, next.board), ...(next.left ?? []), ...fresh];
+  for (const event of steeringEvent(before, next.board)) {
+    if (!steerAlreadyLined(lines, event.summary)) lines.push(event.summary);
+  }
+  return lines.map((summary) => ({ summary }));
 }
 
 /** The loop calls this when the watch retires or is removed: drop the state file an older pr-review kept. */

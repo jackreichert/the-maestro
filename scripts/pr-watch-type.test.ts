@@ -318,3 +318,86 @@ test('with no self_review_repos nothing is labelled', () => {
   assert.equal(first.board['me/tool#1']?.selfReview, false);
   assert.deepEqual(summaries(prWatch.diff(null, first)), []);
 });
+
+/** A fixture board. No GitHub: these tests call diff and steeringEvent on the snapshot directly. */
+function boardPr(over: Partial<prWatch.BoardPr> = {}): prWatch.BoardPr {
+  return {
+    url: 'https://github.com/org/repo/pull/9', repo: 'org/repo', number: 9, isDraft: false, head: 'sha', headRef: 'feat/x', base: 'develop',
+    mergeable: 'MERGEABLE', needsCopilot: false, decision: 'REVIEW_REQUIRED', threads: [], replies: [], comments: [], reviews: [], ...over,
+  };
+}
+const watched = (pr: prWatch.BoardPr): prWatch.PrWatchState => ({ board: { [`org/repo#${pr.number}`]: pr }, reported: {}, left: [], silent: false });
+const steerOf = (before: prWatch.Board, next: prWatch.Board) => prWatch.steeringEvent(before, next);
+
+test('steering: a PR that becomes conflicting yields one event naming the conflict and the PR, without a second CONFLICT line', () => {
+  const prev = watched(boardPr({ mergeable: 'MERGEABLE' }));
+  const next = watched(boardPr({ mergeable: 'CONFLICTING' }));
+  const steer = steerOf(prev.board, next.board);
+  assert.equal(steer.length, 1);
+  assert.match(steer[0].summary, /\bpr 9\b/);
+  assert.match(steer[0].summary, /conflict with base/);
+  const lines = summaries(prWatch.diff(prev, next));
+  assert.equal(lines.filter((l) => /\bCONFLICT\b/.test(l)).length, 1);
+  assert.equal(lines.filter((l) => l.includes('STEER pr')).length, 0, 'the CONFLICT line already states the fact');
+});
+
+test('steering: an open thread yields one event naming the thread and the PR, without a second THREAD line', () => {
+  const prev = watched(boardPr());
+  const next = watched(boardPr({ threads: [{ id: 't1', who: 'rev', url: 'https://x/t1' }] }));
+  const steer = steerOf(prev.board, next.board);
+  assert.equal(steer.length, 1);
+  assert.match(steer[0].summary, /\bpr 9\b/);
+  assert.match(steer[0].summary, /open review thread/);
+  assert.match(steer[0].summary, /https:\/\/x\/t1/);
+  const lines = summaries(prWatch.diff(prev, next));
+  assert.equal(lines.filter((l) => /\bTHREAD\b/.test(l)).length, 1);
+  assert.equal(lines.filter((l) => l.includes('STEER pr')).length, 0, 'the THREAD line already states the fact');
+});
+
+test('steering: a failing check yields one event naming the check and the PR', () => {
+  const prev = watched(boardPr());
+  const next = watched(boardPr({ failingChecks: ['lint'] }));
+  const steer = steerOf(prev.board, next.board);
+  assert.equal(steer.length, 1);
+  assert.match(steer[0].summary, /\bpr 9\b/);
+  assert.match(steer[0].summary, /failing check lint/);
+  assert.deepEqual(summaries(prWatch.diff(prev, next)), [steer[0].summary]);
+});
+
+test('steering: an empty or unchanged board emits no new steering event', () => {
+  const empty: prWatch.PrWatchState = { board: {}, reported: {}, left: [], silent: false };
+  assert.deepEqual(steerOf(empty.board, empty.board), []);
+  assert.deepEqual(prWatch.diff(empty, empty), []);
+  const held = watched(boardPr({ mergeable: 'CONFLICTING', failingChecks: ['lint'], threads: [{ id: 't1', who: 'rev', url: 'https://x/t1' }] }));
+  assert.deepEqual(steerOf(held.board, held.board), []);
+  assert.equal(summaries(prWatch.diff(held, held)).some((l) => l.includes('STEER pr')), false);
+});
+
+/** Hands a fixture search node to check. The runner never spawns gh. */
+function boardFromFixture(node: unknown): prWatch.PrWatchState {
+  const run: Run = (_cmd, args) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      assert.match(args.join(' '), /statusCheckRollup \{ state \}/);
+      return { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [node] } } }), stderr: '' };
+    }
+    throw new Error(`fixture must not call GitHub: ${args.join(' ')}`);
+  };
+  return prWatch.check('open-prs', { run, config: { ghLogin: 'me', copilotOrgs: [], selfReviewRepos: [] } });
+}
+
+test('search node: a failing rollup fills failingChecks and steering names that label once', () => {
+  const node = prNode(9, { commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] } });
+  const next = boardFromFixture(node);
+  assert.deepEqual(next.board['org/repo#9']?.failingChecks, ['FAILURE']);
+  const steer = steerOf({}, next.board);
+  assert.equal(steer.length, 1);
+  assert.match(steer[0].summary, /\bpr 9\b/);
+  assert.match(steer[0].summary, /failing check FAILURE/);
+});
+
+test('search node: no failing check leaves failingChecks empty and emits no failing-check steering event', () => {
+  const node = prNode(9, { commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] } });
+  const next = boardFromFixture(node);
+  assert.deepEqual(next.board['org/repo#9']?.failingChecks, []);
+  assert.equal(steerOf({}, next.board).some((e) => e.summary.includes('failing check')), false);
+});
