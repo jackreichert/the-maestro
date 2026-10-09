@@ -13,7 +13,7 @@ follow up with "…and status?"
 ```bash
 node $J prime
 node $J start-here
-node $J status --footer
+node $J status --footer         # the full multi-line footer: a greeting always gets it
 node $J standup --date <previous working day>
 ```
 
@@ -127,7 +127,7 @@ and PR numbers named in the conversation or the ledger text. Link the ticket tha
 Never invent a link. If there's no match, write `—`.
 
 **After the tables:** one line offering to file tickets for technical rows that have none. Then the
-status footer, with the count of waiting items and how many are probably closeable.
+status footer (the full multi-line form, not `--line`), with the count of waiting items and how many are probably closeable.
 
 ## Issue tracker, only if the MCP is installed
 
