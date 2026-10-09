@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -67,6 +67,28 @@ test('snapshotDirty copies modified and untracked source, skips secret names and
   assert.ok(existsSync(join(dest, 'w1', 'new.ts')));
   assert.ok(!existsSync(join(dest, 'w1', '.env.local')) && !existsSync(join(dest, 'w1', 'leak.txt')));
   assert.equal(snapshotDirty(container, dest).files, 2);
+  assert.equal(readFileSync(join(container, '.gitignore'), 'utf8').trim(), '*', 'the folder holding the dated snapshots ignores itself');
+});
+
+test('snapshotDirty is an allowlist: dotfiles, config files and symlinks (including into an env store) never leave the worktree', () => {
+  const { container, wt } = repoWithDirt();
+  for (const [f, body] of [['.envrc', 'export APP_SECRET hunter2hunter2\n'], ['.netrc', 'machine h login u password p4ssw0rd\n'], ['.pgpass', 'h:5432:db:u:p4ssw0rd\n'], ['secrets.json', '{"k":"v"}\n'], ['app.conf', 'x=1\n']]) writeFileSync(join(wt, f), body);
+  const store = mkdtempSync(join(tmpdir(), 'store-'));
+  writeFileSync(join(store, 'app.pgpass'), 'h:5432:db:u:p4ssw0rd\n');
+  writeFileSync(join(store, 'real.ts'), 'export const secret = 1;\n');
+  symlinkSync(join(store, 'app.pgpass'), join(wt, 'local-db.conf'));
+  symlinkSync(join(store, 'real.ts'), join(wt, 'linked.ts'));
+  symlinkSync(store, join(wt, 'linkdir'));
+  const dest = join(container, 'snap');
+  const r = snapshotDirty(container, dest);
+  assert.equal(r.files, 2, 'only tracked.ts and new.ts');
+  for (const f of ['.envrc', '.netrc', '.pgpass', 'secrets.json', 'app.conf', 'local-db.conf', 'linked.ts', 'linkdir']) assert.ok(!existsSync(join(dest, 'w1', f)), f);
+});
+
+test('snapshotDirty stops at its deadline and says so', () => {
+  const { container } = repoWithDirt();
+  const r = snapshotDirty(container, join(container, 'snap'), Date.now(), Date.now() - 1);
+  assert.deepEqual({ files: r.files, partial: r.partial }, { files: 0, partial: true });
 });
 
 test('snapshotDirty leaves a worktree whose dirt is older than 72 hours', () => {

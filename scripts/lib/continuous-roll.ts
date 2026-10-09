@@ -1,5 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { scanText } from './secret-scan.ts';
 import { clip } from './journal/format.ts';
@@ -73,31 +73,46 @@ export function dirtyPaths(porcelainZ: string): string[] {
     return paths;
 }
 
-const SECRET_NAME = /(^|\/)(\.env(\..*)?|ssm-.*\.json|.*\.(pem|key|p12|pfx|tfstate|tfvars)|.*\.tfstate\.backup|credentials(\..*)?|id_(rsa|ed25519)|node_modules\/.*)$/i;
+/** Names that never go in a snapshot even if their extension would pass; a second line behind the allowlist. */
+const SECRET_NAME = /(^|\/)(secrets?(\..*)?|credentials(\..*)?|.*\.(pem|key|p12|pfx|tfstate|tfvars)|id_[a-z0-9]+)$/i;
 export const isSecretName = (path: string): boolean => SECRET_NAME.test(path) || path.split('/').includes('node_modules');
 
-export interface SnapshotResult { worktrees: number; files: number; skipped: number; dest: string }
+/**
+ * What a snapshot may copy: source and docs by extension, and a few config files by exact name. Everything else (every
+ * dotfile, .json, .yml, .toml, .conf, any binary) is left out, because a denylist of secret names always misses one.
+ */
+const SOURCE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.go', '.rs', '.java', '.kt', '.rb', '.sh', '.sql', '.md', '.css', '.html', '.tf']);
+const SOURCE_NAMES = new Set(['package.json', 'tsconfig.json', 'Makefile', 'Dockerfile', 'pyproject.toml']);
+export const isSnapshotSource = (path: string): boolean => SOURCE_EXT.has(extname(path).toLowerCase()) || SOURCE_NAMES.has(basename(path));
+
+export interface SnapshotResult { worktrees: number; files: number; skipped: number; dest: string; /** True when the deadline stopped the scan before every worktree was read. */ partial: boolean }
 
 /**
  * Copies dirty and untracked source of the active worktrees under `container/.worktrees` to `dest/<worktree>/<path>`.
- * Skips secret-named files, files over 1 MB and files whose text carries a secret or PHI shape (counted, never named by content).
- * Idempotent: the same path overwrites itself. Stops at 300 files or 20 MB. Never throws for one bad worktree.
+ * Only regular files (never a symlink, whatever it points at) that pass `isSnapshotSource` and not `isSecretName`;
+ * skips files over 1 MB and files whose text carries a secret or PHI shape (counted, never named by content). Idempotent.
+ * Stops at 300 files, 20 MB or `deadline` (epoch ms; `partial` is then true). `dest`'s parent gets a `.gitignore` of `*`,
+ * so a snapshots folder inside a repo can never be committed. Never throws for one bad worktree.
  */
-export function snapshotDirty(container: string, dest: string, now: number = Date.now()): SnapshotResult {
+export function snapshotDirty(container: string, dest: string, now: number = Date.now(), deadline: number = Infinity): SnapshotResult {
     const root = join(container, '.worktrees');
-    const result: SnapshotResult = { worktrees: 0, files: 0, skipped: 0, dest };
+    const result: SnapshotResult = { worktrees: 0, files: 0, skipped: 0, dest, partial: false };
     let total = 0;
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(join(dirname(dest), '.gitignore'), '*\n');
     for (const name of existsSync(root) ? readdirSync(root).sort() : []) {
+        if (Date.now() > deadline) { result.partial = true; break; }
         const wt = join(root, name);
-        const git = spawnSync('git', ['-C', wt, 'status', '--porcelain=v1', '-z', '-uall'], { encoding: 'utf8', timeout: 20_000 });
-        if (git.status !== 0) continue;
-        const live = dirtyPaths(git.stdout).filter((p) => { try { return statSync(join(wt, p)).isFile(); } catch { return false; } });
-        if (!live.some((p) => now - statSync(join(wt, p)).mtimeMs < SNAPSHOT_ACTIVE_MS)) continue;
+        const git = spawnSync('git', ['-C', wt, 'status', '--porcelain=v1', '-z', '-uall'], { encoding: 'utf8', timeout: 20_000, maxBuffer: 64_000_000 });
+        if (git.status !== 0) { if (git.error) result.skipped++; continue; }
+        const regular = (p: string): { size: number; mtimeMs: number } | null => { try { const st = lstatSync(join(wt, p)); return st.isFile() ? st : null; } catch { return null; } };
+        const live = dirtyPaths(git.stdout).filter((p) => regular(p));
+        if (!live.some((p) => now - (regular(p)?.mtimeMs ?? 0) < SNAPSHOT_ACTIVE_MS)) continue;
         result.worktrees++;
         for (const p of live) {
             const src = join(wt, p);
-            const size = statSync(src).size;
-            if (isSecretName(p) || size > SNAPSHOT_MAX_FILE_BYTES || result.files >= SNAPSHOT_MAX_FILES || total + size > SNAPSHOT_MAX_TOTAL_BYTES) { result.skipped++; continue; }
+            const size = regular(p)?.size ?? Infinity;
+            if (!isSnapshotSource(p) || isSecretName(p) || size > SNAPSHOT_MAX_FILE_BYTES || result.files >= SNAPSHOT_MAX_FILES || total + size > SNAPSHOT_MAX_TOTAL_BYTES) { result.skipped++; continue; }
             let hasShape = false;
             try { hasShape = scanText(readFileSync(src, 'utf8')).length > 0; } catch { hasShape = true; }
             if (hasShape) { result.skipped++; continue; }
@@ -116,7 +131,7 @@ export function newestHandoff(dir: string): { name: string; at: string } | null 
     for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => /^HANDOFF-.*\.md$/.test(n)) : []) {
         const path = join(dir, name);
         const marker = readFileSync(path, 'utf8').match(/^generated_at: (\S+)$/m)?.[1];
-        const at = marker ?? statSync(path).mtime.toISOString();
+        const at = marker ?? lstatSync(path).mtime.toISOString();
         if (!best || at > best.at) best = { name: basename(name), at };
     }
     return best;
