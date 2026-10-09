@@ -1641,9 +1641,11 @@ test('maintain leaves today alone, skips a day a roll already covered, and archi
     run('log', 'finished today', '--kind', 'done', ...MARK);
     run('log', 'rolled by hand', '--kind', 'done', '--date', daysAgo(2), ...MARK);
     run('roll', '--date', daysAgo(2), '--fast');
+    run('log', 'a note from three days ago', '--kind', 'note', '--date', daysAgo(3), ...MARK);
+    run('roll', '--date', daysAgo(3), '--fast');
     const before = rolledRows().length;
     const r = runEnvIn(w.container, env, 'maintain', '--today', todayUtc());
-    assert.deepEqual(maintainResult(r.out).archivedDays, [], 'today is not past, and day -2 was rolled');
+    assert.deepEqual(maintainResult(r.out).archivedDays, [], 'today is not past, and days -2 and -3 (a note only) were rolled');
     assert.equal(rolledRows().length, before);
     run('log', 'finished after the roll', '--kind', 'done', '--date', daysAgo(2), ...MARK);
     assert.deepEqual(maintainResult(runEnvIn(w.container, env, 'maintain', '--today', todayUtc()).out).archivedDays, [daysAgo(2)]);
