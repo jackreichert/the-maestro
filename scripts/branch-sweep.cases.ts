@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
+process.env.MAESTRO_LAUNCH_AGENTS_DIR = mkdtempSync(join(tmpdir(), 'agents-')); // and never the real launchd plist
 const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
 import type { CmdResult, ExcludedItem, Git, GhJson, ListedItem, PrInfo, SweepContext } from './branch-sweep.ts';
 const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts, isEnvFile } = await import('./branch-sweep.ts');
@@ -942,4 +943,51 @@ test('sweepWorktrees reports a failed fetch as failed and keeps what it would ha
     assert.deepEqual(out.failed, ['proj: git fetch failed']);
     assert.deepEqual(out.removed, []);
     assert.match(keptReason(out, wt), /fetch failed/);
+});
+
+/** A clean, detached, idle worktree that qualifies for removal, so only the in-use guard can keep it. */
+const qualifying = (w: World, name: string): string => {
+    const wt = join(w.root, name); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/develop');
+    return wt;
+};
+
+test('sweepWorktrees keeps the worktree the process cwd is inside, and removes it once the cwd moves', () => {
+    const w = world(); const wt = qualifying(w, 'cwd'); const other = qualifying(w, 'bystander');
+    mkdirSync(join(wt, 'sub'));
+    const before = process.cwd();
+    try {
+        process.chdir(join(wt, 'sub'));
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/);
+        assert.deepEqual(r.removed.map((x) => x.path), [other], 'only the bystander goes');
+        assert.equal(existsSync(wt), true);
+    } finally { process.chdir(before); }
+    assert.deepEqual(sweep(w).removed.map((x) => x.path), [wt]);
+});
+
+test('sweepWorktrees keeps the worktree holding the running script, found through a symlink', () => {
+    const w = world(); const wt = qualifying(w, 'script');
+    const link = join(w.root, 'link.ts'); symlinkSync(join(wt, 'base.txt'), link);
+    const argv1 = process.argv[1];
+    try {
+        process.argv[1] = link; // the script's own path is a symlink; only its real path is inside the worktree
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/);
+        assert.deepEqual(r.removed, []);
+    } finally { process.argv[1] = argv1; }
+    assert.deepEqual(sweep(w).removed.map((x) => x.path), [wt]);
+});
+
+test('sweepWorktrees keeps the checkout the installed loop supervisor runs from, and a worktree that contains it', () => {
+    const w = world(); const wt = qualifying(w, 'runtime'); const other = qualifying(w, 'unrelated');
+    const plist = join(process.env.MAESTRO_LAUNCH_AGENTS_DIR as string, 'com.jackreichert.the-maestro-loop.plist');
+    try {
+        writeFileSync(plist, `<dict><key>WorkingDirectory</key>\n  <string>${join(wt, 'base.txt')}</string></dict>`);
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/);
+        assert.deepEqual(r.removed.map((x) => x.path), [other]);
+        assert.match(worktreeSweepLines(r, false).join('\n'), /1 +in use/);
+        assert.match(removeWorktree(w.repo, { id: 'x', name: wt, kind: 'worktree', head: sh(wt, 'rev-parse', 'HEAD'), detached: true }).message, /in use/, 'a direct removal refuses too');
+    } finally { rmSync(plist, { force: true }); }
+    assert.deepEqual(sweep(w).removed.map((x) => x.path), [wt], 'once the plist is gone the checkout is free');
 });
