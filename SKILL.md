@@ -14,7 +14,7 @@ any command below, read the file its row names, and no others, before acting.
 
 ## Session start
 
-Before anything else in a new session, and after a compaction, run `node scripts/session-start.ts`. It is idempotent: it registers the `status-watch` and `status-refresh` watches when they are missing (no need to ask), then reports the status page's age and whether an event loop holds the lock. Put the page age in your first reply. If it says `Event loop: NOT RUNNING`, launch the printed command yourself with `run_in_background` (a loop launched any other way is not yours to hear from; the script deliberately never starts one). If it says a loop is running that you did not start, that is the launchd supervisor's: launch the `digest-wait` command it prints with `run_in_background` instead ([README](README.md#session-startts)). A `WARNING its target is` line means a watch points at another directory; fix it as the line says. If it prints `Podium web: down`, the page link is dead: tell the user in one line (the text view below still works). Then run `journal.ts prime` as step 8 below says, and read `journal.ts start-here` before the board: it is the Podium's front page, and for a fact about one stream the stream's tab (`journal.ts start-here --stream <Stream>`) comes before grepping the vault, the ledger or asking. When the answer turns out to live elsewhere, attach it so the tab lists it next time. [playbooks/podium-fresh-context.md](playbooks/podium-fresh-context.md) is the eval that checks a fresh session can do this. If prime prints a `Standing pickups` block, those rows are duties to pick up now without being reminded: do each, then record it with `journal.ts standing done <id>` (a checked row passes only when its check does; an unchecked one needs `--evidence`).
+Before anything else in a new session, and after a compaction, run `node scripts/session-start.ts`. It is idempotent: it registers the `status-watch` and `status-refresh` watches when they are missing (no need to ask), then reports the status page's age and whether an event loop holds the lock. Put the page age in your first reply. If it says `Event loop: NOT RUNNING`, launch the printed command yourself with `run_in_background` (a loop launched any other way is not yours to hear from; the script deliberately never starts one). If it says a loop is running that you did not start, that is the launchd supervisor's: launch the `digest-wait` command it prints with `run_in_background` instead ([README](README.md#session-startts)). A `WARNING its target is` line means a watch points at another directory; fix it as the line says. If it prints `Podium web: down`, the page link is dead: tell the user in one line (the text view below still works). Then run `journal.ts prime` as step 8 below says, and read `journal.ts start-here` (about 1.7k tokens) before the board, instead of `CURRENT.md` (the whole generated board, many times larger): it is the Podium's front page, and for a fact about one stream the stream's tab (`journal.ts start-here --stream <Stream>`) comes before grepping the vault, the ledger or asking. When the answer turns out to live elsewhere, attach it so the tab lists it next time. [playbooks/podium-fresh-context.md](playbooks/podium-fresh-context.md) is the eval that checks a fresh session can do this. If prime prints a `Standing pickups` block, those rows are duties to pick up now without being reminded: do each, then record it with `journal.ts standing done <id>` (a checked row passes only when its check does; an unchecked one needs `--evidence`).
 
 ## Operating Contract
 
@@ -84,9 +84,17 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 ```
 
 `journal.ts status --footer` prints the Ledger lines, one per active stream when streams are in use,
-then the Session line for the current session (the newest transcript in `projects_dir`; at 60% of
-a roll threshold it ends `· roll soon`, at 90% `· roll now`)
+then the Session line for the current session (the newest transcript in `projects_dir`, or the one named by `--session <id>`; at 60% of
+a roll threshold it ends `· roll soon`, at 90% `· roll now`). `status --footer --line` prints the same facts as one line (ledger totals, review queue, loop, session); with two windows open, pass `--session <id>` so each reads its own transcript
 ([reference/ledger.md#the-footer-lines](reference/ledger.md#the-footer-lines)).
+
+**Which form to paste.** The script's default stays the multi-line form above. On an ordinary reply, paste `status --footer --line` instead:
+
+```
+Ledger: 0 done · 2 in flight · 0 awaiting | Loop: ok <1 min | Session: 103 turns (57%) · 159k/turn
+```
+
+Paste the full multi-line footer only on a session-opening greeting, a status, board or PR-board request, or when the user asks for it. Either way the text comes from the script, never from memory, and the `roll soon` / `roll now` ending is on both.
 
 Say "none running" when nothing is live; that's still information. When relaying an agent's result,
 the Session line carries the turn count and read/turn. **`roll soon`:** finish in-flight relays,

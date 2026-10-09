@@ -15,6 +15,7 @@ node $J ask   "Split the calendar change into a follow-up PR?" "${M[@]}"
 node $J resolve "calendar change" --answer "Yes — no consumer yet" "${M[@]}"
 node $J status                            # what is open + done today, with usage marks
 node $J status --footer                   # the reply-footer Ledger lines (below)
+node $J status --footer --line            # the same facts as one line; --session <id> / --stdin pick the transcript
 node $J standup                           # end-of-day summary, ready to paste (no usage marks)
 node $J roll                              # compress: archive the day, keep open items
 node $J scratch                           # with scripts_dir set: scratch files with a promote/keep/delete-candidate proposal (roll prints it too; never moves or deletes)
@@ -205,6 +206,14 @@ node $J unarchive Launch "${M[@]}"
 ```
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. After them, when a PR snapshot exists, comes `**Review queue:** N of 4` (open non-draft PRs against `review_queue_cap`; `(full)` at the cap, and a note when the snapshot is over an hour old), then the Session line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
+
+`status --footer --line` prints the same facts on one line, summed across streams (the review queue, loop and session follow when they apply):
+
+```
+Ledger: 0 done · 2 in flight · 0 awaiting | Loop: ok <1 min | Session: 103 turns (57%) · 159k/turn
+```
+
+The multi-line form is the script's default and is what a session-opening greeting, a status, board or PR-board request, or an explicit ask for the footer gets. An ordinary reply pastes the `--line` form. Both print the same figures and the same `roll soon` / `roll now` ending.
 
 `status --json` carries the same figures as data under `footer` (`ledger`: one `{ name, done, inflight, queued, awaiting, paste, blocked }` per line; `session`: the turns, percent, read per turn and advice), and the Podium's **Status** section is formatted from it, so the page and the footer never disagree.
 
@@ -484,9 +493,9 @@ node $J standup         # formatted, for standup
 node $J status --json   # if you need to reason over it
 ```
 
-Read `CURRENT.md` (under `$LEDGER_ROOT/Projects/{container-name}/Journal/`) at the start of a
-session before asking the user anything. It, plus
-`$VAULT_ROOT/Projects/{container-name}/CONTEXT.md`, is the handoff.
+Run `node $J start-here` (about 1.7k tokens) at the start of a
+session before asking the user anything; for one stream add `--stream <Stream>`. It, plus
+`$VAULT_ROOT/Projects/{container-name}/CONTEXT.md`, is the handoff. `CURRENT.md` is the full generated board; read it only when `start-here` points you there.
 
 ## Search (derived index)
 

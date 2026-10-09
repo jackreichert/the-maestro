@@ -489,6 +489,31 @@ test('status --footer ends with the Session line for the newest session, and say
     assert.equal(line({ MAESTRO_ROLL_READ_PER_TURN: '115000', MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
+test('status --footer --line is one line; --session pins a transcript and --stdin reads its id, while the default stays multi-line', () => {
+    run('start', 'plain', ...MARK);
+    const turn = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    writeFileSync(join(projects, 'aaaaaaaa-mine.jsonl'), `${turn('o1', 100000)}\n${turn('o2', 100000)}\n`);
+    writeFileSync(join(projects, 'bbbbbbbb-other.jsonl'), `${turn('m1', 150000)}\n`);
+    utimesSync(join(projects, 'aaaaaaaa-mine.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
+    const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects },
+    }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
+    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default');
+    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 2 turns (1%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 2 turns (1%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest');
+    assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
+    assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
+    assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
+    const odd = status(['--line', '--session', 'x|y\nz']);
+    assert.equal(odd.length, 1, 'the echoed id cannot add a line');
+    assert.match(odd[0], /no session "x\?y\?z" in /);
+    const multi = status(['--session', 'aaaaaaaa-mine']);
+    assert.ok(multi.length >= 2);
+    assert.equal(multi[0], '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');
+    assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** 2 turns (1% of 180 roll) · 100k read/turn', '--session applies to the multi-line footer too');
+});
+
 test('status --json carries the footer numbers, and they match what status --footer prints', () => {
     seedRegistry();
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
