@@ -1,8 +1,8 @@
 /**
  * The Podium server: GET endpoints over buildState/buildCharts and the client's static files, plus one narrow write surface.
  * `GET /api/events` is the one streaming route: Server-Sent Events from a shared watcher (events.ts), so the page updates without a reload.
- * The write surface is three POST routes that reorder, add and delete today's priorities (priorities-write.ts) and nothing else:
- * they need a per-start token the page reads from `GET /api/edit-token`, and guard.ts only lets them through from the page's own origin.
+ * The write surface is four POST routes: three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts).
+ * They need a per-start token the page reads from `GET /api/edit-token`, and guard.ts only lets them through from the page's own origin.
  * Every request goes through guard.refuse first; every response is written by guard.send, so the security headers
  * are on 404s and 500s too. Every GET is read-only: nothing on a GET path writes the ledger, the priorities file or the page.
  */
@@ -19,7 +19,8 @@ import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { buildHome } from './home.ts';
-import { TOKEN_PATH, WRITE_PATHS, handleWrite } from './priorities-write.ts';
+import { TOKEN_PATH, WRITE_PATHS as PRIORITY_PATHS, handleWrite } from './priorities-write.ts';
+import { ANSWER_PATH, handleAnswer } from './answer-write.ts';
 import { DEFAULT_PRIORITIES_MAX } from '../status-page/priorities.ts';
 
 export interface WebServerOptions {
@@ -46,6 +47,9 @@ const DEFAULT_DAYS = 14;
 const MAX_DAYS = 90;
 const EVENTS_PATH = '/api/events';
 const MAX_HEADER_BYTES = 8 * 1024;
+
+/** Every exact path that accepts POST: the three priorities edits and the answer to an ask. */
+const WRITE_PATHS: ReadonlySet<string> = new Set([...PRIORITY_PATHS, ANSWER_PATH]);
 
 type Handler = (url: URL, match: RegExpMatchArray) => unknown;
 interface Route { method: 'GET'; pattern: RegExp; handler: Handler }
@@ -91,7 +95,7 @@ export function createWebServer(o: WebServerOptions): Server {
       if (no) return sendError(res, no.status, no.headers);
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (req.method === 'POST') {   // the guard let a POST through only for a write path
-        handleWrite(writes, url.pathname, req, res).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
+        (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
         return;
       }
       if (url.pathname === TOKEN_PATH) return sendJson(res, 200, { token, max: writes.max });
