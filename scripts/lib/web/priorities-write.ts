@@ -51,13 +51,13 @@ export function parseEdit(op: Edit['op'], body: unknown): Edit | null {
 }
 
 /** Constant-time comparison of the presented token with ours. */
-function tokenOk(presented: string | string[] | undefined, token: string): boolean {
+export function tokenOk(presented: string | string[] | undefined, token: string): boolean {
   if (typeof presented !== 'string' || presented.length !== token.length) return false;
   return timingSafeEqual(Buffer.from(presented), Buffer.from(token));
 }
 
 /** The request body as text, or null if it is longer than the limit or the connection failed. */
-function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
+export function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
   return new Promise((ok) => {
     const chunks: Buffer[] = [];
     let size = 0;

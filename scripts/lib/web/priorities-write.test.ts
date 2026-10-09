@@ -136,7 +136,7 @@ test('a cross-origin page cannot write: foreign or missing Origin, cross-site fe
   assert.equal(ledgerRows(r).length, 0);
 });
 
-test('only the three priorities routes take POST; everything else, and every other method, is 405', async () => {
+test('only the write routes take POST; everything else, and every other method, is 405', async () => {
   const r = await rig('methods', { initial: LIST });
   for (const path of ['/api/state', '/api/edit-token', '/api/events', '/api/priorities', '/api/priorities/add/', '/api/priorities/reset', '/index.html', '/']) assert.equal((await send(r, path, { body: {} })).status, 405, `POST ${path}`);
   for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) {

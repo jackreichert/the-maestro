@@ -332,7 +332,7 @@ export class PodiumApp extends HTMLElement {
 
   // A press holds updates from pointerdown (before focus moves off a field) until the click has been delivered.
   readonly #onPress = (): void => { this.#gate.set({ pointer: true }); };
-  // A card is mid-action (copying): hold until it says it is done, however long the browser takes to answer.
+  // A card is mid-action (saving an answer): hold until it says it is done, however long the browser takes to answer.
   readonly #onBusy = (e: Event): void => {
     if (e instanceof CustomEvent) this.#release({ busy: (e.detail as AskBusyDetail).busy });
   };
@@ -352,7 +352,7 @@ export class PodiumApp extends HTMLElement {
       if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
       return;
     }
-    this.#release({ busy: false });   // this render replaces any card still copying, and its busy=false would never arrive
+    this.#release({ busy: false });   // this render replaces any card still saving, and its busy=false would never arrive
     this.#active = id;
     this.#writeFragment(id);
     this.#safeRender();
@@ -367,7 +367,7 @@ export class PodiumApp extends HTMLElement {
   /** Show only one tile's items, or everything for null. A redraw destroys the tile, so focus goes back to `refocus`'s tile. */
   #setFilter(key: CueKey | null, refocus: CueKey | null): void {
     if (key === this.#filter) return;
-    this.#release({ busy: false });   // this render replaces any card still copying
+    this.#release({ busy: false });   // this render replaces any card still saving
     this.#filter = key;
     this.#writeFragment(this.#active);
     this.#safeRender();
