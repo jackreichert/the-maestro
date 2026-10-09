@@ -14,6 +14,10 @@ import type { LedgerRow } from './ledger-core.ts';
 /** A ledger row the PreCompact hook writes starts with this, so prime can find the newest compaction marker. */
 export const PRECOMPACT_MARK = 'precompact';
 export const PRECOMPACT_INCOMPLETE = 'precompact incomplete';
+/** Written before any slow work, so a hook killed by its timeout still leaves a trace. */
+export const PRECOMPACT_STARTED = 'precompact started';
+/** Written by a person (or `journal.ts log`) to dismiss an alarm whose cause needs no handoff. */
+export const PRECOMPACT_ACK = 'precompact ack';
 const DECISION_COVER_MS = 30 * 60_000;
 const MAX_DECISION_HITS = 3;
 const SNAPSHOT_MAX_FILE_BYTES = 1_000_000;
@@ -141,21 +145,47 @@ const isMark = (r: LedgerRow): boolean => r.kind === 'note' && (r.text ?? '').st
 /** Rows the hook itself wrote after its handoff (the raised asks); they are not work the handoff missed. */
 export const HOOK_USED = 'hook:precompact';
 const byHook = (r: LedgerRow): boolean => JSON.stringify(r.used ?? '').includes(HOOK_USED);
+const starts = (r: LedgerRow, prefix: string): boolean => (r.text ?? '').startsWith(prefix);
 
 /**
- * What prime says first after a compaction. The newest precompact row says whether the hook finished: an "incomplete" row is
- * printed as it stands. Separately, when the newest handoff predates the last ledger row written before that marker, the
- * handoff did not capture what the compaction may have dropped, and the line says so and how to write it.
+ * Where the next decision scan starts: the newest marker row of a run whose decisions step finished. A run that failed in
+ * that step, or was killed before it (a "started" row), must not move the start, or its decisions are never scanned again.
+ */
+export function scanStart(rows: LedgerRow[]): string {
+    const done = rows.findLast((r) => isMark(r) && !starts(r, PRECOMPACT_STARTED) && !starts(r, PRECOMPACT_ACK) && !(starts(r, PRECOMPACT_INCOMPLETE) && /\bdecisions: /.test(r.text ?? '')));
+    return done?.ts ?? '';
+}
+
+const REMEDY = '`journal.ts handoff --all --delta` (or `--force --out <file>` once the day\'s suffixes are used up)';
+const ACK = `journal.ts log "${PRECOMPACT_ACK}" --kind note --model <name> --used tool:journal.ts`;
+
+/**
+ * What prime says first after a compaction. The newest precompact row says how the hook ended:
+ * - "ack": someone dismissed it; nothing is printed.
+ * - "started" with no result after it: the hook was killed. A newer handoff or an ack clears it.
+ * - "incomplete": printed with its failed steps. When the handoff step failed a newer handoff clears it; a snapshot or
+ *   decisions failure needs no handoff and only an ack clears it.
+ * Separately, when the newest handoff predates the last ledger row written before this compaction began (before the run's
+ * "started" row, so rows other writers add while the hook runs are not counted), the handoff missed work and the line says so.
  */
 export function continuityLines(rows: LedgerRow[], handoff: { name: string; at: string } | null): string[] {
     const k = rows.findLastIndex(isMark);
     if (k < 0) return [];
     const mark = rows[k];
+    if (starts(mark, PRECOMPACT_ACK)) return [];
     const lines: string[] = [];
-    if ((mark.text ?? '').startsWith(PRECOMPACT_INCOMPLETE)) lines.push(`!! ${clip(mark.text ?? '', 260)} (${mark.ts}). Run \`journal.ts handoff --all --delta\` before relying on the summary.`);
-    const before = rows.slice(0, k).findLast((r) => r.ts && !isMark(r) && !byHook(r));
+    const handoffNewer = handoff !== null && handoff.at > (mark.ts ?? '');
+    const text = clip(mark.text ?? '', 260);
+    if (starts(mark, PRECOMPACT_STARTED) && !handoffNewer) lines.push(`!! ${text} (${mark.ts}) never finished: the hook was killed or failed before it wrote its result. Run ${REMEDY}, or dismiss with \`${ACK}\`.`);
+    if (starts(mark, PRECOMPACT_INCOMPLETE)) {
+        const needsHandoff = /\bhandoff: /.test(mark.text ?? '');
+        if (!(needsHandoff && handoffNewer)) lines.push(`!! ${text} (${mark.ts}). ${needsHandoff ? `Run ${REMEDY}, or dismiss` : 'A handoff does not fix this; dismiss'} with \`${ACK}\`.`);
+    }
+    const started = rows.slice(0, k + 1).findLastIndex((r) => starts(r, PRECOMPACT_STARTED));
+    const cut = started >= 0 && !rows.slice(started + 1, k).some(isMark) ? started : k;
+    const before = rows.slice(0, cut).findLast((r) => r.ts && !isMark(r) && !byHook(r));
     if (before?.ts && (!handoff || handoff.at < before.ts)) {
-        lines.push(`!! HANDOFF STALE: ${handoff ? `the newest handoff (${handoff.name}, ${handoff.at})` : 'there is no handoff'}, but the last ledger row before the compaction at ${mark.ts} is ${before.ts}. Run \`journal.ts handoff --all --delta\` now.`);
+        lines.push(`!! HANDOFF STALE: ${handoff ? `the newest handoff (${handoff.name}, ${handoff.at})` : 'there is no handoff'}, but the last ledger row before the compaction at ${mark.ts} is ${before.ts}. Run ${REMEDY} now.`);
     }
     return lines;
 }

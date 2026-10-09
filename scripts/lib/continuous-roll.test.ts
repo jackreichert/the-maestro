@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { continuityLines, dirtyPaths, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { continuityLines, scanStart, dirtyPaths, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 
 const line = (o: object): string => JSON.stringify(o);
 const T0 = '2026-10-09T12:00:00.000Z';
@@ -122,4 +122,37 @@ test('continuityLines: silent with no marker or a fresh handoff, loud on an inco
   assert.match(lines[0], /^!! precompact incomplete: handoff: boom/);
   const healed = [work, bad, { kind: 'note', ts: at(30), text: 'precompact: handoff delta written' }];
   assert.deepEqual(continuityLines(healed, { name: 'h.md', at: at(29) }), []);
+});
+
+test('scanStart ignores started rows and runs whose decisions step failed', () => {
+  const ok = { kind: 'note', ts: at(10), text: 'precompact: handoff written, 0 file(s)' };
+  const bad = { kind: 'note', ts: at(20), text: 'precompact incomplete: decisions: EACCES (trigger auto)' };
+  const other = { kind: 'note', ts: at(25), text: 'precompact incomplete: snapshot: boom (trigger auto)' };
+  const started = { kind: 'note', ts: at(30), text: 'precompact started (trigger auto)' };
+  assert.equal(scanStart([]), '');
+  assert.equal(scanStart([ok, bad, started]), at(10));
+  assert.equal(scanStart([ok, bad, other, started]), at(25), 'a failure in another step still finished the decision scan');
+});
+
+test('a started row with no result is loud until a newer handoff or an ack; asks other writers add during the run are not missed work', () => {
+  const work = { kind: 'wip', ts: at(10), text: 'work' };
+  const started = { kind: 'note', ts: at(20), text: 'precompact started (trigger auto)' };
+  assert.match(continuityLines([work, started], { name: 'h.md', at: at(5) })[0], /precompact started .* never finished/);
+  assert.deepEqual(continuityLines([work, started], { name: 'h.md', at: at(21) }), []);
+  const ack = { kind: 'note', ts: at(22), text: 'precompact ack' };
+  assert.deepEqual(continuityLines([work, started, ack], null), []);
+  const lateWriter = { kind: 'wip', ts: at(21), text: 'another agent logged during the hook' };
+  const done = { kind: 'note', ts: at(22), text: 'precompact: handoff written' };
+  assert.deepEqual(continuityLines([work, started, lateWriter, done], { name: 'h.md', at: at(20.5) }), []);
+});
+
+test('an incomplete row clears on a newer handoff only when the handoff step failed; other failures need an ack', () => {
+  const work = { kind: 'wip', ts: at(10), text: 'work' };
+  const ho = { kind: 'note', ts: at(20), text: 'precompact incomplete: handoff: boom (trigger auto)' };
+  const sn = { kind: 'note', ts: at(20), text: 'precompact incomplete: snapshot: boom (trigger auto)' };
+  assert.equal(continuityLines([work, ho], { name: 'h.md', at: at(15) }).length, 1);
+  assert.deepEqual(continuityLines([work, ho], { name: 'h.md', at: at(25) }), []);
+  const kept = continuityLines([work, sn], { name: 'h.md', at: at(25) });
+  assert.match(kept[0], /A handoff does not fix this; dismiss with `journal\.ts log "precompact ack"/);
+  assert.deepEqual(continuityLines([work, sn, { kind: 'note', ts: at(26), text: 'precompact ack' }], { name: 'h.md', at: at(25) }), []);
 });
