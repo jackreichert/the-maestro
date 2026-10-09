@@ -2626,3 +2626,17 @@ test('learned --help prints its usage and writes nothing', () => {
     assert.match(r.out, /journal\.ts learned "<claim>"/);
     assert.equal(learnedRows().length, 0);
 });
+
+test('prime fails loudly after a compaction whose handoff is missing or older than the work it should hold', () => {
+    run('log', 'finished a thing', '--kind', 'note', ...MARK);
+    assert.doesNotMatch(run('prime').out, /HANDOFF STALE|precompact incomplete/, 'no compaction marker, nothing to check');
+    run('log', 'precompact: handoff delta written, 0 file(s) snapshotted from 0 worktree(s), 0 unledgered decision(s) raised (trigger auto)', '--kind', 'note', ...MARK);
+    const stale = run('prime');
+    assert.match(stale.out.split('\n')[0], /^!! HANDOFF STALE: there is no handoff/);
+    assert.match(stale.err, /HANDOFF STALE/, 'the same line goes to stderr');
+    assert.equal(stale.code, 0);
+    assert.equal(run('handoff', '--all', '--no-worktree-sweep').code, 0);
+    assert.doesNotMatch(run('prime').out, /HANDOFF STALE/);
+    run('log', 'precompact incomplete: handoff: boom (trigger auto)', '--kind', 'note', ...MARK);
+    assert.match(run('prime').out.split('\n')[0], /^!! precompact incomplete: handoff: boom/);
+});
