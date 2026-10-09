@@ -319,6 +319,46 @@ test('with no self_review_repos nothing is labelled', () => {
   assert.deepEqual(summaries(prWatch.diff(null, first)), []);
 });
 
+const READY_LINE = 'READY org/repo#5 draft promoted to ready for review https://github.com/org/repo/pull/5';
+
+test('ready: a draft turning ready raises one READY line, once, and is quiet on later ticks', () => {
+  const w = world({ pages: [[prNode(5, { isDraft: true })]] });
+  const first = prWatch.check('open-prs:baseline', w.ctx());
+  w.serve({ pages: [[prNode(5, { isDraft: false })]] });
+  const second = prWatch.check('open-prs', w.ctx({ prev: first }));
+  assert.deepEqual(summaries(prWatch.diff(first, second)), [READY_LINE]);
+  const third = prWatch.check('open-prs', w.ctx({ prev: second }));
+  assert.deepEqual(summaries(prWatch.diff(second, third)), []);
+});
+
+test('ready: still draft, ready to draft, a PR first seen as ready, and a baseline say nothing; a second promotion speaks again', () => {
+  const w = world({ pages: [[prNode(5, { isDraft: true })]] });
+  const first = prWatch.check('open-prs:baseline', w.ctx());
+  assert.deepEqual(prWatch.diff(null, first), []);
+  assert.deepEqual(prWatch.diff(first, prWatch.check('open-prs', w.ctx({ prev: first }))), [], 'still a draft');
+  w.serve({ pages: [[prNode(5, { isDraft: false })]] });
+  const ready = prWatch.check('open-prs', w.ctx({ prev: first }));
+  w.serve({ pages: [[prNode(5, { isDraft: true })]] });
+  const back = prWatch.check('open-prs', w.ctx({ prev: ready }));
+  assert.deepEqual(prWatch.diff(ready, back), [], 'ready back to draft is not a promotion');
+  w.serve({ pages: [[prNode(5, { isDraft: false })]] });
+  assert.deepEqual(summaries(prWatch.diff(back, prWatch.check('open-prs', w.ctx({ prev: back })))), [READY_LINE]);
+  w.serve({ pages: [[prNode(5, { isDraft: false }), prNode(6, { isDraft: false })]] });
+  assert.deepEqual(prWatch.diff(ready, prWatch.check('open-prs', w.ctx({ prev: ready }))), [], 'a PR first seen already ready is not a promotion');
+});
+
+test('ready: a self_review_repos PR is labelled, and the line keeps the other lines of the same tick', () => {
+  const mine = (over: Record<string, unknown>) => prNode(5, { repository: { nameWithOwner: 'me/tool' }, url: 'https://github.com/me/tool/pull/5', ...over });
+  const w = world({ pages: [[mine({ isDraft: true })]] });
+  const ctx = (prev?: prWatch.PrWatchState) => w.ctx({ prev, config: { ghLogin: 'me', copilotOrgs: [], selfReviewRepos: ['me/*'] } });
+  const first = prWatch.check('open-prs:baseline', ctx());
+  w.serve({ pages: [[mine({ isDraft: false, reviewThreads: { nodes: [thread('t1')] } })]] });
+  assert.deepEqual(summaries(prWatch.diff(first, prWatch.check('open-prs', ctx(first)))), [
+    '[self-review] READY me/tool#5 draft promoted to ready for review https://github.com/me/tool/pull/5',
+    '[self-review] THREAD me/tool#5 by rev: https://x/t1',
+  ]);
+});
+
 /** A fixture board. No GitHub: these tests call diff and steeringEvent on the snapshot directly. */
 function boardPr(over: Partial<prWatch.BoardPr> = {}): prWatch.BoardPr {
   return {
