@@ -1,0 +1,84 @@
+// Run: node --test scripts/lib/lease-cli.test.ts
+// Two windows share one ledger through the real journal.ts: start, lease, release, done, brief, status and the race.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const SCRIPT = new URL('../journal.ts', import.meta.url).pathname;
+const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
+
+function setup() {
+  const vault = mkdtempSync(join(tmpdir(), 'lease-cli-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'lease-cli-cwd-'));
+  const argv = (window: string, args: string[]) => [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj', '--window', window];
+  const env = { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '', MAESTRO_WINDOW: '', CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_EVENT_DIR: join(vault, 'Events') };
+  const run = (window: string, ...args: string[]) => spawnSync(process.execPath, argv(window, args), { encoding: 'utf8', cwd, env });
+  const runAsync = (window: string, ...args: string[]) => new Promise<number | null>((resolve) => spawn(process.execPath, argv(window, args), { cwd, env, stdio: 'ignore' }).on('close', resolve));
+  const queue = (text: string): string => run('a', 'queue', text, ...MARK).stdout.match(/queued\s+(\S+)/)![1];
+  const rows = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+  return { run, runAsync, queue, rows, done: () => { rmSync(vault, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); } };
+}
+
+test('start takes the lease; the other window is refused with who holds it, and nothing is written', () => {
+  const t = setup();
+  try {
+    const id = t.queue('shared item');
+    assert.equal(t.run('a', 'start', id, ...MARK).status, 0);
+    const before = t.rows().length;
+    const refused = t.run('b', 'start', id, ...MARK);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, new RegExp(`${id} is leased by a until \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\dZ`));
+    assert.match(refused.stderr, /--steal/);
+    assert.equal(t.rows().length, before);
+    assert.equal(t.run('a', 'start', id, ...MARK).status, 0, 'the holder starting again is idempotent');
+    assert.equal(t.run('b', 'verify').status, 0, 'lease rows are not an integrity problem');
+  } finally { t.done(); }
+});
+
+test('start --steal takes it; done frees it; release frees it; a lapsed lease is free', () => {
+  const t = setup();
+  try {
+    const id = t.queue('shared item');
+    t.run('a', 'start', id, ...MARK);
+    assert.equal(t.run('b', 'start', id, '--steal', ...MARK).status, 0);
+    assert.equal(t.run('a', 'lease', id).status, 1, 'a no longer holds it');
+    assert.equal(t.run('b', 'release', id).status, 0);
+    assert.equal(t.run('a', 'lease', id).status, 0, 'released, so a can take it');
+    assert.equal(t.run('b', 'release', id).status, 1, 'b cannot release a\'s lease');
+    assert.equal(t.run('b', 'release', id, '--force').status, 0);
+    assert.equal(t.run('a', 'lease', id, '--ttl', '0.01').status, 0);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 900);
+    assert.equal(t.run('b', 'lease', id).status, 0, 'a 0.6 s lease has lapsed');
+    assert.equal(t.run('b', 'done', id, ...MARK).status, 0);
+  } finally { t.done(); }
+});
+
+test('start "<text>" leases the new item to its window; brief refuses another window\'s item before writing', () => {
+  const t = setup();
+  try {
+    const out = t.run('a', 'start', 'fresh work', ...MARK).stdout;
+    const id = out.match(/wip\s+(\S+)/)![1];
+    assert.equal(t.run('b', 'start', id, ...MARK).status, 1);
+    const before = t.rows().length;
+    const dir = mkdtempSync(join(tmpdir(), 'lease-cli-brief-'));
+    const brief = t.run('b', 'brief', id, '--read-only', '--out-dir', dir, ...MARK);
+    assert.equal(brief.status, 1);
+    assert.match(brief.stderr, /leased by a/);
+    assert.equal(t.rows().length, before);
+    rmSync(dir, { recursive: true, force: true });
+  } finally { t.done(); }
+});
+
+test('four processes starting one queued item at once: one succeeds, three are refused, one promote row', async () => {
+  const t = setup();
+  try {
+    const id = t.queue('contended');
+    const codes = await Promise.all(['a', 'b', 'c', 'd'].map((w) => t.runAsync(w, 'start', id, ...MARK)));
+    assert.deepEqual(codes.filter((c) => c === 0).length, 1, `exit codes ${codes.join(',')}`);
+    assert.equal(codes.filter((c) => c === 1).length, 3);
+    assert.equal(t.rows().filter((r) => r.kind === 'promote').length, 1, 'the item was promoted once');
+  } finally { t.done(); }
+});

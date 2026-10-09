@@ -76,6 +76,7 @@
  *   journal.ts retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
  *   journal.ts archive <stream>              hide a finished stream; refuses until retro + promotions are done
  *   journal.ts unarchive <stream>            bring an archived stream back, exactly
+ *   journal.ts lease <id> [--ttl minutes] [--steal]         take or renew this window's lease on an open item (`start <id>` and `brief <id>` take it too); another window's live lease refuses with exit 1 and "leased by <window> until <time>" unless --steal; any row the holder writes renews it, `done`/`drop`/`resolve` ends it, `release <id> [--force]` frees it, and it lapses after `lease_ttl_minutes` (default 60) of the holder's silence
  *   journal.ts claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]   take an exclusive repo lock (Claims/<repo>.lock)
  *   journal.ts release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
@@ -128,7 +129,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE } from './local-config.ts';
+import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -162,6 +163,7 @@ import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
+import { acquireLease, releaseLease, describeLease, foldLeases, liveLease } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
@@ -479,7 +481,7 @@ function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
     return fields;
 }
 
-function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false } = {}) {
+function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false, lease = false } = {}) {
     const text = arg('text') || positional.join(' ');
     if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
@@ -505,6 +507,8 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         refs,
         pending: ask && kind === 'decision' ? true : undefined,
         queued: queued ? true : undefined,
+        // A new in-flight item is leased to its window by its own row: nobody else knows the id yet, so there is no race to settle.
+        leaseTtl: lease && kind === 'wip' ? leaseTtl() : undefined,
         box: paste ? 'paste' : undefined,
         paste,
         gate,
@@ -587,12 +591,55 @@ function cmdQueue(): void {
 function cmdStart(): void {
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
-    if (!target || target.kind !== 'wip') { cmdLog('wip'); return; }
+    if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
+    // The lease comes first: a window that does not get it writes nothing.
+    takeLease(target.id as string);
     if (!isQueued(target)) { console.log(`wip  ${target.id}  ${target.text}  (already in flight)`); return; }
     append({ id: newId(entries), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() });
     if (!dryRun) render(true);
     console.log(`wip  ${target.id}  ${target.text}  (promoted from queued)`);
+}
+
+const leaseCtx = () => ({ readLedger, append: (row: LedgerRow) => append(row), window: windowId, now, dryRun });
+const leaseTtl = (): number => (arg('ttl') && Number(arg('ttl')) > 0 ? Number(arg('ttl')) : LEASE_TTL_MINUTES);
+
+/** Take this window's lease on an item, or exit 1 naming the window that holds it (`--steal` takes it anyway). Prints nothing when it is taken. */
+function takeLease(id: string): void {
+    const got = acquireLease(leaseCtx(), id, { ttlMinutes: leaseTtl(), steal: has('steal') });
+    if (!got.ok) refuseLeased(id, got.lease);
+}
+
+function refuseLeased(id: string, lease: Parameters<typeof describeLease>[0]): never {
+    console.error(`${id} is ${describeLease(lease)}. Nothing was written. Work another item, wait for the lease to lapse, or pass --steal to take it.`);
+    process.exit(1);
+}
+
+/** Exit 1 before anything is built or written when another window holds a live lease on the item (the write itself is `takeLease`). */
+function refuseIfLeasedByOther(id: string, entries: LedgerRow[]): void {
+    const held = liveLease(foldLeases(entries), id, Date.now());
+    if (held && held.holder !== windowId && !has('steal')) refuseLeased(id, held);
+}
+
+/** `lease <id> [--ttl minutes] [--steal]`: take or renew the lease on an open item, so no other window starts it. */
+function cmdLease(): void {
+    const target = itemNamedByArg(fold(readLedger()).items);
+    if (!target) die('Usage: journal.ts lease <id> [--ttl minutes] [--steal]   (an open item id)');
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open item can be leased.`);
+    takeLease(target.id as string);
+    const lease = liveLease(foldLeases(readLedger()), target.id as string, Date.now());
+    console.log(`lease  ${target.id}  ${lease ? describeLease(lease) : 'this window'}  ${target.text}`);
+}
+
+/** `release <id>` for an item lease: free it (the holder's own; `--force` for another window's). Returns false when `<id>` is not an item with a live lease, so `release <repo>` runs instead. */
+function releaseItemLease(id: string): boolean {
+    if (existsSync(claimPath(id)) || !foldLeases(readLedger()).has(id)) return false;
+    const res = releaseLease(leaseCtx(), id, has('force'));
+    if ('heldBy' in res) die(`${id} is ${describeLease(res.heldBy)}; only that window can release it, or pass --force.`);
+    if ('none' in res) die(`${id} has no live lease.`);
+    if (!dryRun) render(true);
+    console.log(`unleased  ${id}  (was ${describeLease(res.freed)})`);
+    return true;
 }
 
 /** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
@@ -1459,6 +1506,7 @@ function cmdClaim() {
 }
 
 function cmdRelease() {
+    if (releaseItemLease(positional[0] ?? '')) return;
     const repo = validRepo(positional[0]);
     const held = readClaim(repo);
     const desk = arg('desk') ? normaliseStream(arg('desk')) : null;
@@ -1516,6 +1564,7 @@ function cmdBrief(): void {
     const target = itemNamedByArg(fold(entries).items);
     if (!target) die(`No item with that id.\n${BRIEF_USAGE}`);
     if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open in-flight or queued item can be briefed.`);
+    refuseIfLeasedByOther(target.id as string, entries);
     const usage = usageFromArgs();
     const repoName = arg('repo') || target.repo || undefined;
     const repo = repoName ? validRepo(repoName) : undefined;
@@ -1551,6 +1600,9 @@ function cmdBrief(): void {
     const claim = writer && repo && desk ? { repo, desk, pid, host: hostname(), time: now(), branch: arg('branch') || undefined, why } : undefined;
 
     if (dryRun) { console.log(`[dry-run] brief ${paths.brief}${claim ? `, claim ${claim.repo} for ${claim.desk}` : ''}`); return; }
+
+    // Dispatching an item is taking it: the lease is the first write, so a window that loses a race writes no grant and no row.
+    takeLease(target.id as string);
 
     // One writer grant per item: an exclusive lock names the holder (--as, default the desk) and the pid of the run that took it.
     // The same holder briefing again is a rerun; any other holder is refused, unless the grant is an orphan (its run died before the rows were written).
@@ -2127,6 +2179,7 @@ switch (cmd) {
     case 'archive': cmdArchive(); break;
     case 'unarchive': cmdUnarchive(); break;
     case 'claim': cmdClaim(); break;
+    case 'lease': cmdLease(); break;
     case 'release': cmdRelease(); break;
     case 'claims': cmdClaims(); break;
     case 'brief': cmdBrief(); break;
