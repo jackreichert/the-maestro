@@ -92,6 +92,21 @@ export const countUnprocessed = (u: Unprocessed): number => Object.keys(u.answer
 const replyLines = (id: string, text: string, ticked: boolean, note = ''): string[] => [`- [${ticked ? 'x' : ' '}] \`${id}\`${note}`, `  > answer: ${text}`];
 
 /**
+ * `page` with `text` written into the empty `> answer:` stub under ask `id`'s line, so an answer given somewhere else (the web page)
+ * also shows in the note. Null when the page has no such ask line or its stub already holds an answer: an existing answer is never overwritten.
+ */
+export function fillStub(page: string, id: string, text: string): string | null {
+  const lines = page.split('\n');
+  const at = lines.findIndex((l) => l.match(ASK_LINE)?.[2] === id);
+  if (at === -1) return null;
+  const next = lines[at + 1] ?? '';
+  if (ANSWER.test(next) && !/^\s*>\s*answer\s*:\s*$/i.test(next)) return null;
+  const filled = `  > answer: ${squash(text)}`;
+  if (/^\s*>\s*answer\s*:\s*$/i.test(next)) lines[at + 1] = filled; else lines.splice(at + 1, 0, filled);
+  return lines.join('\n');
+}
+
+/**
  * `page` with the unprocessed edits written back in: answers into the stubs of their asks, ticks onto their boxes, the
  * user's priorities block in place of the generated one. An edit whose ask is no longer on the board goes under a
  * final `## Unprocessed answers` section, so it stays visible until the watcher reports it.
