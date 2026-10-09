@@ -1028,6 +1028,16 @@ To get the post-compact checklist, give `prime` the hook's source: use one entry
 { "matcher": "compact", "hooks": [{ "type": "command", "command": "node /path/to/the-maestro/scripts/journal.ts prime --source compact --project <container-folder-name> --vault <ledger-root>" }] }
 ```
 
+### Rolling continuously
+
+A compaction can happen at any moment, so two hooks make it lossless instead of relying on a manual roll. Neither calls a model, and neither is installed for you: `node scripts/hooks/print-settings-snippet.ts [--project <name>] [--vault <ledger-root>]` only prints the `hooks` entries, and you merge them into your own settings file.
+
+- **PreCompact** (`scripts/hooks/precompact.ts`, matcher `auto|manual`) runs `journal.ts handoff --all --delta`, copies dirty and untracked source of active worktrees (dirty files touched within 72 hours, under the container's `.worktrees`) to `<scripts_dir>/scratch/snapshots/<date>/`, and reads the transcript the hook is given (`transcript_path`) for messages that look like decisions with no ledger row within 30 minutes after them. Each such message (at most three) becomes an `ask` row. Secret-named files, files over 1 MB and files or messages that match a secret or PHI shape are skipped or withheld. It always exits 0, so a failure cannot block compaction; it writes a `note` row starting `precompact incomplete` naming the failed steps, and on success a row starting `precompact`.
+- **SessionStart** (`scripts/hooks/session-start-compact.ts`, matcher `compact|clear`) prints `prime --source <source>`, `start-here`, and `library-brief` for each active stream (skipped, and said so, when that command does not exist), capped at about 5k tokens. The plain `prime` hook above still covers `startup` and `resume`.
+- **`prime`** prints two checks first, outside its 40-line board, to stdout and stderr (exit stays 0, because a failing SessionStart hook can drop its output): the latest `precompact incomplete` row, and `HANDOFF STALE` when the newest handoff predates the last ledger row written before the latest `precompact` row.
+
+Not covered: a decision nobody typed (the hook only reads what you wrote), a transcript file that lags the conversation (the docs say it is written asynchronously), and worktrees outside the container's `.worktrees`.
+
 ## In review
 
 These are open pull requests. They are not on the main branch, so everything above describes the code without them.
