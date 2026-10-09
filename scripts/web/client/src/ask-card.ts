@@ -1,6 +1,6 @@
 import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
 import { askAge } from './glance.ts';
-import { createAnswerer } from './answer-api.ts';
+import { canSkip, createAnswerer } from './answer-api.ts';
 import type { AnswerRequest } from './answer-api.ts';
 import { askState } from './ask-state.ts';
 import './md-fragment.ts';
@@ -178,8 +178,8 @@ export class AskCardElement extends HTMLElement {
     const describedByDecision = { type: 'button', 'aria-describedby': `${uid}-h` };
     const save = h('button', { ...describedByDecision, class: 'primary', id: `${uid}-save` }, 'Send answer');
     const take = a.recommend ? h('button', { ...describedByDecision, class: 'secondary', id: `${uid}-take` }, 'Take recommendation') : null;
-    const skip = h('button', { ...describedByDecision, class: 'quiet', id: `${uid}-skip` }, 'Skip');
-    const buttons = [save, ...(take ? [take] : []), skip];
+    const skip = canSkip(a) ? h('button', { ...describedByDecision, class: 'quiet', id: `${uid}-skip` }, 'Skip') : null;
+    const buttons = [save, ...(take ? [take] : []), ...(skip ? [skip] : [])];
     const NEEDS_ANSWER = 'Write an answer first: there is no approve-as-asked shortcut here.';
     const error = h('p', { class: 'error', id: `${uid}-e`, role: 'alert', hidden: true }, NEEDS_ANSWER);
     // Sample data: no answer field at all (the section head says why), so a locked board has nothing that looks pressable.
@@ -290,7 +290,7 @@ export class AskCardElement extends HTMLElement {
     answer.addEventListener('input', () => { if (!error.hidden) showError(false); });
     save.addEventListener('click', submit);
     take?.addEventListener('click', () => { void send({ id: a.id, mode: 'recommend' }); });
-    skip.addEventListener('click', () => { void send({ id: a.id, mode: 'skip' }); });
+    skip?.addEventListener('click', () => { void send({ id: a.id, mode: 'skip' }); });
     answer.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
     });

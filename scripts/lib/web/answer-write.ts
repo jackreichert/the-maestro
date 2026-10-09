@@ -42,9 +42,9 @@ export function parseAnswer(body: unknown): AnswerBody | null {
   return keys === 'answer,id,mode' && typeof rec.answer === 'string' && rec.answer.length <= MAX_ANSWER * 2 ? { id, mode, answer: rec.answer } : null;
 }
 
-export type AnswerRefusal = 'invalid' | 'unknown' | 'answered' | 'pending' | 'busy';
+export type AnswerRefusal = 'invalid' | 'unknown' | 'answered' | 'pending' | 'busy' | 'one-way';
 export type AnswerOutcome = { ok: true; id: string; text: string } | { ok: false; code: AnswerRefusal; message: string };
-const STATUS: Record<AnswerRefusal, number> = { invalid: 422, unknown: 404, answered: 409, pending: 409, busy: 409 };
+const STATUS: Record<AnswerRefusal, number> = { invalid: 422, unknown: 404, answered: 409, pending: 409, busy: 409, 'one-way': 409 };
 const refuse = (code: AnswerRefusal, message: string): AnswerOutcome => ({ ok: false, code, message });
 
 const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
@@ -71,6 +71,8 @@ export function answerAsk(o: WriteOptions, req: AnswerBody): AnswerOutcome {
     const { g } = readBoard(o.web, o.now());
     const ask = [...g.awaiting, ...g.paste].find((a) => a.id === req.id);
     if (!ask) return g.items.some((i) => i.id === req.id && (i.kind === 'question' || i.kind === 'decision') && i.closedBy) ? refuse('answered', 'That ask is already closed.') : refuse('unknown', 'No such ask is waiting for an answer.');
+    // A skip closes the ask with no decision, so only a two-way ask may be skipped; an ask with no door recorded is one-way, as everywhere else.
+    if (req.mode === 'skip' && ask.door !== 'two-way') return refuse('one-way', 'A one-way ask needs an answer; it cannot be skipped.');
     const text = answerText(req, typeof ask.recommend === 'string' ? ask.recommend.trim() : undefined);
     if (typeof text !== 'string') return text;
     if (pendingInNote(statusDir, req.id)) return refuse('pending', 'That ask already has an answer typed in the note, waiting to be recorded.');

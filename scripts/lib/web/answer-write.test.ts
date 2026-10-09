@@ -102,9 +102,21 @@ test('Take recommendation records the ask\'s own recommendation; Skip records th
   assert.equal((await answer(r, { id: 'aa11', mode: 'recommend' })).status, 200);
   assert.equal(closers(r)[0]?.text, 'Take the recommendation: Merge it today');
   assert.equal((await answer(r, { id: 'bb22', mode: 'recommend' })).status, 422, 'no recommendation to take');
-  assert.equal((await answer(r, { id: 'bb22', mode: 'skip' })).status, 200);
-  assert.equal(closers(r)[1]?.text, SKIP_TEXT);
-  assert.equal(closers(r).length, 2);
+  assert.equal((await answer(r, { id: 'bb22', mode: 'text', answer: 'Cadenza' })).status, 200);
+  const skipped = await rig('skip-two-way', [{ ...ASKS[0], id: 'dd44', recommend: undefined }]);
+  assert.equal((await answer(skipped, { id: 'dd44', mode: 'skip' })).status, 200);
+  assert.equal(closers(skipped)[0]?.text, SKIP_TEXT);
+});
+
+test('a skip is refused for a one-way ask and for an ask with no door, and writes nothing', async () => {
+  const r = await rig('skip-one-way', [{ ...ASKS[1], door: 'one-way' }, ASKS[2] as Record<string, unknown>]);   // bb22 one-way, cc33 no door
+  for (const id of ['bb22', 'cc33']) {
+    const res = await answer(r, { id, mode: 'skip' });
+    assert.equal(res.status, 409, id);
+    assert.equal(res.json.error, 'one-way');
+  }
+  assert.equal(closers(r).length, 0);
+  assert.equal((await answer(r, { id: 'bb22', mode: 'text', answer: 'a real answer' })).status, 200, 'the ask can still be answered');
 });
 
 test('an empty answer, an unknown id and an answered ask are refused and write nothing', async () => {

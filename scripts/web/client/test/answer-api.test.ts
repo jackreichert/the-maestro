@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/answer-api.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createAnswerer } from '../src/answer-api.ts';
+import { canSkip, createAnswerer } from '../src/answer-api.ts';
 
 interface Call { url: string; init?: RequestInit }
 function fake(answers: (Response | Error)[]): { fetch: (u: string, i?: RequestInit) => Promise<Response>; calls: Call[] } {
@@ -39,4 +39,10 @@ test('a dead token is fetched again once; no token, an unreadable body and a dea
   assert.deepEqual(garbled, { ok: false, message: 'The answer was not saved. Try again.', closed: false });
   const down = await createAnswerer(fake([json(200, { token: 't' }), new Error('offline')]).fetch).send({ id: 'ab12', mode: 'skip' });
   assert.match(down.ok ? '' : down.message, /^Could not reach the server\./);
+});
+
+test('Skip is offered on a two-way ask only; no door recorded counts as one-way', () => {
+  assert.equal(canSkip({ door: 'two-way' }), true);
+  assert.equal(canSkip({ door: 'one-way' }), false);
+  assert.equal(canSkip({}), false);
 });

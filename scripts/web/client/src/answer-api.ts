@@ -37,3 +37,6 @@ export function createAnswerer(fetchFn: Fetch = (url, init) => fetch(url, init))
 
   return { send };
 }
+
+/** Whether the card offers Skip: only a two-way ask; one with no door recorded counts as one-way, and the server refuses a skip of it too. */
+export const canSkip = (a: { door?: 'one-way' | 'two-way' }): boolean => a.door === 'two-way';
