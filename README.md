@@ -261,6 +261,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [flow-report.ts](#flow-reportts) | Cycle time, throughput, WIP and open-item age from the ledger |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
+| [pr-state.ts](#pr-statets) | The real review and merge state of a PR: reviewer verdicts, threads, checks, push warning, ready |
 | [pr-guide-links.ts](#pr-guide-linksts) | Expand `{{file:path}}` tokens in an open PR's body into Files changed links, or list the changed line ranges to link |
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
@@ -346,6 +347,12 @@ A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` sec
 | `query [<name>]` | Named queries: `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs`, `tickets`; `--sql "select ..."` is read-only raw SQL |
 
 Pass `--vault` and `--tickets-vault` the way `journal.ts` does; tickets are skipped when no tickets vault is set.
+
+### pr-state.ts
+
+- `pr-state.ts <owner/repo#N | PR URL>... [--json]` reads each PR live and prints its head sha, base, draft flag, `mergeable` and `mergeStateStatus`, `reviewDecision`, and for each reviewer the latest non-comment review with the commit it was on and a verdict word: `APPROVED-on-head`, `APPROVED-stale`, `DISMISSED`, `CHANGES_REQUESTED` or `COMMENTED-only`. Verdicts come from the review history, because an empty `reviewDecision` also appears after a push dismisses an approval.
+- It lists unresolved threads split human and bot (path:line and the first 200 characters), a check summary, a `PUSH WARNING: a push will dismiss N approval(s): <who>` line whenever approvals sit on the current head (rulesets that dismiss on push), and `READY: yes|no (reasons)`. Ready needs not a draft, zero unresolved threads, `mergeable` MERGEABLE and no failing check; pending checks are shown but do not block.
+- It fails closed: more than one page of reviews, threads or checks, or a PR it cannot read, makes `READY: no`. Only logins are printed, never emails. Exit 0 when every PR was read, 2 on bad usage or an unreadable PR. A cheap runner follows [playbooks/pr-state.md](playbooks/pr-state.md), and the standing brief block tells every worker to run it before pushing to a PR branch.
 
 ### prs-snapshot.ts
 
