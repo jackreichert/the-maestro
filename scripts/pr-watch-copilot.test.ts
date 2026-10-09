@@ -132,3 +132,27 @@ test('a snapshot saved before the follow-up existed adopts its heads instead of 
   assert.equal(Object.values(next.copilot ?? {})[0]?.phase, 'done', 'adopted, not watching');
   assert.deepEqual(prWatch.diff(legacy, next).filter((e) => e.summary.startsWith('COPILOT-')), []);
 });
+
+test('a PR missing from one search result but still open is not re-told for the same sha when it returns', () => {
+  const r = rig();
+  const other = prNode(1, { headRefOid: 'x1' });
+  r.tick(0, [other, onHead('sha-a')]);
+  r.tick(600_000, [other, onHead('sha-b')]);
+  r.tick(600_000 + GRACE_MS, [other, onHead('sha-b')]);
+  assert.equal(r.tick(1_200_000, [other, onHead('sha-b', reviewedAt('sha-b'))]).length, 1);
+  r.tick(1_500_000, [other]); // a lagging search index: #5 is absent but gh says it is still open
+  assert.deepEqual(r.tick(1_800_000, [other, onHead('sha-b', reviewedAt('sha-b'))]), []);
+});
+
+test('a PR missing from one search result after COPILOT-LATE is not asked again for the same sha when it returns', () => {
+  const r = rig();
+  const other = prNode(1, { headRefOid: 'x1' });
+  r.tick(0, [other, onHead('sha-a')]);
+  r.tick(600_000, [other, onHead('sha-b')]);
+  r.tick(600_000 + GRACE_MS, [other, onHead('sha-b')]);
+  r.tick(600_000 + GRACE_MS + ESCALATE_MS, [other, onHead('sha-b')]);
+  r.tick(2_400_000, [other]);
+  r.tick(2_700_000, [other, onHead('sha-b')]);
+  assert.deepEqual(r.tick(3_000_000, [other, onHead('sha-b')]), []);
+  assert.deepEqual(r.edits(), [ASK]);
+});

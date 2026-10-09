@@ -269,11 +269,13 @@ function requestCopilot(board: Board, ctx: Ctx): void {
  * time is adopted as told when there is no earlier snapshot of this kind (a first check, or one from before this existed), so
  * switching it on does not request reviews for every old PR; later new heads are followed. Heads that left the board drop out.
  */
-function followCopilot(board: Board, prev: Snapshot | null, ctx: Ctx): { copilot: Tracks; events: { summary: string; actionable: boolean }[] } {
+function followCopilot(board: Board, prev: Snapshot | null, ctx: Ctx, held: ReadonlySet<string> = new Set()): { copilot: Tracks; events: { summary: string; actionable: boolean }[] } {
   const now = ctx.now ?? Date.now();
   const adopt = !prev?.copilot;
   const copilot: Tracks = {};
   const events: { summary: string; actionable: boolean }[] = [];
+  // A PR missing from this search result but still open keeps its tracking, so it returning does not restart its sha.
+  for (const [id, track] of Object.entries(prev?.copilot ?? {})) if (held.has(id.slice(0, id.lastIndexOf('@')))) copilot[id] = track;
   for (const [key, pr] of Object.entries(board)) {
     if (!pr.copilotOrg) continue;
     const id = trackKey(key, pr.head);
@@ -313,14 +315,17 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   }
   // Idempotent: GitHub ignores a repeat add-reviewer and the next fetch sees the request, so a failed save only repeats a no-op.
   requestCopilot(board, ctx);
-  const left = prev ? Object.entries(prev.board).filter(([key, pr]) => !board[key] && confirmedClosed(pr, ctx)).map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`) : [];
+  const missing = prev ? Object.entries(prev.board).filter(([key]) => !board[key]) : [];
+  const closed = missing.filter(([, pr]) => confirmedClosed(pr, ctx));
+  const held = new Set(missing.filter((m) => !closed.includes(m)).map(([key]) => key));
+  const left = closed.map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`);
   // `reported` is what this snapshot's standing conditions look like once told (so the next diff stays quiet about them).
   // A silent (baseline) first check reports nothing at all; a normal first check has told nobody yet, so diff() speaks.
   // `carried` hands diff() the old file's snapshot when that is what this check compared against.
   const silent = !prev && target === 'open-prs:baseline';
   const steering = silent ? undefined : steeringEvent(comparedBoard(prev?.board, board), board)[0]?.summary;
   // Last: it asks gh for reviews, and a throw above must not leave a request made that the saved state does not know.
-  const { copilot, events: copilotEvents } = followCopilot(board, prev, ctx);
+  const { copilot, events: copilotEvents } = followCopilot(board, prev, ctx, held);
   const state: PrWatchState = { board, reported: reportedNow(board), copilot, copilotEvents, left, silent, ...(steering ? { steering } : {}) };
   return prev && !hasBoard(ctx.prev) ? { ...state, carried: prev } : state;
 }
