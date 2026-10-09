@@ -150,7 +150,7 @@ import { scriptsDir } from './brief-block.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
-import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
+import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
 import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
@@ -1414,8 +1414,18 @@ function cmdClaim() {
 function cmdRelease() {
     const repo = validRepo(positional[0]);
     const held = readClaim(repo);
-    if (!existsSync(claimPath(repo))) die(`${repo} is not claimed.`);
     const desk = arg('desk') ? normaliseStream(arg('desk')) : null;
+    const itemDir = join(claimsDir, 'briefs');
+    const grantsFor = (): string[] => (existsSync(itemDir) ? readdirSync(itemDir).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).filter((id) => readClaimIn(itemDir, id)?.repo === repo) : []);
+    if (!existsSync(claimPath(repo))) {
+        // A brief that died before taking the repo claim leaves only its item grants; clearing them is a release of their own.
+        const orphans = grantsFor().filter((id) => has('force') || (desk && readClaimIn(itemDir, id)?.desk === desk));
+        if (!orphans.length) die(`${repo} is not claimed.`);
+        if (dryRun) { console.log(`[dry-run] release grants ${orphans.join(', ')}`); return; }
+        for (const id of orphans) unlinkSync(claimPathIn(itemDir, id));
+        console.log(`released  ${repo}  (no claim; cleared item grants ${orphans.join(', ')})`);
+        return;
+    }
     if (!has('force') && (!desk || !held || held.desk !== desk)) {
         die(`${repo} is held by ${describeClaim(held)}. Only that desk can release it (pass --desk), or use --force.`);
     }
@@ -1423,8 +1433,7 @@ function cmdRelease() {
     if (dryRun) { console.log(`[dry-run] release ${repo}`); return; }
     unlinkSync(claimPath(repo));
     // A brief's per-item writer grants for this repo end with the claim.
-    const itemDir = join(claimsDir, 'briefs');
-    if (existsSync(itemDir)) for (const n of readdirSync(itemDir).filter((f) => f.endsWith('.lock'))) { if (readClaimIn(itemDir, n.slice(0, -5))?.repo === repo) unlinkSync(join(itemDir, n)); }
+    for (const id of grantsFor()) unlinkSync(claimPathIn(itemDir, id));
     append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'released', repo, stream: held?.desk, desk: held?.desk, text: `released ${repo} (${held?.desk ?? 'unknown desk'})${has('force') ? ' with --force' : ''}`, ...usage });
     if (!dryRun) render(true);
     console.log(`released  ${repo}  ${held?.desk ?? ''}`);
@@ -1492,61 +1501,90 @@ function cmdBrief(): void {
 
     if (dryRun) { console.log(`[dry-run] brief ${paths.brief}${claim ? `, claim ${claim.repo} for ${claim.desk}` : ''}`); return; }
 
-    // One writer grant per item: an exclusive lock names the holder (--as, default the desk). The same holder briefing again is a rerun; any other holder is refused.
+    // One writer grant per item: an exclusive lock names the holder (--as, default the desk) and the pid of the run that took it.
+    // The same holder briefing again is a rerun; any other holder is refused, unless the grant is an orphan (its run died before the rows were written).
     const itemLocks = join(claimsDir, 'briefs');
-    const itemLock = { id: target.id, repo, desk, holder, time: now() };
+    const itemId = String(target.id);
+    const itemLock = { id: itemId, repo, desk, holder, pid: process.pid, host: hostname(), time: now() };
+    type Grant = { id?: string; repo?: string; desk?: string; holder?: string; pid?: number; host?: string; time?: string };
+    const readGrant = (id: string): Grant | null => readClaimIn(itemLocks, id) as Grant | null;
+    const hasBriefRow = (id: string): boolean => readLedger().some((r) => r.kind === 'brief' && r.briefs === id);
+    /** A grant is an orphan when its run is gone (this host, dead pid) and wrote no brief row: nothing holds the item. */
+    const orphan = (g: Grant | null, id: string): boolean => Boolean(g && g.host === hostname() && typeof g.pid === 'number' && !pidAlive(g.pid) && !hasBriefRow(id));
     let tookItem = false;
     let rerun = false;
     if (claim) {
-        const itemError = acquireClaimLock(itemLocks, String(target.id), itemLock);
+        let itemError = acquireClaimLock(itemLocks, itemId, itemLock);
+        if (itemError && 'code' in itemError && itemError.code === 'EEXIST' && orphan(readGrant(itemId), itemId)) {
+            try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* another run reclaimed it first */ }
+            itemError = acquireClaimLock(itemLocks, itemId, itemLock);
+        }
         if (itemError) {
             if (!('code' in itemError && itemError.code === 'EEXIST')) throw itemError;
-            const held = readClaimIn(itemLocks, String(target.id)) as { holder?: string; desk?: string; time?: string } | null;
+            const held = readGrant(itemId);
             if (!held || held.holder !== holder) {
-                console.error(`${target.id} is already briefed for a writer by ${held?.holder ?? 'an unreadable holder'} (desk ${held?.desk ?? '?'}, since ${held?.time ?? '?'}). No brief was written; pass --as <name> only if you are that holder.`);
+                console.error(`${itemId} is already briefed for a writer by ${held?.holder ?? 'an unreadable holder'} (desk ${held?.desk ?? '?'}, since ${held?.time ?? '?'}). No brief was written; pass --as <name> only if you are that holder.`);
                 process.exit(1);
             }
             rerun = true;
         } else tookItem = true;
     }
-    const dropItemLock = () => { if (tookItem) { try { unlinkSync(claimPathIn(itemLocks, String(target.id))); } catch { /* already gone */ } } };
+    const dropItemLock = () => { if (tookItem) { try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* already gone */ } } };
 
     let tookClaim = false;
+    let ownedClaim = false;
     if (claim) {
         const linkError = acquireClaimLock(claimsDir, claim.repo, claim);
         if (linkError) {
             if (!('code' in linkError && linkError.code === 'EEXIST')) { dropItemLock(); throw linkError; }
             const held = readClaim(claim.repo);
-            // The desk's own claim is not a second holder: a desk is told to claim before it dispatches. Another desk, or this desk's writer for a different item, is.
-            const ours = held && held.desk === claim.desk && (!held.why?.startsWith('brief ') || held.why === why);
-            if (!ours) {
+            // The desk's own claim is not a second holder: a desk is told to claim before it dispatches.
+            if (!(held && held.desk === claim.desk)) {
                 dropItemLock();
                 console.error(`${claim.repo} is already claimed by ${describeClaim(held)}${held?.why ? ` (${held.why})` : ''}. No brief was written.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
                 process.exit(1);
             }
+            ownedClaim = held.why === why;
+            // Another live grant on this repo, whoever took the repo claim, means another item's writer holds it.
+            const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && readGrant(id)?.repo === claim.repo && !orphan(readGrant(id), id)) : undefined;
+            if (otherGrant) {
+                dropItemLock();
+                console.error(`${claim.repo} already has a writer brief for item ${otherGrant} (holder ${readGrant(otherGrant)?.holder ?? '?'}). No brief was written.`);
+                process.exit(1);
+            }
         } else tookClaim = true;
     }
-    if (rerun && existsSync(paths.brief)) {
-        console.log(`brief  ${target.id}  ${paths.brief}  (already written for this holder)`);
+    // The ledger rows are the commit point. What exists decides what is written, so a rerun after a partial run completes it.
+    const ledgerNow = readLedger();
+    const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId);
+    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && !ledgerNow.some((r) => r.kind === 'claim' && r.repo === claim?.repo && typeof r.text === 'string' && r.text.endsWith(`: ${why}`));
+    if (briefed && existsSync(paths.brief)) {
+        console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
         console.log(`report ${paths.report}`);
-        console.log(`claim  ${claim?.repo}  ${claim?.desk}  (already held for this item)`);
+        console.log(claim ? `claim  ${claim.repo}  ${claim.desk}  (already held for this item)` : 'claim  none (read-only)');
         console.log(`Agent prompt: ${agentPrompt(paths.brief, paths.report)}`);
         return;
     }
+    const rollBack = () => { dropItemLock(); if (tookClaim && claim) { try { unlinkSync(claimPath(claim.repo)); } catch { /* already gone */ } } };
     try {
         mkdirSync(outDir, { recursive: true });
         writeFileSync(paths.brief, text);
     } catch (e) {
-        if (tookClaim && claim) unlinkSync(claimPath(claim.repo));
-        dropItemLock();
+        rollBack();
         die(`The brief file could not be written to ${paths.brief}: ${errorMessage(e)}${tookClaim ? ' (the claim was released again)' : ''}`);
     }
-    if (rerun) { console.log(`brief  ${target.id}  ${paths.brief}  (file rewritten)`); console.log(`Agent prompt: ${agentPrompt(paths.brief, paths.report)}`); return; }
-    if (tookClaim && claim) append({ id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claim.repo} for ${claim.desk}: ${why}`, ...usage });
-    if (isQueued(target)) append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage });
-    append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage });
+    if (!briefed) {
+        const ids = [...ledgerNow];
+        const row = <E extends object>(r: E): E & { id: string } => { const out = { id: newId(ids), ...r }; ids.push(out); return out; };
+        const batch = [
+            ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claim.repo} for ${claim.desk}: ${why}`, ...usage })] : []),
+            ...(isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
+            row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage }),
+        ];
+        try { appendMany(batch); } catch (e) { rollBack(); die(`The ledger rows could not be written (${errorMessage(e)}); nothing is held, run it again.`); }
+    }
     render(true);
-    console.log(`brief  ${target.id}  ${paths.brief}`);
+    console.log(`brief  ${itemId}  ${paths.brief}${rerun ? '  (completed from an earlier run)' : ''}`);
     console.log(`report ${paths.report}`);
     console.log(claim ? `claim  ${claim.repo}  ${claim.desk}${tookClaim ? '' : '  (the desk\'s own claim, kept)'}` : 'claim  none (read-only)');
     console.log(`Agent prompt: ${agentPrompt(paths.brief, paths.report)}`);

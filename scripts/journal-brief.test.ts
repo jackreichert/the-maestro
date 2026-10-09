@@ -2,8 +2,8 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentPrompt, briefPaths, briefText, libraryBlock } from './lib/journal/brief.ts';
 
@@ -28,6 +28,11 @@ function run(args: string[], cfg: string = config, script: string = SCRIPT) {
 const rows = (): Record<string, unknown>[] => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const idOf = (out: string): string => out.trim().split(/\s+/)[1] as string;
 const lock = (repo: string) => join(vault, 'Projects', 'test-proj', 'Claims', `${repo}.lock`);
+/** Removes the rows of one kind from the ledger file (a run that died before writing them). */
+function rowsDrop(kind: string): void {
+    const f = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    writeFileSync(f, readFileSync(f, 'utf8').split('\n').filter((l) => l && JSON.parse(l).kind !== kind).map((l) => l + '\n').join(''));
+}
 const start = (text: string, ...extra: string[]) => idOf(run(['start', text, ...extra, ...MARK]).out);
 
 beforeEach(() => {
@@ -228,4 +233,69 @@ test('a failing library-brief.ts refuses the brief before the claim', () => {
     assert.equal(existsSync(lock('repo-a')), false);
     assert.equal(existsSync(briefPaths(outDir, id).brief), false);
     assert.equal(rows().length, before);
+});
+
+const grantPath = (id: string) => join(vault, 'Projects', 'test-proj', 'Claims', 'briefs', `${id}.lock`);
+/** A grant left by a run that died: the repo, desk and holder it named, and a pid that is not running. */
+function plantOrphanGrant(id: string, repo: string, holder: string): void {
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Claims', 'briefs'), { recursive: true });
+    writeFileSync(grantPath(id), JSON.stringify({ id, repo, desk: 'Alpha', holder, pid: 2 ** 22 + 12345, host: hostname(), time: new Date().toISOString() }));
+}
+
+test('a rerun after a run that died with grant and claim but no rows writes the missing rows', () => {
+    const id = idOf(run(['queue', 'job', '--repo', 'repo-a', '--stream', 'Alpha', ...MARK]).out);
+    // What a killed run leaves: the grant, the repo claim (why names the item), no file, no rows.
+    plantOrphanGrant(id, 'repo-a', 'Alpha');
+    assert.equal(run(['claim', 'repo-a', '--desk', 'Alpha', '--why', `brief ${id}`, ...MARK]).code, 0);
+    rowsDrop('claim');
+    const r = run(['brief', id, '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(rows().filter((x) => x.kind === 'brief' && x.briefs === id).length, 1);
+    assert.equal(rows().filter((x) => x.kind === 'promote' && x.promotes === id).length, 1);
+    assert.equal(rows().filter((x) => x.kind === 'claim').length, 1);
+    assert.doesNotMatch(run(['status']).out, /Queued/);
+    assert.equal(run(['verify']).code, 0);
+});
+
+test('a failed ledger write rolls the grant and claim back, so the rerun starts clean', () => {
+    const id = idOf(run(['queue', 'job', '--repo', 'repo-a', '--stream', 'Alpha', ...MARK]).out);
+    const ledgerFile = join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl');
+    chmodSync(ledgerFile, 0o444);
+    const failed = run(['brief', id, '--out-dir', outDir, ...MARK]);
+    chmodSync(ledgerFile, 0o644);
+    assert.equal(failed.code, 1);
+    assert.equal(existsSync(lock('repo-a')), false);
+    assert.equal(existsSync(grantPath(id)), false);
+    assert.equal(run(['brief', id, '--out-dir', outDir, ...MARK]).code, 0);
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 1);
+});
+
+test('an orphan grant (dead run, no rows, no repo claim) is reclaimed by another holder, and release clears it', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    plantOrphanGrant(id, 'repo-a', 'ghost');
+    const r = run(['brief', id, '--as', 'window-2', '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 0, r.err);
+    const other = start('job two', '--repo', 'repo-b', '--stream', 'Alpha');
+    plantOrphanGrant(other, 'repo-b', 'ghost');
+    const rel = run(['release', 'repo-b', '--force', ...MARK]);
+    assert.equal(rel.code, 0, rel.err);
+    assert.equal(existsSync(grantPath(other)), false);
+});
+
+test('a live grant is not an orphan: another holder is still refused', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    assert.equal(run(['brief', id, '--as', 'w1', '--out-dir', outDir, ...MARK]).code, 0);
+    assert.equal(run(['brief', id, '--as', 'w2', '--out-dir', outDir, ...MARK]).code, 1);
+});
+
+test('two writer briefs on one repo are refused even when the desk took the claim by hand', () => {
+    const a = start('first', '--repo', 'repo-g', '--stream', 'Ggg');
+    const b = start('second', '--repo', 'repo-g', '--stream', 'Ggg');
+    assert.equal(run(['claim', 'repo-g', '--desk', 'Ggg', ...MARK]).code, 0);
+    assert.equal(run(['brief', a, '--out-dir', outDir, ...MARK]).code, 0);
+    const r = run(['brief', b, '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, new RegExp(`already has a writer brief for item ${a}`));
+    assert.equal(existsSync(briefPaths(outDir, b).brief), false);
+    assert.equal(existsSync(grantPath(b)), false);
 });
