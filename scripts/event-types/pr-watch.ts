@@ -77,7 +77,16 @@ export interface BoardPr {
 export type Board = Record<string, BoardPr>;
 
 /** The part of the state a diff compares: the board, and the standing conditions already told (condition id -> signature). */
-export interface Snapshot { board: Board; reported: Record<string, string>; copilot?: Tracks }
+export interface Snapshot {
+  board: Board;
+  reported: Record<string, string>;
+  copilot?: Tracks;
+  /** PRs missing from the search but not confirmed closed, keyed `owner/repo#n`, with when each was first missed (ms). Their Copilot tracks stay in `copilot`. */
+  absent?: Record<string, { since: number }>;
+}
+
+/** Backstop: a PR unseen for this long stops being held, so the state cannot grow forever. */
+export const ABSENT_TTL_MS = 24 * 3600 * 1000;
 
 export interface PrWatchState extends Snapshot {
   /** Lines for PRs that left the open set since the previous snapshot. */
@@ -317,7 +326,13 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   requestCopilot(board, ctx);
   const missing = prev ? Object.entries(prev.board).filter(([key]) => !board[key]) : [];
   const closed = missing.filter(([, pr]) => confirmedClosed(pr, ctx));
-  const held = new Set(missing.filter((m) => !closed.includes(m)).map(([key]) => key));
+  // pr-watch treats a PR missing from the search as open until confirmedClosed says otherwise (asked on the first miss only),
+  // so it is held, with its Copilot tracks, across any number of misses: until it returns, or the 24h backstop.
+  const now = ctx.now ?? Date.now();
+  const absent: Record<string, { since: number }> = {};
+  for (const [key] of missing) if (!closed.some(([k]) => k === key)) absent[key] = { since: now };
+  for (const [key, a] of Object.entries(prev?.absent ?? {})) if (!board[key] && !(key in absent) && now - a.since <= ABSENT_TTL_MS) absent[key] = a;
+  const held = new Set(Object.keys(absent));
   const left = closed.map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`);
   // `reported` is what this snapshot's standing conditions look like once told (so the next diff stays quiet about them).
   // A silent (baseline) first check reports nothing at all; a normal first check has told nobody yet, so diff() speaks.
@@ -326,7 +341,7 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   const steering = silent ? undefined : steeringEvent(comparedBoard(prev?.board, board), board)[0]?.summary;
   // Last: it asks gh for reviews, and a throw above must not leave a request made that the saved state does not know.
   const { copilot, events: copilotEvents } = followCopilot(board, prev, ctx, held);
-  const state: PrWatchState = { board, reported: reportedNow(board), copilot, copilotEvents, left, silent, ...(steering ? { steering } : {}) };
+  const state: PrWatchState = { board, reported: reportedNow(board), copilot, absent, copilotEvents, left, silent, ...(steering ? { steering } : {}) };
   return prev && !hasBoard(ctx.prev) ? { ...state, carried: prev } : state;
 }
 

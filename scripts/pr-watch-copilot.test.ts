@@ -28,6 +28,7 @@ function rig(orgs: string[] = ORGS) {
   };
   let prev: prWatch.PrWatchState | undefined;
   return {
+    state: (): prWatch.PrWatchState | undefined => prev,
     edits: (): string[] => readFileSync(editLog, 'utf8').trim().split('\n').filter(Boolean),
     tick(at: number, nodes: unknown[]): string[] {
       writeFileSync(env.GH_STUB_CONFIG ?? '', JSON.stringify({ ...config, pages: [nodes] }));
@@ -155,4 +156,65 @@ test('a PR missing from one search result after COPILOT-LATE is not asked again 
   r.tick(2_700_000, [other, onHead('sha-b')]);
   assert.deepEqual(r.tick(3_000_000, [other, onHead('sha-b')]), []);
   assert.deepEqual(r.edits(), [ASK]);
+});
+
+// pr-watch treats a PR missing from the search as open until gh confirms otherwise (asked on the first miss only), so Copilot
+// tracking must outlive any number of misses, not just one.
+const other = prNode(1, { headRefOid: 'x1' });
+const away = (r: ReturnType<typeof rig>, from: number, misses: number): number => {
+  for (let i = 0; i < misses; i++) r.tick(from + i * 300_000, [other]);
+  return from + misses * 300_000;
+};
+
+for (const misses of [2, 3]) {
+  test(`a PR missing ${misses} searches after COPILOT-REVIEW is not re-told for the same sha when it returns`, () => {
+    const r = rig();
+    r.tick(0, [other, onHead('sha-a')]);
+    r.tick(600_000, [other, onHead('sha-b')]);
+    r.tick(600_000 + GRACE_MS, [other, onHead('sha-b')]);
+    assert.equal(r.tick(1_200_000, [other, onHead('sha-b', reviewedAt('sha-b'))]).length, 1);
+    const back = away(r, 1_500_000, misses);
+    assert.deepEqual(r.tick(back, [other, onHead('sha-b', reviewedAt('sha-b'))]), []);
+    assert.deepEqual(r.edits(), [ASK]);
+  });
+
+  test(`a PR missing ${misses} searches after COPILOT-LATE is not asked or told again for the same sha when it returns`, () => {
+    const r = rig();
+    r.tick(0, [other, onHead('sha-a')]);
+    r.tick(600_000, [other, onHead('sha-b')]);
+    r.tick(600_000 + GRACE_MS, [other, onHead('sha-b')]);
+    r.tick(600_000 + GRACE_MS + ESCALATE_MS, [other, onHead('sha-b')]);
+    const back = away(r, 2_400_000, misses);
+    assert.deepEqual(r.tick(back, [other, onHead('sha-b')]), []);
+    assert.deepEqual(r.tick(back + 600_000, [other, onHead('sha-b')]), []);
+    assert.deepEqual(r.edits(), [ASK]);
+  });
+}
+
+test('a PR that returns with a new head after several misses starts that head fresh and does not repeat the old one', () => {
+  const r = rig();
+  r.tick(0, [other, onHead('sha-a')]);
+  r.tick(600_000, [other, onHead('sha-b')]);
+  r.tick(600_000 + GRACE_MS, [other, onHead('sha-b')]);
+  r.tick(1_200_000, [other, onHead('sha-b', reviewedAt('sha-b'))]);
+  const back = away(r, 1_500_000, 3);
+  assert.deepEqual(r.tick(back, [other, onHead('sha-c')]), [], 'the tick that first sees the head waits out the grace');
+  assert.deepEqual(r.edits(), [ASK]);
+  r.tick(back + GRACE_MS, [other, onHead('sha-c')]);
+  assert.deepEqual(r.edits(), [ASK, ASK], 'the new head is followed and requested once');
+});
+
+test('a PR unseen for more than 24 hours stops being held: the state does not grow forever', () => {
+  const r = rig();
+  r.tick(0, [other, onHead('sha-a')]);
+  r.tick(600_000, [other, onHead('sha-b')]);
+  r.tick(600_000 + GRACE_MS, [other, onHead('sha-b')]);
+  r.tick(1_200_000, [other, onHead('sha-b', reviewedAt('sha-b'))]);
+  r.tick(1_500_000, [other]);
+  const held = r.tick(1_800_000, [other]);
+  assert.deepEqual(held, []);
+  const late = 1_500_000 + prWatch.ABSENT_TTL_MS + 1;
+  r.tick(late, [other]);
+  assert.deepEqual(r.state()?.absent, {}, 'dropped after the backstop');
+  assert.deepEqual(Object.keys(r.state()?.copilot ?? {}).filter((id) => id.startsWith('org/repo#5@')), [], 'and so are its tracks');
 });
