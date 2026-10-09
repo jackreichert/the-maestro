@@ -28,7 +28,11 @@ export interface BriefInput {
 }
 
 /** The brief and report file paths for an item under a directory. */
-export const briefPaths = (dir: string, id: string): { brief: string; report: string } => ({ brief: join(dir, `brief-${id}.md`), report: join(dir, `report-${id}.md`) });
+/** A read-only brief gets its own files, so it can never be mistaken for the writer's (which says its agent holds the repo claim). */
+export const briefPaths = (dir: string, id: string, writer = true): { brief: string; report: string } => {
+    const mode = writer ? '' : '-ro';
+    return { brief: join(dir, `brief-${id}${mode}.md`), report: join(dir, `report-${id}${mode}.md`) };
+};
 
 /** The one-line Agent prompt that points at a brief file. */
 export const agentPrompt = (briefPath: string, reportPath: string): string =>

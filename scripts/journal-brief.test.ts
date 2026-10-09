@@ -167,7 +167,7 @@ test('--read-only takes no claim; a closed item cannot be briefed; a missing --d
     assert.equal(ro.code, 0, ro.err);
     assert.match(ro.out, /claim  none \(read-only\)/);
     assert.equal(existsSync(lock('repo-a')), false);
-    assert.match(readFileSync(briefPaths(outDir, id).brief, 'utf8'), /Read-only: no claim is held/);
+    assert.match(readFileSync(briefPaths(outDir, id, false).brief, 'utf8'), /Read-only: no claim is held/);
 
     const noStream = start('no desk', '--repo', 'repo-b');
     const r = run(['brief', noStream, '--out-dir', outDir, ...MARK]);
@@ -298,4 +298,57 @@ test('two writer briefs on one repo are refused even when the desk took the clai
     assert.match(r.err, new RegExp(`already has a writer brief for item ${a}`));
     assert.equal(existsSync(briefPaths(outDir, b).brief), false);
     assert.equal(existsSync(grantPath(b)), false);
+});
+
+/** Starts one brief run without waiting, so several overlap. */
+const spawnBrief = (args: string[], extraEnv: Record<string, string> = {}) => new Promise<{ code: number | null; err: string }>((resolve) => {
+    const p = spawn(process.execPath, [SCRIPT, 'brief', ...args, '--out-dir', outDir, ...MARK, '--vault', vault, '--project', 'test-proj'], {
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: config, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...extraEnv }, stdio: ['ignore', 'ignore', 'pipe'], cwd,
+    });
+    let err = '';
+    p.stderr.on('data', (d) => { err += d; });
+    p.on('close', (code) => resolve({ code, err }));
+});
+
+test('a writer brief then a read-only brief use separate files; the read-only one claims nothing', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    assert.equal(run(['brief', id, '--out-dir', outDir, ...MARK]).code, 0);
+    const ro = run(['brief', id, '--read-only', '--out-dir', outDir, ...MARK]);
+    assert.equal(ro.code, 0, ro.err);
+    const writerText = readFileSync(briefPaths(outDir, id).brief, 'utf8');
+    const roText = readFileSync(briefPaths(outDir, id, false).brief, 'utf8');
+    assert.match(writerText, /You hold the repo claim/);
+    assert.match(roText, /Read-only: no claim is held/);
+    assert.doesNotMatch(roText, /one writer/);
+    assert.notEqual(briefPaths(outDir, id).report, briefPaths(outDir, id, false).report);
+});
+
+test('a read-only brief then a writer brief: the writer gets its own file, claim row and brief row', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    assert.equal(run(['brief', id, '--read-only', '--out-dir', outDir, ...MARK]).code, 0);
+    const w = run(['brief', id, '--out-dir', outDir, ...MARK]);
+    assert.equal(w.code, 0, w.err);
+    assert.match(readFileSync(briefPaths(outDir, id).brief, 'utf8'), /You hold the repo claim/);
+    assert.equal(rows().filter((x) => x.kind === 'claim').length, 1);
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 2);
+    assert.equal(existsSync(lock('repo-a')), true);
+});
+
+test('two holders racing to reclaim a dead run\'s grant: exactly one wins, the other is refused', async () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    plantOrphanGrant(id, 'repo-a', 'ghost');
+    const slow = { MAESTRO_TEST_RECLAIM_DELAY_MS: '600' };
+    const results = await Promise.all([spawnBrief([id, '--as', 'w1'], slow), spawnBrief([id, '--as', 'w2'], slow)]);
+    assert.equal(results.filter((r) => r.code === 0).length, 1, results.map((r) => r.err).join('\n'));
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 1);
+    const grant = JSON.parse(readFileSync(grantPath(id), 'utf8'));
+    assert.match(grant.holder, /^w[12]$/, 'the surviving grant is the winner\'s');
+});
+
+test('concurrent runs by one holder write the rows once', async () => {
+    const id = idOf(run(['queue', 'job', '--repo', 'repo-a', '--stream', 'Alpha', ...MARK]).out);
+    await Promise.all([1, 2, 3, 4].map(() => spawnBrief([id, '--as', 'same'])));
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 1);
+    assert.equal(rows().filter((x) => x.kind === 'promote').length, 1);
+    assert.equal(run(['verify']).code, 0);
 });

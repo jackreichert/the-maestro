@@ -1490,7 +1490,7 @@ function cmdBrief(): void {
     if (detailsFile) { try { details = readFileSync(resolve(detailsFile), 'utf8'); } catch (e) { die(`--details-file ${detailsFile} could not be read: ${errorMessage(e)}`); } }
 
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
-    const paths = briefPaths(outDir, target.id as string);
+    const paths = briefPaths(outDir, target.id as string, writer);
     const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
     const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library: library.text, standing: block.stdout, details, writer, reportPath: paths.report });
     const why = `brief ${target.id}`;
@@ -1516,14 +1516,32 @@ function cmdBrief(): void {
     if (claim) {
         let itemError = acquireClaimLock(itemLocks, itemId, itemLock);
         if (itemError && 'code' in itemError && itemError.code === 'EEXIST' && orphan(readGrant(itemId), itemId)) {
-            try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* another run reclaimed it first */ }
-            itemError = acquireClaimLock(itemLocks, itemId, itemLock);
+            // Reclaiming is check, unlink, acquire; a reclaim lock makes that one step, so two runs cannot both reclaim and the second cannot delete the first's live grant.
+            if (process.env.MAESTRO_TEST_RECLAIM_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.MAESTRO_TEST_RECLAIM_DELAY_MS));
+            const reclaimName = `${itemId}.reclaim`;
+            let gate = acquireClaimLock(itemLocks, reclaimName, { pid: process.pid, host: hostname(), time: now() });
+            const stuck = readClaimIn(itemLocks, reclaimName) as { pid?: number; host?: string } | null;
+            if (gate && stuck && stuck.host === hostname() && typeof stuck.pid === 'number' && !pidAlive(stuck.pid)) {
+                try { unlinkSync(claimPathIn(itemLocks, reclaimName)); } catch { /* released meanwhile */ }
+                gate = acquireClaimLock(itemLocks, reclaimName, { pid: process.pid, host: hostname(), time: now() });
+            }
+            if (!gate) {
+                try {
+                    if (orphan(readGrant(itemId), itemId)) try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* already gone */ }
+                    itemError = acquireClaimLock(itemLocks, itemId, itemLock);
+                } finally { try { unlinkSync(claimPathIn(itemLocks, reclaimName)); } catch { /* already gone */ } }
+            }
         }
         if (itemError) {
             if (!('code' in itemError && itemError.code === 'EEXIST')) throw itemError;
             const held = readGrant(itemId);
             if (!held || held.holder !== holder) {
                 console.error(`${itemId} is already briefed for a writer by ${held?.holder ?? 'an unreadable holder'} (desk ${held?.desk ?? '?'}, since ${held?.time ?? '?'}). No brief was written; pass --as <name> only if you are that holder.`);
+                process.exit(1);
+            }
+            // The same holder's other run is still writing the rows: refuse it, so two runs cannot write them twice.
+            if (typeof held.pid === 'number' && held.pid !== process.pid && held.host === hostname() && pidAlive(held.pid) && !hasBriefRow(itemId)) {
+                console.error(`${itemId} is being briefed right now by another run of ${holder} (pid ${held.pid}). Wait for it, then rerun.`);
                 process.exit(1);
             }
             rerun = true;
@@ -1556,7 +1574,7 @@ function cmdBrief(): void {
     }
     // The ledger rows are the commit point. What exists decides what is written, so a rerun after a partial run completes it.
     const ledgerNow = readLedger();
-    const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId);
+    const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
     const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && !ledgerNow.some((r) => r.kind === 'claim' && r.repo === claim?.repo && typeof r.text === 'string' && r.text.endsWith(`: ${why}`));
     if (briefed && existsSync(paths.brief)) {
         console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
