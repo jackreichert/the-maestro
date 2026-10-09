@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { scanText } from './secret-scan.ts';
 import { clip } from './journal/format.ts';
 import type { LedgerRow } from './ledger-core.ts';
@@ -18,7 +19,6 @@ export const PRECOMPACT_INCOMPLETE = 'precompact incomplete';
 export const PRECOMPACT_STARTED = 'precompact started';
 /** Written by a person (or `journal.ts log`) to dismiss an alarm whose cause needs no handoff. */
 export const PRECOMPACT_ACK = 'precompact ack';
-const DECISION_COVER_MS = 30 * 60_000;
 const SNAPSHOT_MAX_FILE_BYTES = 1_000_000;
 const SNAPSHOT_MAX_FILES = 300;
 const SNAPSHOT_MAX_TOTAL_BYTES = 20_000_000;
@@ -46,29 +46,42 @@ export function userMessages(transcript: string): UserMessage[] {
 /** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to Jack, not a fact. */
 export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from now on|standing|always|never|ok(?:ay)? to|you may|let'?s go with|instead of|stop doing|do not|don'?t|yes,? (?:do|merge|push|open))\b/i;
 
-/** A row that records a decision. Not the asks this hook raised itself: those are only questions about other messages, and counting them would mark every other recent decision as recorded. */
-const covers = (r: LedgerRow): boolean => (['decision', 'rule', 'learned', 'resolved', 'ask', 'question'].includes(r.kind ?? '') || Boolean(r.approval))
-    && !JSON.stringify(r.used ?? '').includes('hook:precompact') && !(r.text ?? '').startsWith('unledgered decision?');
-
-/** The message's own marker inside a row's text: how a later compaction knows this hit was already raised. */
-export const hitMarker = (ts: string): string => `[msg ${ts}]`;
+/** The message's own marker: its timestamp plus a short hash of its text, so two messages in the same millisecond never share one. It is the only memory of what was raised. */
+export const hitMarker = (m: UserMessage): string => `[msg ${m.ts} ${createHash('sha1').update(m.text).digest('hex').slice(0, 6)}]`;
 
 /** At most this many hits are raised per run, oldest first; the rest stay unraised and the next run takes them. */
 export const MAX_DECISION_HITS_PER_RUN = 10;
 
+/** A rule, decision or learned row (not one this hook wrote) counts as recording a message when it holds at least this share of the message's distinct words of four letters or more. */
+export const OVERLAP_THRESHOLD = 0.6;
+const MIN_OVERLAP_WORDS = 3;
+const words = (t: string): Set<string> => new Set((t.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []));
+
+/** True when `row` is a hand-written rule/decision/learned row that restates `message`: shares at least OVERLAP_THRESHOLD of its words (needs three or more words in the message). */
+export function restates(row: LedgerRow, message: UserMessage): boolean {
+    if (!(['rule', 'decision', 'learned'].includes(row.kind ?? '') || row.approval) || JSON.stringify(row.used ?? '').includes(HOOK_USED_TAG) || (row.text ?? '').startsWith('unledgered decision?')) return false;
+    const want = words(message.text);
+    if (want.size < MIN_OVERLAP_WORDS) return false;
+    const have = words(`${row.text ?? ''} ${row.scope ?? ''}`);
+    return [...want].filter((w) => have.has(w)).length / want.size >= OVERLAP_THRESHOLD;
+}
+
 /**
- * Messages that look like decisions, have no ledger row that could record them within 30 minutes after, and that no earlier
- * run has already raised (the `[msg <ts>]` marker in a ledger row is the only memory; there is no time cutoff, so another
- * session's compaction can never hide this transcript's decisions). Returns every pending hit, oldest first: `raise` is the
- * first MAX_DECISION_HITS_PER_RUN of them as ask text (clipped, withheld when the text carries a secret or PHI shape), and
- * `pending` counts the hits left for the next run.
+ * Messages that look like decisions and are not handled. A message is handled only by an explicit reference: (a) its own
+ * marker (`hitMarker`) is in some ledger row's text, which is how an earlier run's ask remembers it, or (b) a hand-written
+ * rule, decision or learned row restates it (`restates`). Nothing else counts: not a row written near it in time, not any
+ * other ask, not a resolution of a different ask, so a decision is never hidden by its neighbours and the hook may be noisy
+ * but loses none. There is no time cutoff, so another session's compaction cannot hide this transcript's decisions.
+ * Returns every pending hit ordered by time then marker: `raise` is the first MAX_DECISION_HITS_PER_RUN as ask text (clipped,
+ * withheld when the text carries a secret or PHI shape), `pending` counts those left for the next run.
  */
 export function unledgeredDecisions(messages: UserMessage[], rows: LedgerRow[]): { raise: string[]; pending: number } {
-    const stamped = rows.filter((r) => r.ts);
+    const texts = rows.map((r) => r.text ?? '');
     const hits = messages.filter((m) => m.text.length >= 12 && m.text.length <= 1500 && DECISION_RE.test(m.text))
-        .filter((m) => !stamped.some((r) => (r.text ?? '').includes(hitMarker(m.ts))))
-        .filter((m) => !stamped.some((r) => covers(r) && r.ts! >= m.ts && Date.parse(r.ts!) - Date.parse(m.ts) <= DECISION_COVER_MS));
-    const raise = hits.slice(0, MAX_DECISION_HITS_PER_RUN).map((m) => `unledgered decision? ${hitMarker(m.ts)} ${scanText(m.text).length ? '(text withheld: secret or PHI shape)' : clip(m.text.replace(/\s+/g, ' '), 140)}`);
+        .map((m) => ({ m, marker: hitMarker(m) }))
+        .filter(({ m, marker }) => !texts.some((t) => t.includes(marker)) && !rows.some((r) => restates(r, m)))
+        .sort((x, y) => (x.m.ts + x.marker).localeCompare(y.m.ts + y.marker));
+    const raise = hits.slice(0, MAX_DECISION_HITS_PER_RUN).map(({ m, marker }) => `unledgered decision? ${marker} ${scanText(m.text).length ? '(text withheld: secret or PHI shape)' : clip(m.text.replace(/\s+/g, ' '), 140)}`);
     return { raise, pending: hits.length - raise.length };
 }
 
@@ -159,6 +172,7 @@ export function newestHandoff(dir: string): { name: string; at: string } | null 
 const isMark = (r: LedgerRow): boolean => r.kind === 'note' && (r.text ?? '').startsWith(PRECOMPACT_MARK);
 /** Rows the hook itself wrote after its handoff (the raised asks); they are not work the handoff missed. */
 export const HOOK_USED = 'hook:precompact';
+const HOOK_USED_TAG = HOOK_USED;
 const byHook = (r: LedgerRow): boolean => JSON.stringify(r.used ?? '').includes(HOOK_USED);
 const starts = (r: LedgerRow, prefix: string): boolean => (r.text ?? '').startsWith(prefix);
 

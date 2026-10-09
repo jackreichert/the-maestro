@@ -22,12 +22,47 @@ test('userMessages keeps typed text and drops tool results, meta rows and inject
   assert.deepEqual(userMessages(t).map((m) => m.text), ['always use drafts', 'ok to push']);
 });
 
-test('a decision with no covering row is raised once; a covering row or an earlier hit suppresses it', () => {
-  const msgs = [{ ts: at(0), text: 'from now on never merge without a green suite' }, { ts: at(60), text: 'what time is it right now?' }];
-  assert.equal(unledgeredDecisions(msgs, []).raise.length, 1);
-  assert.equal(unledgeredDecisions(msgs, [{ kind: 'rule', ts: at(5), text: 'merge needs green' }]).raise.length, 0);
-  assert.equal(unledgeredDecisions(msgs, [{ kind: 'rule', ts: at(45), text: 'too late to count' }]).raise.length, 1);
-  assert.equal(unledgeredDecisions(msgs, [{ kind: 'ask', ts: at(70), text: `unledgered decision? ${hitMarker(at(0))} x` }]).raise.length, 0);
+const msg = (n: number, text = `from now on rule number ${n} applies`) => ({ ts: at(n), text });
+const askFor = (m: { ts: string; text: string }, minute = 100) => ({ kind: 'question', ts: at(minute), text: `unledgered decision? ${hitMarker(m)} x`, used: ['hook:precompact'] });
+
+test('a decision is handled only by its own marker or a rule row that restates it; nothing else, however near in time', () => {
+  const m = { ts: at(0), text: 'from now on never merge without a green suite' };
+  assert.equal(unledgeredDecisions([m], []).raise.length, 1);
+  assert.equal(unledgeredDecisions([m], [askFor(m)]).raise.length, 0, 'its own marker');
+  assert.equal(unledgeredDecisions([m], [{ kind: 'rule', ts: at(5), text: 'never merge without a green suite: the suite must pass first' }]).raise.length, 0, 'a rule restating it');
+  assert.equal(unledgeredDecisions([m], [{ kind: 'rule', ts: at(5), text: 'merge needs green' }]).raise.length, 1, 'a short unrelated rule does not');
+});
+
+test('failure 1: two decisions, then an unrelated orchestrator ask, are both still raised', () => {
+  const msgs = [msg(0, 'from now on never push to main'), msg(1, 'always open drafts first')];
+  const unrelated = { kind: 'question', ts: at(5), text: 'Which model should the review use?' };
+  assert.equal(unledgeredDecisions(msgs, [unrelated]).raise.length, 2);
+});
+
+test('failure 2: resolving one raised ask does not stop the rest of 25 decisions', () => {
+  const msgs = Array.from({ length: 25 }, (_, n) => msg(n));
+  const first = unledgeredDecisions(msgs, []);
+  assert.deepEqual({ n: first.raise.length, pending: first.pending }, { n: 10, pending: 15 });
+  const rows = [...msgs.slice(0, 10).map((m) => askFor(m)), { kind: 'resolved', ts: at(101), text: 'answered the first ask' }];
+  const second = unledgeredDecisions(msgs, rows);
+  assert.deepEqual({ n: second.raise.length, pending: second.pending }, { n: 10, pending: 5 });
+});
+
+test('failure 3: one human decision row hides only the message it restates, not its neighbours', () => {
+  const msgs = [msg(0, 'from now on deploys need a ticket reference'), ...Array.from({ length: 9 }, (_, n) => msg(n + 1))];
+  const human = { kind: 'decision', ts: at(2), text: 'deploys need a ticket reference from now on' };
+  const out = unledgeredDecisions(msgs, [human]);
+  assert.equal(out.raise.length, 9);
+  assert.ok(!out.raise.some((q) => /deploys need a ticket/.test(q)));
+});
+
+test('failure 4: two messages in the same millisecond each get their own marker and both are raised', () => {
+  const a = { ts: at(0), text: 'always squash merge feature branches' };
+  const b = { ts: at(0), text: 'never force push shared branches' };
+  assert.notEqual(hitMarker(a), hitMarker(b));
+  const first = unledgeredDecisions([a, b], []);
+  assert.equal(first.raise.length, 2);
+  assert.equal(unledgeredDecisions([a, b], [askFor(a)]).raise.length, 1);
 });
 
 test('a decision message that carries a secret shape is withheld, not quoted', () => {
@@ -189,28 +224,24 @@ test('an incomplete row clears on a newer handoff only when the handoff step fai
   assert.deepEqual(continuityLines([work, sn, { kind: 'note', ts: at(26), text: 'precompact ack' }], { name: 'h.md', at: at(25) }), []);
 });
 
-test('30 recent decisions converge: the asks the hook raised do not count as recording the others', () => {
-  const msgs = Array.from({ length: 30 }, (_, n) => ({ ts: at(n), text: `from now on rule number ${n} applies` }));
-  const rows: { kind: string; ts: string; text: string; used: string[] }[] = [];
-  let pass = 0;
-  for (; pass < 6; pass++) {
+test('30 recent decisions converge to all raised exactly once across runs', () => {
+  const msgs = Array.from({ length: 30 }, (_, n) => msg(n));
+  const rows: ReturnType<typeof askFor>[] = [];
+  for (let pass = 0; pass < 6; pass++) {
     const { raise, pending } = unledgeredDecisions(msgs, rows);
-    raise.forEach((q, n) => rows.push({ kind: 'question', ts: at(31 + pass * 10 + n * 0.01), text: q, used: ['hook:precompact'] }));
+    raise.forEach((q, n) => rows.push({ kind: 'question', ts: at(31 + pass), text: q, used: ['hook:precompact', String(n)] }));
     if (!pending) break;
   }
-  assert.equal(rows.length, 30, 'every decision raised exactly once');
+  assert.equal(rows.length, 30);
   assert.equal(new Set(rows.map((r) => r.text)).size, 30);
   assert.equal(unledgeredDecisions(msgs, rows).raise.length, 0);
-  // Even rows without the used mark (older hook rows) are recognised by their text.
-  assert.equal(unledgeredDecisions(msgs.slice(0, 2), [{ kind: 'question', ts: at(3), text: 'unledgered decision? [msg elsewhere] x' }]).raise.length, 2);
 });
 
-test('two sessions: session A raising asks does not hide session B\'s decision, and a person\'s own rule row still covers one', () => {
-  const a = [{ ts: at(0), text: 'from now on A decides this' }];
-  const b = [{ ts: at(1), text: 'from now on B decides this' }];
+test('two sessions: session A raising asks does not hide session B\'s decision', () => {
+  const a = [msg(0, 'from now on A decides this')];
+  const b = [msg(1, 'from now on B decides this')];
   const raisedA = unledgeredDecisions(a, []).raise.map((q) => ({ kind: 'question', ts: at(2), text: q, used: ['hook:precompact'] }));
   assert.equal(unledgeredDecisions(b, raisedA).raise.length, 1);
-  assert.equal(unledgeredDecisions(b, [{ kind: 'rule', ts: at(5), text: 'B decision recorded by hand' }]).raise.length, 0);
 });
 
 test('an incomplete row from one session survives another session succeeding, and clears only on its own success or an ack', () => {

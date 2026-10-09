@@ -20,7 +20,7 @@ test('precompact writes the handoff delta, raises the decision and ends with a m
   assert.deepEqual(calls[0].slice(0, 2), ['log', 'precompact started (trigger auto, session unknown)'], 'the trace row comes before any slow work');
   assert.deepEqual(calls[1], ['handoff', '--all', '--no-worktree-sweep', '--force', '--out', '/j/HANDOFF-2026-10-09-precompact.md']);
   assert.equal(calls[2][0], 'ask');
-  assert.match(calls[2][1], /^unledgered decision\? \[msg 2026-10-09T11:00:00.000Z\]/);
+  assert.match(calls[2][1], /^unledgered decision\? \[msg 2026-10-09T11:00:00.000Z [0-9a-f]{6}\]/);
   assert.deepEqual(calls[3].slice(0, 2), ['log', text]);
   assert.match(text, /^precompact: handoff written, 5 file\(s\) snapshotted from 2 worktree\(s\), 1 unledgered decision\(s\) raised \(trigger auto, session unknown\)$/);
 });
