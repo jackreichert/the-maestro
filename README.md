@@ -989,7 +989,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 npm test
 ```
 
-Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.ts`. Shared logic that `journal.ts` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.ts`. `node --test` runs files in parallel but the tests inside a file one after another, so the few files with the most tests are split: their cases live in `scripts/<name>.cases.ts` and run through `scripts/<name>.shard-N.test.ts` (see `scripts/lib/shard.ts`), and a test fails if a cases file is missing a shard. To run one of those, run its shards, e.g. `node --test 'scripts/journal.shard-*.test.ts'`. `npm test` also points `NODE_COMPILE_CACHE` at a fresh temp directory and sets `GIT_ALLOW_PROTOCOL=file`, so spawned scripts start faster and a fixture's fake github.com origin cannot reach the network. Shared logic that `journal.ts` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
 
 ## Development
 
@@ -998,7 +998,7 @@ Requires Node 24 or newer, which runs TypeScript directly by stripping types, so
 ```bash
 npm install        # typescript and @types/node, dev only
 npm run typecheck  # tsc --noEmit, strict
-npm test           # node --test over scripts/**/*.test.ts
+npm test           # node --test over scripts/**/*.test.ts, in parallel shards, roughly 80-140 seconds depending on machine load
 ```
 
 The scripts themselves have no runtime dependencies.
