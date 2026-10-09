@@ -1550,6 +1550,22 @@ test('roll refuses to sweep when no container root is configured, and still roll
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
+test('a finished roll sweep records the branch-sweep standing row as run; a dry run, a refused sweep and --no-worktree-sweep do not', () => {
+    const w = sweepWorld();
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    const overdue = () => runEnvIn(w.container, env, 'standing', 'list').out.split('\n').find((l) => /branch-sweep/.test(l)) ?? '';
+    assert.match(overdue(), /^OVERDUE/);
+    runEnvIn(w.container, env, 'roll', '--dry-run');
+    runEnvIn(w.container, env, 'roll', '--no-worktree-sweep');
+    runEnvIn(emptyCwd, env, 'roll');
+    assert.match(overdue(), /^OVERDUE/, 'none of those swept anything');
+    const r = runEnvIn(w.container, env, 'roll');
+    assert.match(r.out, /standing +branch-sweep +recorded/);
+    assert.match(overdue(), /^ok .*last ran 0 min ago/);
+    const ran = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'standing.jsonl'), 'utf8');
+    assert.match(ran, /"op":"ran","id":"branch-sweep","evidence":"roll worktree sweep: 1 removed, 0 pruned, 1 kept; remote branches not swept"/);
+});
+
 test('roll --dry-run and --no-worktree-sweep leave every worktree in place', () => {
     const w = sweepWorld();
     const env = { MAESTRO_CONTAINER_ROOT: w.container };
