@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/status-page/inline.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
+import { carryInline, countUnprocessed, extractFields, fillStub, unprocessed } from './inline.ts';
 
 const PAGE = [
   '# The Podium', '', "## Today's priorities", '', '1. Ship it _[Alpha: awaiting 1 · in flight 0 · open PRs 2]_', '2. Second', '',
@@ -70,4 +70,15 @@ test('carryInline with nothing to carry returns the page unchanged', () => {
 test('a reordered priorities list keeps each stream mapping, so it can be set again unchanged', () => {
   const page = "## Today's priorities\n\nSet for 2026-10-05.\n2. Fix Y _[Beta: awaiting 0 · in flight 0 · open PRs 1]_\n1. Ship X _[Alpha: awaiting 1 · in flight 0 · open PRs 2]_\n\n## Next\n";
   assert.deepEqual(extractFields(page).priorities, ['Fix Y | Beta', 'Ship X | Alpha']);
+});
+
+test('fillStub writes an answer into the ask\'s empty stub, adds one when the stub is gone, and never overwrites a typed answer', () => {
+  const filled = fillStub(PAGE, 'cd34', 'take it');
+  assert.ok(filled);
+  assert.deepEqual(extractFields(filled).answers, { cd34: 'take it' }, 'the answer reads back as the note path would read it');
+  assert.equal(filled.split('\n').filter((l) => /answer:/.test(l)).length, 2, 'the stub was filled, not duplicated');
+  const bare = fillStub(edit(PAGE, '- [ ] `cd34`\n  > answer: ', '- [ ] `cd34`'), 'cd34', 'x\ny');
+  assert.deepEqual(extractFields(bare ?? '').answers, { cd34: 'x y' });
+  assert.equal(fillStub(filled, 'cd34', 'other'), null, 'an existing answer stays');
+  assert.equal(fillStub(PAGE, 'zz99', 'x'), null, 'an ask that is not on the page');
 });
