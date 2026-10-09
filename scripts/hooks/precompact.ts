@@ -43,6 +43,36 @@ export interface PrecompactDeps {
 
 export interface PrecompactInput { transcript_path?: string; trigger?: string; session_id?: string }
 
+/** The decision scan alone: raises every unhandled decision-like message of the transcript as ask rows. Throws on a missing or unreadable transcript or a failed ask. */
+export function raiseDecisions(input: PrecompactInput, deps: Pick<PrecompactDeps, 'journal' | 'readLedger' | 'readTranscript'>): { raised: number; count: number } {
+  if (!input.transcript_path) throw new Error('no transcript_path in the hook input');
+  const found = unledgeredDecisions(userMessages(deps.readTranscript(input.transcript_path)), deps.readLedger());
+  let raised = 0;
+  for (const q of found.raise) {
+    const r = deps.journal(['ask', q, ...MARKS]);
+    if (!r.ok) throw new Error(r.out || 'journal.ts ask failed');
+    raised++;
+  }
+  return { raised, count: found.count };
+}
+
+/**
+ * The SessionEnd entry point: only the decision scan, for the decisions typed after the last compaction (PreCompact does not
+ * fire on /clear or when a session ends). No handoff, no snapshot, no started row. Fails open: it never throws, and a failure
+ * leaves a `precompact incomplete: decisions: ...` row tagged with the session so prime reports it until a later success or an ack.
+ * Returns the number of asks raised.
+ */
+export function decisionsOnly(input: PrecompactInput & { reason?: string }, deps: Pick<PrecompactDeps, 'journal' | 'readLedger' | 'readTranscript'>): number {
+  const tag = `trigger session-end ${input.reason ?? 'unknown'}, session ${(input.session_id ?? 'unknown').slice(0, 8)}`;
+  try {
+    return raiseDecisions(input, deps).raised;
+  } catch (e) {
+    const why = (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 100);
+    try { deps.journal(['log', `${PRECOMPACT_INCOMPLETE}: decisions: ${why} (${tag})`, '--kind', 'note', ...MARKS]); } catch { /* fail open */ }
+    return 0;
+  }
+}
+
 /** Runs the four steps and returns the marker row's text. Never throws. */
 export function precompact(input: PrecompactInput, deps: PrecompactDeps): string {
   // The session tag pairs this run's started row with its result row, so another session's rows cannot hide a killed run.
@@ -58,19 +88,9 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   // No worktree sweep (it took minutes on a big container) and a cap on the child, so the whole hook stays under its harness timeout.
   step('handoff', () => { const r = deps.journal(['handoff', '--all', '--no-worktree-sweep', '--force', '--out', deps.handoffPath(date)], HANDOFF_BUDGET_MS); if (!r.ok) throw new Error(r.out || 'journal.ts handoff failed'); });
   const snap = step('snapshot', () => { const r = deps.snapshot(date, started + SNAPSHOT_DEADLINE_MS); if (!r) throw new Error('scripts_dir is not set'); if (r.partial) throw new Error(`time budget reached after ${r.worktrees} worktree(s)`); if (r.capped) throw new Error(`file or size cap reached after ${r.files} file(s); later source was not copied`); return r; });
-  let raised = 0;
-  let count = 0;
-  step('decisions', () => {
-    if (!input.transcript_path) throw new Error('no transcript_path in the hook input');
-    const rows = deps.readLedger();
-    const found = unledgeredDecisions(userMessages(deps.readTranscript(input.transcript_path)), rows);
-    count = found.count;
-    for (const q of found.raise) {
-      const r = deps.journal(['ask', q, ...MARKS]);
-      if (!r.ok) throw new Error(r.out || 'journal.ts ask failed');
-      raised++;
-    }
-  });
+  const found = { raised: 0, count: 0 };
+  step('decisions', () => { Object.assign(found, raiseDecisions(input, deps)); });
+  const { raised, count } = found;
   const text = failed.length
     ? `${PRECOMPACT_INCOMPLETE}: ${failed.join('; ')} (trigger ${trigger})`
     : `${PRECOMPACT_MARK}: handoff written, ${snap?.files ?? 0} file(s) snapshotted from ${snap?.worktrees ?? 0} worktree(s), ${count} unledgered decision(s) raised in ${raised} ask(s) (trigger ${trigger})`;
@@ -79,9 +99,9 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
 }
 
 /** Value of `--name <v>` in argv, or ''. */
-const flag = (argv: string[], name: string): string => { const k = argv.indexOf(`--${name}`); return k >= 0 ? argv[k + 1] ?? '' : ''; };
+export const flag = (argv: string[], name: string): string => { const k = argv.indexOf(`--${name}`); return k >= 0 ? argv[k + 1] ?? '' : ''; };
 
-function realDeps(argv: string[]): PrecompactDeps {
+export function realDeps(argv: string[]): PrecompactDeps {
   const forward = ['project', 'vault'].flatMap((f) => (flag(argv, f) ? [`--${f}`, flag(argv, f)] : []));
   const store = openStore({ vault: flag(argv, 'vault') || LEDGER_ROOT || VAULT_ROOT, project: flag(argv, 'project') || CONFIGURED_PROJECT, dryRun: false, warn: () => {} });
   return {

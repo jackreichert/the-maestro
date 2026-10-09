@@ -7,7 +7,9 @@
  *
  * PreCompact runs precompact.ts (timeout 120 s, above the 45 s the hook gives its own handoff). SessionStart with matcher
  * `compact|clear` runs session-start-compact.ts (timeout 120 s; each command it runs is capped at 60 s).
- * `--project` and `--vault` are passed through to both hooks.
+ * SessionEnd with matcher `clear|resume|logout|prompt_input_exit|other` runs session-end-decisions.ts, the decision scan alone
+ * (timeout 30 s; SessionEnd hooks otherwise get 1.5 s and never more than 60 s).
+ * `--project` and `--vault` are passed through to every hook.
  */
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,12 +17,13 @@ import { fileURLToPath } from 'node:url';
 const HOOKS = dirname(fileURLToPath(import.meta.url));
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
 
-/** The settings object for the two hooks; `extra` is the shell-quoted pass-through flags. */
+/** The settings object for the three hooks; `extra` is the shell-quoted pass-through flags. */
 export function snippet(extra: string[]): object {
   const cmd = (file: string): string => ['node', shq(join(HOOKS, file)), ...extra].join(' ');
   return {
     hooks: {
       PreCompact: [{ matcher: 'auto|manual', hooks: [{ type: 'command', command: cmd('precompact.ts'), timeout: 120 }] }],
+      SessionEnd: [{ matcher: 'clear|resume|logout|prompt_input_exit|other', hooks: [{ type: 'command', command: cmd('session-end-decisions.ts'), timeout: 30 }] }],
       SessionStart: [{ matcher: 'compact|clear', hooks: [{ type: 'command', command: cmd('session-start-compact.ts'), timeout: 120 }] }],
     },
   };

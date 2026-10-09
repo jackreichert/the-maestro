@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { continuityLines } from '../lib/continuous-roll.ts';
-import { precompact } from './precompact.ts';
+import { decisionsOnly, precompact } from './precompact.ts';
 import type { PrecompactDeps } from './precompact.ts';
 import { assemble, context, streamsFrom } from './session-start-compact.ts';
 import { snippet } from './print-settings-snippet.ts';
@@ -63,6 +63,9 @@ test('session-start context passes --source to prime and caps the output', () =>
 test('the settings snippet names both events with the matchers and passes flags through', () => {
   const s = snippet(['--project', "'p'"]) as { hooks: Record<string, { matcher: string; hooks: { command: string; timeout: number }[] }[]> };
   assert.equal(s.hooks.PreCompact[0].matcher, 'auto|manual');
+  assert.equal(s.hooks.SessionEnd[0].matcher, 'clear|resume|logout|prompt_input_exit|other');
+  assert.match(s.hooks.SessionEnd[0].hooks[0].command, /session-end-decisions\.ts' --project 'p'$/);
+  assert.equal(s.hooks.SessionEnd[0].hooks[0].timeout, 30);
   assert.equal(s.hooks.SessionStart[0].matcher, 'compact|clear');
   assert.match(s.hooks.PreCompact[0].hooks[0].command, /precompact\.ts' --project 'p'$/);
   assert.match(s.hooks.SessionStart[0].hooks[0].command, /session-start-compact\.ts' --project 'p'$/);
@@ -110,4 +113,19 @@ test('25 decisions, /clear, next compaction: everything was raised the first tim
   assert.equal(run(), 2, '25 decisions in two ask rows of 20 and 5');
   assert.equal(run(), 0, 'after /clear the same transcript raises nothing again');
   assert.deepEqual(continuityLines(rows, { name: 'h.md', at: '2026-10-09T13:00:00.000Z' }), []);
+});
+
+test('the SessionEnd entry point runs only the decision scan: no handoff, no snapshot, no marker rows on success', () => {
+  const { d, calls } = deps({ snapshot: () => { throw new Error('snapshot must not run'); } });
+  assert.equal(decisionsOnly({ transcript_path: '/t', reason: 'clear', session_id: 'abcdef1234' }, d), 1);
+  assert.deepEqual(calls.map((c) => c[0]), ['ask']);
+});
+
+test('the SessionEnd entry point fails open: an unreadable transcript leaves a tagged incomplete row and no throw', () => {
+  const { d, calls } = deps({ readTranscript: () => { throw new Error('EACCES'); } });
+  assert.equal(decisionsOnly({ transcript_path: '/t', reason: 'logout', session_id: 'abcdef1234' }, d), 0);
+  assert.deepEqual(calls.map((c) => c[0]), ['log']);
+  assert.equal(calls[0][1], 'precompact incomplete: decisions: EACCES (trigger session-end logout, session abcdef12)');
+  const down = deps({ readTranscript: () => { throw new Error('EACCES'); }, journal: () => { throw new Error('journal down'); } });
+  assert.equal(decisionsOnly({ transcript_path: '/t' }, down.d), 0);
 });
