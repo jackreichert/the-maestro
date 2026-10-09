@@ -53,7 +53,7 @@ const GOOD_BODY = [
 const bodyFile = (repo: string, text: string): string => { const p = join(repo, '..', `body-${Math.random().toString(36).slice(2)}.md`); writeFileSync(p, text); return p; };
 
 const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = [], env: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, GIT_TERMINAL_PROMPT: '0', ...env },
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file', ...env },
 });
 
 /** A throwaway user config file. Gate settings are read from this file, not from the environment. */
