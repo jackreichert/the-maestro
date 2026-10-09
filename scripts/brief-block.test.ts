@@ -164,3 +164,11 @@ test('the shipped block asks for Learned lines in the shape `journal.ts learned`
     const { problems } = fillBlock(block, { '<user git emails>': 'dev@example.com', '<tracker key example>': 'FAKE-1' });
     assert.deepEqual(problems, []);
 });
+
+test('the shipped block carries the necessity rule, and the re-review brief asks the same question', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    assert.match(block, /^- Necessity: .*do we need this\?.*nearest existing mechanism.*stop and say so instead of building\./m);
+    const prs = readFileSync(new URL('../reference/prs.md', import.meta.url).pathname, 'utf8');
+    assert.match(prs, /nearest existing mechanism: X, not enough because Y/);
+    assert.match(readFileSync(BRIEF, 'utf8'), /\*\*Before a build brief:\*\* name the nearest existing mechanism/);
+});
