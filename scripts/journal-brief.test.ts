@@ -352,3 +352,51 @@ test('concurrent runs by one holder write the rows once', async () => {
     assert.equal(rows().filter((x) => x.kind === 'promote').length, 1);
     assert.equal(run(['verify']).code, 0);
 });
+
+test('a reclaim lock left by a dead run is never broken: briefs are refused naming it, and release clears it', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    plantOrphanGrant(id, 'repo-a', 'ghost');
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Claims', 'briefs', `${id}.reclaim.lock`), JSON.stringify({ repo: 'repo-a', pid: 2 ** 22 + 777, host: hostname(), time: new Date().toISOString() }));
+    const before = rows().length;
+    const r = run(['brief', id, '--as', 'w1', '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /being reclaimed by another run \(pid \d+/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Claims', 'briefs', `${id}.reclaim.lock`)), true, 'the lock is left in place');
+    assert.equal(existsSync(grantPath(id)), true, 'the grant is not touched');
+    assert.equal(rows().length, before);
+    assert.equal(run(['release', 'repo-a', '--force', ...MARK]).code, 0);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Claims', 'briefs', `${id}.reclaim.lock`)), false);
+    assert.equal(run(['brief', id, '--as', 'w1', '--out-dir', outDir, ...MARK]).code, 0);
+});
+
+test('two runs meeting a dead reclaim lock both refuse; neither deletes the other\'s grant', async () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    plantOrphanGrant(id, 'repo-a', 'ghost');
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Claims', 'briefs', `${id}.reclaim.lock`), JSON.stringify({ repo: 'repo-a', pid: 2 ** 22 + 778, host: hostname(), time: new Date().toISOString() }));
+    const slow = { MAESTRO_TEST_RECLAIM_DELAY_MS: '400' };
+    const results = await Promise.all([spawnBrief([id, '--as', 'w1'], slow), spawnBrief([id, '--as', 'w2'], slow)]);
+    assert.deepEqual(results.map((r) => r.code), [1, 1]);
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 0);
+});
+
+test('a re-brief after release takes a new claim and writes its claim row', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    assert.equal(run(['brief', id, '--out-dir', outDir, ...MARK]).code, 0);
+    assert.equal(run(['release', 'repo-a', '--desk', 'Alpha', ...MARK]).code, 0);
+    const again = run(['brief', id, '--out-dir', outDir, ...MARK]);
+    assert.equal(again.code, 0, again.err);
+    assert.doesNotMatch(again.out, /already written|already held/);
+    const kinds = rows().map((x) => x.kind).filter((k) => ['claim', 'released', 'brief'].includes(k as string));
+    assert.deepEqual(kinds, ['claim', 'brief', 'released', 'claim']);
+    assert.equal(existsSync(lock('repo-a')), true);
+});
+
+test('a non-numeric reclaim delay is ignored, not waited on forever', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    plantOrphanGrant(id, 'repo-a', 'ghost');
+    const r = spawnSync(process.execPath, [SCRIPT, 'brief', id, '--as', 'w1', '--out-dir', outDir, ...MARK, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd, timeout: 20000,
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: config, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_TEST_RECLAIM_DELAY_MS: 'abc' },
+    });
+    assert.equal(r.status, 0, r.stderr);
+});

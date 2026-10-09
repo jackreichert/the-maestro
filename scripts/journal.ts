@@ -1517,20 +1517,20 @@ function cmdBrief(): void {
         let itemError = acquireClaimLock(itemLocks, itemId, itemLock);
         if (itemError && 'code' in itemError && itemError.code === 'EEXIST' && orphan(readGrant(itemId), itemId)) {
             // Reclaiming is check, unlink, acquire; a reclaim lock makes that one step, so two runs cannot both reclaim and the second cannot delete the first's live grant.
-            if (process.env.MAESTRO_TEST_RECLAIM_DELAY_MS) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.MAESTRO_TEST_RECLAIM_DELAY_MS));
+            const delayMs = Number(process.env.MAESTRO_TEST_RECLAIM_DELAY_MS);
+            if (Number.isFinite(delayMs) && delayMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
             const reclaimName = `${itemId}.reclaim`;
-            let gate = acquireClaimLock(itemLocks, reclaimName, { pid: process.pid, host: hostname(), time: now() });
-            const stuck = readClaimIn(itemLocks, reclaimName) as { pid?: number; host?: string } | null;
-            if (gate && stuck && stuck.host === hostname() && typeof stuck.pid === 'number' && !pidAlive(stuck.pid)) {
-                try { unlinkSync(claimPathIn(itemLocks, reclaimName)); } catch { /* released meanwhile */ }
-                gate = acquireClaimLock(itemLocks, reclaimName, { pid: process.pid, host: hostname(), time: now() });
+            const gate = acquireClaimLock(itemLocks, reclaimName, { repo, pid: process.pid, host: hostname(), time: now() });
+            if (gate) {
+                // Never break a reclaim lock: a dead-looking one is exactly what two racing runs would both delete. `release <repo>` clears it.
+                const holderOfGate = readClaimIn(itemLocks, reclaimName) as { pid?: number; time?: string } | null;
+                console.error(`${itemId} is being reclaimed by another run (pid ${holderOfGate?.pid ?? 'unknown'}, since ${holderOfGate?.time ?? '?'}). No brief was written; if that run died, \`release ${repo} --force\` clears it.`);
+                process.exit(1);
             }
-            if (!gate) {
-                try {
-                    if (orphan(readGrant(itemId), itemId)) try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* already gone */ }
-                    itemError = acquireClaimLock(itemLocks, itemId, itemLock);
-                } finally { try { unlinkSync(claimPathIn(itemLocks, reclaimName)); } catch { /* already gone */ } }
-            }
+            try {
+                if (orphan(readGrant(itemId), itemId)) try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* already gone */ }
+                itemError = acquireClaimLock(itemLocks, itemId, itemLock);
+            } finally { try { unlinkSync(claimPathIn(itemLocks, reclaimName)); } catch { /* already gone */ } }
         }
         if (itemError) {
             if (!('code' in itemError && itemError.code === 'EEXIST')) throw itemError;
@@ -1564,7 +1564,7 @@ function cmdBrief(): void {
             }
             ownedClaim = held.why === why;
             // Another live grant on this repo, whoever took the repo claim, means another item's writer holds it.
-            const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && readGrant(id)?.repo === claim.repo && !orphan(readGrant(id), id)) : undefined;
+            const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && !id.endsWith('.reclaim') && readGrant(id)?.repo === claim.repo && !orphan(readGrant(id), id)) : undefined;
             if (otherGrant) {
                 dropItemLock();
                 console.error(`${claim.repo} already has a writer brief for item ${otherGrant} (holder ${readGrant(otherGrant)?.holder ?? '?'}). No brief was written.`);
@@ -1575,8 +1575,10 @@ function cmdBrief(): void {
     // The ledger rows are the commit point. What exists decides what is written, so a rerun after a partial run completes it.
     const ledgerNow = readLedger();
     const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
-    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && !ledgerNow.some((r) => r.kind === 'claim' && r.repo === claim?.repo && typeof r.text === 'string' && r.text.endsWith(`: ${why}`));
-    if (briefed && existsSync(paths.brief)) {
+    // A claim row counts only if no release of the repo came after it: a re-brief after `release` takes a new claim and needs its own row.
+    const lastIndex = (pred: (r: LedgerRow) => boolean): number => ledgerNow.reduce((at, r, i) => (pred(r) ? i : at), -1);
+    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo);
+    if (briefed && existsSync(paths.brief) && !tookClaim && !tookItem && !claimRowMissing) {
         console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
         console.log(`report ${paths.report}`);
         console.log(claim ? `claim  ${claim.repo}  ${claim.desk}  (already held for this item)` : 'claim  none (read-only)');
@@ -1591,13 +1593,13 @@ function cmdBrief(): void {
         rollBack();
         die(`The brief file could not be written to ${paths.brief}: ${errorMessage(e)}${tookClaim ? ' (the claim was released again)' : ''}`);
     }
-    if (!briefed) {
+    if (!briefed || claimRowMissing) {
         const ids = [...ledgerNow];
         const row = <E extends object>(r: E): E & { id: string } => { const out = { id: newId(ids), ...r }; ids.push(out); return out; };
         const batch = [
             ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claim.repo} for ${claim.desk}: ${why}`, ...usage })] : []),
-            ...(isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
-            row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage }),
+            ...(!briefed && isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
+            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
         ];
         try { appendMany(batch); } catch (e) { rollBack(); die(`The ledger rows could not be written (${errorMessage(e)}); nothing is held, run it again.`); }
     }
