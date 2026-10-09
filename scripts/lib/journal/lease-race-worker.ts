@@ -6,10 +6,10 @@ import { acquireLease } from './leases.ts';
 const [vault, window, startAt, items, mode] = process.argv.slice(2) as [string, string, string, string, string | undefined];
 const store = openStore({ vault, project: 'race', dryRun: false, window });
 store.ensureDir();
-// Steal mode uses wide slots and holds each append back 150 ms into its slot (a loaded machine delays a process by far less), so every stealer has read the ledger and seen the same holder
+// Steal mode uses wide slots and holds each append back 700 ms into its slot (a loaded machine, with the rest of the suite running beside it, still delays a process by less), so every stealer has read the ledger and seen the same holder
 // before any steal row lands. (A stealer that reads after another's row is a legitimate second steal, not a race.)
-const SLOT = mode === 'steal' ? 400 : 40;
-const HOLD = 150 + 40 * Number(window.replace(/\D+/g, '') || 0);   // each stealer lands 40 ms after the one before, so its re-read comes before the next steal row
+const SLOT = mode === 'steal' ? 1500 : 40;
+const HOLD = 700 + 100 * Number(window.replace(/\D+/g, '') || 0);   // each stealer lands 100 ms after the one before, so its re-read comes before the next steal row
 let slot = 0;
 const delayed = (row: object) => { if (mode === 'steal') while (Date.now() < Number(startAt) + slot * SLOT + HOLD) { /* spin */ } return store.append(row); };
 const ctx = { readLedger: store.readLedger, append: delayed, window, now: () => new Date().toISOString(), dryRun: false };
