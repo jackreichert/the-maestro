@@ -7,7 +7,8 @@
  * Reads `git diff --numstat -M -z <base>...<head>` (head defaults to HEAD), sorts each changed file
  * into code, test, config, docs or mechanical, and checks the code against two limits, whichever is
  * hit first: pr_max_code_files (default 5) and pr_max_code_lines (default 400, additions plus
- * deletions). Limits and path globs come from local-config.ts.
+ * deletions). Those two limits are read from the user config file only; an environment variable
+ * cannot change them. Path globs come from local-config.ts.
  *
  * Optional wide tier (off unless pr_wide_max_code_files exceeds pr_max_code_files): a PR also passes
  * with up to pr_wide_max_code_files files when it stays within pr_wide_max_code_lines, which can never

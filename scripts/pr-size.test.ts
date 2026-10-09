@@ -39,7 +39,7 @@ function repoWith(base: Record<string, string>, change: (repo: string) => void):
 /** Runs the CLI hermetically (no user config file); returns { code, out, json }. */
 function check(repo: string, env: Record<string, string> = {}, extra: string[] = []) {
     const r = spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', ...extra], {
-        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', ...env },
+        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', GIT_TERMINAL_PROMPT: '0', ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -67,7 +67,12 @@ test('over on files: six code files fail even when tiny', () => {
     assert.doesNotMatch(r.failures.join('\n'), /code lines/);
 });
 
-const WIDE = { MAESTRO_PR_WIDE_MAX_CODE_FILES: '10' };
+const configFile = (body: string): string => {
+    const path = join(mkdtempSync(join(tmpdir(), 'pr-size-cfg-')), 'config.md');
+    writeFileSync(path, `\`\`\`maestro-config\n${body}\n\`\`\`\n`);
+    return path;
+};
+const WIDE = { MAESTRO_LOCAL_CONFIG: configFile('pr_wide_max_code_files: 10') };
 
 test('wide tier is off by default: output and verdicts match the two-limit gate', () => {
     const repo = repoWith({}, many(6, 1));
@@ -80,9 +85,9 @@ test('wide tier is off by default: output and verdicts match the two-limit gate'
     assert.equal(check(repoWith({}, many(6, 22))).code, 1, 'six small files fail with no settings');
     assert.equal(check(repoWith({}, many(5, 80))).code, 0, 'five files at 400 lines still pass');
     assert.equal(check(repoWith({}, many(5, 81))).code, 1);
-    // setting only the wide line limit, or a wide file limit at or below the normal one, changes nothing
+    // an environment variable cannot turn the wide tier on, or change a limit that is not in the file
     assert.equal(check(repo, { MAESTRO_PR_WIDE_MAX_CODE_LINES: '300' }).code, 1);
-    assert.equal(check(repo, { MAESTRO_PR_WIDE_MAX_CODE_FILES: '5' }).code, 1);
+    assert.equal(check(repo, { MAESTRO_PR_WIDE_MAX_CODE_FILES: '10' }).code, 1, 'env cannot turn the wide tier on');
     assert.equal(check(repo, { MAESTRO_PR_WIDE_MAX_CODE_FILES: '2' }).code, 1);
 });
 
@@ -107,9 +112,15 @@ test('wide tier on: too many lines or files still fail, with a message naming bo
 test('wide line limit can never exceed the normal line limit', () => {
     const big = repoWith({}, many(7, 70));
     assert.equal(check(big, { ...WIDE, MAESTRO_PR_WIDE_MAX_CODE_LINES: '9000' }).code, 1, 'capped at the 400 normal limit');
-    assert.equal(check(big, { ...WIDE, MAESTRO_PR_MAX_CODE_LINES: '900', MAESTRO_PR_WIDE_MAX_CODE_LINES: '900' }).code, 0);
-    assert.equal(check(repoWith({}, many(7, 50)), { ...WIDE, MAESTRO_PR_MAX_CODE_LINES: '300', MAESTRO_PR_WIDE_MAX_CODE_LINES: '900' }).code, 1, 'wide capped at the lowered normal limit');
-    assert.equal(check(repoWith({}, many(7, 40)), { ...WIDE, MAESTRO_PR_WIDE_MAX_CODE_LINES: '250' }).code, 1, 'a lower wide limit applies');
+    const raised = join(big, 'raised.md');
+    writeFileSync(raised, '```maestro-config\npr_max_code_lines: 900\npr_wide_max_code_files: 10\npr_wide_max_code_lines: 900\n```\n');
+    assert.equal(check(big, { MAESTRO_LOCAL_CONFIG: raised, MAESTRO_PR_MAX_CODE_LINES: '50' }).code, 0, 'env cannot lower the file line limit');
+    const lowRepo = repoWith({}, many(7, 50));
+    const lowered = join(lowRepo, 'lowered.md');
+    writeFileSync(lowered, '```maestro-config\npr_max_code_lines: 300\npr_wide_max_code_files: 10\npr_wide_max_code_lines: 900\n```\n');
+    assert.equal(check(lowRepo, { MAESTRO_LOCAL_CONFIG: lowered, MAESTRO_PR_MAX_CODE_LINES: '9000' }).code, 1, 'wide capped at the file line limit; env cannot raise it');
+    const tighter = { MAESTRO_LOCAL_CONFIG: configFile('pr_wide_max_code_files: 10\npr_wide_max_code_lines: 250') };
+    assert.equal(check(repoWith({}, many(7, 40)), { ...tighter, MAESTRO_PR_WIDE_MAX_CODE_LINES: '900' }).code, 1, 'a lower wide limit in the file applies; env cannot raise it');
 });
 
 test('wide tier on: the printed summary shows the tier, and the wide limits come from the config file', () => {
@@ -118,7 +129,7 @@ test('wide tier on: the printed summary shows the tier, and the wide limits come
     const cfg = join(repo, 'cfg.md');
     writeFileSync(cfg, '```maestro-config\npr_wide_max_code_files: 8\n```\n');
     assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: cfg }).code, 0);
-    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: cfg, MAESTRO_PR_WIDE_MAX_CODE_FILES: '5' }).code, 1, 'env wins');
+    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: cfg, MAESTRO_PR_WIDE_MAX_CODE_FILES: '5' }).code, 0, 'env cannot shrink the wide file limit');
 });
 
 test('mechanical files plus code still fail in the wide tier', () => {
@@ -199,16 +210,19 @@ test('a rename-only PR passes', () => {
     assert.equal(check(repo).code, 0);
 });
 
-test('limits come from the environment and from the config file; env wins', () => {
+test('size limits come from the config file; a gate env var does not lift them', () => {
     const repo = repoWith({}, (r) => { for (let i = 0; i < 3; i++) put(r, `src/f${i}.py`, lines(50)); });
     assert.equal(check(repo).code, 0);
-    assert.equal(check(repo, { MAESTRO_PR_MAX_CODE_FILES: '2' }).code, 1);
-    assert.equal(check(repo, { MAESTRO_PR_MAX_CODE_LINES: '100' }).code, 1);
-    assert.equal(check(repo, { MAESTRO_PR_MAX_CODE_FILES: '3', MAESTRO_PR_MAX_CODE_LINES: '150' }).code, 0);
-    const cfg = join(repo, 'cfg.md');
-    writeFileSync(cfg, '```maestro-config\npr_max_code_files: 2\n```\n');
-    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: cfg }).code, 1);
-    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: cfg, MAESTRO_PR_MAX_CODE_FILES: '9' }).code, 0);
+    assert.equal(check(repo, { MAESTRO_PR_MAX_CODE_FILES: '2', MAESTRO_PR_MAX_CODE_LINES: '100' }).code, 0, 'env cannot tighten the defaults');
+    const tightFiles = join(repo, 'tight-files.md');
+    writeFileSync(tightFiles, '```maestro-config\npr_max_code_files: 2\n```\n');
+    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: tightFiles, MAESTRO_PR_MAX_CODE_FILES: '9' }).code, 1, 'env cannot lift the file limit');
+    const tightLines = join(repo, 'tight-lines.md');
+    writeFileSync(tightLines, '```maestro-config\npr_max_code_lines: 100\n```\n');
+    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: tightLines, MAESTRO_PR_MAX_CODE_LINES: '99999' }).code, 1, 'env cannot lift the line limit');
+    const room = join(repo, 'room.md');
+    writeFileSync(room, '```maestro-config\npr_max_code_files: 3\npr_max_code_lines: 150\n```\n');
+    assert.equal(check(repo, { MAESTRO_LOCAL_CONFIG: room }).code, 0);
 });
 
 test('glob settings replace the defaults: a custom test glob excludes, a custom mechanical glob exempts', () => {
