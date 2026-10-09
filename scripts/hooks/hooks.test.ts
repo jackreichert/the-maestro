@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { continuityLines } from '../lib/continuous-roll.ts';
 import { decisionsOnly, precompact } from './precompact.ts';
@@ -12,18 +15,37 @@ const transcript = JSON.stringify({ type: 'user', timestamp: '2026-10-09T11:00:0
 
 function deps(over: Partial<PrecompactDeps> = {}): { d: PrecompactDeps; calls: string[][] } {
   const calls: string[][] = [];
-  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], readTranscript: () => transcript, handoffPath: (d) => `/j/HANDOFF-${d}-precompact.md`, snapshot: () => ({ worktrees: 2, files: 5, skipped: 1, partial: false, capped: false }), now: () => new Date(T), ...over } };
+  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], readTranscript: () => transcript, handoffPath: (d, w) => `/j/HANDOFF-${d}-precompact-${w}.md`, snapshot: () => ({ worktrees: 2, files: 5, skipped: 1, partial: false, capped: false }), now: () => new Date(T), ...over } };
 }
 
 test('precompact writes the handoff delta, raises the decision and ends with a marker row', () => {
   const { d, calls } = deps();
-  const text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d);
+  const prior = process.env.MAESTRO_WINDOW;
+  process.env.MAESTRO_WINDOW = 'envwin';
+  let text: string;
+  try { text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d); } finally { if (prior === undefined) delete process.env.MAESTRO_WINDOW; else process.env.MAESTRO_WINDOW = prior; }
   assert.deepEqual(calls[0].slice(0, 2), ['log', 'precompact started (trigger auto, session unknown)'], 'the trace row comes before any slow work');
-  assert.deepEqual(calls[1], ['handoff', '--all', '--no-worktree-sweep', '--force', '--out', '/j/HANDOFF-2026-10-09-precompact.md']);
+  assert.deepEqual(calls[1], ['handoff', '--all', '--no-worktree-sweep', '--force', '--window', 'envwin', '--out', '/j/HANDOFF-2026-10-09-precompact-envwin.md']);
   assert.equal(calls[2][0], 'ask');
   assert.match(calls[2][1], /^unledgered decision\? \(1\) \[msg 2026-10-09T11:00:00.000Z [0-9a-f]{6}\]/);
   assert.deepEqual(calls[3].slice(0, 2), ['log', text]);
   assert.match(text, /^precompact: handoff written, 5 file\(s\) snapshotted from 2 worktree\(s\), 1 unledgered decision\(s\) raised in 1 ask\(s\) \(trigger auto, session unknown\)$/);
+});
+
+test('two windows compacting the same day write their own precompact handoff and never overwrite each other', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'precompact-'));
+  try {
+    // Stands in for `journal.ts handoff --force --out <path>`: it overwrites whatever is at the path, as the real flag does.
+    const forceWrite = (a: string[]): { ok: boolean; out: string } => { if (a[0] === 'handoff') writeFileSync(a[a.indexOf('--out') + 1], `window: ${a[a.indexOf('--window') + 1]}\n`); return { ok: true, out: '' }; };
+    const own = (): Partial<PrecompactDeps> => ({ journal: forceWrite, handoffPath: (date, w) => join(dir, `HANDOFF-${date}-precompact-${w}.md`) });
+    precompact({ transcript_path: '/t', trigger: 'auto', session_id: 'aaaaaaaa-win-a' }, deps(own()).d);
+    precompact({ transcript_path: '/t', trigger: 'auto', session_id: 'bbbbbbbb-win-b' }, deps(own()).d);
+    precompact({ transcript_path: '/t', trigger: 'auto', session_id: 'aaaaaaaa-win-a' }, deps(own()).d);
+    const files = readdirSync(dir).sort();
+    assert.deepEqual(files, ['HANDOFF-2026-10-09-precompact-aaaaaaaa-win.md', 'HANDOFF-2026-10-09-precompact-bbbbbbbb-win.md'], 'one file per window, a repeat run by the same window reuses its own');
+    assert.equal(readFileSync(join(dir, files[0]), 'utf8'), 'window: aaaaaaaa-win\n');
+    assert.equal(readFileSync(join(dir, files[1]), 'utf8'), 'window: bbbbbbbb-win\n');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('precompact fails open: each failing step is named in an "incomplete" row and the others still run', () => {

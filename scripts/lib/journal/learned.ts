@@ -164,7 +164,7 @@ export function relearn(rows: readonly (LearnedRow & { id?: unknown; kind?: unkn
 /** Every field a stored `learned` row may carry: the fact, its location and checks, the usage marks, and the row's own bookkeeping. Anything else is not written by `learned`. */
 export const LEARNED_ROW_FIELDS: ReadonlySet<string> = new Set([
     'id', 'ts', 'date', 'kind', 'text', 'learnedKind', 'appliesTo', 'evidence', 'verifiedAt', 'confidence', 'supersedes',
-    'repo', 'stream', 'model', 'used', 'tokens', 'harness', 'agent',
+    'repo', 'stream', 'model', 'used', 'tokens', 'harness', 'agent', 'window',
 ]);
 
 /**

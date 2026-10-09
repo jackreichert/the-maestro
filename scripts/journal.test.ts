@@ -45,7 +45,7 @@ function must<T>(v: T | undefined | null, label = 'value'): T {
 function run(...args: string[]): Run {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
-        env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off',
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off',
             MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents') },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
@@ -478,7 +478,7 @@ test('status --footer ends with the Session line for the newest session, and say
     writeFileSync(join(projects, 'bbbbbbbb-new.jsonl'), `${[1, 2, 3, 4].map((n) => turn(`m${n}`, 100000)).join('\n')}\n`);
     utimesSync(join(projects, 'aaaaaaaa-old.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
     const line = (extra = {}) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, ...extra },
+        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, ...extra },
     }).stdout.trim().split('\n').pop();
     assert.equal(line(), '**Session:** 4 turns (2% of 180 roll) · 100k read/turn');
     assert.equal(line({ MAESTRO_ROLL_TURNS: '4' }), '**Session:** 4 turns (100% of 4 roll) · 100k read/turn · roll now');
@@ -496,12 +496,12 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     writeFileSync(join(projects, 'bbbbbbbb-other.jsonl'), `${turn('m1', 150000)}\n`);
     utimesSync(join(projects, 'aaaaaaaa-mine.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
     const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects },
+        encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
-    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default');
-    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 2 turns (1%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 2 turns (1%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest');
+    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
+    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Session: 2 turns (1%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Session: 2 turns (1%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
     assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
@@ -511,6 +511,10 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     const multi = status(['--session', 'aaaaaaaa-mine']);
     assert.ok(multi.length >= 2);
     assert.equal(multi[0], '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');
+    assert.equal(multi.find((l) => l.startsWith('**Window:**')), '**Window:** aaaaaaaa-min', 'the footer names the window of the session it measures');
+    const unpinned = status([]);
+    assert.equal(unpinned.find((l) => l.startsWith('**Window:**')), undefined, 'without a pinned session the newest transcript is not shown under MAESTRO_WINDOW\'s name');
+    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** 1 turns (0% of 180 roll) · 150k read/turn', 'the numbers still show');
     assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** 2 turns (1% of 180 roll) · 100k read/turn', '--session applies to the multi-line footer too');
 });
 
@@ -748,7 +752,7 @@ test('models add is idempotent, refuses alias collisions, and coexists with stre
 
 const runEnvIn = (cwd: string, env: Record<string, string>, ...args: string[]): Run => {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_RESUME_GH: 'off', MAESTRO_CONTAINER_ROOT: '', ...env },
+        encoding: 'utf8', cwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_RESUME_GH: 'off', MAESTRO_CONTAINER_ROOT: '', ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 };
@@ -1010,7 +1014,7 @@ const lockFile = (repo: string) => join(claimsDirPath(), `${repo}.lock`);
 /** Runs journal.ts asynchronously so several can genuinely overlap. */
 const runAsync = (args: string[], extraEnv: Record<string, string> = {}) => new Promise<Run>((resolve) => {
     const p = spawn(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        env: { ...process.env, VAULT_ROOT: '', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
     let err = '';
@@ -1155,10 +1159,10 @@ test('roll does not commit when the config is off, the root is not a repo, or ve
     assert.notEqual(git(vault, 'rev-parse', '--verify', '-q', 'HEAD').status, 0);
     // on, but the ledger root is not a git repo (a plain dir inside another repo does not count either)
     const plain = mkdtempSync(join(tmpdir(), 'plain-'));
-    const p = spawnSync(process.execPath, [SCRIPT, 'start', 'x', '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '' } });
+    const p = spawnSync(process.execPath, [SCRIPT, 'start', 'x', '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin' } });
     const pid = p.stdout.trim().split(/\s+/)[1];
-    spawnSync(process.execPath, [SCRIPT, 'done', pid, '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '' } });
-    const nr = spawnSync(process.execPath, [SCRIPT, 'roll', '--vault', plain, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' } });
+    spawnSync(process.execPath, [SCRIPT, 'done', pid, '--vault', plain, '--project', 'test-proj', ...MARK], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin' } });
+    const nr = spawnSync(process.execPath, [SCRIPT, 'roll', '--vault', plain, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' } });
     assert.equal(nr.status, 0, nr.stderr);
     assert.match(nr.stderr, /not a git repository root; not committing/);
 });
@@ -2227,7 +2231,7 @@ test('--project defaults to the configured project; an explicit one wins; with n
     const go = (cfg: string, ...args: string[]) => {
         const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, ...MARK], {
             encoding: 'utf8', cwd: emptyCwd,
-            env: (({ MAESTRO_PROJECT: _drop, ...rest }) => ({ ...rest, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: cfg }))(process.env),
+            env: (({ MAESTRO_PROJECT: _drop, ...rest }) => ({ ...rest, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_LOCAL_CONFIG: cfg }))(process.env),
         });
         return { code: r.status, out: r.stdout, err: r.stderr };
     };
@@ -2262,7 +2266,7 @@ function skillCheckout(): string {
 function primeIn(skill: string, env: Record<string, string | undefined>): string {
     const r = spawnSync(process.execPath, [join(skill, 'scripts', 'journal.ts'), 'prime', '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,
-        env: Object.fromEntries(Object.entries({ ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'on', ...env }).filter(([, v]) => v !== undefined)),
+        env: Object.fromEntries(Object.entries({ ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'on', ...env }).filter(([, v]) => v !== undefined)),
     });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout;
@@ -2340,7 +2344,7 @@ test('priorities set refuses more than priorities_max and the error names the ca
     assert.equal(over.code, 1);
     assert.match(over.err, /at most 5 priorities \(priorities_max\); got 6/);
     assert.equal(run('priorities', 'set', ...six.slice(0, 5), '--status-dir', sd).code, 0);
-    const r = spawnSync(process.execPath, [SCRIPT, 'priorities', 'set', ...six, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PRIORITIES_MAX: '6' } });
+    const r = spawnSync(process.execPath, [SCRIPT, 'priorities', 'set', ...six, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PRIORITIES_MAX: '6' } });
     assert.equal(r.status, 0, r.stderr);
 });
 
@@ -2362,7 +2366,7 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     const gh = (nodes: unknown[]) => installGhStub({ pages: [nodes] });
     const gate = (env: NodeJS.ProcessEnv, ...args: string[]) => {
         const r = spawnSync(process.execPath, [SCRIPT, 'review-queue', ...args, '--vault', vault, '--project', 'test-proj'], {
-            encoding: 'utf8', cwd: emptyCwd, env: { ...env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+            encoding: 'utf8', cwd: emptyCwd, env: { ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
         });
         return { code: r.status, out: r.stdout, err: r.stderr };
     };
@@ -2397,7 +2401,7 @@ test('review-queue: PRs in a self_review_repos repo are not counted, and the ans
     const mine = (n: number, isDraft = false) => prNode(n, { isDraft, repository: { nameWithOwner: 'example-owner/tool' } });
     const stub = installGhStub({ pages: [[prNode(1), prNode(2), mine(3), mine(4), mine(5), mine(6, true)]] });
     const gate = (extra: NodeJS.ProcessEnv, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, 'review-queue', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...stub, ...extra, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...stub, ...extra, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
     });
     const off = gate({}, '--cap', '4');
     assert.equal(off.status, 1, 'without the setting all 5 open PRs count and the queue is full');
@@ -2419,7 +2423,7 @@ test('status and status --footer list self-review PRs on their own line, apart f
     ];
     writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: new Date().toISOString(), prs }));
     const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
     }).stdout;
     assert.doesNotMatch(status([]), /self-review/, 'no setting, no section');
     const on = { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' };
@@ -2433,7 +2437,7 @@ test('status and status --footer leave self-review PRs out of the review queue c
     const prs = [['org/a', false], ['org/b', false], ['example-owner/tool', false], ['example-owner/tool', false]].map(([repo, isDraft]) => ({ repo, isDraft }));
     writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: new Date().toISOString(), prs }));
     const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
     }).stdout;
     assert.match(status(['--footer']), /^\*\*Review queue:\*\* 4 of 4 \(full\)$/m);
     assert.match(status(['--footer'], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /^\*\*Review queue:\*\* 2 of 4$/m);
@@ -2444,7 +2448,7 @@ test('status and status --footer survive a truncated snapshot or one with no prs
     const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
     mkdirSync(journalDir, { recursive: true });
     const status = (args: string[]) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' },
     });
     for (const body of ['{"takenAt": "2026-01-01T00:00:00Z", "prs": [{"repo": "exam', JSON.stringify({ takenAt: new Date().toISOString() })]) {
         writeFileSync(join(journalDir, 'prs-snapshot.json'), body);
@@ -2463,7 +2467,7 @@ test('status and status --footer show the review queue from the stored snapshot,
     mkdirSync(journalDir, { recursive: true });
     const snapshot = (takenAt: string, ...drafts: boolean[]) => writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt, prs: drafts.map((isDraft) => ({ isDraft })) }));
     const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents'), ...env },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents'), ...env },
     }).stdout;
     snapshot(new Date().toISOString(), false, false, true);
     assert.match(status([]), /\n {2}review queue: 2 of 4\n$/);
@@ -2473,6 +2477,57 @@ test('status and status --footer show the review queue from the stored snapshot,
     assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '6' }), /review queue: 4 of 6\n/);
     snapshot('2020-01-01T00:00:00Z', false);
     assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
+});
+
+// ── window id ───────────────────────────────────────────────────────────────
+
+test('every row written carries the window id: --window, then --session, then MAESTRO_WINDOW, then a pid-based id', () => {
+    const write = (text: string, extra: string[], env: Record<string, string>) => spawnSync(process.execPath, [SCRIPT, 'start', text, ...MARK, ...extra, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', ...env },
+    });
+    assert.equal(write('one', ['--window', 'w-one', '--session', 'sess1234'], { MAESTRO_WINDOW: 'envwin' }).status, 0);
+    assert.equal(write('two', ['--session', 'sess1234-abcd-ef'], { MAESTRO_WINDOW: 'envwin' }).status, 0);
+    assert.equal(write('three', [], { MAESTRO_WINDOW: 'envwin' }).status, 0);
+    assert.equal(write('four', [], { MAESTRO_WINDOW: '' }).status, 0);
+    assert.deepEqual(ledger().map((r) => r.window), ['w-one', 'sess1234-abc', 'envwin', ledger()[3].window]);
+    assert.match(String(ledger()[3].window), /^p\d+$/, 'with nothing else, the id names the parent process');
+    assert.equal(run('status', '--json').code, 0, 'rows with and without a window fold together');
+});
+
+test('rows written before windows were recorded still fold, and the footer names the window it is run in', () => {
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), '{"id":"old1","ts":"2026-10-01T00:00:00Z","date":"2026-10-01","kind":"wip","text":"before windows"}\n');
+    assert.equal(parse(run('status', '--json').out).inflight.length, 1);
+    assert.equal(run('done', 'old1', ...MARK).code, 0);
+    assert.equal(ledger().find((r) => r.kind === 'done')?.window, 'testwin');
+    assert.equal(ledger()[0].window, undefined, 'an old row is left as written');
+});
+
+test('handoff frontmatter names the window that wrote it', () => {
+    run('start', 'work', ...MARK);
+    const r = run('handoff', '--all');
+    assert.equal(r.code, 0, r.err);
+    const file = readdirSync(join(vault, 'Projects', 'test-proj', 'Journal')).find((f) => f.startsWith('HANDOFF-')) as string;
+    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', file), 'utf8'), /\nwindow: testwin\ntype: handoff\n/);
+});
+
+test('two windows rolling a delta at the same moment each get their own file', async () => {
+    run('start', 'work', ...MARK);
+    assert.equal(run('handoff', '--all').code, 0);
+    const jdir = join(vault, 'Projects', 'test-proj', 'Journal');
+    const roll = (window: string) => new Promise<{ code: number | null; out: string }>((resolve) => {
+        const child = spawn(process.execPath, [SCRIPT, 'handoff', '--all', '--delta', '--window', window, '--vault', vault, '--project', 'test-proj'], {
+            cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        let out = '';
+        child.stdout.on('data', (d) => { out += d; });
+        child.on('close', (code) => resolve({ code, out }));
+    });
+    const results = await Promise.all(['wa', 'wb', 'wc'].map(roll));
+    assert.deepEqual(results.map((r) => r.code), [0, 0, 0]);
+    const deltas = readdirSync(jdir).filter((f) => /^HANDOFF-.*-all\.md$/.test(f)).sort();
+    assert.equal(deltas.length, 4, 'the first handoff and one file per window');
+    assert.deepEqual(deltas.slice(1).map((f) => /window: (\w+)/.exec(readFileSync(join(jdir, f), 'utf8'))?.[1]).sort(), ['wa', 'wb', 'wc'], 'each file holds its own window');
 });
 
 // ── learned ─────────────────────────────────────────────────────────────────
@@ -2571,7 +2626,7 @@ test('learned checks the repo against the container root when one is set', () =>
     const container = mkdtempSync(join(tmpdir(), 'journal-container-'));
     mkdirSync(join(container, 'fake-repo'));
     const inContainer = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_CONTAINER_ROOT: container, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_CONTAINER_ROOT: container, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events') },
     });
     assert.equal(inContainer('learned', 'A claim.', ...LEARNED, ...MARK).status, 0);
     const bad = inContainer('learned', 'A claim.', ...without('--applies-to', 'no-such-repo:thing'), ...MARK);

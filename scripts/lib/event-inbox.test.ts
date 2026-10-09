@@ -159,3 +159,20 @@ test('writers racing on a torn file lose nothing', async () => {
   assert.equal(new Set(report.entries.map((e) => e.id)).size, 1 + writers * each);
   assert.equal(report.torn, 1);
 });
+
+test('a seen or handled mark carries the window that made it, free text is stripped, and an unmarked row reads as before', () => {
+  const dir = tempDir();
+  appendEvents(dir, [ev('THREAD acme/widget#1 by alice: x'), ev('THREAD acme/widget#2 by bob: y', { at: '2026-10-01T12:01:00.000Z' }), ev('THREAD acme/widget#3 by cy: z', { at: '2026-10-01T12:02:00.000Z' })]);
+  const [a, b, c] = readInbox(dir).map((e) => e.id);
+  mark(dir, 'seen', [a], Date.now(), 'win-one');
+  mark(dir, 'handled', [a], Date.now(), 'win-two');
+  mark(dir, 'seen', [b], Date.now(), 'bad id "\n{x}');
+  mark(dir, 'seen', [c]);
+  const by = new Map(readInbox(dir).map((e) => [e.id, e]));
+  assert.equal(by.get(a)?.seenBy, 'win-one');
+  assert.equal(by.get(a)?.handledBy, 'win-two');
+  assert.equal(by.get(b)?.seenBy, 'badidx', 'the id is cleaned before it is stored');
+  assert.equal(by.get(c)?.seen, true);
+  assert.equal(by.get(c)?.seenBy, undefined);
+  assert.ok(!readFileSync(inboxPath(dir), 'utf8').includes('bad id'));
+});

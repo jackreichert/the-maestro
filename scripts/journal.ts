@@ -155,12 +155,13 @@ import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn,
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
-import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
+import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, createExclusive, writeHandoffSeries, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
+import { resolveWindowId } from './lib/window-id.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
@@ -239,7 +240,9 @@ if (!projectArg) {
     process.exit(1);
 }
 const project: string = projectArg;
-const store = openStore({ vault, project, dryRun });
+/** The window this run writes as: `--window`, else `--session`, else MAESTRO_WINDOW, else a pid-based id (lib/window-id.ts). */
+const windowId = resolveWindowId({ window: arg('window') ?? undefined, session: arg('session') ?? undefined, env: process.env.MAESTRO_WINDOW });
+const store = openStore({ vault, project, dryRun, window: windowId });
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
 const today = (): string => new Date().toISOString().slice(0, 10);
 const now = (): string => new Date().toISOString();
@@ -782,9 +785,13 @@ function cmdStatus() {
     const queueFooter = boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
-        const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, footerSessionId());
-        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session })); return; }
-        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        const sessionId = footerSessionId();
+        const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, sessionId);
+        // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
+        // another window, and its numbers must not appear under this window's name.
+        const window = sessionId ? resolveWindowId({ session: sessionId }) : undefined;
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session, window })); return; }
+        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
@@ -1642,7 +1649,7 @@ function cmdBrief(): void {
 // ── backfill ────────────────────────────────────────────────────────────────
 
 const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
-const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true), states: standingStatesSafe });
+const handoffCtx = () => ({ window: windowId, fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true), states: standingStatesSafe });
 const handoffText = (stream: string | null, since: string, keptWorktrees?: Parameters<typeof handoffTextIn>[3], opts?: Parameters<typeof handoffTextIn>[4]) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
 const updateContextLink = (file: string, handoffPath: string) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 
@@ -1719,6 +1726,9 @@ function cmdBackfill() {
 /** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
 const oneLineArg = (name: string): string => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
 
+/** The sentence naming handoff files another window created first, or '' when none was skipped. */
+const takenNote = (taken: string[]): string => (taken.length ? ` (${taken.join(', ')} already existed from another window; wrote the next free name)` : '');
+
 function cmdHandoff() {
     const { items } = fold(readLedger());
     const stream = has('all') ? null : existingStream(arg('stream'), items);
@@ -1733,8 +1743,9 @@ function cmdHandoff() {
         if (arg('learn') || arg('next') || has('update-context')) die('--delta writes only the changes; --learn, --next and --update-context belong on the first (full) handoff of the day.');
         const body = handoffDeltaText(handoffCtx(), stream, marker, series.prev);
         if (dryRun) { console.log(body); return; }
-        writeFileSync(path, body);
-        console.log(`wrote ${path} (delta since ${marker})`);
+        const written = writeHandoffSeries(dir, today(), streamSlug, basename(path), body);
+        if (!written) die(`--delta: handoff suffixes b..z for ${today()} are used up; start a fresh session.`);
+        console.log(`wrote ${join(dir, written.name)} (delta since ${marker})${takenNote(written.taken)}`);
         return;
     }
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
@@ -1743,9 +1754,18 @@ function cmdHandoff() {
     const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
     if (dryRun) { console.log(body); if (contextFile) console.log(`would point ${contextFile} at ${basename(path)}`); return; }
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, body);
-    console.log(`wrote ${path}`);
-    if (contextFile) updateContextLink(contextFile, path);
+    let finalPath = path;
+    if (has('force')) writeFileSync(path, body);
+    else if (arg('out')) { if (!createExclusive(path, body)) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`); }
+    else {
+        // Exclusive create: a window that rolled between the check above and this write keeps its file; this one takes the next suffix.
+        const written = writeHandoffSeries(dir, today(), streamSlug, basename(path), body);
+        if (!written) die(`handoff suffixes b..z for ${today()} are used up; start a fresh session.`);
+        finalPath = join(dir, written.name);
+        if (written.taken.length) console.log(takenNote(written.taken).trim());
+    }
+    console.log(`wrote ${finalPath}`);
+    if (contextFile) updateContextLink(contextFile, finalPath);
 }
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
