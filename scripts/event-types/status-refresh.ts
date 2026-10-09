@@ -14,22 +14,32 @@
  * Edit-quiet window: while The-Podium.md holds an edit the status watcher has not adopted and was saved under 60 s ago, nothing is
  * written; the refresh stays pending and runs once the window has passed. A regeneration that fails (ledger unreadable,
  * another rebuild holding .now.lock) is retried after 2 minutes and reported as a non-actionable event, once per new message.
- * State { sig, firstChange, lastChange, lastRun, markerSeen, prDirty, retryAt, error } is the whole memory; times are epoch ms.
+ * Separately, the same idle tick keeps the stored PR snapshot (prs-snapshot.json, which the footer's review queue reads) fresh: when the snapshot
+ * is more than 10 minutes old, one GitHub search rewrites it, with no per-PR calls (the greeting's `prs-snapshot.ts` run still does the
+ * after-merge mergeable re-asks). Never in quiet hours. A failed search is retried after another 10 minutes and reported once, as a
+ * non-actionable event; the 30 s check never waits on it longer than the search's own 60 s timeout.
+ * State { sig, firstChange, lastChange, lastRun, markerSeen, prDirty, retryAt, error, snapshotTry, snapshotError } is the whole memory; times are epoch ms.
  * Scheduling follows status-watch: a local 30 s check, no idle back-off, singleton, never notifies.
  */
-import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { nextInterval } from '../lib/cadence.ts';
 import { stampAll } from '../lib/stamp.ts';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, WATCH_QUIET_HOURS, WATCH_QUIET_WEEKENDS, WATCH_TZ } from '../local-config.ts';
 import { prsDirtyAt } from '../lib/status-page/dirty.ts';
 import { readPrCache } from '../lib/status-page/prcache.ts';
-import { LEGACY_FILE, PODIUM_FILE, readPodium, readSeenMeta, sha } from '../lib/status-page/seen.ts';
+import { LEGACY_FILE, PODIUM_FILE, readPodium, readSeenMeta, sha, writeAtomic } from '../lib/status-page/seen.ts';
+import { fetchLive, loadSnapshot, snapshotPath } from '../prs-snapshot.ts';
 import { regenerate } from '../status-page.ts';
-import type { CheckContext, WatchEvent } from '../lib/types.ts';
+import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
 export interface StatusRefreshState {
   sig: string; firstChange: number; lastChange: number; lastRun: number; markerSeen: number; prDirty: boolean; retryAt: number; error: string;
+  /** When the loop last tried to refresh the stored PR snapshot (success or not); absent in state saved before this existed. */
+  snapshotTry?: number;
+  /** Why the last snapshot refresh failed; empty or absent after a good one. */
+  snapshotError?: string;
 }
 
 export const interval = 30;
@@ -46,6 +56,9 @@ export const IDLE_MS = 10 * 60_000;
 export const PR_MAX_AGE_MS = 5 * 60_000;
 export const EDIT_QUIET_MS = 60_000;
 export const RETRY_MS = 2 * 60_000;
+/** The stored PR snapshot is refreshed when it is older than this, and a failed refresh is not retried sooner. */
+export const SNAPSHOT_MS = 10 * 60_000;
+const SNAPSHOT_TIMEOUT_MS = 60_000;
 const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
 export const defaultTtlMs = (): number => THREE_DAYS_MS;
 
@@ -67,6 +80,10 @@ export interface RefreshIo {
   isQuiet(now: number): boolean;
   /** Rebuilds the page; returns why the GitHub read failed when the page was built from cached PRs, else undefined. */
   regenerate(statusDir: string, cachedPrsOnly: boolean): string | undefined;
+  /** When the stored PR snapshot was taken, 0 when there is none or it is unreadable. */
+  snapshotAt(): number;
+  /** One GitHub search, written over the stored snapshot; returns why it failed, else undefined. Never throws. */
+  refreshSnapshot(): string | undefined;
 }
 
 const mtime = (path: string): number => { try { return statSync(path).mtimeMs; } catch { return 0; } };
@@ -93,6 +110,24 @@ export const realIo: RefreshIo = {
     const project = CONFIGURED_PROJECT || CONTAINER_PROJECT;
     return regenerate({ project, ledger: LEDGER_ROOT || VAULT_ROOT, statusDir, dryRun: false, snapshot: false, cachedPrsOnly }).prFailure;
   },
+  snapshotAt: () => {
+    try { return Date.parse(loadSnapshot(snapshotPath(LEDGER_ROOT || VAULT_ROOT))?.takenAt ?? '') || 0; } catch { return 0; }
+  },
+  refreshSnapshot: () => {
+    try {
+      if (!LEDGER_ROOT && !VAULT_ROOT) return 'no ledger root configured';
+      const path = snapshotPath(LEDGER_ROOT || VAULT_ROOT);
+      const snap = fetchLive(ghRun);
+      mkdirSync(dirname(path), { recursive: true });
+      writeAtomic(path, `${JSON.stringify(snap, null, 2)}\n`);
+      return undefined;
+    } catch (e) { return firstLine(e) || 'unknown error'; }
+  },
+};
+
+const ghRun: Run = (cmd, args) => {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: SNAPSHOT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
+  return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
 };
 
 const firstLine = (e: unknown): string => (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? '';
@@ -119,7 +154,7 @@ export function check(target: string, ctx: Pick<CheckContext, 'now' | 'prev'>, i
   let state = prev;
   try {
     state = observe(prev, target, now, io);
-    return attempt(target, now, state, io);
+    return refreshSnapshot(now, attempt(target, now, state, io), io);
   } catch (e) {
     // Any failure, even a page that cannot be read, is retried later and reported as information: a throw would count towards the loop's "check keeps failing" event, which is actionable.
     const base = state ?? { sig: '', firstChange: 0, lastChange: 0, lastRun: now, markerSeen: 0, prDirty: false, retryAt: 0, error: '' };
@@ -137,6 +172,16 @@ function attempt(target: string, now: number, state: StatusRefreshState, io: Ref
   return { ...state, firstChange: 0, lastChange: 0, lastRun: now, prDirty: state.prDirty && (!fetchPrs || !!prFailure), retryAt: 0, error: '' };
 }
 
+/** The idle-tick refresh of the stored PR snapshot: at most one search per SNAPSHOT_MS, from the snapshot's own age and the last try, and never in quiet hours. */
+function refreshSnapshot(now: number, state: StatusRefreshState, io: RefreshIo): StatusRefreshState {
+  if (io.isQuiet(now) || now - Math.max(state.snapshotTry ?? 0, io.snapshotAt()) < SNAPSHOT_MS) return state;
+  return { ...state, snapshotTry: now, snapshotError: io.refreshSnapshot() ?? '' };
+}
+
 /** Silent unless a regeneration newly fails; even then the event is informational, so a refresh can never wake the orchestrator. */
-export const diff = (prev: StatusRefreshState | null, next: StatusRefreshState): WatchEvent[] =>
-  next.error && next.error !== prev?.error ? [{ summary: `status page refresh failed: ${next.error}`, actionable: false }] : [];
+export function diff(prev: StatusRefreshState | null, next: StatusRefreshState): WatchEvent[] {
+  const events: WatchEvent[] = [];
+  if (next.error && next.error !== prev?.error) events.push({ summary: `status page refresh failed: ${next.error}`, actionable: false });
+  if (next.snapshotError && next.snapshotError !== prev?.snapshotError) events.push({ summary: `PR snapshot refresh failed: ${next.snapshotError}`, actionable: false });
+  return events;
+}

@@ -46,6 +46,7 @@ import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, REREVIEW_GATE, STACK_MAX_AGE
 import { loadVerdicts, verdictFor, type VerdictRow } from './review-verdict.ts';
 import { stackLines } from './lib/stack-cap.ts';
 import { searchAllPages } from './lib/gh-search.ts';
+import type { Run } from './lib/types.ts';
 import { isSelfReview, splitSelfReview } from './lib/self-review.ts';
 
 /** A review as the snapshot keeps it (the latest one per reviewer). */
@@ -157,9 +158,9 @@ const toSnapshotPr = (n: SearchNodePr): SnapshotPr => ({
     commentTotal: n.comments.totalCount,
 });
 
-export function fetchLive(): Snapshot {
+export function fetchLive(run?: Run): Snapshot {
     // Every page: a single 50-result page made PRs past the 50th look "no longer open".
-    return { takenAt: new Date().toISOString(), prs: searchAllPages<SearchNodePr>(QUERY).map(toSnapshotPr) };
+    return { takenAt: new Date().toISOString(), prs: searchAllPages<SearchNodePr>(QUERY, run).map(toSnapshotPr) };
 }
 
 export function loadSnapshot(path: string): Snapshot | null {

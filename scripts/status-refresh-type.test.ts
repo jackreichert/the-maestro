@@ -15,21 +15,24 @@ import { addWatch } from './lib/watch-registry.ts';
 const T0 = Date.parse('2026-10-05T15:00:00Z');
 const SEC = 1000;
 
-interface Rig { io: RefreshIo; runs: { at: number; cachedPrsOnly: boolean }[]; set: (k: Partial<World>) => void; step: (seconds: number) => StatusRefreshState; at: () => number }
-interface World { gh: string; sig: string; marker: number; editAt: number | null; fetchedAt: number; quiet: boolean; fail: boolean }
+interface Rig { io: RefreshIo; runs: { at: number; cachedPrsOnly: boolean }[]; snaps: number[]; set: (k: Partial<World>) => void; step: (seconds: number) => StatusRefreshState; at: () => number }
+interface World { gh: string; sig: string; marker: number; editAt: number | null; fetchedAt: number; quiet: boolean; fail: boolean; snapAt: number; snapFail: string }
 
 /** A fake world and a clock: `step(n)` moves n seconds and runs one check, carrying the state like the loop does. */
 function rig(): Rig {
   let now = T0;
   let state: StatusRefreshState | null = null;
-  const w: World = { gh: '', sig: 'a', marker: 0, editAt: null, fetchedAt: T0, quiet: false, fail: false };
+  const w: World = { gh: '', sig: 'a', marker: 0, editAt: null, fetchedAt: T0, quiet: false, fail: false, snapAt: T0, snapFail: '' };
   const runs: Rig['runs'] = [];
+  const snaps: number[] = [];
   const io: RefreshIo = {
     ledgerSig: () => w.sig, prsDirtyAt: () => w.marker, userEditAt: () => w.editAt, pageAt: () => T0, prsFetchedAt: () => w.fetchedAt, isQuiet: () => w.quiet,
     regenerate: (_dir, cachedPrsOnly) => { if (w.fail) throw new Error('ledger read failed'); runs.push({ at: now, cachedPrsOnly }); if (!cachedPrsOnly && !w.gh) w.fetchedAt = now; return cachedPrsOnly ? undefined : w.gh || undefined; },
+    snapshotAt: () => w.snapAt,
+    refreshSnapshot: () => { snaps.push(now); if (w.snapFail) return w.snapFail; w.snapAt = now; return undefined; },
   };
   return {
-    io, runs, set: (k) => Object.assign(w, k), at: () => now,
+    io, runs, snaps, set: (k) => Object.assign(w, k), at: () => now,
     step: (seconds) => { now += seconds * SEC; state = refresh.check('dir', { now, prev: state }, io); return state; },
   };
 }
@@ -172,4 +175,58 @@ test('the type is registered as a quiet singleton that never notifies', () => {
   assert.ok(t && t.singleton && t.notifies === 'never' && t.backoff === false && t.network === false && t.slowInQuiet);
   assert.throws(() => refresh.validate('/nonexistent/status'), /status directory/);
   assert.equal(readFileSync(new URL('../playbooks/event-types/status-refresh.md', import.meta.url), 'utf8').startsWith('# Event type: status-refresh'), true);
+});
+
+test('the stored PR snapshot is refreshed by the idle tick once it is over 10 minutes old, then not again for 10 minutes', () => {
+  const r = rig();
+  run(r, 9 * 60);
+  assert.deepEqual(r.snaps, [], 'a snapshot taken at the start is fresh for 10 minutes');
+  run(r, 2 * 60);
+  assert.equal(r.snaps.length, 1);
+  assert.equal((r.snaps[0] as number) - T0, 10 * 60 * SEC + 0, 'the first check at or past the 10 minute mark');
+  run(r, 8 * 60);
+  assert.equal(r.snaps.length, 1, 'throttled: one search per 10 minutes, whatever else wakes the check');
+  r.set({ sig: 'b', marker: r.at() });
+  run(r, 30);
+  assert.equal(r.snaps.length, 1, 'a ledger write or PR-dirty marker does not trigger an extra search');
+  run(r, 60);
+  assert.equal(r.snaps.length, 2);
+});
+
+test('a snapshot another process just wrote (the greeting run) counts, so the loop does not search again', () => {
+  const r = rig();
+  r.set({ snapAt: T0 - 11 * 60 * SEC });
+  r.step(30);
+  assert.equal(r.snaps.length, 1);
+  r.set({ snapAt: r.at() });
+  run(r, 9 * 60);
+  assert.equal(r.snaps.length, 1);
+});
+
+test('a failed snapshot search is reported once as a non-actionable event, retried after 10 minutes, and never throws', () => {
+  const r = rig();
+  r.set({ snapAt: 0, snapFail: 'gh api graphql failed: HTTP 502' });
+  const s1 = r.step(30);
+  assert.equal(r.snaps.length, 1);
+  assert.equal(s1.snapshotError, 'gh api graphql failed: HTTP 502');
+  assert.deepEqual(refresh.diff(null, s1), [{ summary: 'PR snapshot refresh failed: gh api graphql failed: HTTP 502', actionable: false }]);
+  run(r, 9 * 60);
+  assert.equal(r.snaps.length, 1, 'a failure waits the full 10 minutes too, so a down GitHub is not hammered');
+  const s2 = r.step(60);
+  assert.equal(r.snaps.length, 2);
+  assert.deepEqual(refresh.diff(s1, s2), [], 'the same failure is not reported twice');
+  r.set({ snapFail: '' });
+  run(r, 11 * 60);
+  const ok = r.step(30);
+  assert.equal(ok.snapshotError, '');
+});
+
+test('no snapshot search runs in quiet hours, and one runs on the first waking check', () => {
+  const r = rig();
+  r.set({ snapAt: 0, quiet: true });
+  run(r, 30 * 60);
+  assert.deepEqual(r.snaps, []);
+  r.set({ quiet: false });
+  r.step(30);
+  assert.equal(r.snaps.length, 1);
 });
