@@ -263,6 +263,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [flow-report.ts](#flow-reportts) | Cycle time, throughput, WIP and open-item age from the ledger |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
+| [pr-state.ts](#pr-statets) | The real review and merge state of a PR: reviewer verdicts, threads, checks, push warning, ready-for-review and ready-to-merge |
 | [pr-guide-links.ts](#pr-guide-linksts) | Expand `{{file:path}}` tokens in an open PR's body into Files changed links, or list the changed line ranges to link |
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
@@ -349,6 +350,12 @@ A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` sec
 | `query [<name>]` | Named queries: `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs`, `tickets`; `--sql "select ..."` is read-only raw SQL |
 
 Pass `--vault` and `--tickets-vault` the way `journal.ts` does; tickets are skipped when no tickets vault is set.
+
+### pr-state.ts
+
+- `pr-state.ts <owner/repo#N | PR URL>... [--json]` reads each PR live and prints a first line `STATE: open|closed|merged` (a closed or merged PR is never ready, since GitHub keeps `CLEAN` on closed PRs), then its head sha, base, draft flag, `mergeable` and `mergeStateStatus`, `reviewDecision`, and for each reviewer the latest non-comment review with the commit it was on and a verdict word: `APPROVED-on-head`, `APPROVED-stale`, `DISMISSED`, `CHANGES_REQUESTED` or `COMMENTED-only`. Verdicts come from the review history, because an empty `reviewDecision` also appears after a push dismisses an approval.
+- It lists unresolved threads split human and bot (path:line and the first 200 characters), a check summary, a `PUSH WARNING: a push will dismiss N approval(s): <who>` line whenever approvals sit on the current head (rulesets that dismiss on push), and two verdict lines. `READY-FOR-REVIEW: yes|no (reasons)` needs an open PR, not a draft, zero unresolved threads, no conflicts, and checks neither failing nor pending. `READY-TO-MERGE: yes|no (reasons)` needs all of that plus `mergeStateStatus` CLEAN, and no standing `CHANGES_REQUESTED`; `CLEAN` already carries the required approvals and rulesets, so repos that need none can say yes with no reviews. When the state is `BLOCKED` the reasons say what is missing in words (for example "approval dismissed by a push" or "changes requested by X"). `reviewDecision` is not used alone, because the rulesets in the Arya repos leave it empty. `--json` adds `readyForReview`, `reviewReasons`, `readyToMerge` and `mergeReasons`; `ready` and `reasons` stay and mean the merge verdict.
+- It fails closed: more than one page of reviews, threads or checks, or a PR it cannot read, makes both verdicts `no`, and so does any merge state it does not recognise. Only logins are printed, never emails. Exit 0 when every PR was read, 2 on bad usage or an unreadable PR. A cheap runner follows [playbooks/pr-state.md](playbooks/pr-state.md), and the standing brief block tells every worker to run it before pushing to a PR branch.
 
 ### prs-snapshot.ts
 
@@ -766,7 +773,7 @@ The rework rate and corrections from the user are not computed from transcripts.
 
 ### brief-block.ts
 
-Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. The block tells a worker to look a credential up with `env-where` (names only) before reporting it missing. Its PR text rule tells workers to link files with `{{file:path}}` and to add a line anchor (`{{file:path#R42-R50}}`) found with `pr-guide-links.ts --hunks`. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
+Prints the standing brief block from [reference/brief.md](reference/brief.md) with its slots filled from your config, ready to paste at the end of a dispatch brief. The block tells a worker to look a credential up with `env-where` (names only) before reporting it missing. Its PR text rule tells workers to link files with `{{file:path}}` and to add a line anchor (`{{file:path#R42-R50}}`) found with `pr-guide-links.ts --hunks`. Its Necessity rule makes a worker answer, before building, whether something existing (a config, flag, helper or earlier PR) already does the job, and reviewers are asked the same. It exits 1 and prints nothing if a slot has no value or any other `<...>` is left in the text. With `scripts_dir` set it appends the scripts-shelf rule; with `agent_owned_repos` set, the agent-owned repos rule.
 
 ### env-store-move.ts
 
@@ -993,7 +1000,7 @@ Every orchestrator turn re-reads the whole session, so what costs money is turns
 npm test
 ```
 
-Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.ts`. Shared logic that `journal.ts` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
+Each script has a test file beside it. The tests run every script as a subprocess against a temporary ledger or temporary directories, use stubs for `gh` and git hosts, and never read your own config file (each test file sets `MAESTRO_LOCAL_CONFIG=''`). Tests that touch time pass an explicit `now`. Run one file with `node --test scripts/<name>.test.ts`. `node --test` runs files in parallel but the tests inside a file one after another, so the few files with the most tests are split: their cases live in `scripts/<name>.cases.ts` and run through `scripts/<name>.shard-N.test.ts` (see `scripts/lib/shard.ts`), and a test fails if a cases file is missing a shard. To run one of those, run its shards, e.g. `node --test 'scripts/journal.shard-*.test.ts'`. `npm test` also points `NODE_COMPILE_CACHE` at a fresh temp directory and sets `GIT_ALLOW_PROTOCOL=file`, so spawned scripts start faster and a fixture's fake github.com origin cannot reach the network. Shared logic that `journal.ts` and `ledger-index.ts` must agree on (the fold, `isOpen`, the stream registry) lives in `scripts/lib/ledger-core.ts`: change it there, once. `ledger-index.ts` needs a Node build with `node:sqlite` and FTS5.
 
 ## Development
 
@@ -1002,7 +1009,7 @@ Requires Node 24 or newer, which runs TypeScript directly by stripping types, so
 ```bash
 npm install        # typescript and @types/node, dev only
 npm run typecheck  # tsc --noEmit, strict
-npm test           # node --test over scripts/**/*.test.ts
+npm test           # node --test over scripts/**/*.test.ts, in parallel shards, roughly 80-140 seconds depending on machine load
 ```
 
 The scripts themselves have no runtime dependencies.

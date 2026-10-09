@@ -92,8 +92,12 @@ test('a typed answer closes the ask with the same row `journal.ts resolve --answ
   const cli = await rig('cli');   // the same ledger, closed by the command line instead
   const ran = spawnSync(process.execPath, [JOURNAL, 'resolve', 'bb22', '--answer', 'Call it Cadenza', '--allow-unmarked', '--vault', cli.vault, '--project', 'p'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '' } });
   assert.equal(ran.status, 0, ran.stderr);
-  const shape = (x: Record<string, any>): Record<string, any> => { const { id, ts, date, ...rest } = x; return rest; };
+  // `window` is the one field that differs on purpose: the CLI stamps the id of the Claude session that ran it, the Podium server has no
+  // session and stores its rows with none (README, "Two windows on one ledger").
+  const shape = (x: Record<string, any>): Record<string, any> => { const { id, ts, date, window, ...rest } = x; return rest; };
   assert.deepEqual(shape(closers(r)[0] as Record<string, any>), shape(closers(cli)[0] as Record<string, any>), 'one recorder, one row shape');
+  assert.equal(closers(r)[0]?.window, undefined, 'the web row names no window');
+  assert.equal(typeof closers(cli)[0]?.window, 'string', 'the CLI row names its window');
   assert.equal(closers(r)[0]?.closes, 'bb22');
 });
 
