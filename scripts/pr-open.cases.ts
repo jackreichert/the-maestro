@@ -1,5 +1,5 @@
-// Run: node --test scripts/pr-open.test.ts
-import { test } from 'node:test';
+// Cases for pr-open; run through pr-open.shard-N.test.ts (see lib/shard.ts)
+import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';

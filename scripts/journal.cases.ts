@@ -1,5 +1,6 @@
-// Run: node --test scripts/journal.test.ts
-import { test, beforeEach } from 'node:test';
+// Cases for journal; run through journal.shard-N.test.ts (see lib/shard.ts)
+import { beforeEach } from 'node:test';
+import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync, renameSync } from 'node:fs';
