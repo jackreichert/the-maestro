@@ -34,6 +34,7 @@ test('start takes the lease; the other window is refused with who holds it, and 
     assert.match(refused.stderr, /--steal/);
     assert.equal(t.rows().length, before);
     assert.equal(t.run('a', 'start', id, ...MARK).status, 0, 'the holder starting again is idempotent');
+    assert.match(t.run('b', 'status').stdout, new RegExp(`Leases\\n  ${id}  leased by a until`));
     assert.equal(t.run('b', 'verify').status, 0, 'lease rows are not an integrity problem');
   } finally { t.done(); }
 });
@@ -53,6 +54,8 @@ test('start --steal takes it; done frees it; release frees it; a lapsed lease is
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 900);
     assert.equal(t.run('b', 'lease', id).status, 0, 'a 0.6 s lease has lapsed');
     assert.equal(t.run('b', 'done', id, ...MARK).status, 0);
+    assert.equal(t.run('a', 'status', '--json').status, 0);
+    assert.deepEqual(JSON.parse(t.run('a', 'status', '--json').stdout).leases.held, []);
   } finally { t.done(); }
 });
 
@@ -69,6 +72,23 @@ test('start "<text>" leases the new item to its window; brief refuses another wi
     assert.match(brief.stderr, /leased by a/);
     assert.equal(t.rows().length, before);
     rmSync(dir, { recursive: true, force: true });
+  } finally { t.done(); }
+});
+
+test('status --json and the footer carry lease counts for this window and others; they are absent from the footer when nothing is leased', () => {
+  const t = setup();
+  try {
+    const one = t.queue('one');
+    const two = t.queue('two');
+    const quiet = t.run('a', 'status', '--footer').stdout;
+    assert.doesNotMatch(quiet, /Leases/);
+    t.run('a', 'start', one, ...MARK);
+    t.run('b', 'start', two, ...MARK);
+    const json = JSON.parse(t.run('a', 'status', '--json').stdout);
+    assert.deepEqual([json.leases.mine, json.leases.other, json.leases.window], [1, 1, 'a']);
+    assert.ok(json.footer && json.inflight && json.date, 'existing fields are still there');
+    assert.match(t.run('a', 'status', '--footer').stdout, /\*\*Leases:\*\* 1 mine, 1 other/);
+    assert.match(t.run('b', 'status', '--footer', '--line').stdout, /Leases: 1 mine, 1 other/);
   } finally { t.done(); }
 });
 

@@ -423,7 +423,8 @@ test('archived items are hidden by default and shown with --include-archived; un
     finishedStream();
     const other = idOf(run('start', 'other stream work', '--stream', 'Maestro', ...MARK).out);
     const snap = () => ({
-        status: run('status', '--json').out, standup: run('standup').out,
+        // A lease's expiry moves with the holder's own rows (the archive and unarchive rows renew it), so it is not part of what must come back identical.
+        status: run('status', '--json').out.replace(/"until": "[^"]*"/g, '"until": "-"'), standup: run('standup').out,
         streams: parse(run('streams', 'list', '--json').out).streams.map(({ stream, open, done, dropped, total }) => [stream, open, done, dropped, total]),
     });
     const before = snap();
@@ -499,8 +500,9 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
         encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
     assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
-    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Session: 2 turns (1%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Session: 2 turns (1%) · 100k/turn']);
+    // The item above was started (and so leased) by `testwin`, a different window from the session pinned below, so the pinned footers count that lease as another window's.
+    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns (1%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns (1%) · 100k/turn']);
     assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');

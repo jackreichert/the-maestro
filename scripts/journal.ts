@@ -145,6 +145,7 @@ import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
+import type { Groups } from './lib/journal/board.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
@@ -163,7 +164,7 @@ import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
-import { acquireLease, releaseLease, describeLease, foldLeases, liveLease } from './lib/journal/leases.ts';
+import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
@@ -815,6 +816,19 @@ function footerSessionId(): string | undefined {
     } catch { return undefined; }
 }
 
+/** Live leases on the board's open items, counted for this window. */
+const leaseSummary = (g: Groups, window = windowId) => {
+    const open = new Set([...g.inflight, ...g.queued, ...g.blocked].map((i) => i.id));
+    return summarizeLeases(foldLeases(readLedger()), window, Date.now(), (id) => open.has(id));
+};
+
+/** `Leases: 2 mine, 1 other` for the footer, or '' unless another window holds a live lease: with one window the footer is unchanged. */
+function leaseFooter(g: Groups, window?: string, markup = false): string {
+    const s = leaseSummary(g, window ?? windowId);
+    if (!s.other) return '';
+    return markup ? `**Leases:** ${s.mine} mine, ${s.other} other` : `Leases: ${s.mine} mine, ${s.other} other`;
+}
+
 function cmdStatus() {
     refreshBoard();
     const g = groups(has('include-archived'));
@@ -826,7 +840,7 @@ function cmdStatus() {
     const done = view.all;
 
     if (asJson) {
-        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll), null, 2));
+        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g)), null, 2));
         return;
     }
 
@@ -838,8 +852,8 @@ function cmdStatus() {
         // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
-        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session, window })); return; }
-        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
+        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
@@ -873,6 +887,8 @@ function cmdStatus() {
     if (!g.inflight.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
     }
+    const leased = leaseSummary(g).held;
+    if (leased.length) { console.log('\nLeases'); leased.forEach((l) => console.log(`  ${l.item}  leased by ${l.holder}${l.holder === windowId ? ' (this window)' : ''} until ${l.until.slice(0, 16)}Z`)); }
     console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
     const queue = boardReviewQueue();
     if (queue) console.log(`  ${queue.text}`);

@@ -11,6 +11,8 @@ export interface FooterLineParts {
     session: SessionStatus;
     /** The orchestrator window this footer is for (lib/window-id.ts); left out when absent. */
     window?: string;
+    /** `Leases: 2 mine, 1 other` (live leases on open items); left out when absent. */
+    leases?: string;
 }
 
 const plain = (s: string): string => s.replace(/\*\*/g, '').trim();
@@ -20,7 +22,7 @@ const plain = (s: string): string => s.replace(/\*\*/g, '').trim();
  * the loop, the window and the session, joined by ` | `. Parts that are empty are left out. Pure: the numbers are the ones `footerRows`
  * and `sessionStatus` already computed, so it cannot disagree with the multi-line footer.
  */
-export function footerOneLine({ rows, queue, loop, session, window }: FooterLineParts): string {
+export function footerOneLine({ rows, queue, loop, session, window, leases }: FooterLineParts): string {
     const sum = (pick: (r: FooterRow) => number): number => rows.reduce((n, r) => n + pick(r), 0);
     const ledger = [
         `${sum((r) => r.done)} done`,
@@ -33,5 +35,5 @@ export function footerOneLine({ rows, queue, loop, session, window }: FooterLine
     const sess = session.available
         ? `Session: ${session.turns} turns (${session.pct}%) · ${session.readK}k/turn${session.advice ? ` · ${session.advice}` : ''}`
         : `Session: unavailable (${session.unavailable})`;
-    return [`Ledger: ${ledger}`, queue ? plain(queue) : '', loop ? plain(loop) : '', window ? `Window: ${window}` : '', sess].filter(Boolean).join(' | ');
+    return [`Ledger: ${ledger}`, queue ? plain(queue) : '', loop ? plain(loop) : '', window ? `Window: ${window}` : '', leases ?? '', sess].filter(Boolean).join(' | ');
 }
