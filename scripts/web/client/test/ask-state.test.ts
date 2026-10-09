@@ -83,12 +83,12 @@ test('resolve is idempotent per ask: only the first call announces, and Edit ans
   assert.equal(s.resolve('a1', 'edited'), true);
 });
 
-test('a copy in flight holds an update that lands during the press, and releases it when the copy settles', () => {
+test('a save in flight holds an update that lands during the press, and releases it when the save settles', () => {
   const g = new UpdateGate<string>();
-  g.set({ pointer: true });                 // pointerdown on Copy answer
-  g.set({ busy: true });                    // the card starts the clipboard write
+  g.set({ pointer: true });                 // pointerdown on Send answer
+  g.set({ busy: true });                    // the card starts the request
   assert.equal(g.offer('d1'), null);
-  assert.equal(g.set({ pointer: false }), null, 'the press ending is not enough: the copy has not settled');
+  assert.equal(g.set({ pointer: false }), null, 'the press ending is not enough: the save has not settled');
   assert.equal(g.set({ busy: false }), 'd1');
 });
 

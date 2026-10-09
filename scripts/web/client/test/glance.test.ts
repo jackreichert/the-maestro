@@ -1,7 +1,7 @@
 // Run: node --test scripts/web/client/test/glance.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TEMPO_RULE, ago, askAge, chatAnswer, clockTime, cueTitle, tempoWord, cueParts, scoped, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
+import { TEMPO_RULE, ago, askAge, clockTime, cueTitle, tempoWord, cueParts, scoped, freshness, longDate, oldestFirst, shortDate } from '../src/glance.ts';
 
 const row = { id: 'x', stream: 's', text: 't', links: { tracker: [], prs: [] }, since: '' };
 
@@ -92,13 +92,6 @@ test('shortDate abbreviates weekday and month and rejects anything but YYYY-MM-D
   assert.equal(shortDate('2026-10-06'), 'Tue 6 Oct');
   assert.equal(shortDate('2026-02-30'), '');
   assert.equal(shortDate('Oct 6'), '');
-});
-
-test('chatAnswer prefixes the ask id for the chat and refuses a blank answer (no approve-as-asked shortcut)', () => {
-  assert.equal(chatAnswer('ab12', '  Yes, merge it.\n'), 'ab12: Yes, merge it.');
-  assert.equal(chatAnswer('ab12', 'line one\nline two'), 'ab12: line one\nline two');
-  assert.equal(chatAnswer('ab12', ''), null);
-  assert.equal(chatAnswer('ab12', ' \n\t '), null);
 });
 
 test('cueTitle counts the asks that need you, and only those', () => {
