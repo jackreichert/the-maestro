@@ -79,6 +79,8 @@ export interface ApplyResult { id: string; done: boolean; message: string }
 export interface WorktreeSweep {
   removed: { repo: string; path: string; why: string }[]; pruned: { repo: string; path: string }[];
   kept: { repo: string; path: string; reason: string }[]; notes: string[]; skipped: string[]; envAsks: EnvAsk[];
+  /** Repos where the sweep could not decide or finish: the fetch failed, the prune failed, or a removal failed. A refusal at removal is not one (the worktree was left alone, which is safe). */
+  failed: string[];
 }
 type Failure = Error & { kind?: string };
 /** A rule: a named check and the reason text for when it fails. `RA` is the argument of `reason`, which is the check's own unless stated. */
@@ -704,16 +706,17 @@ function hasLinkedWorktree(path: string): boolean {
  * not touched and is listed in `skipped` (the check is at repo boundaries, so one repo may run past the budget).
  */
 export function sweepWorktrees(container: string, ctx: SweepContext, { only, dryRun = false, budgetSeconds = 0, clock = Date.now }: { only?: string | null; dryRun?: boolean; budgetSeconds?: number; clock?: () => number } = {}): WorktreeSweep {
-  const out: WorktreeSweep = { removed: [], pruned: [], kept: [], notes: [], skipped: [], envAsks: [] };
+  const out: WorktreeSweep = { removed: [], pruned: [], kept: [], notes: [], skipped: [], envAsks: [], failed: [] };
   const started = clock();
   for (const path of findRepos(container, only)) {
     const repo = basename(path);
     if (budgetSeconds > 0 && clock() - started > budgetSeconds * 1000) { out.skipped.push(repo); continue; }
-    try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${errorOf(e).message}`); }
+    try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${errorOf(e).message}`); out.failed.push(`${repo}: prune failed`); }
     if (!hasLinkedWorktree(path)) continue; // nothing to remove here: no fetch, no scan
     const scan = scanRepo(path, { ...ctx, fetch: true, worktreesOnly: true });
     out.notes.push(...scan.notes.map((n) => `${repo}: ${n}`));
     out.envAsks.push(...scan.envAsks);
+    if (scan.fetchFailed) out.failed.push(`${repo}: git fetch failed`);
     const keep = (i: { name: string }, reason: string): void => { out.kept.push({ repo, path: i.name, reason }); };
     const dropped = new Set(out.pruned.filter((x) => x.repo === repo).map((x) => x.path)); // a dry run still sees these
     scan.excluded.filter((e) => !dropped.has(e.name)).forEach((e) => keep(e, e.reason));
@@ -723,7 +726,10 @@ export function sweepWorktrees(container: string, ctx: SweepContext, { only, dry
       if (dryRun) { out.removed.push({ repo, path: item.name, why: item.why }); continue; }
       const r = removeWorktree(path, item, item.id, ctx.disposableIgnored, ctx.envStoreRoot);
       if (r.done) out.removed.push({ repo, path: item.name, why: item.why });
-      else keep(item, r.message.replace(`refused: ${item.name} `, 'refused: '));
+      else {
+        keep(item, r.message.replace(`refused: ${item.name} `, 'refused: '));
+        if (r.message.startsWith('failed:')) out.failed.push(`${repo}: could not remove ${item.name}`);
+      }
     }
   }
   return out;
@@ -750,7 +756,7 @@ export { keptCounts };
  * Printable lines for a sweepWorktrees result: what went, what stayed, then a count. Kept worktrees print as counts by
  * reason (a big tree keeps hundreds); `verbose` lists each one with its full reason instead.
  */
-export function worktreeSweepLines(r: Omit<WorktreeSweep, 'skipped' | 'envAsks'> & { skipped?: string[] }, dryRun = false, { verbose = false }: { verbose?: boolean } = {}): string[] {
+export function worktreeSweepLines(r: Omit<WorktreeSweep, 'skipped' | 'envAsks' | 'failed'> & { skipped?: string[] }, dryRun = false, { verbose = false }: { verbose?: boolean } = {}): string[] {
   const verb = dryRun ? 'would remove' : 'removed';
   const kept = verbose
     ? r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`)

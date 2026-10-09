@@ -72,7 +72,7 @@ test('cleanupWorktreeLines lists kept worktrees, or summarises a sweep', () => {
     const kept = [{ path: '/w/a', repo: 'r', reason: 'uncommitted changes (2 files)' }];
     assert.deepEqual(cleanupWorktreeLines(kept, null), ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', '- `/w/a` (r): uncommitted changes (2 files)', '']);
     assert.deepEqual(cleanupWorktreeLines([], null), []);
-    const summary = cleanupWorktreeLines(kept, { removed: [], pruned: [], kept, notes: [], skipped: [], envAsks: [] });
+    const summary = cleanupWorktreeLines(kept, { removed: [], pruned: [], kept, notes: [], skipped: [], envAsks: [], failed: [] });
     assert.match(summary[0] ?? '', /^Worktree sweep \(dry run\): 0 would be removed, 0 pruned, 1 kept\./);
     assert.ok(summary.includes('- uncommitted changes: 1'));
 });

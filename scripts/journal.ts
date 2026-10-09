@@ -884,11 +884,12 @@ function sweepWorktreesForRoll() {
 }
 
 /**
- * A finished (not dry, not budget-cut) worktree sweep is the `branch-sweep` row's work, so it records the run itself instead of waiting for
+ * A finished (not dry, not budget-cut, no fetch, prune or removal failure) worktree sweep is the `branch-sweep` row's work, so it records the run itself instead of waiting for
  * someone to say so. The evidence names what the sweep did and that remote branches are not part of it (branch-sweep.ts lists those for approval).
  */
 function recordBranchSweepRan(result: NonNullable<ReturnType<typeof runWorktreeSweep>>): void {
     if (dryRun || result.skipped.length) return;
+    if (result.failed.length) { console.log(`standing  branch-sweep  not recorded (sweep did not finish: ${result.failed.join('; ')}); the row stays overdue`); return; }
     try {
         const evidence = `roll worktree sweep: ${result.removed.length} removed, ${result.pruned.length} pruned, ${result.kept.length} kept; remote branches not swept`;
         if (recordRan(standingFile(), 'branch-sweep', evidence, now())) console.log('standing  branch-sweep  recorded');
