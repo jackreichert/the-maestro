@@ -360,6 +360,24 @@ export function stackReport(snapshot: { prs: StoredPr[] }, now: Date = new Date(
 /** Where the snapshot lives under a ledger root. */
 export const snapshotPath = (root: string): string => join(root, 'Projects', CONTAINER_PROJECT, 'Journal', 'prs-snapshot.json');
 
+/** Where the loop's idle-tick refresh keeps the current board. Never the `--diff` baseline: only the greeting's run writes `prs-snapshot.json`. */
+export const currentPath = (root: string): string => join(dirname(snapshotPath(root)), 'prs-current.json');
+
+/** When a snapshot file was taken, 0 when it is absent or unreadable. */
+function takenAtOf(path: string): number {
+    try { return Date.parse(loadSnapshot(path)?.takenAt ?? '') || 0; } catch { return 0; }
+}
+
+/** The newer of the baseline and the loop's current-state file, for readers that want the latest board (the footer's review queue, the dispatch gate's fallback). Falls back to the baseline path when neither exists. */
+export function freshestSnapshotPath(root: string): string {
+    const base = snapshotPath(root);
+    const cur = currentPath(root);
+    return takenAtOf(cur) > takenAtOf(base) ? cur : base;
+}
+
+/** When the newest stored board was taken, 0 when there is none. */
+export const freshestSnapshotAt = (root: string): number => Math.max(takenAtOf(snapshotPath(root)), takenAtOf(currentPath(root)));
+
 function cmdSnapshot(): void {
     const vault = arg('vault', LEDGER_ROOT || VAULT_ROOT);
     if (!vault) {

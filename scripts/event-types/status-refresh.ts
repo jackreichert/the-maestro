@@ -14,8 +14,8 @@
  * Edit-quiet window: while The-Podium.md holds an edit the status watcher has not adopted and was saved under 60 s ago, nothing is
  * written; the refresh stays pending and runs once the window has passed. A regeneration that fails (ledger unreadable,
  * another rebuild holding .now.lock) is retried after 2 minutes and reported as a non-actionable event, once per new message.
- * Separately, the same idle tick keeps the stored PR snapshot (prs-snapshot.json, which the footer's review queue reads) fresh: when the snapshot
- * is more than 10 minutes old, one GitHub search rewrites it, with no per-PR calls (the greeting's `prs-snapshot.ts` run still does the
+ * Separately, the same idle tick keeps the current PR board (prs-current.json, which the footer's review queue reads when it is newer than prs-snapshot.json) fresh: when the newest
+ * stored board is more than 10 minutes old, one GitHub search rewrites it (never prs-snapshot.json, the greeting's --diff baseline), with no per-PR calls (the greeting's `prs-snapshot.ts` run still does the
  * after-merge mergeable re-asks). Never in quiet hours. A failed search is retried after another 10 minutes and reported once, as a
  * non-actionable event; the 30 s check never waits on it longer than the search's own 60 s timeout.
  * State { sig, firstChange, lastChange, lastRun, markerSeen, prDirty, retryAt, error, snapshotTry, snapshotError } is the whole memory; times are epoch ms.
@@ -30,7 +30,7 @@ import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, WATCH_Q
 import { prsDirtyAt } from '../lib/status-page/dirty.ts';
 import { readPrCache } from '../lib/status-page/prcache.ts';
 import { LEGACY_FILE, PODIUM_FILE, readPodium, readSeenMeta, sha, writeAtomic } from '../lib/status-page/seen.ts';
-import { fetchLive, loadSnapshot, snapshotPath } from '../prs-snapshot.ts';
+import { currentPath, fetchLive, freshestSnapshotAt } from '../prs-snapshot.ts';
 import { regenerate } from '../status-page.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
@@ -111,12 +111,12 @@ export const realIo: RefreshIo = {
     return regenerate({ project, ledger: LEDGER_ROOT || VAULT_ROOT, statusDir, dryRun: false, snapshot: false, cachedPrsOnly }).prFailure;
   },
   snapshotAt: () => {
-    try { return Date.parse(loadSnapshot(snapshotPath(LEDGER_ROOT || VAULT_ROOT))?.takenAt ?? '') || 0; } catch { return 0; }
+    try { return freshestSnapshotAt(LEDGER_ROOT || VAULT_ROOT); } catch { return 0; }
   },
   refreshSnapshot: () => {
     try {
       if (!LEDGER_ROOT && !VAULT_ROOT) return 'no ledger root configured';
-      const path = snapshotPath(LEDGER_ROOT || VAULT_ROOT);
+      const path = currentPath(LEDGER_ROOT || VAULT_ROOT);
       const snap = fetchLive(ghRun);
       mkdirSync(dirname(path), { recursive: true });
       writeAtomic(path, `${JSON.stringify(snap, null, 2)}\n`);
