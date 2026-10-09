@@ -468,7 +468,6 @@ test('status --footer prints one Ledger line per active stream, registry names, 
         '**Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you',
         '**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked',
         '**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you',
-        '**Window:** testwin',
         sessionNone(),
     ]);
 });
@@ -499,10 +498,10 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
-    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: testwin | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default');
+    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
     assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Session: 2 turns (1%) · 100k/turn']);
     assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Session: 2 turns (1%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: testwin | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest');
+    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
     assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
@@ -513,6 +512,9 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.ok(multi.length >= 2);
     assert.equal(multi[0], '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');
     assert.equal(multi.find((l) => l.startsWith('**Window:**')), '**Window:** aaaaaaaa-min', 'the footer names the window of the session it measures');
+    const unpinned = status([]);
+    assert.equal(unpinned.find((l) => l.startsWith('**Window:**')), undefined, 'without a pinned session the newest transcript is not shown under MAESTRO_WINDOW\'s name');
+    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** 1 turns (0% of 180 roll) · 150k read/turn', 'the numbers still show');
     assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** 2 turns (1% of 180 roll) · 100k read/turn', '--session applies to the multi-line footer too');
 });
 
@@ -537,7 +539,7 @@ test('status --json carries the footer numbers, and they match what status --foo
 test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
     run('start', 'plain', ...MARK);
     const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
-    assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Ledger:** 0 done today · 1 in flight · 0 awaiting you', '**Window:** testwin', sessionNone()]);
+    assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Ledger:** 0 done today · 1 in flight · 0 awaiting you', sessionNone()]);
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
 });
 
@@ -2469,7 +2471,7 @@ test('status and status --footer show the review queue from the stored snapshot,
     }).stdout;
     snapshot(new Date().toISOString(), false, false, true);
     assert.match(status([]), /\n {2}review queue: 2 of 4\n$/);
-    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 2 of 4\n\*\*Window:\*\* testwin\n\*\*Session:\*\*/m);
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 2 of 4\n\*\*Session:\*\*/m);
     snapshot(new Date().toISOString(), false, false, false, false);
     assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '4' }), /review queue: 4 of 4 \(full\)/);
     assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '6' }), /review queue: 4 of 6\n/);

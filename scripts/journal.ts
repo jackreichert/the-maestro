@@ -787,10 +787,11 @@ function cmdStatus() {
     if (has('footer')) {
         const sessionId = footerSessionId();
         const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, sessionId);
-        // This footer's own window: the session it measures names it (a status line passes it on stdin), else the run's id.
-        const window = resolveWindowId({ window: arg('window') ?? undefined, session: sessionId, env: process.env.MAESTRO_WINDOW });
+        // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
+        // another window, and its numbers must not appear under this window's name.
+        const window = sessionId ? resolveWindowId({ session: sessionId }) : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session, window })); return; }
-        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), `**Window:** ${window}`, sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
