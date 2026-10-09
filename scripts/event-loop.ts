@@ -57,6 +57,7 @@ import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.t
 import type { TypeRegistry } from './event-types/index.ts';
 import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult, Watch, WatchEvent, WatchState } from './lib/types.ts';
 import type { NotifyRun } from './lib/notify.ts';
+import { resolveWindowId } from './lib/window-id.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 
@@ -311,18 +312,20 @@ async function digestWait(dir: string, timeoutMs: number, pollSeconds: number): 
 const listFilter = (v: { unseen?: boolean; all?: boolean }): ((e: InboxEntry) => boolean) => (v.unseen ? (e) => !e.seen : v.all ? () => true : (e) => !e.handled);
 
 /** Blocks until an unseen actionable event is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). */
-async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, nap: (s: number) => Promise<void> = sleep): Promise<number> {
+async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, nap: (s: number) => Promise<void> = sleep, window?: string): Promise<number> {
   const end = Date.now() + timeoutMs;
   for (;;) {
     const fresh = readInbox(dir).filter((e) => e.actionable && !e.seen);
-    if (fresh.length) { console.log(fresh.map(formatEntry).join('\n')); mark(dir, 'seen', fresh.map((e) => e.id)); return EXIT.actionable; }
+    if (fresh.length) { console.log(fresh.map(formatEntry).join('\n')); mark(dir, 'seen', fresh.map((e) => e.id), Date.now(), window); return EXIT.actionable; }
     if (Date.now() >= end) return EXIT.ok;
     await nap(Math.min(pollSeconds, Math.max(0.05, (end - Date.now()) / 1000)));
   }
 }
 
 /** `events [list|ack|wait]`. Returns the exit code, or a usage message. */
-async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string }): Promise<number | string> {
+async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string; window?: string; session?: string }): Promise<number | string> {
+  // The window that reads or acks is recorded on the seen and handled rows, so a later router can tell whose mark it is.
+  const window = resolveWindowId({ window: v.window, session: v.session, env: process.env.MAESTRO_WINDOW });
   if (sub === undefined || sub === 'list') {
     const { entries, torn } = readInboxReport(dir);
     if (torn) console.error(`warning: ${torn} unreadable line(s) in the inbox (a write cut short); the events on them are not shown`);
@@ -332,7 +335,7 @@ async function eventsCommand(dir: string, sub: string | undefined, ids: string[]
   }
   if (sub === 'ack') {
     if (!ids.length) return 'events ack needs at least one event id';
-    const { unknown } = mark(dir, 'handled', ids);
+    const { unknown } = mark(dir, 'handled', ids, Date.now(), window);
     console.log(`handled ${new Set(ids).size - unknown.length}`);
     return unknown.length ? `no such event: ${unknown.join(' ')}` : EXIT.ok;
   }
@@ -340,7 +343,7 @@ async function eventsCommand(dir: string, sub: string | undefined, ids: string[]
     const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
     const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
     if (!(hours > 0) || !(poll > 0)) return '--timeout-hours and --poll-seconds need positive numbers';
-    return eventsWait(dir, hours * 3600 * 1000, poll);
+    return eventsWait(dir, hours * 3600 * 1000, poll, sleep, window);
   }
   return 'events commands: list | ack <id...> | wait';
 }
@@ -349,7 +352,7 @@ const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' },
+  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */

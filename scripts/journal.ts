@@ -161,6 +161,7 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
+import { resolveWindowId } from './lib/window-id.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
@@ -239,7 +240,9 @@ if (!projectArg) {
     process.exit(1);
 }
 const project: string = projectArg;
-const store = openStore({ vault, project, dryRun });
+/** The window this run writes as: `--window`, else `--session`, else MAESTRO_WINDOW, else a pid-based id (lib/window-id.ts). */
+const windowId = resolveWindowId({ window: arg('window') ?? undefined, session: arg('session') ?? undefined, env: process.env.MAESTRO_WINDOW });
+const store = openStore({ vault, project, dryRun, window: windowId });
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
 const today = (): string => new Date().toISOString().slice(0, 10);
 const now = (): string => new Date().toISOString();
@@ -782,9 +785,12 @@ function cmdStatus() {
     const queueFooter = boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
-        const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, footerSessionId());
-        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session })); return; }
-        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        const sessionId = footerSessionId();
+        const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, sessionId);
+        // This footer's own window: the session it measures names it (a status line passes it on stdin), else the run's id.
+        const window = resolveWindowId({ window: arg('window') ?? undefined, session: sessionId, env: process.env.MAESTRO_WINDOW });
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session, window })); return; }
+        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), `**Window:** ${window}`, sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
@@ -1642,7 +1648,7 @@ function cmdBrief(): void {
 // ── backfill ────────────────────────────────────────────────────────────────
 
 const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
-const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true), states: standingStatesSafe });
+const handoffCtx = () => ({ window: windowId, fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true), states: standingStatesSafe });
 const handoffText = (stream: string | null, since: string, keptWorktrees?: Parameters<typeof handoffTextIn>[3], opts?: Parameters<typeof handoffTextIn>[4]) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
 const updateContextLink = (file: string, handoffPath: string) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 

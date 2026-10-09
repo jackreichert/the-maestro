@@ -16,7 +16,7 @@ import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
 import type { BoardContext } from './board.ts';
 
 /** What the handoff draft reads from the run: the ledger, its fold, the clock and the transcript directory for the session line. */
-export interface HandoffContext { fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string; /** Every standing pickup with its runtime status, as lines (the same block `prime` prints, whole). */ standing?: () => string[]; /** Every standing pickup with its status; the non-routine ones are listed under Commitments and conditions. */ states?: () => RowState[] }
+export interface HandoffContext { /** The window writing the handoff; recorded in its frontmatter when set. */ window?: string; fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string; /** Every standing pickup with its runtime status, as lines (the same block `prime` prints, whole). */ standing?: () => string[]; /** Every standing pickup with its status; the non-routine ones are listed under Commitments and conditions. */ states?: () => RowState[] }
 /** A PR, ref, ticket or path an item mentions. */
 export interface Artifact { kind: string; v: string }
 type KeptWorktree = { path: string; repo: string; reason: string };
@@ -97,7 +97,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
     const one = (kind: string): string[] => arts.filter((a) => a.kind === kind).map((a) => a.v);
 
     return [
-        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `generated_at: ${generatedAt}`, `since: ${since}`, 'type: handoff', '---', '',
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `generated_at: ${generatedAt}`, `since: ${since}`, ...(ctx.window ? [`window: ${ctx.window}`] : []), 'type: handoff', '---', '',
         `# ${stream ?? 'All streams'} handoff, ${d}`, '',
         '> Scaffolded by `journal.ts handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.ts resume`, and calls `ListAgents` itself.', '',
         '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
@@ -180,7 +180,7 @@ export function handoffDeltaText(ctx: HandoffContext, stream: string | null, mar
     const line = (i: LedgerItem, tag: string): string => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
     const list = (rows: string[]): string[] => (rows.length ? rows : ['_none_']);
     return [
-        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${ctx.today()}`, `generated_at: ${generatedAt}`, `delta_of: ${prevName.replace(/\.md$/, '')}`, `since_ts: ${marker}`, 'type: handoff-delta', '---', '',
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${ctx.today()}`, `generated_at: ${generatedAt}`, `delta_of: ${prevName.replace(/\.md$/, '')}`, `since_ts: ${marker}`, ...(ctx.window ? [`window: ${ctx.window}`] : []), 'type: handoff-delta', '---', '',
         `# ${stream ?? 'All streams'} handoff delta, ${ctx.today()}`, '',
         `> Only what changed since [[${prevName.replace(/\.md$/, '')}]] (${marker}). Read that first; this does not repeat it. It lists new items, completions and new open asks only; an older ask resolved since is not shown.`, '',
         '## Session metrics', '', sessionLine(ctx.claudeProjectsDir), '',

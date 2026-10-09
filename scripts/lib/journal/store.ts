@@ -8,10 +8,12 @@ import type { LedgerRow, Registry } from '../ledger-core.ts';
  * One instance per process, so a registry saved mid-run is the one later writes see.
  */
 /** `warn` receives the store's own diagnostics (malformed ledger lines, a bad registry); it defaults to stderr, and a server passes a quiet one. */
-export interface StoreOptions { vault: string; project: string; dryRun: boolean; warn?: (message: string) => void }
+/** `window` is the id of the orchestrator window writing (see lib/window-id.ts); every row appended without its own `window` field carries it. */
+export interface StoreOptions { vault: string; project: string; dryRun: boolean; warn?: (message: string) => void; window?: string }
 export interface Store {
     dir: string;
     ledgerPath: string;
+    window: string | undefined;
     registryPath: string;
     rollPoint(entries: LedgerRow[], d: string | undefined): string | null | undefined;
     ensureDir(): void;
@@ -23,7 +25,7 @@ export interface Store {
     newId(existing: { id?: string }[]): string;
 }
 
-export function openStore({ vault, project, dryRun, warn = (m) => console.error(m) }: StoreOptions): Store {
+export function openStore({ vault, project, dryRun, warn = (m) => console.error(m), window }: StoreOptions): Store {
     const dir = join(vault, 'Projects', project, 'Journal');
     const ledgerPath = join(dir, 'ledger.jsonl');
 
@@ -46,19 +48,27 @@ export function openStore({ vault, project, dryRun, warn = (m) => console.error(
         return parseLedger(readFileSync(ledgerPath, 'utf8'), (n) => warn(`  skipped malformed line ${n}`));
     }
 
+    /** The row with this run's window id added; a row that already names a window keeps it, and a store with no window leaves rows untouched. */
+    function stamped<E>(entry: E): E {
+        if (!window || typeof entry !== 'object' || entry === null || 'window' in entry) return entry;
+        return { ...entry, window };
+    }
+
     function append<E>(entry: E): E {
         ensureDir();
-        if (dryRun) { console.log('[dry-run]', JSON.stringify(entry)); return entry; }
-        appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
-        return entry;
+        const row = stamped(entry);
+        if (dryRun) { console.log('[dry-run]', JSON.stringify(row)); return row; }
+        appendFileSync(ledgerPath, JSON.stringify(row) + '\n');
+        return row;
     }
 
     /** Append several rows in one write, so a batch is either all there or (on a crash) a prefix of whole lines. */
     function appendMany<E>(entries: E[]): E[] {
         ensureDir();
-        if (dryRun) { entries.forEach((e) => console.log('[dry-run]', JSON.stringify(e))); return entries; }
-        if (entries.length) appendFileSync(ledgerPath, entries.map((e) => JSON.stringify(e) + '\n').join(''));
-        return entries;
+        const rows = entries.map(stamped);
+        if (dryRun) { rows.forEach((e) => console.log('[dry-run]', JSON.stringify(e))); return rows; }
+        if (rows.length) appendFileSync(ledgerPath, rows.map((e) => JSON.stringify(e) + '\n').join(''));
+        return rows;
     }
 
     const registryPath = join(vault, 'Projects', project, 'streams.json');
@@ -91,5 +101,5 @@ export function openStore({ vault, project, dryRun, warn = (m) => console.error(
         }
     }
 
-    return { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId };
+    return { dir, ledgerPath, window, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId };
 }

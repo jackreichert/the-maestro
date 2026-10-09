@@ -13,6 +13,8 @@ export interface LedgerRow {
     id?: string;
     kind?: string;
     stream?: string;
+    /** The orchestrator window that wrote the row (lib/window-id.ts); absent on rows written before windows were recorded. */
+    window?: string;
     model?: string;
     used?: unknown;
     tokens?: unknown;
