@@ -32,12 +32,13 @@ Copy these lines verbatim, per PR, in this order, and add nothing in between:
 3. the `unresolved human threads` and `unresolved bot threads` lines, with their thread lines
 4. the `checks:` line
 5. the `PUSH WARNING:` line, if there is one
-6. the `READY:` line
+6. the `READY-FOR-REVIEW:` line
+7. the `READY-TO-MERGE:` line
 
 If a `PUSH WARNING` line is present, say so first in your report and do not push unless the orchestrator's brief says to push anyway.
 
 ## Hard rules
 
 - Do not paraphrase a verdict word. `APPROVED-stale`, `DISMISSED` and `APPROVED-on-head` mean different things.
-- Do not call a PR ready unless the `READY:` line says `yes`.
+- Do not call a PR ready for review unless `READY-FOR-REVIEW:` says `yes`, and do not call it mergeable or ready to merge unless `READY-TO-MERGE:` says `yes`. Quote the reasons in the parentheses as written.
 - Do not paste raw JSON or logs.

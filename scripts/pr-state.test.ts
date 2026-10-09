@@ -75,20 +75,84 @@ test('threads split human vs bot; resolved ones are ignored; text is cut to 200 
   assert.equal(s.ready, false);
 });
 
-test('ready needs no threads, mergeable, no failing check, not a draft; pending checks do not block', () => {
-  assert.equal(state({}).ready, true);
-  assert.match(state({ mergeable: 'CONFLICTING' }).reasons.join(), /mergeable is CONFLICTING/);
-  assert.match(state({ isDraft: true }).reasons.join(), /draft/);
-  const failing = pr({ commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { pageInfo: {}, nodes: [{ __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'FAILURE' }, { __typename: 'CheckRun', name: 'slow', status: 'IN_PROGRESS' }] } } } }] } });
-  const s = buildState({ repo: 'o/r', number: 1 }, failing);
-  assert.deepEqual(s.checks, { passed: 0, failed: ['lint'], pending: 1 });
-  assert.equal(s.ready, false);
+const CHECK = (over: Record<string, unknown>) => ({ commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { pageInfo: {}, nodes: [{ __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS', ...over }] } } } }] } });
+const APPROVED = { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z')] };
+
+test('approved on head and CLEAN is ready to merge and ready for review', () => {
+  const s = state({ reviews: APPROVED });
+  assert.deepEqual([s.readyForReview, s.readyToMerge, s.mergeReasons], [true, true, []]);
+});
+
+test('dismissed approval, REVIEW_REQUIRED and BLOCKED (the 601 case) is ready for review but not to merge', () => {
+  const s = state({ reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'BLOCKED', reviews: { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z', OLD), review('acehand', 'DISMISSED', '2026-10-01T10:00:00Z', OLD)] } });
+  assert.equal(s.readyForReview, true);
+  assert.equal(s.readyToMerge, false);
+  assert.match(s.mergeReasons.join(), /approval dismissed by a push/);
+  assert.match(s.mergeReasons.join(), /blocked/);
+});
+
+test('a standing CHANGES_REQUESTED is not ready to merge even with threads resolved', () => {
+  const s = state({ reviewDecision: 'CHANGES_REQUESTED', reviews: { pageInfo: {}, nodes: [review('acehand', 'CHANGES_REQUESTED', '2026-10-01T10:00:00Z')] } });
+  assert.equal(s.readyForReview, true);
+  assert.equal(s.readyToMerge, false);
+  assert.match(s.mergeReasons.join(), /changes requested by acehand/);
+});
+
+test('a changes request beats another reviewer\'s approval', () => {
+  const s = state({ reviews: { pageInfo: {}, nodes: [review('a', 'APPROVED', '2026-10-01T10:00:00Z'), review('b', 'CHANGES_REQUESTED', '2026-10-01T11:00:00Z')] } });
+  assert.equal(s.readyToMerge, false);
+  assert.match(s.mergeReasons.join(), /changes requested by b/);
+});
+
+test('pending checks block both verdicts', () => {
+  const s = state({ reviews: APPROVED, ...CHECK({ status: 'IN_PROGRESS', conclusion: null }) });
+  assert.deepEqual([s.readyForReview, s.readyToMerge], [false, false]);
+  assert.match(s.reviewReasons.join(), /checks pending/);
+});
+
+test('failing checks block both verdicts', () => {
+  const s = state({ reviews: APPROVED, ...CHECK({ conclusion: 'FAILURE' }) });
+  assert.deepEqual([s.readyForReview, s.readyToMerge], [false, false]);
+  assert.match(s.reviewReasons.join(), /checks failing: lint/);
+});
+
+test('an approval on an older commit and BEHIND is not ready to merge', () => {
+  const s = state({ mergeStateStatus: 'BEHIND', reviews: { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z', OLD)] } });
+  assert.equal(s.readyForReview, true);
+  assert.equal(s.readyToMerge, false);
+  assert.match(s.mergeReasons.join(), /older commit/);
+  assert.match(s.mergeReasons.join(), /behind/);
+});
+
+test('no review at all is waiting for an approval', () => {
+  const s = state({});
+  assert.equal(s.readyToMerge, false);
+  assert.match(s.mergeReasons.join(), /waiting for an approval/);
+});
+
+test('a draft is neither ready for review nor ready to merge', () => {
+  const s = state({ isDraft: true, mergeStateStatus: 'DRAFT', reviews: APPROVED });
+  assert.deepEqual([s.readyForReview, s.readyToMerge], [false, false]);
+  assert.match(s.reviewReasons.join(), /draft/);
+});
+
+test('conflicts block both verdicts', () => {
+  const s = state({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', reviews: APPROVED });
+  assert.deepEqual([s.readyForReview, s.readyToMerge], [false, false]);
+  assert.match(s.reviewReasons.join(), /merge conflicts/);
+});
+
+test('unknown or unrecognised states fail closed', () => {
+  assert.equal(state({ reviews: APPROVED, mergeable: 'UNKNOWN' }).readyForReview, false);
+  assert.equal(state({ reviews: APPROVED, mergeStateStatus: 'UNKNOWN' }).readyToMerge, false);
+  assert.equal(state({ reviews: APPROVED, mergeStateStatus: 'SOMETHING_NEW' }).readyToMerge, false);
+  assert.equal(state({ reviews: APPROVED, mergeStateStatus: undefined }).readyToMerge, false);
 });
 
 test('more than one page of threads fails closed', () => {
   const s = state({ reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] } });
-  assert.equal(s.ready, false);
-  assert.match(s.reasons.join(), /threads/);
+  assert.deepEqual([s.readyForReview, s.readyToMerge], [false, false]);
+  assert.match(s.reviewReasons.join(), /threads/);
 });
 
 test('CLI prints the loud lines for several PRs, one unreadable', () => {
@@ -101,15 +165,18 @@ test('CLI prints the loud lines for several PRs, one unreadable', () => {
   assert.match(r.stdout, /PUSH WARNING: a push will dismiss 1 approval\(s\): acehand/);
   assert.match(r.stdout, /reviewer acehand: DISMISSED on oldsha0000/);
   assert.match(r.stdout, /unresolved bot threads: 1/);
-  assert.match(r.stdout, /READY: yes/);
-  assert.match(r.stdout, /READY: no \(1 unresolved thread\(s\)\)/);
-  assert.match(r.stdout, /o\/r#3\n  could not read: GraphQL: Could not resolve[^\n]*\nREADY: no/);
+  assert.match(r.stdout, /READY-FOR-REVIEW: yes\nREADY-TO-MERGE: yes/);
+  assert.match(r.stdout, /READY-FOR-REVIEW: no \(1 unresolved thread\(s\)\)\nREADY-TO-MERGE: no \(1 unresolved thread\(s\); approval dismissed by a push/);
+  assert.match(r.stdout, /o\/r#3\n  could not read: GraphQL: Could not resolve[^\n]*\nREADY-FOR-REVIEW: no[^\n]*\nREADY-TO-MERGE: no/);
 });
 
 test('--json is machine-readable and carries no email field', () => {
   const r = run({ 1: pr({}) }, 'o/r#1', '--json');
   const out = JSON.parse(r.stdout);
-  assert.equal(out[0].ready, true);
+  assert.equal(out[0].readyForReview, true);
+  assert.equal(out[0].readyToMerge, false);
+  assert.equal(out[0].ready, out[0].readyToMerge);
+  assert.deepEqual(out[0].reasons, out[0].mergeReasons);
   assert.doesNotMatch(r.stdout, /email|@/);
 });
 

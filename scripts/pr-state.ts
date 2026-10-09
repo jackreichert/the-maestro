@@ -7,11 +7,13 @@
  * Per PR it prints the head sha, base, draft, mergeable and mergeStateStatus, reviewDecision, each
  * reviewer's LATEST non-comment review with the commit it was on and a verdict word (APPROVED-on-head,
  * APPROVED-stale, DISMISSED, CHANGES_REQUESTED, COMMENTED-only), unresolved threads split human vs bot,
- * a check summary, a PUSH WARNING when approvals sit on the current head, and READY: yes|no (reasons).
+ * a check summary, a PUSH WARNING when approvals sit on the current head, and two verdict lines:
+ *   READY-FOR-REVIEW: yes|no (reasons)  not a draft, zero unresolved threads, no conflicts, checks neither failing nor pending.
+ *   READY-TO-MERGE: yes|no (reasons)    the above plus mergeStateStatus CLEAN, no standing CHANGES_REQUESTED and an approval on the current head.
  *
  * An empty reviewDecision does not mean "nothing to lose": a dismissed approval also reads empty, so the
  * verdicts come from the review history, not from reviewDecision. Reads fail closed: more than one page of
- * reviews or threads, or an unreadable PR, makes READY no. Only logins are printed, never emails.
+ * reviews or threads, or an unreadable PR, makes both verdicts no; any state it does not recognise is no. Only logins are printed, never emails.
  * Exit 0 when every PR was read, 2 on bad usage or when any PR could not be read.
  */
 import { spawnSync } from 'node:child_process';
@@ -26,7 +28,10 @@ export interface Checks { passed: number; failed: string[]; pending: number }
 export interface PrState {
   ref: string; url: string; head: string; base: string; draft: boolean; mergeable: string; mergeState: string; reviewDecision: string;
   reviewers: Reviewer[]; humanThreads: Thread[]; botThreads: Thread[]; checks: Checks;
-  pushWarning: string[]; truncated: string[]; ready: boolean; reasons: string[];
+  pushWarning: string[]; truncated: string[];
+  readyForReview: boolean; reviewReasons: string[]; readyToMerge: boolean; mergeReasons: string[];
+  /** Kept for existing JSON readers: the same as readyToMerge and mergeReasons. */
+  ready: boolean; reasons: string[];
 }
 
 const QUERY = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
@@ -65,6 +70,10 @@ export function reviewerVerdicts(reviews: any[], head: string): Reviewer[] {
   });
 }
 
+const MERGE_STATE_WORDS: Record<string, string> = {
+  BLOCKED: 'GitHub reports it blocked (a required review or check is missing)', BEHIND: 'branch is behind its base', UNSTABLE: 'a non-required check is failing',
+  DIRTY: 'merge conflicts', UNKNOWN: 'GitHub has not computed the merge state yet', HAS_HOOKS: 'merge state is HAS_HOOKS, not CLEAN', DRAFT: 'draft',
+};
 const FAILING = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
 export function summariseChecks(nodes: any[]): Checks {
   const out: Checks = { passed: 0, failed: [], pending: 0 };
@@ -92,16 +101,27 @@ export function buildState(ref: Ref, pr: any): PrState {
     pr.reviews?.pageInfo?.hasPreviousPage ? 'reviews' : '', pr.reviewThreads?.pageInfo?.hasNextPage ? 'threads' : '', ctx?.pageInfo?.hasNextPage ? 'checks' : '',
   ].filter(Boolean);
   const pushWarning = reviewers.filter((r) => r.verdict === 'APPROVED-on-head').map((r) => r.login);
-  const reasons: string[] = [];
-  if (pr.isDraft) reasons.push('draft');
-  if (threads.length) reasons.push(`${threads.length} unresolved thread(s)`);
-  if (pr.mergeable !== 'MERGEABLE') reasons.push(`mergeable is ${pr.mergeable}`);
-  if (checks.failed.length) reasons.push(`checks failing: ${checks.failed.join(', ')}`);
-  if (truncated.length) reasons.push(`more than one page of ${truncated.join('/')}, not fully read`);
+  const reviewReasons: string[] = [];
+  if (pr.isDraft) reviewReasons.push('draft');
+  if (threads.length) reviewReasons.push(`${threads.length} unresolved thread(s)`);
+  if (pr.mergeable === 'CONFLICTING') reviewReasons.push('merge conflicts');
+  else if (pr.mergeable !== 'MERGEABLE') reviewReasons.push(`mergeable is ${pr.mergeable}`);
+  if (checks.failed.length) reviewReasons.push(`checks failing: ${checks.failed.join(', ')}`);
+  if (checks.pending) reviewReasons.push('checks pending');
+  if (truncated.length) reviewReasons.push(`more than one page of ${truncated.join('/')}, not fully read`);
+  const mergeReasons = [...reviewReasons];
+  const changes = reviewers.filter((r) => r.verdict === 'CHANGES_REQUESTED').map((r) => r.login);
+  if (changes.length) mergeReasons.push(`changes requested by ${changes.join(', ')}`);
+  if (!reviewers.some((r) => r.verdict === 'APPROVED-on-head')) {
+    mergeReasons.push(reviewers.some((r) => r.verdict === 'DISMISSED') ? 'approval dismissed by a push, waiting for a new approval'
+      : reviewers.some((r) => r.verdict === 'APPROVED-stale') ? 'approval is on an older commit, waiting for a new approval' : 'waiting for an approval');
+  }
+  if (pr.mergeStateStatus !== 'CLEAN') mergeReasons.push(MERGE_STATE_WORDS[pr.mergeStateStatus] || `merge state is ${pr.mergeStateStatus || 'unknown'}`);
   return {
     ref: `${ref.repo}#${ref.number}`, url: pr.url, head, base: pr.baseRefName, draft: !!pr.isDraft, mergeable: pr.mergeable, mergeState: pr.mergeStateStatus,
     reviewDecision: pr.reviewDecision || '(empty)', reviewers, humanThreads: threads.filter((t) => !t.bot), botThreads: threads.filter((t) => t.bot), checks,
-    pushWarning, truncated, ready: reasons.length === 0, reasons,
+    pushWarning, truncated, readyForReview: reviewReasons.length === 0, reviewReasons, readyToMerge: mergeReasons.length === 0, mergeReasons,
+    ready: mergeReasons.length === 0, reasons: mergeReasons,
   };
 }
 
@@ -116,7 +136,9 @@ export function render(s: PrState): string {
   }
   L.push(`  checks: ${s.checks.passed} passed, ${s.checks.failed.length} failed${s.checks.failed.length ? ` (${s.checks.failed.join(', ')})` : ''}, ${s.checks.pending} pending`);
   if (s.pushWarning.length) L.push(`PUSH WARNING: a push will dismiss ${s.pushWarning.length} approval(s): ${s.pushWarning.join(', ')}`);
-  L.push(`READY: ${s.ready ? 'yes' : `no (${s.reasons.join('; ')})`}`);
+  const verdict = (ok: boolean, why: string[]) => (ok ? 'yes' : `no (${why.join('; ')})`);
+  L.push(`READY-FOR-REVIEW: ${verdict(s.readyForReview, s.reviewReasons)}`);
+  L.push(`READY-TO-MERGE: ${verdict(s.readyToMerge, s.mergeReasons)}`);
   return L.join('\n');
 }
 
@@ -148,7 +170,8 @@ function main(): void {
     } catch (e) {
       failed++;
       const msg = (e as Error).message;
-      out.push({ ref: a, error: msg, ready: false }); text.push(`${a}\n  could not read: ${msg}\nREADY: no (could not read the PR)`);
+      out.push({ ref: a, error: msg, readyForReview: false, readyToMerge: false, ready: false });
+      text.push(`${a}\n  could not read: ${msg}\nREADY-FOR-REVIEW: no (could not read the PR)\nREADY-TO-MERGE: no (could not read the PR)`);
     }
   }
   console.log(json ? JSON.stringify(out, null, 2) : text.join('\n\n'));
