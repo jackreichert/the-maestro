@@ -161,7 +161,7 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
-import { resolveWindowId } from './lib/window-id.ts';
+import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
@@ -241,7 +241,8 @@ if (!projectArg) {
 }
 const project: string = projectArg;
 /** The window this run writes as: `--window`, else `--session`, else MAESTRO_WINDOW, else a pid-based id (lib/window-id.ts). */
-const windowId = resolveWindowId({ window: arg('window') ?? undefined, session: arg('session') ?? undefined, env: process.env.MAESTRO_WINDOW });
+const resolvedWindow = resolveWindow({ window: arg('window') ?? undefined, session: arg('session') ?? undefined, ...windowEnv() });
+const windowId = resolvedWindow.id;
 const store = openStore({ vault, project, dryRun, window: windowId });
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
 const today = (): string => new Date().toISOString().slice(0, 10);
@@ -789,7 +790,7 @@ function cmdStatus() {
         const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, sessionId);
         // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
         // another window, and its numbers must not appear under this window's name.
-        const window = sessionId ? resolveWindowId({ session: sessionId }) : undefined;
+        const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session, window })); return; }
         [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
@@ -800,6 +801,7 @@ function cmdStatus() {
         console.log(`\n${label}`);
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
+    windowWarning().forEach((l) => console.log(l));
     console.log(`Ledger — ${d}`);
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
@@ -1888,6 +1890,8 @@ function prioritiesNotice(): string[] {
 const supervisorNotice = (): string[] => [supervisorStatus(EVENT_DIR).line].filter(Boolean);
 
 /** The `Loop:` line (heartbeat verdict) without its footer markup; empty when nothing is set up and nothing is required. */
+/** The unstable-window warning as notice lines (empty when the id is stable); `prime` and the text `status` print it. */
+const windowWarning = (): string[] => [windowNotice(resolvedWindow)].filter(Boolean);
 const loopNotice = (): string[] => [liveLoopHealth().line.replace(/\*\*/g, '')].filter(Boolean);
 
 /** The Start-here pointer and, once a status directory exists, the week line (the not-set line when the goals are missing or stale). */
@@ -1901,7 +1905,7 @@ function cmdPrime() {
     // Before the board and outside its 40-line cap: a missing or stale handoff after a compaction must not be missed. Stdout carries it into the session; stderr makes a hook log show it too. Exit stays 0, since a failing SessionStart hook can drop its output.
     const continuity = continuityLines(readLedger(), newestHandoff(dir));
     continuity.forEach((l) => { console.log(l); console.error(l); });
-    primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...windowWarning(), ...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
     // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
     compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(l));
 }

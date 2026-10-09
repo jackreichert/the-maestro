@@ -57,7 +57,7 @@ import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.t
 import type { TypeRegistry } from './event-types/index.ts';
 import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult, Watch, WatchEvent, WatchState } from './lib/types.ts';
 import type { NotifyRun } from './lib/notify.ts';
-import { resolveWindowId } from './lib/window-id.ts';
+import { resolveWindowId, windowEnv } from './lib/window-id.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 
@@ -325,7 +325,7 @@ async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, n
 /** `events [list|ack|wait]`. Returns the exit code, or a usage message. */
 async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string; window?: string; session?: string }): Promise<number | string> {
   // The window that reads or acks is recorded on the seen and handled rows, so a later router can tell whose mark it is.
-  const window = resolveWindowId({ window: v.window, session: v.session, env: process.env.MAESTRO_WINDOW });
+  const window = resolveWindowId({ window: v.window, session: v.session, ...windowEnv() });
   if (sub === undefined || sub === 'list') {
     const { entries, torn } = readInboxReport(dir);
     if (torn) console.error(`warning: ${torn} unreadable line(s) in the inbox (a write cut short); the events on them are not shown`);
