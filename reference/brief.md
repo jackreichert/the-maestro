@@ -19,6 +19,10 @@ A fresh agent sees only what you write. Every brief includes:
 
 A field you cannot fill means scout again, not dispatch.
 
+### The brief file — `journal.ts brief <id>`
+
+For a ledger item, `node scripts/journal.ts brief <id> --model ... --used ...` writes this whole brief as a file, so the dispatch prompt is one line and nothing in the standing block is retyped. The file holds the item's text, the repo and working directory, the library pages for the task (from `library-brief.ts` when it is installed; a failing lookup refuses the brief, and a missing script is stated in the file), your task details (`--details-file`: anchors, scope, verify command), the hand-back cap and report path, and the standing block. The same run promotes a queued item, records a `brief` row with both paths, and takes the repo claim for the item's stream (`--read-only` takes none). If another holder has the repo it exits 1 naming them and writes nothing; stop and report, do not release their claim. It prints the Agent prompt to use. The fields above still apply: put them in the details file.
+
 ### Standing brief block — paste once into every brief
 
 Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
