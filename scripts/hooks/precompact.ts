@@ -21,7 +21,7 @@ import { CONFIGURED_PROJECT, CONTAINER_ROOT, LEDGER_ROOT, SCRIPTS_SHELF_DIR, VAU
 import { openStore } from '../lib/journal/store.ts';
 import { errorLine, HOOK_USED, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_STARTED, snapshotDirty, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
-import { resolveWindowId } from '../lib/window-id.ts';
+import { resolveWindowId, windowEnv } from '../lib/window-id.ts';
 
 const JOURNAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'journal.ts');
 /** The harness timeout is 120 s: the handoff gets 45 s, the snapshot stops scanning at 80 s, and the marker row needs the rest. */
@@ -88,7 +88,7 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   };
   const date = deps.now().toISOString().slice(0, 10);
   // No worktree sweep (it took minutes on a big container) and a cap on the child, so the whole hook stays under its harness timeout.
-  const window = resolveWindowId({ session: input.session_id, env: process.env.MAESTRO_WINDOW });
+  const window = resolveWindowId({ session: input.session_id, ...windowEnv() });
   step('handoff', () => { const r = deps.journal(['handoff', '--all', '--no-worktree-sweep', '--force', '--window', window, '--out', deps.handoffPath(date, window)], HANDOFF_BUDGET_MS); if (!r.ok) throw new Error(r.out || 'journal.ts handoff failed'); });
   const snap = step('snapshot', () => { const r = deps.snapshot(date, started + SNAPSHOT_DEADLINE_MS); if (!r) throw new Error('scripts_dir is not set'); if (r.partial) throw new Error(`time budget reached after ${r.worktrees} worktree(s)`); if (r.capped) throw new Error(`file or size cap reached after ${r.files} file(s); later source was not copied`); return r; });
   const found = { raised: 0, count: 0 };
