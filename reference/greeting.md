@@ -1,7 +1,7 @@
 # Greeting and the board
 
 Read this before replying to any session-opening greeting, or any request for current status /
-what's waiting on the user.
+what's waiting on the user. It is for the greeting step only: at session start read `journal.ts start-here`, not this file in full and not `CURRENT.md`, and open this file when the first message is a greeting.
 
 ## A greeting is a request for the board
 

@@ -15,6 +15,7 @@ node $J ask   "Split the calendar change into a follow-up PR?" "${M[@]}"
 node $J resolve "calendar change" --answer "Yes — no consumer yet" "${M[@]}"
 node $J status                            # what is open + done today, with usage marks
 node $J status --footer                   # the reply-footer Ledger lines (below)
+node $J status --footer --line            # the same facts as one line; --session <id> / --stdin pick the transcript
 node $J standup                           # end-of-day summary, ready to paste (no usage marks)
 node $J roll                              # compress: archive the day, keep open items
 node $J scratch                           # with scripts_dir set: scratch files with a promote/keep/delete-candidate proposal (roll prints it too; never moves or deletes)
