@@ -205,8 +205,8 @@ node <scripts dir>/review-verdict.ts record --pr <owner/repo#N> --head <sha> --v
 ```
 
 - Enforced: `review-verdict.ts` refuses a verdict whose reviewer is the fixer, and `prs-snapshot.ts --ready` lists a PR holding a resolved review-bot thread under "not ready" until a SHIP IT is recorded for its current head commit. A push after the verdict, a NEEDS WORK, or an unknown head commit all hold it. Threads resolved by people do not trigger it.
-- The reviewer's brief asks: do we need this? It reports `nearest existing mechanism: X, not enough because Y`, and names an alternative only after verifying it exists and does the job; a PR that rebuilds what a config, flag, helper or earlier PR already does is NEEDS WORK.
 - Not enforced: that the reviewer was really fresh beyond the id differing, or that the review was good. The id is self-reported.
+- Not enforced: the reviewer's brief asks: do we need this? It reports `nearest existing mechanism: X, not enough because Y`, and names an alternative only after verifying it exists and does the job; a PR that rebuilds what a config, flag, helper or earlier PR already does is NEEDS WORK.
 - On NEEDS WORK the fixing agent (or a new one) fixes, and the cycle repeats on the new head; the loop stops when a round finds only nitpicks, not on a fixed count.
 - Switch: `rereview_gate`, on by default.
 
