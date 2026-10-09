@@ -96,12 +96,6 @@ export function oldestFirst<T extends { ageDays: number; ts: string }>(asks: T[]
   return asks.map((a, i) => ({ a, i })).sort((x, y) => (y.a.ageDays - x.a.ageDays) || (at(x.a.ts) - at(y.a.ts)) || (x.i - y.i)).map((x) => x.a);
 }
 
-/** The text an answer is copied as, for pasting into the orchestrator chat: "<ask id>: <answer>". Null for a blank answer. */
-export function chatAnswer(id: string, answer: string): string | null {
-  const text = answer.trim();
-  return text ? `${id}: ${text}` : null;
-}
-
 /** The browser tab's title: "(n) Podium" while n asks need you, plain "Podium" otherwise. Blocked never counts: it is not your hand. */
 export function cueTitle(asks: number): string {
   return Number.isInteger(asks) && asks > 0 ? `(${asks}) Podium` : 'Podium';

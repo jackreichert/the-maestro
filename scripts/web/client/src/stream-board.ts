@@ -128,16 +128,16 @@ export function askCards(asks: AskCard[], live: boolean, showStream: boolean, ca
 /** The asks list, and the Show all control when the list is capped (it sits at the right of the section heading). */
 export interface AskList { list: HTMLElement; more: HTMLElement | null }
 
-/** True on Apple platforms, where the copy shortcut is shown with the Command key. */
+/** True on Apple platforms, where the send shortcut is shown with the Command key. */
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-/** What the asks list says once, under its heading, instead of on every ask: how answering works on this page. */
+/** What the asks list says once, under its heading, instead of on every ask: how answering works on this page (an answer is recorded in the ledger). */
 export function askHint(live: boolean): Node {
   if (!live) return document.createTextNode('Sample data: asks open read-only. Answering needs the Podium server.');
   const hint = document.createDocumentFragment();
   // A phone has no shortcut to mention, and the shorter line keeps the hint to one line there.
-  hint.append(h('span', { class: 'keys' }, h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' copies an answer for the chat; nothing is saved here yet.'),
-    h('span', { class: 'touch' }, 'Answers are copied for the chat; nothing is saved here yet.'));
+  hint.append(h('span', { class: 'keys' }, h('kbd', {}, APPLE ? '⌘ Enter' : 'Ctrl Enter'), ' sends an answer; it is recorded in the ledger.'),
+    h('span', { class: 'touch' }, 'Answers are recorded in the ledger.'));
   return hint;
 }
 

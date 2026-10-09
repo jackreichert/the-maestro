@@ -2521,7 +2521,7 @@ test('every row written carries the window id: --window, then --session, then MA
     assert.equal(write('one', ['--window', 'w-one', '--session', 'sess1234'], { MAESTRO_WINDOW: 'envwin' }).status, 0);
     assert.equal(write('two', ['--session', 'sess1234-abcd-ef'], { MAESTRO_WINDOW: 'envwin' }).status, 0);
     assert.equal(write('three', [], { MAESTRO_WINDOW: 'envwin' }).status, 0);
-    assert.equal(write('four', [], { MAESTRO_WINDOW: '' }).status, 0);
+    assert.equal(write('four', [], { MAESTRO_WINDOW: '', CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: '' }).status, 0);
     assert.deepEqual(ledger().map((r) => r.window), ['w-one', 'sess1234-abc', 'envwin', ledger()[3].window]);
     assert.match(String(ledger()[3].window), /^p\d+$/, 'with nothing else, the id names the parent process');
     assert.equal(run('status', '--json').code, 0, 'rows with and without a window fold together');
