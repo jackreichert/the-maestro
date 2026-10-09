@@ -188,3 +188,39 @@ test('an incomplete row clears on a newer handoff only when the handoff step fai
   assert.match(kept[0], /A handoff does not fix this; dismiss with `journal\.ts log "precompact ack"/);
   assert.deepEqual(continuityLines([work, sn, { kind: 'note', ts: at(26), text: 'precompact ack' }], { name: 'h.md', at: at(25) }), []);
 });
+
+test('30 recent decisions converge: the asks the hook raised do not count as recording the others', () => {
+  const msgs = Array.from({ length: 30 }, (_, n) => ({ ts: at(n), text: `from now on rule number ${n} applies` }));
+  const rows: { kind: string; ts: string; text: string; used: string[] }[] = [];
+  let pass = 0;
+  for (; pass < 6; pass++) {
+    const { raise, pending } = unledgeredDecisions(msgs, rows);
+    raise.forEach((q, n) => rows.push({ kind: 'question', ts: at(31 + pass * 10 + n * 0.01), text: q, used: ['hook:precompact'] }));
+    if (!pending) break;
+  }
+  assert.equal(rows.length, 30, 'every decision raised exactly once');
+  assert.equal(new Set(rows.map((r) => r.text)).size, 30);
+  assert.equal(unledgeredDecisions(msgs, rows).raise.length, 0);
+  // Even rows without the used mark (older hook rows) are recognised by their text.
+  assert.equal(unledgeredDecisions(msgs.slice(0, 2), [{ kind: 'question', ts: at(3), text: 'unledgered decision? [msg elsewhere] x' }]).raise.length, 2);
+});
+
+test('two sessions: session A raising asks does not hide session B\'s decision, and a person\'s own rule row still covers one', () => {
+  const a = [{ ts: at(0), text: 'from now on A decides this' }];
+  const b = [{ ts: at(1), text: 'from now on B decides this' }];
+  const raisedA = unledgeredDecisions(a, []).raise.map((q) => ({ kind: 'question', ts: at(2), text: q, used: ['hook:precompact'] }));
+  assert.equal(unledgeredDecisions(b, raisedA).raise.length, 1);
+  assert.equal(unledgeredDecisions(b, [{ kind: 'rule', ts: at(5), text: 'B decision recorded by hand' }]).raise.length, 0);
+});
+
+test('an incomplete row from one session survives another session succeeding, and clears only on its own success or an ack', () => {
+  const work = { kind: 'wip', ts: at(10), text: 'work' };
+  const badA = { kind: 'note', ts: at(20), text: 'precompact incomplete: decisions: EACCES (trigger auto, session aaaa1111)' };
+  const okB = { kind: 'note', ts: at(21), text: 'precompact: handoff written, 0 file(s) snapshotted from 0 worktree(s), 0 unledgered decision(s) raised (trigger auto, session bbbb2222)' };
+  const shown = continuityLines([work, badA, okB], { name: 'h.md', at: at(25) });
+  assert.equal(shown.length, 1);
+  assert.match(shown[0], /decisions: EACCES .*aaaa1111/);
+  const okA = { kind: 'note', ts: at(22), text: 'precompact: handoff written (trigger auto, session aaaa1111)' };
+  assert.deepEqual(continuityLines([work, badA, okB, okA], { name: 'h.md', at: at(25) }), []);
+  assert.deepEqual(continuityLines([work, badA, okB, { kind: 'note', ts: at(23), text: 'precompact ack' }], { name: 'h.md', at: at(25) }), []);
+});

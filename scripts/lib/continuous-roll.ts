@@ -46,7 +46,9 @@ export function userMessages(transcript: string): UserMessage[] {
 /** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to Jack, not a fact. */
 export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from now on|standing|always|never|ok(?:ay)? to|you may|let'?s go with|instead of|stop doing|do not|don'?t|yes,? (?:do|merge|push|open))\b/i;
 
-const covers = (r: LedgerRow): boolean => ['decision', 'rule', 'learned', 'resolved', 'ask', 'question'].includes(r.kind ?? '') || Boolean(r.approval);
+/** A row that records a decision. Not the asks this hook raised itself: those are only questions about other messages, and counting them would mark every other recent decision as recorded. */
+const covers = (r: LedgerRow): boolean => (['decision', 'rule', 'learned', 'resolved', 'ask', 'question'].includes(r.kind ?? '') || Boolean(r.approval))
+    && !JSON.stringify(r.used ?? '').includes('hook:precompact') && !(r.text ?? '').startsWith('unledgered decision?');
 
 /** The message's own marker inside a row's text: how a later compaction knows this hit was already raised. */
 export const hitMarker = (ts: string): string => `[msg ${ts}]`;
@@ -183,14 +185,18 @@ export function continuityLines(rows: LedgerRow[], handoff: { name: string; at: 
     const mark = rows[k];
     if (starts(mark, PRECOMPACT_ACK)) return [];
     const lines: string[] = [];
-    const handoffNewer = handoff !== null && handoff.at > (mark.ts ?? '');
     const finished = (i: number): boolean => rows.slice(i + 1).some((r) => isMark(r) && !starts(r, PRECOMPACT_STARTED) && (starts(r, PRECOMPACT_ACK) || tagOf(r) === tagOf(rows[i])));
     const unfinished = rows.findLastIndex((r, i) => starts(r, PRECOMPACT_STARTED) && !finished(i));
     if (unfinished >= 0) lines.push(`!! ${clip(rows[unfinished].text ?? '', 200)} (${rows[unfinished].ts}) never finished: the hook was killed or failed before it wrote its result, so the snapshot or the decision scan may not have run. Run ${REMEDY}, then dismiss with \`${ACK}\`.`);
-    if (starts(mark, PRECOMPACT_INCOMPLETE)) {
-        const needsHandoff = /\bhandoff: /.test(mark.text ?? '');
-        if (!(needsHandoff && handoffNewer)) lines.push(`!! ${clip(mark.text ?? '', 260)} (${mark.ts}). ${needsHandoff ? `Run ${REMEDY}, or dismiss` : 'A handoff does not fix this; dismiss'} with \`${ACK}\`.`);
-    }
+    // An incomplete row stays until its own session writes a later success row, an ack follows it, or (handoff failures only) a newer handoff exists.
+    // Another session's success says nothing about this one's failed step.
+    const cleared = (i: number): boolean => rows.slice(i + 1).some((r) => starts(r, PRECOMPACT_ACK) || (isMark(r) && starts(r, `${PRECOMPACT_MARK}:`) && tagOf(r) === tagOf(rows[i])))
+        || (/\bhandoff: /.test(rows[i].text ?? '') && handoff !== null && handoff.at > (rows[i].ts ?? ''));
+    rows.forEach((r, i) => {
+        if (!starts(r, PRECOMPACT_INCOMPLETE) || cleared(i)) return;
+        const needsHandoff = /\bhandoff: /.test(r.text ?? '');
+        lines.push(`!! ${clip(r.text ?? '', 260)} (${r.ts}). ${needsHandoff ? `Run ${REMEDY}, or dismiss` : 'A handoff does not fix this; dismiss'} with \`${ACK}\`.`);
+    });
     const started = rows.slice(0, k + 1).findLastIndex((r) => starts(r, PRECOMPACT_STARTED) && tagOf(r) === tagOf(mark));
     const cut = started >= 0 ? started : k;
     const before = rows.slice(0, cut).findLast((r) => r.ts && !isMark(r) && !byHook(r));
