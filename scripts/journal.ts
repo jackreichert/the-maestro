@@ -884,7 +884,7 @@ function sweepWorktreesForRoll() {
 }
 
 /**
- * A finished (not dry, not budget-cut, no fetch, prune or removal failure) worktree sweep is the `branch-sweep` row's work, so it records the run itself instead of waiting for
+ * A finished (not dry, not budget-cut, no fetch, prune, scan or removal failure) worktree sweep is the `branch-sweep` row's work, so it records the run itself instead of waiting for
  * someone to say so. The evidence names what the sweep did and that remote branches are not part of it (branch-sweep.ts lists those for approval).
  */
 function recordBranchSweepRan(result: NonNullable<ReturnType<typeof runWorktreeSweep>>): void {

@@ -74,12 +74,12 @@ export interface ListedItem { id: string; repo: string; kind: 'remote-branch' | 
 export type ExcludedItem = Omit<ListedItem, 'why' | 'prs'> & { reason: string };
 /** A worktree the sweep would remove but for real environment files in it: the user is asked to move them into the env store. Names only, never contents. */
 export interface EnvAsk { repo: string; worktree: string; files: string[]; project?: string; destination: string }
-export interface RepoScan { repo: string; items: ListedItem[]; review: ListedItem[]; excluded: ExcludedItem[]; notes: string[]; envAsks: EnvAsk[]; fetchFailed?: boolean }
+export interface RepoScan { repo: string; items: ListedItem[]; review: ListedItem[]; excluded: ExcludedItem[]; notes: string[]; envAsks: EnvAsk[]; fetchFailed?: boolean; stopped?: boolean }
 export interface ApplyResult { id: string; done: boolean; message: string }
 export interface WorktreeSweep {
   removed: { repo: string; path: string; why: string }[]; pruned: { repo: string; path: string }[];
   kept: { repo: string; path: string; reason: string }[]; notes: string[]; skipped: string[]; envAsks: EnvAsk[];
-  /** Repos where the sweep could not decide or finish: the fetch failed, the prune failed, or a removal failed. A refusal at removal is not one (the worktree was left alone, which is safe). */
+  /** Repos where the sweep could not decide or finish: the fetch failed, the prune failed, the scan stopped on a git error, or a removal failed. A refusal at removal is not one (the worktree was left alone, which is safe). */
   failed: string[];
 }
 type Failure = Error & { kind?: string };
@@ -478,7 +478,7 @@ export function scanRepo(repoPath: string, ctx: SweepContext): RepoScan {
     ({ isProtected, refs } = prot);
     scan = { ctx, protectedRefs: prot.protectedRefs, mainline: mainlineOf(g, prot.protectedRefs) };
     wts = worktrees(g);
-  } catch (e) { res.notes.push(`scan stopped: ${errorOf(e).message}`); return res; }
+  } catch (e) { res.notes.push(`scan stopped: ${errorOf(e).message}`); res.stopped = true; return res; }
 
   for (const full of ctx.worktreesOnly ? [] : refs) {
     const branch = full.slice('refs/remotes/origin/'.length);
@@ -717,6 +717,7 @@ export function sweepWorktrees(container: string, ctx: SweepContext, { only, dry
     out.notes.push(...scan.notes.map((n) => `${repo}: ${n}`));
     out.envAsks.push(...scan.envAsks);
     if (scan.fetchFailed) out.failed.push(`${repo}: git fetch failed`);
+    if (scan.stopped) out.failed.push(`${repo}: scan stopped`);
     const keep = (i: { name: string }, reason: string): void => { out.kept.push({ repo, path: i.name, reason }); };
     const dropped = new Set(out.pruned.filter((x) => x.repo === repo).map((x) => x.path)); // a dry run still sees these
     scan.excluded.filter((e) => !dropped.has(e.name)).forEach((e) => keep(e, e.reason));

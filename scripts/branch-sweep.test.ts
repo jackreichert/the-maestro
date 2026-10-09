@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -883,4 +883,63 @@ test('--apply-worktrees from the command line removes what qualifies and prints 
     assert.deepEqual([existsSync(clean), existsSync(work)], [false, true]);
     const v = spawnSync(process.execPath, [SCRIPT, '--apply-worktrees', '--verbose', '--container', w.container, '--idle-minutes', '0', '--claims-dir', join(w.root, 'none')], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH: 'false' } });
     assert.match(v.stdout, new RegExp(`kept +${work} .*untracked`));
+});
+
+// ── sweepWorktrees: a failure it cannot decide through is reported in `failed`, never swallowed ──
+
+/** Runs `fn` with a `git` first on PATH that fails any command whose arguments match `pattern`, and runs the real git otherwise. */
+function withFailingGit<T>(w: World, pattern: string, fn: () => T): T {
+    const bin = join(w.root, 'shim'); mkdirSync(bin, { recursive: true });
+    const real = must(process.env.PATH, 'PATH').split(':').map((d) => join(d, 'git')).find((p) => existsSync(p));
+    writeFileSync(join(bin, 'git'), `#!/bin/bash\ncase " $* " in *" ${pattern} "*) echo "injected failure" >&2; exit 1;; esac\nexec ${must(real, 'real git')} "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    const saved = process.env.PATH;
+    process.env.PATH = `${bin}:${saved}`;
+    try { return fn(); } finally { process.env.PATH = saved; }
+}
+const mergedWorktree = (w: World, branch: string): string => {
+    feature(w, branch); mergeInto(w, 'develop', branch); mergeInto(w, 'staging', branch);
+    const wt = join(w.root, branch.replace('/', '-')); sh(w.repo, 'worktree', 'add', '-q', wt, branch);
+    return wt;
+};
+
+test('sweepWorktrees reports a scan that stopped on a git error as failed, and decides nothing in that repo', () => {
+    const w = world(); const wt = mergedWorktree(w, 'feat/stop');
+    const stop = (repo: string): Git => Object.assign((...a: string[]): CmdResult => {
+        if (a.includes('for-each-ref')) return { ok: false, status: 128, out: '', err: 'boom' };
+        const r = spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+        return { ok: r.status === 0, status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+    }, { repo });
+    const out = sweep(w, { gitFor: stop });
+    assert.deepEqual(out.failed, ['proj: scan stopped']);
+    assert.match(out.notes.join('\n'), /proj: scan stopped: git for-each-ref/);
+    assert.deepEqual(out.removed, []);
+    assert.equal(existsSync(wt), true, 'nothing was decided, so nothing was removed');
+});
+
+test('sweepWorktrees reports a failed prune as failed, and still removes what qualifies', () => {
+    const w = world(); const gone = mergedWorktree(w, 'feat/gone2'); const live = mergedWorktree(w, 'feat/live2');
+    rmSync(gone, { recursive: true });
+    const out = withFailingGit(w, 'worktree prune', () => sweep(w));
+    assert.deepEqual(out.failed, ['proj: prune failed']);
+    assert.deepEqual(out.pruned, []);
+    assert.match(out.notes.join('\n'), /prune skipped: git worktree prune failed/);
+    assert.deepEqual(out.removed.map((x) => x.path), [live]);
+});
+
+test('sweepWorktrees reports a failed removal as failed and keeps the worktree', () => {
+    const w = world(); const wt = mergedWorktree(w, 'feat/stuck');
+    const out = withFailingGit(w, 'worktree remove', () => sweep(w));
+    assert.deepEqual(out.failed, [`proj: could not remove ${wt}`]);
+    assert.deepEqual(out.removed, []);
+    assert.match(keptReason(out, wt), /^failed:/);
+    assert.equal(existsSync(wt), true);
+});
+
+test('sweepWorktrees reports a failed fetch as failed and keeps what it would have removed', () => {
+    const w = world(); const wt = mergedWorktree(w, 'feat/stale');
+    const out = withFailingGit(w, 'fetch --prune origin', () => sweep(w));
+    assert.deepEqual(out.failed, ['proj: git fetch failed']);
+    assert.deepEqual(out.removed, []);
+    assert.match(keptReason(out, wt), /fetch failed/);
 });
