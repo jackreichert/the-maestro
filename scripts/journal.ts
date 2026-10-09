@@ -83,6 +83,7 @@
  *   journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--read-only] [--details-file f] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.ts backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
+ *   journal.ts maintain --today YYYY-MM-DD [--container <dir>] [--budget N]   the model-free half of roll for an unattended caller: archive each of the last 7 days before --today that still owes one, then the same worktree sweep as roll (records branch-sweep), under a lock; ends with one maintain-result JSON line, exit 1 if a step failed. Triage, reports and asks stay in roll
  *   journal.ts handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--delta] [--force] [--container <dir>] [--no-worktree-sweep]   (--delta: when today's handoff exists, write HANDOFF-<date>b-<stream>.md etc. with only what changed since its generated_at) scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
@@ -191,6 +192,9 @@ import { DOC_DIR_SCOPES, DOC_FILE_SCOPES } from './lib/home/docs.ts';
 import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES } from './lib/home/brief.ts';
 import type { EpicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { listWatches, lockHolder } from './lib/watch-registry.ts';
+import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
+import type { MaintainResult } from './lib/journal/maintain.ts';
+import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned'];
@@ -932,14 +936,20 @@ function cmdScratch() {
  * for it): a sweep that follows whatever directory the shell happens to be in can remove worktrees of an unrelated tree.
  */
 function runWorktreeSweep(dry: boolean) {
-    if (has('no-worktree-sweep')) return null;
+    const out = worktreeSweepOutcome(dry);
+    if (out.why) console.log(out.why);
+    return out.result ?? null;
+}
+
+/** The sweep's result, or why there is none: the printable reason (`worktree sweep refused: ...`), or '' when `--no-worktree-sweep` skipped it on purpose. */
+function worktreeSweepOutcome(dry: boolean): { result?: ReturnType<typeof sweepWorktrees>; why?: string } {
+    if (has('no-worktree-sweep')) return {};
     const refusal = sweepRootRefusal(CONTAINER_ROOT, resolve(arg('container', process.cwd())));
-    if (refusal) { console.log(`worktree sweep refused: ${refusal}`); return null; }
+    if (refusal) return { why: `worktree sweep refused: ${refusal}` };
     try {
-        return sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry, budgetSeconds: SWEEP_BUDGET_SECONDS });
+        return { result: sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry, budgetSeconds: Number(arg('budget')) > 0 ? Math.min(Number(arg('budget')), SWEEP_BUDGET_SECONDS) : SWEEP_BUDGET_SECONDS }) };
     } catch (e) {
-        console.log(`worktree sweep skipped: ${errorMessage(e)}`);
-        return null;
+        return { why: `worktree sweep skipped: ${errorMessage(e)}` };
     }
 }
 
@@ -1005,6 +1015,48 @@ function cmdRoll() {
     printEpicBriefs(d);
     printNotesReachability();
     if (!has('fast')) sweepWorktreesForRoll();
+}
+
+/**
+ * `maintain --today D [--container <dir>] [--budget N]`: the model-free half of roll, for a caller that runs unattended (the
+ * roll-maintenance event type). Archives each of the last MAINTAIN_LOOKBACK_DAYS days before D that still owes an archive (work
+ * finished since that day's last roll, or notes with no roll at all), then sweeps worktrees exactly as roll does, and records the
+ * `branch-sweep` run through the same guard. Judgement steps (triage, reports, asks) stay in `roll`. Idempotent: a second run finds nothing
+ * to archive. One run at a time (a lock beside the ledger); a second concurrent run exits 1 saying so. Ends with one `maintain-result` line; exit 1 when any step failed.
+ */
+function cmdMaintain() {
+    const today = arg('today', '');
+    if (!isDate(today)) die('maintain needs --today YYYY-MM-DD (the local day that just started).');
+    let release: () => void = () => {};
+    try { if (!dryRun) release = acquireMaintainLock(join(dir, '.maintain'), { nowMs: Date.now, sleep: () => {}, pidAlive: processAlive, pid: process.pid }, { timeoutMs: 0, staleMs: 30 * 60_000, pollMs: 50 }); }
+    catch { console.log(maintainLine({ ok: false, archivedDays: [], sweep: null, problems: ['another maintenance run holds the lock'] })); process.exit(1); }
+    try {
+        const r = maintain(today);
+        console.log(maintainLine(r));
+        if (!r.ok) process.exitCode = 1;
+    } finally { release(); }
+}
+
+function maintain(today: string): MaintainResult {
+    const problems: string[] = [];
+    const archivedDays: string[] = [];
+    for (const d of daysBefore(today)) {
+        const g = groups();
+        if (!g.doneOn(d, { sinceRoll: true }).length && (g.rollPointOn(d) || !g.notesOn(d).length)) continue;
+        if (!rollArchive(d)) problems.push(`ledger commit failed after archiving ${d}`);
+        archivedDays.push(d);
+    }
+    const out = worktreeSweepOutcome(dryRun);
+    if (out.why) problems.push(out.why);
+    const result = out.result;
+    if (result) {
+        console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
+        raiseEnvAsks(result.envAsks);
+        recordBranchSweepRan(result);
+        problems.push(...result.failed.map((f) => `worktree sweep: ${f}`));
+    }
+    const sweep = result ? { removed: result.removed.length, pruned: result.pruned.length, kept: result.kept.length, skipped: result.skipped.length, failed: result.failed.length } : null;
+    return { ok: !problems.length, archivedDays, sweep, problems };
 }
 
 /**
@@ -1075,15 +1127,16 @@ function cmdNotesCheck() {
 /**
  * Writes the day's finished work to a dated note and drops it out of CURRENT.md, leaving a link. Open items are NOT
  * archived: they stay visible until they are actually closed. Commits the ledger when ledger_git_autocommit is on.
+ * Returns false only when that commit failed (the archive itself is written).
  */
-function rollArchive(d: string): void {
+function rollArchive(d: string): boolean {
     const g = groups();
     const done = g.doneOn(d);
     const notes = g.notesOn(d);
 
     if (!done.length && !notes.length) {
         console.log(`Nothing finished on ${d} to archive.`);
-        return;
+        return true;
     }
 
     const dest = join(dir, `${d}.md`);
@@ -1101,7 +1154,7 @@ function rollArchive(d: string): void {
         '',
     ].join('\n');
 
-    if (dryRun) { console.log(body); return; }
+    if (dryRun) { console.log(body); return true; }
     ensureDir();
     writeFileSync(dest, body);
     append({
@@ -1111,7 +1164,9 @@ function rollArchive(d: string): void {
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
     console.log(`kept open: ${g.inflight.length} in flight${g.queued.length ? `, ${g.queued.length} queued` : ''}, ${g.awaiting.length} awaiting you${g.paste.length ? `, ${g.paste.length} paste block(s)` : ''}`);
-    if (!autoCommitLedger(d)) process.exitCode = 1;
+    if (autoCommitLedger(d)) return true;
+    process.exitCode = 1;
+    return false;
 }
 
 // ── boxes and triage ────────────────────────────────────────────────────────
@@ -2189,6 +2244,7 @@ switch (cmd) {
     case 'status': cmdStatus(); break;
     case 'review-queue': cmdReviewQueue(); break;
     case 'standup': cmdStandup(); break;
+    case 'maintain': cmdMaintain(); break;
     case 'roll': cmdRoll(); if (SCRIPTS_SHELF_DIR && !has('fast')) cmdScratch(); break;
     case 'scratch': cmdScratch(); break;
     case 'verify': cmdVerify(); break;
