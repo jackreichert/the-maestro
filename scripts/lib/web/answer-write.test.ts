@@ -36,7 +36,7 @@ const PAGE_CONFIG = { streams: ['Alpha', 'Beta'], repoStreams: {}, vaultName: ''
 
 interface Rig { server: Server; port: number; vault: string; statusDir: string; ledger: string; web: WebConfig; logged: string[] }
 const rigs: Rig[] = [];
-async function rig(name: string, asks = ASKS): Promise<Rig> {
+async function rig(name: string, asks: Record<string, unknown>[] = ASKS): Promise<Rig> {
   const vault = join(root, name);
   const statusDir = join(vault, 'Status');
   const ledger = join(vault, 'Projects', 'p', 'Journal', 'ledger.jsonl');
