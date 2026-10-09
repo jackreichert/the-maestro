@@ -49,40 +49,31 @@ export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from
 /** The message's own marker: its timestamp plus a short hash of its text, so two messages in the same millisecond never share one. It is the only memory of what was raised. */
 export const hitMarker = (m: UserMessage): string => `[msg ${m.ts} ${createHash('sha1').update(m.text).digest('hex').slice(0, 6)}]`;
 
-/** At most this many hits are raised per run, oldest first; the rest stay unraised and the next run takes them. */
-export const MAX_DECISION_HITS_PER_RUN = 10;
-
-/** A rule, decision or learned row (not one this hook wrote) counts as recording a message when it holds at least this share of the message's distinct words of four letters or more. */
-export const OVERLAP_THRESHOLD = 0.6;
-const MIN_OVERLAP_WORDS = 3;
-const words = (t: string): Set<string> => new Set((t.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []));
-
-/** True when `row` is a hand-written rule/decision/learned row that restates `message`: shares at least OVERLAP_THRESHOLD of its words (needs three or more words in the message). */
-export function restates(row: LedgerRow, message: UserMessage): boolean {
-    if (!(['rule', 'decision', 'learned'].includes(row.kind ?? '') || row.approval) || JSON.stringify(row.used ?? '').includes(HOOK_USED_TAG) || (row.text ?? '').startsWith('unledgered decision?')) return false;
-    const want = words(message.text);
-    if (want.size < MIN_OVERLAP_WORDS) return false;
-    const have = words(`${row.text ?? ''} ${row.scope ?? ''}`);
-    return [...want].filter((w) => have.has(w)).length / want.size >= OVERLAP_THRESHOLD;
-}
+/** Decisions per ask row: a run raises every unhandled hit, in rows of this many, so a long session costs a few journal calls and never leaves a remainder to lose. */
+export const DECISIONS_PER_ASK = 20;
 
 /**
- * Messages that look like decisions and are not handled. A message is handled only by an explicit reference: (a) its own
- * marker (`hitMarker`) is in some ledger row's text, which is how an earlier run's ask remembers it, or (b) a hand-written
- * rule, decision or learned row restates it (`restates`). Nothing else counts: not a row written near it in time, not any
- * other ask, not a resolution of a different ask, so a decision is never hidden by its neighbours and the hook may be noisy
- * but loses none. There is no time cutoff, so another session's compaction cannot hide this transcript's decisions.
- * Returns every pending hit ordered by time then marker: `raise` is the first MAX_DECISION_HITS_PER_RUN as ask text (clipped,
- * withheld when the text carries a secret or PHI shape), `pending` counts those left for the next run.
+ * Messages that look like decisions and are not handled. A message is handled only when its own marker (`hitMarker`) is on
+ * a ledger row's text, which is how an earlier run's ask remembers it. Nothing else counts: not a row written near it in
+ * time, not an ask about something else, and not a rule or decision row that merely resembles it (a recorded decision
+ * would hide its own reversal), so a decision is never hidden by its neighbours and the hook may be noisy but loses none.
+ * There is no time cutoff, so another session's compaction cannot hide this transcript's decisions.
+ * Every pending hit is raised, ordered by time then marker, as ask texts of at most DECISIONS_PER_ASK messages each
+ * (clipped, and withheld when the text carries a secret or PHI shape); `count` is how many messages they carry.
  */
-export function unledgeredDecisions(messages: UserMessage[], rows: LedgerRow[]): { raise: string[]; pending: number } {
+export function unledgeredDecisions(messages: UserMessage[], rows: LedgerRow[]): { raise: string[]; count: number } {
     const texts = rows.map((r) => r.text ?? '');
     const hits = messages.filter((m) => m.text.length >= 12 && m.text.length <= 1500 && DECISION_RE.test(m.text))
         .map((m) => ({ m, marker: hitMarker(m) }))
-        .filter(({ m, marker }) => !texts.some((t) => t.includes(marker)) && !rows.some((r) => restates(r, m)))
+        .filter(({ marker }) => !texts.some((t) => t.includes(marker)))
         .sort((x, y) => (x.m.ts + x.marker).localeCompare(y.m.ts + y.marker));
-    const raise = hits.slice(0, MAX_DECISION_HITS_PER_RUN).map(({ m, marker }) => `unledgered decision? ${marker} ${scanText(m.text).length ? '(text withheld: secret or PHI shape)' : clip(m.text.replace(/\s+/g, ' '), 140)}`);
-    return { raise, pending: hits.length - raise.length };
+    const line = ({ m, marker }: { m: UserMessage; marker: string }): string => `${marker} ${scanText(m.text).length ? '(text withheld: secret or PHI shape)' : clip(m.text.replace(/\s+/g, ' '), 110)}`;
+    const raise: string[] = [];
+    for (let i = 0; i < hits.length; i += DECISIONS_PER_ASK) {
+        const batch = hits.slice(i, i + DECISIONS_PER_ASK);
+        raise.push(`unledgered decision? (${batch.length}) ${batch.map(line).join(' || ')}`);
+    }
+    return { raise, count: hits.length };
 }
 
 /** The line of a failed child's stderr that says why: the first `...Error: ...` line, else the last line (never the trailing "Node.js v24" banner). */

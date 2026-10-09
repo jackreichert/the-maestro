@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LedgerRow } from '../lib/ledger-core.ts';
+import { continuityLines } from '../lib/continuous-roll.ts';
 import { precompact } from './precompact.ts';
 import type { PrecompactDeps } from './precompact.ts';
 import { assemble, context, streamsFrom } from './session-start-compact.ts';
@@ -20,9 +21,9 @@ test('precompact writes the handoff delta, raises the decision and ends with a m
   assert.deepEqual(calls[0].slice(0, 2), ['log', 'precompact started (trigger auto, session unknown)'], 'the trace row comes before any slow work');
   assert.deepEqual(calls[1], ['handoff', '--all', '--no-worktree-sweep', '--force', '--out', '/j/HANDOFF-2026-10-09-precompact.md']);
   assert.equal(calls[2][0], 'ask');
-  assert.match(calls[2][1], /^unledgered decision\? \[msg 2026-10-09T11:00:00.000Z [0-9a-f]{6}\]/);
+  assert.match(calls[2][1], /^unledgered decision\? \(1\) \[msg 2026-10-09T11:00:00.000Z [0-9a-f]{6}\]/);
   assert.deepEqual(calls[3].slice(0, 2), ['log', text]);
-  assert.match(text, /^precompact: handoff written, 5 file\(s\) snapshotted from 2 worktree\(s\), 1 unledgered decision\(s\) raised \(trigger auto, session unknown\)$/);
+  assert.match(text, /^precompact: handoff written, 5 file\(s\) snapshotted from 2 worktree\(s\), 1 unledgered decision\(s\) raised in 1 ask\(s\) \(trigger auto, session unknown\)$/);
 });
 
 test('precompact fails open: each failing step is named in an "incomplete" row and the others still run', () => {
@@ -87,11 +88,26 @@ test('a capped snapshot is reported as a failed step', () => {
   assert.match(precompact({ transcript_path: '/t', trigger: 'auto' }, d), /^precompact incomplete: snapshot: file or size cap reached after 300 file\(s\); later source was not copied /);
 });
 
-test('the started and result rows carry the same session tag, and an overflow of decisions is reported as pending', () => {
+test('the started and result rows carry the same session tag, and 12 decisions go out in one ask row, none left pending', () => {
   const transcript12 = Array.from({ length: 12 }, (_, n) => JSON.stringify({ type: 'user', timestamp: `2026-10-09T11:${String(10 + n)}:00.000Z`, message: { content: `from now on rule ${n} applies` } })).join('\n');
   const { d, calls } = deps({ readTranscript: () => transcript12 });
   const text = precompact({ transcript_path: '/t', trigger: 'auto', session_id: 'abcdef1234567' }, d);
   assert.equal(calls[0][1], 'precompact started (trigger auto, session abcdef12)');
-  assert.match(text, /10 unledgered decision\(s\) raised, 2 more pending for the next compaction \(trigger auto, session abcdef12\)$/);
-  assert.equal(calls.filter((c) => c[0] === 'ask').length, 10);
+  assert.match(text, /12 unledgered decision\(s\) raised in 1 ask\(s\) \(trigger auto, session abcdef12\)$/);
+  assert.equal(calls.filter((c) => c[0] === 'ask').length, 1);
+});
+
+test('25 decisions, /clear, next compaction: everything was raised the first time, the second run raises nothing and prime is clean', () => {
+  const t25 = Array.from({ length: 25 }, (_, n) => JSON.stringify({ type: 'user', timestamp: `2026-10-09T11:${String(10 + n)}:00.000Z`, message: { content: `from now on rule ${n} applies` } })).join('\n');
+  const rows: LedgerRow[] = [];
+  let tick = 0;
+  const journal = (a: string[]) => {
+    const used = ['hook:precompact'];
+    if (a[0] === 'log' || a[0] === 'ask') rows.push({ kind: a[0] === 'ask' ? 'question' : 'note', ts: `2026-10-09T12:${String(10 + tick++)}:00.000Z`, text: a[1], used });
+    return { ok: true, out: '' };
+  };
+  const run = (): number => { const before = rows.length; precompact({ transcript_path: '/t', trigger: 'auto', session_id: 'sess0001' }, deps({ readLedger: () => rows, readTranscript: () => t25, journal }).d); return rows.slice(before).filter((r) => r.kind === 'question').length; };
+  assert.equal(run(), 2, '25 decisions in two ask rows of 20 and 5');
+  assert.equal(run(), 0, 'after /clear the same transcript raises nothing again');
+  assert.deepEqual(continuityLines(rows, { name: 'h.md', at: '2026-10-09T13:00:00.000Z' }), []);
 });

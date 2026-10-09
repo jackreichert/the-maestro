@@ -8,7 +8,7 @@
  * 0. Appends a `note` row "precompact started" first, so a hook killed by its timeout still leaves a trace.
  * 1. `journal.ts handoff --all --no-worktree-sweep --force --out <Journal>/HANDOFF-<date>-precompact.md`: the hook's own file, rewritten each run (45 s cap).
  * 2. Copies dirty and untracked source (an allowlist of extensions, regular files only) of active worktrees to <scripts_dir>/scratch/snapshots/<date>/ (stops at 80 s).
- * 3. Reads the whole transcript and appends an `ask` row for every message that looks like an unledgered decision and was not raised before (the `[msg <ts>]` marker is the memory; at most 10 per run, oldest first, the rest counted as pending).
+ * 3. Reads the whole transcript and raises every message that looks like an unledgered decision and was not raised before (the `[msg <ts> <hash>]` marker on a ledger row is the only memory), 20 messages per `ask` row, so nothing is left pending for a later run that may never come.
  * 4. Appends a `note` row starting "precompact": the marker `prime` reads. A step that failed makes it "precompact incomplete: ...".
  *
  * Fails open: always exits 0, because a hook that blocks compaction leaves a session stuck. A failure is a loud ledger row instead.
@@ -59,12 +59,12 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   step('handoff', () => { const r = deps.journal(['handoff', '--all', '--no-worktree-sweep', '--force', '--out', deps.handoffPath(date)], HANDOFF_BUDGET_MS); if (!r.ok) throw new Error(r.out || 'journal.ts handoff failed'); });
   const snap = step('snapshot', () => { const r = deps.snapshot(date, started + SNAPSHOT_DEADLINE_MS); if (!r) throw new Error('scripts_dir is not set'); if (r.partial) throw new Error(`time budget reached after ${r.worktrees} worktree(s)`); if (r.capped) throw new Error(`file or size cap reached after ${r.files} file(s); later source was not copied`); return r; });
   let raised = 0;
-  let pending = 0;
+  let count = 0;
   step('decisions', () => {
     if (!input.transcript_path) throw new Error('no transcript_path in the hook input');
     const rows = deps.readLedger();
     const found = unledgeredDecisions(userMessages(deps.readTranscript(input.transcript_path)), rows);
-    pending = found.pending;
+    count = found.count;
     for (const q of found.raise) {
       const r = deps.journal(['ask', q, ...MARKS]);
       if (!r.ok) throw new Error(r.out || 'journal.ts ask failed');
@@ -73,7 +73,7 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   });
   const text = failed.length
     ? `${PRECOMPACT_INCOMPLETE}: ${failed.join('; ')} (trigger ${trigger})`
-    : `${PRECOMPACT_MARK}: handoff written, ${snap?.files ?? 0} file(s) snapshotted from ${snap?.worktrees ?? 0} worktree(s), ${raised} unledgered decision(s) raised${pending ? `, ${pending} more pending for the next compaction` : ''} (trigger ${trigger})`;
+    : `${PRECOMPACT_MARK}: handoff written, ${snap?.files ?? 0} file(s) snapshotted from ${snap?.worktrees ?? 0} worktree(s), ${count} unledgered decision(s) raised in ${raised} ask(s) (trigger ${trigger})`;
   if (!deps.journal(['log', text, '--kind', 'note', ...MARKS]).ok) console.error(`precompact hook: could not append the marker row: ${text}`);
   return text;
 }
