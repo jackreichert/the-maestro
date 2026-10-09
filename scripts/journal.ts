@@ -45,6 +45,7 @@
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
  *   journal.ts usage [--open]                counts of model and used marks across items
  *   journal.ts status [--full]               what is open + done today, with usage marks
+ *   journal.ts status --footer --line        the same facts as ONE line (ledger totals, review queue, loop, session) for a status line; --session <id> measures that transcript instead of the newest, --stdin reads the session_id from a status-line command's JSON on stdin
  *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the review queue, the `Loop:` line (running, quiet, STALLED, DOWN or NOT INSTALLED, with age; silent when no loop is set up or required) and the Session line
  * (with the Podium configured, --footer ends with `**Podium:** <uri>`)
  *   journal.ts review-queue [--cap N] [--json]   the dispatch gate: open non-draft PRs awaiting review against review_queue_cap (default 4). Exit 0 room, 1 full, 2 cannot answer or bad --cap (treat as full)
@@ -141,7 +142,7 @@ import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
-import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
@@ -154,7 +155,9 @@ import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, appr
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
-import { sessionLine, sessionStatus } from './token-metrics.ts';
+import { sessionStatus } from './token-metrics.ts';
+import { sessionText } from './lib/session-text.ts';
+import { footerOneLine } from './lib/journal/footer-line.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
 import { fetchLive, selfReviewSummary, snapshotPath, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
@@ -742,6 +745,20 @@ function boardSelfReview(): { text: string; footer: string } | null {
     return { text: `maestro PRs (self-review): ${tail}`, footer: `**Maestro PRs (self-review):** ${tail}` };
 }
 
+/**
+ * The session the footer measures: `--session <id>`, else (with `--stdin`) the `session_id` of the JSON a status-line command is
+ * given on stdin, else undefined (the newest transcript). Unreadable or id-less stdin falls back to the newest transcript.
+ */
+function footerSessionId(): string | undefined {
+    const given = arg('session');
+    if (given) return given;
+    if (!has('stdin')) return undefined;
+    try {
+        const id = (JSON.parse(readFileSync(0, 'utf8')) as { session_id?: unknown }).session_id;
+        return typeof id === 'string' && id ? id : undefined;
+    } catch { return undefined; }
+}
+
 function cmdStatus() {
     refreshBoard();
     const g = groups(has('include-archived'));
@@ -759,7 +776,12 @@ function cmdStatus() {
 
     const queueFooter = boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
-    if (has('footer')) { [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
+    if (has('footer')) {
+        const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, footerSessionId());
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session })); return; }
+        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        return;
+    }
 
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
