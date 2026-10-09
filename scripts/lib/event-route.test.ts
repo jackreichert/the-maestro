@@ -62,3 +62,14 @@ test('an unowned event goes to anyone until some window has seen it; a mark with
   assert.equal(deliverableTo({ ...e, seen: true, seenAnonymous: true }, 'w2', 'w2'), false);
   assert.equal(seenByWindow({ ...e, seen: true, seenAnonymous: true }, 'w9'), true);
 });
+
+test('ownerOf folds the ledger once per context, not once per event', () => {
+  const rows = [item('it1', { repo: 'api' }), lease('it1', 'w1', 0)];
+  const readsFor = (events: number): number => {
+    let reads = 0;
+    const c: RouteContext = { ...ctx([]), get rows() { reads += 1; return rows; } };
+    for (let i = 0; i < events; i += 1) assert.equal(ownerOf(event('acme/api'), c), 'w1');
+    return reads;
+  };
+  assert.equal(readsFor(200), readsFor(1), 'ledger reads must not grow with the number of events');
+});

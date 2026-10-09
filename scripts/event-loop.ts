@@ -317,7 +317,8 @@ const listFilter = (v: { unseen?: boolean; all?: boolean }, window: string): ((e
 /** The window each inbox entry is for right now (see lib/event-route.ts); every event is unowned when no ledger is configured. */
 const ownersOf = (entries: InboxEntry[]): Map<string, string | undefined> => {
   const ctx = loadRouteContext(LEDGER_ROOT || VAULT_ROOT, CONTAINER_PROJECT, STATUS_REPO_STREAMS);
-  return new Map(entries.map((e) => [e.id, ctx ? ownerOf(e, ctx) : undefined]));
+  // Handled events are never deliverable, so their owner is never needed.
+  return new Map(entries.map((e) => [e.id, ctx && !e.handled ? ownerOf(e, ctx) : undefined]));
 };
 
 /**

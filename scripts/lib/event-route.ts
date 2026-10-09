@@ -27,11 +27,20 @@ export interface RouteContext {
 
 const shortRepo = (repo: string | undefined): string => (repo ?? '').split('/').pop()!.toLowerCase();
 
-/** The live leases on open items, each with the item's stream (registry-mapped) and repo, ready to match against events. */
-function openLeases(ctx: RouteContext): { lease: Lease; stream?: string; repo: string }[] {
+type OpenLease = { lease: Lease; stream?: string; repo: string };
+const leaseCache = new WeakMap<RouteContext, OpenLease[]>();
+
+/** The live leases on open items, each with the item's stream (registry-mapped) and repo, ready to match against events. Folds the ledger once per context. */
+function openLeases(ctx: RouteContext): OpenLease[] {
+  let out = leaseCache.get(ctx);
+  if (!out) leaseCache.set(ctx, (out = foldOpenLeases(ctx)));
+  return out;
+}
+
+function foldOpenLeases(ctx: RouteContext): OpenLease[] {
   const { items } = fold([...ctx.rows], ctx.registry);
   const open = new Map(items.filter((i) => isOpen(i) && i.id).map((i) => [i.id as string, i]));
-  const out: { lease: Lease; stream?: string; repo: string }[] = [];
+  const out: OpenLease[] = [];
   for (const [item, lease] of foldLeases(ctx.rows)) {
     const it = open.get(item);
     if (it && lease.until > ctx.nowMs) out.push({ lease, stream: it.stream, repo: shortRepo(typeof it.repo === 'string' ? it.repo : undefined) });
