@@ -535,7 +535,7 @@ test('sessionStatus with a session id reads that transcript, not the newest, and
     assert.deepEqual(sessionStatus(dir, 4, 350000), { available: true, turns: 1, pct: 25, rollTurns: 4, readK: 300, advice: 'roll soon' }, 'newest by mtime is the other window');
     assert.deepEqual(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'aaaa1111-mine'), { available: true, turns: 2, pct: 50, rollTurns: 4, readK: 100, advice: '' });
     assert.equal(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'aaaa1111').available, true, 'a unique prefix names it');
-    assert.deepEqual(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'nope'), { available: false, unavailable: `no session nope in ${dir}` });
+    assert.deepEqual(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'nope'), { available: false, unavailable: `no session "nope" in ${dir}` });
     assert.equal(sessionFileById(dir, '../x'), null);
     writeFileSync(join(dir, 'aaaa1111-twin.jsonl'), `${line('d', 1)}\n`);
     assert.equal(sessionFileById(dir, 'aaaa1111'), null, 'an ambiguous prefix names nothing');

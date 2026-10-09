@@ -253,7 +253,7 @@ export function collect(projectsDir: string): { days: Map<string, DayStats>; ses
  * the run since the last compaction marker (the turns from the last one with since === 1 onward), not the whole transcript.
  */
 export function currentSession(dir: string, sessionId?: string): { session: string; turns: number; readPerTurn: number } | null {
-    const newest = sessionId ? sessionFileById(dir, sessionId) : newestSessionFile(dir);
+    const newest = sessionId !== undefined ? sessionFileById(dir, sessionId) : newestSessionFile(dir);
     if (!newest) return null;
     const all = scanFile(newest).turns;
     const turns = all.slice(Math.max(0, all.findLastIndex((t) => t.since === 1)));
@@ -284,7 +284,7 @@ export function sessionFileById(dir: string, id: string): string | null {
 export function sessionStatus(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT, guessed: boolean = guessedFromCwd(dir), sessionId?: string): SessionStatus {
     let s;
     try { s = currentSession(dir, sessionId); } catch (e) { const err = e as NodeJS.ErrnoException; return { available: false, unavailable: `${err.code || err.message.split('\n')[0]} reading ${dir}` }; }
-    if (!s && sessionId) return { available: false, unavailable: `no session ${sessionId.slice(0, 40)} in ${dir}` };
+    if (!s && sessionId !== undefined) return { available: false, unavailable: `no session ${JSON.stringify(sessionId.replace(/[^\w-]/g, '?').slice(0, 40))} in ${dir}` };
     if (!s) return { available: false, unavailable: `no sessions in ${dir}; set projects_dir${guessed ? ' or container_root (this folder was guessed from the working directory)' : ''}` };
     // Cross-multiplied so 85% of 180 is exactly 153 turns, with no float division at the boundary.
     const reached = (pct: number): boolean => s.turns * 100 >= pct * rollTurns || s.readPerTurn * 100 >= pct * rollRead;

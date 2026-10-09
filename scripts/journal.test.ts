@@ -502,7 +502,12 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 2 turns (1%) · 100k/turn']);
     assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 2 turns (1%) · 100k/turn']);
     assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest');
-    assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session nope in /);
+    assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
+    assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
+    assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
+    const odd = status(['--line', '--session', 'x|y\nz']);
+    assert.equal(odd.length, 1, 'the echoed id cannot add a line');
+    assert.match(odd[0], /no session "x\?y\?z" in /);
     const multi = status(['--session', 'aaaaaaaa-mine']);
     assert.ok(multi.length >= 2);
     assert.equal(multi[0], '**Ledger:** 0 done today · 1 in flight · 0 awaiting you');

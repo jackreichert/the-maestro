@@ -746,13 +746,13 @@ function boardSelfReview(): { text: string; footer: string } | null {
 }
 
 /**
- * The session the footer measures: `--session <id>`, else (with `--stdin`) the `session_id` of the JSON a status-line command is
+ * The session the footer measures: `--session <id>`, else (with `--stdin`, and only when stdin is not a terminal) the `session_id` of the JSON a status-line command is
  * given on stdin, else undefined (the newest transcript). Unreadable or id-less stdin falls back to the newest transcript.
  */
 function footerSessionId(): string | undefined {
-    const given = arg('session');
-    if (given) return given;
-    if (!has('stdin')) return undefined;
+    // `--session` names a transcript or it is an error: an empty or missing value (an unset $SID, or a following flag) is "no session", never the newest.
+    if (has('session')) return arg('session') ?? '';
+    if (!has('stdin') || process.stdin.isTTY) return undefined;
     try {
         const id = (JSON.parse(readFileSync(0, 'utf8')) as { session_id?: unknown }).session_id;
         return typeof id === 'string' && id ? id : undefined;
