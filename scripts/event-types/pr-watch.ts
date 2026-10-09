@@ -50,7 +50,7 @@ export interface BoardPr {
   /** The repo is in self_review_repos: only the user reviews it, so its lines are labelled apart from the org's. Absent in older snapshots. */
   selfReview?: boolean;
   decision: string;
-  /** Failing check names, when known. The search query does not select check rolls, so fetchBoard leaves this unset. */
+  /** One label when the head commit's check rollup failed; empty otherwise. The search selects the rollup state, not each check name. */
   failingChecks?: string[];
   threads: Ref[];
   replies: Ref[];
@@ -92,6 +92,7 @@ interface PrNode {
   reviewThreads: { nodes: { id: string; isResolved: boolean; comments: { nodes: { author?: Login | null; url: string }[] }; last: { nodes: { id: string; author?: Login | null; url: string }[] } }[] };
   comments: { nodes: { id: string; author?: Login | null; url: string }[] };
   reviews: { nodes: { id: string; author?: Login | null; state: string; body?: string | null; url: string }[] };
+  commits?: { nodes: { commit?: { statusCheckRollup?: { state?: string | null } | null } | null }[] };
 }
 
 // Scheduling: default seconds between checks (the old watcher's steady pace; idle back-off stretches it), and whether a check calls the network.
@@ -117,6 +118,7 @@ const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE
   reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } url } } last: comments(last: 1) { nodes { id author { login } url } } } }
   comments(last: 20) { nodes { id author { login } url } }
   reviews(last: 20) { nodes { id author { login } state body url } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 } } } }`;
 
 /** Throws unless the target is `open-prs` or `open-prs:baseline` (the loop calls this at `add`). */
@@ -143,6 +145,15 @@ function settledMergeable(now: string | null | undefined, old: BoardPr | undefin
 /** The label a self-review PR's event lines start with, so a digest keeps them apart from the org's. */
 const label = (pr: Pick<BoardPr, 'selfReview'>): string => (pr.selfReview ? '[self-review] ' : '');
 
+/** Rollup states that mean a check did not pass. PENDING and EXPECTED are not a failure. */
+const FAILING_ROLLUP = new Set(['ERROR', 'FAILURE']);
+
+/** One label for a failing rollup: the state itself. The search does not select each check's name. */
+function failingChecksOf(pr: PrNode): string[] {
+  const state = pr.commits?.nodes[0]?.commit?.statusCheckRollup?.state ?? '';
+  return FAILING_ROLLUP.has(state) ? [state] : [];
+}
+
 /** Every open PR as a plain board keyed `owner/repo#n`, reduced to what a diff needs. */
 function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
   const owners = new Set((ctx.config?.copilotOrgs ?? COPILOT_ORGS).map((o) => o.toLowerCase()));
@@ -168,6 +179,7 @@ function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
       selfReview: isSelfReview(pr.repository.nameWithOwner, selfRepos),
       needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
+      failingChecks: failingChecksOf(pr),
       threads: pr.reviewThreads.nodes.flatMap((t) => {
         const first = t.comments.nodes[0];
         const who = first?.author?.login;

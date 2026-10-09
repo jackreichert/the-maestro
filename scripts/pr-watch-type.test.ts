@@ -372,3 +372,32 @@ test('steering: an empty or unchanged board emits no new steering event', () => 
   assert.deepEqual(steerOf(held.board, held.board), []);
   assert.equal(summaries(prWatch.diff(held, held)).some((l) => l.includes('STEER pr')), false);
 });
+
+/** Hands a fixture search node to check. The runner never spawns gh. */
+function boardFromFixture(node: unknown): prWatch.PrWatchState {
+  const run: Run = (_cmd, args) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      assert.match(args.join(' '), /statusCheckRollup \{ state \}/);
+      return { status: 0, stdout: JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: [node] } } }), stderr: '' };
+    }
+    throw new Error(`fixture must not call GitHub: ${args.join(' ')}`);
+  };
+  return prWatch.check('open-prs', { run, config: { ghLogin: 'me', copilotOrgs: [], selfReviewRepos: [] } });
+}
+
+test('search node: a failing rollup fills failingChecks and steering names that label once', () => {
+  const node = prNode(9, { commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] } });
+  const next = boardFromFixture(node);
+  assert.deepEqual(next.board['org/repo#9']?.failingChecks, ['FAILURE']);
+  const steer = steerOf({}, next.board);
+  assert.equal(steer.length, 1);
+  assert.match(steer[0].summary, /\bpr 9\b/);
+  assert.match(steer[0].summary, /failing check FAILURE/);
+});
+
+test('search node: no failing check leaves failingChecks empty and emits no failing-check steering event', () => {
+  const node = prNode(9, { commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] } });
+  const next = boardFromFixture(node);
+  assert.deepEqual(next.board['org/repo#9']?.failingChecks, []);
+  assert.equal(steerOf({}, next.board).some((e) => e.summary.includes('failing check')), false);
+});
