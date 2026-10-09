@@ -47,6 +47,7 @@ import { loadVerdicts, verdictFor, type VerdictRow } from './review-verdict.ts';
 import { stackLines } from './lib/stack-cap.ts';
 import { searchAllPages } from './lib/gh-search.ts';
 import { isSelfReview, splitSelfReview } from './lib/self-review.ts';
+import { DRAFT_PROMOTED, isDraftPromoted } from './lib/draft-promotion.ts';
 
 /** A review as the snapshot keeps it (the latest one per reviewer). */
 export interface SnapshotReview { author: string | undefined; state: string; submittedAt: string }
@@ -184,8 +185,8 @@ function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot, selfRevie
         if (!old) continue; // a brand-new PR isn't one of the watched actionable events
         const tag = isSelfReview(p.repo, selfReview) ? '[self-review] ' : '';
 
-        if (old.isDraft && !p.isDraft) {
-            changes.push(`${tag}${p.key} draft promoted to ready for review — ${p.url}`);
+        if (isDraftPromoted(old, p)) {
+            changes.push(`${tag}${p.key} ${DRAFT_PROMOTED} — ${p.url}`);
         }
         if (old.reviewDecision !== p.reviewDecision) {
             changes.push(`${tag}${p.key} reviewDecision ${old.reviewDecision} -> ${p.reviewDecision} — ${p.url}`);

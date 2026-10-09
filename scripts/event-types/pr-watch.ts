@@ -8,6 +8,7 @@
  *   - a new unresolved review thread, from anyone but the user (bots included): THREAD;
  *   - a new reply in an open thread, from anyone but the user: REPLY;
  *   - a new top-level PR comment or review body from anyone but the user: COMMENT, REVIEW;
+ *   - a draft that was promoted to ready for review (isDraft true -> false, same wording as prs-snapshot --diff): READY, once per promotion;
  *   - a reviewDecision flip into or out of APPROVED / CHANGES_REQUESTED: DECISION;
  *   - an open PR that turned CONFLICTING with its base: CONFLICT (once per conflict; GitHub's UNKNOWN, while it computes
  *     mergeability, changes nothing, and a conflict that clears resets silently so the next one speaks);
@@ -24,6 +25,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH, SELF_REVIEW_REPOS } from '../local-config.ts';
 import { isSelfReview } from '../lib/self-review.ts';
+import { DRAFT_PROMOTED, isDraftPromoted } from '../lib/draft-promotion.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { markPrsDirty } from '../lib/status-page/dirty.ts';
 import type { CheckContext, Watch, WatchEvent } from '../lib/types.ts';
@@ -337,6 +339,7 @@ function changesBetween(prev: Board, next: Board): string[] {
     const quiet = new Set(['NONE', 'REVIEW_REQUIRED']);
     // CONFLICT speaks on the way in (a PR we never saw before, or one last settled as anything but CONFLICTING); staying conflicted is silent.
     if (pr.mergeable === 'CONFLICTING' && old?.mergeable !== 'CONFLICTING') lines.push(`${label(pr)}CONFLICT ${key} ${pr.base || '?'} <- ${pr.headRef || '?'} ${pr.url}`);
+    if (isDraftPromoted(old, pr)) lines.push(`${label(pr)}READY ${key} ${DRAFT_PROMOTED} ${pr.url}`);
     if (old && old.decision !== pr.decision && !(quiet.has(old.decision) && quiet.has(pr.decision))) lines.push(`${label(pr)}DECISION ${key}: ${old.decision} -> ${pr.decision} ${pr.url}`);
     for (const t of pr.threads) if (!seen('threads', t.id)) lines.push(`${label(pr)}THREAD ${key} by ${t.who}: ${t.url}`);
     const newThreadUrls = new Set(pr.threads.filter((t) => !seen('threads', t.id)).map((t) => t.url));
