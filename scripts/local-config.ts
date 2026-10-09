@@ -2,8 +2,11 @@
  * LOCAL CONFIG: the one place the-maestro's scripts read install-specific values.
  *
  * Everything else in scripts/ is generic. Each value comes from, in order: its environment
- * variable, the user config file, then the org overlay's config.md. Where those files are
- * looked up is documented in reference/local-config.md ("How the scripts find it").
+ * variable, the user config file, then the org overlay's config.md — except the pr-open gate
+ * settings (the size file and line limits, waive_size_gate_owners, pr_smells_repos, and the
+ * body-check lists pr_body_private_words, pr_body_private_patterns, pr_body_voice_names). Those
+ * are read from the user config file only, so an environment variable cannot lift them. Where
+ * the files are looked up is documented in reference/local-config.md ("How the scripts find it").
  *
  * `node scripts/local-config.ts` prints the resolved values and the files they came from.
  */
@@ -70,6 +73,9 @@ const overlay = readConfig(overlayPath) || {};
 
 /** One setting: the environment variable if set (even empty), else the user file, else the overlay file. */
 const pick = (envName: string, key: string, fallback = ''): string => process.env[envName] ?? user[key] ?? overlay[key] ?? fallback;
+
+/** A pr-open gate setting: the user config file only. The environment and the overlay file are ignored, so neither can lift the gate. */
+const pickUserFile = (key: string, fallback = ''): string => user[key] ?? fallback;
 
 /** The config files that were read: the user file and the overlay's config.md (either may be empty). */
 export { userPath, overlayPath };
@@ -285,11 +291,11 @@ const positiveInt = (raw: string, fallback: number): number => (/^\d+$/.test(raw
 const DEFAULT_TRACKER_KEY_PATTERN = '\\b[A-Z][A-Z0-9]+-\\d+\\b';
 export const TRACKER_KEY_PATTERN = ((raw: string) => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })(pick('MAESTRO_TRACKER_KEY_PATTERN', 'tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
 
-/** PR size budget (pr-size.ts): most code files a PR may change. Default 5. */
-export const PR_MAX_CODE_FILES = positiveInt(pick('MAESTRO_PR_MAX_CODE_FILES', 'pr_max_code_files'), 5);
+/** PR size budget (pr-size.ts): most code files a PR may change. Default 5. User config file only. */
+export const PR_MAX_CODE_FILES = positiveInt(pickUserFile('pr_max_code_files'), 5);
 
-/** PR size budget: most changed code lines (additions plus deletions). Default 400. */
-export const PR_MAX_CODE_LINES = positiveInt(pick('MAESTRO_PR_MAX_CODE_LINES', 'pr_max_code_lines'), 400);
+/** PR size budget: most changed code lines (additions plus deletions). Default 400. User config file only. */
+export const PR_MAX_CODE_LINES = positiveInt(pickUserFile('pr_max_code_lines'), 400);
 
 /** PR size budget, wide tier (opt-in): most code files a PR may change under the wide line limit. Defaults to PR_MAX_CODE_FILES, which leaves the wide tier off; never below it. */
 export const PR_WIDE_MAX_CODE_FILES = Math.max(positiveInt(pick('MAESTRO_PR_WIDE_MAX_CODE_FILES', 'pr_wide_max_code_files'), PR_MAX_CODE_FILES), PR_MAX_CODE_FILES);
@@ -341,6 +347,9 @@ export const STACK_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_STACK_MAX_AGE_DAYS',
 
 const globList = (envName: string, key: string): string[] => pick(envName, key).split(',').map((s) => s.trim()).filter(Boolean);
 
+/** A comma-separated pr-open gate list from the user config file only. */
+const globListFile = (key: string): string[] => pickUserFile(key).split(',').map((s) => s.trim()).filter(Boolean);
+
 /** Owner or `owner/name` globs as `owner/name` globs: a bare owner means `owner/*`, and an entry whose owner holds a `*` is dropped, so none can match every repo. */
 const repoGlobs = (globs: string[]): string[] => globs.filter((g) => !g.split('/')[0]!.includes('*')).map((g) => (g.includes('/') ? g : `${g}/*`));
 
@@ -356,11 +365,11 @@ export const PR_CONFIG_GLOBS = globList('MAESTRO_PR_CONFIG_GLOBS', 'pr_config_gl
 export const PR_DOCS_GLOBS = globList('MAESTRO_PR_DOCS_GLOBS', 'pr_docs_globs');
 export const PR_MECHANICAL_GLOBS = globList('MAESTRO_PR_MECHANICAL_GLOBS', 'pr_mechanical_globs');
 
-/** Smells gate (pr-open.ts, pr-smells.ts): GitHub `owner/name` globs of repos where a PR needs a recorded smells run, comma-separated. Default none, so the gate is off until a repo is named. */
-export const PR_SMELLS_REPOS = globList('MAESTRO_PR_SMELLS_REPOS', 'pr_smells_repos');
+/** Smells gate (pr-open.ts, pr-smells.ts): GitHub `owner/name` globs of repos where a PR needs a recorded smells run, comma-separated. Default none, so the gate is off until a repo is named. User config file only. */
+export const PR_SMELLS_REPOS = globListFile('pr_smells_repos');
 
-/** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can waive every repo. Default none, so every repo keeps the gate until it is named here. */
-export const WAIVE_SIZE_GATE_OWNERS = repoGlobs(globList('MAESTRO_WAIVE_SIZE_GATE_OWNERS', 'waive_size_gate_owners'));
+/** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can waive every repo. Default none, so every repo keeps the gate until it is named here. User config file only; there is no flag. */
+export const WAIVE_SIZE_GATE_OWNERS = repoGlobs(globListFile('waive_size_gate_owners'));
 
 /** Self-review repos: GitHub owners, or `owner/name` globs, whose PRs only you review, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can claim every repo. Their PRs do not count toward the review queue cap and are listed apart from the rest on the PR board. Default none, so every PR is counted and listed together. */
 export const SELF_REVIEW_REPOS = repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS', 'self_review_repos'));
@@ -368,11 +377,11 @@ export const SELF_REVIEW_REPOS = repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS',
 /** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pick('MAESTRO_PR_BODY_CHECK_PRIVATE', 'pr_body_check_private'));
 
-/** PR body: words that mark a private workspace and are refused outside code, comma-separated. Default ledger, vault, orchestrator; `none` turns the word list off (for a repo where they are ordinary vocabulary) while wiki-links and obsidian:// links stay refused. */
-export const PR_BODY_PRIVATE_WORDS = ((l: string[]) => (l.length === 1 && /^none$/i.test(l[0]) ? [] : l.length ? l : ['ledger', 'vault', 'orchestrator']))(globList('MAESTRO_PR_BODY_PRIVATE_WORDS', 'pr_body_private_words'));
+/** PR body: words that mark a private workspace and are refused outside code, comma-separated. Default ledger, vault, orchestrator; `none` turns the word list off (for a repo where they are ordinary vocabulary) while wiki-links and obsidian:// links stay refused. User config file only. */
+export const PR_BODY_PRIVATE_WORDS = ((l: string[]) => (l.length === 1 && /^none$/i.test(l[0]) ? [] : l.length ? l : ['ledger', 'vault', 'orchestrator']))(globListFile('pr_body_private_words'));
 
-/** PR body: extra regexes for install-specific private ids (a vault ticket-id format, a ledger-id format), comma-separated, so a pattern cannot contain a comma. Invalid ones are dropped. Added to the built-in list. */
-export const PR_BODY_PRIVATE_PATTERNS = globList('MAESTRO_PR_BODY_PRIVATE_PATTERNS', 'pr_body_private_patterns').filter((r) => { try { new RegExp(r, 'i'); return true; } catch { return false; } });
+/** PR body: extra regexes for install-specific private ids, comma-separated, so a pattern cannot contain a comma. Invalid ones are dropped. Added to the built-in list. User config file only. */
+export const PR_BODY_PRIVATE_PATTERNS = globListFile('pr_body_private_patterns').filter((r) => { try { new RegExp(r, 'i'); return true; } catch { return false; } });
 
 /** PR body: flag third-person references to the author (`pr_body_voice_names`) and the words assistant, agent, AI-generated, so a body reads in the author's own voice. Best effort. Default on. */
 export const PR_BODY_CHECK_VOICE = switchOn(pick('MAESTRO_PR_BODY_CHECK_VOICE', 'pr_body_check_voice'));
@@ -380,8 +389,8 @@ export const PR_BODY_CHECK_VOICE = switchOn(pick('MAESTRO_PR_BODY_CHECK_VOICE', 
 /** PR body: refuse counts the PR page already shows and a push makes stale (commits, files changed, lines, +120 -40) outside code. Best effort. Default on. */
 export const PR_BODY_CHECK_COUNTS = switchOn(pick('MAESTRO_PR_BODY_CHECK_COUNTS', 'pr_body_check_counts'));
 
-/** PR body: the author's names or logins, comma-separated, that must not appear in the third person ("Jack decided"). Default none. */
-export const PR_BODY_VOICE_NAMES = globList('MAESTRO_PR_BODY_VOICE_NAMES', 'pr_body_voice_names');
+/** PR body: the author's names or logins, comma-separated, that must not appear in the third person ("Jack decided"). Default none. User config file only. */
+export const PR_BODY_VOICE_NAMES = globListFile('pr_body_voice_names');
 
 /** Your git author emails (comma-separated), the authorship check branch-sweep.ts uses. Empty means the repo's own user.email. */
 export const GIT_EMAILS = globList('MAESTRO_GIT_EMAILS', 'git_emails');

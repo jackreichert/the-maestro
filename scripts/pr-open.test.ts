@@ -53,8 +53,15 @@ const GOOD_BODY = [
 const bodyFile = (repo: string, text: string): string => { const p = join(repo, '..', `body-${Math.random().toString(36).slice(2)}.md`); writeFileSync(p, text); return p; };
 
 const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = [], env: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, ...env },
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, GIT_TERMINAL_PROMPT: '0', ...env },
 });
+
+/** A throwaway user config file. Gate settings are read from this file, not from the environment. */
+const gateFile = (body: string): { MAESTRO_LOCAL_CONFIG: string } => {
+    const p = join(tmpdir(), `maestro-gate-${Math.random().toString(36).slice(2)}.md`);
+    writeFileSync(p, `\`\`\`maestro-config\n${body}\n\`\`\`\n`);
+    return { MAESTRO_LOCAL_CONFIG: p };
+};
 
 test('over budget refuses, prints the summary and a split hint, and never calls gh', () => {
     const f = fixture({ 'src/big.py': lines(500) });
@@ -348,7 +355,7 @@ test('bodyProblems: an unedited template, and a diagram that only sits in an HTM
     assert.equal(hidden.length, 1, 'a commented-out diagram is not a diagram');
 });
 
-const GATED = { MAESTRO_PR_SMELLS_REPOS: 'example/*' };
+const GATED = gateFile('pr_smells_repos: example/*');
 const withOrigin = (f: { repo: string }): void => git(f.repo, 'remote', 'add', 'origin', 'https://github.com/example/widgets.git');
 
 test('smells gate: a gated repo with no recorded run refuses and never calls gh, even on a dry run', () => {
@@ -392,13 +399,13 @@ test('smells gate: off by default, outside the listed repos, and for a diff with
     const f = fixture({ 'src/a.py': lines(10) });
     withOrigin(f);
     assert.equal(open(f, ['--dry-run', '--head', 'feature']).status, 0, 'default off');
-    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_PR_SMELLS_REPOS: 'other/*' }).status, 0, 'repo not listed');
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], gateFile('pr_smells_repos: other/*')).status, 0, 'repo not listed');
     const docs = fixture({ 'docs/a.md': lines(10) });
     withOrigin(docs);
     assert.equal(open(docs, ['--dry-run', '--head', 'feature'], GATED).status, 0, 'docs only');
 });
 
-const WAIVED = { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner' };
+const WAIVED = gateFile('waive_size_gate_owners: example-owner');
 const originAt = (f: { repo: string }, slug: string): void => git(f.repo, 'remote', 'add', 'origin', `https://github.com/${slug}.git`);
 
 test('size waiver: a repo under a waived owner passes the real gate with a visible note, and gh gets draft and assignee', () => {
@@ -463,8 +470,8 @@ test('size waiver: there is no flag to ask for it, and the other checks still ap
 test('size waiver: owner matching is case-insensitive and owner/name globs narrow it', () => {
     const f = fixture({ 'src/big.py': lines(500) });
     originAt(f, 'Example-Owner/widgets');
-    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/gad*' }).status, 1, 'glob does not match');
-    assert.equal(open(f, ['--dry-run', '--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner/wid*' }).status, 0);
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], gateFile('waive_size_gate_owners: example-owner/gad*')).status, 1, 'glob does not match');
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], gateFile('waive_size_gate_owners: example-owner/wid*')).status, 0);
 });
 
 test('private words: the default list refuses ledger but lets the public product word Podium through the real CLI', () => {
@@ -474,7 +481,7 @@ test('private words: the default list refuses ledger but lets the public product
     const ledger = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Logged in the ledger. Why this exists'))]);
     assert.equal(ledger.status, 1);
     assert.match(ledger.stderr, /private-workspace word/);
-    const custom = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists'))], { MAESTRO_PR_BODY_PRIVATE_WORDS: 'Podium' });
+    const custom = open(f, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(f.repo, GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists'))], gateFile('pr_body_private_words: Podium'));
     assert.equal(custom.status, 1, 'an install can still list it');
 });
 
@@ -505,5 +512,42 @@ test('size waiver: GH_HOST in the environment cannot redirect the pinned repo to
 test('size waiver: an owner wildcard in the setting is ignored, so it cannot waive everything', () => {
     const f = fixture({ 'src/big.py': lines(500) });
     originAt(f, 'other-org/widgets');
-    assert.equal(open(f, ['--head', 'feature'], { MAESTRO_WAIVE_SIZE_GATE_OWNERS: '*, */*' }).status, 1);
+    assert.equal(open(f, ['--head', 'feature'], gateFile('waive_size_gate_owners: *, */*')).status, 1);
+});
+
+test('gate env vars do not lift pr-open against a gating repo', () => {
+    const over = fixture({ 'src/big.py': lines(500) });
+    originAt(over, 'example-owner/widgets');
+    const lift = {
+        MAESTRO_PR_MAX_CODE_FILES: '9999',
+        MAESTRO_PR_MAX_CODE_LINES: '999999',
+        MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'example-owner',
+    };
+    for (const env of [lift, ...Object.entries(lift).map(([k, v]) => ({ [k]: v }))]) {
+        const r = open(over, ['--head', 'feature'], env);
+        assert.equal(r.status, 1, `${JSON.stringify(env)} ${r.stderr}`);
+        assert.match(r.stderr, /split plan/);
+    }
+    assert.ok(!existsSync(over.log), 'gh must not run');
+
+    const gated = fixture({ 'src/a.py': lines(10) });
+    withOrigin(gated);
+    const smells = open(gated, ['--dry-run', '--head', 'feature'], { ...GATED, MAESTRO_PR_SMELLS_REPOS: 'other/*' });
+    assert.equal(smells.status, 1, smells.stderr);
+    assert.match(smells.stderr, /none is recorded/);
+    assert.equal(open(gated, ['--dry-run', '--head', 'feature'], { MAESTRO_PR_SMELLS_REPOS: 'example/*' }).status, 0, 'env alone does not turn the smells gate on');
+
+    const words = GOOD_BODY.replace('Why this exists', 'Logged in the ledger. Why this exists');
+    const wordEnv = open(gated, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(gated.repo, words)], { MAESTRO_PR_BODY_PRIVATE_WORDS: 'none' });
+    assert.equal(wordEnv.status, 1);
+    assert.match(wordEnv.stderr, /private-workspace word/);
+    const podium = GOOD_BODY.replace('Why this exists', 'Adds a Podium tab. Why this exists');
+    assert.equal(open(gated, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(gated.repo, podium)], { MAESTRO_PR_BODY_PRIVATE_WORDS: 'Podium' }).status, 0, 'env cannot add a private word');
+    assert.equal(open(gated, ['--dry-run', '--head', 'feature'], { MAESTRO_PR_BODY_PRIVATE_PATTERNS: 'Why this exists' }).status, 0, 'env cannot add a private pattern');
+
+    const voiceBody = GOOD_BODY.replace('Why this exists', 'Sam Fictional decided this. Why this exists');
+    assert.equal(open(gated, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(gated.repo, voiceBody)], { MAESTRO_PR_BODY_VOICE_NAMES: 'Sam Fictional' }).status, 0, 'env cannot add a voice name');
+    const named = gateFile('pr_body_voice_names: Sam Fictional');
+    const held = open(gated, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(gated.repo, voiceBody)], { ...named, MAESTRO_PR_BODY_VOICE_NAMES: '' });
+    assert.equal(held.status, 1, held.stderr);
 });

@@ -169,7 +169,7 @@ test('roll_warn_pct / roll_at_pct: defaults, file values, environment wins, inva
     assert.deepEqual(pair({ MAESTRO_ROLL_AT_PCT: '100' }), ['70', '100'], '100 is allowed');
 });
 
-test('PR size budget: defaults, file values, env override, and bad values fall back', () => {
+test('PR size budget: defaults and file values; a gate env var is ignored', () => {
     const d = show();
     assert.equal(d.PR_MAX_CODE_FILES, '5');
     assert.equal(d.PR_MAX_CODE_LINES, '400');
@@ -181,9 +181,9 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
     assert.equal(f.PR_TEST_GLOBS, 'a/**, b/**');
     assert.equal(f.PR_MECHANICAL_GLOBS, '*.lock');
     const e = show({ MAESTRO_PR_MAX_CODE_FILES: '3', MAESTRO_PR_MAX_CODE_LINES: 'lots', MAESTRO_PR_CONFIG_GLOBS: 'x.yml' });
-    assert.equal(e.PR_MAX_CODE_FILES, '3');
-    assert.equal(e.PR_MAX_CODE_LINES, '400', 'non-numeric env falls back to the default, not the file value');
-    assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
+    assert.equal(e.PR_MAX_CODE_FILES, '8', 'the file limit ignores the environment');
+    assert.equal(e.PR_MAX_CODE_LINES, '900', 'the line limit ignores the environment');
+    assert.equal(e.PR_CONFIG_GLOBS, 'x.yml', 'a non-gate glob still takes the environment');
 });
 
 test('PR size wide tier is opt-in: defaults follow the normal limits, file and env values apply, line limit is capped', () => {
@@ -201,11 +201,42 @@ test('PR size wide tier is opt-in: defaults follow the normal limits, file and e
     assert.equal(show({ MAESTRO_PR_WIDE_MAX_CODE_FILES: '2' }).PR_WIDE_MAX_CODE_FILES, '5', 'never below pr_max_code_files');
 });
 
-test('waive_size_gate_owners: default none, a bare owner means owner/*, env wins over the file', () => {
+test('waive_size_gate_owners: default none, a bare owner means owner/*, the file wins over env', () => {
     assert.equal(show().WAIVE_SIZE_GATE_OWNERS, '(unset)');
+    assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, '(unset)', 'env cannot waive');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('waive_size_gate_owners: example-owner, other/tools-*, *, */x'));
     assert.equal(show().WAIVE_SIZE_GATE_OWNERS, 'example-owner/*, other/tools-*');
-    assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, 'solo/*');
+    assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, 'example-owner/*, other/tools-*');
+});
+
+test('pr-open gate settings ignore env and the overlay; only the user file applies', () => {
+    write(join(home, '.claude', 'skills', 'o-skill', 'config.md'), block('pr_smells_repos: overlay/*\nwaive_size_gate_owners: overlay-owner\npr_body_private_words: overlayword\npr_body_voice_names: Overlay\npr_max_code_files: 20\npr_max_code_lines: 20'));
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('overlay: o-skill'));
+    const ignored = show({
+        MAESTRO_PR_SMELLS_REPOS: 'env/*',
+        MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'env-owner',
+        MAESTRO_PR_BODY_PRIVATE_WORDS: 'none',
+        MAESTRO_PR_BODY_PRIVATE_PATTERNS: 'envpat',
+        MAESTRO_PR_BODY_VOICE_NAMES: 'Env Name',
+        MAESTRO_PR_MAX_CODE_FILES: '99',
+        MAESTRO_PR_MAX_CODE_LINES: '99',
+    });
+    assert.equal(ignored.PR_SMELLS_REPOS, '(unset)');
+    assert.equal(ignored.WAIVE_SIZE_GATE_OWNERS, '(unset)');
+    assert.equal(ignored.PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator');
+    assert.equal(ignored.PR_BODY_PRIVATE_PATTERNS, '(unset)');
+    assert.equal(ignored.PR_BODY_VOICE_NAMES, '(unset)');
+    assert.equal(ignored.PR_MAX_CODE_FILES, '5', 'overlay cannot raise the file limit');
+    assert.equal(ignored.PR_MAX_CODE_LINES, '400');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('overlay: o-skill\npr_smells_repos: example/*\nwaive_size_gate_owners: example-owner\npr_max_code_files: 8\npr_max_code_lines: 900\npr_body_private_words: memo\npr_body_private_patterns: \\bX-\\d+\\b\npr_body_voice_names: Sam Fictional'));
+    const file = show({ MAESTRO_PR_MAX_CODE_FILES: '2', MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'other', MAESTRO_PR_SMELLS_REPOS: '' });
+    assert.equal(file.PR_SMELLS_REPOS, 'example/*');
+    assert.equal(file.WAIVE_SIZE_GATE_OWNERS, 'example-owner/*');
+    assert.equal(file.PR_MAX_CODE_FILES, '8');
+    assert.equal(file.PR_MAX_CODE_LINES, '900');
+    assert.equal(file.PR_BODY_PRIVATE_WORDS, 'memo');
+    assert.equal(file.PR_BODY_PRIVATE_PATTERNS, '\\bX-\\d+\\b');
+    assert.equal(file.PR_BODY_VOICE_NAMES, 'Sam Fictional');
 });
 
 test('self_review_repos: default none, a bare owner means owner/*, a wildcard owner is ignored, env wins over the file', () => {
@@ -247,8 +278,15 @@ test('PR body private-reference and voice settings: defaults, file values, bad p
     assert.equal(f.PR_BODY_CHECK_VOICE, 'off');
     assert.equal(show({ MAESTRO_PR_BODY_CHECK_PRIVATE: 'off' }).PR_BODY_CHECK_PRIVATE, 'off');
     assert.equal(d.PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator');
-    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none' }).PR_BODY_PRIVATE_WORDS, '(unset)', 'none empties the word list');
-    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, 'memo');
+    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none' }).PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator', 'env cannot empty the word list');
+    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator', 'env cannot replace the word list');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_private_words: none'));
+    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, '(unset)', 'none in the file empties the list; env does not put it back');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_private_words: memo\npr_body_private_patterns: \\bX-\\d+\\b\npr_body_voice_names: Sam Fictional'));
+    const held = show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none', MAESTRO_PR_BODY_PRIVATE_PATTERNS: 'nope', MAESTRO_PR_BODY_VOICE_NAMES: 'Other' });
+    assert.equal(held.PR_BODY_PRIVATE_WORDS, 'memo');
+    assert.equal(held.PR_BODY_PRIVATE_PATTERNS, '\\bX-\\d+\\b');
+    assert.equal(held.PR_BODY_VOICE_NAMES, 'Sam Fictional');
 });
 
 test('review_queue_cap: default 4, file value, env wins, bad values fall back', () => {

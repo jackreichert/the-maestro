@@ -17,9 +17,9 @@
  * Over budget: prints the pr-size summary and a split hint, exits 1, never calls gh, unless the
  * repo's origin matches `waive_size_gate_owners` (default none): then it prints a one-line waiver
  * note and carries on. Mixing code with mechanical files is never waived. Unreadable pr-size JSON
- * refuses instead of claiming that mix. The waiver comes from local-config (or
- * MAESTRO_WAIVE_SIZE_GATE_OWNERS, like every other gate setting); there is no flag for it. When it
- * applies, gh is pinned to the origin repo with --repo. Within budget: runs gh in <path>. --draft
+ * refuses instead of claiming that mix. The waiver comes from the user config file
+ * (`waive_size_gate_owners`) only; an environment variable cannot set it, and there is no flag
+ * for it. When it applies, gh is pinned to the origin repo with --repo. Within budget: runs gh in <path>. --draft
  * and --assignee @me are always added and cannot be turned off; no other gh flag passes through.
  * --dry-run prints the gh command instead of running it.
  * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
