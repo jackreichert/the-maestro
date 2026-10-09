@@ -1,7 +1,7 @@
 // Run: node --test scripts/journal-brief.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,13 +80,69 @@ test('a second item for a claimed repo is refused, naming the holder, and writes
     assert.equal(JSON.parse(readFileSync(lock('repo-a'), 'utf8')).desk, 'Alpha');
 });
 
-test('briefing the same item again is idempotent: one claim, the same file', () => {
+test('briefing the same item again as the same holder is a rerun: same file, no new rows', () => {
     const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
     assert.equal(run(['brief', id, '--out-dir', outDir, ...MARK]).code, 0);
+    const before = rows().length;
     const again = run(['brief', id, '--out-dir', outDir, ...MARK]);
     assert.equal(again.code, 0, again.err);
-    assert.match(again.out, /already held for this item/);
+    assert.match(again.out, /already written for this holder/);
+    assert.match(again.out, /Agent prompt:/);
+    assert.equal(rows().length, before);
+});
+
+test('a desk that claimed the repo itself, as desks.md says, can brief its own item', () => {
+    const id = start('job', '--repo', 'repo-c', '--stream', 'Cee');
+    assert.equal(run(['claim', 'repo-c', '--desk', 'Cee', ...MARK]).code, 0);
+    const r = run(['brief', id, '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /the desk's own claim, kept/);
+    assert.equal(rows().filter((x) => x.kind === 'claim').length, 1, 'no second claim row');
+    assert.equal(existsSync(briefPaths(outDir, id).brief), true);
+});
+
+test('another desk is still refused a repo the first desk claimed by hand', () => {
+    const id = start('job', '--repo', 'repo-c', '--stream', 'Dee');
+    run(['claim', 'repo-c', '--desk', 'Cee', ...MARK]);
+    const r = run(['brief', id, '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /repo-c is already claimed by desk Cee/);
+    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Claims', 'briefs', `${id}.lock`)), false, 'the item grant is dropped on refusal');
+});
+
+test('a second holder briefing an item already briefed is refused, naming the first', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    assert.equal(run(['brief', id, '--as', 'window-1', '--out-dir', outDir, ...MARK]).code, 0);
+    const before = rows().length;
+    const r = run(['brief', id, '--as', 'window-2', '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /already briefed for a writer by window-1/);
+    assert.equal(rows().length, before);
+    assert.equal(run(['brief', id, '--as', 'window-1', '--out-dir', outDir, ...MARK]).code, 0, 'the first holder may rerun');
+});
+
+test('four concurrent briefs of one item by four holders: exactly one wins, one brief row, one promote', async () => {
+    const id = idOf(run(['queue', 'same job', '--repo', 'repo-b', '--stream', 'Bee', ...MARK]).out);
+    const results = await Promise.all([1, 2, 3, 4].map((k) => new Promise<{ code: number | null; err: string }>((resolve) => {
+        const p = spawn(process.execPath, [SCRIPT, 'brief', id, '--as', `w${k}`, '--out-dir', outDir, ...MARK, '--vault', vault, '--project', 'test-proj'], {
+            env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: config, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events') }, stdio: ['ignore', 'ignore', 'pipe'], cwd,
+        });
+        let err = '';
+        p.stderr.on('data', (d) => { err += d; });
+        p.on('close', (code) => resolve({ code, err }));
+    })));
+    assert.equal(results.filter((r) => r.code === 0).length, 1, results.map((r) => r.err).join('\n'));
+    for (const r of results.filter((x) => x.code !== 0)) assert.match(r.err, /already briefed for a writer by w\d/);
+    assert.equal(rows().filter((x) => x.kind === 'brief').length, 1);
+    assert.equal(rows().filter((x) => x.kind === 'promote').length, 1);
     assert.equal(rows().filter((x) => x.kind === 'claim').length, 1);
+});
+
+test('release drops the item grants for that repo, so another holder can brief afterwards', () => {
+    const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
+    run(['brief', id, '--as', 'window-1', '--out-dir', outDir, ...MARK]);
+    assert.equal(run(['release', 'repo-a', '--desk', 'Alpha', ...MARK]).code, 0);
+    assert.equal(run(['brief', id, '--as', 'window-2', '--out-dir', outDir, ...MARK]).code, 0);
 });
 
 test('an unfillable standing block refuses before any claim, file or row', () => {
