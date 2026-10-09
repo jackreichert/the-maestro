@@ -81,15 +81,21 @@ const fixOf = (d: Doc, owners: string[]): string => {
 };
 
 /**
- * The window setting as a start day: `30d` (days back from `now`), `YYYY-MM-DD`, or `all` (no window, undefined).
- * Anything else is null, so a caller can name the bad value instead of silently checking everything.
+ * The window setting as a start day: `30d` (days back from `now`), a `YYYY-MM-DD` on or before `now`'s UTC day, or `all` (no window, undefined).
+ * A future date, an `Nd` above 3660, or anything else is null, so a caller can name the bad value instead of checking a nonsense span.
  */
 export function windowStart(raw: string, now: Date = new Date()): string | undefined | null {
   const v = raw.trim().toLowerCase();
   if (v === 'all') return undefined;
   const days = v.match(/^(\d+)d$/);
-  if (days) return new Date(now.getTime() - Number(days[1]) * 864e5).toISOString().slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  if (days) {
+    const n = Number(days[1]);
+    // Cap: an Nd above 3660 days is a misconfiguration, not a window.
+    if (n > 3660) return null;
+    return new Date(now.getTime() - n * 864e5).toISOString().slice(0, 10);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  return v <= now.toISOString().slice(0, 10) ? v : null;
 }
 
 export function reachability(inp: ReachabilityInput): ReachabilityReport {
