@@ -28,6 +28,10 @@ export interface LedgerRow {
     /** Id of the item a `queue` row moves to queued, and the one a `promote` row moves back to in flight. */
     queues?: string;
     promotes?: string;
+    /** On a `brief` row: the item whose brief file was written, the file and the report path it asks for. */
+    briefs?: string;
+    brief?: string;
+    report?: string;
     /** On a `wip` row: written as queued (a to-do not yet started). On a folded item: true only while it is queued, absent when it is in flight. */
     queued?: boolean;
     /** Item ids an `archive` row hides. */
@@ -84,7 +88,7 @@ export const OPEN_KINDS = ['wip', 'blocked', 'question'];
 export const isPendingDecision = (i: LedgerRow): boolean => i.kind === 'decision' && i.pending === true;
 export const isOpen = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => !i.closedBy && ((i.kind !== undefined && OPEN_KINDS.includes(i.kind)) || isPendingDecision(i));
 // Rows that are events about items, not items themselves.
-export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote'];
+export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote', 'brief'];
 
 /** An open `wip` item that is queued (a to-do not yet started), as opposed to in flight. The fold sets `queued`. */
 export const isQueued = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => i.kind === 'wip' && i.queued === true && isOpen(i);
