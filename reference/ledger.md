@@ -485,9 +485,9 @@ node $J standup         # formatted, for standup
 node $J status --json   # if you need to reason over it
 ```
 
-Read `CURRENT.md` (under `$LEDGER_ROOT/Projects/{container-name}/Journal/`) at the start of a
-session before asking the user anything. It, plus
-`$VAULT_ROOT/Projects/{container-name}/CONTEXT.md`, is the handoff.
+Run `node $J start-here` (about 1.7k tokens) at the start of a
+session before asking the user anything; for one stream add `--stream <Stream>`. It, plus
+`$VAULT_ROOT/Projects/{container-name}/CONTEXT.md`, is the handoff. `CURRENT.md` is the full generated board; read it only when `start-here` points you there.
 
 ## Search (derived index)
 
