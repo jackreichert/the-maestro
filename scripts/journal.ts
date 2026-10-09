@@ -1431,9 +1431,13 @@ function cmdRelease() {
     }
     const usage = usageFromArgs();
     if (dryRun) { console.log(`[dry-run] release ${repo}`); return; }
+    // The releasing holder's grants are listed (with what each says) before the claim goes: once it is gone another desk may take the repo and grant its own item.
+    const mine = grantsFor().map((id) => ({ id, grant: readClaimIn(itemDir, id) as { desk?: string; time?: string } | null })).filter((g) => g.grant && g.grant.desk === held?.desk);
     unlinkSync(claimPath(repo));
-    // A brief's per-item writer grants for this repo end with the claim.
-    for (const id of grantsFor()) unlinkSync(claimPathIn(itemDir, id));
+    const pauseMs = Number(process.env.MAESTRO_TEST_RELEASE_PAUSE_MS);
+    if (Number.isFinite(pauseMs) && pauseMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pauseMs);
+    // A brief's per-item writer grants for this repo end with the claim, and only the ones listed above, still unchanged.
+    for (const { id, grant } of mine) { if ((readClaimIn(itemDir, id) as { time?: string } | null)?.time === grant?.time) unlinkSync(claimPathIn(itemDir, id)); }
     append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'released', repo, stream: held?.desk, desk: held?.desk, text: `released ${repo} (${held?.desk ?? 'unknown desk'})${has('force') ? ' with --force' : ''}`, ...usage });
     if (!dryRun) render(true);
     console.log(`released  ${repo}  ${held?.desk ?? ''}`);
@@ -1563,14 +1567,15 @@ function cmdBrief(): void {
                 process.exit(1);
             }
             ownedClaim = held.why === why;
-            // Another live grant on this repo, whoever took the repo claim, means another item's writer holds it.
-            const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && !id.endsWith('.reclaim') && readGrant(id)?.repo === claim.repo && !orphan(readGrant(id), id)) : undefined;
-            if (otherGrant) {
-                dropItemLock();
-                console.error(`${claim.repo} already has a writer brief for item ${otherGrant} (holder ${readGrant(otherGrant)?.holder ?? '?'}). No brief was written.`);
-                process.exit(1);
-            }
         } else tookClaim = true;
+        // Another live grant on this repo, whoever took the repo claim, means another item's writer holds it.
+        const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && !id.endsWith('.reclaim') && readGrant(id)?.repo === claim.repo && !orphan(readGrant(id), id)) : undefined;
+        if (otherGrant) {
+            dropItemLock();
+            if (tookClaim) { try { unlinkSync(claimPath(claim.repo)); } catch { /* already gone */ } }
+            console.error(`${claim.repo} already has a writer brief for item ${otherGrant} (holder ${readGrant(otherGrant)?.holder ?? '?'}). No brief was written.`);
+            process.exit(1);
+        }
     }
     // The ledger rows are the commit point. What exists decides what is written, so a rerun after a partial run completes it.
     const ledgerNow = readLedger();

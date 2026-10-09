@@ -400,3 +400,29 @@ test('a non-numeric reclaim delay is ignored, not waited on forever', () => {
     });
     assert.equal(r.status, 0, r.stderr);
 });
+
+test('a brief that takes the repo while a release is mid-way does not lose its grant: no second writer on the repo', async () => {
+    const a = start('first', '--repo', 'repo-a', '--stream', 'Alpha');
+    const b = start('second', '--repo', 'repo-a', '--stream', 'Beta');
+    const c = start('third', '--repo', 'repo-a', '--stream', 'Beta');
+    assert.equal(run(['brief', a, '--out-dir', outDir, ...MARK]).code, 0);
+    // The release removes the claim, then pauses before it clears grants: the gap another desk can step into.
+    const releasing = new Promise<{ code: number | null; err: string }>((resolve) => {
+        const p = spawn(process.execPath, [SCRIPT, 'release', 'repo-a', '--desk', 'Alpha', ...MARK, '--vault', vault, '--project', 'test-proj'], {
+            env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: config, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_TEST_RELEASE_PAUSE_MS: '3000' }, stdio: ['ignore', 'ignore', 'pipe'], cwd,
+        });
+        let err = '';
+        p.stderr.on('data', (d) => { err += d; });
+        p.on('close', (code) => resolve({ code, err }));
+    });
+    for (let i = 0; i < 100 && existsSync(lock('repo-a')); i += 1) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    assert.equal(existsSync(lock('repo-a')), false, 'the release reached its pause');
+    const inGap = run(['brief', b, '--out-dir', outDir, ...MARK]);
+    assert.equal((await releasing).code, 0);
+    // If Beta was briefed in the gap its grant must survive the release; if it was refused, nothing of it may linger. Either way a third item on the repo is refused.
+    if (inGap.code === 0) assert.equal(existsSync(grantPath(b)), true, 'the release did not delete the other desk\'s live grant');
+    else assert.equal(existsSync(grantPath(b)), false);
+    const third = inGap.code === 0 ? run(['brief', c, '--out-dir', outDir, ...MARK]) : (run(['brief', b, '--out-dir', outDir, ...MARK]), run(['brief', c, '--out-dir', outDir, ...MARK]));
+    assert.equal(third.code, 1, third.err);
+    assert.match(third.err, /(already has a writer brief for item|already claimed by)/);
+});
