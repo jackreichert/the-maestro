@@ -8,6 +8,8 @@
  *   DOWN             a supervisor is set up (or required) and nothing alive is writing
  *   NOT INSTALLED    `loop_supervisor: required` and no supervisor is set up and no loop is running
  *   absent           nothing is set up and nothing is required: no line, so an install that does not use a loop is not nagged
+ *
+ * Any non-empty line ends with ` · N unread digests` when digests were saved and no session has read them; nothing is added when there are none.
  */
 import type { Heartbeat } from './heartbeat.ts';
 import { CHUNK_SECONDS } from './wall-sleep.ts';
@@ -17,7 +19,12 @@ import type { SupervisorStatus } from './supervisor-state.ts';
 export const STALL_GRACE_MS = 5 * 60_000;
 
 export type LoopState = 'ok' | 'quiet' | 'running' | 'stalled' | 'down' | 'not-installed' | 'absent';
-export interface LoopHealth { state: LoopState; line: string }
+export interface LoopHealth {
+  state: LoopState;
+  line: string;
+  /** Digests saved to the inbox that no session has read yet; present only when there are some. */
+  unreadDigests?: number;
+}
 
 export interface HealthInput {
   now: number;
@@ -29,6 +36,8 @@ export interface HealthInput {
   wokeAt?: number | null;
   /** `loop_supervisor: required` in the config. */
   required: boolean;
+  /** Saved digests not yet shown to a session (the digest store's unseen count); omitted or 0 adds nothing to the line. */
+  unreadDigests?: number;
   alive: (pid: number) => boolean;
   tz: string;
 }
@@ -41,9 +50,17 @@ const clock = (at: number, tz: string): string => new Intl.DateTimeFormat('en-US
 const tzName = (at: number, tz: string): string => new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(at).find((p) => p.type === 'timeZoneName')?.value ?? tz;
 const stamp = (at: number, tz: string): string => `${clock(at, tz)} ${tzName(at, tz)}`;
 const line = (state: LoopState, text: string): LoopHealth => ({ state, line: `**Loop:** ${text}` });
+/** ` · 3 unread digests`: delivered to the inbox and not yet read, which a live heartbeat says nothing about. */
+const unreadSuffix = (n: number): string => ` · ${n} unread digest${n === 1 ? '' : 's'}`;
 
-/** The verdict for the inputs above. Pure: every read is passed in. */
-export function loopHealth({ now, heartbeat, lockPid, supervisor, required, alive, tz, wokeAt = null }: HealthInput): LoopHealth {
+/** The verdict for the inputs above, with the unread-digest count appended to any non-empty line. Pure: every read is passed in. */
+export function loopHealth(input: HealthInput): LoopHealth {
+  const verdict = heartbeatVerdict(input);
+  const unread = Math.max(0, Math.floor(input.unreadDigests ?? 0));
+  return verdict.line && unread > 0 ? { ...verdict, line: `${verdict.line}${unreadSuffix(unread)}`, unreadDigests: unread } : verdict;
+}
+
+function heartbeatVerdict({ now, heartbeat, lockPid, supervisor, required, alive, tz, wokeAt = null }: HealthInput): LoopHealth {
   // A heartbeat counts only from the process that owns it: the lock holder for `run`, the supervisor record's pid (with no loop holding the lock) for the rest.
   // A pid that merely looks alive (reused after a reboot, or another runner) must not vouch for the loop.
   const owned = heartbeat && alive(heartbeat.pid)

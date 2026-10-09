@@ -642,6 +642,8 @@ A held lock does not mean a working loop, so the loop and the supervisor leave a
 | `DOWN, the loop will not start (<reason>)` | The supervisor is alive but the loop refuses to start or keeps crashing (its `backoff` beat carries the last error) |
 | `NOT INSTALLED` | `loop_supervisor: required` and no supervisor is set up and no loop is running |
 
+Whatever the verdict, the line ends with ` · 3 unread digests` (`1 unread digest` for one) when digests were saved to the inbox and no session has read them, for example `Loop: ok <1 min · 3 unread digests`. A live heartbeat only proves the process is alive; this part says a result is waiting. The count is the digest store's unseen files (`event-loop.ts digests` lists them and `digest-wait` claims them); nothing is added when there are none.
+
 A heartbeat counts only from its owner: the process holding the loop lock for the loop's beats, the supervisor's recorded pid (with no loop holding the lock) for the supervisor's. A beat from any other live pid, such as a reused one, is ignored, so it can neither vouch for a hung loop nor raise a false alarm.
 
 With nothing set up and nothing required the line is empty, so an install that does not use a loop is not nagged. Set `loop_supervisor: required` to make a missing supervisor loud.
