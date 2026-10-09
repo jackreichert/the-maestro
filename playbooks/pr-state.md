@@ -27,7 +27,7 @@ It is read-only and needs `gh` logged in. Add `--json` only if the orchestrator 
 
 Copy these lines verbatim, per PR, in this order, and add nothing in between:
 
-1. the first line (PR, head sha, base, draft)
+1. the `STATE:` line and the line after it (PR, head sha, base, draft or not draft)
 2. every `reviewer ...` line
 3. the `unresolved human threads` and `unresolved bot threads` lines, with their thread lines
 4. the `checks:` line

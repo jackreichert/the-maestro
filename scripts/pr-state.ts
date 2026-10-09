@@ -8,8 +8,9 @@
  * reviewer's LATEST non-comment review with the commit it was on and a verdict word (APPROVED-on-head,
  * APPROVED-stale, DISMISSED, CHANGES_REQUESTED, COMMENTED-only), unresolved threads split human vs bot,
  * a check summary, a PUSH WARNING when approvals sit on the current head, and two verdict lines:
- *   READY-FOR-REVIEW: yes|no (reasons)  not a draft, zero unresolved threads, no conflicts, checks neither failing nor pending.
- *   READY-TO-MERGE: yes|no (reasons)    the above plus mergeStateStatus CLEAN, no standing CHANGES_REQUESTED and an approval on the current head.
+ *   READY-FOR-REVIEW: yes|no (reasons)  open, not a draft, zero unresolved threads, no conflicts, checks neither failing nor pending.
+ *   READY-TO-MERGE: yes|no (reasons)    the above plus mergeStateStatus CLEAN (which carries required approvals and rulesets) and no standing CHANGES_REQUESTED.
+ * The first line of each PR is `STATE: open|closed|merged`; a closed or merged PR is never ready (GitHub keeps CLEAN on closed PRs).
  *
  * An empty reviewDecision does not mean "nothing to lose": a dismissed approval also reads empty, so the
  * verdicts come from the review history, not from reviewDecision. Reads fail closed: more than one page of
@@ -26,7 +27,7 @@ export interface Reviewer { login: string; bot: boolean; verdict: Verdict; commi
 export interface Thread { author: string; bot: boolean; where: string; text: string }
 export interface Checks { passed: number; failed: string[]; pending: number }
 export interface PrState {
-  ref: string; url: string; head: string; base: string; draft: boolean; mergeable: string; mergeState: string; reviewDecision: string;
+  ref: string; url: string; prState: string; head: string; base: string; draft: boolean; mergeable: string; mergeState: string; reviewDecision: string;
   reviewers: Reviewer[]; humanThreads: Thread[]; botThreads: Thread[]; checks: Checks;
   pushWarning: string[]; truncated: string[];
   readyForReview: boolean; reviewReasons: string[]; readyToMerge: boolean; mergeReasons: string[];
@@ -35,7 +36,7 @@ export interface PrState {
 }
 
 const QUERY = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-number url headRefOid baseRefName isDraft mergeable mergeStateStatus reviewDecision
+number url state headRefOid baseRefName isDraft mergeable mergeStateStatus reviewDecision
 reviews(last:100){pageInfo{hasPreviousPage} nodes{state submittedAt author{login __typename} commit{oid}}}
 reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved path line comments(first:1){nodes{body author{login __typename}}}}}
 commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){pageInfo{hasNextPage} nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}
@@ -101,6 +102,8 @@ export function buildState(ref: Ref, pr: any): PrState {
     pr.reviews?.pageInfo?.hasPreviousPage ? 'reviews' : '', pr.reviewThreads?.pageInfo?.hasNextPage ? 'threads' : '', ctx?.pageInfo?.hasNextPage ? 'checks' : '',
   ].filter(Boolean);
   const pushWarning = reviewers.filter((r) => r.verdict === 'APPROVED-on-head').map((r) => r.login);
+  const prState = String(pr.state || 'unknown').toLowerCase();
+  const open = pr.state === 'OPEN';
   const reviewReasons: string[] = [];
   if (pr.isDraft) reviewReasons.push('draft');
   if (threads.length) reviewReasons.push(`${threads.length} unresolved thread(s)`);
@@ -112,13 +115,15 @@ export function buildState(ref: Ref, pr: any): PrState {
   const mergeReasons = [...reviewReasons];
   const changes = reviewers.filter((r) => r.verdict === 'CHANGES_REQUESTED').map((r) => r.login);
   if (changes.length) mergeReasons.push(`changes requested by ${changes.join(', ')}`);
-  if (!reviewers.some((r) => r.verdict === 'APPROVED-on-head')) {
+  // CLEAN already covers required approvals and rulesets; the approval words only explain a BLOCKED state.
+  if (pr.mergeStateStatus === 'BLOCKED' && !reviewers.some((r) => r.verdict === 'APPROVED-on-head')) {
     mergeReasons.push(reviewers.some((r) => r.verdict === 'DISMISSED') ? 'approval dismissed by a push, waiting for a new approval'
       : reviewers.some((r) => r.verdict === 'APPROVED-stale') ? 'approval is on an older commit, waiting for a new approval' : 'waiting for an approval');
   }
   if (pr.mergeStateStatus !== 'CLEAN') mergeReasons.push(MERGE_STATE_WORDS[pr.mergeStateStatus] || `merge state is ${pr.mergeStateStatus || 'unknown'}`);
+  if (!open) { const why = `PR is ${prState}`; reviewReasons.splice(0, reviewReasons.length, why); mergeReasons.splice(0, mergeReasons.length, why); }
   return {
-    ref: `${ref.repo}#${ref.number}`, url: pr.url, head, base: pr.baseRefName, draft: !!pr.isDraft, mergeable: pr.mergeable, mergeState: pr.mergeStateStatus,
+    ref: `${ref.repo}#${ref.number}`, url: pr.url, prState, head, base: pr.baseRefName, draft: !!pr.isDraft, mergeable: pr.mergeable, mergeState: pr.mergeStateStatus,
     reviewDecision: pr.reviewDecision || '(empty)', reviewers, humanThreads: threads.filter((t) => !t.bot), botThreads: threads.filter((t) => t.bot), checks,
     pushWarning, truncated, readyForReview: reviewReasons.length === 0, reviewReasons, readyToMerge: mergeReasons.length === 0, mergeReasons,
     ready: mergeReasons.length === 0, reasons: mergeReasons,
@@ -126,7 +131,7 @@ export function buildState(ref: Ref, pr: any): PrState {
 }
 
 export function render(s: PrState): string {
-  const L = [`${s.ref}  head ${s.head.slice(0, 10)}  base ${s.base}  ${s.draft ? 'DRAFT' : 'ready-for-review'}`,
+  const L = [`STATE: ${s.prState}`, `${s.ref}  head ${s.head.slice(0, 10)}  base ${s.base}  ${s.draft ? 'DRAFT' : 'not draft'}`,
     `  mergeable ${s.mergeable}, mergeStateStatus ${s.mergeState}, reviewDecision ${s.reviewDecision} (empty is not "nothing to lose"; read the reviewers below)`];
   for (const r of s.reviewers) L.push(`  reviewer ${r.login}${r.bot ? ' (bot)' : ''}: ${r.verdict}${r.commit ? ` on ${r.commit.slice(0, 10)}` : ''}`);
   if (!s.reviewers.length) L.push('  reviewers: none');
