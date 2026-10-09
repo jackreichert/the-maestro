@@ -46,3 +46,25 @@ test('refuses a missing root and a bad --days', () => {
 test('refuses a negative --oldest', () => {
     assert.equal(run('--vault', ledgerWith(rows), '--project', 'demo', '--oldest', '-3').code, 2);
 });
+
+test('prints ledger stage dwell from a temp ledger and does not invent a waiter', () => {
+    const stuck = [
+        { id: 'qqqq', ts: '2026-10-06T12:00:00Z', date: '2026-10-06', kind: 'wip', queued: true, stream: 's', text: 'sitting queued' },
+        { id: 'bbbb', ts: '2026-09-20T12:00:00Z', date: '2026-09-20', kind: 'blocked', stream: 's', text: 'held', gate: 'ticket:FAKE-1' },
+        { id: 'aaaa', ts: '2026-10-07T00:00:00Z', date: '2026-10-07', kind: 'question', stream: 's', text: 'which way?' },
+    ];
+    const vault = ledgerWith(stuck);
+    const r = run('--vault', vault, '--project', 'demo', '--now', '2026-10-07T12:00:00Z', '--days', '14');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /longest dwell {2}blocked {2}17d/);
+    assert.match(r.out, /ticket: FAKE-1/);
+    assert.match(r.out, /unrecorded {2}which way\?/);
+    assert.equal(r.out.includes(vault), false);
+    assert.equal(r.out.includes('/Users/'), false);
+    const j = JSON.parse(run('--vault', vault, '--project', 'demo', '--now', '2026-10-07T12:00:00Z', '--days', '7', '--json').out);
+    assert.equal(j.dwell.longest, 'blocked');
+    assert.equal(j.dwell.longestDays, 17);
+    assert.equal(j.dwell.stages.find((s: { stage: string }) => s.stage === 'blocked').dwellDays, 7);
+    assert.deepEqual(j.dwell.stages.map((s: { stage: string }) => s.stage), ['queued', 'in flight', 'blocked', 'awaiting a person']);
+    assert.equal(j.dwell.waiting.find((w: { id: string }) => w.id === 'aaaa').waitsOn, 'unrecorded');
+});
