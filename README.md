@@ -990,7 +990,7 @@ Requires Node 24 or newer, which runs TypeScript directly by stripping types, so
 ```bash
 npm install        # typescript and @types/node, dev only
 npm run typecheck  # tsc --noEmit, strict
-npm test           # node --test over scripts/**/*.test.ts, in parallel, about a minute on an idle 16-core machine
+npm test           # node --test over scripts/**/*.test.ts, in parallel shards, roughly 80-140 seconds depending on machine load
 ```
 
 The scripts themselves have no runtime dependencies.
