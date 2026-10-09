@@ -219,6 +219,14 @@ not be spent on what a bot could have caught.
 
 The [pr-watch event type](../scripts/event-types/pr-watch.ts) does the requesting: each check it adds `@copilot`
 as a reviewer on any open draft in a `copilot_orgs` owner that Copilot has neither reviewed nor been asked to review, once per PR.
+That rule is not enough alone: a push gives the PR a new head sha, Copilot re-reviews it only when the repo is set to review new pushes,
+and a PR that already has a Copilot review never gets asked again. So pr-watch also follows Copilot **per head sha** on every open PR
+in a `copilot_orgs` owner ([lib/copilot-follow.ts](../scripts/lib/copilot-follow.ts)): a new head that Copilot has neither a pending request nor a review for
+is requested once, after a 60 s grace. When the review lands pr-watch raises `COPILOT-REVIEW <PR> <sha>` with the unresolved bot thread count,
+and `COPILOT-LATE <PR> <sha>` when nothing came 15 minutes after the trigger (Copilot's measured latency: median 2.3 min, p90 3.2, max 12.6).
+Both are actionable except a clean review: handle the threads as below, and on `COPILOT-LATE` look at the PR before the user does (re-request by hand, or say Copilot is late).
+The delays are minimums measured on loop ticks, so pr-watch's 300 s floor is their granularity. Heads already there when this was switched on are adopted as told, not requested.
+`jackreichert/*` repos are outside `copilot_orgs` and never get any of this.
 Its threads then arrive as `THREAD` lines. Handle them with [the comment workflow](#the-comment-workflow)
 — verdicts drafted, fixes committed, bot threads resolved — without waiting for the user to ask.
 If the watch isn't registered, request it by hand when a draft in a `copilot_orgs` owner goes up:
