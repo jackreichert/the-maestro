@@ -179,7 +179,7 @@ import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween,
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
-import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
+import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, recordRan, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
 import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { createReader } from './lib/vault/reader.ts';
@@ -887,6 +887,20 @@ function sweepWorktreesForRoll() {
     if (!result) return;
     console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
     raiseEnvAsks(result.envAsks);
+    recordBranchSweepRan(result);
+}
+
+/**
+ * A finished (not dry, not budget-cut, no fetch, prune, scan or removal failure) worktree sweep is the `branch-sweep` row's work, so it records the run itself instead of waiting for
+ * someone to say so. The evidence names what the sweep did and that remote branches are not part of it (branch-sweep.ts lists those for approval).
+ */
+function recordBranchSweepRan(result: NonNullable<ReturnType<typeof runWorktreeSweep>>): void {
+    if (dryRun || result.skipped.length) return;
+    if (result.failed.length) { console.log(`standing  branch-sweep  not recorded (sweep did not finish: ${result.failed.join('; ')}); the row stays overdue`); return; }
+    try {
+        const evidence = `roll worktree sweep: ${result.removed.length} removed, ${result.pruned.length} pruned, ${result.kept.length} kept; remote branches not swept`;
+        if (recordRan(standingFile(), 'branch-sweep', evidence, now())) console.log('standing  branch-sweep  recorded');
+    } catch (e) { console.log(`standing  branch-sweep  not recorded (${errorMessage(e)})`); }
 }
 
 /** One question per worktree the sweep would remove but for real env files in it (names only), unless the same question is already open. */

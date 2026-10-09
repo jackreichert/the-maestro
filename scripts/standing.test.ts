@@ -5,7 +5,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, write
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_ROWS, STANDING_FILE, appendEvent, conditionLines, conditionStates, isRoutine, readEvents, standingBlock, standingState, validRow } from './lib/standing.ts';
+import { DEFAULT_ROWS, STANDING_FILE, appendEvent, conditionLines, conditionStates, isRoutine, readEvents, recordRan, standingBlock, standingState, validRow } from './lib/standing.ts';
 import type { CheckContext, StandingEvent } from './lib/standing.ts';
 import { commitmentLines } from './lib/journal/handoff.ts';
 import { addWatch } from './lib/watch-registry.ts';
@@ -366,4 +366,16 @@ test('loop-alive follows the heartbeat verdict: stalled or down fails even with 
   assert.equal(statusOf(fresh, healthy({ loopPid: () => null, health: () => ({ state: 'running', line: '' }) }), 'loop-alive'), 'failing');
   const detail = DEFAULT_ROWS.find((r) => r.id === 'loop-alive') && standingState(fresh, verdict('stalled')).find((s) => s.row.id === 'loop-alive')?.detail;
   assert.match(String(detail), /^Loop: stalled 12 min$/);
+});
+
+test('recordRan writes a ran line for a live cadence row only: a checked, retired or unknown row gets none', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'standing-ran-'));
+  const file = join(dir, STANDING_FILE);
+  assert.equal(recordRan(file, 'branch-sweep', 'swept', new Date(NOON).toISOString()), true);
+  assert.equal(statusOf(readEvents(file), healthy(), 'branch-sweep'), 'ok', 'the recorded run clears the overdue row');
+  assert.equal(recordRan(file, 'loop-alive', 'claimed', new Date(NOON).toISOString()), false, 'a checked row is judged by its check, not by a claim');
+  assert.equal(recordRan(file, 'no-such-row', 'x', new Date(NOON).toISOString()), false);
+  appendEvent(file, { op: 'retire', at: new Date(NOON).toISOString(), id: 'merge-sweep' });
+  assert.equal(recordRan(file, 'merge-sweep', 'x', new Date(NOON).toISOString()), false, 'a retired row stays retired');
+  assert.equal(readEvents(file).filter((e) => e.op === 'ran').length, 1);
 });

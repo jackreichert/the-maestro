@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
@@ -1552,6 +1552,38 @@ test('roll refuses to sweep when no container root is configured, and still roll
     assert.match(r.out, /worktree sweep refused: container_root is not set/);
     assert.doesNotMatch(r.out, /worktrees:/);
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
+});
+
+test('a finished roll sweep records the branch-sweep standing row as run; a dry run, a refused sweep and --no-worktree-sweep do not', () => {
+    const w = sweepWorld();
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    const overdue = () => runEnvIn(w.container, env, 'standing', 'list').out.split('\n').find((l) => /branch-sweep/.test(l)) ?? '';
+    assert.match(overdue(), /^OVERDUE/);
+    runEnvIn(w.container, env, 'roll', '--dry-run');
+    runEnvIn(w.container, env, 'roll', '--no-worktree-sweep');
+    runEnvIn(emptyCwd, env, 'roll');
+    assert.match(overdue(), /^OVERDUE/, 'none of those swept anything');
+    const r = runEnvIn(w.container, env, 'roll');
+    assert.match(r.out, /standing +branch-sweep +recorded/);
+    assert.match(overdue(), /^ok .*last ran 0 min ago/);
+    const ran = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'standing.jsonl'), 'utf8');
+    assert.match(ran, /"op":"ran","id":"branch-sweep","evidence":"roll worktree sweep: 1 removed, 0 pruned, 1 kept; remote branches not swept"/);
+});
+
+test('a roll sweep whose fetch fails removes nothing, does not record branch-sweep, and says so', () => {
+    const w = sweepWorld();
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    const overdue = () => runEnvIn(w.container, env, 'standing', 'list').out.split('\n').find((l) => /branch-sweep/.test(l)) ?? '';
+    renameSync(join(dirname(w.container), 'origin.git'), join(dirname(w.container), 'origin.gone'));
+    const r = runEnvIn(w.container, env, 'roll');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /standing +branch-sweep +not recorded \(sweep did not finish: proj: git fetch failed\)/);
+    assert.doesNotMatch(r.out, /branch-sweep +recorded/);
+    assert.equal(existsSync(w.clean), true, 'nothing is removed on stale refs');
+    assert.match(overdue(), /^OVERDUE/);
+    renameSync(join(dirname(w.container), 'origin.gone'), join(dirname(w.container), 'origin.git'));
+    assert.match(runEnvIn(w.container, env, 'roll').out, /standing +branch-sweep +recorded/);
+    assert.match(overdue(), /^ok /);
 });
 
 test('roll --dry-run and --no-worktree-sweep leave every worktree in place', () => {
