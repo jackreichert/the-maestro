@@ -102,3 +102,55 @@ test('four processes starting one queued item at once: one succeeds, three are r
     assert.equal(t.rows().filter((r) => r.kind === 'promote').length, 1, 'the item was promoted once');
   } finally { t.done(); }
 });
+
+const holderOf = (t: ReturnType<typeof setup>, id: string): string | undefined => JSON.parse(t.run('h', 'status', '--json').stdout).leases.held.find((l: { item: string }) => l.item === id)?.holder;
+
+for (const n of [2, 4, 8]) {
+  test(`${n} processes running \`lease --steal h\` or \`start --steal h\` against holder h: exactly one exits 0 and the ledger folds to it`, async () => {
+    for (let round = 0; round < 4; round++) {
+      const t = setup();
+      try {
+        const id = t.queue('contended steal');
+        assert.equal(t.run('h', 'start', id, ...MARK).status, 0);
+        const windows = Array.from({ length: n }, (_, i) => `s${i}`);
+        const codes = await Promise.all(windows.map((w, i) => t.runAsync(w, i % 2 ? 'start' : 'lease', id, '--steal', 'h', ...MARK)));
+        const winners = windows.filter((_, i) => codes[i] === 0);
+        assert.equal(winners.length, 1, `round ${round}: exit codes ${codes.join(',')}`);
+        assert.equal(codes.filter((c) => c === 1).length, n - 1, `round ${round}: losers exit 1 (${codes.join(',')})`);
+        assert.equal(holderOf(t, id), winners[0], `round ${round}: the ledger names the process that was told it won`);
+      } finally { t.done(); }
+    }
+  });
+}
+
+test('a steal naming a window that does not hold the lease exits 1 and writes nothing; so does a named force', () => {
+  const t = setup();
+  try {
+    const id = t.queue('named target');
+    t.run('a', 'start', id, ...MARK);
+    assert.equal(t.run('b', 'start', id, '--steal', 'a', ...MARK).status, 0);
+    const before = t.rows().length;
+    const stale = t.run('c', 'lease', id, '--steal', 'a');
+    assert.equal(stale.status, 1);
+    assert.match(stale.stderr, /leased by b/);
+    assert.match(stale.stderr, /not by a/);
+    assert.equal(t.run('c', 'release', id, '--force', '--from', 'a').status, 1, 'the lease is not a\'s any more');
+    assert.equal(t.rows().length, before, 'neither refusal wrote a row');
+    assert.equal(t.run('c', 'release', id, '--force', '--from', 'b').status, 0);
+    assert.equal(t.run('c', 'lease', id, '--steal', 'b').status, 1, 'nobody holds it, so there is nothing to steal');
+    assert.equal(t.run('c', 'lease', id).status, 0, 'a plain lease of the free item works');
+  } finally { t.done(); }
+});
+
+test('release --force --from h racing lease --steal h: exactly one exits 0 and the ledger agrees', async () => {
+  for (let round = 0; round < 6; round++) {
+    const t = setup();
+    try {
+      const id = t.queue('force vs steal');
+      t.run('h', 'start', id, ...MARK);
+      const [forced, stolen] = await Promise.all([t.runAsync('f', 'release', id, '--force', '--from', 'h'), t.runAsync('s', 'lease', id, '--steal', 'h')]);
+      assert.equal([forced, stolen].filter((c) => c === 0).length, 1, `round ${round}: exit codes ${forced},${stolen}`);
+      assert.equal(holderOf(t, id), stolen === 0 ? 's' : undefined, `round ${round}: the ledger agrees with who was told it won`);
+    } finally { t.done(); }
+  }
+});

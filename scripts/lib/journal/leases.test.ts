@@ -57,8 +57,9 @@ test('a steal of a free or lapsed lease behaves as a plain acquire', () => {
   assert.ok(late.ok && late.wrote);
   assert.equal(lapsed.at(-1)?.steal, undefined);
   assert.equal(foldLeases(lapsed).get('it01')?.holder, 'b');
-  // A marked steal row whose target lapsed before it landed also takes it: the lease was free.
-  assert.equal(foldLeases([lease('a', 0), lease('b', 45, { steal: true, from: 'a' })]).get('it01')?.holder, 'b');
+  // A named steal whose target lapsed or was released before it landed is ignored: the target no longer held the lease.
+  assert.equal(foldLeases([lease('a', 0), lease('b', 45, { steal: true, from: 'a' })]).get('it01')?.holder, 'a');
+  assert.equal(foldLeases([lease('a', 0), { kind: 'unlease', unleases: 'it01', window: 'a', ts: at(1) }, lease('b', 2, { steal: true, from: 'a' })]).has('it01'), false);
 });
 
 test('a stealer that lost to an earlier steal is refused on re-read and told the new holder', () => {
@@ -68,7 +69,39 @@ test('a stealer that lost to an earlier steal is refused on re-read and told the
   let first = true;
   const stale = { ...ctx, readLedger: () => (first ? ((first = false), [lease('a', 0)]) : rows) };
   const got = acquireLease(stale, 'it01', { ttlMinutes: 30, steal: true });
-  assert.ok(!got.ok && got.lease.holder === 'b');
+  assert.ok(!got.ok && got.lease?.holder === 'b');
+});
+
+test('a named steal takes the lease only from the window it names, and writes nothing otherwise', () => {
+  const rows: LedgerRow[] = [lease('a', 0), lease('b', 1, { steal: true, from: 'a' })];
+  const before = rows.length;
+  const stale = acquireLease(memory('c', rows, 2), 'it01', { ttlMinutes: 30, steal: 'a' });
+  assert.ok(!stale.ok && stale.lease?.holder === 'b' && stale.expected === 'a');
+  const nobody = acquireLease(memory('c', [], 2), 'it02', { ttlMinutes: 30, steal: 'a' });
+  assert.ok(!nobody.ok && nobody.lease === undefined && nobody.expected === 'a');
+  assert.equal(rows.length, before, 'a refused named steal writes nothing');
+  const right = acquireLease(memory('c', rows, 2), 'it01', { ttlMinutes: 30, steal: 'b' });
+  assert.ok(right.ok && rows.at(-1)?.from === 'b');
+});
+
+test('a forced unlease that names a holder frees only that holder\'s lease', () => {
+  const forced = (from?: string): LedgerRow => ({ kind: 'unlease', unleases: 'it01', window: 'c', ts: at(2), force: true, ...(from ? { from } : {}) });
+  assert.equal(foldLeases([lease('a', 0), lease('d', 1, { steal: true, from: 'a' }), forced('a')]).get('it01')?.holder, 'd', 'd stole after c read, so c frees nothing');
+  assert.equal(foldLeases([lease('a', 0), forced('a')]).has('it01'), false);
+  assert.equal(foldLeases([lease('a', 0), forced()]).has('it01'), false, 'a force that names nobody still frees (older rows)');
+});
+
+test('releaseLease with a named force refuses when another window holds it, and re-reads after the append', () => {
+  const rows: LedgerRow[] = [];
+  acquireLease(memory('a', rows, 0), 'it01', { ttlMinutes: 30 });
+  const wrong = releaseLease(memory('c', rows, 1), 'it01', 'z');
+  assert.ok('notHeldBy' in wrong && rows.length === 1, 'nothing written');
+  // c read holder a, then d stole before c's unlease landed: c is told it did not free anything.
+  let first = true;
+  const raced = { ...memory('c', rows, 2), readLedger: () => (first ? ((first = false), [...rows]) : rows), append: (r: LedgerRow) => { rows.push({ kind: 'lease', leases: 'it01', window: 'd', ts: at(2), ttl: 30, steal: true, from: 'a' }); rows.push({ window: 'c', ...r }); } };
+  const res = releaseLease(raced, 'it01', true);
+  assert.ok('notHeldBy' in res && res.lease?.holder === 'd');
+  assert.equal(foldLeases(rows).get('it01')?.holder, 'd');
 });
 
 test('a closing row, or the holder\'s unlease, frees the item; another window\'s unlease needs force', () => {
@@ -94,7 +127,7 @@ test('acquire writes one row when free, none when already ours with time left, a
   const again = acquireLease(memory('a', rows, 5), 'it01', { ttlMinutes: 30 });
   assert.ok(again.ok && !again.wrote);
   const b = acquireLease(memory('b', rows, 6), 'it01', { ttlMinutes: 30 });
-  assert.ok(!b.ok && b.lease.holder === 'a');
+  assert.ok(!b.ok && b.lease?.holder === 'a');
   assert.equal(rows.length, 1, 'a refusal writes nothing');
   const stolen = acquireLease(memory('b', rows, 7), 'it01', { ttlMinutes: 30, steal: true });
   assert.ok(stolen.ok);
@@ -116,7 +149,7 @@ test('a lease row that lost a race is ignored and the loser is told who won', ()
   let first = true;
   const stale = { ...ctx, readLedger: () => (first ? ((first = false), []) : rows) };
   const got = acquireLease(stale, 'it01', { ttlMinutes: 30 });
-  assert.ok(!got.ok && got.lease.holder === 'a');
+  assert.ok(!got.ok && got.lease?.holder === 'a');
 });
 
 test('release frees the holder\'s own lease, refuses another window without force, and reports no lease', () => {

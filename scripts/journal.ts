@@ -76,7 +76,7 @@
  *   journal.ts retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
  *   journal.ts archive <stream>              hide a finished stream; refuses until retro + promotions are done
  *   journal.ts unarchive <stream>            bring an archived stream back, exactly
- *   journal.ts lease <id> [--ttl minutes] [--steal]         take or renew this window's lease on an open item (`start <id>` and `brief <id>` take it too); another window's live lease refuses with exit 1 and "leased by <window> until <time>" unless --steal; any row the holder writes renews it, `done`/`drop`/`resolve` ends it, `release <id> [--force]` frees it, and it lapses after `lease_ttl_minutes` (default 60) of the holder's silence
+ *   journal.ts lease <id> [--ttl minutes] [--steal [window]]         take or renew this window's lease on an open item (`start <id>` and `brief <id>` take it too); another window's live lease refuses with exit 1 and "leased by <window> until <time>" unless --steal [window] (it takes the lease only from the window it names; bare --steal names whoever holds it when read); any row the holder writes renews it, `done`/`drop`/`resolve` ends it, `release <id> [--force [--from <window>]]` frees it, and it lapses after `lease_ttl_minutes` (default 60) of the holder's silence
  *   journal.ts claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]   take an exclusive repo lock (Claims/<repo>.lock)
  *   journal.ts release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
@@ -605,27 +605,36 @@ function cmdStart(): void {
 const leaseCtx = () => ({ readLedger, append: (row: LedgerRow) => append(row), window: windowId, now, dryRun });
 const leaseTtl = (): number => (arg('ttl') && Number(arg('ttl')) > 0 ? Number(arg('ttl')) : LEASE_TTL_MINUTES);
 
-/** Take this window's lease on an item, or exit 1 naming the window that holds it (`--steal` takes it anyway). Prints nothing when it is taken. */
+/** What `--steal` asks for: a window id (`--steal <window>`, take it only from that holder), `true` (bare `--steal`, from whoever holds it now) or undefined. */
+const stealOpt = (): boolean | string | undefined => arg('steal') ?? (has('steal') ? true : undefined);
+
+/** Take this window's lease on an item, or exit 1 naming the window that holds it (`--steal [window]` takes it from the holder). Prints nothing when it is taken. */
 function takeLease(id: string): void {
-    const got = acquireLease(leaseCtx(), id, { ttlMinutes: leaseTtl(), steal: has('steal') });
-    if (!got.ok) refuseLeased(id, got.lease);
+    const got = acquireLease(leaseCtx(), id, { ttlMinutes: leaseTtl(), steal: stealOpt() });
+    if (!got.ok) refuseLeased(id, got.lease, got.expected);
 }
 
-function refuseLeased(id: string, lease: Parameters<typeof describeLease>[0]): never {
-    console.error(`${id} is ${describeLease(lease)}. Nothing was written. Work another item, wait for the lease to lapse, or pass --steal to take it.`);
+function refuseLeased(id: string, lease: Parameters<typeof describeLease>[0] | undefined, expected?: string): never {
+    if (expected !== undefined) {
+        console.error(`${id} is ${lease ? describeLease(lease) : 'not leased'}, not by ${expected}. Nothing was written (a steal only takes the lease from the window it names). Re-read who holds it and name that window, or pass a bare --steal.`);
+    } else {
+        console.error(`${id} is ${lease ? describeLease(lease) : 'not leased'}. Nothing was written. Work another item, wait for the lease to lapse, or pass --steal${lease ? ` ${lease.holder}` : ''} to take it.`);
+    }
     process.exit(1);
 }
 
-/** Exit 1 before anything is built or written when another window holds a live lease on the item (the write itself is `takeLease`). */
+/** Exit 1 before anything is built or written when another window holds a live lease on the item (or a named steal's target does not); the write itself is `takeLease`. */
 function refuseIfLeasedByOther(id: string, entries: LedgerRow[]): void {
     const held = liveLease(foldLeases(entries), id, Date.now());
-    if (held && held.holder !== windowId && !has('steal')) refuseLeased(id, held);
+    const steal = stealOpt();
+    if (typeof steal === 'string' && held?.holder !== steal) refuseLeased(id, held, steal);
+    if (held && held.holder !== windowId && !steal) refuseLeased(id, held);
 }
 
 /** `lease <id> [--ttl minutes] [--steal]`: take or renew the lease on an open item, so no other window starts it. */
 function cmdLease(): void {
     const target = itemNamedByArg(fold(readLedger()).items);
-    if (!target) die('Usage: journal.ts lease <id> [--ttl minutes] [--steal]   (an open item id)');
+    if (!target) die('Usage: journal.ts lease <id> [--ttl minutes] [--steal [window]]   (an open item id)');
     if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open item can be leased.`);
     takeLease(target.id as string);
     const lease = liveLease(foldLeases(readLedger()), target.id as string, Date.now());
@@ -635,7 +644,8 @@ function cmdLease(): void {
 /** `release <id>` for an item lease: free it (the holder's own; `--force` for another window's). Returns false when `<id>` is not an item with a live lease, so `release <repo>` runs instead. */
 function releaseItemLease(id: string): boolean {
     if (existsSync(claimPath(id)) || !foldLeases(readLedger()).has(id)) return false;
-    const res = releaseLease(leaseCtx(), id, has('force'));
+    const res = releaseLease(leaseCtx(), id, has('force') ? (arg('from') ?? true) : false);
+    if ('notHeldBy' in res) die(`${id} is ${res.lease ? describeLease(res.lease) : 'not leased'}, not by ${res.notHeldBy}. Nothing was freed (a forced release only frees the window it names).`);
     if ('heldBy' in res) die(`${id} is ${describeLease(res.heldBy)}; only that window can release it, or pass --force.`);
     if ('none' in res) die(`${id} has no live lease.`);
     if (!dryRun) render(true);

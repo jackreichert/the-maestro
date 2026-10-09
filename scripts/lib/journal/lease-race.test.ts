@@ -11,7 +11,7 @@ import { foldLeases } from './leases.ts';
 
 const WORKER = new URL('./lease-race-worker.ts', import.meta.url).pathname;
 const ITEMS = 25;
-const STEAL_ITEMS = 2;   // wide slots (1.5 s) so every stealer reads before any steal lands
+const STEAL_ITEMS = 4;
 
 function runWorker(vault: string, window: string, startAt: number, items = ITEMS, mode?: string): Promise<{ window: string; won: string[] }> {
     return new Promise((resolve, reject) => {
@@ -49,12 +49,12 @@ function seedHolder(vault: string): void {
     }
 }
 
-for (const windows of [2, 4, 6]) {
+for (const windows of [2, 4, 8]) {
     for (let round = 1; round <= 3; round++) {
-        test(`${windows} processes stealing ${STEAL_ITEMS} held items (round ${round}): each item has exactly one winner, and it is the holder the ledger folds to`, async () => {
+        test(`${windows} processes stealing ${STEAL_ITEMS} held items by naming the holder (round ${round}): each item has exactly one winner, and it is the holder the ledger folds to`, async () => {
             const vault = mkdtempSync(join(tmpdir(), 'lease-steal-'));
             seedHolder(vault);
-            const startAt = Date.now() + 4000;
+            const startAt = Date.now() + 2500;
             const names = Array.from({ length: windows }, (_, i) => `s${i}`);
             const results = await Promise.all(names.map((w) => runWorker(vault, w, startAt, STEAL_ITEMS, 'steal')));
             const held = foldLeases(openStore({ vault, project: 'race', dryRun: false }).readLedger());
