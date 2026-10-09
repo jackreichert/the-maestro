@@ -155,7 +155,7 @@ import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn,
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
-import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
+import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, createExclusive, writeHandoffSeries, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
@@ -1725,6 +1725,9 @@ function cmdBackfill() {
 /** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
 const oneLineArg = (name: string): string => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
 
+/** The sentence naming handoff files another window created first, or '' when none was skipped. */
+const takenNote = (taken: string[]): string => (taken.length ? ` (${taken.join(', ')} already existed from another window; wrote the next free name)` : '');
+
 function cmdHandoff() {
     const { items } = fold(readLedger());
     const stream = has('all') ? null : existingStream(arg('stream'), items);
@@ -1739,8 +1742,9 @@ function cmdHandoff() {
         if (arg('learn') || arg('next') || has('update-context')) die('--delta writes only the changes; --learn, --next and --update-context belong on the first (full) handoff of the day.');
         const body = handoffDeltaText(handoffCtx(), stream, marker, series.prev);
         if (dryRun) { console.log(body); return; }
-        writeFileSync(path, body);
-        console.log(`wrote ${path} (delta since ${marker})`);
+        const written = writeHandoffSeries(dir, today(), streamSlug, basename(path), body);
+        if (!written) die(`--delta: handoff suffixes b..z for ${today()} are used up; start a fresh session.`);
+        console.log(`wrote ${join(dir, written.name)} (delta since ${marker})${takenNote(written.taken)}`);
         return;
     }
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
@@ -1749,9 +1753,18 @@ function cmdHandoff() {
     const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
     if (dryRun) { console.log(body); if (contextFile) console.log(`would point ${contextFile} at ${basename(path)}`); return; }
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, body);
-    console.log(`wrote ${path}`);
-    if (contextFile) updateContextLink(contextFile, path);
+    let finalPath = path;
+    if (has('force')) writeFileSync(path, body);
+    else if (arg('out')) { if (!createExclusive(path, body)) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`); }
+    else {
+        // Exclusive create: a window that rolled between the check above and this write keeps its file; this one takes the next suffix.
+        const written = writeHandoffSeries(dir, today(), streamSlug, basename(path), body);
+        if (!written) die(`handoff suffixes b..z for ${today()} are used up; start a fresh session.`);
+        finalPath = join(dir, written.name);
+        if (written.taken.length) console.log(takenNote(written.taken).trim());
+    }
+    console.log(`wrote ${finalPath}`);
+    if (contextFile) updateContextLink(contextFile, finalPath);
 }
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */

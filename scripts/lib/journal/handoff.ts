@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, linkSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { keptCounts } from '../../branch-sweep.ts';
 import { sessionLine } from '../../token-metrics.ts';
 import { BOX, classify, isStale, daysBetween } from '../boxes.ts';
@@ -154,6 +154,42 @@ export function handoffSeries(dir: string, date: string, slug: string): { prev: 
     const at = prev.slice(`HANDOFF-${date}`.length, -`-${slug}.md`.length);
     const letter = SUFFIXES[at ? SUFFIXES.indexOf(at) + 1 : 0];
     return { prev, next: letter ? `HANDOFF-${date}${letter}-${slug}.md` : null };
+}
+
+/**
+ * Creates `path` with `body` only when no file is there, and never leaves a half-written one: the body goes to a private temp
+ * file and is hard-linked into place, so the name appears whole or not at all, and `link(2)` fails with EEXIST when two
+ * windows race for it. Returns false when the name was taken (the file already there is untouched), true when it was created.
+ */
+export function createExclusive(path: string, body: string): boolean {
+    const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`);
+    writeFileSync(tmp, body, { flag: 'wx' });
+    try {
+        linkSync(tmp, path);
+        return true;
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+        throw e;
+    } finally {
+        unlinkSync(tmp);
+    }
+}
+
+/**
+ * Writes a handoff under the first free name in the day's series, starting at `firstName` (`HANDOFF-<date>[b..z]-<slug>.md`).
+ * A name another window took first is skipped, never overwritten. `name` is the file written; `taken` lists the names skipped
+ * because they already existed, so the caller can say so. Null when every suffix up to `z` is taken.
+ */
+export function writeHandoffSeries(dir: string, date: string, slug: string, firstName: string, body: string): { name: string; taken: string[] } | null {
+    const suffixes = ['', ...SUFFIXES];
+    const start = suffixes.findIndex((x) => `HANDOFF-${date}${x}-${slug}.md` === firstName);
+    const taken: string[] = [];
+    for (const suffix of suffixes.slice(Math.max(start, 0))) {
+        const name = `HANDOFF-${date}${suffix}-${slug}.md`;
+        if (createExclusive(join(dir, name), body)) return { name, taken };
+        taken.push(name);
+    }
+    return null;
 }
 
 /** The `generated_at` marker a handoff (full or delta) carries in its frontmatter, or null. */

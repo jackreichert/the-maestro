@@ -2509,6 +2509,25 @@ test('handoff frontmatter names the window that wrote it', () => {
     assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', file), 'utf8'), /\nwindow: testwin\ntype: handoff\n/);
 });
 
+test('two windows rolling a delta at the same moment each get their own file', async () => {
+    run('start', 'work', ...MARK);
+    assert.equal(run('handoff', '--all').code, 0);
+    const jdir = join(vault, 'Projects', 'test-proj', 'Journal');
+    const roll = (window: string) => new Promise<{ code: number | null; out: string }>((resolve) => {
+        const child = spawn(process.execPath, [SCRIPT, 'handoff', '--all', '--delta', '--window', window, '--vault', vault, '--project', 'test-proj'], {
+            cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        let out = '';
+        child.stdout.on('data', (d) => { out += d; });
+        child.on('close', (code) => resolve({ code, out }));
+    });
+    const results = await Promise.all(['wa', 'wb', 'wc'].map(roll));
+    assert.deepEqual(results.map((r) => r.code), [0, 0, 0]);
+    const deltas = readdirSync(jdir).filter((f) => /^HANDOFF-.*-all\.md$/.test(f)).sort();
+    assert.equal(deltas.length, 4, 'the first handoff and one file per window');
+    assert.deepEqual(deltas.slice(1).map((f) => /window: (\w+)/.exec(readFileSync(join(jdir, f), 'utf8'))?.[1]).sort(), ['wa', 'wb', 'wc'], 'each file holds its own window');
+});
+
 // ── learned ─────────────────────────────────────────────────────────────────
 
 const LEARNED = ['--kind', 'how-it-works', '--applies-to', 'fake-repo:fake-api:staging', '--evidence', 'docs/spec.md:12', '--verified-at', '2026-10-08 read the spec', '--confidence', 'observed'];
