@@ -1,5 +1,5 @@
-// Run: node --test scripts/branch-sweep.test.ts
-import { test } from 'node:test';
+// Cases for branch-sweep; run through branch-sweep.shard-N.test.ts (see lib/shard.ts)
+import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';

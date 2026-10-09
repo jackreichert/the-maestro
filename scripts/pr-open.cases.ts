@@ -1,5 +1,5 @@
-// Run: node --test scripts/pr-open.test.ts
-import { test } from 'node:test';
+// Cases for pr-open; run through pr-open.shard-N.test.ts (see lib/shard.ts)
+import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
@@ -53,7 +53,7 @@ const GOOD_BODY = [
 const bodyFile = (repo: string, text: string): string => { const p = join(repo, '..', `body-${Math.random().toString(36).slice(2)}.md`); writeFileSync(p, text); return p; };
 
 const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = [], env: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, GIT_TERMINAL_PROMPT: '0', ...env },
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file', ...env },
 });
 
 /** A throwaway user config file. Gate settings are read from this file, not from the environment. */
