@@ -8,7 +8,7 @@ import { describeSources, loadCharts, loadHome, loadLinkHosts, loadState } from 
 import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
-import { findByKey, focusKeyOf, openFolds, reopenFolds } from './keep-view.ts';
+import { findByKey, focusKeyOf, foldStates, restoreFolds } from './keep-view.ts';
 import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
@@ -311,9 +311,9 @@ export class PodiumApp extends HTMLElement {
     askState.prune(f.state.asks.map((a) => a.id));
     if (!this.#ids().includes(this.#active)) this.#active = OVERVIEW;   // the stream behind the open tab is gone
     const focused = this.#focusKey();
-    const folds = openFolds(this.#root);
+    const folds = foldStates(this.#root);
     this.#safeRender();
-    reopenFolds(this.#root, folds);   // the redraw closed every disclosure the reader had opened; open the same ones again
+    restoreFolds(this.#root, folds);   // the redraw reset every disclosure to its default; put each back as the reader left it
     if (focused) findByKey(this.#root, focused)?.focus?.();   // the redraw destroyed the element that had focus; put it back on its twin
   }
 
