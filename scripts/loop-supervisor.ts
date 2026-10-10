@@ -50,8 +50,6 @@ export interface SuperviseDeps {
   log: (line: string) => void;
   /** Called with the digest text after a successful save. A throw is logged; it does not stop the loop. */
   queueDigest?: (digest: string) => void;
-  /** Called once after every launch of the loop returns, before its wait: the text-alert policy (lib/alert-policy.ts). A throw is logged; it does not stop the loop. */
-  alertTick?: () => void;
   now?: () => number;
   maxRuns?: number;
 }
@@ -82,10 +80,9 @@ export function quietSleepSeconds(stdout: string, now: number): number | null {
 const lastLine = (text: string): string => text.trim().split('\n').pop() ?? '';
 
 /** The supervision loop. Returns only when `maxRuns` launches are done (never, in production). */
-export async function supervise({ runLoop, sleep, save, log, queueDigest, alertTick, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
+export async function supervise({ runLoop, sleep, save, log, queueDigest, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
   for (let runs = 0; runs < maxRuns; runs += 1) {
     const { code, stdout, stderr } = await runLoop();
-    if (alertTick) { try { alertTick(); } catch (err) { log(`alert tick failed: ${err instanceof Error ? err.message : String(err)}`); } }
     if (code === 10) {
       let saved = false;
       try { save(stdout); saved = true; } catch (err) { log(`could not save digest: ${err instanceof Error ? err.message : String(err)}`); log(`unsaved digest follows:\n${stdout.trimEnd()}`); await sleep(DELAYS.crash, 'backoff', 'could not save digest'); }
@@ -106,6 +103,32 @@ export async function supervise({ runLoop, sleep, save, log, queueDigest, alertT
       await sleep(DELAYS.crash, 'backoff', `exited ${code}: ${lastLine(stderr)}`);
     }
   }
+}
+
+export interface WaitDeps {
+  beat: (mode: HeartbeatMode, until: number, lastError: string) => void;
+  /** The text-alert policy (lib/alert-policy.ts). A throw is logged; it does not stop the wait. */
+  alertTick: () => void;
+  log: (line: string) => void;
+  now?: () => number;
+  /** Real sleep for the given seconds; replaced in tests. */
+  nap: (seconds: number) => Promise<void>;
+}
+
+/**
+ * The supervisor's `sleep`: every chunk writes the supervisor's own heartbeat, then runs the alert tick. The tick must come after the beat:
+ * right after the loop child exits, the newest heartbeat is the dead child's `run` beat and the lock is free, so health reads `down`
+ * even though the supervisor is about to relaunch it. A launch that is relaunched at once (exit 10) has no wait, so it has no tick.
+ */
+export function waitWithAlerts({ beat, alertTick, log, now = Date.now, nap }: WaitDeps): SuperviseDeps['sleep'] {
+  return (seconds, mode = 'idle', lastError = '') => sleepUntil(now() + seconds * 1000, {
+    now,
+    sleep: nap,
+    onChunk: (until) => {
+      beat(mode, until, lastError);
+      try { alertTick(); } catch (err) { log(`alert tick failed: ${err instanceof Error ? err.message : String(err)}`); }
+    },
+  });
 }
 
 /** The loop launched most recently while it runs, so a stop signal can reach it. */
@@ -211,9 +234,11 @@ async function main(): Promise<number> {
   stopOnSignals(EVENT_DIR);
   await supervise({
     runLoop: launch,
-    sleep: (s, mode = 'idle', error = '') => sleepUntil(Date.now() + s * 1000, {
-      sleep: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
-      onChunk: (until) => beat(mode, until, error),
+    sleep: waitWithAlerts({
+      beat,
+      alertTick: () => { runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now: Date.now(), entries: readInbox(EVENT_DIR), health: liveLoopHealth(), config: { quietHours: DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } }); },
+      log: (line) => console.error(stamped(line)),
+      nap: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
     }),
     save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); },
     log: (line) => console.error(stamped(line)),
@@ -221,7 +246,6 @@ async function main(): Promise<number> {
       vault: LEDGER_ROOT,
       project: CONTAINER_PROJECT,
     }),
-    alertTick: () => { runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now: Date.now(), entries: readInbox(EVENT_DIR), health: liveLoopHealth(), config: { quietHours: DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } }); },
     maxRuns: max > 0 ? max : Infinity,
   });
   return 0;
