@@ -43,6 +43,7 @@ test('pendingTransitions finds done items with an unrecorded tracker key, and tr
     const pending = pendingTransitions(ctxFor(), '2026-09-01');
     assert.deepEqual(pending.map((r) => [r.key, r.id]), [['FAKE-12', 'eeee']]);
     assert.deepEqual(trackerKeys('FAKE-12 and FAKE-12', 'see FAKE-3', undefined), ['FAKE-12', 'FAKE-3']);
+    assert.deepEqual(trackerKeys('MAESTRO-5 and MITHRIL-2 shipped FAKE-9'), ['FAKE-9'], 'local personal-repo keys have no tracker, so they never count');
     assert.match(defaultPendingSince(), /^\d{4}-\d{2}-\d{2}$/);
 });
 
