@@ -297,3 +297,17 @@ test('snapshotDirty counts a copy in the previous UTC date dir as current and wr
   assert.deepEqual({ copied: r.copied, current: r.current }, { copied: 0, current: 2 });
   assert.ok(!existsSync(join(today, 'w1', 'new.ts')));
 });
+
+test('snapshotDirty: a file reverted to yesterday\'s bytes after a same-day edit is recopied, so today\'s dir holds the newest version', () => {
+  const { container, wt } = repoWithDirt();
+  const yesterday = join(container, 'snaps', '2026-10-08');
+  const today = join(container, 'snaps', '2026-10-09');
+  const original = readFileSync(join(wt, 'new.ts'), 'utf8');
+  snapshotDirty(container, yesterday);
+  writeFileSync(join(wt, 'new.ts'), 'export const b = 22;\n');
+  snapshotDirty(container, today);
+  writeFileSync(join(wt, 'new.ts'), original);
+  const r = snapshotDirty(container, today);
+  assert.equal(r.copied, 1, 'the revert differs from today\'s copy, so it is copied');
+  assert.equal(readFileSync(join(today, 'w1', 'new.ts'), 'utf8'), original);
+});

@@ -128,7 +128,7 @@ function sameBytes(path: string, bytes: Buffer): boolean {
  * Copies dirty and untracked source of the active worktrees under `container/.worktrees` to `dest/<worktree>/<path>`.
  * Only regular files (never a symlink, whatever it points at) that pass `isSnapshotSource` and not `isSecretName`;
  * skips files over 1 MB and files whose text carries a secret or PHI shape (counted, never named by content). Idempotent:
- * a file whose bytes already sit at the same path in `dest` or in the sibling dir of the previous UTC date is counted in `current`
+ * a file whose bytes already sit at the same path in `dest`, or in the sibling dir of the previous UTC date when `dest` has no copy there yet, is counted in `current`
  * and not copied (byte compare, since copyFileSync does not keep mtime); only copied bytes count toward the caps.
  * Stops at 300 files or 20 MB (`capped` is then true) or at `deadline` (epoch ms; `partial` is then true). `dest`'s parent gets a `.gitignore` of `*`,
  * so a snapshots folder inside a repo can never be committed. Never throws for one bad worktree.
@@ -137,7 +137,7 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
     const root = join(container, '.worktrees');
     const result: SnapshotResult = { worktrees: 0, files: 0, copied: 0, current: 0, skipped: 0, dest, partial: false, capped: false };
     let total = 0;
-    const held = [dest, previousDayDir(dest)].filter((d): d is string => d !== null);
+    const previous = previousDayDir(dest);
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(join(dirname(dest), '.gitignore'), '*\n');
     for (const name of existsSync(root) ? readdirSync(root).sort() : []) {
@@ -157,7 +157,10 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
             let hasShape = false;
             try { bytes = readFileSync(src); hasShape = scanText(bytes.toString('utf8')).length > 0; } catch { hasShape = true; }
             if (hasShape || !bytes) { result.skipped++; continue; }
-            if (held.some((d) => sameBytes(join(d, name, p), bytes))) { result.current++; continue; }
+            // Today's copy decides when there is one; yesterday's only stands in when today has nothing at this path.
+            const mine = join(dest, name, p);
+            const prev = previous ? join(previous, name, p) : null;
+            if (sameBytes(mine, bytes) || (!existsSync(mine) && prev !== null && sameBytes(prev, bytes))) { result.current++; continue; }
             if (result.copied >= SNAPSHOT_MAX_FILES || total + size > SNAPSHOT_MAX_TOTAL_BYTES) { result.skipped++; result.capped = true; continue; }
             mkdirSync(dirname(join(dest, name, p)), { recursive: true });
             copyFileSync(src, join(dest, name, p));
