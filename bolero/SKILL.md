@@ -7,7 +7,7 @@ description: Bolero, the-maestro's standing iterative mode for working a queue o
 
 **Load when** the user hands over a queue and wants it worked to the end, not one item at a time. Otherwise the generic the-maestro files are enough.
 
-Bolero is a loop: scout the whole queue read-only, group it into lanes, dispatch one writer per lane (one writer per worktree), advance each time an agent reports, merge the finished feature branches locally on an integration branch to test them together, then take the next slice, and stop only when nothing is left that can move.
+Bolero is a loop: scout the whole queue read-only, group it into lanes, dispatch one writer per lane (one writer per worktree), advance each time an agent reports, and merge finished feature branches onto a local integration branch only when that stream has a standing approval to merge locally, then take the next slice, and stop only when nothing is left that can move.
 
 The name is the musical form: one short theme repeated, each pass adding voices. Every pass is the same small procedure, and every pass runs more lanes at once than the last.
 
@@ -33,7 +33,7 @@ flowchart TD
   S --> L[Group into lanes: lanes plan]
   L --> D[Dispatch one writer per lane; parallel lanes each get a worktree]
   D --> W{Agent completion notification}
-  W -->|headline relayed, ledger updated| M[Merge the finished branch on the integration branch, run the suite]
+  W -->|headline relayed, ledger updated| M[If standing approval, merge on the integration branch and run the suite]
   M --> N{Anything left that can move?}
   N -->|yes: next slice| L
   N -->|no| B[Stop: ask once, with the stakes]
@@ -45,7 +45,7 @@ flowchart TD
 | 2. Scout | Read-only agent: Haiku for listings and sweeps, Sonnet when it must read and size code | One scout per queue or per repo, capped at about 10 tool calls or 5 minutes, recommending the stage-2 shape ([reference/dispatch.md:160-183](../reference/dispatch.md)). The orchestrator never greps the repos itself ([SKILL.md:24](../SKILL.md)). |
 | 3. Lanes | Orchestrator | Turn the scout's findings into the lanes plan ([lanes-template.md](lanes-template.md)): which items share files, which depend on which, which are independent. |
 | 4. Dispatch | Orchestrator launches; Sonnet writes | One writer per lane (a worktree each when lanes run in parallel), independent lanes launched in a single message so they run concurrently ([cost/budget.md:56-57](../cost/budget.md)). The brief is the eight fields plus the standing block printed by `scripts/brief-block.ts` ([reference/brief.md:8-30](../reference/brief.md)). Opus only for a design call or a bug-finding review ([cost/budget.md:20-21](../cost/budget.md)). |
-| 5. Advance | Orchestrator | On each completion notification, and only then: relay the headline, update the ledger, merge the finished branch on the integration branch, run the suite, and dispatch the next slice that is now unblocked. |
+| 5. Advance | Orchestrator | On each completion notification, and only then: relay the headline, update the ledger, merge the finished branch on the integration branch only when that stream has a standing approval (otherwise ask once), run the suite, and dispatch the next slice that is now unblocked. |
 | 6. Repeat | Orchestrator | Back to step 1 for the next slice, until a stop condition holds. |
 
 The orchestrator dispatches and decides; scouts only read; writers only write inside their worktree and scope. A reviewer is a fresh agent, never the one that wrote the code.
@@ -133,7 +133,7 @@ A session had two streams of queued tickets: ten slices of one plan for a toolin
 1. **Scout first.** One Haiku scout listed the tooling queue and checked each item live (open PR, not superseded, no decision outstanding). One Sonnet scout read the integration stream's tickets, branches and PR states and found that most items were already merged and the rest were blocked on an external allowlist.
 2. **Lanes.** The tooling slices that all touch one script were sequenced into a single lane; the slices on separate files became their own lanes. The integration stream had no lane that could move, only a read-only diagnosis, which was dispatched as a Haiku run.
 3. **Dispatch.** One Sonnet writer per lane, each parallel lane in its own worktree, each brief carrying the printed standing block and the files other lanes were changing.
-4. **Advance.** Each completion notification produced a headline relay, a ledger `done`, a merge of that branch on `local/integration-<stream>`, a full suite run, and the next unblocked slice. Findings noticed in passing became their own tickets.
+4. **Advance.** Each completion notification produced a headline relay, a ledger `done`, a merge of that branch on `local/integration-<stream>` because that stream had a standing approval to merge locally, a full suite run, and the next unblocked slice. Findings noticed in passing became their own tickets.
 5. **Stop.** The loop paused only on the allowlist, an external dependency, with one question to the user stating what it unlocked, while the tooling lanes kept moving.
 
 Only the shape is reproduced here; ids and names stay in the ledger.

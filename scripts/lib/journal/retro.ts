@@ -24,7 +24,7 @@ export interface RetroContext {
 }
 
 export const PR_WORDS = /\bPRs?\b|pull request|release|#\d{2,}/i;
-export const LEARNING = /learned|lesson|ruled out|cause/i;
+export const LEARNING = /learned|lesson|ruled out/i;
 export const TICKET_ID = /\b(?:[A-Za-z][A-Za-z0-9]*-)+\d{1,5}\b/g;
 
 /** Ticket status through ledger-index.ts (the derived index); null when the index cannot be read. */

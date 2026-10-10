@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, linkSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { keptCounts } from '../../branch-sweep.ts';
 import { sessionLine } from '../../token-metrics.ts';
 import { BOX, classify, isStale, daysBetween } from '../boxes.ts';
@@ -16,7 +16,7 @@ import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
 import type { BoardContext } from './board.ts';
 
 /** What the handoff draft reads from the run: the ledger, its fold, the clock and the transcript directory for the session line. */
-export interface HandoffContext { fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string; /** Every standing pickup with its runtime status, as lines (the same block `prime` prints, whole). */ standing?: () => string[]; /** Every standing pickup with its status; the non-routine ones are listed under Commitments and conditions. */ states?: () => RowState[] }
+export interface HandoffContext { /** The window writing the handoff; recorded in its frontmatter when set. */ window?: string; fold: BoardContext['fold']; readLedger: () => LedgerRow[]; today: () => string; claudeProjectsDir: string; /** Every standing pickup with its runtime status, as lines (the same block `prime` prints, whole). */ standing?: () => string[]; /** Every standing pickup with its status; the non-routine ones are listed under Commitments and conditions. */ states?: () => RowState[] }
 /** A PR, ref, ticket or path an item mentions. */
 export interface Artifact { kind: string; v: string }
 type KeptWorktree = { path: string; repo: string; reason: string };
@@ -97,7 +97,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
     const one = (kind: string): string[] => arts.filter((a) => a.kind === kind).map((a) => a.v);
 
     return [
-        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `generated_at: ${generatedAt}`, `since: ${since}`, 'type: handoff', '---', '',
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${d}`, `generated_at: ${generatedAt}`, `since: ${since}`, ...(ctx.window ? [`window: ${ctx.window}`] : []), 'type: handoff', '---', '',
         `# ${stream ?? 'All streams'} handoff, ${d}`, '',
         '> Scaffolded by `journal.ts handoff` from the ledger. Sections 1, 3 and 4 are derived (4 from boxes 4 and 5: questions for the user, and paste blocks with their files); 2 and 5 need the author. A fresh session runs `journal.ts resume`, and calls `ListAgents` itself.', '',
         '## Session metrics', '', sessionLine(CLAUDE_PROJECTS_DIR), '',
@@ -156,6 +156,42 @@ export function handoffSeries(dir: string, date: string, slug: string): { prev: 
     return { prev, next: letter ? `HANDOFF-${date}${letter}-${slug}.md` : null };
 }
 
+/**
+ * Creates `path` with `body` only when no file is there, and never leaves a half-written one: the body goes to a private temp
+ * file and is hard-linked into place, so the name appears whole or not at all, and `link(2)` fails with EEXIST when two
+ * windows race for it. Returns false when the name was taken (the file already there is untouched), true when it was created.
+ */
+export function createExclusive(path: string, body: string): boolean {
+    const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`);
+    writeFileSync(tmp, body, { flag: 'wx' });
+    try {
+        linkSync(tmp, path);
+        return true;
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+        throw e;
+    } finally {
+        unlinkSync(tmp);
+    }
+}
+
+/**
+ * Writes a handoff under the first free name in the day's series, starting at `firstName` (`HANDOFF-<date>[b..z]-<slug>.md`).
+ * A name another window took first is skipped, never overwritten. `name` is the file written; `taken` lists the names skipped
+ * because they already existed, so the caller can say so. Null when every suffix up to `z` is taken.
+ */
+export function writeHandoffSeries(dir: string, date: string, slug: string, firstName: string, body: string): { name: string; taken: string[] } | null {
+    const suffixes = ['', ...SUFFIXES];
+    const start = suffixes.findIndex((x) => `HANDOFF-${date}${x}-${slug}.md` === firstName);
+    const taken: string[] = [];
+    for (const suffix of suffixes.slice(Math.max(start, 0))) {
+        const name = `HANDOFF-${date}${suffix}-${slug}.md`;
+        if (createExclusive(join(dir, name), body)) return { name, taken };
+        taken.push(name);
+    }
+    return null;
+}
+
 /** The `generated_at` marker a handoff (full or delta) carries in its frontmatter, or null. */
 export function handoffMarker(file: string): string | null {
     return readFileSync(file, 'utf8').match(/^generated_at: (\S+)$/m)?.[1] ?? null;
@@ -180,7 +216,7 @@ export function handoffDeltaText(ctx: HandoffContext, stream: string | null, mar
     const line = (i: LedgerItem, tag: string): string => `- \`${i.id}\` [${tag}] ${clip(itemText(i), 200)}${meta(i) ? ` — ${meta(i)}` : ''}`;
     const list = (rows: string[]): string[] => (rows.length ? rows : ['_none_']);
     return [
-        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${ctx.today()}`, `generated_at: ${generatedAt}`, `delta_of: ${prevName.replace(/\.md$/, '')}`, `since_ts: ${marker}`, 'type: handoff-delta', '---', '',
+        '---', 'status: draft', `stream: ${stream ?? 'all'}`, `generated: ${ctx.today()}`, `generated_at: ${generatedAt}`, `delta_of: ${prevName.replace(/\.md$/, '')}`, `since_ts: ${marker}`, ...(ctx.window ? [`window: ${ctx.window}`] : []), 'type: handoff-delta', '---', '',
         `# ${stream ?? 'All streams'} handoff delta, ${ctx.today()}`, '',
         `> Only what changed since [[${prevName.replace(/\.md$/, '')}]] (${marker}). Read that first; this does not repeat it. It lists new items, completions and new open asks only; an older ask resolved since is not shown.`, '',
         '## Session metrics', '', sessionLine(ctx.claudeProjectsDir), '',

@@ -7,9 +7,35 @@ export interface Window { since: string; until: string }
 /** What approvalsWindow reads from the run: the flags, the clock, and the usage-error exit. */
 export interface WindowContext { arg: Args['arg']; has: Args['has']; die: (message: string) => never; today: () => string }
 /** One grant in the digest, reported under the latest row that touched it. */
-export interface Grant { id?: string; date?: string; text?: string; scope: unknown; refs: string[]; taggedBy?: string }
+export interface Grant { id?: string; date?: string; text?: string; scope: unknown; refs: string[]; taggedBy?: string; reversal?: boolean }
 export interface UntaggedDecision { id?: string; date?: string; text?: string; repo?: string }
-export interface Digest { standing: Grant[]; oneOff: Grant[]; untagged: UntaggedDecision[] }
+export interface Digest { standing: Grant[]; oneOff: Grant[]; untagged: UntaggedDecision[]; reversals: Grant[] }
+
+/**
+ * Management 3.0 delegation levels, low to high. A proposal suggests the next level only, never a jump.
+ * tell, sell, consult, agree, advise, inquire, delegate.
+ */
+// tell, sell, consult, agree, advise, inquire, delegate
+export const DELEGATION_LEVELS = ['tell', 'sell', 'consult', 'agree', 'advise', 'inquire', 'delegate'] as const;
+export type DelegationLevel = (typeof DELEGATION_LEVELS)[number];
+
+/** One-off approvals with no reversal required before an area is proposed. */
+export const PROPOSAL_THRESHOLD = 3;
+
+/**
+ * Hard limits. Fixed at tell and never proposed, whatever the approval counts.
+ * Area names in the input — not loaded from rule files.
+ */
+export const HARD_LIMIT_AREAS = ['protected branches', 'attribution', 'secrets', 'frozen tracker labels'] as const;
+
+/** A decision area and its current level. Hard-limit names are fixed at tell even if a caller says otherwise. */
+export interface DecisionArea { name: string; level: DelegationLevel }
+/** One approval row that counts toward a proposal. `id` is the id already on the row. */
+export interface ApprovalEvidence { id: string; area: string; kind: 'one-off' | 'reversal'; date?: string }
+/** A suggestion to move one area to the next level, citing the one-off approval ids that qualified it. */
+export interface DelegationProposal { area: string; from: DelegationLevel; to: DelegationLevel; evidence: string[] }
+/** Inclusive bounds. `now` is injected; the function does not read the clock. */
+export interface ProposalBounds { since: string; now: string }
 /** A row that grants or tags a grant: the row it is about, the fields it sets, and the tag row when it is one. */
 interface GrantEvent { subject: LedgerRow; fields: LedgerRow; tag?: LedgerRow }
 
@@ -54,6 +80,7 @@ export function approvalsWindow(ctx: WindowContext): Window {
  * latest event that sets a field wins it, `scope` and `refs` carry over until replaced, and the entry
  * is reported under the latest event's row. A grant is in the window when any of its rows or tags is.
  * Untagged: `decision` rows that no approval touches.
+ * A row with `reversal: true` is a reversal of its scope. It blocks a delegation proposal and is not evidence for one.
  */
 export function collectApprovals(entries: LedgerRow[], { since, until }: Window): Digest {
     const byId = new Map<string, LedgerRow>();
@@ -70,23 +97,146 @@ export function collectApprovals(entries: LedgerRow[], { since, until }: Window)
     }
     const inWindow = (d: unknown): boolean => String(d || '') >= since && String(d || '') <= until;
     const lastSet = (list: GrantEvent[], field: string): unknown => list.map((ev) => ev.fields[field]).filter((v) => (Array.isArray(v) ? v.length : v)).pop();
-    const out: Digest = { standing: [], oneOff: [], untagged: [] };
+    const out: Digest = { standing: [], oneOff: [], untagged: [], reversals: [] };
     const bucket = new Map<string, Grant[]>([['standing', out.standing], ['one-off', out.oneOff]]);
     for (const list of events.values()) {
         const latest = list[list.length - 1].subject;
         if (!list.some((ev) => inWindow(ev.subject.date) || inWindow(ev.fields.date))) continue;
-        bucket.get(String(lastSet(list, 'approval')))?.push({ id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'), refs: (lastSet(list, 'refs') || []) as string[], taggedBy: list.filter((ev) => ev.tag).pop()?.tag?.id });
+        const reversal = lastSet(list, 'reversal') === true;
+        bucket.get(String(lastSet(list, 'approval')))?.push({
+            id: latest.id, date: latest.date, text: latest.text, scope: lastSet(list, 'scope'),
+            refs: (lastSet(list, 'refs') || []) as string[], taggedBy: list.filter((ev) => ev.tag).pop()?.tag?.id,
+            ...(reversal ? { reversal } : {}),
+        });
     }
     for (const e of entries) {
         if (e.id && !e.annotates && e.kind === 'decision' && !e.pending && !e.closes && !events.has(e.id) && inWindow(e.date)) out.untagged.push({ id: e.id, date: e.date, text: e.text, repo: e.repo });
+        if (e.id && !e.annotates && e.reversal === true && inWindow(e.date)) out.reversals.push({ id: e.id, date: e.date, text: e.text, scope: e.scope, refs: (Array.isArray(e.refs) ? e.refs : []) as string[], reversal: true });
+    }
+    for (const grant of [...out.standing, ...out.oneOff]) {
+        if (grant.reversal && grant.id && !out.reversals.some((row) => row.id === grant.id)) out.reversals.push(grant);
     }
     const byDate = (a: { date?: string }, b: { date?: string }): number => String(a.date).localeCompare(String(b.date));
-    out.standing.sort(byDate); out.oneOff.sort(byDate); out.untagged.sort(byDate);
+    out.standing.sort(byDate); out.oneOff.sort(byDate); out.untagged.sort(byDate); out.reversals.sort(byDate);
     return out;
 }
 
-export function approvalsText(g: Digest, { since, until }: Window, week: string, today: () => string): string {
+const isLevel = (value: string): value is DelegationLevel => (DELEGATION_LEVELS as readonly string[]).includes(value);
+
+/** Hard-limit names match after trim, ignoring case, so a differently cased row cannot be proposed. */
+export function isHardLimit(area: string): boolean {
+    const name = area.trim().toLowerCase();
+    return HARD_LIMIT_AREAS.some((limit) => limit.toLowerCase() === name);
+}
+
+/** The next delegation level, or undefined at `delegate`. Never skips a level. */
+export function nextDelegationLevel(level: DelegationLevel): DelegationLevel | undefined {
+    const i = DELEGATION_LEVELS.indexOf(level);
+    return i >= 0 && i < DELEGATION_LEVELS.length - 1 ? DELEGATION_LEVELS[i + 1] : undefined;
+}
+
+const areaName = (scope: unknown): string => (typeof scope === 'string' ? scope.trim() : '');
+
+const inProposalBounds = (date: string | undefined, bounds: ProposalBounds): boolean => {
+    const d = date ?? '';
+    return d >= bounds.since && d <= bounds.now;
+};
+
+/**
+ * Areas that can move up one delegation level. An area qualifies with `PROPOSAL_THRESHOLD` or more
+ * one-off approvals and zero reversals inside `bounds` (inclusive). Evidence ids are copied from the
+ * rows; none are invented. Hard limits stay at tell and are never proposed. `bounds.now` is injected.
+ */
+export function proposeDelegations(
+    areas: readonly DecisionArea[],
+    evidence: readonly ApprovalEvidence[],
+    bounds: ProposalBounds,
+): DelegationProposal[] {
+    const levelOf = new Map<string, DelegationLevel>();
+    for (const area of areas) {
+        const name = area.name.trim();
+        if (!name || levelOf.has(name) || isHardLimit(name) || !isLevel(area.level)) continue;
+        levelOf.set(name, area.level);
+    }
+    const oneOffIds = new Map<string, string[]>();
+    const reversed = new Set<string>();
+    const ordered = [...evidence].sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.id.localeCompare(b.id));
+    for (const row of ordered) {
+        const area = row.area.trim();
+        if (!area || !row.id || !inProposalBounds(row.date, bounds)) continue;
+        if (row.kind === 'reversal') { reversed.add(area); continue; }
+        if (row.kind !== 'one-off' || isHardLimit(area)) continue;
+        const ids = oneOffIds.get(area) ?? [];
+        if (!ids.includes(row.id)) ids.push(row.id);
+        oneOffIds.set(area, ids);
+    }
+    const proposals: DelegationProposal[] = [];
+    for (const [area, from] of levelOf) {
+        if (reversed.has(area) || isHardLimit(area)) continue;
+        const ids = oneOffIds.get(area) ?? [];
+        if (ids.length < PROPOSAL_THRESHOLD) continue;
+        const to = nextDelegationLevel(from);
+        if (!to) continue;
+        proposals.push({ area, from, to, evidence: ids });
+    }
+    proposals.sort((a, b) => a.area.localeCompare(b.area));
+    return proposals;
+}
+
+function evidenceFrom(g: Digest): ApprovalEvidence[] {
+    const out: ApprovalEvidence[] = [];
+    const seen = new Set<string>();
+    const add = (row: Grant, kind: ApprovalEvidence['kind']) => {
+        const area = areaName(row.scope);
+        if (!area || !row.id || seen.has(`${kind}\0${row.id}`)) return;
+        seen.add(`${kind}\0${row.id}`);
+        out.push({ id: row.id, area, kind, date: row.date });
+    };
+    for (const row of g.oneOff) add(row, row.reversal ? 'reversal' : 'one-off');
+    for (const row of g.standing) if (row.reversal) add(row, 'reversal');
+    for (const row of g.reversals ?? []) add(row, 'reversal');
+    return out;
+}
+
+/** Caller-supplied levels win. Scopes on one-off rows default to tell so the digest can propose one step without a stored level. */
+function areasFor(g: Digest, given: readonly DecisionArea[]): DecisionArea[] {
+    const out: DecisionArea[] = [];
+    const seen = new Set<string>();
+    for (const area of given) {
+        const name = area.name.trim();
+        if (!name || seen.has(name) || isHardLimit(name) || !isLevel(area.level)) continue;
+        seen.add(name);
+        out.push({ name, level: area.level });
+    }
+    for (const row of evidenceFrom(g)) {
+        if (row.kind !== 'one-off' || seen.has(row.area) || isHardLimit(row.area)) continue;
+        seen.add(row.area);
+        out.push({ name: row.area, level: 'tell' });
+    }
+    return out;
+}
+
+function proposalEnd(window: Window, today: () => string): string {
+    const now = today();
+    return window.until < now ? window.until : now;
+}
+
+function delegationSection(g: Digest, window: Window, today: () => string, areas: readonly DecisionArea[]): string[] {
+    const proposals = proposeDelegations(areasFor(g, areas), evidenceFrom(g), { since: window.since, now: proposalEnd(window, today) });
+    const lines = proposals.map((p) => `- \`${p.area}\` ${p.from} -> ${p.to} (evidence: ${p.evidence.map((id) => `\`${id}\``).join(', ')})`);
+    return [
+        '## Delegation proposals', '',
+        'Hard limits stay at tell and are never proposed.', '',
+        ...HARD_LIMIT_AREAS.map((name) => `- \`${name}\` fixed at tell`), '',
+        `Areas with ${PROPOSAL_THRESHOLD} or more one-off approvals and no reversal in the window. The suggestion is the next level only.`, '',
+        'Levels, low to high: tell, sell, consult, agree, advise, inquire, delegate.', '',
+        ...(lines.length ? lines : ['_none_']), '',
+    ];
+}
+
+export function approvalsText(g: Digest, { since, until }: Window, week: string, today: () => string, areas: readonly DecisionArea[] = []): string {
     const refLine = (a: Grant): string => (a.refs.length ? a.refs.join(', ') : 'none');
+    const window = { since, until };
     return [
         '---', 'type: review', 'status: draft', `week: ${week}`, `generated: ${today()}`, `since: ${since}`, `until: ${until}`, '---', '',
         `# Approvals review ${week}`, '',
@@ -101,6 +251,7 @@ export function approvalsText(g: Digest, { since, until }: Window, week: string,
         '## One-off approvals', '',
         'For awareness. No action needed.', '',
         ...(g.oneOff.length ? g.oneOff.map((a) => `- ${a.date} \`${a.id}\` ${clip(a.text, 200)} (ref: ${refLine(a)})`) : ['_none_']), '',
+        ...delegationSection(g, window, today, areas),
         '## Untagged decisions', '',
         'Decision rows with no approval tag. If any was the user granting permission, classify it with `journal.ts approve-tag <id> --approval standing|one-off`.', '',
         ...(g.untagged.length ? g.untagged.map((a) => `- ${a.date} \`${a.id}\` ${clip(a.text, 200)}`) : ['_none_']), '',

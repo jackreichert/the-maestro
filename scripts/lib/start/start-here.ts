@@ -8,7 +8,7 @@ import { askBits } from '../journal/ask-fields.ts';
 import { clip } from '../journal/format.ts';
 import type { Groups } from '../journal/board.ts';
 import type { LedgerItem } from '../ledger-core.ts';
-import { PRIORITIES_UNSET_LINE } from '../status-page/priorities.ts';
+import { PRIORITIES_UNSET_LINE, localDate } from '../status-page/priorities.ts';
 import type { PrioritiesState } from '../status-page/priorities.ts';
 import { weekLines } from '../status-page/week.ts';
 import type { WeekState } from '../status-page/week.ts';
@@ -18,8 +18,8 @@ export const START_MAX_LINES = 80;
 const OTHER = 'other';
 const NEEDS_TOP = 5;
 
-/** What a stream's tab holds, as counts; the notes themselves live on the tab. */
-export interface HomeCounts { context: boolean; decisions: boolean; plans: number; research: number; reviews: number; runbooks: number; epics: number; prs: number }
+/** What a stream's tab holds, as counts; the notes themselves live on the tab. `unreadable` is set when the notes could not be read, so the stream is reported rather than omitted. */
+export interface HomeCounts { context: boolean; decisions: boolean; plans: number; research: number; reviews: number; runbooks: number; epics: number; prs: number; unreadable?: string }
 export interface NeedRow { id: string; stream: string; text: string; ageDays: number | null; stakes: string }
 export interface FlightRow { id: string; stream: string; text: string; model?: string; since?: string; ticket?: string }
 export interface DoneRow { stream: string; count: number; items: { id: string; text: string }[] }
@@ -33,11 +33,16 @@ export interface StartHere {
   inFlight: FlightRow[]; queued: Record<string, number>;
   blocked: (FlightRow & { gate?: string })[];
   done: DoneRow[]; answered: AnsweredRow[];
-  /** Null when no vault root is set: the notes were not read, which is not the same as none. */
+  /** Null when no vault root is set: the notes were not read, which is not the same as none. A key with `unreadable` set could not be read and is still listed. */
   where: Record<string, HomeCounts> | null;
+  /** Null when the check did not run. `unchecked` is projects that could not be read, so `total` may be short. */
+  unreachableNotes: UnreachableNotes | null;
 }
 
-export interface StartOptions { day: string; week: WeekState; priorities: PrioritiesState; conditions: string[]; standing: string[]; where: Record<string, HomeCounts> | null; now: Date }
+/** Unreachable notes for the start view: a count, not the note list. */
+export interface UnreachableNotes { total: number; byStream: Record<string, number>; unchecked?: number }
+
+export interface StartOptions { day: string; week: WeekState; priorities: PrioritiesState; conditions: string[]; standing: string[]; where: Record<string, HomeCounts> | null; now: Date; unreachableNotes?: UnreachableNotes | null }
 
 const streamOf = (i: { stream?: string }): string => i.stream || OTHER;
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
@@ -47,6 +52,19 @@ const shift = (day: string, by: number): string => { const d = new Date(`${day}T
 export function previousWorkingDay(day: string): string {
   const dow = new Date(`${day}T00:00:00Z`).getUTCDay();
   return shift(day, dow === 1 ? -3 : dow === 0 ? -2 : -1);
+}
+
+/** The day the view is for: the local calendar day in `tz`, never the UTC date of `now`. */
+export function viewDay(now: Date, tz: string): string {
+  return localDate(now, tz);
+}
+
+const EMPTY_COUNTS = { context: false, decisions: false, plans: 0, research: 0, reviews: 0, runbooks: 0, epics: 0, prs: 0 };
+
+/** Counts for a stream whose notes could not be read. The reason is one line, so the view can name the stream instead of dropping it. */
+export function unreadableHome(reason: string): HomeCounts {
+  const why = reason.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return { ...EMPTY_COUNTS, unreadable: why || 'unreadable' };
 }
 
 /** What a stream's home base holds, as counts. */
@@ -83,7 +101,21 @@ export function buildStart(g: Groups, o: StartOptions): StartHere {
     done: doneStreams.map((s) => { const rows = doneRows.filter((d) => streamOf(d) === s); return { stream: s, count: rows.length, items: rows.map((d) => ({ id: d.id ?? '', text: d.text ?? '' })) }; }),
     answered: answered.map((a) => ({ id: a.id ?? '', stream: streamOf(a), asked: a.text ?? '', answer: a.closedBy?.text ?? '', date: a.closedBy?.date ?? '' })),
     where: o.where,
+    unreachableNotes: o.unreachableNotes ?? null,
   };
+}
+
+/** One line for the start view. A missing check is not the same as zero. */
+export function unreachableLine(n: UnreachableNotes | null, stream?: string): string {
+  if (!n) return 'Unreachable notes: not checked.';
+  if (stream) {
+    const hit = Object.entries(n.byStream).find(([k]) => same(k, stream));
+    return `Unreachable notes: ${hit ? hit[1] : 0} in ${stream}. journal.ts notes-check lists them.`;
+  }
+  const by = Object.entries(n.byStream).filter(([, c]) => c > 0).map(([k, c]) => `${k} ${c}`).join(', ');
+  const gap = n.unchecked ? ` ${n.unchecked} project${n.unchecked === 1 ? '' : 's'} could not be checked.` : '';
+  if (!n.total && !n.unchecked) return 'Unreachable notes: 0.';
+  return `Unreachable notes: ${n.total}${by ? ` (${by})` : ''}.${gap} journal.ts notes-check lists them.`;
 }
 
 interface Section { title: string; rows: string[]; more: string; cap?: number }
@@ -92,6 +124,7 @@ const ago = (iso: string | undefined, now: Date): string => { const d = ageDays(
 const tag = (stream: string): string => (stream === OTHER ? '' : ` [${stream}]`);
 
 function whereLine(stream: string, c: HomeCounts): string {
+  if (c.unreadable) return `- ${stream}: notes could not be read (${one(c.unreadable, 120)})`;
   const parts = [c.context ? 'CONTEXT' : 'no CONTEXT', c.decisions ? 'DECISIONS' : '', c.epics ? `${c.epics} epic${c.epics === 1 ? '' : 's'}` : '', c.plans ? `${c.plans} plans` : '', c.runbooks ? `${c.runbooks} runbooks` : '', c.research ? `${c.research} research` : '', c.reviews ? `${c.reviews} reviews` : '', c.prs ? `${c.prs} PRs` : ''];
   return `- ${stream}: ${parts.filter(Boolean).join(' · ')}`;
 }
@@ -126,7 +159,8 @@ export function startLines(s: StartHere, now: Date, opts: { stream?: string; max
   const secs = sections(s, now, opts.stream).filter((x) => x.rows.length || x.title.startsWith('Needs') || x.title.startsWith('In flight'));
   const shown = secs.map((x) => Math.min(x.rows.length, x.cap ?? x.rows.length));
   const head = [opts.stream ? `## Start here: ${opts.stream}` : '## Start here', '',
-    `${s.day}. Read this first; each block names where the full version is. Per stream: \`journal.ts start-here --stream <Stream>\`.`, ''];
+    `${s.day}. Read this first; each block names where the full version is. Per stream: \`journal.ts start-here --stream <Stream>\`.`,
+    unreachableLine(s.unreachableNotes, opts.stream), ''];
   const size = (): number => head.length + secs.reduce((n, x, k) => n + 2 + shown[k]! + (shown[k]! < x.rows.length ? 1 : 0), 0);
   while (size() > max) {
     const k = shown.reduce((best, n, i) => (n > shown[best]! ? i : best), 0);

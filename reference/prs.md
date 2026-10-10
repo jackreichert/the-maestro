@@ -215,6 +215,7 @@ node <scripts dir>/review-verdict.ts record --pr <owner/repo#N> --head <sha> --v
 
 - Enforced: `review-verdict.ts` refuses a verdict whose reviewer is the fixer, and `prs-snapshot.ts --ready` lists a PR holding a resolved review-bot thread under "not ready" until a SHIP IT is recorded for its current head commit. A push after the verdict, a NEEDS WORK, or an unknown head commit all hold it. Threads resolved by people do not trigger it.
 - Not enforced: that the reviewer was really fresh beyond the id differing, or that the review was good. The id is self-reported.
+- Not enforced: the reviewer's brief asks: do we need this? It reports `nearest existing mechanism: X, not enough because Y`, and names an alternative only after verifying it exists and does the job; a PR that rebuilds what a config, flag, helper or earlier PR already does is NEEDS WORK.
 - On NEEDS WORK the fixing agent (or a new one) fixes, and the cycle repeats on the new head; the loop stops when a round finds only nitpicks, not on a fixed count.
 - Switch: `rereview_gate`, on by default.
 
@@ -235,6 +236,14 @@ not be spent on what a bot could have caught.
 
 The [pr-watch event type](../scripts/event-types/pr-watch.ts) does the requesting: each check it adds `@copilot`
 as a reviewer on any open draft in a `copilot_orgs` owner that Copilot has neither reviewed nor been asked to review, once per PR.
+That rule is not enough alone: a push gives the PR a new head sha, Copilot re-reviews it only when the repo is set to review new pushes,
+and a PR that already has a Copilot review never gets asked again. So pr-watch also follows Copilot **per head sha** on every open PR
+in a `copilot_orgs` owner ([lib/copilot-follow.ts](../scripts/lib/copilot-follow.ts)): a new head that Copilot has neither a pending request nor a review for
+is requested once, after a 60 s grace. When the review lands pr-watch raises `COPILOT-REVIEW <PR> <sha>` with the unresolved bot thread count,
+and `COPILOT-LATE <PR> <sha>` when nothing came 15 minutes after the trigger (Copilot's measured latency: median 2.3 min, p90 3.2, max 12.6).
+Both are actionable except a clean review: handle the threads as below, and on `COPILOT-LATE` look at the PR before the user does (re-request by hand, or say Copilot is late).
+The delays are minimums measured on loop ticks, so pr-watch's 300 s floor is their granularity. Heads already there when this was switched on are adopted as told, not requested.
+`jackreichert/*` repos are outside `copilot_orgs` and never get any of this.
 Its threads then arrive as `THREAD` lines. Handle them with [the comment workflow](#the-comment-workflow)
 — verdicts drafted, fixes committed, bot threads resolved — without waiting for the user to ask.
 If the watch isn't registered, request it by hand when a draft in a `copilot_orgs` owner goes up:

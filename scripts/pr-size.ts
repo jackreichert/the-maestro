@@ -7,7 +7,12 @@
  * Reads `git diff --numstat -M -z <base>...<head>` (head defaults to HEAD), sorts each changed file
  * into code, test, config, docs or mechanical, and checks the code against two limits, whichever is
  * hit first: pr_max_code_files (default 5) and pr_max_code_lines (default 400, additions plus
- * deletions). Limits and path globs come from local-config.ts.
+ * deletions). Those two limits are read from the user config file only; an environment variable
+ * cannot change them. Path globs come from local-config.ts.
+ *
+ * Optional wide tier (off unless pr_wide_max_code_files exceeds pr_max_code_files): a PR also passes
+ * with up to pr_wide_max_code_files files when it stays within pr_wide_max_code_lines, which can never
+ * exceed pr_max_code_lines. With the tier off, output and verdicts are exactly the two-limit gate.
  *
  * The base resolves to `origin/<base>` when that remote ref exists (after a quiet, non-fatal
  * `git fetch origin <base>`), else the local ref, so a stale local branch cannot skew the count.
@@ -21,7 +26,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_TEST_GLOBS, PR_CONFIG_GLOBS, PR_DOCS_GLOBS, PR_MECHANICAL_GLOBS,
+  PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_WIDE_MAX_CODE_FILES, PR_WIDE_MAX_CODE_LINES, PR_TEST_GLOBS, PR_CONFIG_GLOBS, PR_DOCS_GLOBS, PR_MECHANICAL_GLOBS,
 } from './local-config.ts';
 
 /**
@@ -38,13 +43,18 @@ export type Classify = (file: ChangedFile) => Bucket;
 export interface Assessment {
   verdict: 'PASS' | 'FAIL';
   failures: string[];
-  limits: { maxFiles: number; maxLines: number };
+  /** Present only when the wide tier is enabled: which tier the PR fell into, null when it failed. */
+  tier?: 'normal' | 'wide' | null;
+  /** The wide limits appear only when the wide tier is enabled. */
+  limits: { maxFiles: number; maxLines: number; wideMaxFiles?: number; wideMaxLines?: number };
   code: { files: number; lines: number; paths: string[] };
   tests: { files: number; lines: number };
   config: { files: number; lines: number };
   docs: { files: number; lines: number };
   mechanical: { files: number; paths: string[] };
 }
+/** Size limits; the wide tier is on only when wideMaxFiles exceeds maxFiles, and its line limit is capped at maxLines. */
+export interface Limits { maxFiles: number; maxLines: number; wideMaxFiles?: number; wideMaxLines?: number }
 interface Options { repo: string; base: string; head: string; json: boolean }
 
 export const DEFAULT_GLOBS: Globs = {
@@ -126,21 +136,33 @@ export function parseNumstat(out: string): ChangedFile[] {
   return files;
 }
 
-/** Classifies files and applies the budget. Pure: returns the summary object the CLI prints. */
-export function assess(files: ChangedFile[], { maxFiles, maxLines, classify }: { maxFiles: number; maxLines: number; classify: Classify }): Assessment {
+/** Classifies files and applies the budget: the normal tier, or the wide tier when enabled. Pure: returns the summary object the CLI prints. */
+export function assess(files: ChangedFile[], { maxFiles, maxLines, wideMaxFiles = maxFiles, wideMaxLines = maxLines, classify }: Limits & { classify: Classify }): Assessment {
   const buckets: Record<Bucket, ChangedFile[]> = { code: [], test: [], config: [], docs: [], mechanical: [] };
   for (const f of files) buckets[classify(f)].push(f);
   const sum = (list: ChangedFile[]) => list.reduce((n, f) => n + f.added + f.deleted, 0);
   const codeFiles = buckets.code.length;
   const codeLines = sum(buckets.code);
+  const wideLines = Math.min(wideMaxLines, maxLines); // the wide tier can never allow more lines than the normal one
+  const wideOn = wideMaxFiles > maxFiles;
+  const normalFits = codeFiles <= maxFiles && codeLines <= maxLines;
+  const wideFits = wideOn && codeFiles <= wideMaxFiles && codeLines <= wideLines;
   const failures: string[] = [];
-  if (codeFiles > maxFiles) failures.push(`over budget: ${codeFiles} code files (max ${maxFiles})`);
-  if (codeLines > maxLines) failures.push(`over budget: ${codeLines} code lines (max ${maxLines})`);
+  if (wideOn) {
+    if (!normalFits && !wideFits) {
+      failures.push(`over budget: ${codeFiles} code files, ${codeLines} code lines`);
+      failures.push(`to pass: up to ${maxFiles} files and ${maxLines} lines, or up to ${wideMaxFiles} files with at most ${wideLines} lines`);
+    }
+  } else {
+    if (codeFiles > maxFiles) failures.push(`over budget: ${codeFiles} code files (max ${maxFiles})`);
+    if (codeLines > maxLines) failures.push(`over budget: ${codeLines} code lines (max ${maxLines})`);
+  }
   if (codeFiles > 0 && buckets.mechanical.length > 0) failures.push('mechanical changes go in their own PR');
   return {
     verdict: failures.length ? 'FAIL' : 'PASS',
     failures,
-    limits: { maxFiles, maxLines },
+    ...(wideOn ? { tier: failures.length ? null : normalFits ? 'normal' as const : 'wide' as const } : {}),
+    limits: wideOn ? { maxFiles, maxLines, wideMaxFiles, wideMaxLines: wideLines } : { maxFiles, maxLines },
     code: { files: codeFiles, lines: codeLines, paths: buckets.code.map((f) => f.path) },
     tests: { files: buckets.test.length, lines: sum(buckets.test) },
     config: { files: buckets.config.length, lines: sum(buckets.config) },
@@ -177,7 +199,9 @@ function parseArgs(argv: string[]): Options {
 
 function render(r: Assessment): string {
   const lines = [
-    `code:       ${r.code.files} files, ${r.code.lines} lines (limit ${r.limits.maxFiles} files, ${r.limits.maxLines} lines)`,
+    r.limits.wideMaxFiles === undefined
+      ? `code:       ${r.code.files} files, ${r.code.lines} lines (limit ${r.limits.maxFiles} files, ${r.limits.maxLines} lines)`
+      : `code:       ${r.code.files} files, ${r.code.lines} lines (limit ${r.limits.maxFiles} files, ${r.limits.maxLines} lines, or up to ${r.limits.wideMaxFiles} files under ${r.limits.wideMaxLines} lines; tier ${r.tier ?? 'none'})`,
     `tests:      ${r.tests.files} files, ${r.tests.lines} lines (not counted)`,
     `config:     ${r.config.files} files, ${r.config.lines} lines (not counted)`,
     `docs:       ${r.docs.files} files, ${r.docs.lines} lines (not counted)`,
@@ -194,9 +218,10 @@ function main() {
   const g = spawnSync('git', ['-C', repo, 'diff', '--numstat', '-M', '-z', `${resolveBase(repo, base)}...${head}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (g.status !== 0) { console.error(`pr-size: git diff failed: ${(g.stderr || '').trim()}`); process.exit(2); }
   const classify = makeClassifier({ mechanical: PR_MECHANICAL_GLOBS, test: PR_TEST_GLOBS, config: PR_CONFIG_GLOBS, docs: PR_DOCS_GLOBS });
-  const result = assess(parseNumstat(g.stdout), { maxFiles: PR_MAX_CODE_FILES, maxLines: PR_MAX_CODE_LINES, classify });
+  const result = assess(parseNumstat(g.stdout), { maxFiles: PR_MAX_CODE_FILES, maxLines: PR_MAX_CODE_LINES, wideMaxFiles: PR_WIDE_MAX_CODE_FILES, wideMaxLines: PR_WIDE_MAX_CODE_LINES, classify });
   console.log(json ? JSON.stringify(result, null, 2) : render(result));
-  process.exit(result.verdict === 'PASS' ? 0 : 1);
+  // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
+  process.exitCode = result.verdict === 'PASS' ? 0 : 1;
 }
 
 const isMain = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };

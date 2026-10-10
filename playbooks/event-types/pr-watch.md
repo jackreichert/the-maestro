@@ -12,11 +12,11 @@ Every line is actionable.
 |---|---|
 | `THREAD`, `REPLY`, `COMMENT`, `REVIEW` | The PR key, who, and the link. Do not summarize the comment text. |
 | `DECISION` | The PR and the move (for example into `APPROVED` or `CHANGES_REQUESTED`). |
-| `CONFLICT` | `CONFLICT <PR key> <base> <- <head> <url>`: an open PR now conflicts with its base, once per conflict (the line is not repeated while it stays conflicted, and GitHub's `UNKNOWN` while it computes changes nothing). Report it; the standing rule on the user's own branches is to merge the base in and push, which is the orchestrator's job, not this loop's. When it clears there is no line. |
+| `CONFLICT` | `CONFLICT <PR key> <base> <- <head> <url>`: an open PR now conflicts with its base, once per conflict (the line is not repeated while it stays conflicted, and GitHub's `UNKNOWN` while it computes changes nothing). Report it. Merging the base in and pushing is a merge, so it waits for an explicit ask or a standing approval for that repo; this loop does not do it. When it clears there is no line. |
 | `LEFT-OPEN-SET` | The PR was merged or closed. |
 | `APPROVED-UNMERGED` | An approved PR is waiting. Reported once per approval or moved head. |
 
-A check also requests a Copilot review on draft PRs in scope that have none, only for owners in `copilot_orgs`.
+A check also requests a Copilot review on draft PRs in scope that have none, only for owners in `copilot_orgs`, and follows Copilot per head sha on every open PR in those owners: after a push it requests a review once for the new sha when Copilot has not re-triggered (60 s grace), then reports `COPILOT-REVIEW <PR> <sha>` with the unresolved bot thread count, or `COPILOT-LATE <PR> <sha>` when nothing arrived 15 minutes after the trigger. A clean review is informational; a review with bot threads and a late one are actionable. For the threads, work them as the comment workflow says; for a late one, look at the PR and say so. Details: [reference/prs.md](../../reference/prs.md#copilot-on-drafts).
 
 ## Do not
 

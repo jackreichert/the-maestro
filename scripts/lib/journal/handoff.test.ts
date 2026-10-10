@@ -1,12 +1,12 @@
 // Run: node --test scripts/lib/journal/handoff.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fold } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
-import { artifactsOf, cleanupWorktreeLines, handoffText, updateContextLink, yesterday } from './handoff.ts';
+import { artifactsOf, cleanupWorktreeLines, createExclusive, handoffText, updateContextLink, writeHandoffSeries, yesterday } from './handoff.ts';
 import type { HandoffContext } from './handoff.ts';
 
 const D = '2026-10-03';
@@ -72,7 +72,7 @@ test('cleanupWorktreeLines lists kept worktrees, or summarises a sweep', () => {
     const kept = [{ path: '/w/a', repo: 'r', reason: 'uncommitted changes (2 files)' }];
     assert.deepEqual(cleanupWorktreeLines(kept, null), ['Worktrees the roll sweep keeps, because they hold work or are in use:', '', '- `/w/a` (r): uncommitted changes (2 files)', '']);
     assert.deepEqual(cleanupWorktreeLines([], null), []);
-    const summary = cleanupWorktreeLines(kept, { removed: [], pruned: [], kept, notes: [], skipped: [], envAsks: [] });
+    const summary = cleanupWorktreeLines(kept, { removed: [], pruned: [], kept, notes: [], skipped: [], envAsks: [], failed: [] });
     assert.match(summary[0] ?? '', /^Worktree sweep \(dry run\): 0 would be removed, 0 pruned, 1 kept\./);
     assert.ok(summary.includes('- uncommitted changes: 1'));
 });
@@ -87,4 +87,35 @@ test('updateContextLink adds one Latest handoff line under the first heading, re
     assert.match(readFileSync(file, 'utf8'), /Latest handoff: \[\[HANDOFF-2026-10-04-all\]\] \(2026-10-04\)\n/);
     assert.equal((readFileSync(file, 'utf8').match(/Latest handoff/g) || []).length, 1);
     assert.match(yesterday(), /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('createExclusive creates a missing file whole and refuses a name that is taken, leaving it untouched', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'handoff-excl-'));
+    const path = join(dir, 'HANDOFF-x.md');
+    assert.equal(createExclusive(path, 'first'), true);
+    assert.equal(createExclusive(path, 'second'), false);
+    assert.equal(readFileSync(path, 'utf8'), 'first');
+    assert.deepEqual(readdirSync(dir), ['HANDOFF-x.md'], 'no temp file is left behind, on either path');
+});
+
+test('writeHandoffSeries skips names already taken, reports them, and never overwrites', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'handoff-series-'));
+    writeFileSync(join(dir, 'HANDOFF-2026-10-03-all.md'), 'a');
+    writeFileSync(join(dir, 'HANDOFF-2026-10-03b-all.md'), 'b');
+    const got = writeHandoffSeries(dir, '2026-10-03', 'all', 'HANDOFF-2026-10-03-all.md', 'mine');
+    assert.deepEqual(got, { name: 'HANDOFF-2026-10-03c-all.md', taken: ['HANDOFF-2026-10-03-all.md', 'HANDOFF-2026-10-03b-all.md'] });
+    assert.equal(readFileSync(join(dir, 'HANDOFF-2026-10-03-all.md'), 'utf8'), 'a');
+    assert.equal(readFileSync(join(dir, 'HANDOFF-2026-10-03b-all.md'), 'utf8'), 'b');
+    assert.equal(writeHandoffSeries(dir, '2026-10-03', 'all', 'HANDOFF-2026-10-03d-all.md', 'next')?.taken.length, 0, 'starts at the name it is given');
+});
+
+test('writeHandoffSeries returns null when every suffix is taken', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'handoff-full-'));
+    for (const x of ['', ...'bcdefghijklmnopqrstuvwxyz']) writeFileSync(join(dir, `HANDOFF-2026-10-03${x}-all.md`), 'x');
+    assert.equal(writeHandoffSeries(dir, '2026-10-03', 'all', 'HANDOFF-2026-10-03-all.md', 'late'), null);
+});
+
+test('handoffText records the window in its frontmatter only when one is set', () => {
+    assert.match(handoffText({ ...ctx, window: 'w-one' }, 'Alpha', '2026-10-02', [], {}), /\nsince: 2026-10-02\nwindow: w-one\ntype: handoff\n/);
+    assert.doesNotMatch(handoffText(ctx, 'Alpha', '2026-10-02', [], {}), /window:/);
 });

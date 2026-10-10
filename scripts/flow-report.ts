@@ -4,11 +4,14 @@
  *
  *   flow-report.ts [--days 14] [--oldest N] [--json] [--now <ISO time>] [--vault <path>] [--project <name>]
  *
- * Prints, for the last --days days (default 14): items done and per week, the median (p50) and 85th percentile
- * (p85) start-to-done time, work in flight now, and the age of every open item, oldest first (--oldest N caps the list).
- * p85 is the number to quote as a service level: "85% of items finish within p85 days".
+ * Prints, for the last --days days (default 14, the weekly review uses 7 to 14): items done and per week, the median
+ * (p50) and 85th percentile (p85) start-to-done time, work in flight now, and the age of every open item, oldest first
+ * (--oldest N caps the list). p85 is the number to quote as a service level: "85% of items finish within p85 days".
+ * The same report names ledger stage dwell: time in queued, in flight, blocked, and awaiting a person, the stage with
+ * the longest current dwell, and the top 5 longest-waiting open items with the gate, ticket, or person the row already
+ * names, or "unrecorded". Pull-request stages are not printed.
  * Root and project resolve as journal.ts does: --vault, then $LEDGER_ROOT, then $VAULT_ROOT; --project or the
- * configured project. Definitions live in lib/flow.ts. Run it on Friday; the roll prints it too.
+ * configured project. Definitions live in lib/flow.ts. Run it by hand on Friday; this slice does not wire it into the roll.
  */
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -40,4 +43,5 @@ export function main(argv: string[]): number {
 }
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
-if (isMain()) process.exit(main(process.argv.slice(2)));
+// exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
+if (isMain()) process.exitCode = main(process.argv.slice(2));

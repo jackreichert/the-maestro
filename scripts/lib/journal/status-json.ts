@@ -1,6 +1,7 @@
 import type { LedgerItem } from '../ledger-core.ts';
+import type { LeaseSummary } from './leases.ts';
 import type { SessionStatus } from '../session-text.ts';
-import { footerRows } from './board.ts';
+import { footerDone, footerRows } from './board.ts';
 import type { FooterRow, Groups } from './board.ts';
 
 /** What `journal.ts status --json` prints. */
@@ -13,16 +14,21 @@ export interface StatusJson {
     paste: LedgerItem[];
     done: LedgerItem[];
     footer: { ledger: FooterRow[]; session: SessionStatus };
+    /** Live window leases on open items; present only when `statusJson` is given them. */
+    leases?: LeaseSummary;
 }
 
 /**
- * The board for day `d` as one object. `done` defaults to the items finished on `d` since the last roll, which is
- * what the CLI shows; a caller that already has that list passes it to avoid folding twice.
+ * The board for day `d` as one object. `done` defaults to everything finished on `d` — the full day, not the
+ * since-roll slice. Pass `sinceRoll` when a roll happened that day so the footer can say how many finished after it.
+ * A caller that already has the lists passes them to avoid folding twice.
  */
-export function statusJson(g: Groups, d: string, session: SessionStatus, done: LedgerItem[] = g.doneOn(d, { sinceRoll: true })): StatusJson {
+export function statusJson(g: Groups, d: string, session: SessionStatus, done?: LedgerItem[], sinceRoll?: LedgerItem[], leases?: LeaseSummary): StatusJson {
+    const view = done === undefined ? footerDone(g, d) : { all: done, sinceRoll };
     return {
         date: d,
-        inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done,
-        footer: { ledger: footerRows(g, done), session },
+        inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done: view.all,
+        footer: { ledger: footerRows(g, view.all, view.sinceRoll), session },
+        ...(leases ? { leases } : {}),
     };
 }

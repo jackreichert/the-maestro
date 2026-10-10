@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fold, mapStreamWith } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 import { parseArgs } from './args.ts';
-import { archiveBlockers, findRetro, retroStatus, retroText, unfilledPromotions } from './retro.ts';
+import { LEARNING, archiveBlockers, findRetro, retroStatus, retroText, unfilledPromotions } from './retro.ts';
 import type { RetroContext } from './retro.ts';
 
 const D = '2026-10-03';
@@ -38,6 +38,22 @@ test('retroText summarises the stream, lists shipped work, facts, referenced tic
     assert.match(text, /## Learnings\n\n- `cccc` learned that retries need a cap/);
     assert.match(text, /- \[ \] learned that retries need a cap \(`cccc`\) — Promoted to: /);
     assert.match(retroText(ctxFor(['retro'], { ticketStatuses: () => null }), 'Alpha'), /\| FAKE-7 \| index unavailable \| \|/);
+});
+
+test('a sentence that only says cause is not a learning, and a lesson still is', () => {
+    const causeOnly = 'The delay had one cause and nothing else.';
+    const lesson = 'One lesson: cap the retries.';
+    assert.equal(LEARNING.test(causeOnly), false);
+    assert.equal(LEARNING.test(lesson), true);
+    const text = retroText(ctxFor(['retro'], {
+        readLedger: () => [
+            { id: 'c001', kind: 'note', ts: `${D}T09:00:00Z`, date: D, text: causeOnly, stream: 'Alpha' },
+            { id: 'l001', kind: 'note', ts: `${D}T09:01:00Z`, date: D, text: lesson, stream: 'Alpha' },
+        ],
+    }), 'Alpha');
+    const learnings = text.split('## Learnings\n\n')[1]?.split('\n## ')[0] ?? '';
+    assert.equal(learnings.includes(causeOnly), false);
+    assert.match(learnings, /`l001` One lesson: cap the retries\./);
 });
 
 test('retroStatus and unfilledPromotions read the front matter and the Promoted to checklist', () => {

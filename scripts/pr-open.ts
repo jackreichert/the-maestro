@@ -14,11 +14,14 @@
  * In a repo listed in pr_smells_repos it also refuses unless a smells run is recorded for the head commit
  * (pr-smells.ts record) and the body carries its `Smells:` line; docs-only diffs are exempt.
  *
- * Over budget (or code mixed with mechanical files): prints the pr-size summary and a split hint, exits 1,
- * never calls gh, unless the repo's origin matches `waive_size_gate_owners` (default none): then it prints a
- * one-line waiver note and carries on. The waiver comes from local-config (or its MAESTRO_WAIVE_SIZE_GATE_OWNERS variable, like every other gate
- * setting); there is no flag for it. When it applies, gh is pinned to the origin repo with --repo. Within budget: runs gh in <path>. --draft and --assignee @me are always added and cannot
- * be turned off; no other gh flag passes through. --dry-run prints the gh command instead of running it.
+ * Over budget: prints the pr-size summary and a split hint, exits 1, never calls gh, unless the
+ * repo's origin matches `waive_size_gate_owners` (default none): then it prints a one-line waiver
+ * note and carries on. Mixing code with mechanical files is never waived. Unreadable pr-size JSON
+ * refuses instead of claiming that mix. The waiver comes from the user config file
+ * (`waive_size_gate_owners`) only; an environment variable cannot set it, and there is no flag
+ * for it. When it applies, gh is pinned to the origin repo with --repo. Within budget: runs gh in <path>. --draft
+ * and --assignee @me are always added and cannot be turned off; no other gh flag passes through.
+ * --dry-run prints the gh command instead of running it.
  * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
  * opened but its file links could not be expanded (run pr-guide-links.ts).
  * The gh binary is `gh`, or the path in MAESTRO_GH_BIN (tests use a fake).
@@ -99,14 +102,26 @@ function diffContext(o: OpenArgs): BodyContext {
   return { stacked: !PROTECTED_BRANCHES.some((g) => globToRegExp(g).test(o.base)), codeFiles, title: t >= 0 ? o.pass[t + 1] : '' };
 }
 
-/** True when the diff holds both code and mechanical files: a reviewability rule, so no size waiver lifts it. */
-function mixedWithMechanical(o: OpenArgs): boolean {
+export type SizeMix = 'mixed' | 'clean' | 'unreadable';
+
+/** Classify pr-size --json. Missing numbers are unreadable, not a mix. */
+export const classifySizeJson = (stdout: string): SizeMix => {
+  try {
+    const j = JSON.parse(stdout) as { code?: { files?: number }; mechanical?: { files?: number } };
+    const code = j.code?.files;
+    const mechanical = j.mechanical?.files;
+    if (typeof code !== 'number' || typeof mechanical !== 'number') return 'unreadable';
+    return code > 0 && mechanical > 0 ? 'mixed' : 'clean';
+  } catch {
+    return 'unreadable';
+  }
+};
+
+/** The reviewability rule no size waiver lifts. Unreadable JSON is not reported as a mix. */
+function sizeMix(o: OpenArgs): SizeMix {
   const head = headOf(o);
   const r = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, '--json', ...(head ? ['--head', head] : [])], { encoding: 'utf8' });
-  try {
-    const j = JSON.parse(r.stdout) as { code: { files: number }; mechanical: { files: number } };
-    return j.code.files > 0 && j.mechanical.files > 0;
-  } catch { return true; } // unreadable output: fail closed
+  return classifySizeJson(r.stdout || '');
 }
 
 function main(): void {
@@ -116,7 +131,11 @@ function main(): void {
   process.stdout.write(gate.stdout || '');
   const overBudget = gate.status === 1;
   const waivedSlug = overBudget ? sizeGateWaiver(o.repo) : '';
-  if (overBudget && waivedSlug && mixedWithMechanical(o)) {
+  const mix = overBudget && waivedSlug ? sizeMix(o) : 'clean';
+  if (overBudget && waivedSlug && mix === 'unreadable') {
+    console.error('pr-open: refused, pr-size did not return readable JSON, so the waiver cannot tell code from mechanical files.');
+    process.exit(1);
+  } else if (overBudget && waivedSlug && mix === 'mixed') {
     console.error('pr-open: refused, the PR mixes code with mechanical files. The waiver (waive_size_gate_owners) lifts the size limits only; mechanical changes (lockfiles, generated files, pure renames) still go in their own PR.');
     process.exit(1);
   } else if (overBudget && waivedSlug) {

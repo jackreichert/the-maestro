@@ -2,8 +2,12 @@
  * LOCAL CONFIG: the one place the-maestro's scripts read install-specific values.
  *
  * Everything else in scripts/ is generic. Each value comes from, in order: its environment
- * variable, the user config file, then the org overlay's config.md. Where those files are
- * looked up is documented in reference/local-config.md ("How the scripts find it").
+ * variable, the user config file, then the org overlay's config.md — except the pr-open gate
+ * settings (the size file and line limits, including the wide tier, waive_size_gate_owners,
+ * pr_smells_repos, the required body sections, the body-check on/off switches, and the
+ * body-check lists pr_body_private_words, pr_body_private_patterns, pr_body_voice_names). Those
+ * are read from the user config file only, so an environment variable cannot lift them. Where
+ * the files are looked up is documented in reference/local-config.md ("How the scripts find it").
  *
  * `node scripts/local-config.ts` prints the resolved values and the files they came from.
  */
@@ -70,6 +74,9 @@ const overlay = readConfig(overlayPath) || {};
 
 /** One setting: the environment variable if set (even empty), else the user file, else the overlay file. */
 const pick = (envName: string, key: string, fallback = ''): string => process.env[envName] ?? user[key] ?? overlay[key] ?? fallback;
+
+/** A pr-open gate setting: the user config file only. The environment and the overlay file are ignored, so neither can lift the gate. */
+const pickUserFile = (key: string, fallback = ''): string => user[key] ?? fallback;
 
 /** The config files that were read: the user file and the overlay's config.md (either may be empty). */
 export { userPath, overlayPath };
@@ -285,39 +292,45 @@ const positiveInt = (raw: string, fallback: number): number => (/^\d+$/.test(raw
 const DEFAULT_TRACKER_KEY_PATTERN = '\\b[A-Z][A-Z0-9]+-\\d+\\b';
 export const TRACKER_KEY_PATTERN = ((raw: string) => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })(pick('MAESTRO_TRACKER_KEY_PATTERN', 'tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
 
-/** PR size budget (pr-size.ts): most code files a PR may change. Default 5. */
-export const PR_MAX_CODE_FILES = positiveInt(pick('MAESTRO_PR_MAX_CODE_FILES', 'pr_max_code_files'), 5);
+/** PR size budget (pr-size.ts): most code files a PR may change. Default 5. User config file only. */
+export const PR_MAX_CODE_FILES = positiveInt(pickUserFile('pr_max_code_files'), 5);
 
-/** PR size budget: most changed code lines (additions plus deletions). Default 400. */
-export const PR_MAX_CODE_LINES = positiveInt(pick('MAESTRO_PR_MAX_CODE_LINES', 'pr_max_code_lines'), 400);
+/** PR size budget: most changed code lines (additions plus deletions). Default 400. User config file only. */
+export const PR_MAX_CODE_LINES = positiveInt(pickUserFile('pr_max_code_lines'), 400);
+
+/** PR size budget, wide tier (opt-in): most code files a PR may change under the wide line limit. Defaults to PR_MAX_CODE_FILES, which leaves the wide tier off; never below it. User config file only. */
+export const PR_WIDE_MAX_CODE_FILES = Math.max(positiveInt(pickUserFile('pr_wide_max_code_files'), PR_MAX_CODE_FILES), PR_MAX_CODE_FILES);
+
+/** PR size budget, wide tier: most changed code lines for a wide PR. Defaults to PR_MAX_CODE_LINES; never above it. User config file only. */
+export const PR_WIDE_MAX_CODE_LINES = Math.min(positiveInt(pickUserFile('pr_wide_max_code_lines'), PR_MAX_CODE_LINES), PR_MAX_CODE_LINES);
 
 /** A switch setting: off, false, no or 0 turns it off; anything else, or unset, is the default (on). */
 const switchOn = (raw: string): boolean => !/^(off|false|no|0)$/i.test(raw.trim());
 
-/** PR body (pr-open.ts): the `##` sections every PR body must carry with real content, comma-separated. Default: Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally. */
+/** PR body (pr-open.ts): the `##` sections every PR body must carry with real content, comma-separated. Default: Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally. User config file only. */
 const DEFAULT_PR_BODY_SECTIONS = ['Context', 'Reviewer guide', 'Risk and blast radius', 'Rollback / flag', 'How to verify locally'];
-export const PR_BODY_SECTIONS = ((l: string[]) => (l.length ? l : DEFAULT_PR_BODY_SECTIONS))(pick('MAESTRO_PR_BODY_SECTIONS', 'pr_body_sections').split(',').map((x) => x.trim()).filter(Boolean));
+export const PR_BODY_SECTIONS = ((l: string[]) => (l.length ? l : DEFAULT_PR_BODY_SECTIONS))(pickUserFile('pr_body_sections').split(',').map((x) => x.trim()).filter(Boolean));
 
-/** PR body: require a `Risk: low|medium|high` line in the risk section, and a real Rollback section when it says high. Default on. */
-export const PR_BODY_CHECK_RISK = switchOn(pick('MAESTRO_PR_BODY_CHECK_RISK', 'pr_body_check_risk'));
+/** PR body: require a `Risk: low|medium|high` line in the risk section, and a real Rollback section when it says high. Default on. User config file only. */
+export const PR_BODY_CHECK_RISK = switchOn(pickUserFile('pr_body_check_risk'));
 
-/** PR body: require a fenced code block in the "How to verify" section unless it says `n/a` with a reason. Default on. */
-export const PR_BODY_CHECK_VERIFY = switchOn(pick('MAESTRO_PR_BODY_CHECK_VERIFY', 'pr_body_check_verify'));
+/** PR body: require a fenced code block in the "How to verify" section unless it says `n/a` with a reason. Default on. User config file only. */
+export const PR_BODY_CHECK_VERIFY = switchOn(pickUserFile('pr_body_check_verify'));
 
-/** PR body: refuse attribution lines and obvious secret or PHI-like patterns (regex, best effort). Default on. */
-export const PR_BODY_CHECK_FORBIDDEN = switchOn(pick('MAESTRO_PR_BODY_CHECK_FORBIDDEN', 'pr_body_check_forbidden'));
+/** PR body: refuse attribution lines and obvious secret or PHI-like patterns (regex, best effort). Default on. User config file only. */
+export const PR_BODY_CHECK_FORBIDDEN = switchOn(pickUserFile('pr_body_check_forbidden'));
 
-/** PR body: a stacked PR, or one over `pr_diagram_min_files` code files, needs a mermaid diagram or a `Diagram: n/a, <reason>` line. Default on. */
-export const PR_BODY_CHECK_DIAGRAM = switchOn(pick('MAESTRO_PR_BODY_CHECK_DIAGRAM', 'pr_body_check_diagram'));
+/** PR body: a stacked PR, or one over `pr_diagram_min_files` code files, needs a mermaid diagram or a `Diagram: n/a, <reason>` line. Default on. User config file only. */
+export const PR_BODY_CHECK_DIAGRAM = switchOn(pickUserFile('pr_body_check_diagram'));
 
 /** PR body: the code-file count above which a diagram (or its n/a line) is required. Default 3. */
 export const PR_DIAGRAM_MIN_FILES = positiveInt(pick('MAESTRO_PR_DIAGRAM_MIN_FILES', 'pr_diagram_min_files'), 3);
 
-/** PR body: a stacked PR needs a `## Stack` section that names its base PR (or `n/a, <reason>`). Default on. */
-export const PR_BODY_CHECK_STACK = switchOn(pick('MAESTRO_PR_BODY_CHECK_STACK', 'pr_body_check_stack'));
+/** PR body: a stacked PR needs a `## Stack` section that names its base PR (or `n/a, <reason>`). Default on. User config file only. */
+export const PR_BODY_CHECK_STACK = switchOn(pickUserFile('pr_body_check_stack'));
 
-/** PR body: a PR over `pr_review_order_min_files` code files needs a `Review order:` line in the Reviewer guide that points at files. Default on. */
-export const PR_BODY_CHECK_ORDER = switchOn(pick('MAESTRO_PR_BODY_CHECK_ORDER', 'pr_body_check_order'));
+/** PR body: a PR over `pr_review_order_min_files` code files needs a `Review order:` line in the Reviewer guide that points at files. Default on. User config file only. */
+export const PR_BODY_CHECK_ORDER = switchOn(pickUserFile('pr_body_check_order'));
 
 /** PR body: the code-file count at which a review order is required (more than this many files). Default 3. */
 export const PR_REVIEW_ORDER_MIN_FILES = positiveInt(pick('MAESTRO_PR_REVIEW_ORDER_MIN_FILES', 'pr_review_order_min_files'), 3);
@@ -335,6 +348,9 @@ export const STACK_MAX_AGE_DAYS = positiveInt(pick('MAESTRO_STACK_MAX_AGE_DAYS',
 
 const globList = (envName: string, key: string): string[] => pick(envName, key).split(',').map((s) => s.trim()).filter(Boolean);
 
+/** A comma-separated pr-open gate list from the user config file only. */
+const globListFile = (key: string): string[] => pickUserFile(key).split(',').map((s) => s.trim()).filter(Boolean);
+
 /** Owner or `owner/name` globs as `owner/name` globs: a bare owner means `owner/*`, and an entry whose owner holds a `*` is dropped, so none can match every repo. */
 const repoGlobs = (globs: string[]): string[] => globs.filter((g) => !g.split('/')[0]!.includes('*')).map((g) => (g.includes('/') ? g : `${g}/*`));
 
@@ -350,32 +366,32 @@ export const PR_CONFIG_GLOBS = globList('MAESTRO_PR_CONFIG_GLOBS', 'pr_config_gl
 export const PR_DOCS_GLOBS = globList('MAESTRO_PR_DOCS_GLOBS', 'pr_docs_globs');
 export const PR_MECHANICAL_GLOBS = globList('MAESTRO_PR_MECHANICAL_GLOBS', 'pr_mechanical_globs');
 
-/** Smells gate (pr-open.ts, pr-smells.ts): GitHub `owner/name` globs of repos where a PR needs a recorded smells run, comma-separated. Default none, so the gate is off until a repo is named. */
-export const PR_SMELLS_REPOS = globList('MAESTRO_PR_SMELLS_REPOS', 'pr_smells_repos');
+/** Smells gate (pr-open.ts, pr-smells.ts): GitHub `owner/name` globs of repos where a PR needs a recorded smells run, comma-separated. Default none, so the gate is off until a repo is named. User config file only. */
+export const PR_SMELLS_REPOS = globListFile('pr_smells_repos');
 
-/** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can waive every repo. Default none, so every repo keeps the gate until it is named here. */
-export const WAIVE_SIZE_GATE_OWNERS = repoGlobs(globList('MAESTRO_WAIVE_SIZE_GATE_OWNERS', 'waive_size_gate_owners'));
+/** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can waive every repo. Default none, so every repo keeps the gate until it is named here. User config file only; there is no flag. */
+export const WAIVE_SIZE_GATE_OWNERS = repoGlobs(globListFile('waive_size_gate_owners'));
 
 /** Self-review repos: GitHub owners, or `owner/name` globs, whose PRs only you review, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can claim every repo. Their PRs do not count toward the review queue cap and are listed apart from the rest on the PR board. Default none, so every PR is counted and listed together. */
 export const SELF_REVIEW_REPOS = repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS', 'self_review_repos'));
 
-/** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. */
-export const PR_BODY_CHECK_PRIVATE = switchOn(pick('MAESTRO_PR_BODY_CHECK_PRIVATE', 'pr_body_check_private'));
+/** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. User config file only. */
+export const PR_BODY_CHECK_PRIVATE = switchOn(pickUserFile('pr_body_check_private'));
 
-/** PR body: words that mark a private workspace and are refused outside code, comma-separated. Default ledger, vault, orchestrator; `none` turns the word list off (for a repo where they are ordinary vocabulary) while wiki-links and obsidian:// links stay refused. */
-export const PR_BODY_PRIVATE_WORDS = ((l: string[]) => (l.length === 1 && /^none$/i.test(l[0]) ? [] : l.length ? l : ['ledger', 'vault', 'orchestrator']))(globList('MAESTRO_PR_BODY_PRIVATE_WORDS', 'pr_body_private_words'));
+/** PR body: words that mark a private workspace and are refused outside code, comma-separated. Default ledger, vault, orchestrator; `none` turns the word list off (for a repo where they are ordinary vocabulary) while wiki-links and obsidian:// links stay refused. User config file only. */
+export const PR_BODY_PRIVATE_WORDS = ((l: string[]) => (l.length === 1 && /^none$/i.test(l[0]) ? [] : l.length ? l : ['ledger', 'vault', 'orchestrator']))(globListFile('pr_body_private_words'));
 
-/** PR body: extra regexes for install-specific private ids (a vault ticket-id format, a ledger-id format), comma-separated, so a pattern cannot contain a comma. Invalid ones are dropped. Added to the built-in list. */
-export const PR_BODY_PRIVATE_PATTERNS = globList('MAESTRO_PR_BODY_PRIVATE_PATTERNS', 'pr_body_private_patterns').filter((r) => { try { new RegExp(r, 'i'); return true; } catch { return false; } });
+/** PR body: extra regexes for install-specific private ids, comma-separated, so a pattern cannot contain a comma. Invalid ones are dropped. Added to the built-in list. User config file only. */
+export const PR_BODY_PRIVATE_PATTERNS = globListFile('pr_body_private_patterns').filter((r) => { try { new RegExp(r, 'i'); return true; } catch { return false; } });
 
-/** PR body: flag third-person references to the author (`pr_body_voice_names`) and the words assistant, agent, AI-generated, so a body reads in the author's own voice. Best effort. Default on. */
-export const PR_BODY_CHECK_VOICE = switchOn(pick('MAESTRO_PR_BODY_CHECK_VOICE', 'pr_body_check_voice'));
+/** PR body: flag third-person references to the author (`pr_body_voice_names`) and the words assistant, agent, AI-generated, so a body reads in the author's own voice. Best effort. Default on. User config file only. */
+export const PR_BODY_CHECK_VOICE = switchOn(pickUserFile('pr_body_check_voice'));
 
-/** PR body: refuse counts the PR page already shows and a push makes stale (commits, files changed, lines, +120 -40) outside code. Best effort. Default on. */
-export const PR_BODY_CHECK_COUNTS = switchOn(pick('MAESTRO_PR_BODY_CHECK_COUNTS', 'pr_body_check_counts'));
+/** PR body: refuse counts the PR page already shows and a push makes stale (commits, files changed, lines, +120 -40) outside code. Best effort. Default on. User config file only. */
+export const PR_BODY_CHECK_COUNTS = switchOn(pickUserFile('pr_body_check_counts'));
 
-/** PR body: the author's names or logins, comma-separated, that must not appear in the third person ("Jack decided"). Default none. */
-export const PR_BODY_VOICE_NAMES = globList('MAESTRO_PR_BODY_VOICE_NAMES', 'pr_body_voice_names');
+/** PR body: the author's names or logins, comma-separated, that must not appear in the third person ("Jack decided"). Default none. User config file only. */
+export const PR_BODY_VOICE_NAMES = globListFile('pr_body_voice_names');
 
 /** Your git author emails (comma-separated), the authorship check branch-sweep.ts uses. Empty means the repo's own user.email. */
 export const GIT_EMAILS = globList('MAESTRO_GIT_EMAILS', 'git_emails');
@@ -391,6 +407,9 @@ export const SWEEP_MERGE_TARGETS = Object.fromEntries(globList('MAESTRO_SWEEP_ME
 
 /** The most priorities today's list may hold (`journal.ts priorities set` and the Podium both refuse more). Default 5; a value that is not a positive whole number falls back to it. */
 export const PRIORITIES_MAX = positiveInt(pick('MAESTRO_PRIORITIES_MAX', 'priorities_max'), DEFAULT_PRIORITIES_MAX);
+
+/** Minutes a window's lease on a ledger item lasts after the window's last row (any row it writes renews it). Default 60. */
+export const LEASE_TTL_MINUTES = positiveInt(pick('MAESTRO_LEASE_TTL_MINUTES', 'lease_ttl_minutes'), 60);
 
 /** Minutes a worktree must be untouched before branch-sweep.ts offers it for removal. Default 60. */
 export const SWEEP_IDLE_MINUTES = positiveInt(pick('MAESTRO_SWEEP_IDLE_MINUTES', 'sweep_idle_minutes'), 60);
@@ -457,7 +476,7 @@ if (process.argv[1] && isMain()) {
   console.log(`user_file:    ${userPath || '(disabled)'}${userPath && existsSync(userPath) ? '' : ' (not found)'}`);
   console.log(`overlay:      ${OVERLAY || '(none)'}`);
   console.log(`overlay_file: ${overlayPath || '(none found)'}`);
-  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, NOTES_CHECK_SINCE, COST_TARGETS: Object.entries(COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '), MODEL_PRICES: MODEL_PRICES ? Object.entries(MODEL_PRICES).map(([f, p]) => `${f}(${PRICE_FIELDS.map((k) => `${k}=${p[k]}`).join(' ')})`).join('; ') : '', LEDGER_ROOT, VAULT_ROOT, PRIORITIES_MAX, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', UPDATE_CHECK: UPDATE_CHECK ? 'on' : 'off', LOOP_SUPERVISOR_REQUIRED: LOOP_SUPERVISOR_REQUIRED ? 'required' : 'optional', AUTO_PULL: AUTO_PULL ? 'on' : 'off', AUTO_PULL_SET: AUTO_PULL_SET ? 'yes' : 'no', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_BODY_SECTIONS: PR_BODY_SECTIONS.join(', '), PR_BODY_CHECK_RISK: PR_BODY_CHECK_RISK ? 'on' : 'off', PR_BODY_CHECK_VERIFY: PR_BODY_CHECK_VERIFY ? 'on' : 'off', PR_BODY_CHECK_FORBIDDEN: PR_BODY_CHECK_FORBIDDEN ? 'on' : 'off', PR_BODY_CHECK_DIAGRAM: PR_BODY_CHECK_DIAGRAM ? 'on' : 'off', PR_DIAGRAM_MIN_FILES, PR_BODY_CHECK_STACK: PR_BODY_CHECK_STACK ? 'on' : 'off', PR_BODY_CHECK_ORDER: PR_BODY_CHECK_ORDER ? 'on' : 'off', PR_REVIEW_ORDER_MIN_FILES, PR_SMELLS_REPOS: PR_SMELLS_REPOS.join(', '), WAIVE_SIZE_GATE_OWNERS: WAIVE_SIZE_GATE_OWNERS.join(', '), SELF_REVIEW_REPOS: SELF_REVIEW_REPOS.join(', '), PR_BODY_CHECK_PRIVATE: PR_BODY_CHECK_PRIVATE ? 'on' : 'off', PR_BODY_PRIVATE_WORDS: PR_BODY_PRIVATE_WORDS.join(', '), PR_BODY_PRIVATE_PATTERNS: PR_BODY_PRIVATE_PATTERNS.join(', '), PR_BODY_CHECK_VOICE: PR_BODY_CHECK_VOICE ? 'on' : 'off', PR_BODY_CHECK_COUNTS: PR_BODY_CHECK_COUNTS ? 'on' : 'off', PR_BODY_VOICE_NAMES: PR_BODY_VOICE_NAMES.join(', '), REVIEW_QUEUE_CAP, REREVIEW_GATE: REREVIEW_GATE ? 'on' : 'off', STACK_MAX_DEPTH, STACK_MAX_AGE_DAYS, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', '), COPILOT_ORGS: COPILOT_ORGS.join(', '), GIT_EMAILS: GIT_EMAILS.join(', '), PROTECTED_BRANCHES: PROTECTED_BRANCHES.join(', '), SWEEP_MERGE_TARGETS: Object.entries(SWEEP_MERGE_TARGETS).map(([r, t]) => `${r}=${t.join('|')}`).join(', '), SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, SWEEP_PROTECT_SYMLINK_DIRS: SWEEP_PROTECT_SYMLINK_DIRS.join(', '), SWEEP_DISPOSABLE_IGNORED: SWEEP_DISPOSABLE_IGNORED.join(', '), ENV_STORE_ROOT, APPROVALS_REVIEW_DAY, WATCH_MIN_INTERVAL, WATCH_MAX_INTERVAL, WATCH_NETWORK_FLOOR, WATCH_LOCAL_FLOOR, WATCH_TYPE_INTERVALS: Object.entries(WATCH_TYPE_INTERVALS).map(([t, n]) => `${t}=${n}`).join(', '), WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE, WATCH_QUIET_WEEKENDS: WATCH_QUIET_WEEKENDS ? 'on' : 'off', WATCH_TZ, EVENT_DIR, NOTIFY_COMMAND: NOTIFY_COMMAND.length ? '(set)' : '', INBOX_COMMAND: INBOX_COMMAND.length ? '(set)' : '', SCRIPTS_DIR: SCRIPTS_SHELF_DIR, STATUS_DIR: STATUS_DIR_SETTING, OBSIDIAN_VAULT, STATUS_PAGE_URI: STATUS_PAGE_URI_SETTING, STATUS_STREAMS: STATUS_STREAMS.join(', '), STATUS_REPO_STREAMS: Object.entries(STATUS_REPO_STREAMS).map(([r, s]) => `${r}=${s}`).join(', '), TRACKER_URL_BASE, TICKET_NOTE_PATH, AGENT_OWNED_REPOS: AGENT_OWNED_REPOS.join(', '), CONTAINER_ROOT })) {
+  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, COST_TARGETS: Object.entries(COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '), MODEL_PRICES: MODEL_PRICES ? Object.entries(MODEL_PRICES).map(([f, p]) => `${f}(${PRICE_FIELDS.map((k) => `${k}=${p[k]}`).join(' ')})`).join('; ') : '', LEDGER_ROOT, VAULT_ROOT, PRIORITIES_MAX, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', UPDATE_CHECK: UPDATE_CHECK ? 'on' : 'off', LOOP_SUPERVISOR_REQUIRED: LOOP_SUPERVISOR_REQUIRED ? 'required' : 'optional', AUTO_PULL: AUTO_PULL ? 'on' : 'off', AUTO_PULL_SET: AUTO_PULL_SET ? 'yes' : 'no', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_WIDE_MAX_CODE_FILES, PR_WIDE_MAX_CODE_LINES, PR_BODY_SECTIONS: PR_BODY_SECTIONS.join(', '), PR_BODY_CHECK_RISK: PR_BODY_CHECK_RISK ? 'on' : 'off', PR_BODY_CHECK_VERIFY: PR_BODY_CHECK_VERIFY ? 'on' : 'off', PR_BODY_CHECK_FORBIDDEN: PR_BODY_CHECK_FORBIDDEN ? 'on' : 'off', PR_BODY_CHECK_DIAGRAM: PR_BODY_CHECK_DIAGRAM ? 'on' : 'off', PR_DIAGRAM_MIN_FILES, PR_BODY_CHECK_STACK: PR_BODY_CHECK_STACK ? 'on' : 'off', PR_BODY_CHECK_ORDER: PR_BODY_CHECK_ORDER ? 'on' : 'off', PR_REVIEW_ORDER_MIN_FILES, PR_SMELLS_REPOS: PR_SMELLS_REPOS.join(', '), WAIVE_SIZE_GATE_OWNERS: WAIVE_SIZE_GATE_OWNERS.join(', '), SELF_REVIEW_REPOS: SELF_REVIEW_REPOS.join(', '), PR_BODY_CHECK_PRIVATE: PR_BODY_CHECK_PRIVATE ? 'on' : 'off', PR_BODY_PRIVATE_WORDS: PR_BODY_PRIVATE_WORDS.join(', '), PR_BODY_PRIVATE_PATTERNS: PR_BODY_PRIVATE_PATTERNS.join(', '), PR_BODY_CHECK_VOICE: PR_BODY_CHECK_VOICE ? 'on' : 'off', PR_BODY_CHECK_COUNTS: PR_BODY_CHECK_COUNTS ? 'on' : 'off', PR_BODY_VOICE_NAMES: PR_BODY_VOICE_NAMES.join(', '), REVIEW_QUEUE_CAP, REREVIEW_GATE: REREVIEW_GATE ? 'on' : 'off', STACK_MAX_DEPTH, STACK_MAX_AGE_DAYS, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', '), COPILOT_ORGS: COPILOT_ORGS.join(', '), GIT_EMAILS: GIT_EMAILS.join(', '), PROTECTED_BRANCHES: PROTECTED_BRANCHES.join(', '), SWEEP_MERGE_TARGETS: Object.entries(SWEEP_MERGE_TARGETS).map(([r, t]) => `${r}=${t.join('|')}`).join(', '), SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, SWEEP_PROTECT_SYMLINK_DIRS: SWEEP_PROTECT_SYMLINK_DIRS.join(', '), SWEEP_DISPOSABLE_IGNORED: SWEEP_DISPOSABLE_IGNORED.join(', '), ENV_STORE_ROOT, APPROVALS_REVIEW_DAY, WATCH_MIN_INTERVAL, WATCH_MAX_INTERVAL, WATCH_NETWORK_FLOOR, WATCH_LOCAL_FLOOR, WATCH_TYPE_INTERVALS: Object.entries(WATCH_TYPE_INTERVALS).map(([t, n]) => `${t}=${n}`).join(', '), WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE, WATCH_QUIET_WEEKENDS: WATCH_QUIET_WEEKENDS ? 'on' : 'off', WATCH_TZ, EVENT_DIR, NOTIFY_COMMAND: NOTIFY_COMMAND.length ? '(set)' : '', INBOX_COMMAND: INBOX_COMMAND.length ? '(set)' : '', SCRIPTS_DIR: SCRIPTS_SHELF_DIR, STATUS_DIR: STATUS_DIR_SETTING, OBSIDIAN_VAULT, STATUS_PAGE_URI: STATUS_PAGE_URI_SETTING, STATUS_STREAMS: STATUS_STREAMS.join(', '), STATUS_REPO_STREAMS: Object.entries(STATUS_REPO_STREAMS).map(([r, s]) => `${r}=${s}`).join(', '), TRACKER_URL_BASE, TICKET_NOTE_PATH, AGENT_OWNED_REPOS: AGENT_OWNED_REPOS.join(', '), CONTAINER_ROOT })) {
     console.log(`${k.padEnd(22)} ${v || '(unset)'}`);
   }
 }

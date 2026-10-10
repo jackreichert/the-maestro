@@ -17,6 +17,7 @@ import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, re
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { DigestEvent } from './types.ts';
+import { cleanWindowId } from './window-id.ts';
 
 /** The extracted facts an alert or hook line may use. */
 export interface EventFields { repo?: string; number?: number; who?: 'bot' | 'human'; count?: number }
@@ -34,7 +35,9 @@ export interface InboxEvent {
 }
 
 /** An event with its folded state. */
-export interface InboxEntry extends InboxEvent { seen: boolean; handled: boolean }
+/** `seenBy` and `handledBy` are the window ids on the first `seen` and `handled` rows; absent when the mark carried none (an older row or a caller that gave no window). */
+/** `seen` stays "some window saw it"; `seenWindows` lists every window with its own `seen` or `handled` mark, and `seenAnonymous` is true when a mark named no window (an older row), which counts for every window. */
+export interface InboxEntry extends InboxEvent { seen: boolean; handled: boolean; seenBy?: string; handledBy?: string; seenWindows: string[]; seenAnonymous?: true }
 
 export const inboxPath = (eventDir: string): string => join(eventDir, 'events.jsonl');
 
@@ -74,6 +77,7 @@ const KIND_RULES: [RegExp, string][] = [
   [/^REPLY\b/, 'reply'],
   [/^COMMENT\b/, 'comment'],
   [/^REVIEW\b/, 'review'],
+  [/^READY\b/, 'ready'],
   [/^LEFT-OPEN-SET\b/, 'left-open-set'],
   [/^NOTION-CHANGED\b/, 'notion-changed'],
   [/^reminder\b/, 'reminder'],
@@ -138,17 +142,20 @@ export const readInbox = (eventDir: string): InboxEntry[] => readInboxReport(eve
 export function readInboxReport(eventDir: string): { entries: InboxEntry[]; torn: number } {
   const { rows, torn } = readRows(eventDir);
   const entries = new Map<string, InboxEntry>();
-  const marks: { row: 'seen' | 'handled'; id: string }[] = [];
+  const marks: { row: 'seen' | 'handled'; id: string; window?: string }[] = [];
   for (const raw of rows) {
     const row = (raw as { row?: unknown } | null)?.row;
     if (row === 'event') {
       const e = cleanEvent(raw);
-      if (e && !entries.has(e.id)) entries.set(e.id, { ...e, seen: false, handled: false });
-    } else if ((row === 'seen' || row === 'handled') && typeof (raw as { id?: unknown }).id === 'string') marks.push({ row, id: (raw as { id: string }).id });
+      if (e && !entries.has(e.id)) entries.set(e.id, { ...e, seen: false, handled: false, seenWindows: [] });
+    } else if ((row === 'seen' || row === 'handled') && typeof (raw as { id?: unknown }).id === 'string') marks.push({ row, id: (raw as { id: string }).id, window: cleanWindowId(String((raw as { window?: unknown }).window ?? '')) || undefined });
   }
-  for (const { row, id } of marks) {
+  for (const { row, id, window } of marks) {
     const entry = entries.get(id);
     if (!entry) continue;
+    if (window && row === 'handled' && !entry.handledBy) entry.handledBy = window;
+    if (window && !entry.seenBy) entry.seenBy = window;
+    if (window) { if (!entry.seenWindows.includes(window)) entry.seenWindows.push(window); } else entry.seenAnonymous = true;
     if (row === 'handled') { entry.handled = true; entry.seen = true; } else entry.seen = true;
   }
   return { entries: [...entries.values()], torn };
@@ -198,15 +205,21 @@ export function appendEvents(eventDir: string, events: DigestEvent[]): AppendRes
   return result;
 }
 
-/** Marks existing events with a `seen` or `handled` row; skips ids already in that state or not in the inbox. Returns the ids that are not in the inbox. */
-export function mark(eventDir: string, row: 'seen' | 'handled', ids: string[], now: number = Date.now()): { unknown: string[] } {
+/**
+ * Marks existing events with a `seen` or `handled` row, tagged with the marking window when one is given; skips ids not in the inbox and ids
+ * already in that state. `seen` is per window: a window that gives its id is skipped only when it has marked the event itself (or an older
+ * mark named no window), so one window's mark never stops another's. A caller with no window keeps the old rule (skip once anyone has seen it).
+ * Returns the ids that are not in the inbox.
+ */
+export function mark(eventDir: string, row: 'seen' | 'handled', ids: string[], now: number = Date.now(), window?: string): { unknown: string[] } {
   const entries = new Map(readInbox(eventDir).map((e) => [e.id, e]));
   const unknown: string[] = [];
   for (const id of new Set(ids)) {
     const entry = entries.get(id);
     if (!entry) { unknown.push(id); continue; }
-    if (row === 'handled' ? entry.handled : entry.seen) continue;
-    appendRow(eventDir, { row, id, at: new Date(now).toISOString() });
+    const by = cleanWindowId(window);
+    if (row === 'handled' ? entry.handled : by ? entry.seenWindows.includes(by) || entry.seenAnonymous === true : entry.seen) continue;
+    appendRow(eventDir, { row, id, at: new Date(now).toISOString(), ...(by ? { window: by } : {}) });
   }
   return { unknown };
 }

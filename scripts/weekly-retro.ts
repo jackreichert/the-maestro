@@ -40,4 +40,5 @@ export function main(argv: string[]): number {
 }
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
-if (isMain()) process.exit(main(process.argv.slice(2)));
+// exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
+if (isMain()) process.exitCode = main(process.argv.slice(2));

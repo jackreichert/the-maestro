@@ -83,3 +83,19 @@ test('just after the machine wakes, a beat that is hours old reads as waking, no
   assert.equal(loopHealth(input({ heartbeat: old, wokeAt: NOW - 20 * MIN })).state, 'stalled');
   assert.equal(loopHealth(input({ heartbeat: old, wokeAt: null })).state, 'stalled');
 });
+
+test('unread digests are appended to a live line, singular for one, and nothing is added for none', () => {
+  assert.equal(loopHealth(input({ heartbeat: beat({ at: new Date(NOW - 10_000).toISOString() }), unreadDigests: 3 })).line, '**Loop:** ok <1 min · 3 unread digests');
+  assert.equal(loopHealth(input({ unreadDigests: 1 })).line, '**Loop:** ok 2 min · 1 unread digest');
+  assert.equal(loopHealth(input({ unreadDigests: 0 })).line, '**Loop:** ok 2 min');
+  assert.equal(loopHealth(input()).line, '**Loop:** ok 2 min');
+  assert.equal(loopHealth(input({ unreadDigests: 3 })).unreadDigests, 3);
+});
+
+test('unread digests ride on any non-empty verdict, and an empty (absent) line stays empty', () => {
+  const down = loopHealth(input({ alive: () => false, lockPid: null, unreadDigests: 2 }));
+  assert.equal(down.state, 'down');
+  assert.match(down.line, /^\*\*Loop:\*\* DOWN since .* · 2 unread digests$/);
+  const absent = loopHealth(input({ heartbeat: null, lockPid: null, supervisor: { state: 'absent' }, unreadDigests: 5 }));
+  assert.deepEqual(absent, { state: 'absent', line: '' });
+});

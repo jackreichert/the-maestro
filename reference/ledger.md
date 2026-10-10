@@ -15,6 +15,7 @@ node $J ask   "Split the calendar change into a follow-up PR?" "${M[@]}"
 node $J resolve "calendar change" --answer "Yes — no consumer yet" "${M[@]}"
 node $J status                            # what is open + done today, with usage marks
 node $J status --footer                   # the reply-footer Ledger lines (below)
+node $J status --footer --line            # the same facts as one line; --session <id> / --stdin pick the transcript
 node $J standup                           # end-of-day summary, ready to paste (no usage marks)
 node $J roll                              # compress: archive the day, keep open items
 node $J scratch                           # with scripts_dir set: scratch files with a promote/keep/delete-candidate proposal (roll prints it too; never moves or deletes)
@@ -206,6 +207,14 @@ node $J unarchive Launch "${M[@]}"
 
 One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. After them, when a PR snapshot exists, comes `**Review queue:** N of 4` (open non-draft PRs against `review_queue_cap`; `(full)` at the cap, and a note when the snapshot is over an hour old), then the Session line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
+`status --footer --line` prints the same facts on one line, summed across streams (the review queue, loop and session follow when they apply):
+
+```
+Ledger: 0 done · 2 in flight · 0 awaiting | Loop: ok <1 min | Session: 103 turns (57%) · 159k/turn
+```
+
+The multi-line form is the script's default and is what a session-opening greeting, a status, board or PR-board request, or an explicit ask for the footer gets. An ordinary reply pastes the `--line` form. Both print the same figures and the same `roll soon` / `roll now` ending.
+
 `status --json` carries the same figures as data under `footer` (`ledger`: one `{ name, done, inflight, queued, awaiting, paste, blocked }` per line; `session`: the turns, percent, read per turn and advice), and the Podium's **Status** section is formatted from it, so the page and the footer never disagree.
 
 The Session line comes from `token-metrics.ts`: the most recently modified transcript in `projects_dir`, its turn count against `roll_turns` (default 180) and its mean cache-read per turn. The shown percent is of the full `roll_turns`. When either metric (turns against `roll_turns`, or mean read per turn against `roll_read_per_turn`, default 350000) reaches `roll_warn_pct` (default 60) of its limit the line ends `· roll soon`; at `roll_at_pct` (default 90) it ends `· roll now` instead. What the orchestrator does at each level is in [cost/budget.md#session-hygiene](../cost/budget.md#session-hygiene). With no transcript in that directory it prints `**Session:** unavailable (...)` and does not vanish. An unset `projects_dir` follows `container_root` when that is set, else the transcript directory of the working directory the script runs from, which is usually not the orchestrator's; `token-metrics.ts` warns on stderr when the directory it resolved has no sessions.
@@ -232,7 +241,7 @@ node $J release billing-api --desk Launch "${M[@]}"                 # holder onl
 node $J claims --json
 ```
 
-**Concurrent appends.** The ledger takes no lock, and needs none: `appendFileSync` issues one `write()` on an `O_APPEND` descriptor, so concurrent rows land whole and in some order. `journal.test.ts` has a test that runs several processes appending at once and asserts every line parses, ids are unique and the count is exact, and it passed without adding a lock (also stress-checked once at 8 processes x 40 rows). The one residual risk is `newId` picking the same four characters in two processes inside the same instant; `verify` reports duplicates. `append` and the backfill batch (`appendMany`) each use a single write.
+**Concurrent appends.** The ledger takes no lock, and needs none: `appendFileSync` issues one `write()` on an `O_APPEND` descriptor, so concurrent rows land whole and in some order. `journal.cases.ts` has a test that runs several processes appending at once and asserts every line parses, ids are unique and the count is exact, and it passed without adding a lock (also stress-checked once at 8 processes x 40 rows). The one residual risk is `newId` picking the same four characters in two processes inside the same instant; `verify` reports duplicates. `append` and the backfill batch (`appendMany`) each use a single write.
 
 Desks and the hub/desk split that uses claims: [desks.md](desks.md) (draft).
 
@@ -485,9 +494,9 @@ node $J standup         # formatted, for standup
 node $J status --json   # if you need to reason over it
 ```
 
-Read `CURRENT.md` (under `$LEDGER_ROOT/Projects/{container-name}/Journal/`) at the start of a
-session before asking the user anything. It, plus
-`$VAULT_ROOT/Projects/{container-name}/CONTEXT.md`, is the handoff.
+Run `node $J start-here` (about 1.7k tokens) at the start of a
+session before asking the user anything; for one stream add `--stream <Stream>`. It, plus
+`$VAULT_ROOT/Projects/{container-name}/CONTEXT.md`, is the handoff. `CURRENT.md` is the full generated board; read it only when `start-here` points you there.
 
 ## Search (derived index)
 

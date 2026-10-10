@@ -2,7 +2,8 @@
 /**
  * loop-supervisor.ts: keeps `event-loop.ts run` alive without a session. launchd runs this (KeepAlive); it loops:
  *
- *   exit 10  save the digest (stdout) under <ledger root>/Projects/<project>/Journal/Digests/, relaunch at once
+ *   exit 10  save the digest (stdout) under <ledger root>/Projects/<project>/Journal/Digests/, then queue
+ *            always-actionable pr-watch lines (rules only; a queue failure is logged and does not stop the loop), relaunch at once
  *   exit 3   sleep until the `QUIET-HOURS stop until HH:MM <tz>` time (capped at 12h), relaunch
  *   exit 0   sleep 300s (watches may be added later), relaunch
  *   exit 2   log the stderr line, sleep 300s, relaunch; the lock is never touched (another loop may own it)
@@ -16,17 +17,20 @@
  * still reads as alive (lib/loop-health.ts). The loop writes its own heartbeat while it runs.
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { localClock } from './lib/cadence.ts';
 import { digestDir, saveDigest } from './lib/digest-store.ts';
+import { digestQueueOwners, queueActionableDigest, queuedFixKeys } from './lib/digest-queue.ts';
+import type { DigestFix } from './lib/digest-queue.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
 import type { HeartbeatMode } from './lib/heartbeat.ts';
+import { openStore } from './lib/journal/store.ts';
 import { sleepUntil } from './lib/wall-sleep.ts';
 import { clearRecord, writeRecord } from './lib/supervisor-state.ts';
-import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT } from './local-config.ts';
+import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, SELF_REVIEW_REPOS } from './local-config.ts';
 
 const EVENT_LOOP = fileURLToPath(new URL('./event-loop.ts', import.meta.url));
 export const DELAYS = { idle: 300, usage: 300, crash: 30, quietCap: 12 * 3600, quietFallback: 300 };
@@ -41,6 +45,8 @@ export interface SuperviseDeps {
   sleep: (seconds: number, mode?: HeartbeatMode, lastError?: string) => Promise<void>;
   save: (digest: string) => void;
   log: (line: string) => void;
+  /** Called with the digest text after a successful save. A throw is logged; it does not stop the loop. */
+  queueDigest?: (digest: string) => void;
   now?: () => number;
   maxRuns?: number;
 }
@@ -71,11 +77,15 @@ export function quietSleepSeconds(stdout: string, now: number): number | null {
 const lastLine = (text: string): string => text.trim().split('\n').pop() ?? '';
 
 /** The supervision loop. Returns only when `maxRuns` launches are done (never, in production). */
-export async function supervise({ runLoop, sleep, save, log, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
+export async function supervise({ runLoop, sleep, save, log, queueDigest, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
   for (let runs = 0; runs < maxRuns; runs += 1) {
     const { code, stdout, stderr } = await runLoop();
     if (code === 10) {
-      try { save(stdout); } catch (err) { log(`could not save digest: ${err instanceof Error ? err.message : String(err)}`); log(`unsaved digest follows:\n${stdout.trimEnd()}`); await sleep(DELAYS.crash, 'backoff', 'could not save digest'); }
+      let saved = false;
+      try { save(stdout); saved = true; } catch (err) { log(`could not save digest: ${err instanceof Error ? err.message : String(err)}`); log(`unsaved digest follows:\n${stdout.trimEnd()}`); await sleep(DELAYS.crash, 'backoff', 'could not save digest'); }
+      if (saved && queueDigest) {
+        try { queueDigest(stdout); } catch (err) { log(`could not queue digest fixes: ${err instanceof Error ? err.message : String(err)}`); }
+      }
     } else if (code === 3) {
       const seconds = quietSleepSeconds(stdout, now());
       if (seconds === null) log(`quiet-hours stop with no readable time: ${lastLine(stdout)}`);
@@ -120,6 +130,65 @@ function stopOnSignals(eventDir: string): void {
   process.once('SIGINT', () => stop('SIGINT'));
 }
 
+const JOURNAL = fileURLToPath(new URL('./journal.ts', import.meta.url));
+
+/** Open fix keys already in the ledger. A missing file is an empty set; a read error is the caller's to catch. */
+function readQueuedKeys(vault: string, project: string): Set<string> {
+  const store = openStore({ vault, project, dryRun: true, warn: () => {} });
+  return queuedFixKeys(existsSync(store.ledgerPath) ? readFileSync(store.ledgerPath, 'utf8') : '');
+}
+
+/** Appends one fix through `journal.ts queue`. Throws on a non-zero exit; the caller logs and continues. */
+function enqueueFix(item: DigestFix, vault: string, project: string): void {
+  const r = spawnSync(process.execPath, [
+    JOURNAL, 'queue', item.text,
+    '--repo', item.repo,
+    '--model', 'unrecorded',
+    '--used', 'tool:loop-supervisor',
+    '--vault', vault,
+    '--project', project,
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, LEDGER_ROOT: vault, MAESTRO_PROJECT: project },
+  });
+  if (r.status !== 0) {
+    const detail = (r.stderr || r.stdout || '').trim().split('\n').pop()?.slice(0, 200) ?? '';
+    throw new Error(detail ? `journal.ts queue exited ${r.status}: ${detail}` : `journal.ts queue exited ${r.status}`);
+  }
+}
+
+/**
+ * Production callback for an exit-10 digest that was just saved. Owners come from `copilot_orgs`, else `gh_org`.
+ * Neither set: log and queue nothing. A per-item failure is logged; it does not throw.
+ */
+export function queueSavedDigest(digest: string, log: (line: string) => void, opts: {
+  vault: string;
+  project: string;
+  owners?: readonly string[];
+  excludeRepos?: readonly string[];
+  enqueue?: (item: DigestFix) => void;
+}): void {
+  const owners = opts.owners ?? digestQueueOwners(COPILOT_ORGS, GH_ORG);
+  const excludeRepos = opts.excludeRepos ?? SELF_REVIEW_REPOS;
+  let already: Set<string>;
+  try {
+    already = readQueuedKeys(opts.vault, opts.project);
+  } catch (err) {
+    log(`could not read queued fixes: ${err instanceof Error ? err.message : String(err)}; not queueing`);
+    return;
+  }
+  const enqueue = opts.enqueue ?? ((item: DigestFix) => enqueueFix(item, opts.vault, opts.project));
+  queueActionableDigest(digest, {
+    owners,
+    excludeRepos,
+    alreadyQueued: already,
+    log,
+    queue: (item) => {
+      try { enqueue(item); } catch (err) { log(`could not queue ${item.key}: ${err instanceof Error ? err.message : String(err)}`); }
+    },
+  });
+}
+
 const stamped = (line: string): string => `${new Date().toISOString()} loop-supervisor: ${line}`;
 
 /** The supervisor's own heartbeat while it waits. Never throws: it is advisory. */
@@ -142,6 +211,10 @@ async function main(): Promise<number> {
     }),
     save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); },
     log: (line) => console.error(stamped(line)),
+    queueDigest: (digest) => queueSavedDigest(digest, (line) => console.error(stamped(line)), {
+      vault: LEDGER_ROOT,
+      project: CONTAINER_PROJECT,
+    }),
     maxRuns: max > 0 ? max : Infinity,
   });
   return 0;

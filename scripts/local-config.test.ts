@@ -169,7 +169,7 @@ test('roll_warn_pct / roll_at_pct: defaults, file values, environment wins, inva
     assert.deepEqual(pair({ MAESTRO_ROLL_AT_PCT: '100' }), ['70', '100'], '100 is allowed');
 });
 
-test('PR size budget: defaults, file values, env override, and bad values fall back', () => {
+test('PR size budget: defaults and file values; a gate env var is ignored', () => {
     const d = show();
     assert.equal(d.PR_MAX_CODE_FILES, '5');
     assert.equal(d.PR_MAX_CODE_LINES, '400');
@@ -181,16 +181,74 @@ test('PR size budget: defaults, file values, env override, and bad values fall b
     assert.equal(f.PR_TEST_GLOBS, 'a/**, b/**');
     assert.equal(f.PR_MECHANICAL_GLOBS, '*.lock');
     const e = show({ MAESTRO_PR_MAX_CODE_FILES: '3', MAESTRO_PR_MAX_CODE_LINES: 'lots', MAESTRO_PR_CONFIG_GLOBS: 'x.yml' });
-    assert.equal(e.PR_MAX_CODE_FILES, '3');
-    assert.equal(e.PR_MAX_CODE_LINES, '400', 'non-numeric env falls back to the default, not the file value');
-    assert.equal(e.PR_CONFIG_GLOBS, 'x.yml');
+    assert.equal(e.PR_MAX_CODE_FILES, '8', 'the file limit ignores the environment');
+    assert.equal(e.PR_MAX_CODE_LINES, '900', 'the line limit ignores the environment');
+    assert.equal(e.PR_CONFIG_GLOBS, 'x.yml', 'a non-gate glob still takes the environment');
 });
 
-test('waive_size_gate_owners: default none, a bare owner means owner/*, env wins over the file', () => {
+test('PR size wide tier is opt-in: defaults follow the normal limits, the file applies, env cannot lift it', () => {
+    const d = show();
+    assert.equal(d.PR_WIDE_MAX_CODE_FILES, '5', 'default leaves the wide tier off');
+    assert.equal(d.PR_WIDE_MAX_CODE_LINES, '400');
+    const lifted = show({ MAESTRO_PR_WIDE_MAX_CODE_FILES: '10', MAESTRO_PR_WIDE_MAX_CODE_LINES: '200' });
+    assert.equal(lifted.PR_WIDE_MAX_CODE_FILES, '5', 'env cannot raise the wide file limit');
+    assert.equal(lifted.PR_WIDE_MAX_CODE_LINES, '400', 'env cannot lower the wide line limit');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_max_code_lines: 600\npr_wide_max_code_files: 10\npr_wide_max_code_lines: 500'));
+    const f = show();
+    assert.equal(f.PR_WIDE_MAX_CODE_FILES, '10');
+    assert.equal(f.PR_WIDE_MAX_CODE_LINES, '500');
+    const e = show({ MAESTRO_PR_WIDE_MAX_CODE_FILES: '7', MAESTRO_PR_WIDE_MAX_CODE_LINES: 'lots' });
+    assert.equal(e.PR_WIDE_MAX_CODE_FILES, '10', 'the file wide file limit ignores the environment');
+    assert.equal(e.PR_WIDE_MAX_CODE_LINES, '500', 'the file wide line limit ignores the environment');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_max_code_files: 5\npr_max_code_lines: 600\npr_wide_max_code_files: 2\npr_wide_max_code_lines: 900'));
+    assert.equal(show({ MAESTRO_PR_WIDE_MAX_CODE_LINES: '100' }).PR_WIDE_MAX_CODE_LINES, '600', 'capped at pr_max_code_lines');
+    assert.equal(show({ MAESTRO_PR_WIDE_MAX_CODE_FILES: '20' }).PR_WIDE_MAX_CODE_FILES, '5', 'never below pr_max_code_files');
+});
+
+test('waive_size_gate_owners: default none, a bare owner means owner/*, the file wins over env', () => {
     assert.equal(show().WAIVE_SIZE_GATE_OWNERS, '(unset)');
+    assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, '(unset)', 'env cannot waive');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('waive_size_gate_owners: example-owner, other/tools-*, *, */x'));
     assert.equal(show().WAIVE_SIZE_GATE_OWNERS, 'example-owner/*, other/tools-*');
-    assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, 'solo/*');
+    assert.equal(show({ MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'solo' }).WAIVE_SIZE_GATE_OWNERS, 'example-owner/*, other/tools-*');
+});
+
+test('pr-open gate settings ignore env and the overlay; only the user file applies', () => {
+    write(join(home, '.claude', 'skills', 'o-skill', 'config.md'), block('pr_smells_repos: overlay/*\nwaive_size_gate_owners: overlay-owner\npr_body_private_words: overlayword\npr_body_voice_names: Overlay\npr_max_code_files: 20\npr_max_code_lines: 20\npr_wide_max_code_files: 12\npr_body_check_risk: off\npr_body_sections: Overlay only'));
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('overlay: o-skill'));
+    const ignored = show({
+        MAESTRO_PR_SMELLS_REPOS: 'env/*',
+        MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'env-owner',
+        MAESTRO_PR_BODY_PRIVATE_WORDS: 'none',
+        MAESTRO_PR_BODY_PRIVATE_PATTERNS: 'envpat',
+        MAESTRO_PR_BODY_VOICE_NAMES: 'Env Name',
+        MAESTRO_PR_MAX_CODE_FILES: '99',
+        MAESTRO_PR_MAX_CODE_LINES: '99',
+        MAESTRO_PR_WIDE_MAX_CODE_FILES: '12',
+        MAESTRO_PR_WIDE_MAX_CODE_LINES: '20',
+        MAESTRO_PR_BODY_CHECK_RISK: 'off',
+        MAESTRO_PR_BODY_SECTIONS: 'Env only',
+    });
+    assert.equal(ignored.PR_SMELLS_REPOS, '(unset)');
+    assert.equal(ignored.WAIVE_SIZE_GATE_OWNERS, '(unset)');
+    assert.equal(ignored.PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator');
+    assert.equal(ignored.PR_BODY_PRIVATE_PATTERNS, '(unset)');
+    assert.equal(ignored.PR_BODY_VOICE_NAMES, '(unset)');
+    assert.equal(ignored.PR_MAX_CODE_FILES, '5', 'overlay cannot raise the file limit');
+    assert.equal(ignored.PR_MAX_CODE_LINES, '400');
+    assert.equal(ignored.PR_WIDE_MAX_CODE_FILES, '5', 'overlay and env cannot raise the wide file limit');
+    assert.equal(ignored.PR_WIDE_MAX_CODE_LINES, '400');
+    assert.equal(ignored.PR_BODY_CHECK_RISK, 'on', 'overlay and env cannot turn a body check off');
+    assert.equal(ignored.PR_BODY_SECTIONS, 'Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('overlay: o-skill\npr_smells_repos: example/*\nwaive_size_gate_owners: example-owner\npr_max_code_files: 8\npr_max_code_lines: 900\npr_body_private_words: memo\npr_body_private_patterns: \\bX-\\d+\\b\npr_body_voice_names: Sam Fictional'));
+    const file = show({ MAESTRO_PR_MAX_CODE_FILES: '2', MAESTRO_WAIVE_SIZE_GATE_OWNERS: 'other', MAESTRO_PR_SMELLS_REPOS: '' });
+    assert.equal(file.PR_SMELLS_REPOS, 'example/*');
+    assert.equal(file.WAIVE_SIZE_GATE_OWNERS, 'example-owner/*');
+    assert.equal(file.PR_MAX_CODE_FILES, '8');
+    assert.equal(file.PR_MAX_CODE_LINES, '900');
+    assert.equal(file.PR_BODY_PRIVATE_WORDS, 'memo');
+    assert.equal(file.PR_BODY_PRIVATE_PATTERNS, '\\bX-\\d+\\b');
+    assert.equal(file.PR_BODY_VOICE_NAMES, 'Sam Fictional');
 });
 
 test('self_review_repos: default none, a bare owner means owner/*, a wildcard owner is ignored, env wins over the file', () => {
@@ -200,20 +258,39 @@ test('self_review_repos: default none, a bare owner means owner/*, a wildcard ow
     assert.equal(show({ MAESTRO_SELF_REVIEW_REPOS: 'solo/*' }).SELF_REVIEW_REPOS, 'solo/*');
 });
 
-test('PR body settings: defaults on, file values, env wins, bad values fall back', () => {
+test('PR body settings: defaults on, file values, a check switch env var is ignored', () => {
+    const checks = ['PR_BODY_CHECK_RISK', 'PR_BODY_CHECK_VERIFY', 'PR_BODY_CHECK_FORBIDDEN', 'PR_BODY_CHECK_DIAGRAM', 'PR_BODY_CHECK_STACK', 'PR_BODY_CHECK_ORDER', 'PR_BODY_CHECK_PRIVATE', 'PR_BODY_CHECK_VOICE', 'PR_BODY_CHECK_COUNTS'];
     const d = show();
     assert.equal(d.PR_BODY_SECTIONS, 'Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally');
-    for (const k of ['PR_BODY_CHECK_RISK', 'PR_BODY_CHECK_VERIFY', 'PR_BODY_CHECK_FORBIDDEN', 'PR_BODY_CHECK_DIAGRAM']) assert.equal(d[k], 'on', k);
+    for (const k of checks) assert.equal(d[k], 'on', k);
     assert.equal(d.PR_DIAGRAM_MIN_FILES, '3');
-    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_sections: Context, Notes\npr_body_check_risk: off\npr_diagram_min_files: 6'));
+    const blocked = show({
+        MAESTRO_PR_BODY_SECTIONS: 'Env only',
+        MAESTRO_PR_BODY_CHECK_RISK: 'off',
+        MAESTRO_PR_BODY_CHECK_VERIFY: 'off',
+        MAESTRO_PR_BODY_CHECK_FORBIDDEN: 'false',
+        MAESTRO_PR_BODY_CHECK_DIAGRAM: 'no',
+        MAESTRO_PR_BODY_CHECK_STACK: '0',
+        MAESTRO_PR_BODY_CHECK_ORDER: 'off',
+        MAESTRO_PR_BODY_CHECK_PRIVATE: 'off',
+        MAESTRO_PR_BODY_CHECK_VOICE: 'off',
+        MAESTRO_PR_BODY_CHECK_COUNTS: 'off',
+        MAESTRO_PR_DIAGRAM_MIN_FILES: 'many',
+    });
+    assert.equal(blocked.PR_BODY_SECTIONS, d.PR_BODY_SECTIONS, 'env cannot replace the required sections');
+    for (const k of checks) assert.equal(blocked[k], 'on', `${k} ignores env`);
+    assert.equal(blocked.PR_DIAGRAM_MIN_FILES, '3', 'a bad number falls back to the default');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_sections: Context, Notes\npr_body_check_risk: off\npr_body_check_counts: off\npr_diagram_min_files: 6'));
     const f = show();
     assert.equal(f.PR_BODY_SECTIONS, 'Context, Notes');
     assert.equal(f.PR_BODY_CHECK_RISK, 'off');
     assert.equal(f.PR_BODY_CHECK_VERIFY, 'on');
+    assert.equal(f.PR_BODY_CHECK_COUNTS, 'off');
     assert.equal(f.PR_DIAGRAM_MIN_FILES, '6');
-    const e = show({ MAESTRO_PR_BODY_CHECK_RISK: 'on', MAESTRO_PR_BODY_CHECK_FORBIDDEN: 'false', MAESTRO_PR_DIAGRAM_MIN_FILES: 'many' });
-    assert.equal(e.PR_BODY_CHECK_RISK, 'on');
-    assert.equal(e.PR_BODY_CHECK_FORBIDDEN, 'off');
+    const e = show({ MAESTRO_PR_BODY_CHECK_RISK: 'on', MAESTRO_PR_BODY_CHECK_FORBIDDEN: 'false', MAESTRO_PR_BODY_SECTIONS: 'Env only', MAESTRO_PR_DIAGRAM_MIN_FILES: 'many' });
+    assert.equal(e.PR_BODY_CHECK_RISK, 'off', 'env cannot turn a file-off check back on');
+    assert.equal(e.PR_BODY_CHECK_FORBIDDEN, 'on', 'env cannot turn a default-on check off');
+    assert.equal(e.PR_BODY_SECTIONS, 'Context, Notes', 'env cannot replace the file sections');
     assert.equal(e.PR_DIAGRAM_MIN_FILES, '3', 'a bad number falls back to the default, not the file value');
 });
 
@@ -222,7 +299,7 @@ test('PR body private-reference and voice settings: defaults, file values, bad p
     assert.equal(d.PR_BODY_CHECK_PRIVATE, 'on');
     assert.equal(d.PR_BODY_CHECK_VOICE, 'on');
     assert.equal(d.PR_BODY_CHECK_COUNTS, 'on');
-    assert.equal(show({ MAESTRO_PR_BODY_CHECK_COUNTS: 'off' }).PR_BODY_CHECK_COUNTS, 'off');
+    assert.equal(show({ MAESTRO_PR_BODY_CHECK_COUNTS: 'off' }).PR_BODY_CHECK_COUNTS, 'on', 'env cannot turn the counts check off');
     assert.equal(d.PR_BODY_PRIVATE_PATTERNS, '(unset)');
     assert.equal(d.PR_BODY_VOICE_NAMES, '(unset)');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_private_patterns: \\bX-\\d+\\b, (broken\npr_body_voice_names: Sam Fictional, samf\npr_body_check_voice: off'));
@@ -230,10 +307,18 @@ test('PR body private-reference and voice settings: defaults, file values, bad p
     assert.equal(f.PR_BODY_PRIVATE_PATTERNS, '\\bX-\\d+\\b', 'an invalid regex is dropped');
     assert.equal(f.PR_BODY_VOICE_NAMES, 'Sam Fictional, samf');
     assert.equal(f.PR_BODY_CHECK_VOICE, 'off');
-    assert.equal(show({ MAESTRO_PR_BODY_CHECK_PRIVATE: 'off' }).PR_BODY_CHECK_PRIVATE, 'off');
+    assert.equal(show({ MAESTRO_PR_BODY_CHECK_VOICE: 'on' }).PR_BODY_CHECK_VOICE, 'off', 'env cannot turn a file-off check back on');
+    assert.equal(show({ MAESTRO_PR_BODY_CHECK_PRIVATE: 'off' }).PR_BODY_CHECK_PRIVATE, 'on', 'env cannot turn a check off');
     assert.equal(d.PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator');
-    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none' }).PR_BODY_PRIVATE_WORDS, '(unset)', 'none empties the word list');
-    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, 'memo');
+    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none' }).PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator', 'env cannot empty the word list');
+    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, 'ledger, vault, orchestrator', 'env cannot replace the word list');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_private_words: none'));
+    assert.equal(show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'memo' }).PR_BODY_PRIVATE_WORDS, '(unset)', 'none in the file empties the list; env does not put it back');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('pr_body_private_words: memo\npr_body_private_patterns: \\bX-\\d+\\b\npr_body_voice_names: Sam Fictional'));
+    const held = show({ MAESTRO_PR_BODY_PRIVATE_WORDS: 'none', MAESTRO_PR_BODY_PRIVATE_PATTERNS: 'nope', MAESTRO_PR_BODY_VOICE_NAMES: 'Other' });
+    assert.equal(held.PR_BODY_PRIVATE_WORDS, 'memo');
+    assert.equal(held.PR_BODY_PRIVATE_PATTERNS, '\\bX-\\d+\\b');
+    assert.equal(held.PR_BODY_VOICE_NAMES, 'Sam Fictional');
 });
 
 test('review_queue_cap: default 4, file value, env wins, bad values fall back', () => {

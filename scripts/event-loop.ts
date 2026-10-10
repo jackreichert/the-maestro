@@ -28,10 +28,12 @@
  * means waiting. It ends only on a crash or a signal. The digest is claimed, appended to the inbox (ids dedupe a replay) and then deleted, so a
  * crash repeats an event that the inbox drops instead of losing it.
  *
- * `events` reads the inbox: `list` shows unhandled events (`--unseen` only the unseen, `--all` every one), `ack` marks them handled, and
- * `wait` blocks until an unseen actionable event exists, prints it, marks it seen and exits 10 (0 quietly at the timeout, default 6h).
- * `wait` offers an event once: after it is printed it is `seen` and no later `wait` returns it, so a session that dies before acting must find it again with
- * `events list` (unhandled), which is what a session start has to run before it waits. Two waiters may both print the same event (seen is marked after printing).
+ * `events` reads the inbox: `list` shows unhandled events (`--unseen` only those this window has not seen, `--all` every one), `ack` marks them handled, and
+ * `wait` blocks until an actionable event for this window exists, marks it seen, prints it and exits 10 (0 quietly at the timeout, default 6h).
+ * Events are routed (lib/event-route.ts): an event for a repo goes to the window that holds a live lease on an open item of that repo's stream, and only to it;
+ * an event nobody owns (no repo, no live lease, or the owner's lease lapsed) goes to the first window that takes it. `seen` is per window (each `seen` row names
+ * its window), so one window's mark never hides an event from another. `wait` offers an event once per window: after it is printed it is `seen` by that window,
+ * so a session that dies before acting must find it again with `events list` (unhandled, shown to every window), which is what a session start has to run before it waits.
  *
  * Heartbeat: unless `--once`, `run` rewrites <event dir>/heartbeat.json on each tick and each sleep chunk (lib/heartbeat.ts), and sleeps in chunks of at most 60 s
  * against the wall clock (lib/wall-sleep.ts), so a lid closed mid-sleep costs under a minute, not the whole lid time.
@@ -44,12 +46,13 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
-  EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
+  EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, STATUS_REPO_STREAMS, VAULT_ROOT, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
 import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './lib/event-inbox.ts';
+import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
 import { CHUNK_SECONDS, sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
@@ -57,6 +60,7 @@ import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.t
 import type { TypeRegistry } from './event-types/index.ts';
 import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult, Watch, WatchEvent, WatchState } from './lib/types.ts';
 import type { NotifyRun } from './lib/notify.ts';
+import { resolveWindowId, windowEnv } from './lib/window-id.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 
@@ -308,31 +312,59 @@ async function digestWait(dir: string, timeoutMs: number, pollSeconds: number): 
 }
 
 /** The inbox view `events list` shows: `--unseen`, `--all`, else everything not yet handled. */
-const listFilter = (v: { unseen?: boolean; all?: boolean }): ((e: InboxEntry) => boolean) => (v.unseen ? (e) => !e.seen : v.all ? () => true : (e) => !e.handled);
+const listFilter = (v: { unseen?: boolean; all?: boolean }, window: string): ((e: InboxEntry) => boolean) => (v.unseen ? (e) => !seenByWindow(e, window) : v.all ? () => true : (e) => !e.handled);
 
-/** Blocks until an unseen actionable event is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). */
-async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, nap: (s: number) => Promise<void> = sleep): Promise<number> {
+/** The window each inbox entry is for right now (see lib/event-route.ts); every event is unowned when no ledger is configured. */
+const ownersOf = (entries: InboxEntry[]): Map<string, string | undefined> => {
+  const ctx = loadRouteContext(LEDGER_ROOT || VAULT_ROOT, CONTAINER_PROJECT, STATUS_REPO_STREAMS);
+  // Handled events are never deliverable, so their owner is never needed.
+  return new Map(entries.map((e) => [e.id, ctx && !e.handled ? ownerOf(e, ctx) : undefined]));
+};
+
+/**
+ * The actionable events `window` may take now: the ones it owns and has not seen, plus unowned ones nobody has seen. It marks them seen first and
+ * then re-reads: of several windows that all saw an unowned event free, only the one whose `seen` row is first in the file keeps it, so none is printed twice.
+ */
+/** `beforeMark` runs between reading the inbox and marking: a test uses it to play a second window whose mark lands in that gap. */
+export function claimFor(dir: string, window: string | undefined, beforeMark: () => void = () => {}): InboxEntry[] {
+  const me = window ?? '';
+  const entries = readInbox(dir).filter((e) => e.actionable);
+  const owners = ownersOf(entries);
+  const mine = entries.filter((e) => deliverableTo(e, me, owners.get(e.id)));
+  if (!mine.length) return [];
+  beforeMark();
+  mark(dir, 'seen', mine.map((e) => e.id), Date.now(), window);
+  const after = new Map(readInbox(dir).map((e) => [e.id, e]));
+  return mine.filter((e) => owners.get(e.id) !== undefined || after.get(e.id)?.seenBy === me);
+}
+
+/** Blocks until an event for this window is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). */
+async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, nap: (s: number) => Promise<void> = sleep, window?: string): Promise<number> {
   const end = Date.now() + timeoutMs;
   for (;;) {
-    const fresh = readInbox(dir).filter((e) => e.actionable && !e.seen);
-    if (fresh.length) { console.log(fresh.map(formatEntry).join('\n')); mark(dir, 'seen', fresh.map((e) => e.id)); return EXIT.actionable; }
+    const fresh = claimFor(dir, window);
+    if (fresh.length) { console.log(fresh.map(formatEntry).join('\n')); return EXIT.actionable; }
     if (Date.now() >= end) return EXIT.ok;
     await nap(Math.min(pollSeconds, Math.max(0.05, (end - Date.now()) / 1000)));
   }
 }
 
 /** `events [list|ack|wait]`. Returns the exit code, or a usage message. */
-async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string }): Promise<number | string> {
+async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string; window?: string; session?: string }): Promise<number | string> {
+  // The window that reads or acks is recorded on the seen and handled rows, so a later router can tell whose mark it is.
+  const window = resolveWindowId({ window: v.window, session: v.session, ...windowEnv() });
   if (sub === undefined || sub === 'list') {
     const { entries, torn } = readInboxReport(dir);
     if (torn) console.error(`warning: ${torn} unreadable line(s) in the inbox (a write cut short); the events on them are not shown`);
-    const shown = entries.filter(listFilter(v));
-    console.log(v.json ? JSON.stringify(shown) : shown.map(formatEntry).join('\n') || 'no events');
+    const shown = entries.filter(listFilter(v, window));
+    // `list` shows every event to every window (nothing is hidden by routing); `--json` adds `owner` where a window owns the event now.
+    const owners = ownersOf(shown);
+    console.log(v.json ? JSON.stringify(shown.map((e) => (owners.get(e.id) ? { ...e, owner: owners.get(e.id) } : e))) : shown.map(formatEntry).join('\n') || 'no events');
     return EXIT.ok;
   }
   if (sub === 'ack') {
     if (!ids.length) return 'events ack needs at least one event id';
-    const { unknown } = mark(dir, 'handled', ids);
+    const { unknown } = mark(dir, 'handled', ids, Date.now(), window);
     console.log(`handled ${new Set(ids).size - unknown.length}`);
     return unknown.length ? `no such event: ${unknown.join(' ')}` : EXIT.ok;
   }
@@ -340,7 +372,7 @@ async function eventsCommand(dir: string, sub: string | undefined, ids: string[]
     const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
     const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
     if (!(hours > 0) || !(poll > 0)) return '--timeout-hours and --poll-seconds need positive numbers';
-    return eventsWait(dir, hours * 3600 * 1000, poll);
+    return eventsWait(dir, hours * 3600 * 1000, poll, sleep, window);
   }
   return 'events commands: list | ack <id...> | wait';
 }
@@ -349,7 +381,7 @@ const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' },
+  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */

@@ -46,7 +46,9 @@ import { CONTAINER_PROJECT, LEDGER_ROOT, PR_SEARCH, REREVIEW_GATE, STACK_MAX_AGE
 import { loadVerdicts, verdictFor, type VerdictRow } from './review-verdict.ts';
 import { stackLines } from './lib/stack-cap.ts';
 import { searchAllPages } from './lib/gh-search.ts';
+import type { Run } from './lib/types.ts';
 import { isSelfReview, splitSelfReview } from './lib/self-review.ts';
+import { DRAFT_PROMOTED, isDraftPromoted } from './lib/draft-promotion.ts';
 
 /** A review as the snapshot keeps it (the latest one per reviewer). */
 export interface SnapshotReview { author: string | undefined; state: string; submittedAt: string }
@@ -157,9 +159,9 @@ const toSnapshotPr = (n: SearchNodePr): SnapshotPr => ({
     commentTotal: n.comments.totalCount,
 });
 
-export function fetchLive(): Snapshot {
+export function fetchLive(run?: Run): Snapshot {
     // Every page: a single 50-result page made PRs past the 50th look "no longer open".
-    return { takenAt: new Date().toISOString(), prs: searchAllPages<SearchNodePr>(QUERY).map(toSnapshotPr) };
+    return { takenAt: new Date().toISOString(), prs: searchAllPages<SearchNodePr>(QUERY, run).map(toSnapshotPr) };
 }
 
 export function loadSnapshot(path: string): Snapshot | null {
@@ -184,8 +186,8 @@ function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot, selfRevie
         if (!old) continue; // a brand-new PR isn't one of the watched actionable events
         const tag = isSelfReview(p.repo, selfReview) ? '[self-review] ' : '';
 
-        if (old.isDraft && !p.isDraft) {
-            changes.push(`${tag}${p.key} draft promoted to ready for review — ${p.url}`);
+        if (isDraftPromoted(old, p)) {
+            changes.push(`${tag}${p.key} ${DRAFT_PROMOTED} — ${p.url}`);
         }
         if (old.reviewDecision !== p.reviewDecision) {
             changes.push(`${tag}${p.key} reviewDecision ${old.reviewDecision} -> ${p.reviewDecision} — ${p.url}`);
@@ -357,6 +359,24 @@ export function stackReport(snapshot: { prs: StoredPr[] }, now: Date = new Date(
 
 /** Where the snapshot lives under a ledger root. */
 export const snapshotPath = (root: string): string => join(root, 'Projects', CONTAINER_PROJECT, 'Journal', 'prs-snapshot.json');
+
+/** Where the loop's idle-tick refresh keeps the current board. Never the `--diff` baseline: only the greeting's run writes `prs-snapshot.json`. */
+export const currentPath = (root: string): string => join(dirname(snapshotPath(root)), 'prs-current.json');
+
+/** When a snapshot file was taken, 0 when it is absent or unreadable. */
+function takenAtOf(path: string): number {
+    try { return Date.parse(loadSnapshot(path)?.takenAt ?? '') || 0; } catch { return 0; }
+}
+
+/** The newer of the baseline and the loop's current-state file, for readers that want the latest board (the footer's review queue, the dispatch gate's fallback). Falls back to the baseline path when neither exists. */
+export function freshestSnapshotPath(root: string): string {
+    const base = snapshotPath(root);
+    const cur = currentPath(root);
+    return takenAtOf(cur) > takenAtOf(base) ? cur : base;
+}
+
+/** When the newest stored board was taken, 0 when there is none. */
+export const freshestSnapshotAt = (root: string): number => Math.max(takenAtOf(snapshotPath(root)), takenAtOf(currentPath(root)));
 
 function cmdSnapshot(): void {
     const vault = arg('vault', LEDGER_ROOT || VAULT_ROOT);

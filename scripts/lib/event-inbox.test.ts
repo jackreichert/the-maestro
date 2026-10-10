@@ -27,6 +27,7 @@ test('kinds: decisions split on the target state, conflicts, messages carry a co
   assert.equal(kind('DECISION acme/w#1: NONE -> APPROVED https://x.test'), 'approved');
   assert.equal(kind('CONFLICT acme/w#1 main <- f https://x.test'), 'conflict');
   assert.equal(kind('CONFLICT-CLEARED acme/w#1'), 'conflict-cleared');
+  assert.equal(kind('READY acme/w#1 draft promoted to ready for review https://x.test'), 'ready');
   assert.equal(toInboxEvent(ev('3 new message(s) from user', { type: 'inbox', watch: 'inbox' }))?.fields.count, 3);
   assert.equal(kind(`something odd ${SENTINEL}`), 'other');
 });
@@ -158,4 +159,48 @@ test('writers racing on a torn file lose nothing', async () => {
   assert.equal(report.entries.length, 1 + writers * each);
   assert.equal(new Set(report.entries.map((e) => e.id)).size, 1 + writers * each);
   assert.equal(report.torn, 1);
+});
+
+test('a seen or handled mark carries the window that made it, free text is stripped, and an unmarked row reads as before', () => {
+  const dir = tempDir();
+  appendEvents(dir, [ev('THREAD acme/widget#1 by alice: x'), ev('THREAD acme/widget#2 by bob: y', { at: '2026-10-01T12:01:00.000Z' }), ev('THREAD acme/widget#3 by cy: z', { at: '2026-10-01T12:02:00.000Z' })]);
+  const [a, b, c] = readInbox(dir).map((e) => e.id);
+  mark(dir, 'seen', [a], Date.now(), 'win-one');
+  mark(dir, 'handled', [a], Date.now(), 'win-two');
+  mark(dir, 'seen', [b], Date.now(), 'bad id "\n{x}');
+  mark(dir, 'seen', [c]);
+  const by = new Map(readInbox(dir).map((e) => [e.id, e]));
+  assert.equal(by.get(a)?.seenBy, 'win-one');
+  assert.equal(by.get(a)?.handledBy, 'win-two');
+  assert.equal(by.get(b)?.seenBy, 'badidx', 'the id is cleaned before it is stored');
+  assert.equal(by.get(c)?.seen, true);
+  assert.equal(by.get(c)?.seenBy, undefined);
+  assert.ok(!readFileSync(inboxPath(dir), 'utf8').includes('bad id'));
+});
+
+test('seen is per window: one window\'s mark does not skip another\'s, and seenWindows lists each', () => {
+  const dir = tempDir();
+  appendEvents(dir, [ev('THREAD acme/w#1 by a: u')]);
+  const [a] = readInbox(dir);
+  mark(dir, 'seen', [a.id], Date.now(), 'w1');
+  mark(dir, 'seen', [a.id], Date.now(), 'w2');
+  mark(dir, 'seen', [a.id], Date.now(), 'w2');
+  const rows = readFileSync(inboxPath(dir), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(rows.filter((r) => r.row === 'seen').map((r) => r.window), ['w1', 'w2'], 'w2 wrote its own mark once; its repeat was a no-op');
+  const [e] = readInbox(dir);
+  assert.deepEqual([e.seen, e.seenBy, e.seenWindows, e.seenAnonymous], [true, 'w1', ['w1', 'w2'], undefined]);
+});
+
+test('a mark that names no window counts as seen by every window, and a windowless caller keeps the old skip-once rule', () => {
+  const dir = tempDir();
+  appendEvents(dir, [ev('THREAD acme/w#1 by a: u'), ev('THREAD acme/w#2 by a: u')]);
+  const [a, b] = readInbox(dir);
+  mark(dir, 'seen', [a.id]);
+  mark(dir, 'seen', [a.id], Date.now(), 'w1');
+  mark(dir, 'seen', [b.id], Date.now(), 'w1');
+  mark(dir, 'seen', [b.id]);
+  const rows = readFileSync(inboxPath(dir), 'utf8').trim().split('\n').map((l) => JSON.parse(l).row);
+  assert.deepEqual(rows, ['event', 'event', 'seen', 'seen'], 'w1 adds nothing to an event an older anonymous mark already covers; the windowless repeat on b is skipped');
+  const [a2, b2] = readInbox(dir);
+  assert.deepEqual([a2.seenAnonymous, a2.seenWindows, b2.seenAnonymous, b2.seenWindows], [true, [], undefined, ['w1']]);
 });

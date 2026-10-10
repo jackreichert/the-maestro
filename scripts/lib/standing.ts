@@ -163,6 +163,17 @@ export function standingState(events: StandingEvent[], ctx: CheckContext): RowSt
   });
 }
 
+/**
+ * Records that a cadence row ran because the machine just did the work (no one said so). Returns false and writes nothing when the row is
+ * retired, unknown, or enforced by a runtime check: a checked row is judged by its check, and a `ran` line would be a claim the check ignores.
+ */
+export function recordRan(file: string, id: string, evidence: string, at: string): boolean {
+  const row = liveRows(readEvents(file)).find((r) => r.id === id);
+  if (!row || row.check !== undefined) return false;
+  appendEvent(file, { op: 'ran', id, evidence, at });
+  return true;
+}
+
 const ageText = (ms: number): string => (ms < 3600_000 ? `${Math.max(0, Math.floor(ms / 60_000))} min` : ms < 48 * 3600_000 ? `${Math.floor(ms / 3600_000)} h` : `${Math.floor(ms / 86_400_000)} days`);
 const oneLine = (s: string, max: number): string => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t; };
 

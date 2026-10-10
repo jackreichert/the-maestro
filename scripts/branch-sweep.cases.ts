@@ -1,13 +1,14 @@
-// Run: node --test scripts/branch-sweep.test.ts
-import { test } from 'node:test';
+// Cases for branch-sweep; run through branch-sweep.shard-N.test.ts (see lib/shard.ts)
+import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // Hermetic: never read the user's config file (see local-config.ts).
 process.env.MAESTRO_LOCAL_CONFIG = '';
+process.env.MAESTRO_LAUNCH_AGENTS_DIR = mkdtempSync(join(tmpdir(), 'agents-')); // and never the real launchd plist
 const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
 import type { CmdResult, ExcludedItem, Git, GhJson, ListedItem, PrInfo, SweepContext } from './branch-sweep.ts';
 const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts, isEnvFile } = await import('./branch-sweep.ts');
@@ -883,4 +884,121 @@ test('--apply-worktrees from the command line removes what qualifies and prints 
     assert.deepEqual([existsSync(clean), existsSync(work)], [false, true]);
     const v = spawnSync(process.execPath, [SCRIPT, '--apply-worktrees', '--verbose', '--container', w.container, '--idle-minutes', '0', '--claims-dir', join(w.root, 'none')], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH: 'false' } });
     assert.match(v.stdout, new RegExp(`kept +${work} .*untracked`));
+});
+
+// ── sweepWorktrees: a failure it cannot decide through is reported in `failed`, never swallowed ──
+
+/** Runs `fn` with a `git` first on PATH that fails any command whose arguments match `pattern`, and runs the real git otherwise. */
+function withFailingGit<T>(w: World, pattern: string, fn: () => T): T {
+    const bin = join(w.root, 'shim'); mkdirSync(bin, { recursive: true });
+    const real = must(process.env.PATH, 'PATH').split(':').map((d) => join(d, 'git')).find((p) => existsSync(p));
+    writeFileSync(join(bin, 'git'), `#!/bin/bash\ncase " $* " in *" ${pattern} "*) echo "injected failure" >&2; exit 1;; esac\nexec ${must(real, 'real git')} "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    const saved = process.env.PATH;
+    process.env.PATH = `${bin}:${saved}`;
+    try { return fn(); } finally { process.env.PATH = saved; }
+}
+const mergedWorktree = (w: World, branch: string): string => {
+    feature(w, branch); mergeInto(w, 'develop', branch); mergeInto(w, 'staging', branch);
+    const wt = join(w.root, branch.replace('/', '-')); sh(w.repo, 'worktree', 'add', '-q', wt, branch);
+    return wt;
+};
+
+test('sweepWorktrees reports a scan that stopped on a git error as failed, and decides nothing in that repo', () => {
+    const w = world(); const wt = mergedWorktree(w, 'feat/stop');
+    const stop = (repo: string): Git => Object.assign((...a: string[]): CmdResult => {
+        if (a.includes('for-each-ref')) return { ok: false, status: 128, out: '', err: 'boom' };
+        const r = spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
+        return { ok: r.status === 0, status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+    }, { repo });
+    const out = sweep(w, { gitFor: stop });
+    assert.deepEqual(out.failed, ['proj: scan stopped']);
+    assert.match(out.notes.join('\n'), /proj: scan stopped: git for-each-ref/);
+    assert.deepEqual(out.removed, []);
+    assert.equal(existsSync(wt), true, 'nothing was decided, so nothing was removed');
+});
+
+test('sweepWorktrees reports a failed prune as failed, and still removes what qualifies', () => {
+    const w = world(); const gone = mergedWorktree(w, 'feat/gone2'); const live = mergedWorktree(w, 'feat/live2');
+    rmSync(gone, { recursive: true });
+    const out = withFailingGit(w, 'worktree prune', () => sweep(w));
+    assert.deepEqual(out.failed, ['proj: prune failed']);
+    assert.deepEqual(out.pruned, []);
+    assert.match(out.notes.join('\n'), /prune skipped: git worktree prune failed/);
+    assert.deepEqual(out.removed.map((x) => x.path), [live]);
+});
+
+test('sweepWorktrees reports a failed removal as failed and keeps the worktree', () => {
+    const w = world(); const wt = mergedWorktree(w, 'feat/stuck');
+    const out = withFailingGit(w, 'worktree remove', () => sweep(w));
+    assert.deepEqual(out.failed, [`proj: could not remove ${wt}`]);
+    assert.deepEqual(out.removed, []);
+    assert.match(keptReason(out, wt), /^failed:/);
+    assert.equal(existsSync(wt), true);
+});
+
+test('sweepWorktrees reports a failed fetch as failed and keeps what it would have removed', () => {
+    const w = world(); const wt = mergedWorktree(w, 'feat/stale');
+    const out = withFailingGit(w, 'fetch --prune origin', () => sweep(w));
+    assert.deepEqual(out.failed, ['proj: git fetch failed']);
+    assert.deepEqual(out.removed, []);
+    assert.match(keptReason(out, wt), /fetch failed/);
+});
+
+/** A clean, detached, idle worktree that qualifies for removal, so only the in-use guard can keep it. */
+const qualifying = (w: World, name: string): string => {
+    const wt = join(w.root, name); sh(w.repo, 'worktree', 'add', '-q', '--detach', wt, 'origin/develop');
+    return wt;
+};
+
+test('sweepWorktrees keeps the worktree the process cwd is inside, and removes it once the cwd moves', () => {
+    const w = world(); const wt = qualifying(w, 'cwd'); const other = qualifying(w, 'bystander');
+    mkdirSync(join(wt, 'sub'));
+    const before = process.cwd();
+    try {
+        process.chdir(join(wt, 'sub'));
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/);
+        assert.deepEqual(r.removed.map((x) => x.path), [other], 'only the bystander goes');
+        assert.equal(existsSync(wt), true);
+    } finally { process.chdir(before); }
+    assert.deepEqual(sweep(w).removed.map((x) => x.path), [wt]);
+});
+
+test('sweepWorktrees keeps the worktree holding the running script, found through a symlink', () => {
+    const w = world(); const wt = qualifying(w, 'script');
+    const link = join(w.root, 'link.ts'); symlinkSync(join(wt, 'base.txt'), link);
+    const argv1 = process.argv[1];
+    try {
+        process.argv[1] = link; // the script's own path is a symlink; only its real path is inside the worktree
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/);
+        assert.deepEqual(r.removed, []);
+    } finally { process.argv[1] = argv1; }
+    assert.deepEqual(sweep(w).removed.map((x) => x.path), [wt]);
+});
+
+test('sweepWorktrees keeps the checkout the installed loop supervisor runs from, and a worktree that contains it', () => {
+    const w = world(); const wt = qualifying(w, 'runtime'); const other = qualifying(w, 'unrelated');
+    const plist = join(process.env.MAESTRO_LAUNCH_AGENTS_DIR as string, 'com.jackreichert.the-maestro-loop.plist');
+    try {
+        writeFileSync(plist, `<dict><key>WorkingDirectory</key>\n  <string>${join(wt, 'base.txt')}</string></dict>`);
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/);
+        assert.deepEqual(r.removed.map((x) => x.path), [other]);
+        assert.match(worktreeSweepLines(r, false).join('\n'), /1 +in use/);
+        assert.match(removeWorktree(w.repo, { id: 'x', name: wt, kind: 'worktree', head: sh(wt, 'rev-parse', 'HEAD'), detached: true }).message, /in use/, 'a direct removal refuses too');
+    } finally { rmSync(plist, { force: true }); }
+    assert.deepEqual(sweep(w).removed.map((x) => x.path), [wt], 'once the plist is gone the checkout is free');
+});
+
+test('sweepWorktrees keeps a worktree whose root is exactly the supervisor WorkingDirectory, and still removes a sibling whose name is only a prefix of it', () => {
+    const w = world(); const sibling = qualifying(w, 'runtime'); const wt = qualifying(w, 'runtime-old');
+    const plist = join(process.env.MAESTRO_LAUNCH_AGENTS_DIR as string, 'com.jackreichert.the-maestro-loop.plist');
+    try {
+        writeFileSync(plist, `<dict><key>WorkingDirectory</key>\n  <string>${realpathSync(wt)}</string></dict>`);
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/, 'the exact root is in use');
+        assert.deepEqual(r.removed.map((x) => x.path), [sibling], 'a sibling whose path is a bare string prefix of the in-use root is not it');
+    } finally { rmSync(plist, { force: true }); }
 });

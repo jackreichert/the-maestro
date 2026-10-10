@@ -1,6 +1,6 @@
 # Local config (install overlay)
 
-**This file names the install-specific settings; it holds no values.** Every other generic file states its rule generically and says "from local-config" where it needs one of these. Where the values live is set up per install, as described below. The script-side twin is [scripts/local-config.ts](../scripts/local-config.ts), which reads the same values from environment variables and from the config file.
+**This file names the install-specific settings; it holds no values.** Every other generic file states its rule generically and says "from local-config" where it needs one of these. Where the values live is set up per install, as described below. The script-side twin is [scripts/local-config.ts](../scripts/local-config.ts), which reads the same values from environment variables and from the config file. The pr-open gate settings named below are the exception: they are read from the user config file only.
 
 Personal preferences (greeting style, sign-offs) do not belong in either; they live in the user's own CLAUDE.md or memory.
 
@@ -34,6 +34,7 @@ loop_patterns: loop_a, loop_b  # pgrep -f patterns `journal.ts resume` checks; o
 update_check: on               # off stops `prime` fetching this skill's own repo to report behind/ahead/diverged/dirty; default on
 auto_pull: off                 # on: `prime` fast-forwards a clean, purely-behind skill checkout (merge --ff-only only); off: never, and silences the ask; unset (the default) behaves as off but `prime` asks you to choose each session
 resume_gh: on                  # off skips `gh pr list` in `resume`; default on
+lease_ttl_minutes: 60       # minutes a window's lease on a ledger item lasts after its last row; default 60
 notes_check_since: 7d         # how far back the roll and the notes-reachable row look for notes no stream tab lists: 7d, YYYY-MM-DD, or all; default 7d
 ledger_git_autocommit: on      # on: `roll` commits the ledger root (if it is a git repo) after a clean `verify`; default off
 approvals_review_day: friday   # weekday the morning greeting brings the approvals digest; default friday
@@ -43,17 +44,19 @@ watch_quiet_hours: 20:00-07:00 # PR watcher: no polling in this local window; `o
 watch_quiet_hours_mode: stop   # stop: skip the PR watch (run exits if nothing else is live) until the next greeting; slow: poll every 1800s; default stop
 watch_quiet_weekends: off      # on: Saturday and Sunday count as quiet hours; default off
 watch_tz: America/New_York     # time zone for the quiet hours; default the system time zone
-pr_max_code_files: 5           # PR size budget: most code files per PR; default 5
-pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400
+pr_max_code_files: 5           # PR size budget: most code files per PR; default 5; file-only
+pr_max_code_lines: 400         # PR size budget: most changed code lines (adds + deletes); default 400; file-only
+pr_wide_max_code_files: 10     # optional wide tier: most code files for a PR within the wide line limit; default = pr_max_code_files (tier off); never below it
+pr_wide_max_code_lines: 400    # wide tier: most changed code lines; default = pr_max_code_lines; never above it
 pr_body_sections: Context, Reviewer guide, Risk and blast radius, Rollback / flag, How to verify locally # headings pr-open.ts requires in every PR body; this is the default list
 pr_body_check_risk: on         # also: pr_body_check_verify, pr_body_check_forbidden, pr_body_check_diagram; each on by default, off turns it off
 pr_body_private_words: ledger, vault # words refused outside code in a PR title or body; default ledger, vault, orchestrator; `none` empties the list
-pr_body_private_patterns: \bX-\d+\b # extra regexes for private ids a PR must not carry (comma-separated, no commas inside); checked in title and body
-pr_body_voice_names: Sam, samf # your names or logins that must not appear in the third person; also pr_body_check_private, pr_body_check_voice and pr_body_check_counts (on/off)
+pr_body_private_patterns: \bX-\d+\b # extra regexes for private ids a PR must not carry (comma-separated, no commas inside); checked in title and body; file-only
+pr_body_voice_names: Sam, samf # your names or logins that must not appear in the third person; file-only; also pr_body_check_private, pr_body_check_voice and pr_body_check_counts (on/off)
 pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid diagram or `Diagram: n/a, <reason>`; default 3
 pr_body_check_stack: on         # stacked PR needs a Stack section naming its base PR; also pr_body_check_order (Review order line over pr_review_order_min_files code files, default 3); on by default
-pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off
-waive_size_gate_owners: example-owner # GitHub owners (or owner/name globs, comma-separated) whose repos skip the PR size limits in pr-open.ts (not the mixed code/mechanical refusal); a bare owner means owner/*; default none, so the gate holds everywhere
+pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off; file-only
+waive_size_gate_owners: example-owner # GitHub owners (or owner/name globs, comma-separated) whose repos skip the PR size limits in pr-open.ts (not the mixed code/mechanical refusal); a bare owner means owner/*; default none, so the gate holds everywhere; file-only
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
@@ -98,6 +101,8 @@ Every key is optional. Blank values are ignored.
 
 Precedence per setting: **environment variable, then the user file, then the overlay's `config.md`.**
 
+These pr-open gate settings are the exception. They are read from the user config file only, not from an environment variable and not from the overlay file: `pr_max_code_files`, `pr_max_code_lines`, `pr_wide_max_code_files`, `pr_wide_max_code_lines`, `waive_size_gate_owners`, `pr_smells_repos`, `pr_body_sections`, the `pr_body_check_*` switches, `pr_body_private_words`, `pr_body_private_patterns`, and `pr_body_voice_names`. An environment variable set in the same process cannot raise a size limit, including the wide tier, waive an owner, turn a body check off or on, change the required sections, change which repos the smells gate covers, or change those body-check lists. `MAESTRO_LOCAL_CONFIG` still names the file. `MAESTRO_GH_BIN` and `MAESTRO_OVERLAY` are not gate settings and are unchanged.
+
 The user file is the first of:
 
 1. `MAESTRO_LOCAL_CONFIG`, an explicit file path. Set it to the empty string to read no config file at all (the tests do this).
@@ -106,9 +111,9 @@ The user file is the first of:
 The overlay's `config.md` is found from the overlay name (set in the user file or `MAESTRO_OVERLAY`), first hit wins:
 
 3. **Plugin skill** (`<plugin>:<skill>`): Claude Code records installed plugins in `~/.claude/plugins/installed_plugins.json`, an object `plugins` keyed `<plugin>@<marketplace>`, each entry a list whose items carry an `installPath`. The skill is at `<installPath>/skills/<skill>/config.md`.
-4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repo checkout) and by its real path, and then in `~/.claude/skills/<skill>/config.md`.
+4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repoills/<skill>/config.md`.
 
-The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, `MAESTRO_PR_MAX_CODE_FILES`, `MAESTRO_PR_MAX_CODE_LINES`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_GIT_EMAILS`, `MAESTRO_PROTECTED_BRANCHES`, `MAESTRO_SWEEP_MERGE_TARGETS`, `MAESTRO_SWEEP_IDLE_MINUTES`, `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS`, `MAESTRO_SWEEP_DISPOSABLE_IGNORED`, `MAESTRO_ENV_STORE_ROOT`, `MAESTRO_APPROVALS_REVIEW_DAY`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`, and the event loop overrides `MAESTRO_EVENT_DIR`, `MAESTRO_NOTIFY_COMMAND`, `MAESTRO_INBOX_COMMAND`, `MAESTRO_WATCH_NETWORK_FLOOR`, `MAESTRO_WATCH_LOCAL_FLOOR`, `MAESTRO_WATCH_TYPE_INTERVALS`, the scripts shelf override `MAESTRO_SCRIPTS_DIR`, and the Podium overrides `MAESTRO_STATUS_DIR`, `MAESTRO_PRIORITIES_MAX`, `MAESTRO_STATUS_PAGE_URI`, `MAESTRO_OBSIDIAN_VAULT`, `MAESTRO_STATUS_STREAMS`, `MAESTRO_STATUS_REPO_STREAMS`, `MAESTRO_TRACKER_URL_BASE` and `MAESTRO_TICKET_NOTE_PATH`. A variable that is set to the empty string counts as set.
+The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_GIT_EMAILS`, `MAESTRO_PROTECTED_BRANCHES`, `MAESTRO_SWEEP_MERGE_TARGETS`, `MAESTRO_SWEEP_IDLE_MINUTES`, `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS`, `MAESTRO_SWEEP_DISPOSABLE_IGNORED`, `MAESTRO_ENV_STORE_ROOT`, `MAESTRO_APPROVALS_REVIEW_DAY`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`, and the event loop overrides `MAESTRO_EVENT_DIR`, `MAESTRO_NOTIFY_COMMAND`, `MAESTRO_INBOX_COMMAND`, `MAESTRO_WATCH_NETWORK_FLOOR`, `MAESTRO_WATCH_LOCAL_FLOOR`, `MAESTRO_WATCH_TYPE_INTERVALS`, the scripts shelf override `MAESTRO_SCRIPTS_DIR`, and the Podium overrides `MAESTRO_STATUS_DIR`, `MAESTRO_PRIORITIES_MAX`, `MAESTRO_STATUS_PAGE_URI`, `MAESTRO_OBSIDIAN_VAULT`, `MAESTRO_STATUS_STREAMS`, `MAESTRO_STATUS_REPO_STREAMS`, `MAESTRO_TRACKER_URL_BASE` and `MAESTRO_TICKET_NOTE_PATH`. A variable that is set to the empty string counts as set.
 
 ## Roots and names
 
@@ -142,7 +147,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |
-| PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`), and the owners whose repos are waived from it (`waive_size_gate_owners`) | git.md, `scripts/pr-size.ts`, `scripts/pr-open.ts` |
+| PR size budget: code-file and code-line limits (`pr_max_code_files`, `pr_max_code_lines`, `pr_wide_max_code_files`, `pr_wide_max_code_lines`) and the test, config, docs and mechanical path globs (`pr_*_globs`), and the owners whose repos are waived from it (`waive_size_gate_owners`) | git.md, `scripts/pr-size.ts`, `scripts/pr-open.ts` |
 | PR body rules: required sections (`pr_body_sections`), per-check switches (`pr_body_check_risk`, `_verify`, `_forbidden`, `_diagram`) the diagram file threshold (`pr_diagram_min_files`), the derivable-counts check (`pr_body_check_counts`), and the private-reference and voice checks (`pr_body_check_private`, `pr_body_private_words`, `pr_body_private_patterns`, `pr_body_check_voice`, `pr_body_voice_names`), and the smells gate (`pr_smells_repos`) | git.md#pr-body, `scripts/pr-body.ts` |
 
 ## Issue tracker

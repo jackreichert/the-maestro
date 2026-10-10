@@ -39,6 +39,7 @@ import {
   GIT_EMAILS, PROTECTED_BRANCHES, SWEEP_MERGE_TARGETS, SWEEP_IDLE_MINUTES, SWEEP_BUDGET_SECONDS, SWEEP_PR_DAYS, SWEEP_PROTECT_SYMLINK_DIRS, SWEEP_DISPOSABLE_IGNORED, TWIN_FLOW_REPOS, GH_LOGIN, LEDGER_ROOT, VAULT_ROOT, CONTAINER_PROJECT, ENV_STORE_ROOT,
 } from './local-config.ts';
 import { isEnvFile, isStoreLink, projectFromBranch } from './lib/env-store.ts';
+import { plistPath } from './lib/supervisor-state.ts';
 
 export { isEnvFile };
 
@@ -62,6 +63,8 @@ export interface SweepContext {
   claimsDir?: string; gitFor?: (repo: string) => Git; worktreesOnly?: boolean; prCache?: Map<string, PrInfo[]>;
   /** The env store root (env_store_root). An env file that is a symlink into it does not keep a worktree. */
   envStoreRoot?: string;
+  /** Extra paths that are in use (tests); the cwd, the running script and the loop runtime are always added. */
+  inUse?: string[];
 }
 interface Scan { ctx: SweepContext; protectedRefs: string[]; mainline: Set<string> }
 export interface Evidence { how: string; url?: string }
@@ -74,11 +77,13 @@ export interface ListedItem { id: string; repo: string; kind: 'remote-branch' | 
 export type ExcludedItem = Omit<ListedItem, 'why' | 'prs'> & { reason: string };
 /** A worktree the sweep would remove but for real environment files in it: the user is asked to move them into the env store. Names only, never contents. */
 export interface EnvAsk { repo: string; worktree: string; files: string[]; project?: string; destination: string }
-export interface RepoScan { repo: string; items: ListedItem[]; review: ListedItem[]; excluded: ExcludedItem[]; notes: string[]; envAsks: EnvAsk[]; fetchFailed?: boolean }
+export interface RepoScan { repo: string; items: ListedItem[]; review: ListedItem[]; excluded: ExcludedItem[]; notes: string[]; envAsks: EnvAsk[]; fetchFailed?: boolean; stopped?: boolean }
 export interface ApplyResult { id: string; done: boolean; message: string }
 export interface WorktreeSweep {
   removed: { repo: string; path: string; why: string }[]; pruned: { repo: string; path: string }[];
   kept: { repo: string; path: string; reason: string }[]; notes: string[]; skipped: string[]; envAsks: EnvAsk[];
+  /** Repos where the sweep could not decide or finish: the fetch failed, the prune failed, the scan stopped on a git error, or a removal failed. A refusal at removal is not one (the worktree was left alone, which is safe). */
+  failed: string[];
 }
 type Failure = Error & { kind?: string };
 /** A rule: a named check and the reason text for when it fails. `RA` is the argument of `reason`, which is the check's own unless stated. */
@@ -356,6 +361,29 @@ function liveSkillTargets(repoPath: string, ctx: SweepContext): string[] {
   });
 }
 
+
+const real = (p: string): string | null => { try { return realpathSync(p); } catch { return null; } };
+
+/** The WorkingDirectory of the installed loop supervisor's plist: the checkout the event loop runs from. Null when none is installed or it is unreadable. */
+function loopRuntimeDir(): string | null {
+  try {
+    const m = /<key>WorkingDirectory<\/key>\s*<string>([^<]+)<\/string>/.exec(readFileSync(plistPath(), 'utf8'));
+    return m ? m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>') : null;
+  } catch { return null; }
+}
+
+/**
+ * Real paths (symlinks resolved) a sweep must never remove or sit inside: this process's cwd, the script it is running, this checkout's event-loop.ts
+ * (the loop runtime when the sweep runs from it) and the checkout the installed supervisor runs from. A worktree that equals or contains any is in use.
+ */
+export function inUsePaths(extra: string[] = []): string[] {
+  const candidates = [process.cwd(), process.argv[1], fileURLToPath(import.meta.url), fileURLToPath(new URL('./event-loop.ts', import.meta.url)), loopRuntimeDir(), ...extra];
+  return [...new Set(candidates.flatMap((p) => { const r = p ? real(p) : null; return r ? [r] : []; }))];
+}
+
+/** The in-use path inside worktree `root` (a real path), or undefined. */
+const inUseWithin = (root: string, extra: string[] = []): string | undefined => inUsePaths(extra).find((u) => u === root || u.startsWith(root + sep));
+
 /** Worktree rules, in order: the first that fails keeps the worktree. `check` gets { g, w, repoName, ctx, live, status }. */
 interface WorktreeCtx {
   g: Git; w: Worktree; repoName: string; ctx: SweepContext; live: Live; statusError: string; real: string;
@@ -375,6 +403,7 @@ const realEnvFiles = (root: string, ignored: string[], storeRoot: string): strin
 const ENV_RULE = 'no environment files';
 const WORKTREE_RULES: Rule<[WorktreeCtx], boolean>[] = [
   rule('not locked', (c) => !c.w.locked, () => 'locked'),
+  rule('not in use', (c) => !inUseWithin(c.real, c.ctx.inUse), () => 'in use: it holds this process\'s cwd or script, or the loop runtime'),
   rule('directory present', (c) => !c.w.prunable && existsSync(c.w.path), () => 'directory missing: run git worktree prune'),
   rule('no live claim', (c) => !c.ctx.claims.get(c.repoName), (c) => `repo claimed by ${c.ctx.claims.get(c.repoName)?.desk || 'a desk'}`),
   rule('skill dirs readable', (c) => !c.live.error, (c) => c.live.error as string),
@@ -476,7 +505,7 @@ export function scanRepo(repoPath: string, ctx: SweepContext): RepoScan {
     ({ isProtected, refs } = prot);
     scan = { ctx, protectedRefs: prot.protectedRefs, mainline: mainlineOf(g, prot.protectedRefs) };
     wts = worktrees(g);
-  } catch (e) { res.notes.push(`scan stopped: ${errorOf(e).message}`); return res; }
+  } catch (e) { res.notes.push(`scan stopped: ${errorOf(e).message}`); res.stopped = true; return res; }
 
   for (const full of ctx.worktreesOnly ? [] : refs) {
     const branch = full.slice('refs/remotes/origin/'.length);
@@ -650,7 +679,7 @@ export function apply(ids: string[], container: string, ctx: SweepContext, only?
       return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ' (or its tip moved since it was listed)'}` };
     }
     if (item.kind === 'remote-branch') return deleteRemoteBranch(path, item, id);
-    return removeWorktree(path, item, id, ctx.disposableIgnored, ctx.envStoreRoot);
+    return removeWorktree(path, item, id, ctx.disposableIgnored, ctx.envStoreRoot, ctx.inUse);
   });
 }
 
@@ -659,9 +688,11 @@ export function apply(ids: string[], container: string, ctx: SweepContext, only?
  * what the scan saw cannot have gone stale: HEAD must still be the scanned commit, nothing may be modified, untracked or ignored-but-worth-keeping,
  * and a detached HEAD must still be on origin (once removed, its commits would survive only in the reflog).
  */
-export function removeWorktree(path: string, item: { id: string; name: string; kind: string; head?: string; detached?: boolean }, id: string = item.id, disposableIgnored: string[] = SWEEP_DISPOSABLE_IGNORED, envStoreRoot: string = ENV_STORE_ROOT): ApplyResult {
+export function removeWorktree(path: string, item: { id: string; name: string; kind: string; head?: string; detached?: boolean }, id: string = item.id, disposableIgnored: string[] = SWEEP_DISPOSABLE_IGNORED, envStoreRoot: string = ENV_STORE_ROOT, inUse: string[] = []): ApplyResult {
   const wg = gitIn(item.name);
   const refuse = (m: string): ApplyResult => ({ id, done: false, message: `refused: ${item.name} ${m}` });
+  const root = real(item.name);
+  if (root && inUseWithin(root, inUse)) return refuse('is in use (it holds this process\'s cwd or script, or the loop runtime)');
   const head = wg('rev-parse', 'HEAD');
   if (!head.ok || head.out !== item.head) return refuse('moved since it was scanned');
   // --untracked-files=all overrides a repo's status.showUntrackedFiles=no, which `git worktree remove` would otherwise honour too.
@@ -704,16 +735,18 @@ function hasLinkedWorktree(path: string): boolean {
  * not touched and is listed in `skipped` (the check is at repo boundaries, so one repo may run past the budget).
  */
 export function sweepWorktrees(container: string, ctx: SweepContext, { only, dryRun = false, budgetSeconds = 0, clock = Date.now }: { only?: string | null; dryRun?: boolean; budgetSeconds?: number; clock?: () => number } = {}): WorktreeSweep {
-  const out: WorktreeSweep = { removed: [], pruned: [], kept: [], notes: [], skipped: [], envAsks: [] };
+  const out: WorktreeSweep = { removed: [], pruned: [], kept: [], notes: [], skipped: [], envAsks: [], failed: [] };
   const started = clock();
   for (const path of findRepos(container, only)) {
     const repo = basename(path);
     if (budgetSeconds > 0 && clock() - started > budgetSeconds * 1000) { out.skipped.push(repo); continue; }
-    try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${errorOf(e).message}`); }
+    try { out.pruned.push(...pruneMissing(path, dryRun).map((p) => ({ repo, path: p }))); } catch (e) { out.notes.push(`${repo}: prune skipped: ${errorOf(e).message}`); out.failed.push(`${repo}: prune failed`); }
     if (!hasLinkedWorktree(path)) continue; // nothing to remove here: no fetch, no scan
     const scan = scanRepo(path, { ...ctx, fetch: true, worktreesOnly: true });
     out.notes.push(...scan.notes.map((n) => `${repo}: ${n}`));
     out.envAsks.push(...scan.envAsks);
+    if (scan.fetchFailed) out.failed.push(`${repo}: git fetch failed`);
+    if (scan.stopped) out.failed.push(`${repo}: scan stopped`);
     const keep = (i: { name: string }, reason: string): void => { out.kept.push({ repo, path: i.name, reason }); };
     const dropped = new Set(out.pruned.filter((x) => x.repo === repo).map((x) => x.path)); // a dry run still sees these
     scan.excluded.filter((e) => !dropped.has(e.name)).forEach((e) => keep(e, e.reason));
@@ -721,9 +754,12 @@ export function sweepWorktrees(container: string, ctx: SweepContext, { only, dry
     for (const item of scan.items) {
       if (scan.fetchFailed) { keep(item, 'git fetch failed, so the refs may be stale'); continue; }
       if (dryRun) { out.removed.push({ repo, path: item.name, why: item.why }); continue; }
-      const r = removeWorktree(path, item, item.id, ctx.disposableIgnored, ctx.envStoreRoot);
+      const r = removeWorktree(path, item, item.id, ctx.disposableIgnored, ctx.envStoreRoot, ctx.inUse);
       if (r.done) out.removed.push({ repo, path: item.name, why: item.why });
-      else keep(item, r.message.replace(`refused: ${item.name} `, 'refused: '));
+      else {
+        keep(item, r.message.replace(`refused: ${item.name} `, 'refused: '));
+        if (r.message.startsWith('failed:')) out.failed.push(`${repo}: could not remove ${item.name}`);
+      }
     }
   }
   return out;
@@ -731,7 +767,7 @@ export function sweepWorktrees(container: string, ctx: SweepContext, { only, dry
 
 /** Reason text to a short label, first match wins; work that is in use (claimed, dirty, a live skill) is named before the branch's merge state. */
 const REASON_LABELS: [RegExp, string][] = [
-  [/locked/, 'locked'], [/claimed by/, 'repo claimed'], [/live skill/, 'live skill'], [/uncommitted changes/, 'uncommitted changes'],
+  [/in use/, 'in use'], [/locked/, 'locked'], [/claimed by/, 'repo claimed'], [/live skill/, 'live skill'], [/uncommitted changes/, 'uncommitted changes'],
   [/untracked files/, 'untracked files'], [/environment files/, 'environment files'], [/ignored files kept/, 'non-disposable ignored files'], [/modified \d+ min ago/, 'not idle yet'],
   [/not yours/, 'branch not yours'], [/unpushed|not on any origin ref|not pushed or merged|could not count/, 'unpushed or unverifiable commits'],
   [/not merged/, 'branch not merged'], [/patch-equivalent/, 'needs a human look'], [/fetch failed/, 'fetch failed'], [/^refused/, 'refused at removal'],
@@ -750,7 +786,7 @@ export { keptCounts };
  * Printable lines for a sweepWorktrees result: what went, what stayed, then a count. Kept worktrees print as counts by
  * reason (a big tree keeps hundreds); `verbose` lists each one with its full reason instead.
  */
-export function worktreeSweepLines(r: Omit<WorktreeSweep, 'skipped' | 'envAsks'> & { skipped?: string[] }, dryRun = false, { verbose = false }: { verbose?: boolean } = {}): string[] {
+export function worktreeSweepLines(r: Omit<WorktreeSweep, 'skipped' | 'envAsks' | 'failed'> & { skipped?: string[] }, dryRun = false, { verbose = false }: { verbose?: boolean } = {}): string[] {
   const verb = dryRun ? 'would remove' : 'removed';
   const kept = verbose
     ? r.kept.map((x) => `${'kept'.padEnd(12)} ${x.path}  (${x.repo}): ${x.reason}`)

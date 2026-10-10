@@ -1,9 +1,8 @@
 /**
  * What the page remembers about asks so a redraw cannot lose it, with no DOM in it so it can be tested under node.
  *
- * A live update rebuilds every card. A half-typed answer and a "copied for chat" card (the only place that
- * answer lives until the page can write to the ledger) are therefore kept here, keyed by ask id, and restored into the
- * rebuilt cards. UpdateGate decides when newer data may be shown at all: never while a pointer press is in flight (a
+ * A live update rebuilds every card. A half-typed answer and a saved card (shown until the ask leaves the board on the
+ * next update) are therefore kept here, keyed by ask id, and restored into the rebuilt cards. UpdateGate decides when newer data may be shown at all: never while a pointer press is in flight (a
  * redraw between mousedown and mouseup swallows the click) or while a field the user is typing in has focus.
  */
 
@@ -19,7 +18,7 @@ export class AskState {
     else this.#drafts.set(id, text);
   }
 
-  /** The answer the card was copied for chat with, or null while it is still open. */
+  /** The answer the card was saved with, or null while it is still open. */
   resolvedAnswer(id: string): string | null { return this.#resolved.get(id) ?? null; }
 
   /** Whether the user has the ask unfolded; kept so a redraw does not fold a row someone is reading. */
@@ -72,7 +71,7 @@ export class UpdateGate<T> {
   #held: T | null = null;
   #pointer = false;
   #typing = false;
-  #busy = false;   // an action the card started has not finished (the clipboard write behind Copy answer)
+  #busy = false;   // an action the card started has not finished (the request behind Send answer)
 
   get blocked(): boolean { return this.#pointer || this.#typing || this.#busy; }
   get held(): boolean { return this.#held !== null; }

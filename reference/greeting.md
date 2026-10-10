@@ -1,7 +1,7 @@
 # Greeting and the board
 
 Read this before replying to any session-opening greeting, or any request for current status /
-what's waiting on the user.
+what's waiting on the user. It is for the greeting step only: at session start read `journal.ts start-here`, not this file in full and not `CURRENT.md`, and open this file when the first message is a greeting.
 
 ## A greeting is a request for the board
 
@@ -13,7 +13,7 @@ follow up with "…and status?"
 ```bash
 node $J prime
 node $J start-here
-node $J status --footer
+node $J status --footer         # the full multi-line footer: a greeting always gets it
 node $J standup --date <previous working day>
 ```
 
@@ -127,7 +127,7 @@ and PR numbers named in the conversation or the ledger text. Link the ticket tha
 Never invent a link. If there's no match, write `—`.
 
 **After the tables:** one line offering to file tickets for technical rows that have none. Then the
-status footer, with the count of waiting items and how many are probably closeable.
+status footer (the full multi-line form, not `--line`), with the count of waiting items and how many are probably closeable.
 
 ## Issue tracker, only if the MCP is installed
 

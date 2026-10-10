@@ -13,8 +13,10 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
-import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, shortDate, tempoWord } from './glance.ts';
-import { OVERVIEW, formatFragment, nextTab, parseFragment, tabIds } from './tabs.ts';
+import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
+import { OVERVIEW, formatFragment, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { filteredView } from './filter-view.ts';
+import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
@@ -85,6 +87,15 @@ const CSS = `${BOARD_CSS}
 
   .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-size: var(--text-2xl); line-height: var(--leading-2xl); letter-spacing: -0.02em; }
   .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
+  button.tile {
+    font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer;
+    display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap;
+    padding: 0 var(--space-2); margin: 0 calc(-1 * var(--space-2)); border-radius: var(--radius-sm);
+    transition: background-color var(--dur-fast) var(--ease-out);
+  }
+  @media (hover: hover) { button.tile:hover { background: var(--accent-soft); } }
+  button.tile[aria-pressed=true] { background: var(--accent-soft); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.2em; }
+  .filter-bar { margin: 0 0 var(--space-4); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
   .cue .n { font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; color: var(--text-primary); }
   .cue .zero, .cue .zero .n { color: var(--text-muted); font-weight: var(--weight-regular); }
   .cue .tone-accent:not(.zero) .n { color: var(--accent); }
@@ -198,6 +209,8 @@ export class PodiumApp extends HTMLElement {
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
   #dropped = 0;
   #active = OVERVIEW;
+  // The summary tile pressed, if any: the board shows only that bucket. It lives in the fragment beside the tab.
+  #filter: CueKey | null = null;
   #tick: number | undefined;
   #tabsObserver: ResizeObserver | null = null;
   #tempoOpen = false;
@@ -212,7 +225,10 @@ export class PodiumApp extends HTMLElement {
   // tab so keyboard and screen reader users are not left on the destroyed link.
   readonly #onHash = (): void => {
     const id = parseFragment(location.hash, this.#ids());
-    if (id === this.#active) return;
+    const filter = parseFilter(location.hash);
+    if (id === this.#active && filter === this.#filter) return;
+    if (id === this.#active) { this.#setFilter(filter, null); return; }   // only the filter moved: stay where the reader is
+    this.#filter = filter;
     this.#select(id, true);
     window.scrollTo({ top: 0 });
   };
@@ -239,6 +255,7 @@ export class PodiumApp extends HTMLElement {
       this.#sources = { state: s.source, charts: c.source };
       this.#dropped = s.dropped + c.dropped;
       this.#active = parseFragment(location.hash, this.#ids());
+      this.#filter = parseFilter(location.hash);
       this.#safeRender();
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
@@ -315,7 +332,7 @@ export class PodiumApp extends HTMLElement {
 
   // A press holds updates from pointerdown (before focus moves off a field) until the click has been delivered.
   readonly #onPress = (): void => { this.#gate.set({ pointer: true }); };
-  // A card is mid-action (copying): hold until it says it is done, however long the browser takes to answer.
+  // A card is mid-action (saving an answer): hold until it says it is done, however long the browser takes to answer.
   readonly #onBusy = (e: Event): void => {
     if (e instanceof CustomEvent) this.#release({ busy: (e.detail as AskBusyDetail).busy });
   };
@@ -335,11 +352,26 @@ export class PodiumApp extends HTMLElement {
       if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
       return;
     }
-    this.#release({ busy: false });   // this render replaces any card still copying, and its busy=false would never arrive
+    this.#release({ busy: false });   // this render replaces any card still saving, and its busy=false would never arrive
     this.#active = id;
-    if (location.hash !== formatFragment(id)) history.replaceState(null, '', formatFragment(id));
+    this.#writeFragment(id);
     this.#safeRender();
     if (focusTab) this.#root.querySelector<HTMLElement>('[role=tab][aria-selected=true]')?.focus();
+  }
+
+  #writeFragment(id: string): void {
+    const next = formatFragment(id, this.#filter);
+    if (location.hash !== next) history.replaceState(null, '', next);
+  }
+
+  /** Show only one tile's items, or everything for null. A redraw destroys the tile, so focus goes back to `refocus`'s tile. */
+  #setFilter(key: CueKey | null, refocus: CueKey | null): void {
+    if (key === this.#filter) return;
+    this.#release({ busy: false });   // this render replaces any card still saving
+    this.#filter = key;
+    this.#writeFragment(this.#active);
+    this.#safeRender();
+    if (refocus) this.#root.querySelector<HTMLElement>(`button.tile[data-key="${refocus}"]`)?.focus();
   }
 
   /** Render, and show the failure instead of throwing uncaught from an event handler or a promise callback. */
@@ -377,7 +409,7 @@ export class PodiumApp extends HTMLElement {
       return tab;
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active), fine());
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
@@ -430,11 +462,17 @@ export class PodiumApp extends HTMLElement {
     const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
     // The cue line follows the tab, so its counts always match the panel below it; the scope line says which.
     const stream = this.#active === OVERVIEW ? null : this.#active;
-    const pick = <T extends { stream: string }>(xs: T[]): T[] => (stream === null ? xs : xs.filter((x) => x.stream === stream));
     const scope = stream === null ? 'All streams' : stream;
-    const { tempo, rule } = this.#tempo({ asks: pick(st.asks).length, blocked: pick(st.blocked).length, working: pick(st.working).length });
-    const cue = cueParts({ asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) })
-      .map((p) => h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, h('span', { class: 'n' }, String(p.n)), p.label));
+    const buckets = scoped(st, stream);
+    const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length });
+    const parts = cueParts(buckets);
+    const cue = parts.map((p) => {
+      // Each count is a toggle: pressing it shows only that bucket, pressing it again (or "Show everything") shows all.
+      const tile = h('button', { type: 'button', class: 'tile', id: tileId(p.key), 'data-key': p.key, 'aria-pressed': String(p.key === this.#filter) },
+        h('span', { class: 'n' }, String(p.n)), ' ', p.label);
+      tile.addEventListener('click', () => this.#setFilter(p.key === this.#filter ? null : p.key, p.key));
+      return h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, tile);
+    });
     return h('header', { class: 'wrap' },
       h('div', { class: 'top' },
         h('div', { class: 'brand' }, h('h1', {}, baton(this.#waiting(st) > 0), 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
@@ -510,6 +548,17 @@ export class PodiumApp extends HTMLElement {
     if (!got) return;
     this.#homes.set(stream, got.data);
     if (board.isConnected) board.home = got.data;
+  }
+
+  /** The pressed tile's bucket for the open tab, from the same scoped buckets the tile counts. */
+  #filtered(st: PodiumState, key: CueKey): Node {
+    const stream = this.#active === OVERVIEW ? null : this.#active;
+    const label = cueParts(scoped(st, stream)).find((p) => p.key === key)?.label ?? key;
+    return filteredView(scoped(st, stream), key, label, {
+      live: this.#sources.state === 'server',
+      ctx: { now: st.generatedAt, tz: st.tz, showStream: stream === null, prs: st.prs },
+      clear: () => this.#setFilter(null, key),
+    });
   }
 
   #overview(st: PodiumState): Node {

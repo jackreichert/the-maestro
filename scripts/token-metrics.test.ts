@@ -2,10 +2,10 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { pick, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
+import { sessionFileById, pick, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
 import type { Comparison } from './token-metrics.ts';
 
@@ -524,4 +524,19 @@ test('the entry guard reaches main() through a symlink and through a path with a
         assert.equal(r.status, 0, r.stderr);
         assert.deepEqual(JSON.parse(r.stdout), { day: null, sessions: [] }, entry);
     }
+});
+
+test('sessionStatus with a session id reads that transcript, not the newest, and refuses ids that are not plain', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-byid-'));
+    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+    writeFileSync(join(dir, 'aaaa1111-mine.jsonl'), `${line('a', 100000)}\n${line('b', 100000)}\n`);
+    writeFileSync(join(dir, 'bbbb2222-other.jsonl'), `${line('c', 300000)}\n`);
+    utimesSync(join(dir, 'aaaa1111-mine.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
+    assert.deepEqual(sessionStatus(dir, 4, 350000), { available: true, turns: 1, pct: 25, rollTurns: 4, readK: 300, advice: 'roll soon' }, 'newest by mtime is the other window');
+    assert.deepEqual(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'aaaa1111-mine'), { available: true, turns: 2, pct: 50, rollTurns: 4, readK: 100, advice: '' });
+    assert.equal(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'aaaa1111').available, true, 'a unique prefix names it');
+    assert.deepEqual(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'nope'), { available: false, unavailable: `no session "nope" in ${dir}` });
+    assert.equal(sessionFileById(dir, '../x'), null);
+    writeFileSync(join(dir, 'aaaa1111-twin.jsonl'), `${line('d', 1)}\n`);
+    assert.equal(sessionFileById(dir, 'aaaa1111'), null, 'an ambiguous prefix names nothing');
 });

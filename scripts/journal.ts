@@ -36,6 +36,7 @@
  *   journal.ts log "<text>" --kind blocked --gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>   what a blocked item waits for; `resume` checks it (report only)
  *   journal.ts defer <id> --until YYYY-MM-DD   hide an open item from the board until that date (a later date in the future, never in the past)
  *   journal.ts prime [--no-update-check] [--source startup|compact]     the box view for session start and after a compaction: 40 lines or fewer. First line: one update line when this skill's repo is behind, ahead, diverged or dirty (a git fetch, 15s cap; update_check off skips it); silent when current. Then a `Loop:` line (same verdict as the footer), then a `Loop supervisor:` line when one is set up (its liveness record or installed plist) and not running; silent otherwise. With `--source startup` or `compact` (a SessionStart hook's source) it ends with the short "After a compact" checklist; any other source prints none
+ *                                             after a compaction, the first lines say when the PreCompact hook did not finish ("precompact incomplete") or the newest handoff predates the last ledger row before it ("HANDOFF STALE"); see scripts/hooks/
  *   journal.ts standing list|check|add <id>|done <id>|retire <id>   duties to pick up without a reminder, read from data and checked at runtime; `prime` prints the ones needing attention, `handoff` the whole list.
  *                                             add: --trigger --action --who and (--check <name> | --every-hours N). done: runs the row's check and refuses if it fails; a row with no check needs --evidence. check exits 1 when any row needs attention
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
@@ -45,6 +46,7 @@
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
  *   journal.ts usage [--open]                counts of model and used marks across items
  *   journal.ts status [--full]               what is open + done today, with usage marks
+ *   journal.ts status --footer --line        the same facts as ONE line (ledger totals, review queue, loop, session) for a status line; --session <id> measures that transcript instead of the newest, --stdin reads the session_id from a status-line command's JSON on stdin
  *   journal.ts status --footer               the reply-footer Ledger lines, one per active stream, then the review queue, the `Loop:` line (running, quiet, STALLED, DOWN or NOT INSTALLED, with age; silent when no loop is set up or required) and the Session line
  * (with the Podium configured, --footer ends with `**Podium:** <uri>`)
  *   journal.ts review-queue [--cap N] [--json]   the push gate: open non-draft PRs awaiting review against review_queue_cap (default 4). Exit 0 room, 1 full, 2 cannot answer or bad --cap (treat as full)
@@ -66,6 +68,7 @@
  *                                             an approval the user granted; `resolve` takes --approval too
  *   journal.ts approvals [--since YYYY-MM-DD | --days 7] [--until YYYY-MM-DD] [--out <path>] [--force] [--json]   the approvals digest: standing (keep/narrow/revoke), one-off, untagged decisions
  *   journal.ts approve-tag <id> --approval standing|one-off [--scope ..] [--ref ..]   mark an existing row as an approval (appends a row; nothing is rewritten)
+ *   journal.ts ref <id> --ref <file> [--ref <file>...]   attach existing ref files to a decision (appends a row; nothing is rewritten)
  *   journal.ts streams [list|add <name> [--alias a,b]|check]   the stream registry
  *   journal.ts models [list|add <id> [--alias a,b]|check]   the model-name registry (a `models` section of streams.json)
  *   journal.ts fact <key>=<value> --stream <name>   a structured metric; not an item, never open
@@ -73,11 +76,14 @@
  *   journal.ts retro <stream> [--out <path>] [--force]   draft the epic retro doc (status: draft)
  *   journal.ts archive <stream>              hide a finished stream; refuses until retro + promotions are done
  *   journal.ts unarchive <stream>            bring an archived stream back, exactly
+ *   journal.ts lease <id> [--ttl minutes] [--steal [window]]         take or renew this window's lease on an open item (`start <id>` and `brief <id>` take it too); another window's live lease refuses with exit 1 and "leased by <window> until <time>" unless --steal [window] (it takes the lease only from the window it names; bare --steal names whoever holds it when read); any row the holder writes renews it, `done`/`drop`/`resolve` ends it, `release <id> [--force [--from <window>]]` frees it, and it lapses after `lease_ttl_minutes` (default 60) of the holder's silence
  *   journal.ts claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]   take an exclusive repo lock (Claims/<repo>.lock)
  *   journal.ts release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
+ *   journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--read-only] [--details-file f] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.ts backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
+ *   journal.ts maintain --today YYYY-MM-DD [--container <dir>] [--budget N]   the model-free half of roll for an unattended caller: archive each of the last 7 days before --today that still owes one, then the same worktree sweep as roll (records branch-sweep), under a lock; ends with one maintain-result JSON line, exit 1 if a step failed. Triage, reports and asks stay in roll
  *   journal.ts handoff --stream <name> | --all [--learn "<text>"] [--next "<text>"] [--update-context [--context-file <path>]] [--out <path>] [--since YYYY-MM-DD] [--delta] [--force] [--container <dir>] [--no-worktree-sweep]   (--delta: when today's handoff exists, write HANDOFF-<date>b-<stream>.md etc. with only what changed since its generated_at) scaffold the five-part handoff (--learn and --next fill sections 2 and 5) (Cleanup candidates lists the worktrees a sweep would keep, read-only)
  *   journal.ts log "<text>" --transitioned KEY[,KEY]   record that tracker ticket(s) were moved (a note with a `transitioned` field; the pending check reads it)
  *   journal.ts tickets --pending [--since D] [--json]   done items carrying a tracker key (tracker_key_pattern) with no recorded transition, since D (default 14 days); `prime` and `triage` flag them
@@ -113,7 +119,7 @@
  * `unmeasured`. --allow-unmarked is only for tests and migrations.
  *
  * Kinds: wip | done | blocked | question | decision (not open, unless `ask --kind decision`) | note | resolved | dropped | rolled | stamp
- *        (rows only written by their own commands: tag | fact | carry | archive | unarchive)
+ *        (rows only written by their own commands: tag | fact | carry | archive | unarchive | ref)
  * Common flags: --vault <path> --project <name> --json --dry-run --include-archived
  * retro/archive read tickets through ledger-index.ts: --tickets-vault <path> (else $VAULT_ROOT),
  * --repo <name> picks Projects/<name>/Archive/ for the retro doc (default dev-env).
@@ -124,7 +130,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE } from './local-config.ts';
+import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -140,25 +146,34 @@ import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
-import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
+import type { Groups } from './lib/journal/board.ts';
+import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
+import { briefPaths, briefText, agentPrompt, libraryBlock } from './lib/journal/brief.ts';
+import { scriptsDir } from './brief-block.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
+import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
-import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
+import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
-import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
+import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, createExclusive, writeHandoffSeries, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
-import { sessionLine, sessionStatus } from './token-metrics.ts';
+import { sessionStatus } from './token-metrics.ts';
+import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
+import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
+import { sessionText } from './lib/session-text.ts';
+import { footerOneLine } from './lib/journal/footer-line.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
-import { fetchLive, selfReviewSummary, snapshotPath, type StoredPr } from './prs-snapshot.ts';
+import { fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
-import { buildStart, homeCounts, startLines } from './lib/start/start-here.ts';
+import { buildStart, homeCounts, startLines, unreadableHome, viewDay } from './lib/start/start-here.ts';
+import type { UnreachableNotes } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
 import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
@@ -168,7 +183,7 @@ import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween,
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
 import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
-import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
+import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, recordRan, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
 import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { createReader } from './lib/vault/reader.ts';
@@ -177,9 +192,14 @@ import { DOC_DIR_SCOPES, DOC_FILE_SCOPES } from './lib/home/docs.ts';
 import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES } from './lib/home/brief.ts';
 import type { EpicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { listWatches, lockHolder } from './lib/watch-registry.ts';
+import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
+import type { MaintainResult } from './lib/journal/maintain.ts';
+import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'learned'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned'];
+// `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
+if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
 /** The values --approval accepts. Anything else is rejected at write time and flagged by `verify`. */
 const APPROVALS = new Set(['standing', 'one-off']);
@@ -227,7 +247,10 @@ if (!projectArg) {
     process.exit(1);
 }
 const project: string = projectArg;
-const store = openStore({ vault, project, dryRun });
+/** The window this run writes as: `--window`, else `--session`, else MAESTRO_WINDOW, else a pid-based id (lib/window-id.ts). */
+const resolvedWindow = resolveWindow({ window: arg('window') ?? undefined, session: arg('session') ?? undefined, ...windowEnv() });
+const windowId = resolvedWindow.id;
+const store = openStore({ vault, project, dryRun, window: windowId });
 const { dir, ledgerPath, registryPath, rollPoint, ensureDir, readLedger, append, appendMany, loadRegistry, saveRegistry, newId } = store;
 const today = (): string => new Date().toISOString().slice(0, 10);
 const now = (): string => new Date().toISOString();
@@ -289,6 +312,9 @@ function streamOrNone(raw: string | null): string | undefined {
 
 // The board modules read the run through this: the ledger, the registry and the clock.
 const boardCtx = boardContextFor(store, { has, today, dryRun });
+const foldLedger = boardCtx.fold;
+// A `ref` row is append-only. Readers that fold the ledger still see those files on the decision.
+boardCtx.fold = (entries) => withAttachedRefs(foldLedger(entries), entries);
 /** Read-time mapping through the loaded registry. */
 const { fold, mapStream } = boardCtx;
 const groups = (includeArchived?: boolean) => boardGroups(boardCtx, includeArchived);
@@ -460,7 +486,7 @@ function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
     return fields;
 }
 
-function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false } = {}) {
+function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false, lease = false } = {}) {
     const text = arg('text') || positional.join(' ');
     if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
@@ -486,6 +512,8 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         refs,
         pending: ask && kind === 'decision' ? true : undefined,
         queued: queued ? true : undefined,
+        // A new in-flight item is leased to its window by its own row: nobody else knows the id yet, so there is no race to settle.
+        leaseTtl: lease && kind === 'wip' ? leaseTtl() : undefined,
         box: paste ? 'paste' : undefined,
         paste,
         gate,
@@ -568,12 +596,65 @@ function cmdQueue(): void {
 function cmdStart(): void {
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
-    if (!target || target.kind !== 'wip') { cmdLog('wip'); return; }
+    if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
+    // The lease comes first: a window that does not get it writes nothing.
+    takeLease(target.id as string);
     if (!isQueued(target)) { console.log(`wip  ${target.id}  ${target.text}  (already in flight)`); return; }
     append({ id: newId(entries), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() });
     if (!dryRun) render(true);
     console.log(`wip  ${target.id}  ${target.text}  (promoted from queued)`);
+}
+
+const leaseCtx = () => ({ readLedger, append: (row: LedgerRow) => append(row), window: windowId, now, dryRun });
+const leaseTtl = (): number => (arg('ttl') && Number(arg('ttl')) > 0 ? Number(arg('ttl')) : LEASE_TTL_MINUTES);
+
+/** What `--steal` asks for: a window id (`--steal <window>`, take it only from that holder), `true` (bare `--steal`, from whoever holds it now) or undefined. */
+const stealOpt = (): boolean | string | undefined => arg('steal') ?? (has('steal') ? true : undefined);
+
+/** Take this window's lease on an item, or exit 1 naming the window that holds it (`--steal [window]` takes it from the holder). Prints nothing when it is taken. */
+function takeLease(id: string): void {
+    const got = acquireLease(leaseCtx(), id, { ttlMinutes: leaseTtl(), steal: stealOpt() });
+    if (!got.ok) refuseLeased(id, got.lease, got.expected);
+}
+
+function refuseLeased(id: string, lease: Parameters<typeof describeLease>[0] | undefined, expected?: string): never {
+    if (expected !== undefined) {
+        console.error(`${id} is ${lease ? describeLease(lease) : 'not leased'}, not by ${expected}. Nothing was written (a steal only takes the lease from the window it names). Re-read who holds it and name that window, or pass a bare --steal.`);
+    } else {
+        console.error(`${id} is ${lease ? describeLease(lease) : 'not leased'}. Nothing was written. Work another item, wait for the lease to lapse, or pass --steal${lease ? ` ${lease.holder}` : ''} to take it.`);
+    }
+    process.exit(1);
+}
+
+/** Exit 1 before anything is built or written when another window holds a live lease on the item (or a named steal's target does not); the write itself is `takeLease`. */
+function refuseIfLeasedByOther(id: string, entries: LedgerRow[]): void {
+    const held = liveLease(foldLeases(entries), id, Date.now());
+    const steal = stealOpt();
+    if (typeof steal === 'string' && held?.holder !== steal) refuseLeased(id, held, steal);
+    if (held && held.holder !== windowId && !steal) refuseLeased(id, held);
+}
+
+/** `lease <id> [--ttl minutes] [--steal]`: take or renew the lease on an open item, so no other window starts it. */
+function cmdLease(): void {
+    const target = itemNamedByArg(fold(readLedger()).items);
+    if (!target) die('Usage: journal.ts lease <id> [--ttl minutes] [--steal [window]]   (an open item id)');
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open item can be leased.`);
+    takeLease(target.id as string);
+    const lease = liveLease(foldLeases(readLedger()), target.id as string, Date.now());
+    console.log(`lease  ${target.id}  ${lease ? describeLease(lease) : 'this window'}  ${target.text}`);
+}
+
+/** `release <id>` for an item lease: free it (the holder's own; `--force` for another window's). Returns false when `<id>` is not an item with a live lease, so `release <repo>` runs instead. */
+function releaseItemLease(id: string): boolean {
+    if (existsSync(claimPath(id)) || !foldLeases(readLedger()).has(id)) return false;
+    const res = releaseLease(leaseCtx(), id, has('force') ? (arg('from') ?? true) : false);
+    if ('notHeldBy' in res) die(`${id} is ${res.lease ? describeLease(res.lease) : 'not leased'}, not by ${res.notHeldBy}. Nothing was freed (a forced release only frees the window it names).`);
+    if ('heldBy' in res) die(`${id} is ${describeLease(res.heldBy)}; only that window can release it, or pass --force.`);
+    if ('none' in res) die(`${id} has no live lease.`);
+    if (!dryRun) render(true);
+    console.log(`unleased  ${id}  (was ${describeLease(res.freed)})`);
+    return true;
 }
 
 /** `resolve` may carry an approval (the user answered an `ask` with one); other closers reject the flag. */
@@ -646,6 +727,61 @@ function cmdApproveTag() {
     console.log(`approval-tag  ${target.id}  -> ${fields.approval}  ${target.text}`);
 }
 
+/** Every `--ref <file>` on the command line, in order. `arg('ref')` keeps only the first. */
+function refFlagValues(): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i] !== '--ref') continue;
+        const value = argv[i + 1];
+        if (value && !value.startsWith('--')) out.push(value);
+    }
+    return out;
+}
+
+/** Refs a later `ref` row attached to a decision, so a reader of the fold sees them. The decision row is not rewritten. */
+function withAttachedRefs<F extends { items: LedgerItem[] }>(folded: F, entries: LedgerRow[]): F {
+    const extra = new Map<string, string[]>();
+    for (const e of entries) {
+        if (e.kind !== 'ref' || typeof e.attaches !== 'string') continue;
+        const add = (e.refs || []).filter(Boolean);
+        if (!add.length) continue;
+        extra.set(e.attaches, [...(extra.get(e.attaches) || []), ...add]);
+    }
+    if (!extra.size) return folded;
+    return {
+        ...folded,
+        items: folded.items.map((item) => {
+            const add = item.id ? extra.get(item.id) : undefined;
+            if (!add) return item;
+            return { ...item, refs: [...new Set([...(item.refs || []), ...add])] };
+        }),
+    };
+}
+
+/** Attach one or more existing ref files to a decision without rewriting it: appends a `ref` row. */
+function cmdRef() {
+    const id = positional[0];
+    const given = refFlagValues();
+    if (!id || !given.length) die('Usage: journal.ts ref <id> --ref <file> [--ref <file>...]');
+    const refs = given.map((r) => resolveRefFile(r) || die(`--ref ${r} is not an existing file.`));
+    const entries = readLedger();
+    const target = entries.find((e) => e.id === id && !e.annotates);
+    if (!target) die(`No row with id "${id}".`);
+    if (target.kind !== 'decision') die(`Row ${id} is a ${target.kind ?? 'row'}; only a decision can take a ref.`);
+    append({
+        id: newId(entries),
+        ts: now(),
+        date: today(),
+        kind: 'ref',
+        attaches: target.id,
+        text: `ref ${target.id}`,
+        refs,
+        ...usageFromArgs(),
+    });
+    if (!dryRun) render(true);
+    console.log(`ref  ${target.id}  ${refs.join(', ')}`);
+}
+
 // approvals digest ----------------------------------------------------------
 
 function cmdApprovals() {
@@ -668,39 +804,79 @@ const configuredStatusPageUri = (): string => statusPageUri({
 });
 
 /** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
-const boardReviewQueue = () => boardQueue(readSnapshotPrs(snapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS);
+const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS);
 
 /** The self-review PRs from the stored snapshot (no network), apart from the review queue: null when none are configured, none are open, or no snapshot was taken. */
 function boardSelfReview(): { text: string; footer: string } | null {
     if (!SELF_REVIEW_REPOS.length) return null;
-    const stored = readSnapshotPrs(snapshotPath(vault));
+    const stored = readSnapshotPrs(freshestSnapshotPath(vault));
     const summary = stored ? selfReviewSummary(stored.prs as StoredPr[], SELF_REVIEW_REPOS) : '';
     if (!stored || !summary) return null;
     const tail = `${summary}${staleSuffix(stored.takenAt, new Date())}`;
     return { text: `maestro PRs (self-review): ${tail}`, footer: `**Maestro PRs (self-review):** ${tail}` };
 }
 
+/**
+ * The session the footer measures: `--session <id>`, else (with `--stdin`, and only when stdin is not a terminal) the `session_id` of the JSON a status-line command is
+ * given on stdin, else undefined (the newest transcript). Unreadable or id-less stdin falls back to the newest transcript.
+ */
+function footerSessionId(): string | undefined {
+    // `--session` names a transcript or it is an error: an empty or missing value (an unset $SID, or a following flag) is "no session", never the newest.
+    if (has('session')) return arg('session') ?? '';
+    if (!has('stdin') || process.stdin.isTTY) return undefined;
+    try {
+        const id = (JSON.parse(readFileSync(0, 'utf8')) as { session_id?: unknown }).session_id;
+        return typeof id === 'string' && id ? id : undefined;
+    } catch { return undefined; }
+}
+
+/** Live leases on the board's open items, counted for this window. */
+const leaseSummary = (g: Groups, window = windowId) => {
+    const open = new Set([...g.inflight, ...g.queued, ...g.blocked].map((i) => i.id));
+    return summarizeLeases(foldLeases(readLedger()), window, Date.now(), (id) => open.has(id));
+};
+
+/** `Leases: 2 mine, 1 other` for the footer, or '' unless another window holds a live lease: with one window the footer is unchanged. */
+function leaseFooter(g: Groups, window?: string, markup = false): string {
+    const s = leaseSummary(g, window ?? windowId);
+    if (!s.other) return '';
+    return markup ? `**Leases:** ${s.mine} mine, ${s.other} other` : `Leases: ${s.mine} mine, ${s.other} other`;
+}
+
 function cmdStatus() {
     refreshBoard();
     const g = groups(has('include-archived'));
-    const d = arg('date', today());
-    const rolledAt = g.rollPointOn(d);
-    const done = g.doneOn(d, { sinceRoll: true });
+    // No --date: the day is WATCH_TZ, and closes match by timestamp in that zone. A passed --date still matches the stored date field.
+    const explicit = arg('date');
+    const tz = explicit === null ? WATCH_TZ : undefined;
+    const d = explicit ?? localDate(new Date(), WATCH_TZ);
+    const view = footerDone(g, d, tz ? { tz } : undefined);
+    const done = view.all;
 
     if (asJson) {
-        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done), null, 2));
+        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g)), null, 2));
         return;
     }
 
     const queueFooter = boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
-    if (has('footer')) { [...footerLines(g, done), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), sessionLine(CLAUDE_PROJECTS_DIR), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l)); return; }
+    if (has('footer')) {
+        const sessionId = footerSessionId();
+        const session = sessionStatus(CLAUDE_PROJECTS_DIR, undefined, undefined, undefined, undefined, undefined, sessionId);
+        // The window is named only when the session is pinned (--session, or a status line's stdin): the newest transcript may belong to
+        // another window, and its numbers must not appear under this window's name.
+        const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
+        if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
+        [...footerLines(g, done, view.sinceRoll), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        return;
+    }
 
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
         console.log(`\n${label}`);
         arr.forEach((i) => console.log(`  ${fmt(i)}`));
     };
+    windowWarning().forEach((l) => console.log(l));
     console.log(`Ledger — ${d}`);
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
@@ -720,11 +896,13 @@ function cmdStatus() {
     line('Awaiting you', noStream(g.awaiting));
     line('Paste blocks for you', noStream(g.paste));
     line(`Done ${d}`, noStream(done));
-    if (rolledAt) console.log(`\n  (${g.doneOn(d).length - done.length} earlier item(s) archived to ${d}.md)`);
+    if (view.sinceRoll) console.log(`\n  (${done.length - view.sinceRoll.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
     if (!g.inflight.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
     }
+    const leased = leaseSummary(g).held;
+    if (leased.length) { console.log('\nLeases'); leased.forEach((l) => console.log(`  ${l.item}  leased by ${l.holder}${l.holder === windowId ? ' (this window)' : ''} until ${l.until.slice(0, 16)}Z`)); }
     console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
     const queue = boardReviewQueue();
     if (queue) console.log(`  ${queue.text}`);
@@ -736,7 +914,7 @@ function cmdStatus() {
 function cmdReviewQueue() {
     const capArg = arg('cap');
     if (has('cap') && !(capArg !== null && /^\d+$/.test(capArg) && Number(capArg) > 0)) { console.error('--cap must be a positive whole number.'); process.exit(2); }
-    const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(snapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg), new Date(), SELF_REVIEW_REPOS);
+    const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(freshestSnapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg), new Date(), SELF_REVIEW_REPOS);
     if (asJson) console.log(JSON.stringify(reading, null, 2)); else queueText(reading).forEach((l) => console.log(l));
     process.exit(queueExitCode(reading));
 }
@@ -758,14 +936,20 @@ function cmdScratch() {
  * for it): a sweep that follows whatever directory the shell happens to be in can remove worktrees of an unrelated tree.
  */
 function runWorktreeSweep(dry: boolean) {
-    if (has('no-worktree-sweep')) return null;
+    const out = worktreeSweepOutcome(dry);
+    if (out.why) console.log(out.why);
+    return out.result ?? null;
+}
+
+/** The sweep's result, or why there is none: the printable reason (`worktree sweep refused: ...`), or '' when `--no-worktree-sweep` skipped it on purpose. */
+function worktreeSweepOutcome(dry: boolean): { result?: ReturnType<typeof sweepWorktrees>; why?: string } {
+    if (has('no-worktree-sweep')) return {};
     const refusal = sweepRootRefusal(CONTAINER_ROOT, resolve(arg('container', process.cwd())));
-    if (refusal) { console.log(`worktree sweep refused: ${refusal}`); return null; }
+    if (refusal) return { why: `worktree sweep refused: ${refusal}` };
     try {
-        return sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry, budgetSeconds: SWEEP_BUDGET_SECONDS });
+        return { result: sweepWorktrees(realpathSync(CONTAINER_ROOT), defaultContext({ claimsDir, worktreesOnly: true }), { dryRun: dry, budgetSeconds: Number(arg('budget')) > 0 ? Math.min(Number(arg('budget')), SWEEP_BUDGET_SECONDS) : SWEEP_BUDGET_SECONDS }) };
     } catch (e) {
-        console.log(`worktree sweep skipped: ${errorMessage(e)}`);
-        return null;
+        return { why: `worktree sweep skipped: ${errorMessage(e)}` };
     }
 }
 
@@ -788,6 +972,20 @@ function sweepWorktreesForRoll() {
     if (!result) return;
     console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
     raiseEnvAsks(result.envAsks);
+    recordBranchSweepRan(result);
+}
+
+/**
+ * A finished (not dry, not budget-cut, no fetch, prune, scan or removal failure) worktree sweep is the `branch-sweep` row's work, so it records the run itself instead of waiting for
+ * someone to say so. The evidence names what the sweep did and that remote branches are not part of it (branch-sweep.ts lists those for approval).
+ */
+function recordBranchSweepRan(result: NonNullable<ReturnType<typeof runWorktreeSweep>>): void {
+    if (dryRun || result.skipped.length) return;
+    if (result.failed.length) { console.log(`standing  branch-sweep  not recorded (sweep did not finish: ${result.failed.join('; ')}); the row stays overdue`); return; }
+    try {
+        const evidence = `roll worktree sweep: ${result.removed.length} removed, ${result.pruned.length} pruned, ${result.kept.length} kept; remote branches not swept`;
+        if (recordRan(standingFile(), 'branch-sweep', evidence, now())) console.log('standing  branch-sweep  recorded');
+    } catch (e) { console.log(`standing  branch-sweep  not recorded (${errorMessage(e)})`); }
 }
 
 /** One question per worktree the sweep would remove but for real env files in it (names only), unless the same question is already open. */
@@ -817,6 +1015,48 @@ function cmdRoll() {
     printEpicBriefs(d);
     printNotesReachability();
     if (!has('fast')) sweepWorktreesForRoll();
+}
+
+/**
+ * `maintain --today D [--container <dir>] [--budget N]`: the model-free half of roll, for a caller that runs unattended (the
+ * roll-maintenance event type). Archives each of the last MAINTAIN_LOOKBACK_DAYS days before D that still owes an archive (work
+ * finished since that day's last roll, or notes with no roll at all), then sweeps worktrees exactly as roll does, and records the
+ * `branch-sweep` run through the same guard. Judgement steps (triage, reports, asks) stay in `roll`. Idempotent: a second run finds nothing
+ * to archive. One run at a time (a lock beside the ledger); a second concurrent run exits 1 saying so. Ends with one `maintain-result` line; exit 1 when any step failed.
+ */
+function cmdMaintain() {
+    const today = arg('today', '');
+    if (!isDate(today)) die('maintain needs --today YYYY-MM-DD (the local day that just started).');
+    let release: () => void = () => {};
+    try { if (!dryRun) release = acquireMaintainLock(join(dir, '.maintain'), { nowMs: Date.now, sleep: () => {}, pidAlive: processAlive, pid: process.pid }, { timeoutMs: 0, staleMs: 30 * 60_000, pollMs: 50 }); }
+    catch { console.log(maintainLine({ ok: false, archivedDays: [], sweep: null, problems: ['another maintenance run holds the lock'] })); process.exit(1); }
+    try {
+        const r = maintain(today);
+        console.log(maintainLine(r));
+        if (!r.ok) process.exitCode = 1;
+    } finally { release(); }
+}
+
+function maintain(today: string): MaintainResult {
+    const problems: string[] = [];
+    const archivedDays: string[] = [];
+    for (const d of daysBefore(today)) {
+        const g = groups();
+        if (!g.doneOn(d, { sinceRoll: true }).length && (g.rollPointOn(d) || !g.notesOn(d).length)) continue;
+        if (!rollArchive(d)) problems.push(`ledger commit failed after archiving ${d}`);
+        archivedDays.push(d);
+    }
+    const out = worktreeSweepOutcome(dryRun);
+    if (out.why) problems.push(out.why);
+    const result = out.result;
+    if (result) {
+        console.log(worktreeSweepLines(result, dryRun, { verbose: has('verbose') }).join('\n'));
+        raiseEnvAsks(result.envAsks);
+        recordBranchSweepRan(result);
+        problems.push(...result.failed.map((f) => `worktree sweep: ${f}`));
+    }
+    const sweep = result ? { removed: result.removed.length, pruned: result.pruned.length, kept: result.kept.length, skipped: result.skipped.length, failed: result.failed.length } : null;
+    return { ok: !problems.length, archivedDays, sweep, problems };
 }
 
 /**
@@ -887,15 +1127,16 @@ function cmdNotesCheck() {
 /**
  * Writes the day's finished work to a dated note and drops it out of CURRENT.md, leaving a link. Open items are NOT
  * archived: they stay visible until they are actually closed. Commits the ledger when ledger_git_autocommit is on.
+ * Returns false only when that commit failed (the archive itself is written).
  */
-function rollArchive(d: string): void {
+function rollArchive(d: string): boolean {
     const g = groups();
     const done = g.doneOn(d);
     const notes = g.notesOn(d);
 
     if (!done.length && !notes.length) {
         console.log(`Nothing finished on ${d} to archive.`);
-        return;
+        return true;
     }
 
     const dest = join(dir, `${d}.md`);
@@ -913,7 +1154,7 @@ function rollArchive(d: string): void {
         '',
     ].join('\n');
 
-    if (dryRun) { console.log(body); return; }
+    if (dryRun) { console.log(body); return true; }
     ensureDir();
     writeFileSync(dest, body);
     append({
@@ -923,7 +1164,9 @@ function rollArchive(d: string): void {
     render(true);
     console.log(`archived ${done.length} finished item(s) -> ${dest}`);
     console.log(`kept open: ${g.inflight.length} in flight${g.queued.length ? `, ${g.queued.length} queued` : ''}, ${g.awaiting.length} awaiting you${g.paste.length ? `, ${g.paste.length} paste block(s)` : ''}`);
-    if (!autoCommitLedger(d)) process.exitCode = 1;
+    if (autoCommitLedger(d)) return true;
+    process.exitCode = 1;
+    return false;
 }
 
 // ── boxes and triage ────────────────────────────────────────────────────────
@@ -1344,16 +1587,33 @@ function cmdClaim() {
 }
 
 function cmdRelease() {
+    if (releaseItemLease(positional[0] ?? '')) return;
     const repo = validRepo(positional[0]);
     const held = readClaim(repo);
-    if (!existsSync(claimPath(repo))) die(`${repo} is not claimed.`);
     const desk = arg('desk') ? normaliseStream(arg('desk')) : null;
+    const itemDir = join(claimsDir, 'briefs');
+    const grantsFor = (): string[] => (existsSync(itemDir) ? readdirSync(itemDir).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).filter((id) => readClaimIn(itemDir, id)?.repo === repo) : []);
+    if (!existsSync(claimPath(repo))) {
+        // A brief that died before taking the repo claim leaves only its item grants; clearing them is a release of their own.
+        const orphans = grantsFor().filter((id) => has('force') || (desk && readClaimIn(itemDir, id)?.desk === desk));
+        if (!orphans.length) die(`${repo} is not claimed.`);
+        if (dryRun) { console.log(`[dry-run] release grants ${orphans.join(', ')}`); return; }
+        for (const id of orphans) unlinkSync(claimPathIn(itemDir, id));
+        console.log(`released  ${repo}  (no claim; cleared item grants ${orphans.join(', ')})`);
+        return;
+    }
     if (!has('force') && (!desk || !held || held.desk !== desk)) {
         die(`${repo} is held by ${describeClaim(held)}. Only that desk can release it (pass --desk), or use --force.`);
     }
     const usage = usageFromArgs();
     if (dryRun) { console.log(`[dry-run] release ${repo}`); return; }
+    // The releasing holder's grants are listed (with what each says) before the claim goes: once it is gone another desk may take the repo and grant its own item.
+    const mine = grantsFor().map((id) => ({ id, grant: readClaimIn(itemDir, id) as { desk?: string; time?: string } | null })).filter((g) => g.grant && g.grant.desk === held?.desk);
     unlinkSync(claimPath(repo));
+    const pauseMs = Number(process.env.MAESTRO_TEST_RELEASE_PAUSE_MS);
+    if (Number.isFinite(pauseMs) && pauseMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pauseMs);
+    // A brief's per-item writer grants for this repo end with the claim, and only the ones listed above, still unchanged.
+    for (const { id, grant } of mine) { if ((readClaimIn(itemDir, id) as { time?: string } | null)?.time === grant?.time) unlinkSync(claimPathIn(itemDir, id)); }
     append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'released', repo, stream: held?.desk, desk: held?.desk, text: `released ${repo} (${held?.desk ?? 'unknown desk'})${has('force') ? ' with --force' : ''}`, ...usage });
     if (!dryRun) render(true);
     console.log(`released  ${repo}  ${held?.desk ?? ''}`);
@@ -1373,10 +1633,172 @@ function cmdClaims() {
     for (const r of rows) console.log(`  ${r.repo}  desk ${r.desk ?? '?'}  pid ${r.pid ?? 'unknown'}  ${r.host ?? '?'}  ${r.ageHours ?? '?'}h${r.branch ? `  ${r.branch}` : ''}${r.stale ? `  STALE (${r.reason})` : ''}`);
 }
 
+/**
+ * `brief <id>`: write the dispatch brief file for an open item, record it, and take the repo claim.
+ * Everything that can refuse (the item, the standing block, the library lookup, the details file, the claim)
+ * runs before the first write, so a refusal leaves no file and no row. The claim is the one write that can
+ * precede the file; it is released again if the file cannot be written.
+ */
+function cmdBrief(): void {
+    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--as holder] [--pid n] [--read-only] [--details-file f] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
+    const entries = readLedger();
+    const target = itemNamedByArg(fold(entries).items);
+    if (!target) die(`No item with that id.\n${BRIEF_USAGE}`);
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open in-flight or queued item can be briefed.`);
+    refuseIfLeasedByOther(target.id as string, entries);
+    const usage = usageFromArgs();
+    const repoName = arg('repo') || target.repo || undefined;
+    const repo = repoName ? validRepo(repoName) : undefined;
+    const writer = !has('read-only') && Boolean(repo);
+    const desk = writer ? normaliseStream(arg('desk') || target.stream || '') : undefined;
+    if (writer && !desk) die('A writer brief takes the repo claim for a desk: pass --desk <stream>, or give the item a stream (or pass --read-only).');
+
+    const scripts = scriptsDir(process.argv[1]);
+    const block = spawnSync(process.execPath, [join(scripts, 'brief-block.ts')], { encoding: 'utf8' });
+    if (block.status !== 0 || !block.stdout.trim()) die(`The standing block could not be built, so no brief was written:\n${(block.stderr || 'brief-block.ts printed nothing').trim()}`);
+
+    const libraryScript = join(scripts, 'library-brief.ts');
+    const words = target.text || '';
+    const libraryArgs = ['--repo', repo || '', '--vault', vault, '--project', project, ...(VAULT_ROOT ? ['--tickets-vault', VAULT_ROOT] : []), words];
+    const library = libraryBlock(
+        !repo ? null : existsSync(libraryScript) ? () => spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8' }) : null,
+        !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
+    );
+    if (!library.ok) die(`${library.error}\nNo brief was written: a brief never goes out with its library block missing.`);
+
+    let details: string | undefined;
+    const detailsFile = arg('details-file');
+    if (detailsFile) { try { details = readFileSync(resolve(detailsFile), 'utf8'); } catch (e) { die(`--details-file ${detailsFile} could not be read: ${errorMessage(e)}`); } }
+
+    const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
+    const paths = briefPaths(outDir, target.id as string, writer);
+    const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
+    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library: library.text, standing: block.stdout, details, writer, reportPath: paths.report });
+    const why = `brief ${target.id}`;
+    const holder = writer ? (arg('as') || desk) : undefined;
+    const pid = arg('pid') ? Number(arg('pid')) : null;
+    if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
+    const claim = writer && repo && desk ? { repo, desk, pid, host: hostname(), time: now(), branch: arg('branch') || undefined, why } : undefined;
+
+    if (dryRun) { console.log(`[dry-run] brief ${paths.brief}${claim ? `, claim ${claim.repo} for ${claim.desk}` : ''}`); return; }
+
+    // Dispatching an item is taking it: the lease is the first write, so a window that loses a race writes no grant and no row.
+    takeLease(target.id as string);
+
+    // One writer grant per item: an exclusive lock names the holder (--as, default the desk) and the pid of the run that took it.
+    // The same holder briefing again is a rerun; any other holder is refused, unless the grant is an orphan (its run died before the rows were written).
+    const itemLocks = join(claimsDir, 'briefs');
+    const itemId = String(target.id);
+    const itemLock = { id: itemId, repo, desk, holder, pid: process.pid, host: hostname(), time: now() };
+    type Grant = { id?: string; repo?: string; desk?: string; holder?: string; pid?: number; host?: string; time?: string };
+    const readGrant = (id: string): Grant | null => readClaimIn(itemLocks, id) as Grant | null;
+    const hasBriefRow = (id: string): boolean => readLedger().some((r) => r.kind === 'brief' && r.briefs === id);
+    /** A grant is an orphan when its run is gone (this host, dead pid) and wrote no brief row: nothing holds the item. */
+    const orphan = (g: Grant | null, id: string): boolean => Boolean(g && g.host === hostname() && typeof g.pid === 'number' && !pidAlive(g.pid) && !hasBriefRow(id));
+    let tookItem = false;
+    let rerun = false;
+    if (claim) {
+        let itemError = acquireClaimLock(itemLocks, itemId, itemLock);
+        if (itemError && 'code' in itemError && itemError.code === 'EEXIST' && orphan(readGrant(itemId), itemId)) {
+            // Reclaiming is check, unlink, acquire; a reclaim lock makes that one step, so two runs cannot both reclaim and the second cannot delete the first's live grant.
+            const delayMs = Number(process.env.MAESTRO_TEST_RECLAIM_DELAY_MS);
+            if (Number.isFinite(delayMs) && delayMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+            const reclaimName = `${itemId}.reclaim`;
+            const gate = acquireClaimLock(itemLocks, reclaimName, { repo, pid: process.pid, host: hostname(), time: now() });
+            if (gate) {
+                // Never break a reclaim lock: a dead-looking one is exactly what two racing runs would both delete. `release <repo>` clears it.
+                const holderOfGate = readClaimIn(itemLocks, reclaimName) as { pid?: number; time?: string } | null;
+                console.error(`${itemId} is being reclaimed by another run (pid ${holderOfGate?.pid ?? 'unknown'}, since ${holderOfGate?.time ?? '?'}). No brief was written; if that run died, \`release ${repo} --force\` clears it.`);
+                process.exit(1);
+            }
+            try {
+                if (orphan(readGrant(itemId), itemId)) try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* already gone */ }
+                itemError = acquireClaimLock(itemLocks, itemId, itemLock);
+            } finally { try { unlinkSync(claimPathIn(itemLocks, reclaimName)); } catch { /* already gone */ } }
+        }
+        if (itemError) {
+            if (!('code' in itemError && itemError.code === 'EEXIST')) throw itemError;
+            const held = readGrant(itemId);
+            if (!held || held.holder !== holder) {
+                console.error(`${itemId} is already briefed for a writer by ${held?.holder ?? 'an unreadable holder'} (desk ${held?.desk ?? '?'}, since ${held?.time ?? '?'}). No brief was written; pass --as <name> only if you are that holder.`);
+                process.exit(1);
+            }
+            // The same holder's other run is still writing the rows: refuse it, so two runs cannot write them twice.
+            if (typeof held.pid === 'number' && held.pid !== process.pid && held.host === hostname() && pidAlive(held.pid) && !hasBriefRow(itemId)) {
+                console.error(`${itemId} is being briefed right now by another run of ${holder} (pid ${held.pid}). Wait for it, then rerun.`);
+                process.exit(1);
+            }
+            rerun = true;
+        } else tookItem = true;
+    }
+    const dropItemLock = () => { if (tookItem) { try { unlinkSync(claimPathIn(itemLocks, itemId)); } catch { /* already gone */ } } };
+
+    let tookClaim = false;
+    let ownedClaim = false;
+    if (claim) {
+        const linkError = acquireClaimLock(claimsDir, claim.repo, claim);
+        if (linkError) {
+            if (!('code' in linkError && linkError.code === 'EEXIST')) { dropItemLock(); throw linkError; }
+            const held = readClaim(claim.repo);
+            // The desk's own claim is not a second holder: a desk is told to claim before it dispatches.
+            if (!(held && held.desk === claim.desk)) {
+                dropItemLock();
+                console.error(`${claim.repo} is already claimed by ${describeClaim(held)}${held?.why ? ` (${held.why})` : ''}. No brief was written.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
+                process.exit(1);
+            }
+            ownedClaim = held.why === why;
+        } else tookClaim = true;
+        // Another live grant on this repo, whoever took the repo claim, means another item's writer holds it.
+        const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && !id.endsWith('.reclaim') && readGrant(id)?.repo === claim.repo && !orphan(readGrant(id), id)) : undefined;
+        if (otherGrant) {
+            dropItemLock();
+            if (tookClaim) { try { unlinkSync(claimPath(claim.repo)); } catch { /* already gone */ } }
+            console.error(`${claim.repo} already has a writer brief for item ${otherGrant} (holder ${readGrant(otherGrant)?.holder ?? '?'}). No brief was written.`);
+            process.exit(1);
+        }
+    }
+    // The ledger rows are the commit point. What exists decides what is written, so a rerun after a partial run completes it.
+    const ledgerNow = readLedger();
+    const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
+    // A claim row counts only if no release of the repo came after it: a re-brief after `release` takes a new claim and needs its own row.
+    const lastIndex = (pred: (r: LedgerRow) => boolean): number => ledgerNow.reduce((at, r, i) => (pred(r) ? i : at), -1);
+    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo);
+    if (briefed && existsSync(paths.brief) && !tookClaim && !tookItem && !claimRowMissing) {
+        console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
+        console.log(`report ${paths.report}`);
+        console.log(claim ? `claim  ${claim.repo}  ${claim.desk}  (already held for this item)` : 'claim  none (read-only)');
+        console.log(`Agent prompt: ${agentPrompt(paths.brief, paths.report)}`);
+        return;
+    }
+    const rollBack = () => { dropItemLock(); if (tookClaim && claim) { try { unlinkSync(claimPath(claim.repo)); } catch { /* already gone */ } } };
+    try {
+        mkdirSync(outDir, { recursive: true });
+        writeFileSync(paths.brief, text);
+    } catch (e) {
+        rollBack();
+        die(`The brief file could not be written to ${paths.brief}: ${errorMessage(e)}${tookClaim ? ' (the claim was released again)' : ''}`);
+    }
+    if (!briefed || claimRowMissing) {
+        const ids = [...ledgerNow];
+        const row = <E extends object>(r: E): E & { id: string } => { const out = { id: newId(ids), ...r }; ids.push(out); return out; };
+        const batch = [
+            ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claim.repo} for ${claim.desk}: ${why}`, ...usage })] : []),
+            ...(!briefed && isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
+            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
+        ];
+        try { appendMany(batch); } catch (e) { rollBack(); die(`The ledger rows could not be written (${errorMessage(e)}); nothing is held, run it again.`); }
+    }
+    render(true);
+    console.log(`brief  ${itemId}  ${paths.brief}${rerun ? '  (completed from an earlier run)' : ''}`);
+    console.log(`report ${paths.report}`);
+    console.log(claim ? `claim  ${claim.repo}  ${claim.desk}${tookClaim ? '' : '  (the desk\'s own claim, kept)'}` : 'claim  none (read-only)');
+    console.log(`Agent prompt: ${agentPrompt(paths.brief, paths.report)}`);
+}
+
 // ── backfill ────────────────────────────────────────────────────────────────
 
 const backfillProposals = () => backfillProposalsIn({ readLedger, fold, loadRegistry });
-const handoffCtx = () => ({ fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true), states: standingStatesSafe });
+const handoffCtx = () => ({ window: windowId, fold, readLedger, today, claudeProjectsDir: CLAUDE_PROJECTS_DIR, standing: () => standingLines(true), states: standingStatesSafe });
 const handoffText = (stream: string | null, since: string, keptWorktrees?: Parameters<typeof handoffTextIn>[3], opts?: Parameters<typeof handoffTextIn>[4]) => handoffTextIn(handoffCtx(), stream, since, keptWorktrees, opts);
 const updateContextLink = (file: string, handoffPath: string) => updateContextLinkIn(handoffCtx(), file, handoffPath);
 
@@ -1453,6 +1875,9 @@ function cmdBackfill() {
 /** A free-text flag as one line (newlines folded to spaces), '' when absent: it lands inside a markdown list or paragraph. */
 const oneLineArg = (name: string): string => (arg(name, '') || '').replace(/\s+/g, ' ').trim();
 
+/** The sentence naming handoff files another window created first, or '' when none was skipped. */
+const takenNote = (taken: string[]): string => (taken.length ? ` (${taken.join(', ')} already existed from another window; wrote the next free name)` : '');
+
 function cmdHandoff() {
     const { items } = fold(readLedger());
     const stream = has('all') ? null : existingStream(arg('stream'), items);
@@ -1467,8 +1892,9 @@ function cmdHandoff() {
         if (arg('learn') || arg('next') || has('update-context')) die('--delta writes only the changes; --learn, --next and --update-context belong on the first (full) handoff of the day.');
         const body = handoffDeltaText(handoffCtx(), stream, marker, series.prev);
         if (dryRun) { console.log(body); return; }
-        writeFileSync(path, body);
-        console.log(`wrote ${path} (delta since ${marker})`);
+        const written = writeHandoffSeries(dir, today(), streamSlug, basename(path), body);
+        if (!written) die(`--delta: handoff suffixes b..z for ${today()} are used up; start a fresh session.`);
+        console.log(`wrote ${join(dir, written.name)} (delta since ${marker})${takenNote(written.taken)}`);
         return;
     }
     if (existsSync(path) && !has('force')) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`);
@@ -1477,9 +1903,18 @@ function cmdHandoff() {
     const contextFile = has('update-context') ? arg('context-file') || join(ticketsBase(), 'Projects', project, 'CONTEXT.md') : '';
     if (dryRun) { console.log(body); if (contextFile) console.log(`would point ${contextFile} at ${basename(path)}`); return; }
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, body);
-    console.log(`wrote ${path}`);
-    if (contextFile) updateContextLink(contextFile, path);
+    let finalPath = path;
+    if (has('force')) writeFileSync(path, body);
+    else if (arg('out')) { if (!createExclusive(path, body)) die(`${path} already exists. Pass --force to overwrite it, or --out <path>.`); }
+    else {
+        // Exclusive create: a window that rolled between the check above and this write keeps its file; this one takes the next suffix.
+        const written = writeHandoffSeries(dir, today(), streamSlug, basename(path), body);
+        if (!written) die(`handoff suffixes b..z for ${today()} are used up; start a fresh session.`);
+        finalPath = join(dir, written.name);
+        if (written.taken.length) console.log(takenNote(written.taken).trim());
+    }
+    console.log(`wrote ${finalPath}`);
+    if (contextFile) updateContextLink(contextFile, finalPath);
 }
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
@@ -1588,6 +2023,8 @@ function prioritiesNotice(): string[] {
 const supervisorNotice = (): string[] => [supervisorStatus(EVENT_DIR).line].filter(Boolean);
 
 /** The `Loop:` line (heartbeat verdict) without its footer markup; empty when nothing is set up and nothing is required. */
+/** The unstable-window warning as notice lines (empty when the id is stable); `prime` and the text `status` print it. */
+const windowWarning = (): string[] => [windowNotice(resolvedWindow)].filter(Boolean);
 const loopNotice = (): string[] => [liveLoopHealth().line.replace(/\*\*/g, '')].filter(Boolean);
 
 /** The Start-here pointer and, once a status directory exists, the week line (the not-set line when the goals are missing or stale). */
@@ -1598,7 +2035,10 @@ function startPointer(): string[] {
 
 function cmdPrime() {
     refreshBoard();
-    primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    // Before the board and outside its 40-line cap: a missing or stale handoff after a compaction must not be missed. Stdout carries it into the session; stderr makes a hook log show it too. Exit stays 0, since a failing SessionStart hook can drop its output.
+    const continuity = continuityLines(readLedger(), newestHandoff(dir));
+    continuity.forEach((l) => { console.log(l); console.error(l); });
+    primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...windowWarning(), ...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
     // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
     compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(l));
 }
@@ -1646,21 +2086,34 @@ function homesFor(names: string[], dirPath: string): Record<string, HomeCounts> 
         try {
             const home = buildHome({ vault, project, statusDir: dirPath, page: pageConfig(project, dirPath), vaultRoot: VAULT_ROOT }, name);
             if (home) out[name] = homeCounts(home);
-        } catch { /* a stream whose notes cannot be read is left off the list, not a failed page */ }
+        } catch (e) {
+            // A stream whose notes cannot be read is named, not dropped, and does not fail the page.
+            out[name] = unreadableHome(errorMessage(e));
+        }
     }
     return out;
+}
+
+/** The unreachable-note count for the start view. Null when the check did not run, which is not the same as zero. */
+function unreachableForStart(): UnreachableNotes | null {
+    try {
+        const r = notesCheck(notesWindow());
+        if (!r) return null;
+        return { total: r.report.unreachable.length, byStream: r.report.byStream, ...(r.unreadable.length ? { unchecked: r.unreadable.length } : {}) };
+    } catch { return null; }
 }
 
 /** `start-here [--stream <name>] [--json]`: the Start view as text (or data). Reads the ledger, the status dir and the vault; writes nothing. */
 function cmdStartHere() {
     const g = groups();
     const dirPath = statusDir();
-    const local = priorityDay();
+    const nowAt = new Date();
+    const local = viewDay(nowAt, WATCH_TZ);
     const priorities = dirPath ? readPriorities(dirPath, local) : { state: 'missing' as const };
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
-    const s = buildStart(g, { day: today(), week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), now: new Date() });
+    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), now: nowAt });
     if (asJson) console.log(JSON.stringify(s, null, 2));
-    else startLines(s, new Date(), { stream: arg('stream') || undefined }).forEach((l) => console.log(l));
+    else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(l));
 }
 
 /** `week set "<goal> | <Stream>" ...` and `week show`: this week's goals in <status dir>/week.md. */
@@ -1791,12 +2244,14 @@ switch (cmd) {
     case 'status': cmdStatus(); break;
     case 'review-queue': cmdReviewQueue(); break;
     case 'standup': cmdStandup(); break;
+    case 'maintain': cmdMaintain(); break;
     case 'roll': cmdRoll(); if (SCRIPTS_SHELF_DIR && !has('fast')) cmdScratch(); break;
     case 'scratch': cmdScratch(); break;
     case 'verify': cmdVerify(); break;
     case 'render': render(false, has('include-archived')); break;
     case 'tag': cmdTag(); break;
     case 'approve-tag': cmdApproveTag(); break;
+    case 'ref': cmdRef(); break;
     case 'approvals': cmdApprovals(); break;
     case 'streams': cmdStreams(); break;
     case 'models': cmdModels(); break;
@@ -1806,8 +2261,10 @@ switch (cmd) {
     case 'archive': cmdArchive(); break;
     case 'unarchive': cmdUnarchive(); break;
     case 'claim': cmdClaim(); break;
+    case 'lease': cmdLease(); break;
     case 'release': cmdRelease(); break;
     case 'claims': cmdClaims(); break;
+    case 'brief': cmdBrief(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
     case 'defer': cmdDefer(); break;

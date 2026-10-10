@@ -1,11 +1,21 @@
 /** The cue line (what Jack must see in two seconds), relative ages and clock times. Pure and DOM-free. */
+import type { CueKey } from './tabs.ts';
 import type { PodiumState } from './types.ts';
 
 /** One part of the cue line: a count, the words after it, and the tone it earns when it is not zero. */
-export interface CuePart { key: 'asks' | 'blocked' | 'done' | 'working'; n: number; label: string; tone: 'accent' | 'critical' | 'success' | 'neutral' }
+export interface CuePart { key: CueKey; n: number; label: string; tone: 'accent' | 'critical' | 'success' | 'neutral' }
+
+/** The four buckets the cue line counts. */
+export type Buckets = Pick<PodiumState, CueKey>;
+
+/** The buckets for one scope: every stream when `stream` is null, otherwise that stream's items. The one place a tab scopes them. */
+export function scoped(st: Buckets, stream: string | null): Buckets {
+  const pick = <T extends { stream: string }>(xs: T[]): T[] => (stream === null ? xs : xs.filter((x) => x.stream === stream));
+  return { asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) };
+}
 
 /** The cue line in reading order: what needs you, what is blocked, what shipped today, what is in flight. */
-export function cueParts(st: Pick<PodiumState, 'asks' | 'blocked' | 'done' | 'working'>): CuePart[] {
+export function cueParts(st: Buckets): CuePart[] {
   return [
     { key: 'asks', n: st.asks.length, label: st.asks.length === 1 ? 'needs you' : 'need you', tone: 'accent' },
     { key: 'blocked', n: st.blocked.length, label: 'blocked', tone: 'critical' },
@@ -84,12 +94,6 @@ export function askAge(days: number): string {
 export function oldestFirst<T extends { ageDays: number; ts: string }>(asks: T[]): T[] {
   const at = (t: string): number => { const n = Date.parse(t); return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; };
   return asks.map((a, i) => ({ a, i })).sort((x, y) => (y.a.ageDays - x.a.ageDays) || (at(x.a.ts) - at(y.a.ts)) || (x.i - y.i)).map((x) => x.a);
-}
-
-/** The text an answer is copied as, for pasting into the orchestrator chat: "<ask id>: <answer>". Null for a blank answer. */
-export function chatAnswer(id: string, answer: string): string | null {
-  const text = answer.trim();
-  return text ? `${id}: ${text}` : null;
 }
 
 /** The browser tab's title: "(n) Podium" while n asks need you, plain "Podium" otherwise. Blocked never counts: it is not your hand. */
