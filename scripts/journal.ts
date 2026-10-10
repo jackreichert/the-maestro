@@ -1667,7 +1667,6 @@ function cmdBrief(): void {
         !repo ? null : existsSync(libraryScript) ? () => spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8' }) : null,
         !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
     );
-    if (!library.ok) die(`${library.error}\nNo brief was written: a brief never goes out with its library block missing.`);
 
     let details: string | undefined;
     const detailsFile = arg('details-file');
@@ -1676,7 +1675,7 @@ function cmdBrief(): void {
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
     const paths = briefPaths(outDir, target.id as string, writer);
     const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
-    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library: library.text, standing: block.stdout, details, writer, reportPath: paths.report });
+    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, writer, reportPath: paths.report });
     const why = `brief ${target.id}`;
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;

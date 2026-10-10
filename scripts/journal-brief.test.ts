@@ -9,13 +9,15 @@ import { agentPrompt, briefPaths, briefText, libraryBlock } from './lib/journal/
 
 process.env.MAESTRO_LOCAL_CONFIG = '';
 /** A scripts dir whose journal.ts, pr-open.ts and brief-block.ts are the real ones; library-brief.ts is the given stub, or absent when none is given. */
-function shelfWith(libraryStub?: string): string {
+const REAL = Symbol('real library-brief.ts');
+function shelfWith(libraryStub?: string | typeof REAL): string {
     const dir = mkdtempSync(join(tmpdir(), 'brief-shelf-'));
     for (const f of ['journal.ts', 'pr-open.ts', 'brief-block.ts']) symlinkSync(new URL(`./${f}`, import.meta.url).pathname, join(dir, f));
-    if (libraryStub !== undefined) writeFileSync(join(dir, 'library-brief.ts'), libraryStub);
+    if (libraryStub === REAL) symlinkSync(new URL('./library-brief.ts', import.meta.url).pathname, join(dir, 'library-brief.ts'));
+    else if (libraryStub !== undefined) writeFileSync(join(dir, 'library-brief.ts'), libraryStub);
     return join(dir, 'journal.ts');
 }
-// These tests are about claims and grants, not the library: run them on a shelf with no library-brief.ts, so the real one (which needs a library vault) is not in play.
+// Most tests are about claims and grants, not the library: they run on a shelf with no library-brief.ts. The real one is exercised in the "fails open" tests below.
 const SCRIPT = shelfWith();
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
 const FILLED = '## Standing brief block, filled\n\n- `<user git emails>` → `dev@example.com`\n- `<tracker key example>` → FAKE-1\n';
@@ -26,10 +28,10 @@ let config: string;
 let cwd: string;
 
 /** Runs journal.ts against a throwaway ledger; `cfg` is the one config file it may read ('' for none). */
-function run(args: string[], cfg: string = config, script: string = SCRIPT) {
+function run(args: string[], cfg: string = config, script: string = SCRIPT, env: Record<string, string> = {}) {
     const r = spawnSync(process.execPath, [script, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd,
-        env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: cfg, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: cfg, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -199,14 +201,14 @@ test('--details-file is carried into the brief, and an unreadable one refuses be
     assert.equal(existsSync(lock('repo-c')), false);
 });
 
-test('libraryBlock: a failing lookup is an error, a missing tool is said so, never silently empty', () => {
+test('libraryBlock: a failing lookup says so in one line, a missing tool is said so, never silently empty', () => {
     const ok = libraryBlock(() => ({ status: 0, stdout: 'Library pages for this task:\n- a.md\n', stderr: '' }), 'x');
-    assert.deepEqual(ok, { ok: true, text: 'Library pages for this task:\n- a.md' });
+    assert.equal(ok, 'Library pages for this task:\n- a.md');
     const failed = libraryBlock(() => ({ status: 2, stdout: '', stderr: 'no index\nmore' }), 'x');
-    assert.equal(failed.ok, false);
-    assert.match(failed.ok ? '' : failed.error, /exit 2\): no index/);
+    assert.match(failed, /^Library pages for this task: unavailable \(library-brief failed, exit 2: no index\)/);
+    assert.equal(failed.includes('\n'), false);
     const absent = libraryBlock(null, 'no repo named');
-    assert.match(absent.ok ? absent.text : '', /none \(no repo named\)/);
+    assert.match(absent, /none \(no repo named\)/);
 });
 
 test('briefText states the cap and the report path once each, and the repo role', () => {
@@ -223,16 +225,39 @@ test('the library block comes from library-brief.ts when it is installed, asked 
     assert.match(readFileSync(briefPaths(outDir, id).brief, 'utf8'), /LIB repo=repo-a words=fix the widget/);
 });
 
-test('a failing library-brief.ts refuses the brief before the claim', () => {
+test('a failing library-brief.ts does not stop the brief: one unavailable line, claim and file still written', () => {
     const shelf = shelfWith("console.error('index missing'); process.exit(2);");
     const id = start('fix the widget', '--repo', 'repo-a', '--stream', 'Alpha');
-    const before = rows().length;
     const r = run(['brief', id, '--out-dir', outDir, ...MARK], config, shelf);
-    assert.equal(r.code, 1);
-    assert.match(r.err, /library-brief failed \(exit 2\): index missing/);
-    assert.equal(existsSync(lock('repo-a')), false);
-    assert.equal(existsSync(briefPaths(outDir, id).brief), false);
-    assert.equal(rows().length, before);
+    assert.equal(r.code, 0, r.err);
+    assert.match(readFileSync(briefPaths(outDir, id).brief, 'utf8'), /Library pages for this task: unavailable \(library-brief failed, exit 2: index missing\)/);
+    assert.equal(existsSync(lock('repo-a')), true);
+});
+
+/** Runs the real library-brief.ts inside `journal.ts brief` and returns the brief text; it must exit 0 whatever the library state. */
+function briefWithRealLibrary(text: string, env: Record<string, string>): string {
+    const id = start(text, '--repo', 'repo-a', '--stream', 'Alpha');
+    const r = run(['brief', id, '--out-dir', outDir, ...MARK], config, shelfWith(REAL), { MAESTRO_STATUS_DIR: mkdtempSync(join(tmpdir(), 'brief-status-')), ...env });
+    assert.equal(r.code, 0, r.err);
+    const body = readFileSync(briefPaths(outDir, id).brief, 'utf8');
+    assert.equal((body.match(/Library pages for this task: unavailable[^\n]*/g) ?? []).length, 1, 'one line');
+    return body;
+}
+
+test('fails open: the real library-brief.ts with VAULT_ROOT unset still lets the brief go out', () => {
+    assert.match(briefWithRealLibrary('fix the widget', {}), /unavailable \(library-brief failed, exit 2: library-brief: no vault/);
+});
+
+test('fails open: the real library-brief.ts on a vault with no Projects folder for the repo', () => {
+    const tickets = mkdtempSync(join(tmpdir(), 'brief-tickets-'));
+    mkdirSync(join(tickets, 'Projects', 'other-repo'), { recursive: true });
+    assert.match(briefWithRealLibrary('fix the widget', { VAULT_ROOT: tickets }), /unavailable \(library-brief failed, exit 2: library-brief: the lookup failed: No project "repo-a"/);
+});
+
+test('fails open: the real library-brief.ts with task text that has no words', () => {
+    const tickets = mkdtempSync(join(tmpdir(), 'brief-tickets-'));
+    mkdirSync(join(tickets, 'Projects', 'repo-a'), { recursive: true });
+    assert.match(briefWithRealLibrary('?? !!', { VAULT_ROOT: tickets }), /unavailable \(library-brief failed, exit 2: Usage: library-brief\.ts/);
 });
 
 const grantPath = (id: string) => join(vault, 'Projects', 'test-proj', 'Claims', 'briefs', `${id}.lock`);

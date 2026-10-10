@@ -38,12 +38,17 @@ export const briefPaths = (dir: string, id: string, writer = true): { brief: str
 export const agentPrompt = (briefPath: string, reportPath: string): string =>
     `Your full brief is the file ${briefPath}. Read it first and follow it exactly. Write your report to ${reportPath} and hand back a headline under ${HAND_BACK_WORDS} words plus that path.`;
 
-/** The `Library pages for this task` section: the helper's block, or the reason there is none. Never silently empty. */
-export function libraryBlock(run: (() => { status: number | null; stdout: string; stderr: string }) | null, reason: string): { ok: true; text: string } | { ok: false; error: string } {
-    if (!run) return { ok: true, text: `Library pages for this task: none (${reason}).` };
+/**
+ * The `Library pages for this task` section: the helper's block, or the reason there is none. A library lookup is advisory, so it fails open: a
+ * lookup that cannot run (no vault set, no vault folder for the repo, task text with no words, a crash) puts one "unavailable" line in the brief
+ * and the brief goes out. The section is never silently empty; the line says why.
+ */
+export function libraryBlock(run: (() => { status: number | null; stdout: string; stderr: string }) | null, reason: string): string {
+    if (!run) return `Library pages for this task: none (${reason}).`;
     const r = run();
-    if (r.status !== 0 || !r.stdout.trim()) return { ok: false, error: `library-brief failed (exit ${r.status ?? 'none'}): ${(r.stderr || r.stdout).trim().split('\n')[0] ?? ''}`.trim() };
-    return { ok: true, text: r.stdout.trim() };
+    if (r.status === 0 && r.stdout.trim()) return r.stdout.trim();
+    const why = ((r.stderr || r.stdout).trim().split('\n')[0] ?? '').replace(/\s+/g, ' ').slice(0, 160);
+    return `Library pages for this task: unavailable (library-brief failed, exit ${r.status ?? 'none'}${why ? `: ${why}` : ''}); look in the vault's Projects folder yourself.`;
 }
 
 /** The brief file's text. */

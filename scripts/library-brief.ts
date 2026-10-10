@@ -6,8 +6,8 @@
  *   node scripts/library-brief.ts --repo <repo> [--tickets-vault <vault>] [--vault <ledger root>] [--project <name>] [--json] "<task words>"
  *
  * It asks `ledger-index.ts find` (which rebuilds its index when a page changed), so it ranks the way `journal.ts find` does. With no match it still
- * prints the block, saying none were found. Exit 2 when the words are missing or the lookup fails: a brief must never go out with the block
- * silently absent.
+ * prints the block, saying none were found. Exit 2 when the words are missing or the lookup fails. `journal.ts brief` treats that as advisory: it writes one "unavailable" line in
+ * place of the block and the brief still goes out, so the block is never silently absent.
  */
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
