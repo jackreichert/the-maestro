@@ -2317,6 +2317,15 @@ test('the key pattern is configurable, so an overlay can narrow what counts as a
     assert.doesNotMatch(narrow, /ABC-12/);
 });
 
+test('local keys with no tracker (MAESTRO-N, MITHRIL-N) are never pending, and local_key_prefixes is configurable', () => {
+    run('done', idOf(run('start', 'the-maestro MAESTRO-7 and MITHRIL-3 shipped, ABC-5 too', ...MARK).out), ...MARK);
+    assert.deepEqual(parse(run('tickets', '--pending', '--json').out).pending.map((p) => p.key), ['ABC-5']);
+    const none = parse(runEnv({ MAESTRO_LOCAL_KEY_PREFIXES: 'none' }, 'tickets', '--pending', '--json').out);
+    assert.deepEqual(none.pending.map((p) => p.key).sort(), ['ABC-5', 'MAESTRO-7', 'MITHRIL-3']);
+    const custom = parse(runEnv({ MAESTRO_LOCAL_KEY_PREFIXES: 'ABC' }, 'tickets', '--pending', '--json').out);
+    assert.deepEqual(custom.pending.map((p) => p.key).sort(), ['MAESTRO-7', 'MITHRIL-3']);
+});
+
 test('prime and triage flag pending transitions when there are some, and say nothing when there are none', () => {
     assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
     assert.match(run('triage').out, /\[x\] Every done item with a tracker key has a recorded transition$/m);
