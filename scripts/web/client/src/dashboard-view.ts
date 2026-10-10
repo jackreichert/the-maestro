@@ -48,14 +48,15 @@ function prQuadrant(st: PodiumState, charts: ChartsData | null): HTMLElement {
   const tallest = Math.max(1, ...m.columns.map((c) => c.inQueue.length + c.other.length));
   const unit = Math.max(8, Math.min(20, Math.floor((H - 40) / tallest) - 2));
   const slot = W / m.columns.length;
-  const chart = svgChart('Open pull requests by age', 'One square per pull request, stacked by age. Filled squares are in the review queue, outlined squares are not. Each square opens the pull request.',
+  const chart = svgChart('Open pull requests by age', 'One square per pull request, stacked by age. Filled squares are in the review queue, outlined squares are not. Dashed squares, in the last column, have no creation date. Each square opens the pull request.',
     m.columns.map((c, i) => {
       const cx = i * slot + slot / 2;
       const squares = [...c.inQueue.map((p) => ({ p, inQ: true })), ...c.other.map((p) => ({ p, inQ: false }))].map(({ p, inQ }, k) => {
         const y = H - 20 - (k + 1) * (unit + 2);
         const attrs = linkAttrs(p.url);
-        return mark(attrs ?? { href: formatFragment('overview') }, `${p.title}, ${p.repo} number ${p.number}, ${c.label}, ${inQ ? 'in the review queue' : 'not in the review queue'}`, `pr-${p.repo}-${p.number}`,
-          s('rect', { class: `unit ${inQ ? 'fill' : 'ring'}${c.undated ? ' dashed' : ''}`, x: String(cx - unit / 2), y: String(y), width: String(unit), height: String(unit), rx: '3' }),
+        const age = c.undated ? 'no creation date' : c.label;
+        return mark(attrs ?? { href: formatFragment('overview') }, `${p.title}, ${p.repo} number ${p.number}, ${age}, ${inQ ? 'in the review queue' : 'not in the review queue'}`, `pr-${p.repo}-${p.number}`,
+          s('rect', { class: `unit ${inQ ? 'fill' : 'ring'}${c.undated ? ' undated' : ''}`, x: String(cx - unit / 2), y: String(y), width: String(unit), height: String(unit), rx: '3' }),
           s('rect', { class: 'hit', x: String(cx - Math.max(unit, UNIT) / 2), y: String(y - 1), width: String(Math.max(unit, UNIT)), height: String(unit + 2) }));
       });
       return s('g', {}, ...squares, s('text', { class: 'lab', x: String(cx), y: String(H - 4), 'text-anchor': 'middle' }, c.label));
@@ -64,6 +65,7 @@ function prQuadrant(st: PodiumState, charts: ChartsData | null): HTMLElement {
   const legend = h('p', { class: 'legend' },
     h('span', { class: 'key' }, h('i', { class: 'sw fill', 'aria-hidden': 'true' }), `in the review queue${cap}`), ' ',
     h('span', { class: 'key' }, h('i', { class: 'sw ring', 'aria-hidden': 'true' }), 'other open (self-review repos)'),
+    m.columns.some((c) => c.undated) ? h('span', { class: 'key' }, h('i', { class: 'sw undated', 'aria-hidden': 'true' }), 'no creation date') : null,
     m.drafts > 0 ? h('span', { class: 'key' }, `${m.drafts} ${m.drafts === 1 ? 'draft is' : 'drafts are'} not counted`) : null);
   const table = tableView('Open pull requests by age', ['Age', 'In the review queue', 'Other open'], m.columns.map((c) => [c.label, String(c.inQueue.length), String(c.other.length)]));
   return quadrant('PRs waiting', m.n, note, chart, legend, rowList(m.rows, '', null), table);
@@ -145,12 +147,12 @@ function quadrant(title: string, n: number, note: Node | null, ...body: (Node | 
 const emptyText = (text: string): HTMLElement => h('p', { class: 'empty' }, text);
 const missingCharts = (): HTMLElement => emptyText('Chart data is missing. The server did not send /api/charts, so nothing is drawn here.');
 
-function svgChart(title: string, desc: string, marks: (Node | null)[], height = H): SVGSVGElement {
+function svgChart(title: string, desc: string, marks: (Node | null)[], height = H, baseline = true): SVGSVGElement {
   const t = `t${++seq}`;
   const d = `d${seq}`;
   return s('svg', { class: 'chart', viewBox: `0 0 ${W} ${height}`, role: 'group', 'aria-labelledby': `${t} ${d}`, focusable: 'false' },
     s('title', { id: t }, title), s('desc', { id: d }, desc),
-    s('line', { class: 'base', x1: '0', x2: String(W), y1: String(height - 20), y2: String(height - 20) }),
+    baseline ? s('line', { class: 'base', x1: '0', x2: String(W), y1: String(height - 20), y2: String(height - 20) }) : null,
     ...marks);
 }
 
@@ -204,7 +206,8 @@ export const DASHBOARD_CSS = `
   .c-5 { fill: var(--series-5); } .c-6 { fill: var(--series-6); } .c-7 { fill: var(--series-7); } .c-8 { fill: var(--series-8); } .c-other { fill: var(--series-other); }
   .chart .unit.fill { fill: var(--series-1); }
   .chart .unit.ring { fill: none; stroke: var(--series-1); stroke-width: 2; }
-  .chart .unit.dashed { stroke-dasharray: 3 2; }
+  .chart .unit.undated { stroke: var(--text-primary); stroke-width: 2; stroke-dasharray: 3 2; }
+  .chart .unit.undated.ring { fill: none; }
   .chart .lab { fill: var(--text-muted); font-size: var(--text-xs); }
   .chart .val { fill: var(--text-primary); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
   .chart a.mark { cursor: pointer; }
@@ -216,6 +219,7 @@ export const DASHBOARD_CSS = `
   .legend .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
   .legend .sw.fill { background: var(--series-1); }
   .legend .sw.ring { background: none; border: 2px solid var(--series-1); }
+  .legend .sw.undated { background: none; border: 2px dashed var(--text-primary); }
   .legend .sw.c-1 { background: var(--series-1); } .legend .sw.c-2 { background: var(--series-2); } .legend .sw.c-3 { background: var(--series-3); } .legend .sw.c-4 { background: var(--series-4); }
   .legend .sw.c-5 { background: var(--series-5); } .legend .sw.c-6 { background: var(--series-6); } .legend .sw.c-7 { background: var(--series-7); } .legend .sw.c-8 { background: var(--series-8); } .legend .sw.c-other { background: var(--series-other); }
   ul.dash-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
