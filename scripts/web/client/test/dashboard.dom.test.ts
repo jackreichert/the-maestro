@@ -8,6 +8,7 @@ import type { ChartsData, PodiumState } from '../src/types.ts';
 
 installDom();
 const { dashboardView } = await import('../src/dashboard-view.ts');
+const { keepAcross } = await import('../src/keep-view.ts');
 const read = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 const state = (): PodiumState => structuredClone(sanitizeState(read('state.json'))!.state);
 const charts = (): ChartsData => structuredClone(sanitizeCharts(read('charts.json'))!.data);
@@ -131,4 +132,23 @@ test('PRs with no creation date get their own labelled dashed column, say whethe
   assert.ok(!rows.some((r) => r.includes('undated 73')), 'a self-review PR is not a queue row');
   const noDate = [...el.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent?.startsWith('PRs waiting'))!.querySelector('tbody tr:last-child');
   assert.deepEqual([...noDate!.children].map((x) => x.textContent), ['no date', '2', '1']);
+});
+
+test('pressing a day column keeps keyboard focus on it after the page is redrawn', () => {
+  const c = charts();
+  const day = c.throughput.find((d) => d.total > 0)!;
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = host.attachShadow({ mode: 'open' });
+  let open: string | null = null;
+  const redraw = (): void => root.replaceChildren(dashboardView(state(), c, { day: open, setDay: (d) => keepAcross(root, () => { open = d; redraw(); }) }));   // as app.ts does
+  redraw();
+  const col = root.querySelector(`#done-${day.date}`) as unknown as HTMLElement;
+  col.focus();
+  assert.equal(root.activeElement?.id, `done-${day.date}`);
+  col.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.ok(root.querySelector('.day'), 'the day opened');
+  assert.equal(root.activeElement?.id, `done-${day.date}`, 'focus is on the redrawn column, not the page');
+  assert.equal(root.activeElement?.getAttribute('aria-expanded'), 'true');
+  host.remove();
 });
