@@ -64,7 +64,7 @@ export function run(stdin: string, ctx: Partial<GuardContext> = {}, decider: typ
 interface Word { text: string; redirect: boolean }
 const SEPARATORS = new Set([';', '&', '|', '\n', '(', ')']);
 
-/** Split a shell string into command segments of words; `$(...)` and backtick bodies come back in `nested`. Lenient: unterminated quotes run to the end. */
+/** Split a shell string into command segments of words; `$(...)` and backtick bodies come back in `nested`, and the word they sit in keeps a `$(...)` placeholder so the words after it stay in the same command. Lenient: unterminated quotes run to the end. */
 export function split(src: string): { segments: Word[][]; nested: string[] } {
   const segments: Word[][] = [];
   const nested: string[] = [];
@@ -88,8 +88,8 @@ export function split(src: string): { segments: Word[][]; nested: string[] } {
       }
       continue;
     }
-    if (c === '$' && src[i + 1] === '(') { const e = closeParen(src, i + 2); nested.push(src.slice(i + 2, e)); i = e; endSegment(); continue; }
-    if (c === '`') { const e = src.indexOf('`', i + 1); const end = e < 0 ? src.length : e; nested.push(src.slice(i + 1, end)); i = end; endSegment(); continue; }
+    if (c === '$' && src[i + 1] === '(') { const e = closeParen(src, i + 2); nested.push(src.slice(i + 2, e)); i = e; add('$(...)'); continue; }
+    if (c === '`') { const e = src.indexOf('`', i + 1); const end = e < 0 ? src.length : e; nested.push(src.slice(i + 1, end)); i = end; add('$(...)'); continue; }
     if (c === '#' && !cur) { while (i < src.length && src[i] !== '\n') i++; i--; continue; }
     if (c === '>' || c === '<') { if (!cur || /^\d+$/.test(cur.text)) { cur ??= { text: '', redirect: false }; cur.redirect = true; } add(c); continue; }
     if (c === '&' && cur?.redirect) { add(c); continue; }
