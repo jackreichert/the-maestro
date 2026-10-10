@@ -242,6 +242,26 @@ test('a malformed or unterminated command never throws and is still scanned', ()
   assert.equal(asks('git push --force "origin'), true);
 });
 
+test('heredoc bodies are skipped, so an apostrophe in one does not hide the commands after it', () => {
+  const FORCE = 'git push --force-with-lease';
+  assert.equal(asks(`git commit -m "$(cat <<'EOF'\nfix: don't\nEOF\n)" && ${FORCE}`), true);
+  assert.equal(asks(`git commit -F - <<'EOF'\nfix: don't\nEOF\n${FORCE}`), true);
+  assert.equal(asks(`git commit -F - <<-"EOF" && ${FORCE}\n\tdon't\n\tEOF\n`), true);
+  assert.equal(asks(`git commit -F - <<EOF\nit's\nEOF\ngit status`), false);
+  // a push-looking line inside a body is text, not a command
+  assert.equal(asks(`cat <<'EOF'\ngit push --force\nEOF\n`), false);
+  // control: no heredoc, same shape
+  assert.equal(asks(`git commit -m "fix: dont" && ${FORCE}`), true);
+  assert.equal(asks('git commit -m "fix: dont" && git status'), false);
+});
+
+test('a malformed heredoc fails open: no throw, no ask, nothing after the unterminated body is run as a command', () => {
+  for (const cmd of ["git commit -F - <<'EOF'\nfix: don't", 'cat <<', 'cat <<-', "echo $(cat <<'EOF'\nit's"]) {
+    assert.doesNotThrow(() => decide(cmd, ctx()), cmd);
+    assert.equal(asks(cmd), false, cmd);
+  }
+});
+
 test('real git lookups: a throwaway repo on main asks to commit, on a feature branch it does not, and its own alias is followed', () => {
   const dir = mkdtempSync(join(tmpdir(), 'git-guard-'));
   try {

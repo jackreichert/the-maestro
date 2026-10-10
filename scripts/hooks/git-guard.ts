@@ -73,8 +73,11 @@ export function split(src: string): { segments: Word[][]; nested: string[] } {
   const push = (): void => { if (cur) words.push(cur); cur = undefined; };
   const endSegment = (): void => { push(); if (words.length) segments.push(words); words = []; };
   const add = (c: string): void => { cur ??= { text: '', redirect: false }; cur.text += c; };
+  const heredocs: Heredoc[] = [];
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
+    if (c === '<') { const h = heredocAt(src, i); if (h) heredocs.push(h); }
+    if (c === '\n' && heredocs.length) { endSegment(); i = skipHeredocs(src, i + 1, heredocs) - 1; continue; }
     if (c === '\\') { if (i + 1 < src.length) { i++; if (src[i] !== '\n') add(src[i]); } continue; }
     if (c === "'") { cur ??= { text: '', redirect: false }; const j = src.indexOf("'", i + 1); const end = j < 0 ? src.length : j; cur.text += src.slice(i + 1, end); i = end; continue; }
     if (c === '"') {
@@ -102,10 +105,38 @@ export function split(src: string): { segments: Word[][]; nested: string[] } {
   return { segments, nested };
 }
 
+interface Heredoc { delim: string; strip: boolean }
+
+/** If `src[i]` starts a here-document operator (`<<EOF`, `<<'EOF'`, `<<"EOF"`, `<<-EOF`; not `<<<`), return its delimiter. */
+function heredocAt(src: string, i: number): Heredoc | undefined {
+  if (src[i + 1] !== '<' || src[i + 2] === '<' || src[i - 1] === '<') return undefined;
+  const m = /^<<(-?)[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|()<>'"\\])+)/.exec(src.slice(i, i + 300));
+  if (!m) return undefined;
+  const delim = m[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_a, x, y, z) => x ?? y ?? z);
+  return { delim, strip: m[1] === '-' };
+}
+
+/** Index just past the bodies of the pending here-documents, which start at `from` (the line after the operator). An unterminated body runs to the end, as in a shell. */
+function skipHeredocs(src: string, from: number, pending: Heredoc[]): number {
+  let i = from;
+  for (const h of pending.splice(0)) {
+    while (i < src.length) {
+      const nl = src.indexOf('\n', i);
+      const line = src.slice(i, nl < 0 ? src.length : nl);
+      i = nl < 0 ? src.length : nl + 1;
+      if ((h.strip ? line.replace(/^\t+/, '') : line) === h.delim) break;
+    }
+  }
+  return i;
+}
+
 function closeParen(s: string, from: number): number {
   let depth = 1;
+  const heredocs: Heredoc[] = [];
   for (let i = from; i < s.length; i++) {
     const c = s[i];
+    if (c === '<') { const h = heredocAt(s, i); if (h) heredocs.push(h); }
+    if (c === '\n' && heredocs.length) { i = skipHeredocs(s, i + 1, heredocs) - 1; continue; }
     if (c === '\\') { i++; continue; }
     if (c === "'") { const j = s.indexOf("'", i + 1); i = j < 0 ? s.length : j; continue; }
     if (c === '"') { for (i++; i < s.length && s[i] !== '"'; i++) if (s[i] === '\\') i++; continue; }
