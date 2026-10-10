@@ -118,3 +118,15 @@ test('a library date written as date@sha shows the full date', () => {
   assert.match(text, /verified 2026-10-09\)/);
   assert.doesNotMatch(text, /2026-10-0…/);
 });
+
+test('a ledger row with a numeric ts does not break the page and the page names it', () => {
+  const rows = [
+    ...ROWS,
+    { ...row({ id: 'ggg1', kind: 'note', stream: 'Alpha', text: 'odd row' }), ts: 1760000000 as unknown as string },
+    { ...row({ id: 'ggg2', kind: 'question', stream: 'Beta', text: 'odd ask?' }), ts: 1760000001 as unknown as string },
+  ];
+  const { text } = coldStart({ ...input, rows });
+  assert.match(text, /`aaa1`/);
+  assert.match(text, /`ggg2`/);
+  assert.match(text, /2 ledger row\(s\) have a ts that is not text/);
+});

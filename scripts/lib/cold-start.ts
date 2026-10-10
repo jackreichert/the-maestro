@@ -36,7 +36,9 @@ export function safe(raw: unknown, max: number): string {
 }
 
 const streamOf = (i: { stream?: string }): string => i.stream || NO_STREAM;
-const day = (ts: string | undefined): string => (ts ?? '').slice(0, 10);
+/** A ts as text: a row whose ts is not a string (a number, an object) is read as that value's text instead of throwing. */
+const tsOf = (ts: unknown): string => String(ts ?? '');
+const day = (ts: unknown): string => tsOf(ts).slice(0, 10);
 
 /** Per-level wording budgets: higher levels say less, never name fewer in-flight, blocked or ask items. */
 interface Level { text: number; queuedText: boolean; notes: boolean; pages: number; askText: number; stakes: boolean }
@@ -47,7 +49,7 @@ const LEVELS: Level[] = [
   { text: 0, queuedText: false, notes: false, pages: 0, askText: 0, stakes: false },
 ];
 
-interface Folded { inFlight: LedgerItem[]; blocked: LedgerItem[]; queued: LedgerItem[]; asks: LedgerItem[]; notes: LedgerItem[]; brief: Map<string, { brief?: string; report?: string }> }
+interface Folded { inFlight: LedgerItem[]; blocked: LedgerItem[]; queued: LedgerItem[]; asks: LedgerItem[]; notes: LedgerItem[]; badTs: number; brief: Map<string, { brief?: string; report?: string }> }
 
 function foldBoard(rows: LedgerRow[], registry: RegistryLookup | null): Folded {
   const f = fold(rows, registry);
@@ -58,12 +60,13 @@ function foldBoard(rows: LedgerRow[], registry: RegistryLookup | null): Folded {
     inFlight: open.filter(isInFlight), blocked: open.filter((i) => i.kind === 'blocked'), queued: open.filter(isQueued),
     asks: open.filter((i) => i.kind === 'question' || i.kind === 'decision'),
     notes: f.items.filter((i) => i.kind === 'note' && !f.hidden.has(i.id ?? '')), brief,
+    badTs: rows.filter((r) => r.ts !== undefined && typeof r.ts !== 'string').length,
   };
 }
 
 const by = <T extends { stream?: string }>(xs: T[], s: string): T[] => xs.filter((x) => streamOf(x) === s);
-const ageOf = (ts: string | undefined, now: Date): string => {
-  const t = Date.parse(ts ?? '');
+const ageOf = (ts: unknown, now: Date): string => {
+  const t = Date.parse(tsOf(ts));
   if (!Number.isFinite(t)) return '';
   const d = Math.floor((now.getTime() - t) / 864e5);
   return d <= 0 ? 'today' : `${d}d`;
@@ -82,14 +85,14 @@ function workLines(b: Folded, streams: string[], lv: Level, now: Date): string[]
     }
     for (const i of bl) out.push(`- blocked \`${i.id}\` ${t(i.text)}${i.gate && lv.text ? ` · gate: ${safe(i.gate, 50)}` : ''}`.trimEnd());
     if (q.length) out.push(lv.queuedText ? `- queued: ${q.map((i) => `\`${i.id}\` ${safe(i.text, 50)}`).join('; ')}` : `- queued: ${q.map((i) => `\`${i.id}\``).join(' ')}`);
-    const note = lv.notes ? by(b.notes, s).sort((x, y) => (y.ts ?? '').localeCompare(x.ts ?? ''))[0] : undefined;
+    const note = lv.notes ? by(b.notes, s).sort((x, y) => tsOf(y.ts).localeCompare(tsOf(x.ts)))[0] : undefined;
     if (note) out.push(`- last note (${day(note.ts)}): ${safe(note.text, 160)}`);
   }
   return out;
 }
 
 function askLines(b: Folded, lv: Level, now: Date): string[] {
-  return [...b.asks].sort((x, y) => (x.ts ?? '').localeCompare(y.ts ?? '')).map((a) => {
+  return [...b.asks].sort((x, y) => tsOf(x.ts).localeCompare(tsOf(y.ts))).map((a) => {
     const stakes = lv.stakes ? askBits(a as Parameters<typeof askBits>[0], 60).map((x) => safe(x, 90)).join(' · ') : '';
     return `- \`${a.id}\` [${streamOf(a)}] ${lv.askText ? safe(a.text, lv.askText) : ''} · ${ageOf(a.ts, now) || 'new'}${stakes ? ` · ${stakes}` : ''}`.replace(/ {2,}/g, ' ');
   });
@@ -108,7 +111,7 @@ function howLines(streams: string[], library: LibraryEntry[], lv: Level): string
 
 function render(b: Folded, library: LibraryEntry[], now: Date, lv: Level): string {
   const streams = [...new Set([...b.inFlight, ...b.blocked, ...b.queued].map(streamOf))].sort();
-  const head = ['# Cold start', '', `Generated ${now.toISOString().slice(0, 16)}Z from the ledger and the library; read-only, regenerated at read time. Anything not here is in \`journal.ts start-here\`.`, ''];
+  const head = ['# Cold start', '', `Generated ${now.toISOString().slice(0, 16)}Z from the ledger and the library; read-only, regenerated at read time. Anything not here is in \`journal.ts start-here\`.`, ...(b.badTs ? [``, `Note: ${b.badTs} ledger row(s) have a ts that is not text; read as is, so their order and age may be off.`] : []), ''];
   return [
     ...head, SECTION_WORK, '', ...(streams.length ? workLines(b, streams, lv, now) : ['Nothing in flight, blocked or queued.']), '',
     SECTION_ASKS, '', ...(b.asks.length ? askLines(b, lv, now) : ['None.']), '',
