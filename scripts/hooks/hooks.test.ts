@@ -102,6 +102,8 @@ test('the settings snippet names both events with the matchers and passes flags 
   assert.equal(s.hooks.SessionEnd[0].hooks[0].timeout, 30);
   assert.equal(s.hooks.SessionStart[0].matcher, 'compact|clear');
   assert.match(s.hooks.PreCompact[0].hooks[0].command, /precompact\.ts' --project 'p'$/);
+  assert.equal(s.hooks.PreToolUse[0].matcher, 'Bash');
+  assert.match(s.hooks.PreToolUse[0].hooks[0].command, /git-guard\.ts'$/, 'no pass-through flags reach the guard');
   assert.match(s.hooks.SessionStart[0].hooks[0].command, /session-start-compact\.ts' --project 'p'$/);
 });
 
