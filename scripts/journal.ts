@@ -839,10 +839,10 @@ const leaseSummary = (g: Groups, window = windowId) => {
     return summarizeLeases(foldLeases(readLedger()), window, Date.now(), (id) => open.has(id));
 };
 
-/** `Leases: 2 mine, 1 other` for the footer, or '' unless another window holds a live lease: with one window the footer is unchanged. */
+/** `Leases: 2 mine, 1 other` for the footer whenever any live lease is held (this window's alone included), or '' when none is. */
 function leaseFooter(g: Groups, window?: string, markup = false): string {
     const s = leaseSummary(g, window ?? windowId);
-    if (!s.other) return '';
+    if (!s.mine && !s.other) return '';
     return markup ? `**Leases:** ${s.mine} mine, ${s.other} other` : `Leases: ${s.mine} mine, ${s.other} other`;
 }
 
