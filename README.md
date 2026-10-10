@@ -1055,6 +1055,10 @@ To get the post-compact checklist, give `prime` the hook's source: use one entry
 { "matcher": "compact", "hooks": [{ "type": "command", "command": "node /path/to/the-maestro/scripts/journal.ts prime --source compact --project <container-folder-name> --vault <ledger-root>" }] }
 ```
 
+### Text alerts
+
+`scripts/lib/alert-policy.ts` decides when the loop texts you through `notify_command`, and the supervisor runs it after every launch of the loop. An allowlisted event (changes requested, conflict, approved-unmerged, reminder, notion change, a human thread or reply) is texted only when no session has seen it for 10 minutes. Loop DOWN or STALLED for 15 minutes, a check that keeps failing, and the first healthy start are texted too. At most one text goes out per 20 minutes, batched into one line; nothing is sent from 23:00 to 07:00 (what is still unseen then goes out as one line after). The line is built only from an event's kind, repo and PR number, so no title, comment, org name or Notion text can reach the notifier; a test feeds a sentinel string through the inbox and asserts it never appears in the notifier's argv. State is `Events/alerts.json`.
+
 ### Rolling continuously
 
 A compaction can happen at any moment, so three hooks make it lossless instead of relying on a manual roll. Neither calls a model, and neither is installed for you: `node scripts/hooks/print-settings-snippet.ts [--project <name>] [--vault <ledger-root>]` only prints the `hooks` entries, and you merge them into your own settings file.

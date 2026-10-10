@@ -30,7 +30,10 @@ import type { HeartbeatMode } from './lib/heartbeat.ts';
 import { openStore } from './lib/journal/store.ts';
 import { sleepUntil } from './lib/wall-sleep.ts';
 import { clearRecord, writeRecord } from './lib/supervisor-state.ts';
-import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, SELF_REVIEW_REPOS } from './local-config.ts';
+import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WATCH_TZ } from './local-config.ts';
+import { DEFAULT_ALERT_QUIET_HOURS, runAlerts } from './lib/alert-policy.ts';
+import { readInbox } from './lib/event-inbox.ts';
+import { liveLoopHealth } from './lib/loop-health-live.ts';
 
 const EVENT_LOOP = fileURLToPath(new URL('./event-loop.ts', import.meta.url));
 export const DELAYS = { idle: 300, usage: 300, crash: 30, quietCap: 12 * 3600, quietFallback: 300 };
@@ -47,6 +50,8 @@ export interface SuperviseDeps {
   log: (line: string) => void;
   /** Called with the digest text after a successful save. A throw is logged; it does not stop the loop. */
   queueDigest?: (digest: string) => void;
+  /** Called once after every launch of the loop returns, before its wait: the text-alert policy (lib/alert-policy.ts). A throw is logged; it does not stop the loop. */
+  alertTick?: () => void;
   now?: () => number;
   maxRuns?: number;
 }
@@ -77,9 +82,10 @@ export function quietSleepSeconds(stdout: string, now: number): number | null {
 const lastLine = (text: string): string => text.trim().split('\n').pop() ?? '';
 
 /** The supervision loop. Returns only when `maxRuns` launches are done (never, in production). */
-export async function supervise({ runLoop, sleep, save, log, queueDigest, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
+export async function supervise({ runLoop, sleep, save, log, queueDigest, alertTick, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
   for (let runs = 0; runs < maxRuns; runs += 1) {
     const { code, stdout, stderr } = await runLoop();
+    if (alertTick) { try { alertTick(); } catch (err) { log(`alert tick failed: ${err instanceof Error ? err.message : String(err)}`); } }
     if (code === 10) {
       let saved = false;
       try { save(stdout); saved = true; } catch (err) { log(`could not save digest: ${err instanceof Error ? err.message : String(err)}`); log(`unsaved digest follows:\n${stdout.trimEnd()}`); await sleep(DELAYS.crash, 'backoff', 'could not save digest'); }
@@ -215,6 +221,7 @@ async function main(): Promise<number> {
       vault: LEDGER_ROOT,
       project: CONTAINER_PROJECT,
     }),
+    alertTick: () => { runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now: Date.now(), entries: readInbox(EVENT_DIR), health: liveLoopHealth(), config: { quietHours: DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } }); },
     maxRuns: max > 0 ? max : Infinity,
   });
   return 0;
