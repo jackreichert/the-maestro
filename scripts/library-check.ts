@@ -95,6 +95,11 @@ export function componentsOf(vault: string, repo: string): Set<string> | null {
 
 /** The report for each page. `pages` are vault-relative paths. */
 export function checkVault(vault: string, pages: string[], scan?: Scanner): PageReport[] {
+  return checkTexts(vault, pages.map((path) => ({ path, text: readFileSync(join(vault, path), 'utf8') })), scan);
+}
+
+/** The report for page text that is not (yet) on disk, as library-write checks a staged page before it replaces the real one. `path` is vault-relative. */
+export function checkTexts(vault: string, pages: { path: string; text: string }[], scan?: Scanner): PageReport[] {
   const repos = new Set(dirs(join(vault, 'Projects')));
   let names: Set<string> | undefined;
   const resolves = (raw: string): boolean => {
@@ -104,9 +109,9 @@ export function checkVault(vault: string, pages: string[], scan?: Scanner): Page
     names ??= vaultNames(vault);
     return names.has(ref);
   };
-  return pages.map((path) => {
+  return pages.map(({ path, text }) => {
     const project = path.split('/')[1] ?? '';
-    return { path, findings: checkPage(parsePage(path, readFileSync(join(vault, path), 'utf8')), { project, repos, components: componentsOf(vault, project), resolves, ...(scan ? { scan } : {}) }) };
+    return { path, findings: checkPage(parsePage(path, text), { project, repos, components: componentsOf(vault, project), resolves, ...(scan ? { scan } : {}) }) };
   });
 }
 

@@ -200,7 +200,7 @@ import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'curated'];
 // `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
 if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
@@ -494,6 +494,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
+    if (kind === 'curated') die('A curated row is written only by `library-write.ts curate`, which holds the composer lease and checks the page.');
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
