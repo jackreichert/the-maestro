@@ -32,6 +32,14 @@ test('kinds: decisions split on the target state, conflicts, messages carry a co
   assert.equal(kind(`something odd ${SENTINEL}`), 'other');
 });
 
+test('a [self-review] prefix does not change the kind, and the tag is not a free-form skip', () => {
+  const kind = (s: string) => toInboxEvent(ev(s))?.kind;
+  assert.equal(kind('[self-review] THREAD acme/w#1 by someone: x'), 'thread');
+  assert.equal(kind('[self-review] CONFLICT acme/w#1 main <- f'), 'conflict');
+  assert.equal(kind('[self-review] DECISION acme/w#1: NONE -> CHANGES_REQUESTED'), 'changes-requested');
+  assert.equal(kind('[other] THREAD acme/w#1'), 'other');
+});
+
 test('the allowlist is applied on the write path: free text and unknown fields never reach the file', () => {
   const dir = tempDir();
   // The producer hands over a digest event carrying extra keys and a summary full of free text.
