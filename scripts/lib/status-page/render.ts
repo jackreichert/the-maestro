@@ -242,8 +242,8 @@ function prFlags(p: Pr): string {
   return prFlagNames(p).map((f) => `**${f}**`).join(' ');
 }
 
-/** `Review queue: 3 of 4 ...`: the non-draft PRs waiting on a review against the cap, and what a full queue means for dispatch. */
-const queueSentence = (q: ReviewQueue): string => `**Review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}**${q.full ? ': dispatch only fixes to PRs already open until it drops.' : ' non-draft PRs awaiting review.'}`;
+/** `Review queue: 3 of 4 ...`: the non-draft PRs waiting on a review against the cap, and what a full queue means for pushes. */
+const queueSentence = (q: ReviewQueue): string => `**Review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}**${q.full ? ': hold pushes of new PRs (keep working locally) until it drops; fixes to open PRs still go out.' : ' non-draft PRs awaiting review.'}`;
 
 /** Where a self-review PR stands for its one reviewer, first match: new comments, draft, ready to merge, approved but held, awaiting review. The same buckets as `prs-snapshot.ts --ready`. */
 export function selfReviewState(p: Pr): string {

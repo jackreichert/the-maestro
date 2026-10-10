@@ -343,7 +343,7 @@ export const PR_BODY_CHECK_ORDER = switchOn(pickUserFile('pr_body_check_order'))
 /** PR body: the code-file count at which a review order is required (more than this many files). Default 3. */
 export const PR_REVIEW_ORDER_MIN_FILES = positiveInt(pick('MAESTRO_PR_REVIEW_ORDER_MIN_FILES', 'pr_review_order_min_files'), 3);
 
-/** Review queue cap: most open non-draft PRs awaiting human review before dispatch stops new PR-producing work. Default 4. */
+/** Review queue cap: most open non-draft PRs awaiting human review before a finished branch is held as ready to push (dispatch is never held). Default 4. */
 export const REVIEW_QUEUE_CAP = positiveInt(pick('MAESTRO_REVIEW_QUEUE_CAP', 'review_queue_cap'), 4);
 
 /** Re-review gate (prs-snapshot.ts --ready): a PR with resolved review-bot threads is not ready until a fresh agent recorded SHIP IT for its head commit (review-verdict.ts). Default on; off, false, no or 0 turns it off. */

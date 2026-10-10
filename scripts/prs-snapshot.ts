@@ -368,7 +368,7 @@ function takenAtOf(path: string): number {
     try { return Date.parse(loadSnapshot(path)?.takenAt ?? '') || 0; } catch { return 0; }
 }
 
-/** The newer of the baseline and the loop's current-state file, for readers that want the latest board (the footer's review queue, the dispatch gate's fallback). Falls back to the baseline path when neither exists. */
+/** The newer of the baseline and the loop's current-state file, for readers that want the latest board (the footer's review queue, the push gate's fallback). Falls back to the baseline path when neither exists. */
 export function freshestSnapshotPath(root: string): string {
     const base = snapshotPath(root);
     const cur = currentPath(root);

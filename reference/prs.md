@@ -127,7 +127,7 @@ The rule and the reminder are described with the buckets above; the git side is 
 Some repos have one reviewer: the person who owns them. Name them in local-config `self_review_repos` (comma-separated `owner/name` globs; a bare owner means `owner/*`; default empty, which changes nothing). Their PRs get their own list, never mixed into the org's:
 
 - **A separate section.** The board prints **Maestro PRs (self-review)** after the org buckets, with a count and a link per PR, bucketed the same way (first match wins): new comments (unresolved threads), drafts ready for you, awaiting your review, approved and ready to merge, approved but not ready. `node scripts/prs-snapshot.ts --ready` prints it, and `journal.ts status` (line and footer), the Podium page, the stream board and `pr-watch` lines (marked `[self-review]`) follow. The one-line digest in the greeting gives it its own clause.
-- **Not in the queue.** They do not count toward `review_queue_cap`: the cap models other reviewers' attention, and these have none. `journal.ts review-queue --json` reports how many it left out.
+- **Not in the queue.** They do not count toward `review_queue_cap`: the cap models other reviewers' attention, and these have none. `journal.ts review-queue --json` reports how many it left out, and the footer's queue figure leaves them out too ([review queue cap](dispatch.md#review-queue-cap)).
 - **Not in the org numbers.** The org list's counts, the ready and held buckets and the PR mix chart leave them out. A PR whose repo is unknown is treated as an org PR.
 
 ## Links are mandatory
@@ -137,6 +137,15 @@ Every PR is a clickable markdown link, `[repo#number](https://github.com/<owner>
 `#438`, no bare repo/number pair. Link Jira keys the same way `greeting.md` already does:
 `[KEY-123](https://<site>.atlassian.net/browse/KEY-123)`. A PR mentioned without its link is the
 one anti-pattern this file exists to prevent — see [Anti-patterns](#anti-patterns).
+
+## Unblocking your own PRs is autonomous
+
+Getting the user's open PRs to mergeable is the orchestrator's job, not a question for the user. Without asking, and in bolero mode as in any other: fix review threads and blockers, re-review, and re-push until the PR is mergeable with zero unresolved threads ([ready means both](#the-buckets)).
+
+- **Conflicts:** a merge needs the user's explicit ask ([git.md](git.md)). Merge the base branch into the feature branch and push only where the user has granted that as a standing approval (a `standing` ledger row or memory); otherwise put the conflict on the board as a single ask. Never rebase and never force-push without the user's word.
+- **Threads:** fix, then resolve bot threads only ([the comment workflow](#the-comment-workflow)); people resolve their own.
+- **Each fix is reviewed by a fresh agent** before the PR counts as ready ([re-review](#re-review-before-ready)).
+- **Hard limits do not move.** These stay the user's: merging, undrafting, approving, rebasing, force-pushing, anything on a protected branch, secrets, and external sends (a Jira write, a Slack message, a comment that is not a thread reply the workflow already allows). Anything that needs one of them goes on the board as a single ask, not as a question about the fix.
 
 ## The comment workflow
 
@@ -209,6 +218,14 @@ node <scripts dir>/review-verdict.ts record --pr <owner/repo#N> --head <sha> --v
 - Not enforced: the reviewer's brief asks: do we need this? It reports `nearest existing mechanism: X, not enough because Y`, and names an alternative only after verifying it exists and does the job; a PR that rebuilds what a config, flag, helper or earlier PR already does is NEEDS WORK.
 - On NEEDS WORK the fixing agent (or a new one) fixes, and the cycle repeats on the new head; the loop stops when a round finds only nitpicks, not on a fixed count.
 - Switch: `rereview_gate`, on by default.
+
+Lessons from 2026-10-08, each a rule for the loop:
+
+- **After any fix, a fresh agent re-reviews.** Not only after bot-thread fixes: a fix to a reviewer's finding, a conflict resolution and a "small" follow-up all count.
+- **Verify a claimed fix by running it.** Reading the diff is not enough: a focus-loss bug was caught only by driving the page in a real browser. The re-reviewer runs the tests and, for behaviour a test does not cover, the thing itself.
+- **A builder does not push before its local review.** The branch is built, tested and reviewed locally first ([review queue cap](dispatch.md#review-queue-cap) holds it as ready to push when the queue is full); the push comes after.
+- **Read PR state live.** `gh` at the moment of the check, never a remembered or cached state, and never the stored snapshot for a go/no-go on merge or readiness.
+- **Stacked PRs: confirm the fix reached the base.** After a stack merges, a fix pushed to an upper PR can be left behind. Compare ancestry (`git merge-base --is-ancestor <fix sha> origin/<base>`) instead of trusting "merged".
 
 ## Copilot on drafts
 

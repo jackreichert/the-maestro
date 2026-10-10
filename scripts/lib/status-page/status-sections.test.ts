@@ -217,7 +217,7 @@ test('the Open PRs section shows the review queue against the cap, and says what
   const render = (prs: ReturnType<typeof pr>[], config: PageConfig): string => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page;
   const withCap = { ...CONFIG, reviewQueueCap: 2 };
   assert.match(render([pr(1, false), pr(2, true)], withCap), /\*\*Review queue: 1 of 2\*\* non-draft PRs awaiting review\./);
-  assert.match(render([pr(1, false), pr(2, false), pr(3, true)], withCap), /\*\*Review queue: 2 of 2 \(full\)\*\*: dispatch only fixes to PRs already open/);
+  assert.match(render([pr(1, false), pr(2, false), pr(3, true)], withCap), /\*\*Review queue: 2 of 2 \(full\)\*\*: hold pushes of new PRs \(keep working locally\) until it drops/);
   assert.doesNotMatch(render([pr(1, false)], CONFIG), /Review queue/, 'no cap configured, no line');
 });
 

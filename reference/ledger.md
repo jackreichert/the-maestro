@@ -476,12 +476,13 @@ A done item that carries a tracker key (any match of `tracker_key_pattern`, in i
 
 ### On every merge
 
-When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way), the orchestrator does all four of these in the same turn, not at end of day. The `pr-merged` ACTION line already names the repo and PR and the tracker keys found in the title and branch ([playbooks/event-types/pr-merged.md](../playbooks/event-types/pr-merged.md)).
+When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way), the orchestrator does all five of these in the same turn, not at end of day. The `pr-merged` ACTION line already names the repo and PR and the tracker keys found in the title and branch ([playbooks/event-types/pr-merged.md](../playbooks/event-types/pr-merged.md)).
 
 1. **Scoped sweep.** `node scripts/branch-sweep.ts --apply-worktrees --container <container_root> --repo <repo>`. It touches only that repo, and the same guards decide: a worktree that is not idle, is claimed or has uncommitted work stays and is listed.
 2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means), then record it: `journal.ts log "moved <KEY> to <status>" --transitioned <KEY>[,<KEY>]`. A merge with no key is worth a line saying so.
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch with the overlay's sync script.
 4. **Ledger.** Log the merge as a note carrying the repo and PR, so the board and the standup show that it landed.
+5. **Stack ancestry.** If the merged PR was part of a stack, check that each fix pushed to the PRs above it reached the base branch: `git merge-base --is-ancestor <fix sha> origin/<base>` for each recorded head ([reference/prs.md](prs.md#re-review-before-ready)). A fix not in the base is a follow-up, not a merged one.
 
 ## Reading it back
 
