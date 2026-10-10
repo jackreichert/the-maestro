@@ -1066,6 +1066,14 @@ A compaction can happen at any moment, so three hooks make it lossless instead o
 
 Not covered: a session that crashes or is killed (no SessionEnd fires) after decisions typed since its last compaction; a decision nobody typed (the hook only reads what you wrote); a message the decision pattern does not match; a transcript file that lags the conversation (the docs say it is written asynchronously), and worktrees outside the container's `.worktrees`.
 
+### Git guard hook
+
+Rules that only live in a prompt get forgotten under pressure, so `scripts/hooks/git-guard.ts` makes the git ones a runtime check. It is a `PreToolUse` hook on the `Bash` tool, printed by `print-settings-snippet.ts` with the other hooks (you merge it into your settings yourself). It answers ask, not deny: the harness shows its normal permission prompt and you decide. The idea comes from the git guardrails skill in [mattpocock/skills](https://github.com/mattpocock/skills/tree/main/skills/misc/git-guardrails-claude-code); this version asks instead of blocking and reads compound commands.
+
+It asks for a push to `main`, `staging` or `develop` (set `GIT_GUARD_PROTECTED` to a comma list to change them), any force push (`--force`, `--force-with-lease`, a `+refspec`), `reset`, `rebase`, `merge`, `cherry-pick`, `revert`, `add -A` and `add .`, `commit -a`, `branch -D`, `clean -f`, a `checkout`, `restore` or `switch` that discards work, and a commit while HEAD is a protected branch. `status`, `diff`, `log`, `show`, `fetch`, `ls-remote`, `rev-parse`, `blame`, a plain commit or push on a feature branch and `add` by explicit path pass silently. A push or commit with no explicit branch reads HEAD with `git symbolic-ref`; a HEAD it cannot read counts as protected.
+
+Commands are split on `&&`, `||`, `;`, `|`, `&`, newlines, subshells, `$(...)` and backticks, and the guard looks inside `bash -c`, `eval`, wrappers such as `env`, `sudo` and `xargs`, `git -C dir`, `git -c alias.x=...` and the repo's own aliases, so a risky verb inside a chain is still seen. If the hook itself breaks (bad input, an internal error) it prints a note to stderr and allows, so a broken guard cannot brick a session. It is a net for honest mistakes, not a sandbox: a script or Makefile target that runs git on its own is not seen.
+
 ## In review
 
 These are open pull requests. They are not on the main branch, so everything above describes the code without them.
