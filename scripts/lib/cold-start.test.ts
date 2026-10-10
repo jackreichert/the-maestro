@@ -7,6 +7,9 @@ import type { LedgerRow } from './ledger-core.ts';
 import { COLD_START_MAX_CHARS, WITHHELD, coldStart, coldStartCheck, currentWorkStatement, safe } from './cold-start.ts';
 import type { LibraryEntry } from './cold-start.ts';
 import { main, readLibrary } from '../cold-start.ts';
+import { scanText } from './library/scan.ts';
+
+const scanTextHits = (t: string): number => scanText(t).length;
 
 const NOW = new Date('2026-10-10T15:00:00.000Z');
 const row = (o: LedgerRow): LedgerRow => ({ ts: '2026-10-10T12:00:00.000Z', date: '2026-10-10', ...o });
@@ -129,4 +132,20 @@ test('a ledger row with a numeric ts does not break the page and the page names 
   assert.match(text, /`aaa1`/);
   assert.match(text, /`ggg2`/);
   assert.match(text, /2 ledger row\(s\) have a ts that is not text/);
+});
+
+test('a secret-shaped stream name or id is withheld on the page, not printed', () => {
+  const tokenStream = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
+  const rows = [
+    ...ROWS,
+    row({ id: 'hhh1', kind: 'wip', stream: tokenStream, text: 'work in an odd stream' }),
+    row({ id: 'hhh2', kind: 'question', stream: tokenStream, text: 'odd stream ask?' }),
+    row({ id: FAKE_KEY, kind: 'wip', stream: 'Alpha', text: 'work with an odd id' }),
+  ];
+  const { text } = coldStart({ ...input, rows });
+  assert.ok(!text.includes(tokenStream));
+  assert.ok(!text.includes(FAKE_KEY));
+  assert.ok(text.includes(`### ${WITHHELD}:`));
+  assert.ok(text.includes(`[${WITHHELD}]`));
+  assert.equal(scanTextHits(text), 0);
 });

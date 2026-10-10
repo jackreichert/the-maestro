@@ -35,6 +35,8 @@ export function safe(raw: unknown, max: number): string {
   return t.length > max ? `${t.slice(0, Math.max(1, max - 1))}…` : t;
 }
 
+/** A stream name or id as printed: scanned like every other field, so a secret-shaped one is withheld, never echoed. */
+const shown = (raw: unknown): string => safe(raw, 40) || '?';
 const streamOf = (i: { stream?: string }): string => i.stream || NO_STREAM;
 /** A ts as text: a row whose ts is not a string (a number, an object) is read as that value's text instead of throwing. */
 const tsOf = (ts: unknown): string => String(ts ?? '');
@@ -77,14 +79,14 @@ function workLines(b: Folded, streams: string[], lv: Level, now: Date): string[]
   const out: string[] = [];
   for (const s of streams) {
     const fl = by(b.inFlight, s), bl = by(b.blocked, s), q = by(b.queued, s);
-    out.push(`### ${s}: ${fl.length} in flight, ${bl.length} blocked, ${q.length} queued`);
+    out.push(`### ${shown(s)}: ${fl.length} in flight, ${bl.length} blocked, ${q.length} queued`);
     for (const i of fl) {
       const files = b.brief.get(i.id ?? '');
       const bits = [i.model ? safe(i.model, 24) : '', ageOf(i.ts, now), files?.report ? `report: ${safe(files.report, 160)}` : '', files?.brief && lv.text >= 70 ? `brief: ${safe(files.brief, 160)}` : ''].filter(Boolean);
-      out.push(`- \`${i.id}\` ${t(i.text)}${bits.length ? ` · ${bits.join(' · ')}` : ''}`.trimEnd());
+      out.push(`- \`${shown(i.id)}\` ${t(i.text)}${bits.length ? ` · ${bits.join(' · ')}` : ''}`.trimEnd());
     }
-    for (const i of bl) out.push(`- blocked \`${i.id}\` ${t(i.text)}${i.gate && lv.text ? ` · gate: ${safe(i.gate, 50)}` : ''}`.trimEnd());
-    if (q.length) out.push(lv.queuedText ? `- queued: ${q.map((i) => `\`${i.id}\` ${safe(i.text, 50)}`).join('; ')}` : `- queued: ${q.map((i) => `\`${i.id}\``).join(' ')}`);
+    for (const i of bl) out.push(`- blocked \`${shown(i.id)}\` ${t(i.text)}${i.gate && lv.text ? ` · gate: ${safe(i.gate, 50)}` : ''}`.trimEnd());
+    if (q.length) out.push(lv.queuedText ? `- queued: ${q.map((i) => `\`${shown(i.id)}\` ${safe(i.text, 50)}`).join('; ')}` : `- queued: ${q.map((i) => `\`${shown(i.id)}\``).join(' ')}`);
     const note = lv.notes ? by(b.notes, s).sort((x, y) => tsOf(y.ts).localeCompare(tsOf(x.ts)))[0] : undefined;
     if (note) out.push(`- last note (${day(note.ts)}): ${safe(note.text, 160)}`);
   }
@@ -94,7 +96,7 @@ function workLines(b: Folded, streams: string[], lv: Level, now: Date): string[]
 function askLines(b: Folded, lv: Level, now: Date): string[] {
   return [...b.asks].sort((x, y) => tsOf(x.ts).localeCompare(tsOf(y.ts))).map((a) => {
     const stakes = lv.stakes ? askBits(a as Parameters<typeof askBits>[0], 60).map((x) => safe(x, 90)).join(' · ') : '';
-    return `- \`${a.id}\` [${streamOf(a)}] ${lv.askText ? safe(a.text, lv.askText) : ''} · ${ageOf(a.ts, now) || 'new'}${stakes ? ` · ${stakes}` : ''}`.replace(/ {2,}/g, ' ');
+    return `- \`${shown(a.id)}\` [${shown(streamOf(a))}] ${lv.askText ? safe(a.text, lv.askText) : ''} · ${ageOf(a.ts, now) || 'new'}${stakes ? ` · ${stakes}` : ''}`.replace(/ {2,}/g, ' ');
   });
 }
 
@@ -103,7 +105,7 @@ function howLines(streams: string[], library: LibraryEntry[], lv: Level): string
   for (const s of streams) {
     const pages = library.filter((p) => p.status === 'current' && p.stream.toLowerCase() === s.toLowerCase())
       .sort((a, b) => (a.kind === 'runbook' ? 0 : 1) - (b.kind === 'runbook' ? 0 : 1) || b.verifiedAt.localeCompare(a.verifiedAt)).slice(0, lv.pages);
-    if (pages.length) out.push(`- ${s}: ${pages.map((p) => `${safe(p.path, 120)} (${safe(p.kind, 16)}, verified ${safe(String(p.verifiedAt ?? '').slice(0, 10), 10)})`).join('; ')}`);
+    if (pages.length) out.push(`- ${shown(s)}: ${pages.map((p) => `${safe(p.path, 120)} (${safe(p.kind, 16)}, verified ${safe(String(p.verifiedAt ?? '').slice(0, 10), 10)})`).join('; ')}`);
   }
   out.push('- Full views: `journal.ts start-here`, `journal.ts handoff --all`, `journal.ts prime`; library: `library-check.ts`.');
   return out;
