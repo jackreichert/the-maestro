@@ -271,6 +271,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
 | [library-check.ts](#library-checkts) | Check library pages against the template, the controlled vocabulary and the secret scan |
 | [library-index.ts](#library-indexts) | Generate the page list in each project's INDEX.md |
+| [library-write.ts](#library-writets) | The only way a composer pass writes a library page or closes a learned row |
 | [library-brief.ts](#library-briefts) | The three best library pages for a task, ready to paste into a dispatch brief |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
@@ -703,6 +704,10 @@ A decision stated only in conversation is lost at a session roll unless somethin
 ### library-check.ts
 
 The library is a set of one-fact-per-page notes (`Projects/<repo>/Knowledge` and `Runbooks`) that agents read before they re-derive something. The page template and vocabulary are in [reference/library.md](reference/library.md). `library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]` checks every page (or the named ones) for the required frontmatter, the controlled vocabulary (`kind`, `status`, `repo`, `composed-by: composer`, and `components` against the repo's `INDEX.md` list), a `verified-at` date, dated evidence on every fact, a 150 line budget, links that resolve (the frontmatter links and every `[[wikilink]]` in the body, with or without an alias or `#heading`, against the notes in the vault; the heading itself is not checked), and secret or PHI shapes (including a bare 32-character or longer random-looking token; git shas, digests, UUIDs, paths and slugs are not flagged, and a hex secret reads as a sha). A hit prints the rule and the line, never the matched text. Exit 0 when every page passes, 1 on any finding, 2 on a usage or read error (no vault, an unreadable named page), so a wrong path never reads as a pass. The secret patterns sit behind a small `Scanner` interface in `scripts/lib/library/scan.ts`, so a shared scanner can replace them. `notes-check` also reads `Knowledge/`, so a page with a `stream:` field is listed on that stream's tab.
+
+### library-write.ts
+
+The one write path to library pages. `library-write.ts begin` takes the composer lock, which is a ledger lease on the item `library:composer` (30 minutes, renewed by every row the pass writes, lapsing by itself if the pass dies) and prints a holder id; a second `begin` exits 3 while it is held. Every later subcommand takes `--holder <id>` and exits 3 unless the live lease names it. `write <page> --from <staged file>` replaces one page (`Projects/<repo>/Knowledge|Runbooks/<name>.md`, no `..`, no symlink in the path) only when the staged text passes all of library-check's rules, the shared secret and PHI scanner over the whole page, and a comment-split check (a token cut by an HTML comment delimiter is refused); `composed-by: composer` is forced, the new text goes to a temp file and is renamed over the page, and identical bytes write nothing. `curate <learned id> (--page <page> | --reject "<why>") --model M --used a,b` closes one pending learned row with a `curated` row (the page's sha256, or a scanned one-line reason); only a `curated` row may close a learned row, and `verify` re-checks every curated row. `end` frees the lock. Exit 1 means a check refused the work and nothing was written; messages name the rule and the line, never the match. `journal.ts log --kind curated` is refused.
 
 ### library-index.ts
 

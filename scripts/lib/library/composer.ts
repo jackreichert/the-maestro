@@ -56,7 +56,7 @@ export function curatedProblems(row: LedgerRow, learnedIds: ReadonlySet<string>)
   const extra = Object.keys(row).filter((k) => !CURATED_ROW_FIELDS.has(k));
   if (extra.length) out.push(`${extra.length} field(s) the write path never sets`);
   const fields: Record<string, string | undefined> = {};
-  for (const k of ['text', 'page', 'rejected', 'repo', 'stream', 'model', 'used', 'tokens', 'harness', 'agent']) fields[k] = typeof row[k] === 'string' || typeof row[k] === 'number' ? String(row[k]) : undefined;
+  for (const k of ['text', 'page', 'rejected', 'repo', 'stream', 'model', 'used', 'tokens', 'harness', 'agent']) fields[k] = Array.isArray(row[k]) ? (row[k] as unknown[]).map(String).join(' ') : typeof row[k] === 'string' || typeof row[k] === 'number' ? String(row[k]) : undefined;
   const findings = scanFields(fields);
   if (findings.length) out.push(`refused by the scanner (${describeFindings(findings).join('; ')})`);
   return out;

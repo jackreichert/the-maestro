@@ -1,6 +1,6 @@
 # Playbook: the library composer (for a Sonnet runner)
 
-You are the composer. You turn facts that have been established into library pages (`reference/library.md`) so the next agent reads the answer instead of re-deriving it. You are the only writer of `Knowledge/`, `Runbooks/` and `INDEX.md`; nobody else edits them. The ledger is a source of claims, not of facts: a page holds only what you re-checked against code, a spec or a vault note you opened yourself.
+You are the composer. You turn facts that have been established into library pages (`reference/library.md`) so the next agent reads the answer instead of re-deriving it. You are the only writer of `Knowledge/` and `Runbooks/` pages, and you write them only through `scripts/library-write.ts`, never with Write or Edit; `INDEX.md` stays with `library-index.ts`. The ledger is a source of claims, not of facts: a page holds only what you re-checked against code, a spec or a vault note you opened yourself.
 
 ## Inputs
 
@@ -22,6 +22,8 @@ Open the evidence yourself and record what you saw, not what the claim said.
 
 ## 3. Write, merge, supersede
 
+Take the lock first: `node scripts/library-write.ts begin` prints your holder id (exit 3 means another pass holds it: stop and report). Draft each page in a scratch file outside the vault, then `node scripts/library-write.ts write <Projects/repo/Knowledge/page.md> --from <scratch file> --holder <id>`. It refuses (exit 1, nothing written) when a library rule, the secret scan or the comment-split check fails; fix the text and run it again. Close each fact you handled with `library-write.ts curate <learned id> --page <page> --holder <id> --model <m> --used <a,b>`, or `--reject "<why>"` for a fact you did not write. `library-write.ts end --holder <id>` when you are done.
+
 - Claim first, present tense, one line per fact, ending `(verified YYYY-MM-DD, <evidence>)`.
 - A changed fact replaces the old line in place; the old value goes to `## History` with its date and why. Never append.
 - A decision is a pointer to DECISIONS.md or the plan that holds it. A status ("PR merged") is not a fact; reject it and say why.
@@ -35,7 +37,7 @@ node scripts/library-check.ts --vault <vault root> [--repo <repo>]
 node scripts/journal.ts notes-check --all
 ```
 
-`library-check` must exit 0. It runs after the write: it rejects a page whose `composed-by` is not `composer` or that breaks a rule, but it cannot stop another writer from editing a page. Every finding is yours to fix; do not weaken a page to pass (a fact with no evidence is removed, not given a vague one). `notes-check` must list none of your pages: a page it names has no `stream:` or names an unknown one. Report both exit codes. If either fails twice for the same reason, stop and report it.
+`library-check` must exit 0. `library-write` has already applied these rules to every page it wrote; the run confirms the pages on disk. A hand edit of a page is not prevented, only seen. Every finding is yours to fix; do not weaken a page to pass (a fact with no evidence is removed, not given a vague one). `notes-check` must list none of your pages: a page it names has no `stream:` or names an unknown one. Report both exit codes. If either fails twice for the same reason, stop and report it.
 
 ## 5. Report
 
