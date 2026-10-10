@@ -256,7 +256,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | Script | Purpose |
 |---|---|
 | [journal.ts](#journalts) | The ledger: log, board, standup, streams, claims, handoff, roll |
-| [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets and handoffs |
+| [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets, handoffs and library pages |
 | [prs-snapshot.ts](#prs-snapshotts) | Mid-day PR board snapshot and actionable diff |
 | [status-page.ts](#status-pagets) | The Podium, the always-current status page, with today's priorities and inline answers |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
@@ -292,6 +292,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 | `ask "<question>"` | Put a question on the awaiting-you board. `--kind decision` marks a decision still pending. `--paste <file>` lists a run-this ask apart from the questions; the file must exist. Decision fields, all optional: `--recommend` (what you would do; an ask without one warns), `--door one-way\|two-way` (no door means one-way), `--default` (what happens if the user stays silent; two-way asks only, a one-way ask is refused one), `--decide-by` (`2026-10-09`, an ISO time with a zone, or `2d`, `6h`, `1w`; not in the past; alias `--by`) and `--class expedite\|fixed-date\|standard\|intangible` (default standard). `ask --help` prints them. Rows without these fields read as before |
 | `resolve <id>` | Answer an ask (`--answer`, `--approval`) |
 | `rule "<text>" --ref <file>` | Record a decision already made. Refuses unless every `--ref` is an existing file; never shows as open |
+| `find "<words>"` | Look up library pages (see `ledger-index.ts find`); reads the library under `--tickets-vault` (else `$VAULT_ROOT`) |
 | `learned "<claim>"` | Record one fact someone established, the moment it is learned: `--kind` (how-to, how-it-works, gotcha, decision, tool), `--applies-to repo:component[:env]`, `--evidence`, `--verified-at` (a sha, or a date plus how it was checked) and `--confidence` (observed, told-by-jack, inferred) are all required; `--supersedes` takes an earlier learned id or a page path. Every field is checked before anything is written, and a claim, evidence or location that looks like a secret or PHI is refused (the refusal names the field and rule, never the value; a git sha in evidence or a claim needs a label such as `sha`, `commit` or `@`, since an unlabelled 40 or 64 character hex value reads as a key). `verify` re-checks stored rows, `log --kind learned` is refused, and the same fact is recorded once (the same fact with a new `--verified-at` or `--confidence` is a new row that supersedes the earlier one, so a re-check is never dropped). Standing brief blocks ask agents to end their report with a `Learned:` line per fact. `triage` boxes these rows as box 9. `learned --help` prints the usage |
 | `log ... --kind blocked --gate <gate>` | Name what a blocked item waits for: `gh:pr:<repo>#N`, `date:YYYY-MM-DD` or `ticket:<id>`. `resume` reports whether it cleared |
 | `defer <id> --until YYYY-MM-DD` | Hide an open item from the board until that date |
@@ -342,17 +343,18 @@ Roll at end of day, or when `CURRENT.md` is longer than a screen. The detailed r
 
 ### ledger-index.ts
 
-A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` section of `HANDOFF-*.md` notes. The JSONL stays the source of truth; deleting `Index/maestro.sqlite` loses nothing.
+A disposable SQLite FTS5 index over ledger rows, vault tickets and each `##` section of `HANDOFF-*.md` notes and the library pages under `Projects/<repo>/Knowledge` and `Runbooks`. The JSONL stays the source of truth; deleting `Index/maestro.sqlite` loses nothing.
 
 | Command | Purpose and key flags |
 |---|---|
 | `index` | Full rebuild, atomic rename into place |
 | `tickets --pending` | Done items carrying a tracker key (`tracker_key_pattern`) with no recorded transition, since `--since` (default 14 days); `--json`. Record a transition with `log "moved ABC-1 to <status>" --transitioned ABC-1`. `prime` and `triage` flag pending ones |
-| `search "<fts query>"` | `--source ledger\|tickets\|handoffs\|archive`, `--stream`, `--limit 20`, `--json` (rebuilds first if a source changed) |
+| `find "<words>"` | Library pages, best first: path, kind, the page's `Read when:` line, verified-at age and a stale flag. `--repo`, `--kind`, `--component`, `--limit 10`, `--neighbors` (the pages one link away, both directions), `--include-superseded`, `--json`. Title, read-when line and components outweigh the body; when no page has every word it falls back to any word and says so. `journal.ts find` is the same command |
+| `search "<fts query>"` | `--source ledger\|tickets\|handoffs\|archive\|library`, `--stream`, `--limit 20`, `--json` (rebuilds first if a source changed) |
 | `stats [--json]` | Counts per table and open items per stream |
 | `query [<name>]` | Named queries: `open`, `by-ticket`, `untagged`, `stream-counts`, `handoffs`, `tickets`; `--sql "select ..."` is read-only raw SQL |
 
-Pass `--vault` and `--tickets-vault` the way `journal.ts` does; tickets are skipped when no tickets vault is set.
+Pass `--vault` and `--tickets-vault` the way `journal.ts` does; tickets and library pages are skipped when no tickets vault is set. The index holds a `library` table (one row per page with its frontmatter facets), `library_fts` and a `links` table (every wikilink and `depends-on`, `supersedes` and `superseded-by` value, resolved to a library page when it names one). It rebuilds when a page's modification time changes.
 
 ### pr-state.ts
 

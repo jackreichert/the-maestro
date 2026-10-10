@@ -75,3 +75,7 @@ No secret (a key, token, password, connection string with credentials, or an env
 ## Checking
 
 `node scripts/library-check.ts` reads every page and exits 1 when any page breaks a rule above. Run it on the pages before anyone trusts them.
+
+## Finding pages
+
+`node scripts/journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--neighbors]` returns the best pages with their `Read when:` line, verified-at age and stale flag; `--neighbors` adds the pages one link away. Run `find` before dispatching an agent to scout something a page may already say.

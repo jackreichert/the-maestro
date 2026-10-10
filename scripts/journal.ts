@@ -61,6 +61,9 @@
  *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
+ *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
+ *                                             library pages, best first: path, kind, read-when line, verified-at age, stale flag; --neighbors adds the pages one link away.
+ *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed
  *   journal.ts verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.ts render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.ts tag <id> --stream <name>      file an existing item under a workstream
@@ -2225,6 +2228,22 @@ function cmdTickets() {
     if (rows.length) console.log('Move each ticket, then: journal.ts log "moved <KEY> to <status>" --transitioned <KEY> ...');
 }
 
+// ── library lookup ──────────────────────────────────────────────────────────
+
+/** `find "<words>"`: hands the lookup to ledger-index.ts (the one place the library index is built and read) and relays its output and exit code. */
+function cmdFind() {
+    const query = positional.join(' ').trim();
+    if (!query) die('Usage: journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]');
+    const values = ['repo', 'kind', 'component', 'limit'].flatMap((k) => (arg(k) ? [`--${k}`, arg(k) as string] : []));
+    const flags = ['neighbors', 'include-superseded', 'json'].filter(has).map((k) => `--${k}`);
+    // The child writes straight to our stdout and stderr: no buffer to cap or to lose when this process exits, so a large result arrives whole.
+    const r = spawnSync(process.execPath, [
+        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags,
+        '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
+    ], { stdio: 'inherit' });
+    process.exitCode = r.status ?? 1;
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
 switch (cmd) {
@@ -2234,6 +2253,7 @@ switch (cmd) {
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
     case 'learned': cmdLearned(); break;
+    case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
     case 'drop': cmdClose('dropped'); break;
