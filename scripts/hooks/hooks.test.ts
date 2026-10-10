@@ -7,7 +7,7 @@ import type { LedgerRow } from '../lib/ledger-core.ts';
 import { continuityLines } from '../lib/continuous-roll.ts';
 import { decisionsOnly, precompact } from './precompact.ts';
 import type { PrecompactDeps } from './precompact.ts';
-import { assemble, context, streamsFrom } from './session-start-compact.ts';
+import { assemble, context } from './session-start-compact.ts';
 import { snippet } from './print-settings-snippet.ts';
 
 const T = '2026-10-09T12:00:00.000Z';
@@ -76,14 +76,21 @@ test('precompact reports a missing transcript_path and an unset scripts_dir inst
   assert.match(precompact({}, d), /^precompact incomplete: decisions: no transcript_path in the hook input; snapshot: scripts_dir is not set/);
 });
 
-test('session-start context: only compact and clear print; streams come from prime; a missing library-brief is named once', () => {
-  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: "Board x\nToday's streams: alpha, beta" } : a[0] === 'start-here' ? { ok: true, out: 'start page' } : { ok: false, out: 'unknown' });
-  assert.equal(context('startup', run), '');
-  const out = context('compact', run);
+test('session-start context: only compact and clear print; the cold-start page sits before Start here so the cap never cuts it', () => {
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : a[0] === 'start-here' ? { ok: true, out: 'start page' } : { ok: false, out: 'unknown' });
+  assert.equal(context('startup', run, () => ({ ok: true, out: 'cold' })), '');
+  const out = context('compact', run, () => ({ ok: true, out: '# Cold start\nwork' }));
   assert.match(out, /== Board \(journal\.ts prime\) ==/);
-  assert.match(out, /== Start here ==\nstart page/);
-  assert.equal(out.match(/library-brief is not available/g)?.length, 1);
-  assert.deepEqual(streamsFrom("Today's streams: none"), []);
+  assert.match(out, /== Cold start ==\n# Cold start\nwork\n\n== Start here ==\nstart page/);
+});
+
+test('session-start is a fail-open fallback: a missing, failing or throwing cold-start part is named and the rest still prints', () => {
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : { ok: true, out: 'start page' });
+  for (const cold of [undefined, () => ({ ok: false, out: 'no ledger\nboom' }), () => { throw new Error('exploded'); }]) {
+    const out = context('compact', run, cold);
+    assert.match(out, /== Cold start ==\nskipped: /);
+    assert.match(out, /== Start here ==\nstart page/);
+  }
 });
 
 test('session-start context passes --source to prime and caps the output', () => {
