@@ -395,7 +395,7 @@ The page, top to bottom: a freshness line with both times (`Updated 3:05 pm ET �
 
 Nothing install-specific is built in. The status directory is `status_dir`, else `<vault_root>/Projects/<project>/Status`; the stream order is `status_streams`, a PR's stream comes from the ledger first (board items that name a tracker key in the PR's title or branch, directly or through `ticket-map.json`, or whose refs name the PR as `<repo>#N` or `gh:pr:<repo>#N`; the stream with most such items wins), then `stream-overrides.json`, then `status_repo_streams`, then `other`; tracker keys link through `tracker_url_base`, ticket notes through `obsidian_vault` and `ticket_note_path`.
 
-**Keeping it current.** Register a `status-refresh` watch and the page regenerates by itself: once the ledger has been quiet for 15 s after a write (never more than 60 s late), after a PR event, and at least every 10 minutes. GitHub is read only when the PR data is dirty or over 5 minutes old, never in quiet hours, and nothing is written within 60 s of your own edit of the page.
+**Keeping it current.** Register a `status-refresh` watch and the page regenerates by itself: once the ledger has been quiet for 15 s after a write (never more than 60 s late), after a PR event, and at least every 10 minutes. GitHub is read only when the PR data is dirty or over 5 minutes old, never in quiet hours, and nothing is written within 60 s of your own edit of the page. The same watch keeps the current PR board from going stale: when the newest stored board is over 10 minutes old, one GitHub search rewrites `prs-current.json` (no per-PR calls, never in quiet hours; a failure is retried after 10 minutes and reported once as an informational line). The footer's review queue and the dispatch gate's stored fallback read whichever of `prs-current.json` and `prs-snapshot.json` is newer. The refresh never touches `prs-snapshot.json`, which stays the baseline `prs-snapshot.ts --diff` compares against and is written only by that command, so the greeting's diff still reports everything since the last greeting.
 
 ```mermaid
 flowchart LR
@@ -641,6 +641,8 @@ A held lock does not mean a working loop, so the loop and the supervisor leave a
 | `DOWN since 13:58 EDT` | A supervisor is set up and nothing alive is writing a heartbeat |
 | `DOWN, the loop will not start (<reason>)` | The supervisor is alive but the loop refuses to start or keeps crashing (its `backoff` beat carries the last error) |
 | `NOT INSTALLED` | `loop_supervisor: required` and no supervisor is set up and no loop is running |
+
+Whatever the verdict, the line ends with ` · 3 unread digests` (`1 unread digest` for one) when digests were saved to the inbox and no session has read them, for example `Loop: ok <1 min · 3 unread digests`. A live heartbeat only proves the process is alive; this part says a result is waiting. The count is the digest store's unseen files (`event-loop.ts digests` lists them and `digest-wait` claims them); nothing is added when there are none.
 
 A heartbeat counts only from its owner: the process holding the loop lock for the loop's beats, the supervisor's recorded pid (with no loop holding the lock) for the supervisor's. A beat from any other live pid, such as a reused one, is ignored, so it can neither vouch for a hung loop nor raise a false alarm.
 
