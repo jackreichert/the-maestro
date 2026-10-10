@@ -107,19 +107,37 @@ const SOURCE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py',
 const SOURCE_NAMES = new Set(['package.json', 'tsconfig.json', 'Makefile', 'Dockerfile', 'pyproject.toml']);
 export const isSnapshotSource = (path: string): boolean => SOURCE_EXT.has(extname(path).toLowerCase()) || SOURCE_NAMES.has(basename(path));
 
-export interface SnapshotResult { worktrees: number; files: number; skipped: number; dest: string; /** True when the deadline stopped the scan before every worktree was read. */ partial: boolean; /** True when the file-count or total-size cap left source uncopied. */ capped: boolean }
+export interface SnapshotResult { worktrees: number; /** Files copied this run; same as `copied`, kept for older callers. */ files: number; /** Files copied this run because today's and yesterday's snapshots lacked identical bytes. */ copied: number; /** Files already held, byte for byte, in today's or yesterday's snapshot: not copied, not counted against the caps. */ current: number; skipped: number; dest: string; /** True when the deadline stopped the scan before every worktree was read. */ partial: boolean; /** True when the file-count or total-size cap left source uncopied. */ capped: boolean }
+
+/** The sibling of a `<date>`-named snapshot dir for the previous UTC date, or null when `dest` is not named by a date. */
+function previousDayDir(dest: string): string | null {
+    const date = basename(dest);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    return join(dirname(dest), new Date(Date.parse(`${date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10));
+}
+
+/** True when `path` is a regular file holding exactly `bytes` (size first, then content). */
+function sameBytes(path: string, bytes: Buffer): boolean {
+    try {
+        const st = lstatSync(path);
+        return st.isFile() && st.size === bytes.length && readFileSync(path).equals(bytes);
+    } catch { return false; }
+}
 
 /**
  * Copies dirty and untracked source of the active worktrees under `container/.worktrees` to `dest/<worktree>/<path>`.
  * Only regular files (never a symlink, whatever it points at) that pass `isSnapshotSource` and not `isSecretName`;
- * skips files over 1 MB and files whose text carries a secret or PHI shape (counted, never named by content). Idempotent.
+ * skips files over 1 MB and files whose text carries a secret or PHI shape (counted, never named by content). Idempotent:
+ * a file whose bytes already sit at the same path in `dest`, or in the sibling dir of the previous UTC date when `dest` has no copy there yet, is counted in `current`
+ * and not copied (byte compare, since copyFileSync does not keep mtime); only copied bytes count toward the caps.
  * Stops at 300 files or 20 MB (`capped` is then true) or at `deadline` (epoch ms; `partial` is then true). `dest`'s parent gets a `.gitignore` of `*`,
  * so a snapshots folder inside a repo can never be committed. Never throws for one bad worktree.
  */
 export function snapshotDirty(container: string, dest: string, now: number = Date.now(), deadline: number = Infinity): SnapshotResult {
     const root = join(container, '.worktrees');
-    const result: SnapshotResult = { worktrees: 0, files: 0, skipped: 0, dest, partial: false, capped: false };
+    const result: SnapshotResult = { worktrees: 0, files: 0, copied: 0, current: 0, skipped: 0, dest, partial: false, capped: false };
     let total = 0;
+    const previous = previousDayDir(dest);
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(join(dirname(dest), '.gitignore'), '*\n');
     for (const name of existsSync(root) ? readdirSync(root).sort() : []) {
@@ -135,12 +153,18 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
             const src = join(wt, p);
             const size = regular(p)?.size ?? Infinity;
             if (!isSnapshotSource(p) || isSecretName(p) || size > SNAPSHOT_MAX_FILE_BYTES) { result.skipped++; continue; }
-            if (result.files >= SNAPSHOT_MAX_FILES || total + size > SNAPSHOT_MAX_TOTAL_BYTES) { result.skipped++; result.capped = true; continue; }
+            let bytes: Buffer | null = null;
             let hasShape = false;
-            try { hasShape = scanText(readFileSync(src, 'utf8')).length > 0; } catch { hasShape = true; }
-            if (hasShape) { result.skipped++; continue; }
+            try { bytes = readFileSync(src); hasShape = scanText(bytes.toString('utf8')).length > 0; } catch { hasShape = true; }
+            if (hasShape || !bytes) { result.skipped++; continue; }
+            // Today's copy decides when there is one; yesterday's only stands in when today has nothing at this path.
+            const mine = join(dest, name, p);
+            const prev = previous ? join(previous, name, p) : null;
+            if (sameBytes(mine, bytes) || (!existsSync(mine) && prev !== null && sameBytes(prev, bytes))) { result.current++; continue; }
+            if (result.copied >= SNAPSHOT_MAX_FILES || total + size > SNAPSHOT_MAX_TOTAL_BYTES) { result.skipped++; result.capped = true; continue; }
             mkdirSync(dirname(join(dest, name, p)), { recursive: true });
             copyFileSync(src, join(dest, name, p));
+            result.copied++;
             result.files++;
             total += size;
         }
@@ -148,10 +172,16 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
     return result;
 }
 
-/** Newest `generated_at` among the handoff files in `dir` (marker, else mtime), as an ISO string with its file name; null when none. */
-export function newestHandoff(dir: string): { name: string; at: string } | null {
+/** True for a handoff file known to cover the whole ledger: `--all` output (`HANDOFF-<date>[b]-all.md`) and the hook's own `-precompact-` files. Single-stream and custom `--out` names have an unknown scope and do not qualify. */
+export const isAllScopeHandoff = (name: string): boolean => /^HANDOFF-.*(-all|-precompact-.+)\.md$/.test(name);
+
+/**
+ * Newest `generated_at` among the handoff files in `dir` (marker, else mtime), as an ISO string with its file name; null when none.
+ * With `allScopeOnly`, only files `isAllScopeHandoff` accepts are considered: use it when the answer gates whether a whole-ledger handoff is written.
+ */
+export function newestHandoff(dir: string, allScopeOnly = false): { name: string; at: string } | null {
     let best: { name: string; at: string } | null = null;
-    for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => /^HANDOFF-.*\.md$/.test(n)) : []) {
+    for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => /^HANDOFF-.*\.md$/.test(n) && (!allScopeOnly || isAllScopeHandoff(n))) : []) {
         const path = join(dir, name);
         const marker = readFileSync(path, 'utf8').match(/^generated_at: (\S+)$/m)?.[1];
         const at = marker ?? lstatSync(path).mtime.toISOString();
@@ -163,9 +193,23 @@ export function newestHandoff(dir: string): { name: string; at: string } | null 
 const isMark = (r: LedgerRow): boolean => r.kind === 'note' && (r.text ?? '').startsWith(PRECOMPACT_MARK);
 /** Rows the hook itself wrote after its handoff (the raised asks); they are not work the handoff missed. */
 export const HOOK_USED = 'hook:precompact';
-const HOOK_USED_TAG = HOOK_USED;
-const byHook = (r: LedgerRow): boolean => JSON.stringify(r.used ?? '').includes(HOOK_USED);
+/** Rows the continuity tick (the event loop's counterpart of the hook) writes carry this, so they never stale the handoff either. */
+export const LOOP_USED = 'loop:continuity';
+const byHook = (r: LedgerRow): boolean => { const used = JSON.stringify(r.used ?? ''); return used.includes(HOOK_USED) || used.includes(LOOP_USED); };
 const starts = (r: LedgerRow, prefix: string): boolean => (r.text ?? '').startsWith(prefix);
+
+/**
+ * Whether `handoff` covers the ledger: it is fresh when it was generated at or after the newest row that is neither a
+ * precompact marker nor written by the hook or the loop (those rows follow their own handoff and are not missed work).
+ * `behindMs` is 0 when fresh; `lastRowTs` is that newest row's timestamp, null when none.
+ * With no handoff at all `behindMs` is Infinity.
+ */
+export function handoffFresh(rows: LedgerRow[], handoff: { name: string; at: string } | null): { fresh: boolean; behindMs: number; lastRowTs: string | null } {
+    const lastRowTs = rows.findLast((r) => r.ts && !isMark(r) && !byHook(r))?.ts ?? null;
+    if (!handoff) return { fresh: false, behindMs: Infinity, lastRowTs };
+    if (!lastRowTs || handoff.at >= lastRowTs) return { fresh: true, behindMs: 0, lastRowTs };
+    return { fresh: false, behindMs: Math.max(0, Date.parse(lastRowTs) - Date.parse(handoff.at)) || 0, lastRowTs };
+}
 
 const REMEDY = '`journal.ts handoff --all --delta` (or `--force --out <file>` once the day\'s suffixes are used up)';
 const ACK = `journal.ts log "${PRECOMPACT_ACK}" --kind note --model <name> --used tool:journal.ts`;
@@ -204,9 +248,9 @@ export function continuityLines(rows: LedgerRow[], handoff: { name: string; at: 
     });
     const started = rows.slice(0, k + 1).findLastIndex((r) => starts(r, PRECOMPACT_STARTED) && tagOf(r) === tagOf(mark));
     const cut = started >= 0 ? started : k;
-    const before = rows.slice(0, cut).findLast((r) => r.ts && !isMark(r) && !byHook(r));
-    if (before?.ts && (!handoff || handoff.at < before.ts)) {
-        lines.push(`!! HANDOFF STALE: ${handoff ? `the newest handoff (${handoff.name}, ${handoff.at})` : 'there is no handoff'}, but the last ledger row before the compaction at ${mark.ts} is ${before.ts}. Run ${REMEDY} now.`);
+    const covered = handoffFresh(rows.slice(0, cut), handoff);
+    if (covered.lastRowTs && !covered.fresh) {
+        lines.push(`!! HANDOFF STALE: ${handoff ? `the newest handoff (${handoff.name}, ${handoff.at})` : 'there is no handoff'}, but the last ledger row before the compaction at ${mark.ts} is ${covered.lastRowTs}. Run ${REMEDY} now.`);
     }
     return lines;
 }
