@@ -7,7 +7,7 @@ import { sanitizeCharts, sanitizeState } from '../src/contract.ts';
 import type { ChartsData, PodiumState } from '../src/types.ts';
 
 installDom();
-const { dashboardView } = await import('../src/dashboard-view.ts');
+const { dashboardView, DASHBOARD_CSS } = await import('../src/dashboard-view.ts');
 const { keepAcross } = await import('../src/keep-view.ts');
 const read = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 const state = (): PodiumState => structuredClone(sanitizeState(read('state.json'))!.state);
@@ -151,4 +151,13 @@ test('pressing a day column keeps keyboard focus on it after the page is redrawn
   assert.equal(root.activeElement?.id, `done-${day.date}`, 'focus is on the redrawn column, not the page');
   assert.equal(root.activeElement?.getAttribute('aria-expanded'), 'true');
   host.remove();
+});
+
+test('chart text is not underlined by its link, and the in-flight bars have no baseline through their last label', () => {
+  assert.match(DASHBOARD_CSS, /\.chart a\.mark text \{ text-decoration: none; \}/);
+  const el = draw(state(), charts());
+  const flight = el.querySelector('svg.flight');
+  assert.ok(flight, 'the in-flight chart is marked so it is not stretched past the others');
+  assert.equal(flight.querySelector('line.base'), null);
+  assert.ok([...el.querySelectorAll('svg:not(.flight)')].every((svg) => svg.querySelector('line.base')), 'the column charts keep theirs');
 });
