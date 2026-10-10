@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeHome } from '../src/contract.ts';
-import { awaitingLabel, barSegments, capRows, clearAgainstHome, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence } from '../src/home-text.ts';
+import { awaitingLabel, firstSentence, kindWord, railCount, railGroups, barSegments, capRows, clearAgainstHome, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence } from '../src/home-text.ts';
 import { home } from './home-fixture.ts';
 
 test('the progress sentence always states its denominator, for every epic shape', () => {
@@ -84,3 +84,26 @@ test('the no-epic line teaches how to get progress, or says why the vault was no
   assert.equal(awaitingLabel(0), null);
 });
 
+
+test('done means shows the first sentence and says when more follows', () => {
+  assert.deepEqual(firstSentence('The new pipeline is primary for seven days. Then the old one is removed.'), { head: 'The new pipeline is primary for seven days.', more: true });
+  assert.deepEqual(firstSentence('Shipped to 2.5 percent of users.'), { head: 'Shipped to 2.5 percent of users.', more: false });
+  assert.deepEqual(firstSentence('  no full stop here  '), { head: 'no full stop here', more: false });
+  assert.equal(firstSentence('(draft) 1. First thing happens. 2. Second.').head, '(draft) 1. First thing happens.');
+  assert.deepEqual(firstSentence(''), { head: '', more: false });
+});
+
+test('the rail draws pinned, epics, docs and runbooks in that order, leaves out empty groups and the PR group, and counts what is behind them', () => {
+  const l = (label: string, kind: 'note' | 'web' | 'pr' = 'note') => ({ label, kind, url: 'https://example.com/x' });
+  const groups = [
+    { group: 'runbooks' as const, items: [l('Cutover')], more: 0 },
+    { group: 'prs' as const, items: [l('avonlea-api#412', 'pr')], more: 0 },
+    { group: 'docs' as const, items: [l('Context'), l('Plan')], more: 3 },
+    { group: 'pinned' as const, items: [], more: 0 },
+    { group: 'epics' as const, items: [l('avonlea-api-042')], more: 0 },
+  ];
+  assert.deepEqual(railGroups(groups).map((g) => g.title), ['Epics', 'Docs', 'Runbooks']);
+  assert.equal(railCount(groups), 7);
+  assert.equal(railCount([]), 0);
+  assert.deepEqual(['note', 'tracker', 'pr', 'web'].map((k) => kindWord(k as 'note')), ['note', 'tracker', 'pull request', 'web']);
+});
