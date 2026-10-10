@@ -156,6 +156,22 @@ test('a token split by <!--> mixed with a multi-line comment is refused', () => 
   assert.equal(existsSync(join(f.root, PAGE)), false);
 });
 
+// A renderer reads comments in one pass: removing `<!---->` inside `<<!---->!--` leaves a literal `<!--` that is shown as text, so a
+// token after it is visible. Stripping until nothing changes would delete that literal text with the token.
+for (const [name, head] of [['<<!---->!--', '<<!---->!--'], ['<<!---->!-<!---->-', '<<!---->!-<!---->-']] as const) {
+  test(`a token after a comment-formed literal opener (${name}) is refused, comments are read in one pass`, () => {
+    const f = fixture();
+    const holder = holderOf(f.cli('begin').out);
+    const t = 'a1B2'.repeat(9);
+    const split = `${head}ghp_${t.slice(0, 8)}<!-- x${PROV}\n-->${t.slice(8)}${PROV}`;
+    const r = f.cli('write', PAGE, '--from', f.stage(GOOD.replace('02:00', split)), '--holder', holder);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.err, /comment-split|scanner|secret/);
+    assert.ok(!r.err.includes(t.slice(8)));
+    assert.equal(existsSync(join(f.root, PAGE)), false);
+  });
+}
+
 test('prose with a literal <!-- or <!--> still writes', () => {
   const f = fixture();
   const holder = holderOf(f.cli('begin').out);
