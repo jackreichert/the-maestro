@@ -6,7 +6,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc -p scripts/web/client/tsconfig.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p scripts/web/client/tsconfig.json --noEmit && tsc -p scripts/web/client/tsconfig.dom-tests.json",
     "build:web": "tsc -p scripts/web/client/tsconfig.json",
     "web:static": "npm run build:web && node scripts/web/serve-static.ts",
     "test": "MAESTRO_STATUS_DIR=\"$(mktemp -d)\" NODE_COMPILE_CACHE=\"$(mktemp -d)\" GIT_ALLOW_PROTOCOL=file node --test 'scripts/**/*.test.ts'"
