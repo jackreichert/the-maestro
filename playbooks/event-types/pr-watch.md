@@ -16,7 +16,7 @@ Every line is actionable.
 | `LEFT-OPEN-SET` | The PR was merged or closed. |
 | `APPROVED-UNMERGED` | An approved PR is waiting. Reported once per approval or moved head. |
 
-A check also requests a Copilot review on draft PRs in scope that have none, only for owners in `copilot_orgs`.
+A check also requests a Copilot review on draft PRs in scope that have none, only for owners in `copilot_orgs`, and follows Copilot per head sha on every open PR in those owners: after a push it requests a review once for the new sha when Copilot has not re-triggered (60 s grace), then reports `COPILOT-REVIEW <PR> <sha>` with the unresolved bot thread count, or `COPILOT-LATE <PR> <sha>` when nothing arrived 15 minutes after the trigger. A clean review is informational; a review with bot threads and a late one are actionable. For the threads, work them as the comment workflow says; for a late one, look at the PR and say so. Details: [reference/prs.md](../../reference/prs.md#copilot-on-drafts).
 
 ## Do not
 

@@ -18,7 +18,10 @@
  * Standing conditions (APPROVED-UNMERGED) speak once, when they first appear or their signature (the head) changes.
  *
  * A check also requests a Copilot review on any draft PR, in a copilot_orgs owner, that Copilot has neither reviewed nor
- * been asked to review. A failed fetch, or a search that lost more than half the open set, throws: the loop keeps the
+ * been asked to review (once per PR), and follows Copilot per head sha on every open PR in such an owner
+ * (lib/copilot-follow.ts): a push that Copilot does not re-review is requested once for that sha, then COPILOT-REVIEW
+ * (with the unresolved bot thread count) when the review lands, or COPILOT-LATE when nothing came 15 minutes after the trigger.
+ * A failed fetch, or a search that lost more than half the open set, throws: the loop keeps the
  * last good snapshot and the next tick compares against it. Cadence and quiet hours are the loop's (lib/cadence.ts).
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
@@ -28,10 +31,12 @@ import { isSelfReview } from '../lib/self-review.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from '../lib/draft-promotion.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { markPrsDirty } from '../lib/status-page/dirty.ts';
+import { advance, begin, requestReview, trackKey } from '../lib/copilot-follow.ts';
+import type { Tracks } from '../lib/copilot-follow.ts';
 import type { CheckContext, Watch, WatchEvent } from '../lib/types.ts';
 
 /** pr-watch never reads the clock, so a check needs everything the loop passes except `now`. */
-type Ctx = Omit<CheckContext, 'now'>;
+type Ctx = Omit<CheckContext, 'now'> & { now?: number };
 
 /** A reference to something a person wrote: its id, who wrote it and where to read it. */
 interface Ref { id: string; who: string; url: string }
@@ -49,6 +54,14 @@ export interface BoardPr {
   /** MERGEABLE | CONFLICTING | UNKNOWN: GitHub's last settled answer, carried across ticks while it re-computes. Absent in older snapshots. */
   mergeable?: string;
   needsCopilot: boolean;
+  /** The owner is in copilot_orgs, so the per-head-sha follow-up (lib/copilot-follow.ts) applies. Absent in older snapshots. */
+  copilotOrg?: boolean;
+  /** Copilot has a pending review request. */
+  copilotPending?: boolean;
+  /** Copilot's latest review is on the current head sha. */
+  copilotOnHead?: boolean;
+  /** Unresolved threads opened by a bot. */
+  botThreads?: number;
   /** The repo is in self_review_repos: only the user reviews it, so its lines are labelled apart from the org's. Absent in older snapshots. */
   selfReview?: boolean;
   decision: string;
@@ -64,13 +77,24 @@ export interface BoardPr {
 export type Board = Record<string, BoardPr>;
 
 /** The part of the state a diff compares: the board, and the standing conditions already told (condition id -> signature). */
-export interface Snapshot { board: Board; reported: Record<string, string> }
+export interface Snapshot {
+  board: Board;
+  reported: Record<string, string>;
+  copilot?: Tracks;
+  /** PRs missing from the search but not confirmed closed, keyed `owner/repo#n`, with when each was first missed (ms). Their Copilot tracks stay in `copilot`. */
+  absent?: Record<string, { since: number }>;
+}
+
+/** Backstop: a PR unseen for this long stops being held, so the state cannot grow forever. */
+export const ABSENT_TTL_MS = 24 * 3600 * 1000;
 
 export interface PrWatchState extends Snapshot {
   /** Lines for PRs that left the open set since the previous snapshot. */
   left: string[];
   /** A baseline first check: report nothing. */
   silent: boolean;
+  /** Copilot follow-up lines raised by this check (see lib/copilot-follow.ts). */
+  copilotEvents?: { summary: string; actionable: boolean }[];
   /** Steering summary when the next concrete fix changed. Absent when there is nothing new to fix. */
   steering?: string;
   /** The snapshot adopted from an older pr-review file, when this check compared against it. */
@@ -90,7 +114,7 @@ interface PrNode {
   headRefOid: string;
   repository: { nameWithOwner: string };
   reviewRequests: { nodes: { requestedReviewer?: Login | null }[] };
-  latestReviews: { nodes: { author?: Login | null }[] };
+  latestReviews: { nodes: { author?: Login | null; commit?: { oid?: string } | null }[] };
   reviewThreads: { nodes: { id: string; isResolved: boolean; comments: { nodes: { author?: Login | null; url: string }[] }; last: { nodes: { id: string; author?: Login | null; url: string }[] } }[] };
   comments: { nodes: { id: string; author?: Login | null; url: string }[] };
   reviews: { nodes: { id: string; author?: Login | null; state: string; body?: string | null; url: string }[] };
@@ -111,12 +135,14 @@ export const singleton = true;
 export const defaultTtlMs = (): number => 72 * 3600 * 1000;
 
 const COPILOT = 'copilot-pull-request-reviewer';
+/** A bot's login: GitHub apps end in [bot]; Copilot's reviewer is a Bot with its own login. */
+const isBot = (login: string): boolean => login === COPILOT || login.endsWith('[bot]');
 const TARGETS = new Set(['open-prs', 'open-prs:baseline']);
 
 const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
   number url isDraft reviewDecision mergeable headRefName baseRefName headRefOid repository { nameWithOwner }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on Bot { login } } } }
-  latestReviews(first: 20) { nodes { author { login } } }
+  latestReviews(first: 20) { nodes { author { login } commit { oid } } }
   reviewThreads(first: 100) { nodes { id isResolved comments(first: 1) { nodes { author { login } url } } last: comments(last: 1) { nodes { id author { login } url } } } }
   comments(last: 20) { nodes { id author { login } url } }
   reviews(last: 20) { nodes { id author { login } state body url } }
@@ -169,6 +195,11 @@ function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
       pr.reviewRequests.nodes.some((r) => r.requestedReviewer?.login === COPILOT) ||
       pr.latestReviews.nodes.some((r) => r.author?.login === COPILOT);
     const key = `${pr.repository.nameWithOwner}#${pr.number}`;
+    const threads = pr.reviewThreads.nodes.flatMap((t) => {
+      const first = t.comments.nodes[0];
+      const who = first?.author?.login;
+      return !t.isResolved && first && who && who !== self ? [{ id: t.id, who, url: first.url }] : [];
+    });
     board[key] = {
       url: pr.url,
       repo: pr.repository.nameWithOwner,
@@ -182,11 +213,11 @@ function fetchBoard(ctx: Ctx, self: string, before: Board = {}): Board {
       needsCopilot: pr.isDraft && !copilotSeen && copilotAllowed(pr.repository.nameWithOwner),
       decision: pr.reviewDecision || 'NONE',
       failingChecks: failingChecksOf(pr),
-      threads: pr.reviewThreads.nodes.flatMap((t) => {
-        const first = t.comments.nodes[0];
-        const who = first?.author?.login;
-        return !t.isResolved && first && who && who !== self ? [{ id: t.id, who, url: first.url }] : [];
-      }),
+      copilotOrg: copilotAllowed(pr.repository.nameWithOwner),
+      copilotPending: pr.reviewRequests.nodes.some((r) => r.requestedReviewer?.login === COPILOT),
+      copilotOnHead: pr.latestReviews.nodes.some((r) => r.author?.login === COPILOT && r.commit?.oid === pr.headRefOid),
+      botThreads: threads.filter((t) => isBot(t.who)).length,
+      threads,
       // The newest comment on each open thread, so a reply in an existing thread wakes us too, not just new threads.
       replies: pr.reviewThreads.nodes.flatMap((t) => {
         const last = t.last.nodes[0];
@@ -242,6 +273,29 @@ function requestCopilot(board: Board, ctx: Ctx): void {
   }
 }
 
+/**
+ * The per-head-sha follow-up (lib/copilot-follow.ts) for every board PR in a copilot_orgs owner. A head met for the first
+ * time is adopted as told when there is no earlier snapshot of this kind (a first check, or one from before this existed), so
+ * switching it on does not request reviews for every old PR; later new heads are followed. Heads that left the board drop out.
+ */
+function followCopilot(board: Board, prev: Snapshot | null, ctx: Ctx, held: ReadonlySet<string> = new Set()): { copilot: Tracks; events: { summary: string; actionable: boolean }[] } {
+  const now = ctx.now ?? Date.now();
+  const adopt = !prev?.copilot;
+  const copilot: Tracks = {};
+  const events: { summary: string; actionable: boolean }[] = [];
+  // A PR missing from this search result but still open keeps its tracking, so it returning does not restart its sha.
+  for (const [id, track] of Object.entries(prev?.copilot ?? {})) if (held.has(id.slice(0, id.lastIndexOf('@')))) copilot[id] = track;
+  for (const [key, pr] of Object.entries(board)) {
+    if (!pr.copilotOrg) continue;
+    const id = trackKey(key, pr.head);
+    const obs = { pending: Boolean(pr.copilotPending), reviewed: Boolean(pr.copilotOnHead), botThreads: pr.botThreads ?? 0 };
+    const out = advance(key, pr.head, prev?.copilot?.[id] ?? begin(now, adopt), obs, now, () => requestReview(ctx.run, pr.repo, pr.number));
+    copilot[id] = out.track;
+    events.push(...out.events);
+  }
+  return { copilot, events };
+}
+
 /** The snapshot before this install moved into the loop: pr-review kept { board, reported } in its own file, which we adopt once. */
 function legacySnapshot(ctx: Ctx): Snapshot | null {
   const file = ctx.dir && ctx.watch ? join(ctx.dir, `pr-review-${ctx.watch.id}.json`) : '';
@@ -270,13 +324,24 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   }
   // Idempotent: GitHub ignores a repeat add-reviewer and the next fetch sees the request, so a failed save only repeats a no-op.
   requestCopilot(board, ctx);
-  const left = prev ? Object.entries(prev.board).filter(([key, pr]) => !board[key] && confirmedClosed(pr, ctx)).map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`) : [];
+  const missing = prev ? Object.entries(prev.board).filter(([key]) => !board[key]) : [];
+  const closed = missing.filter(([, pr]) => confirmedClosed(pr, ctx));
+  // pr-watch treats a PR missing from the search as open until confirmedClosed says otherwise (asked on the first miss only),
+  // so it is held, with its Copilot tracks, across any number of misses: until it returns, or the 24h backstop.
+  const now = ctx.now ?? Date.now();
+  const absent: Record<string, { since: number }> = {};
+  for (const [key] of missing) if (!closed.some(([k]) => k === key)) absent[key] = { since: now };
+  for (const [key, a] of Object.entries(prev?.absent ?? {})) if (!board[key] && !(key in absent) && now - a.since <= ABSENT_TTL_MS) absent[key] = a;
+  const held = new Set(Object.keys(absent));
+  const left = closed.map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`);
   // `reported` is what this snapshot's standing conditions look like once told (so the next diff stays quiet about them).
   // A silent (baseline) first check reports nothing at all; a normal first check has told nobody yet, so diff() speaks.
   // `carried` hands diff() the old file's snapshot when that is what this check compared against.
   const silent = !prev && target === 'open-prs:baseline';
   const steering = silent ? undefined : steeringEvent(comparedBoard(prev?.board, board), board)[0]?.summary;
-  const state: PrWatchState = { board, reported: reportedNow(board), left, silent, ...(steering ? { steering } : {}) };
+  // Last: it asks gh for reviews, and a throw above must not leave a request made that the saved state does not know.
+  const { copilot, events: copilotEvents } = followCopilot(board, prev, ctx, held);
+  const state: PrWatchState = { board, reported: reportedNow(board), copilot, absent, copilotEvents, left, silent, ...(steering ? { steering } : {}) };
   return prev && !hasBoard(ctx.prev) ? { ...state, carried: prev } : state;
 }
 
@@ -372,7 +437,7 @@ function changes(prev: unknown, next: PrWatchState): WatchEvent[] {
   for (const event of steeringEvent(before, next.board)) {
     if (!steerAlreadyLined(lines, event.summary)) lines.push(event.summary);
   }
-  return lines.map((summary) => ({ summary }));
+  return [...lines.map((summary) => ({ summary })), ...(next.copilotEvents ?? [])];
 }
 
 /** The loop calls this when the watch retires or is removed: drop the state file an older pr-review kept. */
