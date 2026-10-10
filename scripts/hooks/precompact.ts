@@ -7,7 +7,7 @@
  *
  * 0. Appends a `note` row "precompact started" first, so a hook killed by its timeout still leaves a trace.
  * 1. Reads the whole transcript and raises every message that looks like an unledgered decision and was not raised before (the `[msg <ts> <hash>]` marker on a ledger row is the only memory), 20 messages per `ask` row, so nothing is left pending for a later run that may never come. It runs first so the asks it raises land in the handoff.
- * 2. Verifies the handoff: when the newest `--all` handoff (a single-stream one never counts) is at least as new as the newest ledger row that is not a hook or loop row (`handoffFresh`), it is left alone. Otherwise `journal.ts handoff --all --no-worktree-sweep --force --window <id> --out <Journal>/HANDOFF-<date>-precompact-<window>.md`: the hook's own file for this window, rewritten each run by that window only (45 s cap); another window's compaction the same day writes its own name, so `--force` never touches it.
+ * 2. Verifies the handoff: when the newest `--all` handoff (a single-stream one never counts) is at least as new as the newest ledger row that is not a hook or loop row (`handoffFresh`) and step 1 raised no ask, it is left alone (the raised asks are hook rows that `handoffFresh` ignores, so any ask forces the rewrite). Otherwise `journal.ts handoff --all --no-worktree-sweep --force --window <id> --out <Journal>/HANDOFF-<date>-precompact-<window>.md`: the hook's own file for this window, rewritten each run by that window only (45 s cap); another window's compaction the same day writes its own name, so `--force` never touches it.
  * 3. Copies dirty and untracked source (an allowlist of extensions, regular files only) of active worktrees to <scripts_dir>/scratch/snapshots/<date>/ (stops at 80 s). A file already held byte for byte in today's or yesterday's snapshot is not copied again.
  * 4. Appends a `note` row starting "precompact": the marker `prime` reads. When all three were already current it says `precompact: all current`; when it had to repair something it says what and by how much. A step that failed makes it "precompact incomplete: ...".
  *
@@ -101,11 +101,12 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   let handoffRepaired = false;
   step('handoff', () => {
     const covered = handoffFresh(deps.readLedger(), deps.newestHandoff());
-    if (covered.fresh) return;
+    // The asks this run raised are hook rows, which the freshness check ignores, so a handoff generated before them does not hold them: raising anything forces the rewrite.
+    if (covered.fresh && !raised) return;
     const r = deps.journal(['handoff', '--all', '--no-worktree-sweep', '--force', '--window', window, '--out', deps.handoffPath(date, window)], HANDOFF_BUDGET_MS);
     if (!r.ok) throw new Error(r.out || 'journal.ts handoff failed');
     handoffRepaired = true;
-    handoff = Number.isFinite(covered.behindMs) ? `handoff rewritten (${minutes(covered.behindMs)} min behind)` : 'handoff rewritten (none before)';
+    handoff = covered.fresh ? `handoff rewritten (to include ${raised} raised ask(s))` : Number.isFinite(covered.behindMs) ? `handoff rewritten (${minutes(covered.behindMs)} min behind)` : 'handoff rewritten (none before)';
   });
   const snap = step('snapshot', () => { const r = deps.snapshot(date, started + SNAPSHOT_DEADLINE_MS); if (!r) throw new Error('scripts_dir is not set'); if (r.partial) throw new Error(`time budget reached after ${r.worktrees} worktree(s)`); if (r.capped) throw new Error(`file or size cap reached after ${r.copied} file(s); later source was not copied`); return r; });
   const allCurrent = !handoffRepaired && !raised && !(snap?.copied ?? 0);

@@ -32,6 +32,18 @@ test('precompact writes the handoff delta, raises the decision and ends with a m
   assert.match(text, /^precompact: handoff rewritten \(none before\), snapshot copied 5 \(3 current\), decisions raised 1 in 1 ask\(s\) \(trigger auto, session unknown\)$/);
 });
 
+test('a fresh handoff is still rewritten when this run raised asks, and the marker says why; with nothing raised it is left alone', () => {
+  const row = (ts: string): LedgerRow => ({ ts, kind: 'done', text: 'work', stream: 'Maestro' } as LedgerRow);
+  const fresh = (): Partial<PrecompactDeps> => ({ readLedger: () => [row('2026-10-09T11:00:00.000Z')], newestHandoff: () => ({ name: 'HANDOFF-2026-10-09-all.md', at: '2026-10-09T11:30:00.000Z' }) });
+  const withAsk = deps(fresh());
+  const text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, withAsk.d);
+  assert.deepEqual(withAsk.calls.map((c) => c[0]), ['log', 'ask', 'handoff', 'log'], 'the handoff is written after the ask even though it looked fresh');
+  assert.match(text, /^precompact: handoff rewritten \(to include 1 raised ask\(s\)\), snapshot copied 5/);
+  const quiet = deps({ ...fresh(), readTranscript: () => '' });
+  assert.match(precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, quiet.d), /^precompact: handoff current/);
+  assert.deepEqual(quiet.calls.map((c) => c[0]), ['log', 'log'], 'no ask, fresh handoff: nothing is rewritten');
+});
+
 test('two windows compacting the same day write their own precompact handoff and never overwrite each other', () => {
   const dir = mkdtempSync(join(tmpdir(), 'precompact-'));
   try {
