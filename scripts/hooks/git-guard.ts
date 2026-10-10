@@ -76,8 +76,10 @@ export function split(src: string): { segments: Word[][]; nested: string[] } {
   const heredocs: Heredoc[] = [];
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
+    const ar = arithAt(src, i, !cur);
+    if (ar) { subsIn(ar.body, nested); i = ar.end; add(ar.dollar ? '$((...))' : '((...))'); continue; }
     if (c === '<') { const h = heredocAt(src, i); if (h) heredocs.push(h); }
-    if (c === '\n' && heredocs.length) { endSegment(); i = skipHeredocs(src, i + 1, heredocs) - 1; continue; }
+    if (c === '\n' && heredocs.length) { endSegment(); i = skipHeredocs(src, i + 1, heredocs, nested) - 1; continue; }
     if (c === '\\') { if (i + 1 < src.length) { i++; if (src[i] !== '\n') add(src[i]); } continue; }
     if (c === "'") { cur ??= { text: '', redirect: false }; const j = src.indexOf("'", i + 1); const end = j < 0 ? src.length : j; cur.text += src.slice(i + 1, end); i = end; continue; }
     if (c === '"') {
@@ -85,6 +87,8 @@ export function split(src: string): { segments: Word[][]; nested: string[] } {
       i++;
       for (; i < src.length && src[i] !== '"'; i++) {
         if (src[i] === '\\' && i + 1 < src.length) { i++; cur.text += src[i]; continue; }
+        const qa = arithAt(src, i, false);
+        if (qa) { subsIn(qa.body, nested); i = qa.end; cur.text += '$((...))'; continue; }
         if (src[i] === '$' && src[i + 1] === '(') { const e = closeParen(src, i + 2); nested.push(src.slice(i + 2, e)); i = e; cur.text += '$(...)'; continue; }
         if (src[i] === '`') { const e = src.indexOf('`', i + 1); const end = e < 0 ? src.length : e; nested.push(src.slice(i + 1, end)); i = end; cur.text += '$(...)'; continue; }
         cur.text += src[i];
@@ -105,7 +109,42 @@ export function split(src: string): { segments: Word[][]; nested: string[] } {
   return { segments, nested };
 }
 
-interface Heredoc { delim: string; strip: boolean }
+interface Heredoc { delim: string; strip: boolean; expand: boolean }
+
+/** If `src[i]` opens an arithmetic expression (`$((..))`, `$[..]`, or `((..))` in command position), return its body and the index of its last character. Unsure (no clean close) means undefined, so `<<` inside is then read as a plain operator. */
+function arithAt(src: string, i: number, commandPos: boolean): { body: string; end: number; dollar: boolean } | undefined {
+  const c = src[i];
+  let from: number;
+  let dollar = false;
+  if (c === '$' && src[i + 1] === '[') {
+    const e = src.indexOf(']', i + 2);
+    return e < 0 ? undefined : { body: src.slice(i + 2, e), end: e, dollar: true };
+  }
+  if (c === '$' && src[i + 1] === '(' && src[i + 2] === '(') { from = i + 3; dollar = true; }
+  else if (c === '(' && src[i + 1] === '(' && (commandPos || cmdPosBefore(src, i))) from = i + 2;
+  else return undefined;
+  let depth = 2;
+  for (let k = from; k < src.length; k++) {
+    if (src[k] === '(') depth++;
+    else if (src[k] === ')' && --depth === 0) return src[k - 1] === ')' && k - 1 >= from ? { body: src.slice(from, k - 1), end: k, dollar } : undefined;
+  }
+  return undefined;
+}
+
+/** True when what precedes `src[i]` leaves it in command position (start, after a separator, or after a compound-command keyword such as `for`). */
+function cmdPosBefore(src: string, i: number): boolean {
+  return /(?:^|[;&|(\n{]|\b(?:for|while|until|if|then|do|else|elif))[ \t]*$/.test(src.slice(Math.max(0, i - 40), i));
+}
+
+/** Collect the `$(...)` and backtick substitutions in text a shell expands (an arithmetic body or an unquoted here-document body). */
+function subsIn(text: string, nested: string[]): void {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '\\') { i++; continue; }
+    if (c === '$' && text[i + 1] === '(') { const e = closeParen(text, i + 2); nested.push(text.slice(i + 2, e)); i = e; continue; }
+    if (c === '`') { const e = text.indexOf('`', i + 1); const end = e < 0 ? text.length : e; nested.push(text.slice(i + 1, end)); i = end; }
+  }
+}
 
 /** If `src[i]` starts a here-document operator (`<<EOF`, `<<'EOF'`, `<<"EOF"`, `<<-EOF`; not `<<<`), return its delimiter. */
 function heredocAt(src: string, i: number): Heredoc | undefined {
@@ -113,19 +152,24 @@ function heredocAt(src: string, i: number): Heredoc | undefined {
   const m = /^<<(-?)[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|()<>'"\\])+)/.exec(src.slice(i, i + 300));
   if (!m) return undefined;
   const delim = m[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_a, x, y, z) => x ?? y ?? z);
-  return { delim, strip: m[1] === '-' };
+  return { delim, strip: m[1] === '-', expand: !/['"\\]/.test(m[2]) };
 }
 
 /** Index just past the bodies of the pending here-documents, which start at `from` (the line after the operator). An unterminated body runs to the end, as in a shell. */
-function skipHeredocs(src: string, from: number, pending: Heredoc[]): number {
+function skipHeredocs(src: string, from: number, pending: Heredoc[], nested?: string[]): number {
   let i = from;
   for (const h of pending.splice(0)) {
+    const bodyStart = i;
+    let bodyEnd = i;
     while (i < src.length) {
       const nl = src.indexOf('\n', i);
       const line = src.slice(i, nl < 0 ? src.length : nl);
+      bodyEnd = i;
       i = nl < 0 ? src.length : nl + 1;
       if ((h.strip ? line.replace(/^\t+/, '') : line) === h.delim) break;
+      bodyEnd = i;
     }
+    if (nested && h.expand) subsIn(src.slice(bodyStart, bodyEnd), nested);
   }
   return i;
 }
@@ -135,6 +179,8 @@ function closeParen(s: string, from: number): number {
   const heredocs: Heredoc[] = [];
   for (let i = from; i < s.length; i++) {
     const c = s[i];
+    const ar = arithAt(s, i, false);
+    if (ar) { i = ar.end; continue; }
     if (c === '<') { const h = heredocAt(s, i); if (h) heredocs.push(h); }
     if (c === '\n' && heredocs.length) { i = skipHeredocs(s, i + 1, heredocs) - 1; continue; }
     if (c === '\\') { i++; continue; }

@@ -255,6 +255,26 @@ test('heredoc bodies are skipped, so an apostrophe in one does not hide the comm
   assert.equal(asks('git commit -m "fix: dont" && git status'), false);
 });
 
+test('an unquoted heredoc body is expanded by the shell, so substitutions in it are still scanned; quoted ones stay data', () => {
+  const F = 'git push --force';
+  assert.equal(asks(`cat <<EOF\n$(${F})\nEOF\n`), true);
+  assert.equal(asks(`cat <<EOF\n\`${F}\`\nEOF\n`), true);
+  assert.equal(asks(`cat <<-EOF\n\t$(${F})\n\tEOF\n`), true);
+  assert.equal(asks(`cat <<EOF\nhello $(git status)\nEOF\n`), false);
+  assert.equal(asks(`cat <<EOF\n\\$(${F})\nEOF\n`), false);
+  for (const d of ["'EOF'", '"EOF"', '\\EOF']) assert.equal(asks(`cat <<${d}\n$(${F})\nEOF\n`), false, d);
+});
+
+test('arithmetic << is not a heredoc, so the commands after it are still seen', () => {
+  const F = 'git push --force';
+  for (const head of ['((x=1<<2))', 'for ((i=1<<3;;)); do break; done', 'echo $[1<<2]', 'echo $((1<<2))', 'x=$((1<<2))', 'if ((1<<2)); then :; fi'])
+    assert.equal(asks(`${head}\n${F}`), true, head);
+  assert.equal(asks('((x=1<<2))\ngit status'), false);
+  assert.equal(asks('echo "$((1<<2))"\ngit status\n'), false);
+  // a real heredoc still swallows its body
+  assert.equal(asks(`cat <<'EOF'\n${F}\nEOF\n`), false);
+});
+
 test('a malformed heredoc fails open: no throw, no ask, nothing after the unterminated body is run as a command', () => {
   for (const cmd of ["git commit -F - <<'EOF'\nfix: don't", 'cat <<', 'cat <<-', "echo $(cat <<'EOF'\nit's"]) {
     assert.doesNotThrow(() => decide(cmd, ctx()), cmd);
