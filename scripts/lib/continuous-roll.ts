@@ -172,10 +172,16 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
     return result;
 }
 
-/** Newest `generated_at` among the handoff files in `dir` (marker, else mtime), as an ISO string with its file name; null when none. */
-export function newestHandoff(dir: string): { name: string; at: string } | null {
+/** True for a handoff file known to cover the whole ledger: `--all` output (`HANDOFF-<date>[b]-all.md`) and the hook's own `-precompact-` files. Single-stream and custom `--out` names have an unknown scope and do not qualify. */
+export const isAllScopeHandoff = (name: string): boolean => /^HANDOFF-.*(-all|-precompact-.+)\.md$/.test(name);
+
+/**
+ * Newest `generated_at` among the handoff files in `dir` (marker, else mtime), as an ISO string with its file name; null when none.
+ * With `allScopeOnly`, only files `isAllScopeHandoff` accepts are considered: use it when the answer gates whether a whole-ledger handoff is written.
+ */
+export function newestHandoff(dir: string, allScopeOnly = false): { name: string; at: string } | null {
     let best: { name: string; at: string } | null = null;
-    for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => /^HANDOFF-.*\.md$/.test(n)) : []) {
+    for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => /^HANDOFF-.*\.md$/.test(n) && (!allScopeOnly || isAllScopeHandoff(n))) : []) {
         const path = join(dir, name);
         const marker = readFileSync(path, 'utf8').match(/^generated_at: (\S+)$/m)?.[1];
         const at = marker ?? lstatSync(path).mtime.toISOString();

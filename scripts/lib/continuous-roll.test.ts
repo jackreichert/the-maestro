@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { continuityLines, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { continuityLines, isAllScopeHandoff, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 
 const line = (o: object): string => JSON.stringify(o);
 const T0 = '2026-10-09T12:00:00.000Z';
@@ -146,6 +146,19 @@ test('newestHandoff prefers the generated_at marker and falls back to mtime', ()
   writeFileSync(join(dir, 'HANDOFF-2026-10-09-all.md'), `---\ngenerated_at: ${at(0)}\n---\n`);
   writeFileSync(join(dir, 'HANDOFF-2026-10-09b-all.md'), `---\ngenerated_at: ${at(30)}\n---\n`);
   assert.deepEqual(newestHandoff(dir), { name: 'HANDOFF-2026-10-09b-all.md', at: at(30) });
+});
+
+test('newestHandoff(dir, true) ignores a newer single-stream or custom handoff, since only --all covers the whole ledger', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ho-'));
+  writeFileSync(join(dir, 'HANDOFF-2026-10-09-all.md'), `---\ngenerated_at: ${at(0)}\n---\n`);
+  writeFileSync(join(dir, 'HANDOFF-2026-10-09-options.md'), `---\ngenerated_at: ${at(30)}\n---\n`);
+  writeFileSync(join(dir, 'HANDOFF-eod.md'), `---\ngenerated_at: ${at(40)}\n---\n`);
+  assert.equal(newestHandoff(dir)?.name, 'HANDOFF-eod.md', 'the plain read still sees every scope');
+  assert.deepEqual(newestHandoff(dir, true), { name: 'HANDOFF-2026-10-09-all.md', at: at(0) });
+  writeFileSync(join(dir, 'HANDOFF-2026-10-09-precompact-win1.md'), `---\ngenerated_at: ${at(50)}\n---\n`);
+  assert.equal(newestHandoff(dir, true)?.name, 'HANDOFF-2026-10-09-precompact-win1.md');
+  assert.deepEqual(['HANDOFF-2026-10-09b-all.md', 'HANDOFF-2026-10-09-precompact-w.md'].map(isAllScopeHandoff), [true, true]);
+  assert.deepEqual(['HANDOFF-2026-10-09-Options.md', 'HANDOFF-2026-10-09-allies.md'].map(isAllScopeHandoff), [false, false]);
 });
 
 test('continuityLines: silent with no marker or a fresh handoff, loud on an incomplete marker or a stale handoff', () => {

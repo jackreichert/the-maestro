@@ -7,7 +7,7 @@
  *
  * 0. Appends a `note` row "precompact started" first, so a hook killed by its timeout still leaves a trace.
  * 1. Reads the whole transcript and raises every message that looks like an unledgered decision and was not raised before (the `[msg <ts> <hash>]` marker on a ledger row is the only memory), 20 messages per `ask` row, so nothing is left pending for a later run that may never come. It runs first so the asks it raises land in the handoff.
- * 2. Verifies the handoff: when the newest handoff is at least as new as the newest ledger row that is not a hook or loop row (`handoffFresh`), it is left alone. Otherwise `journal.ts handoff --all --no-worktree-sweep --force --window <id> --out <Journal>/HANDOFF-<date>-precompact-<window>.md`: the hook's own file for this window, rewritten each run by that window only (45 s cap); another window's compaction the same day writes its own name, so `--force` never touches it.
+ * 2. Verifies the handoff: when the newest `--all` handoff (a single-stream one never counts) is at least as new as the newest ledger row that is not a hook or loop row (`handoffFresh`), it is left alone. Otherwise `journal.ts handoff --all --no-worktree-sweep --force --window <id> --out <Journal>/HANDOFF-<date>-precompact-<window>.md`: the hook's own file for this window, rewritten each run by that window only (45 s cap); another window's compaction the same day writes its own name, so `--force` never touches it.
  * 3. Copies dirty and untracked source (an allowlist of extensions, regular files only) of active worktrees to <scripts_dir>/scratch/snapshots/<date>/ (stops at 80 s). A file already held byte for byte in today's or yesterday's snapshot is not copied again.
  * 4. Appends a `note` row starting "precompact": the marker `prime` reads. When all three were already current it says `precompact: all current`; when it had to repair something it says what and by how much. A step that failed makes it "precompact incomplete: ...".
  *
@@ -36,7 +36,7 @@ export interface PrecompactDeps {
   /** The hook's own handoff file for one window and day: the window is in the name so two windows compacting the same day keep their own. */
   handoffPath: (date: string, window: string) => string;
   readLedger: () => LedgerRow[];
-  /** The newest handoff file of any kind in the journal folder, as `newestHandoff` reads it; null when there is none. */
+  /** The newest whole-ledger (`--all`) handoff file in the journal folder, as `newestHandoff(dir, true)` reads it; a single-stream handoff never counts. Null when there is none. */
   newestHandoff: () => { name: string; at: string } | null;
   readTranscript: (path: string) => string;
   /** Copies the snapshot until `deadline` (epoch ms); null when no scripts shelf is configured. */
@@ -131,7 +131,7 @@ export function realDeps(argv: string[]): PrecompactDeps {
       return { ok: !r.error && r.status === 0, out: errorLine(r.stderr || r.stdout || r.error?.message || '') };
     },
     readLedger: () => store.readLedger(),
-    newestHandoff: () => newestHandoff(store.dir),
+    newestHandoff: () => newestHandoff(store.dir, true),
     readTranscript: (p) => readFileSync(p, 'utf8'),
     snapshot: (date, deadline) => (SCRIPTS_SHELF_DIR && CONTAINER_ROOT ? snapshotDirty(CONTAINER_ROOT, join(SCRIPTS_SHELF_DIR, 'scratch', 'snapshots', date), Date.now(), deadline) : null),
     now: () => new Date(),
