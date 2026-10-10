@@ -207,6 +207,8 @@ test('libraryBlock: a failing lookup says so in one line, a missing tool is said
     const failed = libraryBlock(() => ({ status: 2, stdout: '', stderr: 'no index\nmore' }), 'x');
     assert.match(failed, /^Library pages for this task: unavailable \(library-brief failed, exit 2: no index\)/);
     assert.equal(failed.includes('\n'), false);
+    const hung = libraryBlock(() => ({ status: null, stdout: '', stderr: 'lookup did not finish within 10000 ms' }), 'x');
+    assert.match(hung, /^Library pages for this task: unavailable \(library-brief failed, exit none: lookup did not finish/);
     const absent = libraryBlock(null, 'no repo named');
     assert.match(absent, /none \(no repo named\)/);
 });

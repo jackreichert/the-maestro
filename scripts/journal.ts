@@ -1642,6 +1642,8 @@ function cmdClaims() {
  * runs before the first write, so a refusal leaves no file and no row. The claim is the one write that can
  * precede the file; it is released again if the file cannot be written.
  */
+const LIBRARY_LOOKUP_TIMEOUT_MS = 10000;
+
 function cmdBrief(): void {
     const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--as holder] [--pid n] [--read-only] [--details-file f] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
     const entries = readLedger();
@@ -1664,7 +1666,10 @@ function cmdBrief(): void {
     const words = target.text || '';
     const libraryArgs = ['--repo', repo || '', '--vault', vault, '--project', project, ...(VAULT_ROOT ? ['--tickets-vault', VAULT_ROOT] : []), words];
     const library = libraryBlock(
-        !repo ? null : existsSync(libraryScript) ? () => spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8' }) : null,
+        !repo ? null : existsSync(libraryScript) ? () => {
+            const r = spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8', timeout: LIBRARY_LOOKUP_TIMEOUT_MS });
+            return r.error ? { status: null, stdout: '', stderr: `lookup did not finish within ${LIBRARY_LOOKUP_TIMEOUT_MS} ms (${errorMessage(r.error)})` } : r;
+        } : null,
         !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
     );
 
