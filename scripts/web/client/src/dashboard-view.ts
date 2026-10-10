@@ -86,7 +86,7 @@ function flightQuadrant(st: PodiumState): HTMLElement {
       s('text', { class: 'lab', x: '0', y: String(i * rowH + 20) }, b.stream.length > 16 ? `${b.stream.slice(0, 15)}…` : b.stream),
       s('rect', { class: `bar ${colour(b.stream)}`, x: String(labelW), y: String(i * rowH + 6), width: String(w), height: '20', rx: '4' }),
       s('text', { class: 'val', x: String(labelW + w + 6), y: String(i * rowH + 21) }, String(b.count)));
-  }), height);
+  }), height, true);
   const table = tableView('In flight by stream', ['Stream', 'In flight'], m.bars.map((b) => [b.stream, String(b.count)]));
   return quadrant('In flight', m.n, null, chart, rowList(m.rows, `All ${m.n} on the Board`, WORKING_HREF), table);
 }
@@ -147,12 +147,12 @@ function quadrant(title: string, n: number, note: Node | null, ...body: (Node | 
 const emptyText = (text: string): HTMLElement => h('p', { class: 'empty' }, text);
 const missingCharts = (): HTMLElement => emptyText('Chart data is missing. The server did not send /api/charts, so nothing is drawn here.');
 
-function svgChart(title: string, desc: string, marks: (Node | null)[], height = H, baseline = true): SVGSVGElement {
+function svgChart(title: string, desc: string, marks: (Node | null)[], height = H, flight = false): SVGSVGElement {
   const t = `t${++seq}`;
   const d = `d${seq}`;
-  return s('svg', { class: 'chart', viewBox: `0 0 ${W} ${height}`, role: 'group', 'aria-labelledby': `${t} ${d}`, focusable: 'false' },
+  return s('svg', { class: flight ? 'chart flight' : 'chart', viewBox: `0 0 ${W} ${height}`, role: 'group', 'aria-labelledby': `${t} ${d}`, focusable: 'false' },
     s('title', { id: t }, title), s('desc', { id: d }, desc),
-    baseline ? s('line', { class: 'base', x1: '0', x2: String(W), y1: String(height - 20), y2: String(height - 20) }) : null,
+    flight ? null : s('line', { class: 'base', x1: '0', x2: String(W), y1: String(height - 20), y2: String(height - 20) }),
     ...marks);
 }
 
@@ -199,6 +199,7 @@ export const DASHBOARD_CSS = `
   .quad .head { margin-bottom: var(--space-3); }
   .quad .warn { margin: 0 0 var(--space-3); color: var(--warning); font-size: var(--text-sm); line-height: var(--leading-sm); }
   .chart { display: block; width: 100%; height: auto; max-height: 200px; margin-bottom: var(--space-2); font-variant-numeric: tabular-nums; overflow: visible; }
+  .chart.flight { max-width: 420px; }   /* as wide as the other charts can draw, so its labels are the same size as theirs */
   .chart .base { stroke: var(--grid-line); stroke-width: 1; }
   .chart .hit { fill: transparent; }
   .chart .bar.accent { fill: var(--accent); }
@@ -210,7 +211,8 @@ export const DASHBOARD_CSS = `
   .chart .unit.undated.ring { fill: none; }
   .chart .lab { fill: var(--text-muted); font-size: var(--text-xs); }
   .chart .val { fill: var(--text-primary); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
-  .chart a.mark { cursor: pointer; }
+  .chart a.mark { cursor: pointer; text-decoration: none; }
+  .chart a.mark text { text-decoration: none; }
   .chart a.mark:focus-visible { outline: none; }
   .chart a.mark:focus-visible .hit, .chart a.mark.open .hit { stroke: var(--focus); stroke-width: 2; rx: 4; }
   @media (hover: hover) { .chart a.mark:hover .hit { fill: var(--accent-soft); } }
