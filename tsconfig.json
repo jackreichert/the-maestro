@@ -17,5 +17,5 @@
     "checkJs": false
   },
   "include": ["scripts/**/*.ts"],
-  "exclude": ["scripts/web/client/src", "scripts/web/client/dist"]
+  "exclude": ["scripts/web/client/src", "scripts/web/client/dist", "scripts/web/client/test/dom-harness.ts", "scripts/web/client/test/*.dom.test.ts"]
 }

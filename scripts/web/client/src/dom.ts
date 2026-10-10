@@ -1,7 +1,7 @@
 /** Small DOM helpers shared by the components. Text is always set with textContent, never innerHTML. */
 
 import { linkAttrs } from './link-policy.ts';
-import { formatFragment } from './tabs.ts';
+import { formatFragment, streamTabId } from './tabs.ts';
 import { memoByKey } from './memo.ts';
 
 type Attrs = Record<string, string | boolean | undefined>;
@@ -59,7 +59,7 @@ export function refLink(ref: { label: string; url?: string }): Node {
 
 /** A link to a stream's tab, for rows and cards shown outside that tab. The href is built here, never taken from data. */
 export function streamTag(stream: string): HTMLElement {
-  return h('a', { class: 'tag', href: formatFragment(stream), 'aria-label': `Open the ${stream} tab` }, stream);
+  return h('a', { class: 'tag', href: formatFragment(streamTabId(stream)), 'aria-label': `Open the ${stream} tab` }, stream);
 }
 
 /** Visually hidden but readable by assistive tech. */

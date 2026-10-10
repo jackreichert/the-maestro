@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": ".", "types": ["node"], "sourceMap": false },
+  "include": ["./src/*.ts", "./test/dom-harness.ts", "./test/*.dom.test.ts", "./test/home-fixture.ts"],
+  "exclude": ["./dist"]
+}
