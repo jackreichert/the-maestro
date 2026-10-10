@@ -29,6 +29,8 @@ export const HEALTH_AFTER_MS = 15 * 60_000;
 export const DEFAULT_ALERT_QUIET_HOURS = '23:00-07:00';
 const MAX_REMEMBERED = 200;
 const MAX_LISTED = 3;
+/** A notifier that keeps failing is retried after RATE_MS, then 2x, 4x, 8x (capped), not on every tick: it may have delivered before it failed. */
+const MAX_BACKOFF_DOUBLINGS = 3;
 
 /** Kinds that may be texted whoever raised them. */
 const ALWAYS_KINDS = new Set(['changes-requested', 'conflict', 'approved-unmerged', 'reminder', 'notion-changed']);
@@ -48,9 +50,11 @@ export interface AlertState {
   badAlerted: boolean;
   /** True once the first-start text went out. */
   startSent: boolean;
+  /** Sends in a row that failed (non-zero exit, error or timeout); each doubles the wait before the next try, up to MAX_BACKOFF_DOUBLINGS. 0 after a send that worked. */
+  failures: number;
 }
 
-export const emptyState = (): AlertState => ({ lastSentAt: 0, alerted: [], badSince: 0, badAlerted: false, startSent: false });
+export const emptyState = (): AlertState => ({ lastSentAt: 0, alerted: [], badSince: 0, badAlerted: false, startSent: false, failures: 0 });
 
 export interface AlertConfig { quietHours: string; tz: string }
 
@@ -97,8 +101,9 @@ export function decide({ now, entries, health, state, config }: DecideInput): De
   const startDue = !next.startSent && !bad && (health.state === 'ok' || health.state === 'quiet' || health.state === 'running');
   if (startDue) parts.push('loop started');
 
-  if (!parts.length || inQuiet(now, config) || now - state.lastSentAt < RATE_MS) return { text: null, state: { ...state, badSince: next.badSince, badAlerted: next.badAlerted }, ids: [] };
+  if (!parts.length || inQuiet(now, config) || now - state.lastSentAt < RATE_MS * 2 ** Math.min(state.failures, MAX_BACKOFF_DOUBLINGS)) return { text: null, state: { ...state, badSince: next.badSince, badAlerted: next.badAlerted }, ids: [] };
   next.lastSentAt = now;
+  next.failures = 0;
   next.alerted = [...next.alerted, ...ids].slice(-MAX_REMEMBERED);
   if (badDue) next.badAlerted = true;
   if (startDue) next.startSent = true;
@@ -112,7 +117,7 @@ export function readAlertState(eventDir: string): AlertState {
   try {
     const r = JSON.parse(readFileSync(alertsPath(eventDir), 'utf8')) as Partial<AlertState>;
     const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
-    return { lastSentAt: num(r.lastSentAt), badSince: num(r.badSince), badAlerted: r.badAlerted === true, startSent: r.startSent === true, alerted: Array.isArray(r.alerted) ? r.alerted.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{12}$/.test(x)).slice(-MAX_REMEMBERED) : [] };
+    return { lastSentAt: num(r.lastSentAt), badSince: num(r.badSince), badAlerted: r.badAlerted === true, startSent: r.startSent === true, failures: Math.min(Math.floor(num(r.failures)), MAX_BACKOFF_DOUBLINGS), alerted: Array.isArray(r.alerted) ? r.alerted.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{12}$/.test(x)).slice(-MAX_REMEMBERED) : [] };
   } catch { return emptyState(); }
 }
 
@@ -136,7 +141,7 @@ export interface AlertDeps {
   run?: SendRun;
 }
 
-/** One alert tick: decide, send through `command` (its argv is `command.slice(1)` plus the one line), and save the state only when the send worked. Returns the line sent, or null. Never throws. */
+/** One alert tick: decide, send through `command` (its argv is `command.slice(1)` plus the one line), and save the state after a send that worked, and after a failed one only to stamp the attempt (so a notifier that fails after delivering is not re-sent on every tick). Returns the line sent, or null. Never throws. */
 export function runAlerts({ eventDir, command, now, entries, health, config, run = (cmd, args) => spawnSync(cmd, args, { stdio: 'ignore', timeout: 30_000 }) }: AlertDeps): string | null {
   try {
     if (!command.length) return null;
@@ -144,7 +149,12 @@ export function runAlerts({ eventDir, command, now, entries, health, config, run
     const d = decide({ now, entries, health, state, config });
     if (!d.text) { if (d.state.badSince !== state.badSince || d.state.badAlerted !== state.badAlerted) writeAlertState(eventDir, d.state); return null; }
     const r = run(command[0] as string, [...command.slice(1), d.text]);
-    if (r?.error || r?.status) { console.error(`alert send failed: ${r.error?.message ?? `exit ${r.status}`}`); return null; }
+    if (r?.error || r?.status) {
+      // The notifier may have delivered before it failed (non-zero exit, or killed by the timeout), so the attempt counts against the rate limit; events stay unalerted for the retry.
+      writeAlertState(eventDir, { ...state, badSince: d.state.badSince, badAlerted: d.state.badAlerted, lastSentAt: now, failures: Math.min(state.failures + 1, MAX_BACKOFF_DOUBLINGS) });
+      console.error(`alert send failed: ${r.error?.message ?? `exit ${r.status}`}`);
+      return null;
+    }
     writeAlertState(eventDir, d.state);
     return d.text;
   } catch (err) {

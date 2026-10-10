@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendEvents, readInbox } from './event-inbox.ts';
 import type { InboxEntry } from './event-inbox.ts';
-import { AWAY_MS, RATE_MS, HEALTH_AFTER_MS, alertsPath, decide, emptyState, readAlertState, runAlerts } from './alert-policy.ts';
+import { AWAY_MS, RATE_MS, HEALTH_AFTER_MS, decide, emptyState, readAlertState, runAlerts } from './alert-policy.ts';
 import type { AlertState } from './alert-policy.ts';
 
 const SENTINEL = 'SENTINEL_FREE_TEXT_7c1e';
@@ -85,17 +85,46 @@ test('first start: texted once when the loop is first healthy', () => {
   assert.equal(go([], { state: emptyState(), health: { state: 'down', line: 'DOWN' } }).text, null, 'not while down');
 });
 
-test('runAlerts saves state only after a send that worked, and keeps it on a failure', () => {
+test('runAlerts saves the alerted ids and send time only after a send that worked', () => {
   const dir = mkdtempSync(join(tmpdir(), 'alerts-'));
   try {
     const base = { eventDir: dir, command: ['say-it', '--to', 'me'], now: NOON, entries: [ev()], health: ok, config: CFG };
     const sent: string[][] = [];
-    assert.equal(runAlerts({ ...base, run: () => ({ status: 1 }) }), null);
-    assert.equal(existsSync(alertsPath(dir)), false, 'a failed send leaves no state, so it is retried');
     assert.match(runAlerts({ ...base, run: (c, a) => { sent.push([c, ...a]); return { status: 0 }; } }) ?? '', /conflict/);
     assert.deepEqual(sent[0]!.slice(0, 3), ['say-it', '--to', 'me']);
     assert.equal(readAlertState(dir).lastSentAt, NOON);
+    assert.equal(readAlertState(dir).alerted.length, 1);
+    assert.equal(readAlertState(dir).failures, 0);
     assert.equal(runAlerts({ ...base, command: [] }), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a failed send stamps the attempt: a notifier that delivers then exits non-zero is not re-sent every tick, and is retried with backoff', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'alerts-'));
+  try {
+    const entries = [ev()];
+    let attempts = 0;
+    const fail = () => { attempts += 1; return { status: 1 }; };
+    const tick = (now: number, run: () => { status: number }) => runAlerts({ eventDir: dir, command: ['say-it'], now, entries, health: ok, config: CFG, run });
+    // Ticks every 30 s for 19 minutes: one attempt, not 39.
+    for (let t = 0; t < 19 * 60_000; t += 30_000) assert.equal(tick(NOON + t, fail), null);
+    assert.equal(attempts, 1);
+    assert.equal(readAlertState(dir).lastSentAt, NOON);
+    assert.deepEqual(readAlertState(dir).alerted, [], 'the event is still unalerted, so a later try can send it');
+    // Backoff doubles: after one failure the next try is at 40 minutes, after two at 80, and it is capped at 160.
+    assert.equal(tick(NOON + 39 * 60_000, fail), null);
+    assert.equal(attempts, 1);
+    assert.equal(tick(NOON + 40 * 60_000, fail), null);
+    assert.equal(attempts, 2);
+    assert.equal(tick(NOON + (40 + 79) * 60_000, fail), null);
+    assert.equal(attempts, 2);
+    for (let i = 0, at = NOON + 120 * 60_000; i < 4; i += 1, at += 160 * 60_000) tick(at, fail);
+    assert.equal(readAlertState(dir).failures, 3);
+    // A send that finally works clears the backoff and records the event.
+    const line = tick(NOON + 1440 * 60_000, () => ({ status: 0 }));
+    assert.match(line ?? '', /conflict/);
+    assert.equal(readAlertState(dir).failures, 0);
+    assert.equal(readAlertState(dir).alerted.length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
