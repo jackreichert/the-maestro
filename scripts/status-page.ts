@@ -31,7 +31,7 @@ import type { PageConfig } from './lib/status-page/render.ts';
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
 const PR_QUERY = `query{search(query:"${PR_SEARCH} archived:false",type:ISSUE,first:100){issueCount nodes{... on PullRequest{
-number title url isDraft baseRefName headRefName mergeable mergeStateStatus reviewDecision repository{nameWithOwner}
+number title url isDraft createdAt baseRefName headRefName mergeable mergeStateStatus reviewDecision repository{nameWithOwner}
 reviewThreads(first:100){nodes{isResolved}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`;
 
 const sleep = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };

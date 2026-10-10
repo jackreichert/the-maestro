@@ -470,6 +470,7 @@ test('status --footer prints one Ledger line per active stream, registry names, 
         '**Ledger (Launch):** 1 done today · 1 in flight · 0 awaiting you',
         '**Ledger (Maestro):** 0 done today · 0 in flight · 1 awaiting you · 1 blocked',
         '**Ledger (other):** 0 done today · 1 in flight · 0 awaiting you',
+        '**Leases:** 2 mine, 0 other',
         sessionNone(),
     ]);
 });
@@ -500,11 +501,11 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
-    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
+    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: 1 turns (0%) · 150k/turn'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
     // The item above was started (and so leased) by `testwin`, a different window from the session pinned below, so the pinned footers count that lease as another window's.
     assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns (1%) · 100k/turn']);
     assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns (1%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest, still without a window');
+    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: 1 turns (0%) · 150k/turn'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
     assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
@@ -542,7 +543,7 @@ test('status --json carries the footer numbers, and they match what status --foo
 test('status --footer with no streams is the single plain Ledger line, and appends nothing', () => {
     run('start', 'plain', ...MARK);
     const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
-    assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Ledger:** 0 done today · 1 in flight · 0 awaiting you', sessionNone()]);
+    assert.deepEqual(run('status', '--footer').out.trim().split('\n'), ['**Ledger:** 0 done today · 1 in flight · 0 awaiting you', '**Leases:** 1 mine, 0 other', sessionNone()]);
     assert.equal(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8'), before);
 });
 
@@ -2315,6 +2316,15 @@ test('the key pattern is configurable, so an overlay can narrow what counts as a
     const narrow = runEnv({ MAESTRO_TRACKER_KEY_PATTERN: '\\bXYZ-\\d+\\b' }, 'tickets', '--pending').out;
     assert.match(narrow, /XYZ-7/);
     assert.doesNotMatch(narrow, /ABC-12/);
+});
+
+test('local keys with no tracker (MAESTRO-N, MITHRIL-N) are never pending, and local_key_prefixes is configurable', () => {
+    run('done', idOf(run('start', 'the-maestro MAESTRO-7 and MITHRIL-3 shipped, ABC-5 too', ...MARK).out), ...MARK);
+    assert.deepEqual(parse(run('tickets', '--pending', '--json').out).pending.map((p) => p.key), ['ABC-5']);
+    const none = parse(runEnv({ MAESTRO_LOCAL_KEY_PREFIXES: 'none' }, 'tickets', '--pending', '--json').out);
+    assert.deepEqual(none.pending.map((p) => p.key).sort(), ['ABC-5', 'MAESTRO-7', 'MITHRIL-3']);
+    const custom = parse(runEnv({ MAESTRO_LOCAL_KEY_PREFIXES: 'ABC' }, 'tickets', '--pending', '--json').out);
+    assert.deepEqual(custom.pending.map((p) => p.key).sort(), ['MAESTRO-7', 'MITHRIL-3']);
 });
 
 test('prime and triage flag pending transitions when there are some, and say nothing when there are none', () => {

@@ -23,6 +23,8 @@ import { PODIUM_FILE, readLegacyPage, readPodium, writePointer, readSeenMeta, re
 export interface RawPr {
   number: number; title: string; url: string; isDraft: boolean; baseRefName: string; headRefName: string;
   mergeable: string; mergeStateStatus: string; reviewDecision: string | null;
+  /** When the PR was opened. Absent in a PR cache written before this was read. */
+  createdAt?: string;
   repository: { nameWithOwner: string };
   reviewThreads: { nodes: { isResolved: boolean }[] };
   commits: { nodes: { commit: { statusCheckRollup: { state: string } | null } }[] };
@@ -62,7 +64,7 @@ export function loadPrs(raw: RawPr[], evidence: StreamEvidence): Pr[] {
     return {
       number: n.number, title: n.title, url: n.url, isDraft: n.isDraft, baseRefName: n.baseRefName, headRefName: n.headRefName,
       mergeable: n.mergeable, mergeStateStatus: n.mergeStateStatus, reviewDecision: n.reviewDecision,
-      repo: n.repository.nameWithOwner, short, owner,
+      repo: n.repository.nameWithOwner, short, owner, ...(typeof n.createdAt === 'string' ? { createdAt: n.createdAt } : {}),
       unresolved: n.reviewThreads.nodes.filter((t) => !t.isResolved).length,
       ci: n.commits.nodes[0]?.commit.statusCheckRollup?.state ?? 'NONE', stream,
     };

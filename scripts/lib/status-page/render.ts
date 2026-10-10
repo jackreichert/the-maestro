@@ -26,6 +26,8 @@ export interface Pr {
   number: number; title: string; url: string; isDraft: boolean; baseRefName: string; headRefName: string;
   mergeable: string; mergeStateStatus: string; reviewDecision: string | null;
   repo: string; short: string; owner: string; unresolved: number; ci: string; stream: string;
+  /** When the PR was opened; absent when the PR cache predates the field. */
+  createdAt?: string;
 }
 /** The numbers `journal.ts status --footer` prints, as `status --json` carries them: one row per stream, and the session. */
 export interface FooterData { ledger: FooterRow[]; session: SessionStatus }

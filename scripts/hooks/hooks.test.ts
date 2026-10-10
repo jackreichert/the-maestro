@@ -7,7 +7,7 @@ import type { LedgerRow } from '../lib/ledger-core.ts';
 import { continuityLines } from '../lib/continuous-roll.ts';
 import { decisionsOnly, precompact } from './precompact.ts';
 import type { PrecompactDeps } from './precompact.ts';
-import { assemble, context, streamsFrom } from './session-start-compact.ts';
+import { assemble, context } from './session-start-compact.ts';
 import { snippet } from './print-settings-snippet.ts';
 
 const T = '2026-10-09T12:00:00.000Z';
@@ -15,7 +15,7 @@ const transcript = JSON.stringify({ type: 'user', timestamp: '2026-10-09T11:00:0
 
 function deps(over: Partial<PrecompactDeps> = {}): { d: PrecompactDeps; calls: string[][] } {
   const calls: string[][] = [];
-  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], readTranscript: () => transcript, handoffPath: (d, w) => `/j/HANDOFF-${d}-precompact-${w}.md`, snapshot: () => ({ worktrees: 2, files: 5, skipped: 1, partial: false, capped: false }), now: () => new Date(T), ...over } };
+  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], newestHandoff: () => null, readTranscript: () => transcript, handoffPath: (d, w) => `/j/HANDOFF-${d}-precompact-${w}.md`, snapshot: () => ({ worktrees: 2, copied: 5, current: 3, skipped: 1, partial: false, capped: false }), now: () => new Date(T), ...over } };
 }
 
 test('precompact writes the handoff delta, raises the decision and ends with a marker row', () => {
@@ -25,11 +25,23 @@ test('precompact writes the handoff delta, raises the decision and ends with a m
   let text: string;
   try { text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d); } finally { if (prior === undefined) delete process.env.MAESTRO_WINDOW; else process.env.MAESTRO_WINDOW = prior; }
   assert.deepEqual(calls[0].slice(0, 2), ['log', 'precompact started (trigger auto, session unknown)'], 'the trace row comes before any slow work');
-  assert.deepEqual(calls[1], ['handoff', '--all', '--no-worktree-sweep', '--force', '--window', 'envwin', '--out', '/j/HANDOFF-2026-10-09-precompact-envwin.md']);
-  assert.equal(calls[2][0], 'ask');
-  assert.match(calls[2][1], /^unledgered decision\? \(1\) \[msg 2026-10-09T11:00:00.000Z [0-9a-f]{6}\]/);
+  assert.equal(calls[1][0], 'ask', 'decisions are raised before the handoff, so the asks land in it');
+  assert.match(calls[1][1], /^unledgered decision\? \(1\) \[msg 2026-10-09T11:00:00.000Z [0-9a-f]{6}\]/);
+  assert.deepEqual(calls[2], ['handoff', '--all', '--no-worktree-sweep', '--force', '--window', 'envwin', '--out', '/j/HANDOFF-2026-10-09-precompact-envwin.md']);
   assert.deepEqual(calls[3].slice(0, 2), ['log', text]);
-  assert.match(text, /^precompact: handoff written, 5 file\(s\) snapshotted from 2 worktree\(s\), 1 unledgered decision\(s\) raised in 1 ask\(s\) \(trigger auto, session unknown\)$/);
+  assert.match(text, /^precompact: handoff rewritten \(none before\), snapshot copied 5 \(3 current\), decisions raised 1 in 1 ask\(s\) \(trigger auto, session unknown\)$/);
+});
+
+test('a fresh handoff is still rewritten when this run raised asks, and the marker says why; with nothing raised it is left alone', () => {
+  const row = (ts: string): LedgerRow => ({ ts, kind: 'done', text: 'work', stream: 'Maestro' } as LedgerRow);
+  const fresh = (): Partial<PrecompactDeps> => ({ readLedger: () => [row('2026-10-09T11:00:00.000Z')], newestHandoff: () => ({ name: 'HANDOFF-2026-10-09-all.md', at: '2026-10-09T11:30:00.000Z' }) });
+  const withAsk = deps(fresh());
+  const text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, withAsk.d);
+  assert.deepEqual(withAsk.calls.map((c) => c[0]), ['log', 'ask', 'handoff', 'log'], 'the handoff is written after the ask even though it looked fresh');
+  assert.match(text, /^precompact: handoff rewritten \(to include 1 raised ask\(s\)\), snapshot copied 5/);
+  const quiet = deps({ ...fresh(), readTranscript: () => '' });
+  assert.match(precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, quiet.d), /^precompact: handoff current/);
+  assert.deepEqual(quiet.calls.map((c) => c[0]), ['log', 'log'], 'no ask, fresh handoff: nothing is rewritten');
 });
 
 test('two windows compacting the same day write their own precompact handoff and never overwrite each other', () => {
@@ -55,23 +67,30 @@ test('precompact fails open: each failing step is named in an "incomplete" row a
     readTranscript: () => { throw new Error('ENOENT'); },
   });
   const text = precompact({ transcript_path: '/gone', trigger: 'manual' }, d);
-  assert.match(text, /^precompact incomplete: handoff: boom; snapshot: disk full; decisions: ENOENT \(trigger manual, session unknown\)$/);
+  assert.match(text, /^precompact incomplete: decisions: ENOENT; handoff: boom; snapshot: disk full \(trigger manual, session unknown\)$/);
   assert.equal(calls.at(-1)?.[0], 'log');
 });
 
 test('precompact reports a missing transcript_path and an unset scripts_dir instead of skipping silently', () => {
   const { d } = deps({ snapshot: () => null });
-  assert.match(precompact({}, d), /^precompact incomplete: snapshot: scripts_dir is not set; decisions: no transcript_path/);
+  assert.match(precompact({}, d), /^precompact incomplete: decisions: no transcript_path in the hook input; snapshot: scripts_dir is not set/);
 });
 
-test('session-start context: only compact and clear print; streams come from prime; a missing library-brief is named once', () => {
-  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: "Board x\nToday's streams: alpha, beta" } : a[0] === 'start-here' ? { ok: true, out: 'start page' } : { ok: false, out: 'unknown' });
-  assert.equal(context('startup', run), '');
-  const out = context('compact', run);
+test('session-start context: only compact and clear print; the cold-start page sits before Start here so the cap never cuts it', () => {
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : a[0] === 'start-here' ? { ok: true, out: 'start page' } : { ok: false, out: 'unknown' });
+  assert.equal(context('startup', run, () => ({ ok: true, out: 'cold' })), '');
+  const out = context('compact', run, () => ({ ok: true, out: '# Cold start\nwork' }));
   assert.match(out, /== Board \(journal\.ts prime\) ==/);
-  assert.match(out, /== Start here ==\nstart page/);
-  assert.equal(out.match(/library-brief is not available/g)?.length, 1);
-  assert.deepEqual(streamsFrom("Today's streams: none"), []);
+  assert.match(out, /== Cold start ==\n# Cold start\nwork\n\n== Start here ==\nstart page/);
+});
+
+test('session-start is a fail-open fallback: a missing, failing or throwing cold-start part is named and the rest still prints', () => {
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : { ok: true, out: 'start page' });
+  for (const cold of [undefined, () => ({ ok: false, out: 'no ledger\nboom' }), () => { throw new Error('exploded'); }]) {
+    const out = context('compact', run, cold);
+    assert.match(out, /== Cold start ==\nskipped: /);
+    assert.match(out, /== Start here ==\nstart page/);
+  }
 });
 
 test('session-start context passes --source to prime and caps the output', () => {
@@ -90,11 +109,13 @@ test('the settings snippet names both events with the matchers and passes flags 
   assert.equal(s.hooks.SessionEnd[0].hooks[0].timeout, 30);
   assert.equal(s.hooks.SessionStart[0].matcher, 'compact|clear');
   assert.match(s.hooks.PreCompact[0].hooks[0].command, /precompact\.ts' --project 'p'$/);
+  assert.equal(s.hooks.PreToolUse[0].matcher, 'Bash');
+  assert.match(s.hooks.PreToolUse[0].hooks[0].command, /git-guard\.ts'$/, 'no pass-through flags reach the guard');
   assert.match(s.hooks.SessionStart[0].hooks[0].command, /session-start-compact\.ts' --project 'p'$/);
 });
 
 test('a partial snapshot (deadline hit) is reported as a failed step, not as success', () => {
-  const { d } = deps({ snapshot: () => ({ worktrees: 3, files: 4, skipped: 0, partial: true, capped: false }) });
+  const { d } = deps({ snapshot: () => ({ worktrees: 3, copied: 4, current: 0, skipped: 0, partial: true, capped: false }) });
   assert.match(precompact({ transcript_path: '/t', trigger: 'auto' }, d), /^precompact incomplete: snapshot: time budget reached after 3 worktree\(s\) \(trigger auto, session unknown\)$/);
 });
 
@@ -109,7 +130,7 @@ test('a failed decisions step does not move the scan memory, so the next run rai
 });
 
 test('a capped snapshot is reported as a failed step', () => {
-  const { d } = deps({ snapshot: () => ({ worktrees: 3, files: 300, skipped: 9, partial: false, capped: true }) });
+  const { d } = deps({ snapshot: () => ({ worktrees: 3, copied: 300, current: 0, skipped: 9, partial: false, capped: true }) });
   assert.match(precompact({ transcript_path: '/t', trigger: 'auto' }, d), /^precompact incomplete: snapshot: file or size cap reached after 300 file\(s\); later source was not copied /);
 });
 
@@ -118,7 +139,7 @@ test('the started and result rows carry the same session tag, and 12 decisions g
   const { d, calls } = deps({ readTranscript: () => transcript12 });
   const text = precompact({ transcript_path: '/t', trigger: 'auto', session_id: 'abcdef1234567' }, d);
   assert.equal(calls[0][1], 'precompact started (trigger auto, session abcdef12)');
-  assert.match(text, /12 unledgered decision\(s\) raised in 1 ask\(s\) \(trigger auto, session abcdef12\)$/);
+  assert.match(text, /decisions raised 12 in 1 ask\(s\) \(trigger auto, session abcdef12\)$/);
   assert.equal(calls.filter((c) => c[0] === 'ask').length, 1);
 });
 
@@ -150,4 +171,29 @@ test('the SessionEnd entry point fails open: an unreadable transcript leaves a t
   assert.equal(calls[0][1], 'precompact incomplete: decisions: EACCES (trigger session-end logout, session abcdef12)');
   const down = deps({ readTranscript: () => { throw new Error('EACCES'); }, journal: () => { throw new Error('journal down'); } });
   assert.equal(decisionsOnly({ transcript_path: '/t' }, down.d), 0);
+});
+
+const rowAt = (ts: string, text: string, used?: string[]): LedgerRow => ({ kind: 'note', ts, text, ...(used ? { used } : {}) } as LedgerRow);
+const quiet = (): Partial<PrecompactDeps> => ({ readTranscript: () => '', snapshot: () => ({ worktrees: 1, copied: 0, current: 4, skipped: 0, partial: false, capped: false }) });
+
+test('precompact leaves a fresh handoff alone and says everything was current', () => {
+  const { d, calls } = deps({ ...quiet(), readLedger: () => [rowAt('2026-10-09T11:00:00.000Z', 'did a thing')], newestHandoff: () => ({ name: 'HANDOFF-x.md', at: '2026-10-09T11:30:00.000Z' }) });
+  const text = precompact({ transcript_path: '/t', trigger: 'auto' }, d);
+  assert.equal(calls.some((c) => c[0] === 'handoff'), false, 'no handoff call when nothing is newer than it');
+  assert.equal(text, 'precompact: all current (trigger auto, session unknown)');
+});
+
+test('precompact rewrites a stale handoff and says how far behind it was', () => {
+  const { d, calls } = deps({ ...quiet(), readLedger: () => [rowAt('2026-10-09T11:40:00.000Z', 'later work')], newestHandoff: () => ({ name: 'HANDOFF-x.md', at: '2026-10-09T11:03:00.000Z' }) });
+  const text = precompact({ transcript_path: '/t', trigger: 'auto' }, d);
+  assert.equal(calls.filter((c) => c[0] === 'handoff').length, 1);
+  assert.match(text, /^precompact: handoff rewritten \(37 min behind\), snapshot copied 0 \(4 current\), decisions raised 0 in 0 ask\(s\) /);
+});
+
+test('precompact: rows the hook and the loop wrote do not stale the handoff, but a repair is still reported when only the snapshot copied', () => {
+  const rows = [rowAt('2026-10-09T11:00:00.000Z', 'work'), rowAt('2026-10-09T11:50:00.000Z', 'ask', ['hook:precompact']), rowAt('2026-10-09T11:55:00.000Z', 'tick', ['loop:continuity'])];
+  const { d, calls } = deps({ ...quiet(), readLedger: () => rows, newestHandoff: () => ({ name: 'h.md', at: '2026-10-09T11:30:00.000Z' }), snapshot: () => ({ worktrees: 1, copied: 2, current: 1, skipped: 0, partial: false, capped: false }) });
+  const text = precompact({ transcript_path: '/t', trigger: 'auto' }, d);
+  assert.equal(calls.some((c) => c[0] === 'handoff'), false);
+  assert.match(text, /^precompact: handoff current, snapshot copied 2 \(1 current\), decisions raised 0 in 0 ask\(s\) /);
 });

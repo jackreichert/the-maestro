@@ -1,10 +1,30 @@
 /** Tab state in the URL fragment, and arrow-key movement. Pure and DOM-free. */
 
+/** The landing tab: read-only charts and lists across every stream. */
+export const DASHBOARD = 'dashboard';
+/** The Board tab. Its id stays `overview` so old `#tab=overview` links keep working; only its label changed. */
 export const OVERVIEW = 'overview';
+/** Tab ids a stream may not take. A stream with one of these names gets a prefixed id instead (`flow` is reserved for the Flow tab). */
+const RESERVED = [DASHBOARD, OVERVIEW, 'flow'];
+const STREAM_PREFIX = 'stream:';
 
-/** The tab ids for a state: overview, then each stream. */
+/** Both all-streams tabs: the header scopes them to every stream. */
+export const isAllStreams = (id: string): boolean => id === DASHBOARD || id === OVERVIEW;
+
+/** The tab id for a stream: its name, unless the name is reserved. */
+export function streamTabId(stream: string): string {
+  return RESERVED.includes(stream) ? `${STREAM_PREFIX}${stream}` : stream;
+}
+
+/** The stream a tab id shows, or null for an all-streams tab. The inverse of `streamTabId`. */
+export function tabStream(id: string): string | null {
+  if (isAllStreams(id)) return null;
+  return id.startsWith(STREAM_PREFIX) ? id.slice(STREAM_PREFIX.length) : id;
+}
+
+/** The tab ids for a state: Dashboard, Board, then each stream. */
 export function tabIds(streams: string[]): string[] {
-  return [OVERVIEW, ...streams.filter((s) => s !== OVERVIEW)];
+  return [DASHBOARD, OVERVIEW, ...streams.map(streamTabId)];
 }
 
 /** The summary tiles that filter the board: asks (need you), blocked, done (shipped today), working (in flight). */
@@ -23,12 +43,12 @@ export function parseFilter(hash: string): CueKey | null {
   return CUE_KEYS.find((k) => k === value) ?? null;
 }
 
-/** Read the active tab from a `location.hash` value; anything unknown falls back to overview. A `&show=...` part is ignored here. */
+/** Read the active tab from a `location.hash` value; anything unknown falls back to the dashboard. A `&show=...` part is ignored here. */
 export function parseFragment(hash: string, ids: string[]): string {
   let raw = hash.replace(/^#/, '').split('&')[0];
   if (raw.startsWith('tab=')) raw = raw.slice(4);
-  try { raw = decodeURIComponent(raw); } catch { return OVERVIEW; }
-  return ids.includes(raw) ? raw : OVERVIEW;
+  try { raw = decodeURIComponent(raw); } catch { return DASHBOARD; }
+  return ids.includes(raw) ? raw : DASHBOARD;
 }
 
 /** The fragment (with the leading #) that selects a tab, and a tile filter when there is one: `#tab=ops&show=blocked`. */

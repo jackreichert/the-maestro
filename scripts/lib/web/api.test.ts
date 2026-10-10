@@ -36,7 +36,7 @@ function fixture(): WebConfig {
   row({ id: 'blk1', kind: 'blocked', text: 'Publish v1', stream: 'ops', gate: 'FAKE-3 decision' });
   row({ id: 'don1', kind: 'wip', text: 'Tidy shelf', stream: 'widgets', model: 'claude-opus-5' });
   row({ id: 'dn01', kind: 'done', text: 'Tidy shelf', closes: 'don1', ts: `${DAY}T13:00:00Z` });
-  writePrCache(statusDir, { fetchedAt: new Date(NOW.getTime() - 60_000), prs: [raw(12), raw(13, { baseRefName: 'staging', title: 'feat: widgets FAKE-12 (staging)', headRefName: 'feat/FAKE-12-x', ci: 'FAILURE', mergeable: 'CONFLICTING' } as never)] });
+  writePrCache(statusDir, { fetchedAt: new Date(NOW.getTime() - 60_000), prs: [raw(12, { createdAt: '2026-10-05T14:00:00Z' } as never), raw(13, { baseRefName: 'staging', title: 'feat: widgets FAKE-12 (staging)', headRefName: 'feat/FAKE-12-x', ci: 'FAILURE', mergeable: 'CONFLICTING' } as never)] });
   writePriorities(statusDir, DAY, [{ text: 'Ship the exporter', stream: 'widgets' }]);
   writeFileSync(join(statusDir, 'ticket-map.json'), JSON.stringify({ 'FAKE-12': ['ask1'] }));
   mkdirSync(join(statusDir, 'fragments'));
@@ -142,7 +142,7 @@ test('buildCharts passes the client contract and counts the day, the ask age, th
   assert.deepEqual(got?.data.throughput, charts.throughput);
   assert.deepEqual(got?.data.prMix.byState, charts.prMix.byState);
   assert.deepEqual(charts.days, ['2026-10-04', '2026-10-05', '2026-10-06']);
-  assert.deepEqual(charts.throughput[2], { date: DAY, total: 1, byStream: { widgets: 1 } });
+  assert.deepEqual(charts.throughput[2], { date: DAY, total: 1, byStream: { widgets: 1 }, ids: ['don1'] });
   assert.deepEqual(charts.ageBuckets[0].ids, ['ask1']);
   assert.deepEqual(charts.prMix.byState, { pass: 1, fail: 1 });
   assert.deepEqual(charts.modelMix, { byFamily: { opus: 1 }, source: 'ledger' });
@@ -163,4 +163,29 @@ test('the PR mix chart counts only the org PRs when self_review_repos names a re
   assert.equal(Object.values(buildCharts(cfg, 3, NOW).prMix.byState).reduce((n, c) => n + c, 0), 2);
   const apart = buildCharts({ ...cfg, page: { ...cfg.page, selfReviewRepos: ['acme/widgets'] } }, 3, NOW);
   assert.deepEqual(apart.prMix.byState, {}, 'both fixture PRs are in the self-review repo');
+});
+
+test('buildCharts sends done items, PR ages from the cache and the review queue count', () => {
+  const cfg = fixture();
+  const charts = buildCharts({ ...cfg, page: { ...cfg.page, reviewQueueCap: 4 } }, 3, NOW);
+  assert.deepEqual(charts.doneItems.map((d) => [d.id, d.stream, d.text]), [['don1', 'widgets', 'Tidy shelf']]);
+  assert.deepEqual(charts.reviewQueue, { count: 2, cap: 4 });
+  assert.deepEqual(charts.prAge.buckets.map((b) => b.inQueue.length), [0, 1, 0, 0], 'the PR with a date is one day old');
+  assert.deepEqual(charts.prAge.unknownAge.inQueue.map((p) => p.number), [13], 'the cached PR with no date is listed apart, not counted as new');
+  assert.equal(sanitizeCharts(JSON.parse(JSON.stringify(charts)))?.dropped, 0);
+});
+
+test('a PR in a self-review repo is out of the review queue count but still in the age chart', () => {
+  const cfg = fixture();
+  const apart = buildCharts({ ...cfg, page: { ...cfg.page, reviewQueueCap: 4, selfReviewRepos: ['acme/widgets'] } }, 3, NOW);
+  assert.deepEqual(apart.reviewQueue, { count: 0, cap: 4 });
+  assert.deepEqual(apart.prAge.buckets.map((b) => b.other.length), [0, 1, 0, 0]);
+  assert.equal(buildCharts(cfg, 3, NOW).reviewQueue && 'unavailable' in buildCharts(cfg, 3, NOW).reviewQueue, true, 'no cap configured gives a reason, not zero');
+});
+
+test('a done item with a ticket in the map links to its note', () => {
+  const cfg = fixture();
+  writeFileSync(join(cfg.statusDir, 'ticket-map.json'), JSON.stringify({ 'FAKE-12': ['ask1'], 'FAKE-99': ['don1'] }));
+  const done = buildCharts(cfg, 3, NOW).doneItems[0];
+  assert.equal(done.ticket?.label, 'FAKE-99');
 });

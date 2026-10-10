@@ -20,7 +20,6 @@ import { statusJson } from '../journal/status-json.ts';
 import { triageItems } from '../journal/triage.ts';
 import { ticketNoteRef } from '../status-page/render.ts';
 import type { PageConfig, Ref } from '../status-page/render.ts';
-import { splitSelfReview } from '../self-review.ts';
 import { gatherInputsCached } from '../status-page/generate.ts';
 import { DEFAULT_PRIORITIES_MAX, localDate } from '../status-page/priorities.ts';
 import type { GatheredInputs } from '../status-page/generate.ts';
@@ -107,8 +106,15 @@ export function buildStream(cfg: WebConfig, name: string, now: Date = new Date()
   return { ...s, asks: mine(s.asks), working: mine(s.working), queued: mine(s.queued), blocked: mine(s.blocked), done: mine(s.done), deferred: mine(s.deferred), prs: mine(s.prs), footer: mine(s.footer), fragments: s.fragments && name in s.fragments ? { [name]: s.fragments[name] as string } : {} };
 }
 
-/** The chart data for the last `days` days (the caller clamps the range). */
+/** The chart data for the last `days` days (the caller clamps the range). Done items carry their ticket note as a link, like the board's rows. */
 export function buildCharts(cfg: WebConfig, days: number, now: Date = new Date()): ChartsData {
   const { inputs, g } = readBoard(cfg, now);
-  return reduceCharts({ items: g.items, awaiting: [...g.awaiting, ...g.paste], prs: splitSelfReview(inputs.prs, cfg.page.selfReviewRepos ?? []).org, now, tz: cfg.page.tz, days });
+  const c = reduceCharts({ items: g.items, awaiting: [...g.awaiting, ...g.paste], prs: inputs.prs, selfReview: cfg.page.selfReviewRepos ?? [], reviewQueueCap: cfg.page.reviewQueueCap, now, tz: cfg.page.tz, days });
+  const noteOf = new Map<string, string>();
+  for (const [ticket, ids] of Object.entries(inputs.ticketMap)) for (const id of ids) noteOf.set(id, ticket);
+  const doneItems = c.doneItems.map(({ ticket, ...d }) => {
+    const note = ticket ?? noteOf.get(d.id);
+    return note ? { ...d, ticket: toRef(ticketNoteRef(cfg.page, note)) } : d;
+  });
+  return { ...c, doneItems };
 }

@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/web/charts.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { askAgeDays, awaitingAge, buildCharts, lastDays, modelMix, prMix, throughputByDay } from './charts.ts';
+import { DONE_ITEMS_MAX, askAgeDays, awaitingAge, buildCharts, doneItems, lastDays, modelMix, prAgeBuckets, prMix, throughputByDay } from './charts.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 import type { Pr } from '../status-page/render.ts';
 
@@ -28,8 +28,8 @@ test('lastDays does not skip or repeat a day across a daylight-saving change', (
 test('throughput buckets by the closing time in the page zone: 9 pm Eastern on the 5th is the 6th in UTC but still the 5th on the page', () => {
   const out = throughputByDay([doneAt('2026-10-06T01:00:00Z'), doneAt('2026-10-06T14:00:00Z', { stream: 'beta' }), doneAt('2026-10-06T14:30:00Z', { stream: undefined })], 2, TZ, NOW);
   assert.deepEqual(out, [
-    { date: '2026-10-05', total: 1, byStream: { alpha: 1 } },
-    { date: '2026-10-06', total: 2, byStream: { beta: 1, other: 1 } },
+    { date: '2026-10-05', total: 1, byStream: { alpha: 1 }, ids: ['aa11'] },
+    { date: '2026-10-06', total: 2, byStream: { beta: 1, other: 1 }, ids: ['aa11', 'aa11'] },
   ]);
 });
 
@@ -95,4 +95,50 @@ test('a stream or CI state named __proto__ is counted as an ordinary key and pol
   assert.equal(Object.hasOwn(m.byState, '__proto__'), true);
   assert.equal(Object.getPrototypeOf(t[0]?.byStream), Object.prototype);
   assert.equal(({} as Record<string, unknown>).fail, undefined);
+});
+
+test('each day lists the ids of the items it counts, and the ids sum to the total', () => {
+  const out = throughputByDay([doneAt('2026-10-06T14:00:00Z', { id: 'd001' }), doneAt('2026-10-06T14:10:00Z', { id: 'd002' }), doneAt('2026-10-05T14:00:00Z', { id: 'd003' })], 3, TZ, NOW);
+  assert.deepEqual(out.map((d) => [d.date, d.total, d.ids]), [['2026-10-04', 0, []], ['2026-10-05', 1, ['d003']], ['2026-10-06', 2, ['d001', 'd002']]]);
+  assert.equal(out.every((d) => d.ids.length === d.total), true);
+});
+
+test('done items are newest first, carry their stream and ticket, skip anything not finished done, and are capped', () => {
+  const rows = [doneAt('2026-10-05T14:00:00Z', { id: 'd001', text: 'older', ticket: 'fake-ticket-1' }), doneAt('2026-10-06T14:00:00Z', { id: 'd002', text: 'newer', stream: undefined }),
+    item({ id: 'x001', state: 'resolved', closedBy: { kind: 'resolved', ts: '2026-10-06T14:00:00Z' } }), doneAt('2026-08-01T14:00:00Z', { id: 'old1' })];
+  assert.deepEqual(doneItems(rows, 3, TZ, NOW), [
+    { id: 'd002', stream: 'other', text: 'newer', finishedAt: '2026-10-06T14:00:00Z' },
+    { id: 'd001', stream: 'alpha', text: 'older', finishedAt: '2026-10-05T14:00:00Z', ticket: 'fake-ticket-1' },
+  ]);
+  const many = Array.from({ length: DONE_ITEMS_MAX + 5 }, (_, n) => doneAt('2026-10-06T14:00:00Z', { id: `m${n}` }));
+  assert.equal(doneItems(many, 1, TZ, NOW).length, DONE_ITEMS_MAX);
+});
+
+test('PR age buckets split at exactly 1, 3 and 7 page days, leave drafts out, and keep a PR with no date apart rather than counting it as new', () => {
+  const at = (n: number, createdAt: string | undefined, over: Partial<Pr> = {}): Pr => pr({ number: n, url: `https://example.test/${n}`, ...(createdAt ? { createdAt } : {}), ...over });
+  // NOW is the 6th at 11 am Eastern: the page day boundaries are Eastern midnights.
+  const out = prAgeBuckets([
+    at(1, '2026-10-06T05:00:00Z'), at(2, '2026-10-05T04:00:00Z'), at(3, '2026-10-03T14:00:00Z'), at(4, '2026-10-02T14:00:00Z'), at(5, '2026-09-29T14:00:00Z'),
+    at(6, '2026-10-06T05:00:00Z', { isDraft: true }), at(7, undefined), at(8, 'not a date'), at(9, '2026-10-06T05:00:00Z', { repo: 'me/notes' }), at(10, undefined, { repo: 'me/notes' }),
+  ], NOW, TZ, ['me/*']);
+  assert.deepEqual(out.buckets.map((b) => [b.label, b.inQueue.map((p) => p.number), b.other.map((p) => p.number)]), [
+    ['under 1 d', [1], [9]], ['1-3 d', [2], []], ['3-7 d', [3, 4], []], ['over 7 d', [5], []],
+  ]);
+  assert.deepEqual([out.unknownAge.inQueue, out.unknownAge.other].map((l) => l.map((p) => p.number)), [[7, 8], [10]], 'undated PRs are split by the review-queue rule like dated ones');
+  assert.equal(out.drafts, 1);
+  const total = out.buckets.reduce((n, b) => n + b.inQueue.length + b.other.length, 0) + out.unknownAge.inQueue.length + out.unknownAge.other.length + out.drafts;
+  assert.equal(total, 10, 'every PR is in exactly one place');
+});
+
+test('with no PRs the age chart is four empty buckets, not an error', () => {
+  const out = prAgeBuckets([], NOW, TZ);
+  assert.deepEqual(out.buckets.map((b) => b.inQueue.length + b.other.length), [0, 0, 0, 0]);
+  assert.deepEqual([out.unknownAge, out.drafts], [{ inQueue: [], other: [] }, 0]);
+});
+
+test('the review queue count matches the cap rule (non-draft, not self-review) and says why when no cap is configured', () => {
+  const prs = [pr({ number: 1 }), pr({ number: 2, isDraft: true }), pr({ number: 3, repo: 'me/notes' })];
+  const base = { items: [], awaiting: [], prs, now: NOW, tz: TZ, days: 1, selfReview: ['me/*'] };
+  assert.deepEqual(buildCharts({ ...base, reviewQueueCap: 4 }).reviewQueue, { count: 1, cap: 4 });
+  assert.deepEqual(buildCharts(base).reviewQueue, { unavailable: 'no review_queue_cap is configured' });
 });

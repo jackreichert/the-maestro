@@ -292,6 +292,14 @@ const positiveInt = (raw: string, fallback: number): number => (/^\d+$/.test(raw
 const DEFAULT_TRACKER_KEY_PATTERN = '\\b[A-Z][A-Z0-9]+-\\d+\\b';
 export const TRACKER_KEY_PATTERN = ((raw: string) => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })(pick('MAESTRO_TRACKER_KEY_PATTERN', 'tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
 
+/** Key prefixes that belong to no tracker (the local MAESTRO-N / MITHRIL-N keys of personal repos): a done item carrying one is never a pending transition. Comma-separated; default MAESTRO,MITHRIL; `none` clears it. */
+export const LOCAL_KEY_PREFIXES: string[] = (() => {
+  const raw = pick('MAESTRO_LOCAL_KEY_PREFIXES', 'local_key_prefixes').trim();
+  if (raw.toLowerCase() === 'none') return [];
+  const list = raw.split(',').map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z][A-Z0-9]*$/.test(x));
+  return list.length ? list : ['MAESTRO', 'MITHRIL'];
+})();
+
 /** PR size budget (pr-size.ts): most code files a PR may change. Default 5. User config file only. */
 export const PR_MAX_CODE_FILES = positiveInt(pickUserFile('pr_max_code_files'), 5);
 
