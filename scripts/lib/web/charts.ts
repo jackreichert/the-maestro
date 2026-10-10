@@ -8,11 +8,26 @@ import type { LedgerItem } from '../ledger-core.ts';
 import type { Pr } from '../status-page/render.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { family } from '../model-family.ts';
+import { reviewQueue } from '../review-queue.ts';
+import { isSelfReview, splitSelfReview } from '../self-review.ts';
 
 const OTHER = 'other';
 const DAY_MS = 86_400_000;
 
-export interface ThroughputDay { date: string; total: number; byStream: Record<string, number> }
+/** `ids` are the folded items finished that day, so a bar can open them; they sum to `total`. */
+export interface ThroughputDay { date: string; total: number; byStream: Record<string, number>; ids: string[] }
+/** One finished item for the Dashboard's done list. `finishedAt` is the closing time; `ticket` is the vault note name when the item has one. */
+export interface DoneRef { id: string; stream: string; text: string; finishedAt: string; ticket?: string }
+/** A pull request as a chart mark links to it. `createdAt` is absent when the PR cache predates the field. */
+export interface PrRef { repo: string; number: number; title: string; url: string; stream: string; createdAt?: string }
+/**
+ * Open, non-draft pull requests by whole days old. `inQueue` are the ones the review-queue cap counts (every repo not in
+ * `self_review_repos`), `other` the self-review repos. A PR with no usable `createdAt` is in `unknownAge`, never in a bucket.
+ */
+export interface PrAgeBucket { label: string; inQueue: PrRef[]; other: PrRef[] }
+export interface PrAge { buckets: PrAgeBucket[]; unknownAge: PrRef[]; drafts: number }
+/** The review-queue count and cap, or why there is none (no cap configured). */
+export type ReviewQueueState = { count: number; cap: number } | { unavailable: string };
 export interface AgeBucket { label: string; count: number; ids: string[] }
 export interface PrMix {
   byState: Record<string, number>;
@@ -21,19 +36,35 @@ export interface PrMix {
   totals: { open: number; draft: number; conflicting: number; withThreads: number; failingCi: number };
 }
 export interface ModelMix { byFamily: Record<string, number>; source: 'ledger' }
-export interface Charts { days: string[]; throughput: ThroughputDay[]; ageBuckets: AgeBucket[]; prMix: PrMix; modelMix: ModelMix }
+export interface Charts {
+  days: string[]; throughput: ThroughputDay[]; ageBuckets: AgeBucket[]; prMix: PrMix; modelMix: ModelMix;
+  /** The newest finished items in the window, newest first, capped at `DONE_ITEMS_MAX`. */
+  doneItems: DoneRef[]; prAge: PrAge; reviewQueue: ReviewQueueState;
+}
 
-export interface ChartsInput { items: LedgerItem[]; awaiting: LedgerItem[]; prs: Pr[]; now: Date; tz: string; days: number }
+/** The most items `doneItems` lists: enough for a fortnight's days, bounded so the payload stays small. */
+export const DONE_ITEMS_MAX = 200;
+
+export interface ChartsInput {
+  items: LedgerItem[]; awaiting: LedgerItem[]; prs: Pr[]; now: Date; tz: string; days: number;
+  /** `self_review_repos`: PRs in these are not in the review queue. Default none. */
+  selfReview?: readonly string[];
+  /** `review_queue_cap`; absent means the page has no queue to report. */
+  reviewQueueCap?: number;
+}
 
 /** All four charts for the last `days` page days ending today. */
 export function buildCharts(input: ChartsInput): Charts {
-  const { items, awaiting, prs, now, tz, days } = input;
+  const { items, awaiting, prs, now, tz, days, selfReview = [], reviewQueueCap } = input;
   return {
     days: lastDays(now, tz, days),
     throughput: throughputByDay(items, days, tz, now),
     ageBuckets: awaitingAge(awaiting, now, tz),
-    prMix: prMix(prs),
+    prMix: prMix(splitSelfReview(prs, selfReview).org),
     modelMix: modelMix(items, days, tz, now),
+    doneItems: doneItems(items, days, tz, now),
+    prAge: prAgeBuckets(prs, now, tz, selfReview),
+    reviewQueue: reviewQueueCap === undefined ? { unavailable: 'no review_queue_cap is configured' } : queueState(prs, reviewQueueCap, selfReview),
   };
 }
 
@@ -69,8 +100,20 @@ export function throughputByDay(items: LedgerItem[], days: number, tz: string, n
   return [...finishedInWindow(items, days, tz, now)].map(([date, done]) => {
     const byStream: Tally = new Map();
     for (const i of done) bump(byStream, i.stream ?? OTHER);
-    return { date, total: done.length, byStream: toRecord(byStream) };
+    return { date, total: done.length, byStream: toRecord(byStream), ids: done.map((i) => i.id).filter((id): id is string => typeof id === 'string') };
   });
+}
+
+/** The items finished in the window, newest first, at most `DONE_ITEMS_MAX`. Same window and day rule as `throughputByDay`, so a bar's ids are all in this list unless the cap cut it. */
+export function doneItems(items: LedgerItem[], days: number, tz: string, now: Date): DoneRef[] {
+  const out: DoneRef[] = [];
+  for (const list of finishedInWindow(items, days, tz, now).values()) {
+    for (const i of list) {
+      const at = finishedAt(i);
+      if (at !== undefined && typeof i.id === 'string') out.push({ id: i.id, stream: i.stream ?? OTHER, text: i.text ?? '', finishedAt: at, ...(i.ticket ? { ticket: i.ticket } : {}) });
+    }
+  }
+  return out.sort((a, b) => Date.parse(b.finishedAt) - Date.parse(a.finishedAt)).slice(0, DONE_ITEMS_MAX);
 }
 
 const AGE_BUCKETS: { label: string; below: number }[] = [
@@ -97,6 +140,28 @@ export function awaitingAge(awaiting: LedgerItem[], now: Date, tz: string): AgeB
     if (bucket) { bucket.count += 1; if (a.id) bucket.ids.push(a.id); }
   }
   return buckets;
+}
+
+/** Open non-draft PRs bucketed by whole page days since `createdAt` (`askAgeDays`, the buckets `awaitingAge` uses), split by whether the review-queue cap counts them. Drafts are only counted. */
+export function prAgeBuckets(prs: Pr[], now: Date, tz: string, selfReview: readonly string[] = []): PrAge {
+  const buckets: PrAgeBucket[] = AGE_BUCKETS.map((b) => ({ label: b.label, inQueue: [], other: [] }));
+  const unknownAge: PrRef[] = [];
+  let drafts = 0;
+  for (const p of prs) {
+    if (p.isDraft) { drafts += 1; continue; }
+    const ref: PrRef = { repo: p.repo, number: p.number, title: p.title, url: p.url, stream: p.stream, ...(p.createdAt ? { createdAt: p.createdAt } : {}) };
+    if (!p.createdAt || !Number.isFinite(Date.parse(p.createdAt))) { unknownAge.push(ref); continue; }
+    const age = askAgeDays({ ts: p.createdAt }, now, tz);
+    const bucket = buckets[AGE_BUCKETS.findIndex((b) => age < b.below)];
+    bucket?.[isSelfReview(p.repo, selfReview) ? 'other' : 'inQueue'].push(ref);
+  }
+  return { buckets, unknownAge, drafts };
+}
+
+/** The same count `journal.ts review-queue` gates on (open, non-draft, not in a self-review repo), against the cap. */
+function queueState(prs: Pr[], cap: number, selfReview: readonly string[]): ReviewQueueState {
+  const q = reviewQueue(prs, cap, selfReview);
+  return { count: q.count, cap: q.cap };
 }
 
 const CI_STATE = new Map([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['ERROR', 'fail'], ['PENDING', 'pending'], ['EXPECTED', 'pending'], ['NONE', 'none']]);
