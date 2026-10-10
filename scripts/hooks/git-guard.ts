@@ -82,8 +82,8 @@ export function split(src: string): { segments: Word[][]; nested: string[] } {
       i++;
       for (; i < src.length && src[i] !== '"'; i++) {
         if (src[i] === '\\' && i + 1 < src.length) { i++; cur.text += src[i]; continue; }
-        if (src[i] === '$' && src[i + 1] === '(') { const e = closeParen(src, i + 2); nested.push(src.slice(i + 2, e)); i = e; continue; }
-        if (src[i] === '`') { const e = src.indexOf('`', i + 1); const end = e < 0 ? src.length : e; nested.push(src.slice(i + 1, end)); i = end; continue; }
+        if (src[i] === '$' && src[i + 1] === '(') { const e = closeParen(src, i + 2); nested.push(src.slice(i + 2, e)); i = e; cur.text += '$(...)'; continue; }
+        if (src[i] === '`') { const e = src.indexOf('`', i + 1); const end = e < 0 ? src.length : e; nested.push(src.slice(i + 1, end)); i = end; cur.text += '$(...)'; continue; }
         cur.text += src[i];
       }
       continue;
@@ -256,6 +256,7 @@ const push: Rule = (args, env) => {
     const spec = r.replace(/^\+/, '');
     const dst = spec.includes(':') ? spec.slice(spec.indexOf(':') + 1) : spec;
     if (dst.includes('*')) { env.reasons.push(`git push glob refspec ${r} may reach a protected branch`); continue; }
+    if (/[$`{}]/.test(dst)) { env.reasons.push(`git push ${r}: the destination is built by the shell, so it cannot be shown to avoid a protected branch`); continue; }
     let target = dst;
     if (dst === 'HEAD' || dst === '') {
       const b = head(env);
