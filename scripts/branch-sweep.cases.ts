@@ -991,3 +991,14 @@ test('sweepWorktrees keeps the checkout the installed loop supervisor runs from,
     } finally { rmSync(plist, { force: true }); }
     assert.deepEqual(sweep(w).removed.map((x) => x.path), [wt], 'once the plist is gone the checkout is free');
 });
+
+test('sweepWorktrees keeps a worktree whose root is exactly the supervisor WorkingDirectory, and still removes a sibling whose name is only a prefix of it', () => {
+    const w = world(); const sibling = qualifying(w, 'runtime'); const wt = qualifying(w, 'runtime-old');
+    const plist = join(process.env.MAESTRO_LAUNCH_AGENTS_DIR as string, 'com.jackreichert.the-maestro-loop.plist');
+    try {
+        writeFileSync(plist, `<dict><key>WorkingDirectory</key>\n  <string>${realpathSync(wt)}</string></dict>`);
+        const r = sweep(w);
+        assert.match(keptReason(r, wt), /^in use/, 'the exact root is in use');
+        assert.deepEqual(r.removed.map((x) => x.path), [sibling], 'a sibling whose path is a bare string prefix of the in-use root is not it');
+    } finally { rmSync(plist, { force: true }); }
+});
