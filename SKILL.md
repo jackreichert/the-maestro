@@ -133,6 +133,7 @@ Each row names the one file to read, or says not to read further. Read only what
 | Cost, token usage, what did today cost, model/agent choice, long session | Read [cost/SKILL.md](cost/SKILL.md). |
 | "the Podium", the status page, "what's on the page", an `> answer:` or tick the user left on it, the `Podium:` footer link | Read [podium/SKILL.md](podium/SKILL.md). |
 | "bolero", "keep looping until the queue is done", "work the queue", "loop until done" | Read [bolero/SKILL.md](bolero/SKILL.md): scout the queue, work it in lanes, merge locally to test, stop only when blocked. |
+| "grill me", or a decision that forks into dependent choices | Read [reference/grill.md](reference/grill.md): on demand only; ask the ready decisions in one numbered round with recommendations, look facts up yourself, take no action until the user confirms. |
 | `git`, `pr`, "commit this", "push", "open a PR" | Read [reference/git.md](reference/git.md) in full before any git write. This is the safety gate. |
 | "PRs", "my PRs", "PR status", "open PRs" | Read [reference/prs.md](reference/prs.md): run the query, report the full bucketed board, links mandatory. |
 | Citing a vault ticket/ledger id, or noting an incidental finding | Read [reference/citations.md](reference/citations.md) before writing the id into a reply. |
