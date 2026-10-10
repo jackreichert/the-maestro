@@ -1074,6 +1074,10 @@ To get the post-compact checklist, give `prime` the hook's source: use one entry
 { "matcher": "compact", "hooks": [{ "type": "command", "command": "node /path/to/the-maestro/scripts/journal.ts prime --source compact --project <container-folder-name> --vault <ledger-root>" }] }
 ```
 
+### Event hooks
+
+`scripts/hooks/event-inject.ts` is a SessionStart and UserPromptSubmit hook that shows the orchestrator the actionable events no session has seen yet. It reads only local files, fails open (any error prints nothing and exits 0), prints at most 8 headlines built from each event's allowlisted `kind` and `fields` (never a summary), then one `Loop:` health line when it says something worth seeing, and marks those events `seen`, not `handled`. `node scripts/hooks/install-hooks.ts` only prints the `hooks` entries; you merge them into your own settings file, and there is no Stop hook.
+
 ### Rolling continuously
 
 A compaction can happen at any moment, so three hooks make it lossless instead of relying on a manual roll. Neither calls a model, and neither is installed for you: `node scripts/hooks/print-settings-snippet.ts [--project <name>] [--vault <ledger-root>]` only prints the `hooks` entries, and you merge them into your own settings file.
