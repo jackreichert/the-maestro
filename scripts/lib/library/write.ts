@@ -95,11 +95,11 @@ export function forceComposer(text: string): string {
   return lines.join('\n');
 }
 
-/** The page as a reader sees it: every `<!-- ... -->` span (an unclosed one runs to the end) removed, repeated until nothing changes. */
+/** The page as a reader sees it, per the HTML comment rules: `<!-->` and `<!--->` are complete empty comments, otherwise `<!--` runs to `-->` or `--!>` (an unclosed one runs to the end); removed repeatedly until nothing changes. */
 function stripComments(text: string): string {
   let t = text;
   for (;;) {
-    const next = t.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+    const next = t.replace(/<!---?>|<!--[\s\S]*?(?:--!?>|$)/g, '');
     if (next === t) return t;
     t = next;
   }

@@ -130,6 +130,39 @@ test('a token split across a multi-line comment is refused', () => {
   assert.equal(existsSync(join(f.root, PAGE)), false);
 });
 
+const PROV = ' (verified 2026-10-08, src/sync.ts:40)';
+for (const [name, closer] of [['<!-->', '<!-->'], ['<!--->', '<!--->'], ['--!> closer', null]] as const) {
+  test(`a token split by ${name} is refused (a renderer treats it as a complete empty comment)`, () => {
+    const f = fixture();
+    const holder = holderOf(f.cli('begin').out);
+    const tail = 'a1B2'.repeat(9);
+    const split = closer ? `ghp_a1B2${closer}${tail.slice(4)}${PROV}` : `ghp_a1B2<!-- c${PROV}\n--!>${tail.slice(4)}${PROV}`;
+    const r = f.cli('write', PAGE, '--from', f.stage(GOOD.replace('02:00', split)), '--holder', holder);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.err, /comment-split/);
+    assert.ok(!r.err.includes(tail));
+    assert.equal(existsSync(join(f.root, PAGE)), false);
+  });
+}
+
+test('a token split by <!--> mixed with a multi-line comment is refused', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  const t = 'a1B2'.repeat(10);
+  const split = `ghp_${t.slice(0, 4)}<!-- c${PROV}\n-->${t.slice(4, 14)}<!-->${t.slice(14, 36)}${PROV}`;
+  const r = f.cli('write', PAGE, '--from', f.stage(GOOD.replace('02:00', split)), '--holder', holder);
+  assert.equal(r.code, 1, r.out + r.err);
+  assert.match(r.err, /comment-split/);
+  assert.equal(existsSync(join(f.root, PAGE)), false);
+});
+
+test('prose with a literal <!-- or <!--> still writes', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  const r = f.cli('write', PAGE, '--from', f.stage(GOOD.replace('02:00', '02:00; docs mention <!--> and <!---> and a lone <!-- opener')), '--holder', holder);
+  assert.equal(r.code, 0, r.out + r.err);
+});
+
 test('a refused rewrite leaves the existing page byte for byte', () => {
   const f = fixture();
   const holder = holderOf(f.cli('begin').out);
