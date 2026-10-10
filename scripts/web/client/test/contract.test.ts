@@ -169,3 +169,13 @@ test('a PR row may carry selfReview (a boolean) and is dropped when it is not on
   bad.prs[0].selfReview = 'yes';
   assert.equal(sanitizeState(bad)?.state.prs.length, bad.prs.length - 1);
 });
+
+test('charts: done items, PR age and review queue survive, and bad rows are dropped and counted', () => {
+  const c = fixture('charts.json');
+  const ok = sanitizeCharts(c)!;
+  assert.deepEqual([ok.data.doneItems.length, ok.data.prAge.buckets.length, ok.data.reviewQueue], [2, 4, { count: 1, cap: 4 }]);
+  const bad = sanitizeCharts({ ...c, doneItems: [...c.doneItems, { id: 5 }], reviewQueue: 'x', throughput: [{ date: '2026-10-06', total: 1, byStream: {} }] })!;
+  assert.equal(bad.data.doneItems.length, 2);
+  assert.ok(bad.dropped >= 2);
+  assert.deepEqual(Object.keys(bad.data.reviewQueue), ['unavailable']);
+});

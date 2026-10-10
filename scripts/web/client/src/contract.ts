@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -34,7 +34,7 @@ const ROW_RULES = {
   deferred: { ...WORK, until: str },
   prs: {
     repo: str, short: str, number: num, title: str, url: str, stream: str, base: str, head: str, isDraft: bool, ci: str,
-    mergeable: str, mergeStateStatus: str, unresolved: num, review: str, flags: arrOf(str), twinOf: opt(num), stackedOn: opt(num), selfReview: opt(bool),
+    mergeable: str, mergeStateStatus: str, unresolved: num, review: str, flags: arrOf(str), twinOf: opt(num), stackedOn: opt(num), selfReview: opt(bool), createdAt: opt(str),
   } satisfies Shape,
   footer: { stream: str, asks: num, working: num, queued: num, blocked: num, done: num } satisfies Shape,
 };
@@ -108,7 +108,8 @@ export function sanitizeState(x: unknown): { state: PodiumState; dropped: number
 
 const COUNTS = recordOf(num);
 const CHART_ROWS = {
-  throughput: { date: str, total: num, byStream: COUNTS } satisfies Shape,
+  throughput: { date: str, total: num, byStream: COUNTS, ids: arrOf(str) } satisfies Shape,
+  doneItems: { id: str, stream: str, text: str, finishedAt: str, ticket: opt(ref) } satisfies Shape,
   ageBuckets: { label: str, count: num, ids: arrOf(str) } satisfies Shape,
 };
 
@@ -134,16 +135,35 @@ export function sanitizeCharts(x: unknown): { data: ChartsData; dropped: number 
   const byFamily = part<Record<string, number>>(model.byFamily, COUNTS, {});
   const wholeMix = x.prMix !== undefined && !isObj(x.prMix) ? 1 : 0;
   const wholeModel = x.modelMix !== undefined && !isObj(x.modelMix) ? 1 : 0;
-  const dropped = lost(x.days, days) + lost(x.throughput, throughput) + lost(x.ageBuckets, ageBuckets)
+  const doneItems = validRows(x.doneItems, CHART_ROWS.doneItems) as ChartDoneItem[];
+  const prAge = sanitizePrAge(x.prAge);
+  const q = x.reviewQueue;
+  const reviewQueue: ChartsData['reviewQueue'] = isObj(q) && count(q.count) && count(q.cap) ? { count: q.count as number, cap: q.cap as number }
+    : { unavailable: (isObj(q) && typeof q.unavailable === 'string' && q.unavailable) || 'the server did not send a review queue count' };
+  const dropped = lost(x.days, days) + lost(x.throughput, throughput) + lost(x.ageBuckets, ageBuckets) + lost(x.doneItems, doneItems) + prAge.dropped
     + byState.dropped + byStream.dropped + byFamily.dropped + wholeMix + wholeModel;
   return {
     data: {
-      days, throughput, ageBuckets,
+      days, throughput, ageBuckets, doneItems, prAge: prAge.value, reviewQueue,
       prMix: { byState: byState.value, byStream: byStream.value },
       modelMix: { byFamily: byFamily.value, source: model.source === 'tokens' ? 'tokens' : 'ledger' },
     },
     dropped,
   };
+}
+
+const PR_REF: Shape = { repo: str, number: num, title: str, url: str, stream: str, createdAt: opt(str) };
+const NO_PR_AGE: PrAge = { buckets: [], unknownAge: [], drafts: 0 };
+
+/** A PrAge from an untrusted value: PR refs that fail their rules are dropped and counted, a bucket with no label is dropped whole, anything else is empty. */
+function sanitizePrAge(v: unknown): { value: PrAge; dropped: number } {
+  if (!isObj(v)) return { value: NO_PR_AGE, dropped: v === undefined ? 0 : 1 };
+  let dropped = 0;
+  const refs = (list: unknown): PrRef[] => { const ok = validRows(list, PR_REF) as PrRef[]; dropped += lost(list, ok); return ok; };
+  const raw = Array.isArray(v.buckets) ? v.buckets : [];
+  const buckets = raw.filter(isObj).filter((b) => str(b.label)).map((b) => ({ label: b.label as string, inQueue: refs(b.inQueue), other: refs(b.other) }));
+  dropped += raw.length - buckets.length;
+  return { value: { buckets, unknownAge: refs(v.unknownAge), drafts: typeof v.drafts === 'number' && Number.isInteger(v.drafts) && v.drafts >= 0 ? v.drafts : 0 }, dropped };
 }
 
 const count: Check = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0;
