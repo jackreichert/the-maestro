@@ -149,3 +149,27 @@ test('a secret-shaped stream name or id is withheld on the page, not printed', (
   assert.ok(text.includes(`[${WITHHELD}]`));
   assert.equal(scanTextHits(text), 0);
 });
+
+test('generate drops the How to work section before cutting, and a forced cut names every id it dropped', () => {
+  let fit = 100;
+  while (coldStart({ ...input, maxChars: fit }).truncated) fit += 5;
+  const smallest = coldStart({ ...input, maxChars: fit });
+  assert.doesNotMatch(smallest.text, /## How to work/);
+  assert.match(smallest.text, /`aaa1`[\s\S]*`ddd1`/);
+  assert.match(coldStart(input).text, /## How to work/);
+  const cut = coldStart({ ...input, maxChars: fit - 120 });
+  assert.equal(cut.truncated, true);
+  assert.ok(cut.text.length <= fit - 120, `${cut.text.length}`);
+  for (const id of ['aaa1', 'aaa3', 'ddd1', 'ccc1', 'fff1']) assert.ok(cut.text.includes(id), `${id} neither shown nor named`);
+  assert.match(cut.text, /open ids not shown: /);
+});
+
+test('the cut line names exactly the ids missing from the shown lines, and a big ledger loses no id silently', () => {
+  const rows: LedgerRow[] = [];
+  for (let n = 0; n < 400; n += 1) rows.push(row({ id: `z${String(n).padStart(3, '0')}`, kind: 'question', stream: 'Beta', text: `question ${n}` }));
+  const page = coldStart({ ...input, rows, maxChars: 3000 });
+  assert.equal(page.truncated, true);
+  assert.ok(page.text.length <= 3000);
+  for (const id of page.ids.asks) assert.ok(page.text.includes(id), `${id} neither shown nor named`);
+  assert.equal(coldStartCheck({ ...input, rows, maxChars: 3000 }).ok, false);
+});

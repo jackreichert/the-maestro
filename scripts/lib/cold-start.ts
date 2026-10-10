@@ -6,8 +6,9 @@
  * (open asks), How to work (current library pages per active stream, then the commands that print the full views).
  *
  * Guarantees, each enforced where it is applied:
- *  - Every open in-flight, blocked and ask id is in the text at every size level; only wording shrinks. If even the shortest form
- *    does not fit, the text is cut and `truncated` is true, and `coldStartCheck` fails on the ids that fell off.
+ *  - Every open in-flight, blocked and ask id is in the text at every size level; only wording shrinks, then the How to work
+ *    section goes. If the work and ask sections alone do not fit, whole lines are cut, the page ends by naming each id that fell
+ *    off, `truncated` is true, and `coldStartCheck` fails on those ids.
  *  - Every item text, path and field passes `scanText`; a hit replaces the text with a marker, never the matched value.
  */
 import { fold, isInFlight, isOpen, isQueued } from './ledger-core.ts';
@@ -111,17 +112,21 @@ function howLines(streams: string[], library: LibraryEntry[], lv: Level): string
   return out;
 }
 
-function render(b: Folded, library: LibraryEntry[], now: Date, lv: Level): string {
+function render(b: Folded, library: LibraryEntry[], now: Date, lv: Level, withHow = true): string {
   const streams = [...new Set([...b.inFlight, ...b.blocked, ...b.queued].map(streamOf))].sort();
   const head = ['# Cold start', '', `Generated ${now.toISOString().slice(0, 16)}Z from the ledger and the library; read-only, regenerated at read time. Anything not here is in \`journal.ts start-here\`.`, ...(b.badTs ? [``, `Note: ${b.badTs} ledger row(s) have a ts that is not text; read as is, so their order and age may be off.`] : []), ''];
   return [
     ...head, SECTION_WORK, '', ...(streams.length ? workLines(b, streams, lv, now) : ['Nothing in flight, blocked or queued.']), '',
     SECTION_ASKS, '', ...(b.asks.length ? askLines(b, lv, now) : ['None.']), '',
-    SECTION_HOW, '', ...howLines(streams, library, lv), '',
+    ...(withHow ? [SECTION_HOW, '', ...howLines(streams, library, lv), ''] : []),
   ].join('\n');
 }
 
-/** The page: the fullest wording that fits `maxChars`; at the shortest level the text is cut and `truncated` says so. */
+/**
+ * The page: the fullest wording that fits `maxChars`. When even the shortest wording does not fit, the lowest-priority section
+ * (How to work) goes first; only if the work and ask sections alone still do not fit are whole lines cut from the end, and the
+ * last line names every id that fell off (plain, no backticks, so `coldStartCheck` still counts it as missing). `truncated` is true.
+ */
 export function coldStart(input: ColdInput): ColdStart {
   const max = input.maxChars ?? COLD_START_MAX_CHARS;
   const b = foldBoard(input.rows, input.registry);
@@ -129,13 +134,27 @@ export function coldStart(input: ColdInput): ColdStart {
   const ids = { inFlight: id(b.inFlight), blocked: id(b.blocked), queued: id(b.queued), asks: id(b.asks) };
   for (let level = 0; level < LEVELS.length; level += 1) {
     const text = render(b, input.library, input.now, LEVELS[level] as Level);
-    if (text.length <= max || level === LEVELS.length - 1) {
-      const fits = text.length <= max;
-      return { text: fits ? text : `${text.slice(0, max)}\n… cut at ${max} characters`, truncated: !fits, level, ids };
-    }
+    if (text.length <= max) return { text, truncated: false, level, ids };
   }
-  /* c8 ignore next: the loop always returns at the last level */
-  throw new Error('unreachable');
+  const last = LEVELS.length - 1;
+  const lean = render(b, input.library, input.now, LEVELS[last] as Level, false);
+  if (lean.length <= max) return { text: lean, truncated: false, level: last, ids };
+  return { text: cutWithDroppedIds(lean, [...ids.inFlight, ...ids.blocked, ...ids.asks, ...ids.queued], max), truncated: true, level: last, ids };
+}
+
+/** Whole lines kept from the top while a closing line, naming the open ids no longer on the page, still fits in `max`. */
+function cutWithDroppedIds(text: string, ids: string[], max: number): string {
+  const lines = text.split('\n');
+  const tail = (kept: string): string => {
+    const gone = ids.filter((i) => !kept.includes(`\`${shown(i)}\``)).map(shown);
+    return `… cut at ${max} characters; open ids not shown: ${gone.join(' ') || 'none'}`;
+  };
+  for (let n = lines.length; n > 0; n -= 1) {
+    const kept = lines.slice(0, n).join('\n');
+    const out = `${kept}\n${tail(kept)}`;
+    if (out.length <= max) return out;
+  }
+  return tail('').slice(0, max);
 }
 
 /** The "Current work" and "Decisions pending" sections of a page: the statement a cold session reads and states. */
