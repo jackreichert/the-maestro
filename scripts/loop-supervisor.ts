@@ -30,7 +30,10 @@ import type { HeartbeatMode } from './lib/heartbeat.ts';
 import { openStore } from './lib/journal/store.ts';
 import { sleepUntil } from './lib/wall-sleep.ts';
 import { clearRecord, writeRecord } from './lib/supervisor-state.ts';
-import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, SELF_REVIEW_REPOS } from './local-config.ts';
+import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WATCH_TZ } from './local-config.ts';
+import { DEFAULT_ALERT_QUIET_HOURS, runAlerts } from './lib/alert-policy.ts';
+import { readInbox } from './lib/event-inbox.ts';
+import { liveLoopHealth } from './lib/loop-health-live.ts';
 
 const EVENT_LOOP = fileURLToPath(new URL('./event-loop.ts', import.meta.url));
 export const DELAYS = { idle: 300, usage: 300, crash: 30, quietCap: 12 * 3600, quietFallback: 300 };
@@ -100,6 +103,32 @@ export async function supervise({ runLoop, sleep, save, log, queueDigest, now = 
       await sleep(DELAYS.crash, 'backoff', `exited ${code}: ${lastLine(stderr)}`);
     }
   }
+}
+
+export interface WaitDeps {
+  beat: (mode: HeartbeatMode, until: number, lastError: string) => void;
+  /** The text-alert policy (lib/alert-policy.ts). A throw is logged; it does not stop the wait. */
+  alertTick: () => void;
+  log: (line: string) => void;
+  now?: () => number;
+  /** Real sleep for the given seconds; replaced in tests. */
+  nap: (seconds: number) => Promise<void>;
+}
+
+/**
+ * The supervisor's `sleep`: every chunk writes the supervisor's own heartbeat, then runs the alert tick. The tick must come after the beat:
+ * right after the loop child exits, the newest heartbeat is the dead child's `run` beat and the lock is free, so health reads `down`
+ * even though the supervisor is about to relaunch it. A launch that is relaunched at once (exit 10) has no wait, so it has no tick.
+ */
+export function waitWithAlerts({ beat, alertTick, log, now = Date.now, nap }: WaitDeps): SuperviseDeps['sleep'] {
+  return (seconds, mode = 'idle', lastError = '') => sleepUntil(now() + seconds * 1000, {
+    now,
+    sleep: nap,
+    onChunk: (until) => {
+      beat(mode, until, lastError);
+      try { alertTick(); } catch (err) { log(`alert tick failed: ${err instanceof Error ? err.message : String(err)}`); }
+    },
+  });
 }
 
 /** The loop launched most recently while it runs, so a stop signal can reach it. */
@@ -205,9 +234,11 @@ async function main(): Promise<number> {
   stopOnSignals(EVENT_DIR);
   await supervise({
     runLoop: launch,
-    sleep: (s, mode = 'idle', error = '') => sleepUntil(Date.now() + s * 1000, {
-      sleep: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
-      onChunk: (until) => beat(mode, until, error),
+    sleep: waitWithAlerts({
+      beat,
+      alertTick: () => { runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now: Date.now(), entries: readInbox(EVENT_DIR), health: liveLoopHealth(), config: { quietHours: DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } }); },
+      log: (line) => console.error(stamped(line)),
+      nap: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
     }),
     save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); },
     log: (line) => console.error(stamped(line)),

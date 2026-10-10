@@ -1083,6 +1083,10 @@ To get the post-compact checklist, give `prime` the hook's source: use one entry
 { "matcher": "compact", "hooks": [{ "type": "command", "command": "node /path/to/the-maestro/scripts/journal.ts prime --source compact --project <container-folder-name> --vault <ledger-root>" }] }
 ```
 
+### Text alerts
+
+`scripts/lib/alert-policy.ts` decides when the loop texts you through `notify_command`, and the supervisor runs it on every chunk of its wait between launches, right after it writes its own heartbeat (right after the loop exits the newest heartbeat is the dead child's, which would read as DOWN). An allowlisted event (changes requested, conflict, approved-unmerged, reminder, notion change, a human thread or reply) is texted only when no session has seen it for 10 minutes. Loop DOWN or STALLED for 15 minutes, a check that keeps failing, and the first healthy start are texted too. At most one text goes out per 20 minutes, batched into one line (a send that fails still counts as an attempt, and the retry waits 20, 40, 80, then 160 minutes); nothing is sent from 23:00 to 07:00 (what is still unseen then goes out as one line after). The line is built only from an event's kind, repo and PR number, so no title, comment, org name or Notion text can reach the notifier; a test feeds a sentinel string through the inbox and asserts it never appears in the notifier's argv. State is `Events/alerts.json`.
+
 ### Event hooks
 
 `scripts/hooks/event-inject.ts` is a SessionStart and UserPromptSubmit hook that shows the orchestrator the actionable events no session has seen yet. It reads only local files, fails open (any error prints nothing and exits 0), prints at most 8 headlines built from each event's allowlisted `kind` and `fields` (never a summary), then one `Loop:` health line when it says something worth seeing, and marks those events `seen`, not `handled`. `node scripts/hooks/install-hooks.ts` only prints the `hooks` entries; you merge them into your own settings file, and there is no Stop hook.
