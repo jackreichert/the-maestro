@@ -77,6 +77,7 @@ const KIND_RULES: [RegExp, string][] = [
   [/^REPLY\b/, 'reply'],
   [/^COMMENT\b/, 'comment'],
   [/^REVIEW\b/, 'review'],
+  [/^READY\b/, 'ready'],
   [/^LEFT-OPEN-SET\b/, 'left-open-set'],
   [/^NOTION-CHANGED\b/, 'notion-changed'],
   [/^reminder\b/, 'reminder'],

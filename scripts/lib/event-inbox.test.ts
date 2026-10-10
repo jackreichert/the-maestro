@@ -27,6 +27,7 @@ test('kinds: decisions split on the target state, conflicts, messages carry a co
   assert.equal(kind('DECISION acme/w#1: NONE -> APPROVED https://x.test'), 'approved');
   assert.equal(kind('CONFLICT acme/w#1 main <- f https://x.test'), 'conflict');
   assert.equal(kind('CONFLICT-CLEARED acme/w#1'), 'conflict-cleared');
+  assert.equal(kind('READY acme/w#1 draft promoted to ready for review https://x.test'), 'ready');
   assert.equal(toInboxEvent(ev('3 new message(s) from user', { type: 'inbox', watch: 'inbox' }))?.fields.count, 3);
   assert.equal(kind(`something odd ${SENTINEL}`), 'other');
 });
