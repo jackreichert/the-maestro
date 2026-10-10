@@ -14,7 +14,8 @@ import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { OVERVIEW, formatFragment, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { DASHBOARD, OVERVIEW, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { DASHBOARD_CSS, dashboardView } from './dashboard-view.ts';
 import { filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
@@ -24,7 +25,7 @@ import type { AskBusyDetail, ChartsData, PodiumState, StreamHome } from './types
 
 interface Fresh { state: PodiumState; charts: ChartsData; dropped: number }
 
-const CSS = `${BOARD_CSS}
+const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   :host { --pad: var(--space-4); }
   @media (min-width: 640px) { :host { --pad: var(--space-5); } }
   @media (min-width: 1100px) { :host { --pad: var(--space-7); } }
@@ -208,7 +209,9 @@ export class PodiumApp extends HTMLElement {
   #charts: ChartsData | null = null;
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
   #dropped = 0;
-  #active = OVERVIEW;
+  #active = DASHBOARD;
+  // The day whose finished items the Dashboard has open, if any. Lives here so a live redraw keeps it.
+  #day: string | null = null;
   // The summary tile pressed, if any: the board shows only that bucket. It lives in the fragment beside the tab.
   #filter: CueKey | null = null;
   #tick: number | undefined;
@@ -309,7 +312,7 @@ export class PodiumApp extends HTMLElement {
     this.#charts = f.charts;
     this.#dropped = f.dropped;
     askState.prune(f.state.asks.map((a) => a.id));
-    if (!this.#ids().includes(this.#active)) this.#active = OVERVIEW;   // the stream behind the open tab is gone
+    if (!this.#ids().includes(this.#active)) this.#active = DASHBOARD;   // the stream behind the open tab is gone
     const focused = this.#focusKey();
     const folds = foldStates(this.#root);
     this.#safeRender();
@@ -387,15 +390,15 @@ export class PodiumApp extends HTMLElement {
     const st = this.#state;
     if (!st) return;
     const ids = this.#ids();
-    const count = <T extends { stream: string }>(xs: T[], id: string): number => (id === OVERVIEW ? xs.length : xs.filter((x) => x.stream === id).length);
+    const count = <T extends { stream: string }>(xs: T[], id: string): number => (isAllStreams(id) ? xs.length : xs.filter((x) => x.stream === tabStream(id)).length);
     const tabs = ids.map((id) => {
       const on = id === this.#active;
-      const n = count(st.asks, id);
-      const blocked = count(st.blocked, id);
+      const n = id === DASHBOARD ? 0 : count(st.asks, id);   // the badge rides on the Board, so the two all-streams tabs do not repeat it
+      const blocked = id === DASHBOARD ? 0 : count(st.blocked, id);
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === OVERVIEW ? 'Overview' : id,
+      }, id === DASHBOARD ? 'Dashboard' : id === OVERVIEW ? 'Board' : tabStream(id),
       n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
       blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
       tab.addEventListener('click', () => this.#select(id, true));
@@ -409,7 +412,7 @@ export class PodiumApp extends HTMLElement {
       return tab;
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, this.#active), fine());
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#dashboard(st) : this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
@@ -461,7 +464,7 @@ export class PodiumApp extends HTMLElement {
   #header(st: PodiumState): HTMLElement {
     const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
     // The cue line follows the tab, so its counts always match the panel below it; the scope line says which.
-    const stream = this.#active === OVERVIEW ? null : this.#active;
+    const stream = tabStream(this.#active);
     const scope = stream === null ? 'All streams' : stream;
     const buckets = scoped(st, stream);
     const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length });
@@ -552,12 +555,20 @@ export class PodiumApp extends HTMLElement {
 
   /** The pressed tile's bucket for the open tab, from the same scoped buckets the tile counts. */
   #filtered(st: PodiumState, key: CueKey): Node {
-    const stream = this.#active === OVERVIEW ? null : this.#active;
+    const stream = tabStream(this.#active);
     const label = cueParts(scoped(st, stream)).find((p) => p.key === key)?.label ?? key;
     return filteredView(scoped(st, stream), key, label, {
       live: this.#sources.state === 'server',
       ctx: { now: st.generatedAt, tz: st.tz, showStream: stream === null, prs: st.prs },
       clear: () => this.#setFilter(null, key),
+    });
+  }
+
+  /** The landing tab. Read-only: every mark and row links to where the thing is answered or opened. */
+  #dashboard(st: PodiumState): Node {
+    return dashboardView(st, this.#charts, {
+      day: this.#day,
+      setDay: (day) => { this.#day = day; this.#release({ busy: false }); this.#safeRender(); },
     });
   }
 
