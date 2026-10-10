@@ -33,6 +33,8 @@ export function needsYou(st: PodiumState, charts: ChartsData | null): NeedsYou {
   return { n: st.asks.length, buckets: charts ? charts.ageBuckets.map((b) => ({ label: b.label, count: b.count })) : null, rows };
 }
 
+const NO_DATE = 'no date';
+
 export interface PrColumn { label: string; inQueue: PrRef[]; other: PrRef[]; undated: boolean }
 export interface PrsWaiting {
   n: number;
@@ -50,12 +52,14 @@ const prRow = (p: PrRef, meta: string): Row => ({ key: `${p.repo}#${p.number}`, 
 export function prsWaiting(st: PodiumState, charts: ChartsData | null): PrsWaiting {
   const age = charts?.prAge;
   const buckets = age?.buckets ?? [];
+  const undated = age ? age.unknownAge.inQueue.length + age.unknownAge.other.length : 0;
   const columns: PrColumn[] | null = age
     ? [...buckets.map((b) => ({ label: b.label, inQueue: b.inQueue, other: b.other, undated: false })),
-      ...(age.unknownAge.length > 0 ? [{ label: 'no date', inQueue: [], other: age.unknownAge, undated: true }] : [])]
+      ...(undated > 0 ? [{ label: NO_DATE, inQueue: age.unknownAge.inQueue, other: age.unknownAge.other, undated: true }] : [])]
     : null;
   // Oldest first: the buckets run newest to oldest, so walk them backwards.
-  const rows = [...buckets].reverse().flatMap((b) => [...b.inQueue].reverse().map((p) => prRow(p, b.label)));
+  const rows = [...[...buckets].reverse().flatMap((b) => [...b.inQueue].reverse().map((p) => prRow(p, b.label))),
+    ...(age?.unknownAge.inQueue ?? []).map((p) => prRow(p, NO_DATE))];
   const n = columns ? columns.reduce((t, c) => t + c.inQueue.length + c.other.length, 0) : 0;
   return { n, columns, drafts: age?.drafts ?? 0, queue: charts?.reviewQueue ?? null, rows, stale: snapshotNote(st) };
 }

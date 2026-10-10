@@ -171,7 +171,7 @@ test('buildCharts sends done items, PR ages from the cache and the review queue 
   assert.deepEqual(charts.doneItems.map((d) => [d.id, d.stream, d.text]), [['don1', 'widgets', 'Tidy shelf']]);
   assert.deepEqual(charts.reviewQueue, { count: 2, cap: 4 });
   assert.deepEqual(charts.prAge.buckets.map((b) => b.inQueue.length), [0, 1, 0, 0], 'the PR with a date is one day old');
-  assert.deepEqual(charts.prAge.unknownAge.map((p) => p.number), [13], 'the cached PR with no date is listed apart, not counted as new');
+  assert.deepEqual(charts.prAge.unknownAge.inQueue.map((p) => p.number), [13], 'the cached PR with no date is listed apart, not counted as new');
   assert.equal(sanitizeCharts(JSON.parse(JSON.stringify(charts)))?.dropped, 0);
 });
 

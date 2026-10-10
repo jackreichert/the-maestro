@@ -22,10 +22,10 @@ export interface DoneRef { id: string; stream: string; text: string; finishedAt:
 export interface PrRef { repo: string; number: number; title: string; url: string; stream: string; createdAt?: string }
 /**
  * Open, non-draft pull requests by whole days old. `inQueue` are the ones the review-queue cap counts (every repo not in
- * `self_review_repos`), `other` the self-review repos. A PR with no usable `createdAt` is in `unknownAge`, never in a bucket.
+ * `self_review_repos`), `other` the self-review repos. A PR with no usable `createdAt` is in `unknownAge`, split the same way, never in a bucket.
  */
 export interface PrAgeBucket { label: string; inQueue: PrRef[]; other: PrRef[] }
-export interface PrAge { buckets: PrAgeBucket[]; unknownAge: PrRef[]; drafts: number }
+export interface PrAge { buckets: PrAgeBucket[]; unknownAge: { inQueue: PrRef[]; other: PrRef[] }; drafts: number }
 /** The review-queue count and cap, or why there is none (no cap configured). */
 export type ReviewQueueState = { count: number; cap: number } | { unavailable: string };
 export interface AgeBucket { label: string; count: number; ids: string[] }
@@ -145,12 +145,12 @@ export function awaitingAge(awaiting: LedgerItem[], now: Date, tz: string): AgeB
 /** Open non-draft PRs bucketed by whole page days since `createdAt` (`askAgeDays`, the buckets `awaitingAge` uses), split by whether the review-queue cap counts them. Drafts are only counted. */
 export function prAgeBuckets(prs: Pr[], now: Date, tz: string, selfReview: readonly string[] = []): PrAge {
   const buckets: PrAgeBucket[] = AGE_BUCKETS.map((b) => ({ label: b.label, inQueue: [], other: [] }));
-  const unknownAge: PrRef[] = [];
+  const unknownAge: PrAge['unknownAge'] = { inQueue: [], other: [] };
   let drafts = 0;
   for (const p of prs) {
     if (p.isDraft) { drafts += 1; continue; }
     const ref: PrRef = { repo: p.repo, number: p.number, title: p.title, url: p.url, stream: p.stream, ...(p.createdAt ? { createdAt: p.createdAt } : {}) };
-    if (!p.createdAt || !Number.isFinite(Date.parse(p.createdAt))) { unknownAge.push(ref); continue; }
+    if (!p.createdAt || !Number.isFinite(Date.parse(p.createdAt))) { unknownAge[isSelfReview(p.repo, selfReview) ? 'other' : 'inQueue'].push(ref); continue; }
     const age = askAgeDays({ ts: p.createdAt }, now, tz);
     const bucket = buckets[AGE_BUCKETS.findIndex((b) => age < b.below)];
     bucket?.[isSelfReview(p.repo, selfReview) ? 'other' : 'inQueue'].push(ref);

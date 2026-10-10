@@ -90,7 +90,7 @@ export interface ChartsData {
 export interface ChartDoneItem { id: string; stream: string; text: string; finishedAt: string; ticket?: Ref }
 /** A pull request as a chart mark links to it; `createdAt` is absent when the server has none. */
 export interface PrRef { repo: string; number: number; title: string; url: string; stream: string; createdAt?: string }
-export interface PrAge { buckets: { label: string; inQueue: PrRef[]; other: PrRef[] }[]; unknownAge: PrRef[]; drafts: number }
+export interface PrAge { buckets: { label: string; inQueue: PrRef[]; other: PrRef[] }[]; unknownAge: { inQueue: PrRef[]; other: PrRef[] }; drafts: number }
 
 /** `ask-busy`: a card is partway through an action (true) or has finished it (false); the page holds redraws until it has. */
 export interface AskBusyDetail { busy: boolean }

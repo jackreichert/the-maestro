@@ -67,7 +67,7 @@ test('with nothing to show, each region says what is missing instead of drawing 
   const st = state();
   st.asks = []; st.working = []; st.prs = [];
   const c = charts();
-  c.prAge = { buckets: c.prAge.buckets.map((b) => ({ ...b, inQueue: [], other: [] })), unknownAge: [], drafts: 0 };
+  c.prAge = { buckets: c.prAge.buckets.map((b) => ({ ...b, inQueue: [], other: [] })), unknownAge: { inQueue: [], other: [] }, drafts: 0 };
   c.throughput = c.throughput.map((d) => ({ ...d, total: 0, byStream: {}, ids: [] }));
   const el = draw(st, c);
   const text = (el.textContent ?? '').replace(/\s+/g, ' ');
@@ -112,4 +112,23 @@ test('each table view is a named disclosure, so a live redraw keeps it open for 
   assert.equal(folds.length, 4);
   assert.equal(new Set(folds).size, 4, 'names are unique');
   assert.ok(folds.every((f) => f && f.startsWith('dash-')));
+});
+
+test('PRs with no creation date get their own labelled dashed column, say whether they count toward the queue, and are listed', () => {
+  const c = charts();
+  const ref = (n: number) => ({ repo: 'acme/widgets', number: n, title: `undated ${n}`, url: `https://example.test/${n}`, stream: 'ops' });
+  c.prAge = { ...c.prAge, unknownAge: { inQueue: [ref(71), ref(72)], other: [ref(73)] } };
+  const el = draw(state(), c);
+  const label = (n: number): string => el.querySelector(`#m-pr-acme_widgets-${n}`)?.getAttribute('aria-label') ?? '';
+  assert.match(label(71), /no creation date, in the review queue$/);
+  assert.match(label(73), /no creation date, not in the review queue$/);
+  assert.equal(el.querySelectorAll('rect.unit.undated').length, 3, 'every undated PR is a dashed square, none an ordinary outlined one');
+  assert.equal(el.querySelector('#m-pr-acme_widgets-71 rect.unit')?.getAttribute('class')?.includes('fill'), true, 'an undated PR in the queue is still filled');
+  assert.ok([...el.querySelectorAll('svg text.lab')].some((t) => t.textContent === 'no date'), 'the column is labelled');
+  assert.match(el.querySelector('.legend')?.textContent ?? '', /no creation date/);
+  const rows = [...el.querySelectorAll('ul.dash-rows a')].map((a) => a.textContent ?? '');
+  assert.ok(rows.some((r) => r.includes('undated 71') && r.includes('no date')) && rows.some((r) => r.includes('undated 72')), 'undated queue PRs are in the list');
+  assert.ok(!rows.some((r) => r.includes('undated 73')), 'a self-review PR is not a queue row');
+  const noDate = [...el.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent?.startsWith('PRs waiting'))!.querySelector('tbody tr:last-child');
+  assert.deepEqual([...noDate!.children].map((x) => x.textContent), ['no date', '2', '1']);
 });

@@ -153,7 +153,7 @@ export function sanitizeCharts(x: unknown): { data: ChartsData; dropped: number 
 }
 
 const PR_REF: Shape = { repo: str, number: num, title: str, url: str, stream: str, createdAt: opt(str) };
-const NO_PR_AGE: PrAge = { buckets: [], unknownAge: [], drafts: 0 };
+const NO_PR_AGE: PrAge = { buckets: [], unknownAge: { inQueue: [], other: [] }, drafts: 0 };
 
 /** A PrAge from an untrusted value: PR refs that fail their rules are dropped and counted, a bucket with no label is dropped whole, anything else is empty. */
 function sanitizePrAge(v: unknown): { value: PrAge; dropped: number } {
@@ -163,7 +163,7 @@ function sanitizePrAge(v: unknown): { value: PrAge; dropped: number } {
   const raw = Array.isArray(v.buckets) ? v.buckets : [];
   const buckets = raw.filter(isObj).filter((b) => str(b.label)).map((b) => ({ label: b.label as string, inQueue: refs(b.inQueue), other: refs(b.other) }));
   dropped += raw.length - buckets.length;
-  return { value: { buckets, unknownAge: refs(v.unknownAge), drafts: typeof v.drafts === 'number' && Number.isInteger(v.drafts) && v.drafts >= 0 ? v.drafts : 0 }, dropped };
+  return { value: { buckets, unknownAge: { inQueue: refs(isObj(v.unknownAge) ? v.unknownAge.inQueue : undefined), other: refs(isObj(v.unknownAge) ? v.unknownAge.other : undefined) }, drafts: typeof v.drafts === 'number' && Number.isInteger(v.drafts) && v.drafts >= 0 ? v.drafts : 0 }, dropped };
 }
 
 const count: Check = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0;

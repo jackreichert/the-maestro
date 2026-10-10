@@ -119,21 +119,21 @@ test('PR age buckets split at exactly 1, 3 and 7 page days, leave drafts out, an
   // NOW is the 6th at 11 am Eastern: the page day boundaries are Eastern midnights.
   const out = prAgeBuckets([
     at(1, '2026-10-06T05:00:00Z'), at(2, '2026-10-05T04:00:00Z'), at(3, '2026-10-03T14:00:00Z'), at(4, '2026-10-02T14:00:00Z'), at(5, '2026-09-29T14:00:00Z'),
-    at(6, '2026-10-06T05:00:00Z', { isDraft: true }), at(7, undefined), at(8, 'not a date'), at(9, '2026-10-06T05:00:00Z', { repo: 'me/notes' }),
+    at(6, '2026-10-06T05:00:00Z', { isDraft: true }), at(7, undefined), at(8, 'not a date'), at(9, '2026-10-06T05:00:00Z', { repo: 'me/notes' }), at(10, undefined, { repo: 'me/notes' }),
   ], NOW, TZ, ['me/*']);
   assert.deepEqual(out.buckets.map((b) => [b.label, b.inQueue.map((p) => p.number), b.other.map((p) => p.number)]), [
     ['under 1 d', [1], [9]], ['1-3 d', [2], []], ['3-7 d', [3, 4], []], ['over 7 d', [5], []],
   ]);
-  assert.deepEqual(out.unknownAge.map((p) => p.number), [7, 8]);
+  assert.deepEqual([out.unknownAge.inQueue, out.unknownAge.other].map((l) => l.map((p) => p.number)), [[7, 8], [10]], 'undated PRs are split by the review-queue rule like dated ones');
   assert.equal(out.drafts, 1);
-  const total = out.buckets.reduce((n, b) => n + b.inQueue.length + b.other.length, 0) + out.unknownAge.length + out.drafts;
-  assert.equal(total, 9, 'every PR is in exactly one place');
+  const total = out.buckets.reduce((n, b) => n + b.inQueue.length + b.other.length, 0) + out.unknownAge.inQueue.length + out.unknownAge.other.length + out.drafts;
+  assert.equal(total, 10, 'every PR is in exactly one place');
 });
 
 test('with no PRs the age chart is four empty buckets, not an error', () => {
   const out = prAgeBuckets([], NOW, TZ);
   assert.deepEqual(out.buckets.map((b) => b.inQueue.length + b.other.length), [0, 0, 0, 0]);
-  assert.deepEqual([out.unknownAge, out.drafts], [[], 0]);
+  assert.deepEqual([out.unknownAge, out.drafts], [{ inQueue: [], other: [] }, 0]);
 });
 
 test('the review queue count matches the cap rule (non-draft, not self-review) and says why when no cap is configured', () => {
