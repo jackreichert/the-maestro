@@ -271,6 +271,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
 | [library-check.ts](#library-checkts) | Check library pages against the template, the controlled vocabulary and the secret scan |
 | [library-index.ts](#library-indexts) | Generate the page list in each project's INDEX.md |
+| [library-brief.ts](#library-briefts) | The three best library pages for a task, ready to paste into a dispatch brief |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
@@ -706,6 +707,10 @@ The library is a set of one-fact-per-page notes (`Projects/<repo>/Knowledge` and
 ### library-index.ts
 
 `library-index.ts [--vault <root>] [--repo <name>] [--dry-run] [--check]` writes one line per library page (a wikilink, the kind, the read-when line, the verified-at date and a STALE or SUPERSEDED flag) into each project's `INDEX.md`, between `<!-- library-index:start -->` and `<!-- library-index:end -->`. Nothing outside the markers is touched, so the `components` vocabulary in the frontmatter stays a deliberate edit; a file with no markers gets the block appended under `## Pages`, and a project with pages but no `INDEX.md` is named and skipped, never created. A rerun with no page change writes nothing. `--check` prints what would change and exits 1 when any `INDEX.md` is out of date; exit 2 is a usage or read error. `library-check.ts` also fails a whole run when an `INDEX.md` has malformed block markers, since this script refuses to rewrite one.
+
+### library-brief.ts
+
+`library-brief.ts --repo <repo> "<task words>" [--tickets-vault <vault>] [--json]` prints a `Library pages for this task` block for a dispatch brief: up to three absolute page paths with their read-when lines, and a warning on a stale page. It ranks like `find` (it asks `ledger-index.ts find`). With no match it still prints the block, saying none were found; a failed lookup exits 2 so the block is never silently missing. `journal.ts brief` runs it for the item's repo and refuses to write a brief when it fails.
 
 ### weekly-retro.ts
 

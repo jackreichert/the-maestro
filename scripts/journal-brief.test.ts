@@ -8,7 +8,15 @@ import { join } from 'node:path';
 import { agentPrompt, briefPaths, briefText, libraryBlock } from './lib/journal/brief.ts';
 
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
+/** A scripts dir whose journal.ts, pr-open.ts and brief-block.ts are the real ones; library-brief.ts is the given stub, or absent when none is given. */
+function shelfWith(libraryStub?: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-shelf-'));
+    for (const f of ['journal.ts', 'pr-open.ts', 'brief-block.ts']) symlinkSync(new URL(`./${f}`, import.meta.url).pathname, join(dir, f));
+    if (libraryStub !== undefined) writeFileSync(join(dir, 'library-brief.ts'), libraryStub);
+    return join(dir, 'journal.ts');
+}
+// These tests are about claims and grants, not the library: run them on a shelf with no library-brief.ts, so the real one (which needs a library vault) is not in play.
+const SCRIPT = shelfWith();
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro,tool:journal.ts'];
 const FILLED = '## Standing brief block, filled\n\n- `<user git emails>` → `dev@example.com`\n- `<tracker key example>` → FAKE-1\n';
 
@@ -206,14 +214,6 @@ test('briefText states the cap and the report path once each, and the repo role'
     assert.equal(t.split('/tmp/report-ab12.md').length - 1, 1);
     assert.match(t, /You hold the repo claim/);
 });
-
-/** A scripts dir whose journal.ts, pr-open.ts and brief-block.ts are the real ones and whose library-brief.ts is the given stub. */
-function shelfWith(libraryStub: string): string {
-    const dir = mkdtempSync(join(tmpdir(), 'brief-shelf-'));
-    for (const f of ['journal.ts', 'pr-open.ts', 'brief-block.ts']) symlinkSync(new URL(`./${f}`, import.meta.url).pathname, join(dir, f));
-    writeFileSync(join(dir, 'library-brief.ts'), libraryStub);
-    return join(dir, 'journal.ts');
-}
 
 test('the library block comes from library-brief.ts when it is installed, asked for the item\'s repo and words', () => {
     const shelf = shelfWith("console.log('LIB repo=' + process.argv[process.argv.indexOf('--repo') + 1] + ' words=' + process.argv.at(-1));");

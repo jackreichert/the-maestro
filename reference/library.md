@@ -78,4 +78,4 @@ No secret (a key, token, password, connection string with credentials, or an env
 
 ## Finding pages
 
-`node scripts/journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--neighbors]` returns the best pages with their `Read when:` line, verified-at age and stale flag; `--neighbors` adds the pages one link away. `node scripts/library-index.ts` regenerates the page list in each `INDEX.md` (between its markers). Run `find` before dispatching an agent to scout something a page may already say.
+`node scripts/journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--neighbors]` returns the best pages with their `Read when:` line, verified-at age and stale flag; `--neighbors` adds the pages one link away. `node scripts/library-index.ts` regenerates the page list in each `INDEX.md` (between its markers). `node scripts/library-brief.ts --repo <repo> "<task words>"` prints the three best pages as a block for a dispatch brief. Run `find` before dispatching an agent to scout something a page may already say.
