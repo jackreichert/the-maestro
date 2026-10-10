@@ -8,7 +8,7 @@ import { describeSources, loadCharts, loadHome, loadLinkHosts, loadState } from 
 import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
-import { findByKey, focusKeyOf, foldStates, restoreFolds } from './keep-view.ts';
+import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
 import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
@@ -568,7 +568,7 @@ export class PodiumApp extends HTMLElement {
   #dashboard(st: PodiumState): Node {
     return dashboardView(st, this.#charts, {
       day: this.#day,
-      setDay: (day) => { this.#day = day; this.#release({ busy: false }); this.#safeRender(); },
+      setDay: (day) => keepAcross(this.#root, () => { this.#day = day; this.#release({ busy: false }); this.#safeRender(); }),   // the column that was pressed is redrawn; keep focus on its twin
     });
   }
 
