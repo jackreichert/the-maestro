@@ -183,7 +183,8 @@ function rowList(rows: Row[], all: string, allHref: string | null, limit = LIST_
 }
 
 function tableView(title: string, head: string[], body: string[][]): HTMLElement {
-  return h('details', { class: 'tv' }, h('summary', {}, 'Table view'),
+  // Named, so a live redraw keeps the table open for a reader who opened it (see keep-view).
+  return h('details', { class: 'tv', 'data-fold': `dash-${title.toLowerCase().replace(/[^a-z]+/g, '-')}` }, h('summary', {}, 'Table view'),
     h('div', { class: 'table-wrap' }, h('table', { class: 'counts' }, h('caption', { class: 'vh' }, title),
       h('thead', {}, h('tr', {}, ...head.map((t) => h('th', { scope: 'col' }, t)))),
       h('tbody', {}, ...body.map((r) => h('tr', {}, ...r.map((c, i) => (i === 0 ? h('th', { scope: 'row' }, c) : h('td', {}, c)))))))));
