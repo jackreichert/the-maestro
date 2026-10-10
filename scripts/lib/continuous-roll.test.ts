@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { continuityLines, dirtyPaths, errorLine, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { continuityLines, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 
 const line = (o: object): string => JSON.stringify(o);
 const T0 = '2026-10-09T12:00:00.000Z';
@@ -107,7 +107,8 @@ test('snapshotDirty copies modified and untracked source, skips secret names and
   assert.equal(readFileSync(join(dest, 'w1', 'tracked.ts'), 'utf8'), 'export const a = 2;\n');
   assert.ok(existsSync(join(dest, 'w1', 'new.ts')));
   assert.ok(!existsSync(join(dest, 'w1', '.env.local')) && !existsSync(join(dest, 'w1', 'leak.txt')));
-  assert.equal(snapshotDirty(container, dest).files, 2);
+  const again = snapshotDirty(container, dest);
+  assert.deepEqual({ copied: again.copied, current: again.current }, { copied: 0, current: 2 }, 'a second run copies nothing: the bytes are already there');
   assert.equal(readFileSync(join(container, '.gitignore'), 'utf8').trim(), '*', 'the folder holding the dated snapshots ignores itself');
 });
 
@@ -251,4 +252,48 @@ test('an incomplete row from one session survives another session succeeding, an
   const okA = { kind: 'note', ts: at(22), text: 'precompact: handoff written (trigger auto, session aaaa1111)' };
   assert.deepEqual(continuityLines([work, badA, okB, okA], { name: 'h.md', at: at(25) }), []);
   assert.deepEqual(continuityLines([work, badA, okB, { kind: 'note', ts: at(23), text: 'precompact ack' }], { name: 'h.md', at: at(25) }), []);
+});
+
+test('handoffFresh ignores precompact markers and hook or loop rows, flags a later normal row, and handles a missing handoff', () => {
+  const work = { kind: 'note', ts: at(0), text: 'work' };
+  const hook = { kind: 'question', ts: at(20), text: 'asks', used: ['hook:precompact'] };
+  const loop = { kind: 'note', ts: at(21), text: 'tick', used: ['loop:continuity'] };
+  const mark = { kind: 'note', ts: at(22), text: 'precompact: all current (trigger auto, session aaaa1111)' };
+  const handoff = { name: 'h.md', at: at(10) };
+  assert.deepEqual(handoffFresh([work, hook, loop, mark], handoff), { fresh: true, behindMs: 0, lastRowTs: at(0) });
+  const later = { kind: 'note', ts: at(25), text: 'more work' };
+  const stale = handoffFresh([work, hook, mark, later], handoff);
+  assert.deepEqual({ fresh: stale.fresh, behindMs: stale.behindMs, lastRowTs: stale.lastRowTs }, { fresh: false, behindMs: 15 * 60_000, lastRowTs: at(25) });
+  assert.deepEqual(handoffFresh([work], null), { fresh: false, behindMs: Infinity, lastRowTs: at(0) });
+  assert.deepEqual(handoffFresh([], handoff), { fresh: true, behindMs: 0, lastRowTs: null });
+  assert.equal(handoffFresh([work], { name: 'h.md', at: at(0) }).fresh, true, 'generated at the same instant as the row counts as covering it');
+});
+
+test('snapshotDirty run twice copies nothing the second time and reports the files as current', () => {
+  const { container } = repoWithDirt();
+  const dest = join(container, 'snaps', '2026-10-09');
+  const first = snapshotDirty(container, dest);
+  assert.deepEqual({ copied: first.copied, files: first.files, current: first.current }, { copied: 2, files: 2, current: 0 });
+  const second = snapshotDirty(container, dest);
+  assert.deepEqual({ copied: second.copied, files: second.files, current: second.current }, { copied: 0, files: 0, current: 2 });
+});
+
+test('snapshotDirty recopies a file that changed since the last snapshot', () => {
+  const { container, wt } = repoWithDirt();
+  const dest = join(container, 'snaps', '2026-10-09');
+  snapshotDirty(container, dest);
+  writeFileSync(join(wt, 'new.ts'), 'export const b = 22;\n');
+  const r = snapshotDirty(container, dest);
+  assert.deepEqual({ copied: r.copied, current: r.current }, { copied: 1, current: 1 });
+  assert.equal(readFileSync(join(dest, 'w1', 'new.ts'), 'utf8'), 'export const b = 22;\n');
+});
+
+test('snapshotDirty counts a copy in the previous UTC date dir as current and writes nothing new', () => {
+  const { container } = repoWithDirt();
+  const yesterday = join(container, 'snaps', '2026-10-08');
+  snapshotDirty(container, yesterday);
+  const today = join(container, 'snaps', '2026-10-09');
+  const r = snapshotDirty(container, today);
+  assert.deepEqual({ copied: r.copied, current: r.current }, { copied: 0, current: 2 });
+  assert.ok(!existsSync(join(today, 'w1', 'new.ts')));
 });

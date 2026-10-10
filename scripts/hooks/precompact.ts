@@ -6,10 +6,10 @@
  *   precompact.ts [--project <name>] [--vault <ledger-root>]
  *
  * 0. Appends a `note` row "precompact started" first, so a hook killed by its timeout still leaves a trace.
- * 1. `journal.ts handoff --all --no-worktree-sweep --force --window <id> --out <Journal>/HANDOFF-<date>-precompact-<window>.md`: the hook's own file for this window, rewritten each run by that window only (45 s cap); another window's compaction the same day writes its own name, so `--force` never touches it.
- * 2. Copies dirty and untracked source (an allowlist of extensions, regular files only) of active worktrees to <scripts_dir>/scratch/snapshots/<date>/ (stops at 80 s).
- * 3. Reads the whole transcript and raises every message that looks like an unledgered decision and was not raised before (the `[msg <ts> <hash>]` marker on a ledger row is the only memory), 20 messages per `ask` row, so nothing is left pending for a later run that may never come.
- * 4. Appends a `note` row starting "precompact": the marker `prime` reads. A step that failed makes it "precompact incomplete: ...".
+ * 1. Reads the whole transcript and raises every message that looks like an unledgered decision and was not raised before (the `[msg <ts> <hash>]` marker on a ledger row is the only memory), 20 messages per `ask` row, so nothing is left pending for a later run that may never come. It runs first so the asks it raises land in the handoff.
+ * 2. Verifies the handoff: when the newest handoff is at least as new as the newest ledger row that is not a hook or loop row (`handoffFresh`), it is left alone. Otherwise `journal.ts handoff --all --no-worktree-sweep --force --window <id> --out <Journal>/HANDOFF-<date>-precompact-<window>.md`: the hook's own file for this window, rewritten each run by that window only (45 s cap); another window's compaction the same day writes its own name, so `--force` never touches it.
+ * 3. Copies dirty and untracked source (an allowlist of extensions, regular files only) of active worktrees to <scripts_dir>/scratch/snapshots/<date>/ (stops at 80 s). A file already held byte for byte in today's or yesterday's snapshot is not copied again.
+ * 4. Appends a `note` row starting "precompact": the marker `prime` reads. When all three were already current it says `precompact: all current`; when it had to repair something it says what and by how much. A step that failed makes it "precompact incomplete: ...".
  *
  * Fails open: always exits 0, because a hook that blocks compaction leaves a session stuck. A failure is a loud ledger row instead.
  */
@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, CONTAINER_ROOT, LEDGER_ROOT, SCRIPTS_SHELF_DIR, VAULT_ROOT } from '../local-config.ts';
 import { openStore } from '../lib/journal/store.ts';
-import { errorLine, HOOK_USED, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_STARTED, snapshotDirty, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
+import { errorLine, handoffFresh, HOOK_USED, newestHandoff, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_STARTED, snapshotDirty, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { resolveWindowId, windowEnv } from '../lib/window-id.ts';
 
@@ -33,13 +33,14 @@ const MARKS = ['--model', 'unrecorded', '--used', HOOK_USED];
 export interface PrecompactDeps {
   /** Runs journal.ts with the forwarded flags; ok false carries the reason. */
   journal: (args: string[], timeoutMs?: number) => { ok: boolean; out: string };
-  /** Where this hook writes its own handoff for a date: one file it overwrites each run, so compactions never use up the day's b..z suffixes. */
   /** The hook's own handoff file for one window and day: the window is in the name so two windows compacting the same day keep their own. */
   handoffPath: (date: string, window: string) => string;
   readLedger: () => LedgerRow[];
+  /** The newest handoff file of any kind in the journal folder, as `newestHandoff` reads it; null when there is none. */
+  newestHandoff: () => { name: string; at: string } | null;
   readTranscript: (path: string) => string;
   /** Copies the snapshot until `deadline` (epoch ms); null when no scripts shelf is configured. */
-  snapshot: (date: string, deadline: number) => { worktrees: number; files: number; skipped: number; partial: boolean; capped: boolean } | null;
+  snapshot: (date: string, deadline: number) => { worktrees: number; copied: number; current: number; skipped: number; partial: boolean; capped: boolean } | null;
   now: () => Date;
 }
 
@@ -75,6 +76,9 @@ export function decisionsOnly(input: PrecompactInput & { reason?: string }, deps
   }
 }
 
+/** Whole minutes, at least 1, for the marker's "N min behind". */
+const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000));
+
 /** Runs the four steps and returns the marker row's text. Never throws. */
 export function precompact(input: PrecompactInput, deps: PrecompactDeps): string {
   // The session tag pairs this run's started row with its result row, so another session's rows cannot hide a killed run.
@@ -87,16 +91,29 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
     try { return fn(); } catch (e) { failed.push(`${name}: ${(e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 100)}`); return null; }
   };
   const date = deps.now().toISOString().slice(0, 10);
-  // No worktree sweep (it took minutes on a big container) and a cap on the child, so the whole hook stays under its harness timeout.
-  const window = resolveWindowId({ session: input.session_id, ...windowEnv() });
-  step('handoff', () => { const r = deps.journal(['handoff', '--all', '--no-worktree-sweep', '--force', '--window', window, '--out', deps.handoffPath(date, window)], HANDOFF_BUDGET_MS); if (!r.ok) throw new Error(r.out || 'journal.ts handoff failed'); });
-  const snap = step('snapshot', () => { const r = deps.snapshot(date, started + SNAPSHOT_DEADLINE_MS); if (!r) throw new Error('scripts_dir is not set'); if (r.partial) throw new Error(`time budget reached after ${r.worktrees} worktree(s)`); if (r.capped) throw new Error(`file or size cap reached after ${r.files} file(s); later source was not copied`); return r; });
+  // Decisions first, so the asks they raise are in the ledger before the handoff is judged and written.
   const found = { raised: 0, count: 0 };
   step('decisions', () => { Object.assign(found, raiseDecisions(input, deps)); });
   const { raised, count } = found;
+  // No worktree sweep (it took minutes on a big container) and a cap on the child, so the whole hook stays under its harness timeout.
+  const window = resolveWindowId({ session: input.session_id, ...windowEnv() });
+  let handoff = 'handoff current';
+  let handoffRepaired = false;
+  step('handoff', () => {
+    const covered = handoffFresh(deps.readLedger(), deps.newestHandoff());
+    if (covered.fresh) return;
+    const r = deps.journal(['handoff', '--all', '--no-worktree-sweep', '--force', '--window', window, '--out', deps.handoffPath(date, window)], HANDOFF_BUDGET_MS);
+    if (!r.ok) throw new Error(r.out || 'journal.ts handoff failed');
+    handoffRepaired = true;
+    handoff = Number.isFinite(covered.behindMs) ? `handoff rewritten (${minutes(covered.behindMs)} min behind)` : 'handoff rewritten (none before)';
+  });
+  const snap = step('snapshot', () => { const r = deps.snapshot(date, started + SNAPSHOT_DEADLINE_MS); if (!r) throw new Error('scripts_dir is not set'); if (r.partial) throw new Error(`time budget reached after ${r.worktrees} worktree(s)`); if (r.capped) throw new Error(`file or size cap reached after ${r.copied} file(s); later source was not copied`); return r; });
+  const allCurrent = !handoffRepaired && !raised && !(snap?.copied ?? 0);
   const text = failed.length
     ? `${PRECOMPACT_INCOMPLETE}: ${failed.join('; ')} (trigger ${trigger})`
-    : `${PRECOMPACT_MARK}: handoff written, ${snap?.files ?? 0} file(s) snapshotted from ${snap?.worktrees ?? 0} worktree(s), ${count} unledgered decision(s) raised in ${raised} ask(s) (trigger ${trigger})`;
+    : allCurrent
+      ? `${PRECOMPACT_MARK}: all current (trigger ${trigger})`
+      : `${PRECOMPACT_MARK}: ${handoff}, snapshot copied ${snap?.copied ?? 0} (${snap?.current ?? 0} current), decisions raised ${count} in ${raised} ask(s) (trigger ${trigger})`;
   if (!deps.journal(['log', text, '--kind', 'note', ...MARKS]).ok) console.error(`precompact hook: could not append the marker row: ${text}`);
   return text;
 }
@@ -114,6 +131,7 @@ export function realDeps(argv: string[]): PrecompactDeps {
       return { ok: !r.error && r.status === 0, out: errorLine(r.stderr || r.stdout || r.error?.message || '') };
     },
     readLedger: () => store.readLedger(),
+    newestHandoff: () => newestHandoff(store.dir),
     readTranscript: (p) => readFileSync(p, 'utf8'),
     snapshot: (date, deadline) => (SCRIPTS_SHELF_DIR && CONTAINER_ROOT ? snapshotDirty(CONTAINER_ROOT, join(SCRIPTS_SHELF_DIR, 'scratch', 'snapshots', date), Date.now(), deadline) : null),
     now: () => new Date(),
