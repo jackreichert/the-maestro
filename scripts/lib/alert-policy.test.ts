@@ -128,6 +128,23 @@ test('a failed send stamps the attempt: a notifier that delivers then exits non-
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a failed DOWN send is retried on the backoff, not marked alerted', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'alerts-'));
+  try {
+    const down = { state: 'down' as const, line: 'DOWN' };
+    let attempts = 0;
+    const tick = (now: number, status: number) => runAlerts({ eventDir: dir, command: ['say-it'], now, entries: [], health: down, config: CFG, run: () => { attempts += 1; return { status }; } });
+    tick(NOON, 0);
+    // Ticks until the DOWN is due, then it fails.
+    const due = NOON + HEALTH_AFTER_MS;
+    assert.equal(tick(due, 1), null);
+    assert.equal(attempts, 1);
+    assert.equal(readAlertState(dir).badAlerted, false, 'a failed send must not mark the outage alerted');
+    assert.match(tick(due + 40 * 60_000, 0) ?? '', /DOWN/, 'retried after the first backoff');
+    assert.equal(readAlertState(dir).badAlerted, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('SENTINEL: free text in a summary never reaches the notifier argv', () => {
   const dir = mkdtempSync(join(tmpdir(), 'alerts-'));
   try {

@@ -150,8 +150,8 @@ export function runAlerts({ eventDir, command, now, entries, health, config, run
     if (!d.text) { if (d.state.badSince !== state.badSince || d.state.badAlerted !== state.badAlerted) writeAlertState(eventDir, d.state); return null; }
     const r = run(command[0] as string, [...command.slice(1), d.text]);
     if (r?.error || r?.status) {
-      // The notifier may have delivered before it failed (non-zero exit, or killed by the timeout), so the attempt counts against the rate limit; events stay unalerted for the retry.
-      writeAlertState(eventDir, { ...state, badSince: d.state.badSince, badAlerted: d.state.badAlerted, lastSentAt: now, failures: Math.min(state.failures + 1, MAX_BACKOFF_DOUBLINGS) });
+      // The notifier may have delivered before it failed (non-zero exit, or killed by the timeout), so the attempt counts against the rate limit; events, the DOWN/STALLED text and the start text stay unsent for the retry (only the health clock moves; badSince 0 means the loop recovered, so the flag clears).
+      writeAlertState(eventDir, { ...state, badSince: d.state.badSince, badAlerted: d.state.badSince ? state.badAlerted : false, lastSentAt: now, failures: Math.min(state.failures + 1, MAX_BACKOFF_DOUBLINGS) });
       console.error(`alert send failed: ${r.error?.message ?? `exit ${r.status}`}`);
       return null;
     }
