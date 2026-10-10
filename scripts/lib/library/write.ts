@@ -13,7 +13,7 @@ import type { LeaseContext } from '../journal/leases.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 import { describeFindings, scanFields, scanText as scanShared } from '../secret-scan.ts';
 import { COMPOSER, MAX_LINES } from './rules.ts';
-import { MAX_LINE } from './scan.ts';
+import { MAX_LINE, scanText as scanPage } from './scan.ts';
 import { COMPOSER_ITEM, REJECT_MAX, curatedProblems, pendingLearned } from './composer.ts';
 import { WITHHELD, safeLine } from './safe-text.ts';
 
@@ -95,9 +95,20 @@ export function forceComposer(text: string): string {
   return lines.join('\n');
 }
 
+/** The page as a reader sees it: every `<!-- ... -->` span (an unclosed one runs to the end) removed, repeated until nothing changes. */
+function stripComments(text: string): string {
+  let t = text;
+  for (;;) {
+    const next = t.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+    if (next === t) return t;
+    t = next;
+  }
+}
+
 /**
  * Every reason `text` may not become the page `page`: library-check's rules (all nine, over the staged text), the shared scanner over the
- * whole page, and the comment-split check line by line (a token split by a comment delimiter, which neither scanner sees raw).
+ * whole page, the same scanners over the whole page with comments stripped (a token split across a multi-line comment), and the
+ * comment-split check line by line (a token split by a comment delimiter, which neither scanner sees raw).
  * Messages name the rule and the line, never the match.
  */
 export function pageProblems(vault: string, page: string, text: string): string[] {
@@ -107,6 +118,8 @@ export function pageProblems(vault: string, page: string, text: string): string[
   for (const f of report?.findings ?? []) out.push(`${f.rule}${f.line ? `:${f.line}` : ''}: ${f.message}`);
   const shared = scanShared(text);
   for (const f of shared) out.push(`scanner: ${f.rule} (${f.class}) shape in the page (the match is not printed)`);
+  const rendered = stripComments(text);
+  if (rendered !== text && (scanShared(rendered).length || scanPage(rendered).length)) out.push('comment-split:page: the page fails the scan once its comments are removed (the match is not printed)');
   text.split('\n').forEach((line, i) => { if (line.length <= MAX_LINE && safeLine(line, MAX_LINE) === WITHHELD) out.push(`comment-split:${i + 1}: this line fails the scan once comment delimiters are removed (the match is not printed)`); else if (line.length > MAX_LINE) out.push(`size:${i + 1}: line over ${MAX_LINE} characters, not scanned`); });
   return out;
 }

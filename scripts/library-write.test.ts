@@ -118,6 +118,18 @@ test('a token split by a comment delimiter is refused by the comment-split check
   assert.equal(existsSync(join(f.root, PAGE)), false);
 });
 
+test('a token split across a multi-line comment is refused', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  const tail = 'a1B2'.repeat(9);
+  const split = `ghp_a1B2<!-- (verified 2026-10-08, src/sync.ts:40)\n-->${tail.slice(4)} (verified 2026-10-08, src/sync.ts:40)`;
+  const r = f.cli('write', PAGE, '--from', f.stage(GOOD.replace('02:00', split)), '--holder', holder);
+  assert.equal(r.code, 1, r.out + r.err);
+  assert.match(r.err, /comment-split:page/, 'caught by the whole-page comment-stripped scan');
+  assert.ok(!r.err.includes(tail));
+  assert.equal(existsSync(join(f.root, PAGE)), false);
+});
+
 test('a refused rewrite leaves the existing page byte for byte', () => {
   const f = fixture();
   const holder = holderOf(f.cli('begin').out);
