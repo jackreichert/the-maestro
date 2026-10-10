@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * Derived, disposable SQLite FTS5 index over the ledger, vault tickets and handoff notes.
+ * Derived, disposable SQLite FTS5 index over the ledger, vault tickets, handoff notes and library pages.
  * The JSONL stays the source of truth; deleting the DB loses nothing.
  *
  *   ledger-index.ts index                       full rebuild, atomic rename into place
- *   ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json]
+ *   ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive|library] [--stream X] [--limit 20] [--json]
+ *   ledger-index.ts find "<fts query>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
+ *                                               library pages, best first: path, kind, read-when line, verified-at age, stale flag
  *   ledger-index.ts stats [--json]              counts per table, open items per stream
  *   ledger-index.ts query <name> [args] [--json]  named queries and read-only --sql; `query` lists them
  *
@@ -16,13 +18,22 @@
  *
  * DB: $LEDGER_ROOT/Projects/<project>/Index/maestro.sqlite (project defaults to dev-env).
  * Roots: --vault, then $LEDGER_ROOT, then $VAULT_ROOT (no default). Tickets: --tickets-vault,
- * then $VAULT_ROOT (no default; tickets are skipped when unset). `search` rebuilds first if a source changed.
+ * then $VAULT_ROOT (no default; tickets and library pages are skipped when unset). `search` and `find` rebuild first if a source changed.
+ *
+ * Library: the pages under Projects/<repo>/Knowledge and Runbooks of the tickets vault (the set library-check reads) go into `library`
+ * (one row per page with its frontmatter facets), `library_fts` (the ranked body search `find` uses) and `links` (one row per wikilink
+ * and depends-on/supersedes/superseded-by, resolved to a library page when it names one). `find` skips superseded pages unless asked. A page
+ * that is not a library page, or has no `Read when:` line, is still indexed; it prints `Read when: (none)`.
  */
 import { DatabaseSync } from 'node:sqlite';
 import type { SQLInputValue, SQLOutputValue } from 'node:sqlite';
 import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
+import { discover } from './library-check.ts';
+import { readLibrary, linkRows } from './lib/library/pages.ts';
+import { findPages, anyWordQuery, renderHit } from './lib/library/find.ts';
+import type { FoundPage } from './lib/library/find.ts';
 import { isOpen, readRegistry, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 import type { LedgerRow } from './lib/ledger-core.ts';
 
@@ -45,10 +56,10 @@ const retroOf = (e: LedgerRow): string | undefined => e.retro as string | undefi
 /** A row field as text, empty when unset. */
 const str = (v: unknown): string => (v || '') as string;
 
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '3';
 const argv = process.argv.slice(2);
 const cmd = argv[0];
-const VALUE_FLAGS = new Set(['--vault', '--tickets-vault', '--project', '--source', '--stream', '--limit', '--since', '--status', '--type', '--sql']);
+const VALUE_FLAGS = new Set(['--vault', '--tickets-vault', '--project', '--source', '--stream', '--limit', '--since', '--status', '--type', '--sql', '--repo', '--kind', '--component']);
 function arg(name: string): string | null;
 function arg(name: string, fallback: string): string;
 function arg(name: string, fallback: string | null = null): string | null {
@@ -175,6 +186,7 @@ function fingerprint() {
         }) : [];
     const tf = walkTickets();
     const r = st(registryPath);
+    const lib = ticketsRoot ? discover(ticketsRoot).map((rel) => [rel, statSync(join(ticketsRoot, rel)).mtimeMs]) : [];
     const retros = [...archiveState(readLedgerRows()).events.values()].map((e) => {
         const retro = retroOf(e);
         const rs = retro ? st(retro) : null;
@@ -185,6 +197,7 @@ function fingerprint() {
         registry: r ? { size: r.size, mtime: r.mtimeMs } : null,
         retros,
         handoffs,
+        library: lib,
         tickets: { count: tf.length, maxMtime: Math.max(0, ...tf.map((p) => statSync(p).mtimeMs)) },
     };
 }
@@ -207,6 +220,7 @@ function rebuild(): { counts: Record<string, number>; ms: number } {
     const rowHidden = (r: LedgerRow): boolean => (r.kind === 'fact' ? streamArchived(mapStream(r.stream)) : hidden.has(r.closes || r.tags || r.carries || r.annotates || r.id || ''));
     const tickets = walkTickets().map(parseTicket);
     const handoffs = readHandoffs();
+    const library = ticketsRoot ? readLibrary(ticketsRoot) : [];
 
     const db = new DatabaseSync(tmp);
     try {
@@ -220,6 +234,9 @@ function rebuild(): { counts: Record<string, number>; ms: number } {
             CREATE TABLE tickets (id TEXT, title TEXT, status TEXT, type TEXT, priority TEXT, labels TEXT,
                 reviewed TEXT, external TEXT, path TEXT PRIMARY KEY, body TEXT);
             CREATE TABLE handoffs (file TEXT, section INTEGER, heading TEXT, body TEXT, PRIMARY KEY (file, section));
+            CREATE TABLE library (path TEXT PRIMARY KEY, repo TEXT, kind TEXT, title TEXT, read_when TEXT, components TEXT, stream TEXT, status TEXT, verified_at TEXT);
+            CREATE TABLE links (src TEXT, target TEXT, via TEXT, target_path TEXT);
+            CREATE VIRTUAL TABLE library_fts USING fts5(title, read_when, components, body, tokenize='unicode61');
             CREATE VIRTUAL TABLE docs USING fts5(source, ref, title, body, stream UNINDEXED, archived UNINDEXED, tokenize='unicode61');
         `);
         db.exec('BEGIN');
@@ -229,6 +246,9 @@ function rebuild(): { counts: Record<string, number>; ms: number } {
         const insTicket = ins('INSERT OR REPLACE INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?)');
         const insHand = ins('INSERT INTO handoffs VALUES (?,?,?,?)');
         const insDoc = ins('INSERT INTO docs (source, ref, title, body, stream, archived) VALUES (?,?,?,?,?,?)');
+        const insPage = ins('INSERT INTO library (rowid, path, repo, kind, title, read_when, components, stream, status, verified_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
+        const insPageFts = ins('INSERT INTO library_fts (rowid, title, read_when, components, body) VALUES (?,?,?,?,?)');
+        const insLink = ins('INSERT INTO links VALUES (?,?,?,?)');
         const s = (v: unknown): string | null => (v === undefined || v === null ? null : Array.isArray(v) ? v.join(',') : String(v));
 
         rows.forEach((r, n) => {
@@ -253,6 +273,13 @@ function rebuild(): { counts: Record<string, number>; ms: number } {
             insHand.run(h.file, h.section, h.heading, h.body);
             insDoc.run('handoffs', `${h.file}#${h.section}`, h.heading, h.body, null, '0');
         }
+        library.forEach((pg, n) => {
+            const stream = mapStream(pg.stream || undefined);
+            insPage.run(n + 1, pg.path, pg.repo, pg.kind, pg.title, pg.readWhen, pg.components.join(','), stream ?? '', pg.status, pg.verifiedAt);
+            insPageFts.run(n + 1, pg.title, pg.readWhen, pg.components.join(' '), pg.body);
+            insDoc.run('library', pg.path, pg.title, [pg.readWhen, pg.components.join(' '), pg.body].filter(Boolean).join('\n'), stream ?? null, '0');
+        });
+        for (const l of linkRows(library)) insLink.run(l.src, l.target, l.via, l.targetPath);
         // One pointer per archived stream: the retro's summary, so a default search still finds the epic.
         for (const [stream, e] of archivedEvents) {
             const retroPath = retroOf(e);
@@ -281,7 +308,7 @@ function counts(): Record<string, number> {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
         const out: Record<string, number> = {};
-        for (const t of ['rows', 'items', 'tickets', 'handoffs', 'docs', 'meta']) {
+        for (const t of ['rows', 'items', 'tickets', 'handoffs', 'library', 'links', 'docs', 'meta']) {
             out[t] = (db.prepare(`SELECT count(*) AS n FROM ${t}`).get() as { n: number }).n;
         }
         return out;
@@ -304,11 +331,30 @@ function cmdIndex(): void {
     console.log(Object.entries(c).map(([k, v]) => `${k}=${v}`).join(' ') + `  (${ms} ms)`);
 }
 
+/**
+ * Runs an FTS5 query through `run`. Bare ids such as KEY-1234 or my_db are FTS5 syntax errors, so a failed parse is retried once
+ * with those tokens quoted; a query that still does not parse exits with advice. Any other error is rethrown.
+ */
+function matchQuery<T>(query: string, run: (match: string) => T): T {
+    const quoted = query.replace(/"[^"]*"|\S+/g, (t) => (t.startsWith('"') || /^\w+\*?$/.test(t) || /^(AND|OR|NOT)$/.test(t) ? t : `"${t.replace(/"/g, '')}"`));
+    try {
+        try { return run(query); } catch (e) {
+            if (quoted === query) throw e;
+            return run(quoted);
+        }
+    } catch (e) {
+        if (/fts5|syntax|no such column|unterminated|malformed/i.test(errorMessage(e))) {
+            fail(`Could not parse search query: ${errorMessage(e)}\nTry plain words, "quoted phrases", prefix*, AND/OR/NOT.`);
+        }
+        throw e;
+    }
+}
+
 function cmdSearch(): void {
     const query = positional.join(' ').trim();
-    if (!query) fail('Usage: ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive] [--stream X] [--limit 20] [--json] [--include-archived]');
+    if (!query) fail('Usage: ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive|library] [--stream X] [--limit 20] [--json] [--include-archived]');
     const source = arg('source');
-    if (source && !['ledger', 'tickets', 'handoffs', 'archive'].includes(source)) fail('--source must be ledger, tickets, handoffs or archive.');
+    if (source && !['ledger', 'tickets', 'handoffs', 'archive', 'library'].includes(source)) fail('--source must be ledger, tickets, handoffs, archive or library.');
     const limit = Number.parseInt(arg('limit', '20'), 10);
     if (!Number.isInteger(limit) || limit < 1) fail('--limit must be a positive integer.');
     if (isStale()) rebuild();
@@ -322,24 +368,40 @@ function cmdSearch(): void {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     const run = (match: string): Hit[] => db.prepare(`SELECT source, ref, title, snippet(docs, 3, '[', ']', '…', 14) AS snippet, bm25(docs) AS score
         FROM docs WHERE ${where.join(' AND ')} ORDER BY bm25(docs) LIMIT ${limit}`).all(match, ...params.slice(1)) as unknown as Hit[];
-    // Bare ids such as KEY-1234 or my_db are FTS5 syntax errors; retry with those tokens quoted.
-    const quoted = query.replace(/"[^"]*"|\S+/g, (t) => (t.startsWith('"') || /^\w+\*?$/.test(t) || /^(AND|OR|NOT)$/.test(t) ? t : `"${t.replace(/"/g, '')}"`));
     let hits: Hit[];
-    try {
-        try { hits = run(query); } catch (e) {
-            if (quoted === query) throw e;
-            hits = run(quoted);
-        }
-    } catch (e) {
-        if (/fts5|syntax|no such column|unterminated|malformed/i.test(errorMessage(e))) {
-            fail(`Could not parse search query: ${errorMessage(e)}\nTry plain words, "quoted phrases", prefix*, AND/OR/NOT.`);
-        }
-        throw e;
-    } finally { db.close(); }
+    try { hits = matchQuery(query, run); } finally { db.close(); }
 
     if (has('json')) { console.log(JSON.stringify(hits, null, 2)); return; }
     if (!hits.length) { console.log('(no hits)'); return; }
     for (const h of hits) console.log(`${h.ref}  [${h.source}]  ${h.title}\n    ${h.snippet.replace(/\s+/g, ' ')}`);
+}
+
+function cmdFind(): void {
+    const query = positional.join(' ').trim();
+    const usage = 'Usage: ledger-index.ts find "<fts query>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]';
+    if (!query) fail(usage);
+    const limit = Number.parseInt(arg('limit', '10'), 10);
+    if (!Number.isInteger(limit) || limit < 1) fail('--limit must be a positive integer.');
+    // With no vault there are no pages to find; saying "no match" would read as an answer.
+    if (!ticketsRoot) fail('The library vault is not set. Set VAULT_ROOT or pass --tickets-vault <path>.');
+    // A path or repo name that does not exist would otherwise read as "no match".
+    if (!existsSync(join(ticketsRoot, 'Projects'))) fail(`No Projects folder under ${ticketsRoot}: check --tickets-vault (or VAULT_ROOT).`);
+    const repoArg = arg('repo');
+    if (repoArg && (!/^[\w][\w.-]*$/.test(repoArg) || !existsSync(join(ticketsRoot, 'Projects', repoArg)))) fail(`No project "${repoArg}" under ${join(ticketsRoot, 'Projects')}.`);
+    if (isStale()) rebuild();
+    const opts = { repo: arg('repo'), kind: arg('kind'), component: arg('component'), limit, includeSuperseded: has('include-superseded'), neighbors: has('neighbors') };
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    let hits: FoundPage[];
+    try {
+        hits = matchQuery(query, (m) => findPages(db, m, opts));
+        // A sentence rarely has every word in one page: fall back to any word, still ranked by bm25, and say so in the output.
+        const any = anyWordQuery(query);
+        if (!hits.length && any) hits = findPages(db, any, opts, 'any');
+    } finally { db.close(); }
+    if (has('json')) { console.log(JSON.stringify(hits, null, 2)); return; }
+    if (!hits.length) { console.log('(no library pages match)'); return; }
+    if (hits[0].matched === 'any') console.log('(no page has every word; showing pages that match any)');
+    console.log(hits.map(renderHit).join('\n'));
 }
 
 function cmdStats(): void {
@@ -371,7 +433,7 @@ Named queries (each rebuilds the index first if a source changed):
   tickets [--project P] [--status S] [--type T]   counts by project, type, status; list when filtered
   --sql "<select>"                          arbitrary SQL on a read-only connection
 
-Tables: rows, items, tickets, handoffs, docs, meta.
+Tables: rows, items, tickets, handoffs, library, links, docs, meta (library_fts backs the find command).
 Every query hides archived streams unless --include-archived; --sql is raw (see the archived columns).`;
 
 const clip = (v: unknown, n: number): string => {
@@ -505,6 +567,7 @@ try {
     switch (cmd) {
         case 'index': cmdIndex(); break;
         case 'search': cmdSearch(); break;
+        case 'find': cmdFind(); break;
         case 'stats': cmdStats(); break;
         case 'query': cmdQuery(); break;
         default:

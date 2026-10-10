@@ -1,5 +1,5 @@
 /** Command-line parsing for journal: flags, boolean flags and positionals. Pure: it reads only the argv it is given. */
-const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all', '--update-context', '--pending', '--snapshot']);
+const BOOL_FLAGS = new Set(['--json', '--dry-run', '--full', '--open', '--allow-unmarked', '--new-stream', '--force', '--include-archived', '--footer', '--apply', '--strict', '--fast', '--verbose', '--all', '--update-context', '--pending', '--snapshot', '--neighbors', '--include-superseded']);
 export interface Args {
     /** The value after `--name`, or `fallback` when the flag is absent or followed by another flag. */
     arg(name: string): string | null;

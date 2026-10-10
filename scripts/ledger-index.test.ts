@@ -59,7 +59,7 @@ beforeEach(() => {
 test('index builds every table and skips _Index.md', () => {
     const r = run('index');
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /rows=7 items=4 tickets=2 handoffs=2 docs=11 meta=4/);
+    assert.match(r.out, /rows=7 items=4 tickets=2 handoffs=2 library=0 links=0 docs=11 meta=4/);
 });
 
 test('rebuild is idempotent after deleting the DB', () => {

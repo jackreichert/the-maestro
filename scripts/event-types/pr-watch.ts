@@ -82,8 +82,11 @@ export interface Snapshot {
   reported: Record<string, string>;
   copilot?: Tracks;
   /** PRs missing from the search but not confirmed closed, keyed `owner/repo#n`, with when each was first missed (ms). Their Copilot tracks stay in `copilot`. */
-  absent?: Record<string, { since: number }>;
+  absent?: Record<string, Absent>;
 }
+
+/** When a PR was first missed and whether it is a self-review repo's (so a later LEFT-OPEN-SET keeps its tag). Its repo and number come from the key. */
+export interface Absent { since: number; selfReview?: boolean }
 
 /** Backstop: a PR unseen for this long stops being held, so the state cannot grow forever. */
 export const ABSENT_TTL_MS = 24 * 3600 * 1000;
@@ -246,7 +249,7 @@ function looksTruncated(prev: Board, next: Board): boolean {
 
 // A PR missing from one search result is only reported once GitHub confirms it is no longer open;
 // a lagging search index must not look like a merge.
-function confirmedClosed(pr: BoardPr, ctx: Ctx): boolean {
+function confirmedClosed(pr: Pick<BoardPr, 'number' | 'repo'>, ctx: Ctx): boolean {
   const r = ctx.run('gh', ['pr', 'view', String(pr.number), '--repo', pr.repo, '--json', 'state', '-q', '.state']);
   return r.status === 0 && r.stdout.trim() !== 'OPEN';
 }
@@ -326,14 +329,21 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   requestCopilot(board, ctx);
   const missing = prev ? Object.entries(prev.board).filter(([key]) => !board[key]) : [];
   const closed = missing.filter(([, pr]) => confirmedClosed(pr, ctx));
-  // pr-watch treats a PR missing from the search as open until confirmedClosed says otherwise (asked on the first miss only),
-  // so it is held, with its Copilot tracks, across any number of misses: until it returns, or the 24h backstop.
+  // pr-watch treats a PR missing from the search as open until confirmedClosed says otherwise, so it is held, with its Copilot tracks,
+  // until it returns, is confirmed closed, or the 24h backstop. A held PR is no longer in the board, so each tick asks GitHub about it
+  // again: without that a PR that merged while missing from the search would never raise LEFT-OPEN-SET.
   const now = ctx.now ?? Date.now();
-  const absent: Record<string, { since: number }> = {};
-  for (const [key] of missing) if (!closed.some(([k]) => k === key)) absent[key] = { since: now };
-  for (const [key, a] of Object.entries(prev?.absent ?? {})) if (!board[key] && !(key in absent) && now - a.since <= ABSENT_TTL_MS) absent[key] = a;
+  const absent: Record<string, Absent> = {};
+  for (const [key, pr] of missing) if (!closed.some(([k]) => k === key)) absent[key] = { since: now, ...(pr.selfReview ? { selfReview: true } : {}) };
+  const heldLeft: string[] = [];
+  for (const [key, a] of Object.entries(prev?.absent ?? {})) {
+    if (board[key] || key in absent || now - a.since > ABSENT_TTL_MS) continue;
+    const m = key.match(/^(.+)#(\d+)$/);
+    if (m && confirmedClosed({ repo: m[1] as string, number: Number(m[2]) }, ctx)) heldLeft.push(`${a.selfReview ? '[self-review] ' : ''}LEFT-OPEN-SET ${key} (merged or closed) https://github.com/${m[1]}/pull/${m[2]}`);
+    else absent[key] = a;
+  }
   const held = new Set(Object.keys(absent));
-  const left = closed.map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`);
+  const left = [...closed.map(([key, pr]) => `${label(pr)}LEFT-OPEN-SET ${key} (merged or closed) ${pr.url}`), ...heldLeft];
   // `reported` is what this snapshot's standing conditions look like once told (so the next diff stays quiet about them).
   // A silent (baseline) first check reports nothing at all; a normal first check has told nobody yet, so diff() speaks.
   // `carried` hands diff() the old file's snapshot when that is what this check compared against.

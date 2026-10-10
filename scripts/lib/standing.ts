@@ -76,7 +76,7 @@ export const CHECKS: Record<string, Check> = {
   },
   'tracker-transitions': ({ pendingTransitions }) => {
     const keys = pendingTransitions();
-    return keys.length ? { ok: false, detail: `${keys.length} not transitioned: ${keys.slice(0, 5).join(', ')}` } : { ok: true, detail: 'none pending' };
+    return keys.length ? { ok: false, detail: `${keys.length} not transitioned: ${keys.slice(0, 5).join(', ')}. Not Jira keys? Narrow \`tracker_key_pattern\` (e.g. \\bAH-\\d+\\b) or add prefixes to \`local_key_prefixes\` in the local config` } : { ok: true, detail: 'none pending' };
   },
 };
 

@@ -38,6 +38,8 @@ export interface PrCard {
   unresolved: number; review: string; flags: string[]; twinOf?: number; stackedOn?: number;
   /** The repo is in `self_review_repos`: only the user reviews it, so the board lists it apart from the org's PRs. Older servers omit it. */
   selfReview?: boolean;
+  /** When the PR was opened; absent when the server has no date for it. */
+  createdAt?: string;
 }
 
 export interface Priority { text: string; stream?: string }
@@ -73,11 +75,22 @@ export interface PodiumState {
 
 export interface ChartsData {
   days: string[];
-  throughput: { date: string; total: number; byStream: Record<string, number> }[];
+  throughput: { date: string; total: number; byStream: Record<string, number>; ids: string[] }[];
   ageBuckets: { label: string; count: number; ids: string[] }[];
   prMix: { byState: Record<string, number>; byStream: Record<string, Record<string, number>> };
   modelMix: { byFamily: Record<string, number>; source: 'ledger' | 'tokens' };
+  /** Finished items in the window, newest first, so a bar can open them; the server caps the list. */
+  doneItems: ChartDoneItem[];
+  /** Open non-draft PRs by age, split by whether the review-queue cap counts them. Empty when the server predates it. */
+  prAge: PrAge;
+  /** The review-queue count against its cap, or why there is none. */
+  reviewQueue: { count: number; cap: number } | { unavailable: string };
 }
+
+export interface ChartDoneItem { id: string; stream: string; text: string; finishedAt: string; ticket?: Ref }
+/** A pull request as a chart mark links to it; `createdAt` is absent when the server has none. */
+export interface PrRef { repo: string; number: number; title: string; url: string; stream: string; createdAt?: string }
+export interface PrAge { buckets: { label: string; inQueue: PrRef[]; other: PrRef[] }[]; unknownAge: { inQueue: PrRef[]; other: PrRef[] }; drafts: number }
 
 /** `ask-busy`: a card is partway through an action (true) or has finished it (false); the page holds redraws until it has. */
 export interface AskBusyDetail { busy: boolean }
@@ -102,12 +115,18 @@ export interface HomeEpic {
 /** Something the files cannot tell, with the fix in its text. `epic` names the epic block it counts toward. */
 export interface HomeUnknown { kind: string; text: string; ref?: Ref; epic?: string }
 
+/** One link in the rail. The server builds `url` (http, https or `obsidian://open`); the client re-checks it before it becomes an href. */
+export interface RailLink { label: string; kind: 'note' | 'tracker' | 'pr' | 'web'; url: string; meta?: string }
+export interface RailGroup { group: 'pinned' | 'epics' | 'docs' | 'prs' | 'runbooks'; items: RailLink[]; more: number }
+
 /** The part of `GET /api/streams/:name/home` this client draws; fields it does not read are left out here and ignored on arrival. */
 export interface StreamHome {
   stream: string;
   epics: HomeEpic[];
   loose: HomeTicket[];
   left: { inProgress: HomeTicket[]; blocked: HomeTicket[]; notStarted: HomeTicket[]; truncated: number };
+  doneMeans: { epic: string; text: string }[];
+  links: RailGroup[];
   unknowns: HomeUnknown[];
   freshness: { prs: { fetchedAt: string | null; stale: boolean } };
 }

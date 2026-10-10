@@ -93,8 +93,12 @@ const FIELD_EXTRACTORS: ((summary: string) => Record<string, unknown>)[] = [
   (s) => { const m = s.match(/^(\d+) new message/); return m ? { count: Number(m[1]) } : {}; },
 ];
 
+/** pr-watch prefixes a line for a self-review repo with this tag; the kind is the same with or without it. */
+const SELF_REVIEW_TAG = /^\[self-review\] /;
+
 const kindOf = (summary: string): string => {
-  for (const [re, kind] of KIND_RULES) if (re.test(summary)) return kind;
+  const text = summary.replace(SELF_REVIEW_TAG, '');
+  for (const [re, kind] of KIND_RULES) if (re.test(text)) return kind;
   return 'other';
 };
 

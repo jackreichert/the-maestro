@@ -61,6 +61,9 @@
  *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
+ *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
+ *                                             library pages, best first: path, kind, read-when line, verified-at age, stale flag; --neighbors adds the pages one link away.
+ *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed
  *   journal.ts verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.ts render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.ts tag <id> --stream <name>      file an existing item under a workstream
@@ -197,7 +200,7 @@ import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'curated'];
 // `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
 if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
@@ -491,6 +494,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
+    if (kind === 'curated') die('A curated row is written only by `library-write.ts curate`, which holds the composer lease and checks the page.');
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
@@ -836,10 +840,10 @@ const leaseSummary = (g: Groups, window = windowId) => {
     return summarizeLeases(foldLeases(readLedger()), window, Date.now(), (id) => open.has(id));
 };
 
-/** `Leases: 2 mine, 1 other` for the footer, or '' unless another window holds a live lease: with one window the footer is unchanged. */
+/** `Leases: 2 mine, 1 other` for the footer whenever any live lease is held (this window's alone included), or '' when none is. */
 function leaseFooter(g: Groups, window?: string, markup = false): string {
     const s = leaseSummary(g, window ?? windowId);
-    if (!s.other) return '';
+    if (!s.mine && !s.other) return '';
     return markup ? `**Leases:** ${s.mine} mine, ${s.other} other` : `Leases: ${s.mine} mine, ${s.other} other`;
 }
 
@@ -1639,6 +1643,8 @@ function cmdClaims() {
  * runs before the first write, so a refusal leaves no file and no row. The claim is the one write that can
  * precede the file; it is released again if the file cannot be written.
  */
+const LIBRARY_LOOKUP_TIMEOUT_MS = 10000;
+
 function cmdBrief(): void {
     const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--as holder] [--pid n] [--read-only] [--details-file f] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
     const entries = readLedger();
@@ -1661,10 +1667,12 @@ function cmdBrief(): void {
     const words = target.text || '';
     const libraryArgs = ['--repo', repo || '', '--vault', vault, '--project', project, ...(VAULT_ROOT ? ['--tickets-vault', VAULT_ROOT] : []), words];
     const library = libraryBlock(
-        !repo ? null : existsSync(libraryScript) ? () => spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8' }) : null,
+        !repo ? null : existsSync(libraryScript) ? () => {
+            const r = spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8', timeout: LIBRARY_LOOKUP_TIMEOUT_MS });
+            return r.error ? { status: null, stdout: '', stderr: `lookup did not finish within ${LIBRARY_LOOKUP_TIMEOUT_MS} ms (${errorMessage(r.error)})` } : r;
+        } : null,
         !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
     );
-    if (!library.ok) die(`${library.error}\nNo brief was written: a brief never goes out with its library block missing.`);
 
     let details: string | undefined;
     const detailsFile = arg('details-file');
@@ -1673,7 +1681,7 @@ function cmdBrief(): void {
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
     const paths = briefPaths(outDir, target.id as string, writer);
     const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
-    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library: library.text, standing: block.stdout, details, writer, reportPath: paths.report });
+    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, writer, reportPath: paths.report });
     const why = `brief ${target.id}`;
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
@@ -2225,6 +2233,22 @@ function cmdTickets() {
     if (rows.length) console.log('Move each ticket, then: journal.ts log "moved <KEY> to <status>" --transitioned <KEY> ...');
 }
 
+// ── library lookup ──────────────────────────────────────────────────────────
+
+/** `find "<words>"`: hands the lookup to ledger-index.ts (the one place the library index is built and read) and relays its output and exit code. */
+function cmdFind() {
+    const query = positional.join(' ').trim();
+    if (!query) die('Usage: journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]');
+    const values = ['repo', 'kind', 'component', 'limit'].flatMap((k) => (arg(k) ? [`--${k}`, arg(k) as string] : []));
+    const flags = ['neighbors', 'include-superseded', 'json'].filter(has).map((k) => `--${k}`);
+    // The child writes straight to our stdout and stderr: no buffer to cap or to lose when this process exits, so a large result arrives whole.
+    const r = spawnSync(process.execPath, [
+        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags,
+        '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
+    ], { stdio: 'inherit' });
+    process.exitCode = r.status ?? 1;
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
 switch (cmd) {
@@ -2234,6 +2258,7 @@ switch (cmd) {
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
     case 'learned': cmdLearned(); break;
+    case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
     case 'drop': cmdClose('dropped'); break;

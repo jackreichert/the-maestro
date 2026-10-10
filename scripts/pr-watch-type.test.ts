@@ -79,6 +79,20 @@ test('threads, replies, comments, reviews and decision flips are reported; the u
   ]);
 });
 
+test('a PR missed while still open is asked about again, and LEFT-OPEN-SET fires when it later closes', () => {
+  const nodes = [1, 2, 3].map((n) => prNode(n));
+  const w = world({ pages: [nodes], prState: 'OPEN' });
+  const first = prWatch.check('open-prs', w.ctx());
+  w.serve({ pages: [nodes.slice(0, 2)], prState: 'OPEN' });
+  const second = prWatch.check('open-prs', w.ctx({ prev: first }));
+  assert.deepEqual(Object.keys(second.absent ?? {}), ['org/repo#3'], 'held after the first miss');
+  assert.deepEqual(prWatch.diff(second, prWatch.check('open-prs', w.ctx({ prev: second }))), [], 'still open: nothing yet');
+  w.serve({ pages: [nodes.slice(0, 2)], prState: 'MERGED' });
+  const third = prWatch.check('open-prs', w.ctx({ prev: second }));
+  assert.deepEqual(summaries(prWatch.diff(second, third)), ['LEFT-OPEN-SET org/repo#3 (merged or closed) https://github.com/org/repo/pull/3']);
+  assert.deepEqual(third.absent, {}, 'no longer held');
+});
+
 test('PRs past the first search page are not reported as having left the open set', () => {
   const nodes = Array.from({ length: 53 }, (_, i) => prNode(i + 1));
   const w = world({ pages: paged(nodes), prState: 'MERGED' });

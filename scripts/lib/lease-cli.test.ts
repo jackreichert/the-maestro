@@ -75,7 +75,7 @@ test('start "<text>" leases the new item to its window; brief refuses another wi
   } finally { t.done(); }
 });
 
-test('status --json and the footer carry lease counts for this window and others; they are absent from the footer when nothing is leased', () => {
+test('status --json and the footer carry lease counts for this window and others; they are absent from the footer only when nothing is leased', () => {
   const t = setup();
   try {
     const one = t.queue('one');
@@ -83,6 +83,7 @@ test('status --json and the footer carry lease counts for this window and others
     const quiet = t.run('a', 'status', '--footer').stdout;
     assert.doesNotMatch(quiet, /Leases/);
     t.run('a', 'start', one, ...MARK);
+    assert.match(t.run('a', 'status', '--footer').stdout, /\*\*Leases:\*\* 1 mine, 0 other/, 'this window alone holding the only live lease still shows a Leases line');
     t.run('b', 'start', two, ...MARK);
     const json = JSON.parse(t.run('a', 'status', '--json').stdout);
     assert.deepEqual([json.leases.mine, json.leases.other, json.leases.window], [1, 1, 'a']);

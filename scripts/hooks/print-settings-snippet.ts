@@ -9,7 +9,8 @@
  * `compact|clear` runs session-start-compact.ts (timeout 120 s; each command it runs is capped at 60 s).
  * SessionEnd with matcher `clear|resume|logout|prompt_input_exit|other` runs session-end-decisions.ts, the decision scan alone
  * (timeout 30 s; SessionEnd hooks otherwise get 1.5 s and never more than 60 s).
- * `--project` and `--vault` are passed through to every hook.
+ * PreToolUse with matcher `Bash` runs git-guard.ts (timeout 10 s), which takes no flags: it asks before risky git commands.
+ * `--project` and `--vault` are passed through to the three roll hooks, not to git-guard.
  */
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +24,7 @@ export function snippet(extra: string[]): object {
   return {
     hooks: {
       PreCompact: [{ matcher: 'auto|manual', hooks: [{ type: 'command', command: cmd('precompact.ts'), timeout: 120 }] }],
+      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'git-guard.ts'))].join(' '), timeout: 10 }] }],
       SessionEnd: [{ matcher: 'clear|resume|logout|prompt_input_exit|other', hooks: [{ type: 'command', command: cmd('session-end-decisions.ts'), timeout: 30 }] }],
       SessionStart: [{ matcher: 'compact|clear', hooks: [{ type: 'command', command: cmd('session-start-compact.ts'), timeout: 120 }] }],
     },

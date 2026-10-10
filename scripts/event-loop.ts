@@ -326,11 +326,12 @@ const ownersOf = (entries: InboxEntry[]): Map<string, string | undefined> => {
  * then re-reads: of several windows that all saw an unowned event free, only the one whose `seen` row is first in the file keeps it, so none is printed twice.
  */
 /** `beforeMark` runs between reading the inbox and marking: a test uses it to play a second window whose mark lands in that gap. */
-export function claimFor(dir: string, window: string | undefined, beforeMark: () => void = () => {}): InboxEntry[] {
+export function claimFor(dir: string, window: string | undefined, beforeMark: () => void = () => {}, limit: number = Infinity): InboxEntry[] {
   const me = window ?? '';
   const entries = readInbox(dir).filter((e) => e.actionable);
   const owners = ownersOf(entries);
-  const mine = entries.filter((e) => deliverableTo(e, me, owners.get(e.id)));
+  // `limit` caps how many are taken, so the rest stay unseen for the next caller (the hook shows a few headlines per turn).
+  const mine = entries.filter((e) => deliverableTo(e, me, owners.get(e.id))).slice(0, limit);
   if (!mine.length) return [];
   beforeMark();
   mark(dir, 'seen', mine.map((e) => e.id), Date.now(), window);

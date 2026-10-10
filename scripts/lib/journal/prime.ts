@@ -1,4 +1,4 @@
-import { RESUME_GH, VAULT_ROOT, TRACKER_KEY_PATTERN } from '../../local-config.ts';
+import { RESUME_GH, VAULT_ROOT, TRACKER_KEY_PATTERN, LOCAL_KEY_PREFIXES } from '../../local-config.ts';
 import { BOX, classify, gateStatus } from '../boxes.ts';
 import { approvalMap } from './approvals.ts';
 import { activeStreams } from './board.ts';
@@ -113,8 +113,9 @@ export function primeLines(ctx: PrimeContext): string[] {
 
 export const PENDING_WINDOW_DAYS = 14;
 
-/** Distinct tracker keys (tracker_key_pattern) in the given texts. */
-export const trackerKeys = (...texts: unknown[]): string[] => [...new Set(texts.flatMap((t) => String(t || '').match(new RegExp(TRACKER_KEY_PATTERN, 'g')) || []))];
+/** Distinct keys matching tracker_key_pattern in the given texts, minus local keys (local_key_prefixes) that no tracker holds. */
+export const trackerKeys = (...texts: unknown[]): string[] => [...new Set(texts.flatMap((t) => String(t || '').match(new RegExp(TRACKER_KEY_PATTERN, 'g')) || []))]
+    .filter((k) => !LOCAL_KEY_PREFIXES.includes(k.replace(/-\d+$/, '').toUpperCase()));
 
 /**
  * Done items finished on or after `since` that carry a tracker key (in the ticket field, the text, or the closing row)
