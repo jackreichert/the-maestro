@@ -1614,6 +1614,79 @@ test('roll archives and commits the ledger before it sweeps, and a --fast roll s
     assert.equal(existsSync(w.clean), false);
 });
 
+const maintainResult = (out: string): { ok: boolean; archivedDays: string[]; sweep: Record<string, number> | null; problems: string[] } =>
+    JSON.parse(must(out.split('\n').find((l) => l.startsWith('maintain-result ')), 'a maintain-result line').slice('maintain-result '.length));
+const todayUtc = (): string => new Date().toISOString().slice(0, 10);
+const rolledRows = () => ledger().filter((e) => e.kind === 'rolled');
+
+test('maintain archives a past day and sweeps clean worktrees, records branch-sweep, and a second run does nothing', () => {
+    const w = sweepWorld();
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    run('log', 'shipped yesterday', '--kind', 'done', '--date', daysAgo(1), ...MARK);
+    const first = runEnvIn(w.container, env, 'maintain', '--today', todayUtc());
+    assert.equal(first.code, 0, first.err);
+    assert.deepEqual(maintainResult(first.out), { ok: true, archivedDays: [daysAgo(1)], sweep: { removed: 1, pruned: 0, kept: 1, skipped: 0, failed: 0 }, problems: [] });
+    assert.ok(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', `${daysAgo(1)}.md`)));
+    assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [false, true], 'the clean worktree goes, the dirty one stays');
+    assert.match(first.out, /standing +branch-sweep +recorded/);
+    const second = runEnvIn(w.container, env, 'maintain', '--today', todayUtc());
+    assert.equal(second.code, 0, second.err);
+    assert.deepEqual(maintainResult(second.out), { ok: true, archivedDays: [], sweep: { removed: 0, pruned: 0, kept: 1, skipped: 0, failed: 0 }, problems: [] });
+    assert.equal(rolledRows().length, 1, 'no second rolled row');
+});
+
+test('maintain leaves today alone, skips a day a roll already covered, and archives work finished after that roll', () => {
+    const w = sweepWorld();
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    run('log', 'finished today', '--kind', 'done', ...MARK);
+    run('log', 'rolled by hand', '--kind', 'done', '--date', daysAgo(2), ...MARK);
+    run('roll', '--date', daysAgo(2), '--fast');
+    run('log', 'a note from three days ago', '--kind', 'note', '--date', daysAgo(3), ...MARK);
+    run('roll', '--date', daysAgo(3), '--fast');
+    const before = rolledRows().length;
+    const r = runEnvIn(w.container, env, 'maintain', '--today', todayUtc());
+    assert.deepEqual(maintainResult(r.out).archivedDays, [], 'today is not past, and days -2 and -3 (a note only) were rolled');
+    assert.equal(rolledRows().length, before);
+    run('log', 'finished after the roll', '--kind', 'done', '--date', daysAgo(2), ...MARK);
+    assert.deepEqual(maintainResult(runEnvIn(w.container, env, 'maintain', '--today', todayUtc()).out).archivedDays, [daysAgo(2)]);
+});
+
+test('maintain reports a sweep that failed: exit 1, problem named, branch-sweep not recorded', () => {
+    const w = sweepWorld();
+    const env = { MAESTRO_CONTAINER_ROOT: w.container };
+    renameSync(join(dirname(w.container), 'origin.git'), join(dirname(w.container), 'origin.gone'));
+    const r = runEnvIn(w.container, env, 'maintain', '--today', todayUtc());
+    assert.equal(r.code, 1);
+    const res = maintainResult(r.out);
+    assert.equal(res.ok, false);
+    assert.match(res.problems.join('\n'), /git fetch failed/);
+    assert.doesNotMatch(r.out, /branch-sweep +recorded/);
+    assert.equal(existsSync(w.clean), true, 'nothing is removed on stale refs');
+});
+
+test('maintain from outside the container root still archives, and reports the refused sweep as a failure', () => {
+    const w = sweepWorld();
+    run('log', 'shipped yesterday', '--kind', 'done', '--date', daysAgo(1), ...MARK);
+    const r = runEnvIn(emptyCwd, { MAESTRO_CONTAINER_ROOT: w.container }, 'maintain', '--today', todayUtc());
+    assert.equal(r.code, 1);
+    const res = maintainResult(r.out);
+    assert.deepEqual([res.archivedDays, res.sweep], [[daysAgo(1)], null]);
+    assert.match(res.problems.join('\n'), /worktree sweep refused: .* is outside container_root/);
+    assert.equal(existsSync(w.clean), true);
+});
+
+test('maintain refuses to run while another run holds the lock, and needs --today', () => {
+    const w = sweepWorld();
+    const lockDir = join(vault, 'Projects', 'test-proj', 'Journal', '.maintain');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(join(lockDir, '.now.lock'), JSON.stringify({ pid: process.pid, at: Date.now() }));
+    const busy = runEnvIn(w.container, { MAESTRO_CONTAINER_ROOT: w.container }, 'maintain', '--today', todayUtc());
+    assert.equal(busy.code, 1);
+    assert.match(maintainResult(busy.out).problems.join(), /holds the lock/);
+    assert.equal(existsSync(w.clean), true, 'a refused run touches nothing');
+    assert.equal(run('maintain').code, 1);
+});
+
 test('roll --fast skips the scratch review too', () => {
     const shelf = mkdtempSync(join(tmpdir(), 'journal-shelf-'));
     mkdirSync(join(shelf, 'scratch'));
