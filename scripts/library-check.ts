@@ -18,6 +18,7 @@ import { VAULT_ROOT } from './local-config.ts';
 import { linkTarget, list, parsePage } from './lib/library/page.ts';
 import { checkPage } from './lib/library/rules.ts';
 import type { Finding } from './lib/library/rules.ts';
+import { locateBlock } from './lib/library/index-page.ts';
 import type { Scanner } from './lib/library/scan.ts';
 
 const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]';
@@ -109,11 +110,21 @@ export function checkVault(vault: string, pages: string[], scan?: Scanner): Page
   });
 }
 
-export function render(reports: PageReport[]): string[] {
+/** The INDEX.md files (`repo` limits it to one project) whose generated-block markers are not exactly one well-formed pair: `library-index.ts` refuses to rewrite them, so a person has to fix them. Files with no markers are fine. */
+export function indexReports(vault: string, repo?: string): PageReport[] {
+  return (repo ? [repo] : dirs(join(vault, 'Projects'))).flatMap((project) => {
+    const path = join('Projects', project, 'INDEX.md');
+    if (!insideVault(vault, path)) return [];
+    const at = locateBlock(readFileSync(join(vault, path), 'utf8'));
+    return at.kind === 'bad' ? [{ path, findings: [{ rule: 'index-markers', message: `${at.why}; library-index.ts will not rewrite this file` }] }] : [];
+  });
+}
+
+export function render(reports: PageReport[], extra: PageReport[] = []): string[] {
   const bad = reports.filter((r) => r.findings.length);
   return [
-    ...bad.flatMap((r) => r.findings.map((f) => `${r.path}${f.line ? `:${f.line}` : ''}  ${f.rule}  ${f.message}`)),
-    `library-check: ${reports.length} page${reports.length === 1 ? '' : 's'} checked, ${bad.length} failing, ${reports.reduce((n, r) => n + r.findings.length, 0)} finding${reports.reduce((n, r) => n + r.findings.length, 0) === 1 ? '' : 's'}.`,
+    ...[...bad, ...extra].flatMap((r) => r.findings.map((f) => `${r.path}${f.line ? `:${f.line}` : ''}  ${f.rule}  ${f.message}`)),
+    `library-check: ${reports.length} page${reports.length === 1 ? '' : 's'} checked, ${bad.length} failing, ${reports.reduce((n, r) => n + r.findings.length, 0)} finding${reports.reduce((n, r) => n + r.findings.length, 0) === 1 ? '' : 's'}${extra.length ? `, ${extra.length} INDEX.md with malformed block markers` : ''}.`,
   ];
 }
 
@@ -129,8 +140,10 @@ function main(argv: string[]): number {
   const pages = named.length ? named : discover(o.vault, o.repo);
   if (!pages.length) { console.error('library-check: no library pages found (a wrong --vault or --repo, or a renamed Knowledge folder); nothing was checked'); return 2; }
   const reports = checkVault(o.vault, pages);
-  if (o.json) console.log(JSON.stringify(reports, null, 2)); else render(reports).forEach((l) => console.log(l));
-  return reports.some((r) => r.findings.length) ? 1 : 0;
+  // Named pages are checked alone; the generated INDEX.md files are part of a whole run.
+  const indexes = named.length ? [] : indexReports(o.vault, o.repo);
+  if (o.json) console.log(JSON.stringify([...reports, ...indexes], null, 2)); else render(reports, indexes).forEach((l) => console.log(l));
+  return reports.some((r) => r.findings.length) || indexes.length ? 1 : 0;
 }
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1] as string) === fileURLToPath(import.meta.url); } catch { return false; } };

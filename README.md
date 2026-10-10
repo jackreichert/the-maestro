@@ -270,6 +270,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
 | [library-check.ts](#library-checkts) | Check library pages against the template, the controlled vocabulary and the secret scan |
+| [library-index.ts](#library-indexts) | Generate the page list in each project's INDEX.md |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
@@ -701,6 +702,10 @@ A decision stated only in conversation is lost at a session roll unless somethin
 ### library-check.ts
 
 The library is a set of one-fact-per-page notes (`Projects/<repo>/Knowledge` and `Runbooks`) that agents read before they re-derive something. The page template and vocabulary are in [reference/library.md](reference/library.md). `library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]` checks every page (or the named ones) for the required frontmatter, the controlled vocabulary (`kind`, `status`, `repo`, `composed-by: composer`, and `components` against the repo's `INDEX.md` list), a `verified-at` date, dated evidence on every fact, a 150 line budget, links that resolve (the frontmatter links and every `[[wikilink]]` in the body, with or without an alias or `#heading`, against the notes in the vault; the heading itself is not checked), and secret or PHI shapes (including a bare 32-character or longer random-looking token; git shas, digests, UUIDs, paths and slugs are not flagged, and a hex secret reads as a sha). A hit prints the rule and the line, never the matched text. Exit 0 when every page passes, 1 on any finding, 2 on a usage or read error (no vault, an unreadable named page), so a wrong path never reads as a pass. The secret patterns sit behind a small `Scanner` interface in `scripts/lib/library/scan.ts`, so a shared scanner can replace them. `notes-check` also reads `Knowledge/`, so a page with a `stream:` field is listed on that stream's tab.
+
+### library-index.ts
+
+`library-index.ts [--vault <root>] [--repo <name>] [--dry-run] [--check]` writes one line per library page (a wikilink, the kind, the read-when line, the verified-at date and a STALE or SUPERSEDED flag) into each project's `INDEX.md`, between `<!-- library-index:start -->` and `<!-- library-index:end -->`. Nothing outside the markers is touched, so the `components` vocabulary in the frontmatter stays a deliberate edit; a file with no markers gets the block appended under `## Pages`, and a project with pages but no `INDEX.md` is named and skipped, never created. A rerun with no page change writes nothing. `--check` prints what would change and exits 1 when any `INDEX.md` is out of date; exit 2 is a usage or read error. `library-check.ts` also fails a whole run when an `INDEX.md` has malformed block markers, since this script refuses to rewrite one.
 
 ### weekly-retro.ts
 
