@@ -100,7 +100,7 @@ function howLines(streams: string[], library: LibraryEntry[], lv: Level): string
   for (const s of streams) {
     const pages = library.filter((p) => p.status === 'current' && p.stream.toLowerCase() === s.toLowerCase())
       .sort((a, b) => (a.kind === 'runbook' ? 0 : 1) - (b.kind === 'runbook' ? 0 : 1) || b.verifiedAt.localeCompare(a.verifiedAt)).slice(0, lv.pages);
-    if (pages.length) out.push(`- ${s}: ${pages.map((p) => `${safe(p.path, 120)} (${safe(p.kind, 16)}, verified ${safe(p.verifiedAt, 10)})`).join('; ')}`);
+    if (pages.length) out.push(`- ${s}: ${pages.map((p) => `${safe(p.path, 120)} (${safe(p.kind, 16)}, verified ${safe(String(p.verifiedAt ?? '').slice(0, 10), 10)})`).join('; ')}`);
   }
   out.push('- Full views: `journal.ts start-here`, `journal.ts handoff --all`, `journal.ts prime`; library: `library-check.ts`.');
   return out;

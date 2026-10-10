@@ -111,3 +111,10 @@ test('CLI: generate prints the page, check passes on a fixture and fails (exit 1
     } finally { console.log = log; console.error = err; }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a library date written as date@sha shows the full date', () => {
+  const library = [{ ...(LIB[0] as LibraryEntry), verifiedAt: '2026-10-09@6fa5f6c' }];
+  const { text } = coldStart({ ...input, library });
+  assert.match(text, /verified 2026-10-09\)/);
+  assert.doesNotMatch(text, /2026-10-0…/);
+});
