@@ -258,7 +258,7 @@ const push: Rule = (args, env) => {
     if (dst.includes('*')) { env.reasons.push(`git push glob refspec ${r} may reach a protected branch`); continue; }
     if (/[$`{}]/.test(dst)) { env.reasons.push(`git push ${r}: the destination is built by the shell, so it cannot be shown to avoid a protected branch`); continue; }
     let target = dst;
-    if (dst === 'HEAD' || dst === '') {
+    if (dst === 'HEAD' || dst === '@' || dst === '') {
       const b = head(env);
       if (b === undefined) { env.reasons.push('git push HEAD: could not tell which branch HEAD is on'); continue; }
       target = b;
