@@ -2846,3 +2846,18 @@ test('web needs no --project when the config names none: it falls back to the co
     assert.doesNotMatch(r.stderr, /Pass --project/);
     assert.match(r.stdout, /Podium web: http:\/\/127\.0\.0\.1:\d+\//);
 });
+
+test('query filters read-only and capped: by stream, status and id, refuses bad filters, writes no row', () => {
+    const a = idOf(run('start', 'alpha job', '--stream', 'Alpha', ...MARK).out);
+    const b = idOf(run('start', 'beta job', '--stream', 'Beta', ...MARK).out);
+    run('done', b, ...MARK);
+    const before = ledger().length;
+    type Q = { total: number; shown: number; rows: { id: string }[] };
+    assert.deepEqual(parse<Q>(run('query', '--stream', 'Alpha', '--json').out).rows.map((r) => r.id), [a]);
+    assert.deepEqual(parse<Q>(run('query', '--status', 'done', '--json').out).rows.map((r) => r.id), [b]);
+    assert.equal(parse<Q>(run('query', '--id', a, '--json').out).total, 1);
+    assert.equal(parse<Q>(run('query', '--limit', '1', '--json').out).shown, 1);
+    assert.match(run('query').out, /alpha job/);
+    for (const bad of [['--limit', '0'], ['--limit', '9999'], ['--status', 'nope'], ['--date', 'today']]) assert.equal(run('query', ...bad).code, 1, bad.join(' '));
+    assert.equal(ledger().length, before, 'a query writes nothing');
+});

@@ -82,6 +82,7 @@
  *   journal.ts lease <id> [--ttl minutes] [--steal [window]]         take or renew this window's lease on an open item (`start <id>` and `brief <id>` take it too); another window's live lease refuses with exit 1 and "leased by <window> until <time>" unless --steal [window] (it takes the lease only from the window it names; bare --steal names whoever holds it when read); any row the holder writes renews it, `done`/`drop`/`resolve` ends it, `release <id> [--force [--from <window>]]` frees it, and it lapses after `lease_ttl_minutes` (default 60) of the holder's silence
  *   journal.ts claim <repo> --desk <stream> [--worktree w | --branch b] [--why "..."] [--pid n]   take a repo lock (Claims/<repo>.lock, or <repo>@<scope>.lock with a worktree or branch)
  *   journal.ts release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
+ *   journal.ts query [--stream S] [--id X] [--status open|inflight|queued|blocked|done|dropped|resolved|closed|all] [--date D | --since D --until D] [--model M] [--limit N] [--json]   read-only, capped (default 50, max 200) filters over every item, newest first
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--read-only] [--details-file f] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
@@ -159,6 +160,8 @@ import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
+import { filterProblem, queryItems, queryLines, QUERY_STATUSES } from './lib/journal/query.ts';
+import type { QueryStatus } from './lib/journal/query.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock, acquireRepoClaim, claimKey, claimKeysFor, claimScope, scopesConflict, splitClaimKey } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
 import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, createExclusive, writeHandoffSeries, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
@@ -1634,6 +1637,21 @@ function cmdRelease() {
     console.log(`released  ${key}  ${held?.desk ?? ''}`);
 }
 
+/** `query`: read-only, capped filters over the folded items; writes nothing and renders nothing. */
+function cmdQuery() {
+    const status = arg('status') as QueryStatus | null;
+    const rawLimit = arg('limit');
+    const filter = {
+        stream: normaliseStream(arg('stream')) ?? undefined, id: arg('id') ?? undefined, ...(status ? { status } : {}),
+        date: arg('date') ?? undefined, since: arg('since') ?? undefined, until: arg('until') ?? undefined, model: arg('model') ?? undefined,
+        limit: rawLimit === null ? undefined : Number(rawLimit),
+    };
+    const problem = filterProblem(filter, rawLimit);
+    if (problem) die(`${problem}\nUsage: journal.ts query [--stream S] [--id X] [--status ${QUERY_STATUSES.join('|')}] [--date D | --since D --until D] [--model M] [--limit N] [--json]`);
+    const result = queryItems(fold(readLedger()).items, filter);
+    if (asJson) console.log(JSON.stringify(result, null, 2)); else queryLines(result).forEach((l) => console.log(l));
+}
+
 function cmdClaims() {
     const hours = Number(arg('stale-hours', '12'));
     const files = existsSync(claimsDir) ? readdirSync(claimsDir).filter((n) => n.endsWith('.lock')).sort() : [];
@@ -2302,6 +2320,7 @@ switch (cmd) {
     case 'lease': cmdLease(); break;
     case 'release': cmdRelease(); break;
     case 'claims': cmdClaims(); break;
+    case 'query': cmdQuery(); break;
     case 'brief': cmdBrief(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
