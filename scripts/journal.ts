@@ -133,7 +133,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES } from './local-config.ts';
+import { statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, CONTAINER_PROJECT } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -182,6 +182,9 @@ import type { HomeCounts } from './lib/start/start-here.ts';
 import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
 import { pageConfig } from './status-page.ts';
+import type { Priority, PrioritiesState } from './lib/status-page/priorities.ts';
+import { fanOut, nextItems, prioritiesDir, projectsFor, readProjectFile, writeProjectPriorities } from './lib/status-page/project-priorities.ts';
+import { readHomes } from './lib/home/config.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
@@ -2082,11 +2085,37 @@ function cmdPriorities() {
     const day = arg('date', priorityDay());
     if (sub === 'set') {
         if (dryRun) { console.log('[dry-run]', JSON.stringify(words.map(parsePriority))); return; }
-        try { console.log(`wrote ${writePriorities(dirPath, day, words.map(parsePriority), PRIORITIES_MAX)}`); } catch (e) { die(errorMessage(e)); }
+        const items = words.map(parsePriority);
+        try { console.log(`wrote ${writePriorities(dirPath, day, items, PRIORITIES_MAX)}`); } catch (e) { die(errorMessage(e)); }
+        writeProjectFiles(dirPath, day, items);
     } else if (sub === 'show') {
-        const state = readPriorities(dirPath, day);
+        const target = arg('repo');
+        const state = target ? readProjectState(target, day) : readPriorities(dirPath, day);
         if (asJson) console.log(JSON.stringify(state, null, 2)); else showLines(state).forEach((l) => console.log(l));
-    } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show');
+    } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show [--repo <repo>]');
+}
+
+/** `priorities set` also writes each project's own file for `day`, for the projects its items' streams map to. A problem is reported and never undoes the container-wide write. */
+function writeProjectFiles(dirPath: string, day: string, items: Priority[]) {
+    if (!VAULT_ROOT) return;
+    const registry = loadRegistry();
+    const homes = readHomes(dirPath, Object.keys(registry?.streams ?? {}));
+    const route = (s: string | undefined): string[] => projectsFor(s, homes, STATUS_REPO_STREAMS, CONTAINER_PROJECT);
+    const rows = readLedger();
+    for (const [name, mine] of fanOut(items, route)) {
+        try {
+            const streams = [...new Set(mine.map((p) => p.stream).filter((s): s is string => Boolean(s)))];
+            const result = writeProjectPriorities(VAULT_ROOT, name, day, { project: name, date: day, carriedFrom: '', writtenBy: 'priorities set', today: mine, carried: [], next: nextItems(rows, registry, streams) });
+            console.log(result === 'written' ? `wrote ${join(prioritiesDir(VAULT_ROOT, name), `${day}.md`)}` : `skipped ${name}: no vault folder Projects/${name}`);
+        } catch (e) { console.error(`project ${name}: ${errorMessage(e).split('\n')[0].slice(0, 100)}`); }
+    }
+}
+
+/** The project file for `day` as the same state `priorities show` prints for the container list. */
+function readProjectState(name: string, day: string): PrioritiesState {
+    let file: ReturnType<typeof readProjectFile> = null;
+    try { file = VAULT_ROOT ? readProjectFile(join(prioritiesDir(VAULT_ROOT, name), `${day}.md`)) : null; } catch { file = null; }
+    return file && file.today.length ? { state: 'ok', date: day, items: file.today } : { state: 'missing' };
 }
 
 /** Note counts for each stream with something open (and each stream named in today's priorities); null when no vault root is set, since then nothing was read. */

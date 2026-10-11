@@ -2424,6 +2424,30 @@ test('priorities set and show round-trip through the status dir, with a stream s
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
 
+test('priorities set also writes each mapped project\'s own file, and priorities show --repo reads it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-root-'));
+    mkdirSync(join(root, 'Projects', 'the-maestro'), { recursive: true });
+    const sd = join(vault, 'Status');
+    const runIn = (...args: string[]): Run => {
+        const r = spawnSync(process.execPath, [SCRIPT, ...args, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd,
+            env: { ...process.env, VAULT_ROOT: root, MAESTRO_WINDOW: 'testwin', MAESTRO_STATUS_REPO_STREAMS: 'the-maestro=Maestro', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const set = runIn('priorities', 'set', 'Ship the widget | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    const file = readFileSync(join(root, 'Projects', 'the-maestro', 'Status', 'priorities', '2030-01-02.md'), 'utf8');
+    assert.match(file, /^written-by: priorities set$/m);
+    assert.match(file, /^## Today\n- Ship the widget \| Maestro$/m);
+    const shown = runIn('priorities', 'show', '--repo', 'the-maestro', '--date', '2030-01-02');
+    assert.equal(shown.code, 0, shown.err);
+    assert.match(shown.out, /^Priorities for 2030-01-02:\n1\. Ship the widget \[Maestro\]\n/);
+    assert.match(runIn('priorities', 'show', '--repo', 'nowhere', '--date', '2030-01-02').out, /Priorities not set for today/);
+    assert.equal(existsSync(join(root, 'Projects', 'dev-env')), false, 'a project with no vault folder is not created');
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
     seedRegistry();
     const sd = join(vault, 'Status');
