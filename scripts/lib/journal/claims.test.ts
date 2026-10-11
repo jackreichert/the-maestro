@@ -98,3 +98,17 @@ test('an old whole-repo lock still blocks scoped claims, and a scoped claim bloc
     acquireRepoClaim(dir2, 'proj', 'wt-a', old);
     assert.equal(acquireRepoClaim(dir2, 'proj', undefined, { ...old, desk: 'New' }).status, 'conflict');
 });
+
+test('acquireRepoClaim backs its own claim out when a conflicting claim lands between the pre-check and the link', () => {
+    const claimsDir = dir();
+    const claim = { repo: 'proj', desk: 'Alpha', pid: process.pid, host: hostname(), time: new Date().toISOString() };
+    const rival = { ...claim, desk: 'Beta' };
+    const racing: typeof acquireClaimLock = (d, key, c) => {
+        assert.equal(acquireClaimLock(d, claimKey('proj', 'wt-a'), rival), null, 'the scoped rival lands first');
+        return acquireClaimLock(d, key, c);
+    };
+    const out = acquireRepoClaim(claimsDir, 'proj', undefined, claim, racing);
+    assert.equal(out.status, 'conflict');
+    assert.equal(existsSync(claimPath(claimsDir, claimKey('proj', undefined))), false, 'the whole-repo claim was unlinked');
+    assert.equal(readClaim(claimsDir, claimKey('proj', 'wt-a'))?.desk, 'Beta', 'the rival still stands');
+});

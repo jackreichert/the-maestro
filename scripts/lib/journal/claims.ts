@@ -69,14 +69,14 @@ export type RepoClaimOutcome = { status: 'taken' } | { status: 'exists' | 'confl
 
 /**
  * Takes the claim for a repo and scope. The own-key link is the atomic step; a conflicting claim under another key is checked before and
- * after it, and the second check backs the own claim out again, so a whole-repo claim and a scoped one racing never both stand (at worst both back off).
+ * after it (`lock` is injectable so a test can land the rival between the two), and the second check backs the own claim out again, so a whole-repo claim and a scoped one racing never both stand (at worst both back off).
  */
-export function acquireRepoClaim(claimsDir: string, repo: string, scope: string | undefined, claim: ClaimFile): RepoClaimOutcome {
+export function acquireRepoClaim(claimsDir: string, repo: string, scope: string | undefined, claim: ClaimFile, lock: typeof acquireClaimLock = acquireClaimLock): RepoClaimOutcome {
     const key = claimKey(repo, scope);
     const conflicting = (): string | undefined => claimKeysFor(claimsDir, repo).find((k) => k !== key && scopesConflict(scope, splitClaimKey(k).scope));
     const before = conflicting();
     if (before) return { status: 'conflict', key: before, held: readClaim(claimsDir, before) };
-    const linkError = acquireClaimLock(claimsDir, key, claim);
+    const linkError = lock(claimsDir, key, claim);
     if (linkError) {
         if (!('code' in linkError && linkError.code === 'EEXIST')) throw linkError;
         return { status: 'exists', key, held: readClaim(claimsDir, key) };
