@@ -16,6 +16,7 @@ The first check of each new local day (`watch_tz`) runs `journal.ts maintain --t
 |---|---|
 | Archive | Each of the last 7 days before today that still owes an archive (work finished since that day's last roll, or notes with no roll) is written to its dated note, dropped from CURRENT, and the ledger is committed when `ledger_git_autocommit` is on. A day a roll already covered is left alone |
 | Worktree sweep | Removes clean, idle, pushed worktrees and prunes missing ones, exactly as roll does: never `--force`, a dirty worktree is kept and listed, a remote branch is never touched |
+| Priorities carry-over | After a clean sweep, each project that had priorities gets today's `Projects/<project>/Status/priorities/<date>.md`: Today says `not set yet` (or the container list when it is already dated today), `Carried from <date>` lists yesterday's items with their stream's status, `Next` the queued ids. A file that exists is never replaced. A project with no vault folder is a problem, not a new folder |
 | Standing row | A finished sweep records the `branch-sweep` run through the same guard roll uses (not on a dry run, a failed sweep or a retired row) |
 
 It is idempotent (a second run finds nothing to archive or remove) and takes a lock beside the ledger, so a manual roll or a retry cannot overlap it. A clean run is silent and is not run again that day.

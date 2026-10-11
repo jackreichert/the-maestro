@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
+import { carryPriorities, fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
 import type { ProjectFile } from './project-priorities.ts';
 import type { Homes } from '../home/config.ts';
 import type { LedgerRow } from '../ledger-core.ts';
@@ -90,4 +90,39 @@ test('a secret-shaped item, status or queued text is withheld, never written', (
   assert.ok(!text.includes(key), 'the value never reaches the file');
   assert.match(text, /\[withheld: secret shape\]/);
   assert.deepEqual(parseProjectFile(text).today, [{ text: '[withheld: secret shape]' }]);
+});
+
+test('carryPriorities starts each project from the container list and its own previous file, and never replaces a file already there', () => {
+  const v = vaultWith('arya-scraper', 'arya-avonlea', 'dev-env');
+  const rows: LedgerRow[] = [{ id: 'q1', kind: 'wip', stream: 'TeamSelect', text: 'queued one', queued: true, ts: '2026-10-09T09:00:00Z' }];
+  const base = { vault: v, rows, registry: null, homes, repoStreams: {}, containerProject: 'dev-env' };
+  // Friday: the container list, and one project's own file with an extra item.
+  assert.equal(writeProjectPriorities(v, 'arya-avonlea', '2026-10-09', file({ project: 'arya-avonlea', date: '2026-10-09', today: [{ text: 'avonlea only', stream: 'TeamSelect' }] })), 'written');
+  const container = { date: '2026-10-09', items: [{ text: 'ship it', stream: 'TeamSelect' }, { text: 'plain item' }] };
+  // Monday's first check.
+  const first = carryPriorities({ ...base, today: '2026-10-12', container });
+  assert.deepEqual(first, { written: ['dev-env', 'arya-scraper', 'arya-avonlea'], problems: [] });
+  const scraper = readFileSync(join(prioritiesDir(v, 'arya-scraper'), '2026-10-12.md'), 'utf8');
+  assert.match(scraper, /written-by: roll-maintenance\n/);
+  assert.match(scraper, /carried-from: 2026-10-09\n/);
+  assert.match(scraper, /## Today\n- not set yet\n/);
+  assert.match(scraper, /## Carried from 2026-10-09\n- ship it \| TeamSelect · 0 done, 0 in flight, 1 queued, 0 blocked\n/);
+  assert.match(scraper, /## Next\n- `q1` queued one\n/);
+  const avonlea = readFileSync(join(prioritiesDir(v, 'arya-avonlea'), '2026-10-12.md'), 'utf8');
+  assert.match(avonlea, /- avonlea only \| TeamSelect/);
+  assert.match(avonlea, /- ship it \| TeamSelect/);
+  assert.ok(!readFileSync(join(prioritiesDir(v, 'dev-env'), '2026-10-12.md'), 'utf8').includes('ship it'), 'the container project gets only its own (stream-less) item');
+  // A second run, and a list a person confirmed first, are left alone.
+  writeProjectPriorities(v, 'arya-scraper', '2026-10-12', file({ today: [{ text: 'confirmed' }] }));
+  assert.deepEqual(carryPriorities({ ...base, today: '2026-10-12', container }).written, []);
+  assert.match(readFileSync(join(prioritiesDir(v, 'arya-scraper'), '2026-10-12.md'), 'utf8'), /- confirmed/);
+});
+
+test('carryPriorities: a container list already dated today is today\'s list; a project with nothing to carry gets no file; a missing project folder is a problem', () => {
+  const v = vaultWith('arya-scraper', 'dev-env');
+  const out = carryPriorities({ vault: v, today: '2026-10-12', rows: [], registry: null, homes, repoStreams: {}, containerProject: 'dev-env', container: { date: '2026-10-12', items: [{ text: 'now', stream: 'TeamSelect' }] } });
+  assert.deepEqual(out.written, ['arya-scraper']);
+  assert.deepEqual(out.problems, ['arya-avonlea: no vault folder Projects/arya-avonlea']);
+  assert.match(readFileSync(join(prioritiesDir(v, 'arya-scraper'), '2026-10-12.md'), 'utf8'), /## Today\n- now \| TeamSelect\n\n?$/);
+  assert.deepEqual(carryPriorities({ vault: v, today: '2026-10-12', rows: [], registry: null, homes, repoStreams: {}, containerProject: 'dev-env', container: null }), { written: [], problems: [] });
 });
