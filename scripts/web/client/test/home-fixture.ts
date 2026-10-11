@@ -22,3 +22,17 @@ export const epics = (): Record<string, any> => ({
   streams: [{ stream: 'Avonlea', epics: [epicLine('avonlea-api-042', { next: { id: 'avonlea-api-051', title: 'Ticket avonlea-api-051', ref: ref('avonlea-api-051') }, prs: [{ label: 'avonlea-api#412', url: 'https://github.test/acme/avonlea-api/pull/412' }] })] }, { stream: 'Green Gables', epics: [] }],
   unfiled: [epicLine('loop-lab-002', { total: 1, closed: 0, inProgress: 0, blocked: 0, notStarted: 1, awaiting: 0 })],
 });
+export const brief = (over: Record<string, unknown> = {}): Record<string, any> => ({
+  state: 'fresh', updated: '2026-01-01', ref: ref('avonlea-api-042 brief'),
+  blocks: [
+    { type: 'heading', level: 3, runs: [{ text: 'Status' }] },
+    { type: 'paragraph', runs: [{ text: 'Nine of fourteen are closed, see ' }, { text: 'the plan', link: { url: 'obsidian://open?vault=Fictional&file=plan', kind: 'note' } }, { text: '.' }] },
+    { type: 'list', ordered: false, items: [{ runs: [{ text: 'one', strong: true }], children: [{ runs: [{ text: 'nested' }] }] }] },
+    { type: 'quote', runs: [{ text: 'quoted', em: true }] },
+  ],
+  ...over,
+});
+export const docs = (): Record<string, any> => ({
+  groups: [{ kind: 'plan', items: [{ title: 'Rollout plan', kind: 'plan', project: 'avonlea-api', ticket: 'avonlea-api-042', status: 'draft', updated: '2026-01-02', url: 'obsidian://open?vault=Fictional&file=plan' }], more: 2 }, { kind: 'runbook', items: [{ title: 'Cutover runbook', kind: 'runbook', project: '', ticket: 'avonlea-api-042', url: 'https://docs.example.com/cutover' }], more: 0 }],
+  unattributedRecent: 3,
+});
