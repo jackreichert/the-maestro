@@ -97,7 +97,7 @@ test('session-start is a fail-open fallback: a missing, failing or throwing cold
 
 test('session-start context passes --source to prime and caps the output', () => {
   const seen: string[][] = [];
-  const out = context('clear', (a) => { seen.push(a); return { ok: true, out: 'x'.repeat(30_000) }; });
+  const out = context('clear', (a) => { seen.push(a); return { ok: true, out: Array.from({ length: 4000 }, (_, n) => `line ${n}`).join('\n') }; });
   assert.deepEqual(seen[0], ['prime', '--source', 'clear', '--no-update-check']);
   assert.ok(out.length < 20_300 && /cut at 20000/.test(out));
   assert.equal(assemble([{ title: 'a', body: 'b' }]), '== a ==\nb');
@@ -252,4 +252,15 @@ test('a handoff rewritten 37 minutes behind marks the row repaired; one 4 minute
   };
   assert.match(run(37), /^precompact: repaired, handoff rewritten \(37 min behind\)/);
   assert.match(run(4), /^precompact: handoff rewritten \(4 min behind\)/);
+});
+
+test('session-start context withholds a secret-shaped line from every part it injects', () => {
+  const token = `ghp_${'x'.repeat(36)}`;
+  const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: `Today's streams: ok, ${token}\nplain line` } : { ok: true, out: `- \`${key}\` [Beta] something\nnormal` });
+  const out = context('compact', run, () => ({ ok: true, out: '# Cold start\nwork' }));
+  assert.ok(!out.includes(token) && !out.includes(key), 'neither value is injected');
+  assert.equal(out.split('[withheld: secret shape]').length - 1, 2);
+  assert.match(out, /plain line/);
+  assert.match(out, /normal/);
 });

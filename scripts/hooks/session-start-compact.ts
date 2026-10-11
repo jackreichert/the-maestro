@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { floorWarnings, readAutocompact } from '../lib/autocompact.ts';
+import { scanText } from '../lib/library/scan.ts';
 
 const JOURNAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'journal.ts');
 const COLD_START = join(dirname(fileURLToPath(import.meta.url)), '..', 'cold-start.ts');
@@ -23,9 +24,17 @@ export const SOURCES = ['compact', 'clear'];
 /** About 5k tokens at four characters each. */
 export const MAX_CHARS = 20_000;
 
-/** Joins the parts under their headings and cuts at the cap, saying so. */
+export const WITHHELD = '[withheld: secret shape]';
+
+/** The body with every line the secret scan flags replaced by a marker, so a secret-shaped stream name or id the board printed never becomes session context. */
+function withhold(body: string): string {
+  const hits = new Set(scanText(body).map((h) => h.line));
+  return hits.size ? body.split('\n').map((l, i) => (hits.has(i + 1) ? WITHHELD : l)).join('\n') : body;
+}
+
+/** Joins the parts under their headings, withholds secret-shaped lines, and cuts at the cap, saying so. */
 export function assemble(parts: { title: string; body: string }[], max: number = MAX_CHARS): string {
-  const text = parts.map((p) => `== ${p.title} ==\n${p.body.trim()}`).join('\n\n');
+  const text = parts.map((p) => `== ${p.title} ==\n${withhold(p.body.trim())}`).join('\n\n');
   return text.length <= max ? text : `${text.slice(0, max)}\n… cut at ${max} characters; \`journal.ts start-here\` and \`library-brief\` have the rest.`;
 }
 
