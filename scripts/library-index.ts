@@ -3,28 +3,33 @@
  * LIBRARY INDEX: generates the page list in each project's INDEX.md from the library pages, so a person or an agent that knows the repo
  * but not the words can browse it (`journal.ts find` is the search path).
  *
- *   node scripts/library-index.ts [--vault <root>] [--repo <name>] [--dry-run] [--check]
+ *   node scripts/library-index.ts [--vault <root>] [--repo <name>] [--dry-run] [--check] [--stale [--code-root <dir>]]
  *
  * Only the block between `<!-- library-index:start -->` and `<!-- library-index:end -->` is written; the frontmatter (the `components`
  * vocabulary) and every other line stay as they are. A file with no markers gets the block appended under `## Pages`; a hand-written list
  * above it is left for a person to remove. A project with pages but no INDEX.md is skipped and named: the component list is a deliberate
  * edit, so this never creates the file. A rerun with no page change writes nothing. --dry-run prints what would change; --check does the
- * same and exits 1 when any INDEX.md is out of date. Exit 2 on a usage or read error.
+ * same and exits 1 when any INDEX.md is out of date. --stale also flags (STALE) the pages whose cited evidence changed since verified-at
+ * (library-check.ts --stale says how it is judged); it is opt-in because the line then depends on git state, which a plain --check must not. Exit 2 on a usage or read error.
  */
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VAULT_ROOT } from './local-config.ts';
 import { readLibrary } from './lib/library/pages.ts';
+import { checkStaleness, realGit } from './lib/library/stale.ts';
+import type { Git } from './lib/library/stale.ts';
 import { END, START, mergeIndex, renderBlock } from './lib/library/index-page.ts';
 
-const USAGE = 'Usage: library-index.ts [--vault <root>] [--repo <name>] [--dry-run] [--check]';
+const USAGE = 'Usage: library-index.ts [--vault <root>] [--repo <name>] [--dry-run] [--check] [--stale [--code-root <dir>]]';
 
 export interface IndexResult { repo: string; file: string; pages: number; status: 'updated' | 'unchanged' | 'no-index' | 'appended' | 'malformed'; why?: string }
 
 /** Regenerates the page list of every project that has library pages (or of `repo`). Writes unless `dryRun`. */
-export function generate(vault: string, repo: string | undefined, dryRun: boolean): IndexResult[] {
-  const pages = readLibrary(vault, repo);
+export function generate(vault: string, repo: string | undefined, dryRun: boolean, stale?: { codeRoot: string | null; git: Git }): IndexResult[] {
+  const read = readLibrary(vault, repo);
+  const verdicts = stale ? new Map(checkStaleness(read, stale.codeRoot, stale.git).map((r) => [r.path, r.state])) : null;
+  const pages = verdicts ? read.map((p) => (p.status === 'current' && verdicts.get(p.path) === 'stale' ? { ...p, status: 'stale' } : p)) : read;
   const byRepo = new Map<string, typeof pages>();
   for (const p of pages) {
     const project = p.path.split('/')[1] as string;
@@ -57,21 +62,22 @@ export function generate(vault: string, repo: string | undefined, dryRun: boolea
 function main(argv: string[]): number {
   let vault = VAULT_ROOT;
   let repo: string | undefined;
+  let codeRoot: string | undefined;
   const flags = new Set<string>();
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i] as string;
-    if (a === '--vault' || a === '--repo') {
+    if (a === '--vault' || a === '--repo' || a === '--code-root') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) { console.error(`library-index: ${a} needs a value\n${USAGE}`); return 2; }
-      if (a === '--vault') vault = v; else repo = v;
+      if (a === '--vault') vault = v; else if (a === '--repo') repo = v; else codeRoot = v;
       i += 1;
-    } else if (a === '--dry-run' || a === '--check') flags.add(a);
+    } else if (a === '--dry-run' || a === '--check' || a === '--stale') flags.add(a);
     else { console.error(`library-index: unknown argument ${a}\n${USAGE}`); return 2; }
   }
   if (!vault || !existsSync(join(vault, 'Projects'))) { console.error('library-index: no vault with a Projects folder; set VAULT_ROOT or pass --vault <path>'); return 2; }
   if (repo && !/^[\w.-]+$/.test(repo)) { console.error('library-index: --repo must be a plain project folder name'); return 2; }
   const preview = flags.has('--dry-run') || flags.has('--check');
-  const results = generate(vault, repo, preview);
+  const results = generate(vault, repo, preview, flags.has('--stale') ? { codeRoot: codeRoot ?? (process.env.MAESTRO_CONTAINER_ROOT || null), git: realGit } : undefined);
   if (!results.length) { console.error('library-index: no library pages found; nothing was indexed'); return 2; }
   for (const r of results) {
     const note = r.status === 'no-index' ? 'skipped: no INDEX.md (create it with a components list first)'
