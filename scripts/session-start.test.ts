@@ -13,6 +13,7 @@ import { listWatches } from './lib/watch-registry.ts';
 import type { StartDeps } from './session-start.ts';
 import type { Watch } from './lib/types.ts';
 import { cleanEnv } from './lib/test-env.ts';
+import { startLockOwner } from './lib/lock-owner-fixture.ts';
 
 const NOW = Date.parse('2026-10-06T15:00:00Z');
 const HOUR = 3600_000;
@@ -120,8 +121,11 @@ test('end to end: registers through event-loop.ts add, then a second run changes
   assert.match(second.stdout, /status-refresh: already registered/);
   assert.match(second.stdout, /whats-next: already registered/);
   assert.match(second.stdout, /retro-due: already registered/);
-  writeFileSync(join(events, 'loop.lock'), String(process.pid));
-  assert.match(run().stdout, new RegExp(`running \\(pid ${process.pid}\\)`));
+  const owner = startLockOwner();
+  try {
+    writeFileSync(join(events, 'loop.lock'), String(owner.pid));
+    assert.match(run().stdout, new RegExp(`running \\(pid ${owner.pid}\\)`));
+  } finally { owner.stop(); }
 });
 
 test('a status directory that does not exist fails the registration with the type\'s own message', () => {

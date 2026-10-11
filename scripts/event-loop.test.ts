@@ -17,6 +17,7 @@ import { notifyChoice } from './lib/notify.ts';
 import { appendEvents, inboxPath, readInbox } from './lib/event-inbox.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
 import { cleanEnv } from './lib/test-env.ts';
+import { startLockOwner } from './lib/lock-owner-fixture.ts';
 
 const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
@@ -383,10 +384,13 @@ test('cli: digest consumes what it prints; --peek does not', () => {
 test('cli: a second loop is refused while one holds the lock', () => {
   const dir = tempDir();
   cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
-  writeFileSync(join(dir, 'loop.lock'), String(process.pid));
-  const r = cli(dir, 'run', '--once');
-  assert.equal(r.status, EXIT.usage);
-  assert.match(r.stderr, /another event loop is running/);
+  const owner = startLockOwner();
+  try {
+    writeFileSync(join(dir, 'loop.lock'), String(owner.pid));
+    const r = cli(dir, 'run', '--once');
+    assert.equal(r.status, EXIT.usage);
+    assert.match(r.stderr, /another event loop is running/);
+  } finally { owner.stop(); }
 });
 
 test('cli: info-only events survive a quiet run and show in the next actionable digest', () => {
