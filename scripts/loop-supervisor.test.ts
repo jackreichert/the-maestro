@@ -288,11 +288,17 @@ test('the real supervisor kills a loop that is alive but silent, then relaunches
   const dir = tempDir();
   const bin = join(dir, 'hang-loop.sh');
   // First launch: replace the shell with sleep, so the kill reaches the process that is actually running and nothing is orphaned. Second launch: end cleanly.
-  writeFileSync(bin, `#!/bin/sh\nif [ -f "${join(dir, 'ran')}" ]; then echo "ACTION w1 (fake): x"; exit 10; fi\ntouch "${join(dir, 'ran')}"\nexec sleep 60\n`);
+  // The watchdog's clock starts when the supervisor spawns the script, so the script must be cheap to start: a MAESTRO_TEST_WARM run first pays
+  // the one-time cost of executing a new file (it can be minutes under macOS provenance checks), and then the 4 s grace is only CPU contention.
+  writeFileSync(bin, `#!/bin/sh\nif [ -n "$MAESTRO_TEST_WARM" ]; then exit 0; fi\nif [ -f "${join(dir, 'ran')}" ]; then echo "ACTION w1 (fake): x"; exit 10; fi\ntouch "${join(dir, 'ran')}"\nexec sleep 60\n`);
   chmodSync(bin, 0o755);
-  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '2', MAESTRO_WATCHDOG_GRACE_MS: '1500', MAESTRO_WATCHDOG_INTERVAL_MS: '200' }) });
+  const warm = spawnSync(bin, [], { timeout: PATIENCE_MS, env: { PATH: process.env.PATH, MAESTRO_TEST_WARM: '1' } });
+  assert.equal(warm.status, 0, 'the fake loop could not be warmed');
+  assert.equal(existsSync(join(dir, 'ran')), false, 'warming must not count as the first launch');
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '2', MAESTRO_WATCHDOG_GRACE_MS: '4000', MAESTRO_WATCHDOG_INTERVAL_MS: '200' }) });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /is hung/);
+  assert.equal(existsSync(join(dir, 'ran')), true, 'the first launch never ran');
+  assert.equal(r.stderr.match(/is hung/g)?.length, 1, 'exactly one launch is killed as hung');
   assert.equal(readdirSync(digestDir(ledger, 'proj')).filter((f) => f.endsWith('.md')).length, 1);
 });
 
