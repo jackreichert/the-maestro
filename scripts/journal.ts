@@ -177,6 +177,7 @@ import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
+import { gitBranches, queueFooter as hygieneFooter, queueHygiene } from './lib/queue-hygiene.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
 import { fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
@@ -831,6 +832,17 @@ const configuredStatusPageUri = (): string => statusPageUri({
 /** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
 const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS);
 
+/** The queue-hygiene footer line: oldest queued age and rows that already have a built branch. Branch names come from the row's repo under the container root (the-maestro's own checkout for a row with no repo); each repo is listed once. */
+function boardQueueHygiene(g: Groups, today: string): string {
+    const lists = new Map<string, string[]>();
+    const branchesOf = (repo: string | undefined): string[] => {
+        const dir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : fileURLToPath(new URL('..', import.meta.url));
+        if (!lists.has(dir)) lists.set(dir, gitBranches(dir));
+        return lists.get(dir) as string[];
+    };
+    return hygieneFooter(queueHygiene(g.queued, today, TRACKER_KEY_PATTERN, branchesOf));
+}
+
 /** The self-review PRs from the stored snapshot (no network), apart from the review queue: null when none are configured, none are open, or no snapshot was taken. */
 function boardSelfReview(): { text: string; footer: string } | null {
     if (!SELF_REVIEW_REPOS.length) return null;
@@ -893,7 +905,7 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll, live), ...[boardQueueHygiene(g, d)].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
