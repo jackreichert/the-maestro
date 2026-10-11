@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { digestBody, digestDir, claimDigests, saveDigest, unseenDigests } from './lib/digest-store.ts';
+import { digestBody, digestDir, claimDigests, drainDigests, saveDigest, unseenDigests } from './lib/digest-store.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'digest-wait-test-'));
 const EVENT_LOOP = new URL('./event-loop.ts', import.meta.url).pathname;
@@ -90,3 +90,18 @@ test('a live claim is left alone until it is ten minutes old', () => {
   assert.equal(claimDigests(dir, t + 60000).length, 0);
   assert.equal(claimDigests(dir, t + 11 * 60000).length, 1);
 });
+
+test('drainDigests shows fresh digests and counts older unread ones in a line instead of dropping them silently', () => {
+  const dir = join(tempDir(), 'Digests');
+  saveDigest(dir, 'ACTION saturday', NOON - 50 * 3600_000);
+  saveDigest(dir, 'ACTION sunday', NOON - 26 * 3600_000);
+  saveDigest(dir, 'note fresh', NOON - 3600_000);
+  const out = drainDigests(dir, NOON);
+  assert.equal(out.length, 2);
+  assert.equal(out[0], 'note fresh');
+  assert.match(out[1], /^2 older digests were unread for over 24h and are marked seen \(oldest 2d\), in /);
+  assert.ok(out[1].endsWith(dir));
+  assert.deepEqual(unseenDigests(dir), []);
+  assert.deepEqual(drainDigests(dir, NOON), [], 'a second drain has nothing left to say');
+});
+

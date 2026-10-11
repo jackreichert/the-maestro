@@ -19,3 +19,12 @@ test('footerOneLine strips markup from the queue and loop lines and carries the 
 test('footerOneLine says when the session is unavailable', () => {
     assert.match(footerOneLine({ rows: [row({})], session: { available: false, unavailable: 'no session x in /d' } }), /Session: unavailable \(no session x in \/d\)$/);
 });
+
+test('footerOneLine shows the stale in-flight count beside the in-flight total', () => {
+    const rows = [row({ name: 'A', inflight: 3, stale: 2 }), row({ name: 'B', inflight: 1, stale: 1 })];
+    assert.match(footerOneLine({ rows, session: ok }), /^Ledger: 0 done · 4 in flight \(3 stale\) · 0 awaiting/);
+});
+
+test('footerOneLine names the session by its short id when the status carries one, so two open sessions are told apart', () => {
+    assert.match(footerOneLine({ rows: [row({})], session: { ...ok, session: '31a43ae4' } }), /Session: 31a43ae4 · 86 turns · 96k\/200k \(48%\)/);
+});

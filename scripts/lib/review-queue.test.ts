@@ -125,3 +125,9 @@ test('the push gate and the board line apply the same exclusion', () => {
   assert.equal(boardQueue(stored, 4, now, ['me/*'])?.text, 'review queue: 1 of 4');
   assert.equal(boardQueue(stored, 4, now)?.text, 'review queue: 3 of 4');
 });
+
+test('with a review pool the queue counts only pool repos: personal and stray repos are left out and reported as self-review', () => {
+  const prs = [{ isDraft: false, repo: 'avonlea/a' }, { isDraft: false, repo: 'avonlea/b' }, { isDraft: false, repo: 'jackreichert/the-maestro' }, { isDraft: false, repo: 'femmebot/google-type' }, { isDraft: true, repo: 'avonlea/c' }];
+  assert.deepEqual(reviewQueue(prs, 2, ['!avonlea/*']), { count: 2, cap: 2, full: true, selfReview: 2 });
+  assert.equal(reviewQueue(prs, 4, []).count, 4, 'without a pool every non-draft PR counts');
+});

@@ -95,6 +95,19 @@ test('a second item for a claimed repo is refused, naming the holder, and writes
     assert.equal(JSON.parse(readFileSync(lock('repo-a'), 'utf8')).desk, 'Alpha');
 });
 
+test('two items for one repo can be briefed from different worktrees; the same worktree and a whole-repo brief are refused', () => {
+    const a = start('first job', '--repo', 'repo-a', '--stream', 'Alpha');
+    const b = start('second job', '--repo', 'repo-a', '--stream', 'Beta');
+    const c = start('third job', '--repo', 'repo-a', '--stream', 'Cee');
+    assert.equal(run(['brief', a, '--worktree', 'wt-a', '--out-dir', outDir, ...MARK]).code, 0);
+    assert.equal(run(['brief', b, '--worktree', 'wt-b', '--out-dir', outDir, ...MARK]).code, 0, 'a different worktree is a different writer');
+    assert.ok(existsSync(lock('repo-a@wt-a')) && existsSync(lock('repo-a@wt-b')));
+    assert.equal(run(['brief', c, '--worktree', 'wt-a', '--out-dir', outDir, ...MARK]).code, 1, 'same worktree');
+    const whole = run(['brief', c, '--out-dir', outDir, ...MARK]);
+    assert.equal(whole.code, 1, 'a whole-repo brief conflicts with scoped claims');
+    assert.equal(existsSync(briefPaths(outDir, c).brief), false);
+});
+
 test('briefing the same item again as the same holder is a rerun: same file, no new rows', () => {
     const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
     assert.equal(run(['brief', id, '--out-dir', outDir, ...MARK]).code, 0);

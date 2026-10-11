@@ -297,7 +297,7 @@ export function sessionStatus(dir: string, trigger: number = triggerTokens(readA
     // Cross-multiplied so 85% of 200k is exactly 170k, with no float division at the boundary.
     const reached = (pct: number): boolean => s.ctx * 100 >= pct * trigger;
     const advice = reached(rollPct) ? 'roll now' : reached(warnPct) ? 'roll soon' : '';
-    return { available: true, turns: s.turns, ctxK: Math.floor(s.ctx / 1000), triggerK: Math.floor(trigger / 1000), pct: Math.floor((s.ctx / trigger) * 100), readK: Math.floor(s.readPerTurn / 1000), advice };
+    return { available: true, session: s.session, turns: s.turns, ctxK: Math.floor(s.ctx / 1000), triggerK: Math.floor(trigger / 1000), pct: Math.floor((s.ctx / trigger) * 100), readK: Math.floor(s.readPerTurn / 1000), advice };
 }
 
 /**
