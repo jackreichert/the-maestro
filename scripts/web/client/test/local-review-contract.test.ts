@@ -2,11 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeLocalReview } from '../src/contract.ts';
+import { localUnit as unit } from './home-fixture.ts';
 
-export const unit = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
-  id: 'local:alpha#feat/one', repo: 'alpha', branch: 'feat/one', head: 'a'.repeat(40), ahead: 2, at: '2026-10-11T12:00:00-04:00', subject: 'add one',
-  where: 'alpha', checkedOut: false, base: 'origin/staging', command: "git -C 'alpha' difftool 'origin/staging...feat/one'", verdict: { state: 'none' }, ...over,
-});
 const body = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ generatedAt: '2026-10-11T16:00:00Z', available: true, units: [unit()], more: 0, notes: ['read from local git'], ...over });
 
 test('a well-formed queue passes through with its units', () => {
