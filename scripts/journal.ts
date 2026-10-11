@@ -193,6 +193,8 @@ import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, recordRan, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
+import { readLibrary } from './lib/library/pages.ts';
+import { checkStaleness, realGit, summarize } from './lib/library/stale.ts';
 import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
 import { createReader } from './lib/vault/reader.ts';
 import { TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from './lib/vault/tickets.ts';
@@ -2198,6 +2200,7 @@ function standingContext(): CheckContext {
         queue: () => { const g = groups(); return { inflight: g.inflight.length, queued: g.queued.length }; },
         pendingTransitions: () => pendingTransitions(defaultPendingSince()).map((r) => r.key),
         epicBriefs: () => { const r = epicBriefsToday(today()); return r ? { epics: r.epics.length, failures: r.failures } : null; },
+        libraryStale: () => (VAULT_ROOT ? summarize(checkStaleness(readLibrary(VAULT_ROOT), CONTAINER_ROOT || null, realGit)) : null),
         notesReachable: () => { const r = notesCheck(notesWindow()); return r ? { checked: r.report.checked, failures: [...r.unreadable, ...r.report.unreachable.map((u) => `${u.path} ${u.reason}`)] } : null; },
     };
 }
