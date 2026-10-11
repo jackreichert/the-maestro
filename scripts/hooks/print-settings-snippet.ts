@@ -6,7 +6,7 @@
  *   print-settings-snippet.ts [--project <name>] [--vault <ledger-root>]
  *
  * PreCompact runs precompact.ts (timeout 120 s, above the 45 s the hook gives its own handoff). SessionStart with matcher
- * `compact|clear` runs session-start-compact.ts (timeout 120 s; each command it runs is capped at 60 s).
+ * `startup|resume|compact|clear` runs session-start-compact.ts (timeout 120 s; each command it runs is capped at 60 s).
  * SessionEnd with matcher `clear|resume|logout|prompt_input_exit|other` runs session-end-decisions.ts, the decision scan alone
  * (timeout 30 s; SessionEnd hooks otherwise get 1.5 s and never more than 60 s).
  * PreToolUse with matcher `Bash` runs git-guard.ts (timeout 10 s), which takes no flags: it asks before risky git commands.
@@ -35,7 +35,7 @@ export function snippet(extra: string[], autocompactPct?: number): object {
       PreCompact: [{ matcher: 'auto|manual', hooks: [{ type: 'command', command: cmd('precompact.ts'), timeout: 120 }] }],
       PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'git-guard.ts'))].join(' '), timeout: 10 }] }],
       SessionEnd: [{ matcher: 'clear|resume|logout|prompt_input_exit|other', hooks: [{ type: 'command', command: cmd('session-end-decisions.ts'), timeout: 30 }] }],
-      SessionStart: [{ matcher: 'compact|clear', hooks: [{ type: 'command', command: cmd('session-start-compact.ts'), timeout: 120 }] }, ...events.SessionStart],
+      SessionStart: [{ matcher: 'startup|resume|compact|clear', hooks: [{ type: 'command', command: cmd('session-start-compact.ts'), timeout: 120 }] }, ...events.SessionStart],
       UserPromptSubmit: events.UserPromptSubmit,
     },
   };
@@ -57,5 +57,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     }
   }
   console.log(JSON.stringify(snippet(extra, wanted), null, 2));
+  console.error('note: when pasting, remove any separate plain `prime` SessionStart entry you added earlier; this one prints the board for every start reason, so prime would print twice.');
   console.error('Printed only: merge the "hooks" (and "env", if printed) entries into your settings file yourself. Nothing was edited.');
 }

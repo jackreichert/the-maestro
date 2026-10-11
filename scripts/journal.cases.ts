@@ -46,7 +46,7 @@ function must<T>(v: T | undefined | null, label = 'value'): T {
 function run(...args: string[]): Run {
     const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd,   // roll and handoff sweep the cwd: never a real container
-        env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', MAESTRO_CLAUDE_SETTINGS: '/nonexistent',
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent',
             MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents') },
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
@@ -481,7 +481,7 @@ test('status --footer ends with the Session line for the newest session, and say
     writeFileSync(join(projects, 'bbbbbbbb-new.jsonl'), `${[1, 2, 3, 4].map((n) => turn(`m${n}`, 100000)).join('\n')}\n`);
     utimesSync(join(projects, 'aaaaaaaa-old.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
     const line = (extra = {}) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CLAUDE_SETTINGS: '/nonexistent', ...extra },
+        encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent', ...extra },
     }).stdout.trim().split('\n').pop();
     const pct = (n: string, extra = {}) => line({ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: n, ...extra });
     assert.equal(pct('20'), '**Session:** 4 turns · ctx 100k of ~200k (50%) · 100k read/turn');
@@ -498,7 +498,7 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     writeFileSync(join(projects, 'bbbbbbbb-other.jsonl'), `${turn('m1', 150000)}\n`);
     utimesSync(join(projects, 'aaaaaaaa-mine.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
     const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
-        encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', MAESTRO_CLAUDE_SETTINGS: '/nonexistent' },
+        encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent' },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
     assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
     // The item above was started (and so leased) by `testwin`, a different window from the session pinned below, so the pinned footers count that lease as another window's.

@@ -19,16 +19,18 @@ const OK: MaintainResult = { ok: true, archivedDays: ['2026-10-08'], sweep: { re
 const noRun: Run = () => ({ status: 0, stdout: '', stderr: '' });
 
 /** A fake world: the local day is the UTC day plus an offset, and maintain answers from a script. */
-function rig(answers: (MaintainResult | Error)[]) {
+function rig(answers: (MaintainResult | Error)[], carries: { written: string[]; problems: string[] }[] = []) {
   const calls: { today: string }[] = [];
+  const carried: string[] = [];
   let state: RollMaintenanceState | null = null;
   let offsetH = 0;
   const io: MaintenanceIo = {
     localDay: (now) => new Date(now + offsetH * HOUR).toISOString().slice(0, 10),
     maintain: (_t, today) => { calls.push({ today }); const a = answers.shift() ?? OK; if (a instanceof Error) throw a; return a; },
+    carry: (today) => { carried.push(today); return carries.shift() ?? { written: [], problems: [] }; },
   };
   return {
-    calls,
+    calls, carried,
     setOffset: (h: number) => { offsetH = h; },
     /** One check at `now`; returns the events its diff reports against the previous state. */
     at: (now: number) => { const prev = state; state = maint.check('box', { now, prev, run: noRun }, io); return { state, events: maint.diff(prev, state) }; },
@@ -40,7 +42,7 @@ test('the first check of a day runs maintain, silently; later checks that day do
   const first = r.at(T0);
   assert.deepEqual(first.events, []);
   assert.equal(first.state.ranDay, '2026-10-09');
-  assert.equal(first.state.last, 'archived 1 day(s), swept 1 removed, 0 pruned, 2 kept');
+  assert.equal(first.state.last, 'archived 1 day(s), swept 1 removed, 0 pruned, 2 kept, carried 0 project(s)');
   for (let i = 1; i <= 20; i++) r.at(T0 + i * 15 * 60_000);
   assert.equal(r.calls.length, 1);
 });
@@ -117,7 +119,7 @@ test('in the loop: success is silent, a failure is an actionable event, and the 
   const dir = mkdtempSync(join(tmpdir(), 'rm-loop-'));
   const target = mkdtempSync(join(tmpdir(), 'rm-box-'));
   const answers: (MaintainResult | Error)[] = [OK, { ...OK, ok: false, problems: ['no container'] }];
-  const io: MaintenanceIo = { localDay: (n) => new Date(n).toISOString().slice(0, 10), maintain: () => answers.shift() as MaintainResult };
+  const io: MaintenanceIo = { localDay: (n) => new Date(n).toISOString().slice(0, 10), maintain: () => answers.shift() as MaintainResult, carry: () => ({ written: [], problems: [] }) };
   const types = { ...BUILTIN_TYPES, 'roll-maintenance': { ...maint, check: (t: string, c: Parameters<typeof maint.check>[1]) => maint.check(t, c, io) } };
   addWatch(dir, { id: 'rm', type: 'roll-maintenance', target, done_when: '', report: '', notify_overnight: false, notify: false, interval: null, renew: true }, T0);
   const config = { quietHours: 'off' };
@@ -127,4 +129,27 @@ test('in the loop: success is silent, a failure is an actionable event, and the 
   assert.deepEqual(failed.events.map((e) => [e.summary, e.actionable]), [['roll maintenance failed: no container', true]]);
   assert.equal(maint.singleton, true);
   assert.equal(listWatches(dir).length, 1);
+});
+
+test('a clean new-day run carries the priorities and records the count; the same day asks neither again', () => {
+  const r = rig([OK], [{ written: ['arya-scraper', 'the-maestro'], problems: [] }]);
+  const first = r.at(T0);
+  assert.equal(first.state.last, 'archived 1 day(s), swept 1 removed, 0 pruned, 2 kept, carried 2 project(s)');
+  assert.deepEqual(first.events, []);
+  r.at(T0 + 15 * 60_000);
+  r.at(T0 + 2 * HOUR);
+  assert.deepEqual([r.calls.length, r.carried], [1, ['2026-10-09']]);
+});
+
+test('a carry problem schedules the hourly retry and raises one event, and a failed maintain never reaches carry', () => {
+  const r = rig([OK, OK, { ...OK, ok: false, problems: ['no container'] }], [{ written: [], problems: ['arya-scraper: no vault folder Projects/arya-scraper'] }, { written: [], problems: ['arya-scraper: no vault folder Projects/arya-scraper'] }]);
+  const bad = r.at(T0);
+  assert.deepEqual(bad.events.map((e) => [e.summary, e.actionable]), [['roll maintenance failed: carry: arya-scraper: no vault folder Projects/arya-scraper', true]]);
+  assert.equal(bad.state.ranDay, '', 'the day is not marked done');
+  r.at(T0 + 30 * 60_000);
+  assert.equal(r.carried.length, 1, 'no retry inside the hour');
+  assert.deepEqual(r.at(T0 + HOUR).events, [], 'the same problem is not raised again');
+  assert.equal(r.carried.length, 2);
+  r.at(T0 + 25 * HOUR);
+  assert.equal(r.carried.length, 2, 'a maintain that failed did not carry');
 });
