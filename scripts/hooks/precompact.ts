@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, CONTAINER_ROOT, LEDGER_ROOT, SCRIPTS_SHELF_DIR, VAULT_ROOT } from '../local-config.ts';
-import { ensureContinuity, marks, raiseDecisionsFromText } from '../lib/continuity.ts';
+import { ensureContinuity, marks, raiseDecisionsFromText, withContinuityLock } from '../lib/continuity.ts';
 import { openStore } from '../lib/journal/store.ts';
 import { readAutocompact, triggerTokens } from '../lib/autocompact.ts';
 import type { AutocompactSetting } from '../lib/autocompact.ts';
@@ -32,6 +32,8 @@ const JOURNAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'journal.ts'
 export const HANDOFF_BUDGET_MS = 45_000;
 export const SNAPSHOT_DEADLINE_MS = 80_000;
 const MARKS = marks(HOOK_USED);
+/** How long the hook waits for the continuity tick's lock. */
+export const LOCK_WAIT_MS = 5_000;
 
 /** Everything the hook touches outside itself; tests replace it. */
 export interface PrecompactDeps {
@@ -46,6 +48,8 @@ export interface PrecompactDeps {
   /** Copies the snapshot until `deadline` (epoch ms); null when no scripts shelf is configured. */
   snapshot: (date: string, deadline: number) => { worktrees: number; copied: number; current: number; skipped: number; partial: boolean; capped: boolean } | null;
   now: () => Date;
+  /** The continuity lock folder shared with the tick; unset runs without it. */
+  lockDir?: string;
   /** The effective autocompact setting, named in a thrash row. */
   autocompact: () => AutocompactSetting;
 }
@@ -98,7 +102,10 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   } catch { cached = undefined; /* the decisions step reads again and names any failure */ }
   // Decisions, then the handoff, then the snapshot: the shared steps (lib/continuity.ts), in that fixed order.
   const window = resolveWindowId({ session: input.session_id, ...windowEnv() });
-  const done = ensureContinuity({ decisions: () => raiseDecisions(input, deps), window, handoffPath: deps.handoffPath(date, window), date, deadlineMs: started + SNAPSHOT_DEADLINE_MS, handoffBudgetMs: HANDOFF_BUDGET_MS }, deps);
+  // Taken so the hook and the continuity tick do not raise the same asks twice; after LOCK_WAIT_MS the hook runs anyway (a compaction must never lose its steps to a held lock).
+  const steps = (): ReturnType<typeof ensureContinuity> => ensureContinuity({ decisions: () => raiseDecisions(input, deps), window, handoffPath: deps.handoffPath(date, window), date, deadlineMs: started + SNAPSHOT_DEADLINE_MS, handoffBudgetMs: HANDOFF_BUDGET_MS }, deps);
+  const locked = deps.lockDir ? withContinuityLock(deps.lockDir, LOCK_WAIT_MS, steps) : { ran: false as const };
+  const done = locked.ran ? locked.value : steps();
   const { raised, count, snapshot: snap } = done;
   const failed = done.failed;
   const handoff = done.handoff.reason;
@@ -121,6 +128,7 @@ export function realDeps(argv: string[]): PrecompactDeps {
   const store = openStore({ vault: flag(argv, 'vault') || LEDGER_ROOT || VAULT_ROOT, project: flag(argv, 'project') || CONFIGURED_PROJECT, dryRun: false, warn: () => {} });
   return {
     handoffPath: (date, window) => join(store.dir, `HANDOFF-${date}-precompact-${window}.md`),
+    lockDir: join(store.dir, '.continuity'),
     journal: (args, timeoutMs = 20_000) => {
       const r = spawnSync(process.execPath, [JOURNAL, ...args, ...forward], { encoding: 'utf8', timeout: timeoutMs });
       return { ok: !r.error && r.status === 0, out: errorLine(r.stderr || r.stdout || r.error?.message || '') };

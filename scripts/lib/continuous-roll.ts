@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, statSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -42,6 +42,30 @@ export function userMessages(transcript: string): UserMessage[] {
     }
     return out;
 }
+
+/** How recently a transcript must have been written to count as a live session. */
+export const LIVE_WINDOW_MS = 6 * 3_600_000;
+
+/**
+ * The transcripts of interactive sessions written to in the last `windowMs`: top-level `*.jsonl` files of one project folder (a subagent's
+ * transcript lives in a subfolder and is never read), and only those with a user row from the `cli` entrypoint, so a headless run (`sdk-cli`) never counts.
+ * Unreadable files are skipped: a transcript vanishing mid-scan is not an error.
+ */
+export function liveTranscripts(dir: string, nowMs: number, windowMs: number = LIVE_WINDOW_MS): { path: string; text: string }[] {
+    const out: { path: string; text: string }[] = [];
+    for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.jsonl')) : []) {
+        const path = join(dir, name);
+        try {
+            const st = statSync(path);
+            if (!st.isFile() || nowMs - st.mtimeMs > windowMs) continue;
+            const text = readFileSync(path, 'utf8');
+            if (text.split('\n').some((l) => l.includes('"entrypoint"') && l.includes('"user"') && isCliUserRow(l))) out.push({ path, text });
+        } catch { /* gone or unreadable */ }
+    }
+    return out;
+}
+
+const isCliUserRow = (line: string): boolean => { try { const r = JSON.parse(line) as { type?: string; entrypoint?: string }; return r.type === 'user' && r.entrypoint === 'cli'; } catch { return false; } };
 
 /** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to Jack, not a fact. */
 export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from now on|standing|always|never|ok(?:ay)? to|you may|let'?s go with|instead of|stop doing|do not|don'?t|yes,? (?:do|merge|push|open))\b/i;
@@ -172,8 +196,8 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
     return result;
 }
 
-/** True for a handoff file known to cover the whole ledger: `--all` output (`HANDOFF-<date>[b]-all.md`) and the hook's own `-precompact-` files. Single-stream and custom `--out` names have an unknown scope and do not qualify. */
-export const isAllScopeHandoff = (name: string): boolean => /^HANDOFF-.*(-all|-precompact-.+)\.md$/.test(name);
+/** True for a handoff file known to cover the whole ledger: `--all` output (`HANDOFF-<date>[b]-all.md`), the hook's own `-precompact-` files and the continuity tick's `-live` file. Single-stream and custom `--out` names have an unknown scope and do not qualify. */
+export const isAllScopeHandoff = (name: string): boolean => /^HANDOFF-.*(-all|-live|-precompact-.+)\.md$/.test(name);
 
 /**
  * Newest `generated_at` among the handoff files in `dir` (marker, else mtime), as an ISO string with its file name; null when none.

@@ -1,4 +1,5 @@
 import { handoffFresh, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { acquireLock, processAlive } from './status-page/lock.ts';
 import type { LedgerRow } from './ledger-core.ts';
 
 /**
@@ -89,4 +90,16 @@ export function ensureContinuity(input: ContinuityInput, deps: ContinuityDeps): 
     return r;
   });
   return { raised, count, handoff, snapshot, failed };
+}
+
+const sleepMs = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+/**
+ * Runs `fn` holding the continuity lock (a folder beside the ledger), so the tick and a PreCompact hook never write a handoff at once.
+ * Waits up to `waitMs` for a live holder (0 = do not wait). Returns null when the lock was not got; a lock left by a dead process is taken over.
+ */
+export function withContinuityLock<T>(dir: string, waitMs: number, fn: () => T): { ran: true; value: T } | { ran: false } {
+  let release: () => void;
+  try { release = acquireLock(dir, { nowMs: () => Date.now(), sleep: sleepMs, pidAlive: processAlive, pid: process.pid }, { timeoutMs: waitMs, staleMs: 10 * 60_000, pollMs: 250 }); } catch { return { ran: false }; }
+  try { return { ran: true, value: fn() }; } finally { release(); }
 }
