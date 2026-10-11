@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { continuityLines } from '../lib/continuous-roll.ts';
 import { decisionsOnly, precompact } from './precompact.ts';
@@ -196,4 +198,37 @@ test('precompact: rows the hook and the loop wrote do not stale the handoff, but
   const text = precompact({ transcript_path: '/t', trigger: 'auto' }, d);
   assert.equal(calls.some((c) => c[0] === 'handoff'), false);
   assert.match(text, /^precompact: handoff current, snapshot copied 2 \(1 current\), decisions raised 0 in 0 ask\(s\) /);
+});
+
+const SNIPPET_CLI = join(dirname(fileURLToPath(import.meta.url)), 'print-settings-snippet.ts');
+const runSnippet = (args: string[]) => spawnSync(process.execPath, [SNIPPET_CLI, ...args], { encoding: 'utf8', env: { ...process.env, MAESTRO_CLAUDE_SETTINGS: '/nonexistent', CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '' }, timeout: 20_000 });
+
+test('the one snippet holds the roll hooks and the event-inject entries, and no settings-env block without the flag', () => {
+  const r = runSnippet([]);
+  assert.equal(r.status, 0);
+  const s = JSON.parse(r.stdout) as Record<string, unknown> & { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
+  assert.deepEqual(Object.keys(s.hooks).sort(), ['PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'UserPromptSubmit']);
+  assert.equal(s.hooks.SessionStart.length, 2);
+  assert.equal(s.hooks.SessionStart[1].matcher, undefined);
+  assert.match(s.hooks.SessionStart[1].hooks[0].command, /event-inject\.ts'$/);
+  assert.equal(s.hooks.UserPromptSubmit.length, 1);
+  assert.deepEqual(Object.keys(s), ['hooks']);
+  assert.match(r.stderr, /autocompact: unset% of 1000k window \(source default\)/);
+});
+
+test('--autocompact-pct adds the settings env block; a value under the floor is refused with exit 2 and nothing on stdout', () => {
+  const ok = runSnippet(['--autocompact-pct', '20']);
+  assert.equal(ok.status, 0);
+  assert.deepEqual(Object.entries(JSON.parse(ok.stdout) as Record<string, unknown>).find(([k]) => k !== 'hooks')?.[1], { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20' });
+  const low = runSnippet(['--autocompact-pct', '5']);
+  assert.equal(low.status, 2);
+  assert.equal(low.stdout, '');
+  assert.match(low.stderr, /refused/);
+});
+
+test('session-start context puts the autocompact warnings first, and prints none when there are none', () => {
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : { ok: true, out: 'start page' });
+  const out = context('compact', run, () => ({ ok: true, out: 'cold' }), ['too low']);
+  assert.ok(out.startsWith('== Autocompact ==\n!! too low\n\n== Board'));
+  assert.ok(!context('compact', run, () => ({ ok: true, out: 'cold' })).includes('Autocompact'));
 });
