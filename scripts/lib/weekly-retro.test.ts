@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fold } from './ledger-core.ts';
 import type { LedgerRow } from './ledger-core.ts';
-import { lastExperiment, renderRetro, weeklyRetro } from './weekly-retro.ts';
+import { lastExperiment, renderRetro, taskKey, weeklyRetro } from './weekly-retro.ts';
 
 const NOW = new Date('2026-10-09T12:00:00Z');
 const row = (id: string, ts: string, kind: string, extra: Partial<LedgerRow> = {}): LedgerRow => ({ id, ts, date: ts.slice(0, 10), kind, stream: 's', text: `item ${id}`, ...extra });
@@ -54,4 +54,18 @@ test('renderRetro names the gaps the ledger cannot fill and says undecided when 
     assert.match(text, /o {2}item o/);
     assert.match(text, /reopened tickets, corrections from the user, cost misses/);
     assert.match(renderRetro(retro([])), /last experiment {2}none recorded/);
+});
+
+test('a task finished twice in the window is listed as repeated, with its ids; one-offs, stale repeats and unclassifiable text are not', () => {
+    const done = (id: string, text: string, day: string): LedgerRow[] => [row(id, `2026-10-0${day}T00:00:00Z`, 'wip', { text }), row(`${id}d`, `2026-10-0${day}T06:00:00Z`, 'done', { closes: id })];
+    const r = retro([
+        ...done('a', 'Sweep merged branches in Avonlea #412', '5'), ...done('b', 'sweep merged branches in Narnia', '7'),
+        ...done('c', 'Write the cutover plan for Bayada', '6'),
+        ...done('e', 'Sweep merged branches in the-maestro', '1'),
+        ...done('f', 'ok', '6'), ...done('g', 'ok', '7'),
+    ]);
+    assert.deepEqual(r.repeated, [{ key: 'sweep merged branches', ids: ['a', 'b'] }], 'only the two inside the window; the lone and the unclassifiable ones stay out');
+    assert.match(renderRetro(r), /2x {2}sweep merged branches {2}\(a, b\)/);
+    assert.equal(taskKey('ok'), null);
+    assert.equal(retro([]).repeated.length, 0);
 });
