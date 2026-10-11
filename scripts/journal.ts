@@ -2095,7 +2095,7 @@ function cmdPriorities() {
     } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show [--repo <repo>]');
 }
 
-/** `priorities set` also writes each project's own file for `day`, for the projects its items' streams map to. A problem is reported and never undoes the container-wide write. */
+/** `priorities set` also writes each project's own file for `day`, for the projects its items' streams map to. A problem is reported, sets the exit code to 1 once the other projects are written, and never undoes the container-wide write. */
 function writeProjectFiles(dirPath: string, day: string, items: Priority[]) {
     if (!VAULT_ROOT) return;
     const registry = loadRegistry();
@@ -2111,7 +2111,7 @@ function writeProjectFiles(dirPath: string, day: string, items: Priority[]) {
             const kept = readProjectFile(join(prioritiesDir(VAULT_ROOT, name), `${day}.md`));
             const result = writeProjectPriorities(VAULT_ROOT, name, day, { project: name, date: day, carriedFrom: kept?.carriedFrom ?? '', writtenBy: 'priorities set', today: mine, carried: kept?.carried ?? [], next: nextItems(rows, registry, streams) });
             console.log(result === 'written' ? `wrote ${join(prioritiesDir(VAULT_ROOT, name), `${day}.md`)}` : `skipped ${name}: no vault folder Projects/${name}`);
-        } catch (e) { console.error(`project ${name}: ${errorMessage(e).split('\n')[0].slice(0, 100)}`); }
+        } catch (e) { console.error(`project ${name}: ${errorMessage(e).split('\n')[0].slice(0, 100)}`); process.exitCode = 1; }
     }
 }
 

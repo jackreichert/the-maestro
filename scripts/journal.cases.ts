@@ -2505,6 +2505,18 @@ test('priorities set again without a stream clears that project\'s Today and Nex
     rmSync(root, { recursive: true, force: true });
 });
 
+test('a project write that fails makes priorities set exit 1 after the other projects are written', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    mkdirSync(join(root, 'Projects', 'options-app', 'Status'), { recursive: true });
+    writeFileSync(join(root, 'Projects', 'options-app', 'Status', 'priorities'), 'blocker');
+    const set = runIn('priorities', 'set', 'Opt work | Options', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 1);
+    assert.match(set.err, /project options-app: /);
+    assert.match(fileOf('the-maestro', '2030-01-02'), /^## Today\n- New thing \| Maestro$/m);
+    assert.match(set.out, /^wrote .*priorities\.md$/m, 'the container list is still written');
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
     seedRegistry();
     const sd = join(vault, 'Status');
