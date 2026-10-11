@@ -35,7 +35,7 @@ Rules for the file:
 
 - **Credentials created during the walkthrough** go in a durable place the check can see (the CLI's own login state, a credential file), and the check asks the CLI (as `login_check` does below), not `X_NEEDS`.
 - **Names only for secrets.** Say which variable to set, never a value. Look a credential up by name with `env-where NAME`; do not open the file it names.
-- **Plan before apply, with counts.** A `plan` step's check must print one line `PLAN add=N change=N destroy=N replace=N`. The template shows the counts, and stops the run if destroy or replace is above zero. An `apply` step is refused unless the step before it was a plan that passed, and one plan covers one apply.
+- **Plan before apply, with counts.** A `plan` step's check must print one line `PLAN add=N change=N destroy=N replace=N`. The template shows the counts, and stops the run if destroy or replace is above zero. An `apply` step is refused unless the step directly before it was a plan that passed: any other step in between, even a hand step, voids the plan, and one plan covers one apply.
 - **Print with `print -r --`**, never plain `print --`, in `X_say`. Without `-r`, zsh expands `\n` and `\t`, so a `sed` or `printf` command shown for pasting reaches the user changed. The template does the same for titles.
 - **Zsh paste rules** for anything the user will copy from `X_say`: no inline `#` comments on a command line, command variables as functions, and one line per command.
 - **One focused task per step**, so the instructions fit on one screen.

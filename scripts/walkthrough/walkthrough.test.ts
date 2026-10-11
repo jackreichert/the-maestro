@@ -180,3 +180,21 @@ test('the playbook example first step passes as written when the CLI is logged i
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /PASS/);
 });
+
+test('an action step between a plan and its apply voids the plan', () => {
+  const steps = `
+WALK_STEPS=(p mid a)
+p_KIND=plan
+p_say() { print -r -- "  Plan."; }
+p_check() { print -r -- "PLAN add=1 change=0 destroy=0 replace=0"; }
+mid_say() { print -r -- "  Something else."; }
+mid_check() { return 0; }
+a_KIND=apply
+a_say() { print -r -- "  Apply."; }
+a_check() { return 0; }
+`;
+  const r = run(steps, ENTER.repeat(3));
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /apply step needs a passed plan step/);
+  assert.match(r.out, /Stopped at step 3 of 3/);
+});

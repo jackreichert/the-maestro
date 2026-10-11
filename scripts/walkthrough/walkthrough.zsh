@@ -98,7 +98,7 @@ run_step() {
       fail_step "plan destroys or replaces resources; do not apply" $n $total
     fi
     LAST_PLAN_OK=1
-  elif [[ $kind == apply ]]; then
+  else
     LAST_PLAN_OK=0
   fi
 
