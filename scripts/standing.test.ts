@@ -19,7 +19,7 @@ const ran = (id: string, hoursAgo: number): StandingEvent => ({ op: 'ran', id, e
 const statusOf = (events: StandingEvent[], ctx: CheckContext, id: string) => standingState(events, ctx).find((s) => s.row.id === id)?.status;
 
 test('the built-in rows cover the pickups the ticket names, each enforced by a check or a cadence', () => {
-  assert.deepEqual(DEFAULT_ROWS.map((r) => r.id), ['loop-alive', 'chain-next', 'merge-sweep', 'branch-sweep', 'epic-briefs', 'notes-reachable', 'tracker-reconcile']);
+  assert.deepEqual(DEFAULT_ROWS.map((r) => r.id), ['loop-alive', 'chain-next', 'merge-sweep', 'branch-sweep', 'epic-briefs', 'notes-reachable', 'library-fresh', 'tracker-reconcile']);
   for (const r of DEFAULT_ROWS) assert.equal(validRow(r), null, r.id);
 });
 
@@ -42,6 +42,18 @@ test('the notes-reachable row fails while a note is on no stream tab, names it, 
   assert.equal(statusOf([], healthy(), 'notes-reachable'), 'ok');
   assert.equal(statusOf([], healthy({ notesReachable: undefined }), 'notes-reachable'), 'failing', 'no vault: could not look, so not a pass');
   assert.equal(statusOf([], healthy({ notesReachable: () => null }), 'notes-reachable'), 'failing');
+});
+
+test('the library-fresh row fails once 10 percent of pages cite changed evidence, never blocks on unchecked pages, and cannot be marked done on a claim', () => {
+  const lib = (pages: number, stale: string[], unchecked = 0) => healthy({ libraryStale: () => ({ pages, stale, unchecked }) });
+  const row = standingState([ran('library-fresh', 0)], lib(10, ['Projects/p/Knowledge/a.md'])).find((x) => x.row.id === 'library-fresh');
+  assert.equal(row?.status, 'failing', 'a ran row does not clear a failing check');
+  assert.match(row?.detail ?? '', /1 of 10 pages stale.*first: Projects\/p\/Knowledge\/a\.md/);
+  assert.equal(statusOf([], lib(11, ['a.md']), 'library-fresh'), 'ok', '1 of 11 is under 10 percent');
+  assert.equal(statusOf([], lib(9, [], 9), 'library-fresh'), 'ok', 'unchecked pages are shown, not failed');
+  assert.equal(statusOf([], lib(0, []), 'library-fresh'), 'ok');
+  assert.equal(statusOf([], healthy({ libraryStale: () => null }), 'library-fresh'), 'failing', 'wired but could not look: not a pass');
+  assert.equal(statusOf([], healthy(), 'library-fresh'), 'ok', 'a caller that does not read the library asks nothing');
 });
 
 test('the epic-briefs row fails while an epic touched today owes a brief or a note, and says what', () => {
@@ -105,7 +117,7 @@ test('standingBlock: silent when everything is ok, only rows needing attention f
   assert.equal(standingBlock(all, { all: true }).length, 1 + DEFAULT_ROWS.length);
   const broken = standingState([], healthy({ loopPid: () => null }));
   const prime = standingBlock(broken, { max: 2 });
-  assert.match(prime[0], /Standing pickups \(3 need attention, 7 total\)/);
+  assert.match(prime[0], /Standing pickups \(3 need attention, 8 total\)/);
   assert.equal(prime.length, 1 + 2);
   assert.match(prime[2], /… \+2 more/);
   assert.equal(standingBlock(broken).length, 1 + 3);
@@ -196,7 +208,7 @@ test('cli: prime carries the rows needing attention inside its 40 lines; handoff
   for (let i = 0; i < 30; i += 1) assert.equal(cli(vault, events, 'log', `open item number ${i}`, '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
   const prime = cli(vault, events, 'prime');
   assert.equal(prime.code, 0, prime.err);
-  assert.match(prime.out, /^Standing pickups \(\d need attention, 7 total\)/m);
+  assert.match(prime.out, /^Standing pickups \(\d need attention, 8 total\)/m);
   assert.match(prime.out, /FAILING loop-alive/);
   assert.ok(prime.out.trimEnd().split('\n').length <= 40);
   const handoff = cli(vault, events, 'handoff', '--stream', 'S', '--dry-run', '--no-worktree-sweep');

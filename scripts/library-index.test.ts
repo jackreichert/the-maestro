@@ -113,7 +113,7 @@ test('usage and read errors exit 2, never a silent pass', () => {
 });
 
 test('renderBlock links by vault path when two pages share a name, and mergeIndex keeps text after the end marker', () => {
-    const mk = (path: string): LibraryPage => ({ path, repo: 'alpha', kind: 'how-to', title: 't', readWhen: '', components: [], stream: '', status: 'superseded', verifiedAt: '', body: '', links: [] });
+    const mk = (path: string): LibraryPage => ({ path, repo: 'alpha', kind: 'how-to', title: 't', readWhen: '', components: [], stream: '', status: 'superseded', verifiedAt: '', verifiedRaw: '', body: '', links: [] });
     const block = renderBlock([mk('Projects/alpha/Knowledge/x.md'), mk('Projects/alpha/Runbooks/x.md')]);
     assert.match(block, /\[\[Projects\/alpha\/Knowledge\/x\]\]: how-to, no Read when line \(verified never SUPERSEDED\)/);
     const merged = mergeIndex(`top\n${START}\nold\n${END}\ntail\n`, block);
@@ -242,4 +242,17 @@ test('a verified-at value with a PHI shape is withheld whole, not cut to ten cha
     const text = read('Projects/alpha/INDEX.md');
     assert.ok(!text.includes('123-45-678'));
     assert.match(text, /\[\[odd-date\]\]: tool, you read it \(verified \(withheld/);
+});
+
+test('--stale flags a current page whose cited file changed after verified-at; without it the line is unchanged', () => {
+    const code = mkdtempSync(join(tmpdir(), 'lindex-code-'));
+    mkdirSync(join(code, 'alpha'));
+    writeFileSync(join(code, 'alpha', 'a.md'), 'x\n');
+    const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com', GIT_AUTHOR_DATE: '2026-10-05T10:00:00Z', GIT_COMMITTER_DATE: '2026-10-05T10:00:00Z' };
+    for (const a of [['init', '-q'], ['add', 'a.md'], ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'chore: fixture']]) spawnSync('git', ['-C', join(code, 'alpha'), ...a], { env });
+    run();
+    assert.match(read('Projects/alpha/INDEX.md'), /\[\[alpha-flow\]\]: how-it-works, you trace the flow \(verified 2026-10-02\)$/m);
+    const r = run('--stale', '--code-root', code);
+    assert.equal(r.code, 0, r.err);
+    assert.match(read('Projects/alpha/INDEX.md'), /\[\[alpha-flow\]\]: how-it-works, you trace the flow \(verified 2026-10-02 STALE\)$/m);
 });

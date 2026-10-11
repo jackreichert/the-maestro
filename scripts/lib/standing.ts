@@ -37,12 +37,17 @@ export interface CheckContext {
   epicBriefs?: () => { epics: number; failures: string[] } | null;
   /** How many notes were checked for a stream tab and which are on none (or why the vault could not be read). Null when no vault is configured. */
   notesReachable?: () => { checked: number; failures: string[] } | null;
+  /** How many library pages there are, which of them cite evidence that changed since they were verified, and how many could not be checked (lib/library/stale.ts `summarize`). Null when no vault is configured; absent where the caller does not read the library. */
+  libraryStale?: () => { pages: number; stale: string[]; unchecked: number } | null;
 }
 export interface CheckResult { ok: boolean; detail: string }
 export type Check = (ctx: CheckContext) => CheckResult;
 
 /** What a vault-reading check says when no vault root is configured. */
 export const NO_VAULT_DETAIL = 'could not be checked: no vault root is configured (set vault_root)';
+
+/** The share of library pages that may be stale before the `library-fresh` row fails (the ledger-to-library plan: under 10 percent). */
+export const LIBRARY_STALE_LIMIT = 0.1;
 
 /** Every runtime check a row may name. A row naming anything else reads as failing, loudly. */
 export const CHECKS: Record<string, Check> = {
@@ -74,6 +79,15 @@ export const CHECKS: Record<string, Check> = {
     if (!r) return { ok: false, detail: NO_VAULT_DETAIL };
     return r.failures.length ? { ok: false, detail: `${r.failures.length} to fix, first: ${r.failures[0]}` } : { ok: true, detail: `${r.checked} notes, every one listed on a stream tab` };
   },
+  'library-stale': ({ libraryStale }) => {
+    // Absent means this caller does not read the library at all (nothing was asked); null means it tried and could not look, which is not a pass.
+    if (!libraryStale) return { ok: true, detail: 'not read by this caller' };
+    const r = libraryStale();
+    if (!r) return { ok: false, detail: NO_VAULT_DETAIL };
+    // Stale pages must stay under LIBRARY_STALE_LIMIT of the library; an unchecked page is shown, not counted as fresh or stale.
+    if (r.stale.length > 0 && r.stale.length >= r.pages * LIBRARY_STALE_LIMIT) return { ok: false, detail: `${r.stale.length} of ${r.pages} pages stale (the limit is under ${LIBRARY_STALE_LIMIT * 100}%), first: ${r.stale[0]}` };
+    return { ok: true, detail: `${r.pages} pages, ${r.stale.length} stale, ${r.unchecked} unchecked` };
+  },
   'tracker-transitions': ({ pendingTransitions }) => {
     const keys = pendingTransitions();
     return keys.length ? { ok: false, detail: `${keys.length} not transitioned: ${keys.slice(0, 5).join(', ')}. Not Jira keys? Narrow \`tracker_key_pattern\` (e.g. \\bAH-\\d+\\b) or add prefixes to \`local_key_prefixes\` in the local config` } : { ok: true, detail: 'none pending' };
@@ -88,6 +102,7 @@ export const DEFAULT_ROWS: StandingRow[] = [
   { id: 'branch-sweep', trigger: 'roll or handoff', action: 'branch and worktree sweep (journal.ts roll removes qualifying worktrees; branch-sweep.ts lists the rest)', who: 'any model (haiku)', everyHours: 36 },
   { id: 'epic-briefs', trigger: 'roll, and when an epic changes state', action: 'refresh each stale or missing epic brief (`ticket.mjs brief <epic> --refresh`) and attach each note written today to its ticket (`ticket.mjs attach`)', who: 'any model (sonnet)', check: 'epic-briefs' },
   { id: 'notes-reachable', trigger: 'roll, and when a note is written under an active stream', action: 'list every unreachable note (`journal.ts notes-check`) and attach it to a ticket or give it a `stream:` field', who: 'any model (sonnet)', check: 'notes-reachable' },
+  { id: 'library-fresh', trigger: 'roll, and when a library page\'s evidence changes', action: 'refresh each stale library page: `library-check.ts --stale` lists them; re-verify the facts and have the composer rewrite the page', who: 'composer (sonnet)', check: 'library-stale' },
   { id: 'tracker-reconcile', trigger: 'a done item carries a tracker key', action: 'move the tracker ticket and record it with `log --transitioned KEY`', who: 'any model (haiku)', check: 'tracker-transitions' },
 ];
 
