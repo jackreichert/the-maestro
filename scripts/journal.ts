@@ -80,7 +80,7 @@
  *   journal.ts archive <stream>              hide a finished stream; refuses until retro + promotions are done
  *   journal.ts unarchive <stream>            bring an archived stream back, exactly
  *   journal.ts lease <id> [--ttl minutes] [--steal [window]]         take or renew this window's lease on an open item (`start <id>` and `brief <id>` take it too); another window's live lease refuses with exit 1 and "leased by <window> until <time>" unless --steal [window] (it takes the lease only from the window it names; bare --steal names whoever holds it when read); any row the holder writes renews it, `done`/`drop`/`resolve` ends it, `release <id> [--force [--from <window>]]` frees it, and it lapses after `lease_ttl_minutes` (default 60) of the holder's silence
- *   journal.ts claim <repo> --desk <stream> [--branch b] [--why "..."] [--pid n]   take an exclusive repo lock (Claims/<repo>.lock)
+ *   journal.ts claim <repo> --desk <stream> [--worktree w | --branch b] [--why "..."] [--pid n]   take a repo lock (Claims/<repo>.lock, or <repo>@<scope>.lock with a worktree or branch)
  *   journal.ts release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--read-only] [--details-file f] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
@@ -159,7 +159,7 @@ import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
-import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock } from './lib/journal/claims.ts';
+import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock, acquireRepoClaim, claimKey, claimKeysFor, claimScope, scopesConflict, splitClaimKey } from './lib/journal/claims.ts';
 import { CONF, backfillProposals as backfillProposalsIn } from './lib/journal/backfill.ts';
 import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSeries, handoffMarker, createExclusive, writeHandoffSeries, updateContextLink as updateContextLinkIn } from './lib/journal/handoff.ts';
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
@@ -1576,65 +1576,76 @@ function cmdClaim() {
     const usage = usageFromArgs();
     const pid = arg('pid') ? Number(arg('pid')) : null;
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
-    const claim = { repo, desk, pid, host: hostname(), time: now(), branch: arg('branch') || undefined, why: arg('why') || undefined };
+    const scope = claimScope(arg('worktree') || arg('branch'));
+    const claim = { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why: arg('why') || undefined };
     if (dryRun) { console.log('[dry-run]', JSON.stringify(claim)); return; }
-    const linkError = acquireClaimLock(claimsDir, repo, claim);
-    if (linkError) {
-        if (!('code' in linkError && linkError.code === 'EEXIST')) throw linkError;
-        const held = readClaim(repo);
-        console.error(`${repo} is already claimed by ${describeClaim(held)}.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
+    const taken = acquireRepoClaim(claimsDir, repo, scope, claim);
+    if (taken.status !== 'taken') {
+        console.error(`${claimKey(repo, scope)} is already claimed by ${describeClaim(taken.held)}${taken.status === 'conflict' ? ` (claim ${taken.key} conflicts: a whole-repo claim, with no --worktree or --branch, conflicts with every claim on the repo)` : ''}.${taken.held && claimStaleness(taken.held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
         process.exit(1);
     }
-    append({ id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, stream: desk, desk, branch: claim.branch, text: `claim ${repo} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage });
+    append({ id: newId(readLedger()), ts: claim.time, date: today(), kind: 'claim', repo, scope, stream: desk, desk, branch: claim.branch, text: `claim ${claimKey(repo, scope)} for ${desk}${claim.why ? `: ${claim.why}` : ''}`, ...usage });
     if (!dryRun) render(true);
-    console.log(`claim  ${repo}  ${desk}`);
+    console.log(`claim  ${claimKey(repo, scope)}  ${desk}`);
 }
 
 function cmdRelease() {
     if (releaseItemLease(positional[0] ?? '')) return;
-    const repo = validRepo(positional[0]);
-    const held = readClaim(repo);
+    const named = splitClaimKey(positional[0] ?? '');
+    const repo = validRepo(named.repo);
     const desk = arg('desk') ? normaliseStream(arg('desk')) : null;
+    let scope = named.scope ? claimScope(named.scope) : claimScope(arg('worktree') || arg('branch'));
+    if (!scope && !existsSync(claimPath(repo))) {
+        // No scope named and no whole-repo claim: the desk's own scoped claim if it holds exactly one, else the repo's only claim (so a refusal names its holder).
+        const all = claimKeysFor(claimsDir, repo);
+        const mineHere = all.filter((k) => readClaim(k)?.desk === desk);
+        const pick = mineHere.length ? mineHere : all;
+        if (pick.length === 1) scope = splitClaimKey(pick[0] as string).scope;
+    }
+    const key = claimKey(repo, scope);
+    const held = readClaim(key);
     const itemDir = join(claimsDir, 'briefs');
     const grantsFor = (): string[] => (existsSync(itemDir) ? readdirSync(itemDir).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).filter((id) => readClaimIn(itemDir, id)?.repo === repo) : []);
-    if (!existsSync(claimPath(repo))) {
+    if (!existsSync(claimPath(key))) {
         // A brief that died before taking the repo claim leaves only its item grants; clearing them is a release of their own.
         const orphans = grantsFor().filter((id) => has('force') || (desk && readClaimIn(itemDir, id)?.desk === desk));
-        if (!orphans.length) die(`${repo} is not claimed.`);
+        const others = claimKeysFor(claimsDir, repo);
+        if (!orphans.length) die(`${key} is not claimed.${others.length ? ` Claims on ${repo}: ${others.join(', ')} (pass --worktree or --branch, or name <repo>@<scope>).` : ''}`);
         if (dryRun) { console.log(`[dry-run] release grants ${orphans.join(', ')}`); return; }
         for (const id of orphans) unlinkSync(claimPathIn(itemDir, id));
         console.log(`released  ${repo}  (no claim; cleared item grants ${orphans.join(', ')})`);
         return;
     }
     if (!has('force') && (!desk || !held || held.desk !== desk)) {
-        die(`${repo} is held by ${describeClaim(held)}. Only that desk can release it (pass --desk), or use --force.`);
+        die(`${key} is held by ${describeClaim(held)}. Only that desk can release it (pass --desk), or use --force.`);
     }
     const usage = usageFromArgs();
-    if (dryRun) { console.log(`[dry-run] release ${repo}`); return; }
+    if (dryRun) { console.log(`[dry-run] release ${key}`); return; }
     // The releasing holder's grants are listed (with what each says) before the claim goes: once it is gone another desk may take the repo and grant its own item.
-    const mine = grantsFor().map((id) => ({ id, grant: readClaimIn(itemDir, id) as { desk?: string; time?: string } | null })).filter((g) => g.grant && g.grant.desk === held?.desk);
-    unlinkSync(claimPath(repo));
+    const mine = grantsFor().map((id) => ({ id, grant: readClaimIn(itemDir, id) as { desk?: string; time?: string; scope?: string } | null })).filter((g) => g.grant && g.grant.desk === held?.desk && (g.grant.scope ?? undefined) === scope);
+    unlinkSync(claimPath(key));
     const pauseMs = Number(process.env.MAESTRO_TEST_RELEASE_PAUSE_MS);
     if (Number.isFinite(pauseMs) && pauseMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pauseMs);
     // A brief's per-item writer grants for this repo end with the claim, and only the ones listed above, still unchanged.
     for (const { id, grant } of mine) { if ((readClaimIn(itemDir, id) as { time?: string } | null)?.time === grant?.time) unlinkSync(claimPathIn(itemDir, id)); }
-    append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'released', repo, stream: held?.desk, desk: held?.desk, text: `released ${repo} (${held?.desk ?? 'unknown desk'})${has('force') ? ' with --force' : ''}`, ...usage });
+    append({ id: newId(readLedger()), ts: now(), date: today(), kind: 'released', repo, scope, stream: held?.desk, desk: held?.desk, text: `released ${key} (${held?.desk ?? 'unknown desk'})${has('force') ? ' with --force' : ''}`, ...usage });
     if (!dryRun) render(true);
-    console.log(`released  ${repo}  ${held?.desk ?? ''}`);
+    console.log(`released  ${key}  ${held?.desk ?? ''}`);
 }
 
 function cmdClaims() {
     const hours = Number(arg('stale-hours', '12'));
     const files = existsSync(claimsDir) ? readdirSync(claimsDir).filter((n) => n.endsWith('.lock')).sort() : [];
     const rows = files.map((n) => {
-        const repo = n.slice(0, -5);
-        const c = readClaim(repo);
+        const key = n.slice(0, -5);
+        const { repo, scope } = splitClaimKey(key);
+        const c = readClaim(key);
         const st = claimStaleness(c, hours);
-        return { repo, desk: c?.desk ?? null, pid: c?.pid ?? null, host: c?.host ?? null, time: c?.time ?? null, branch: c?.branch ?? null, ageHours: Number.isFinite(st.ageHours) ? Math.round(st.ageHours * 10) / 10 : null, stale: st.stale, reason: st.reason };
+        return { repo, scope: scope ?? null, key, desk: c?.desk ?? null, pid: c?.pid ?? null, host: c?.host ?? null, time: c?.time ?? null, branch: c?.branch ?? null, ageHours: Number.isFinite(st.ageHours) ? Math.round(st.ageHours * 10) / 10 : null, stale: st.stale, reason: st.reason };
     });
     if (asJson) { console.log(JSON.stringify({ staleHours: hours, claims: rows }, null, 2)); return; }
     if (!rows.length) { console.log('No claims.'); return; }
-    for (const r of rows) console.log(`  ${r.repo}  desk ${r.desk ?? '?'}  pid ${r.pid ?? 'unknown'}  ${r.host ?? '?'}  ${r.ageHours ?? '?'}h${r.branch ? `  ${r.branch}` : ''}${r.stale ? `  STALE (${r.reason})` : ''}`);
+    for (const r of rows) console.log(`  ${r.key}  desk ${r.desk ?? '?'}  pid ${r.pid ?? 'unknown'}  ${r.host ?? '?'}  ${r.ageHours ?? '?'}h${r.branch ? `  ${r.branch}` : ''}${r.stale ? `  STALE (${r.reason})` : ''}`);
 }
 
 /**
@@ -1646,7 +1657,7 @@ function cmdClaims() {
 const LIBRARY_LOOKUP_TIMEOUT_MS = 10000;
 
 function cmdBrief(): void {
-    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--as holder] [--pid n] [--read-only] [--details-file f] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
+    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--as holder] [--pid n] [--read-only] [--details-file f] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
     if (!target) die(`No item with that id.\n${BRIEF_USAGE}`);
@@ -1686,7 +1697,8 @@ function cmdBrief(): void {
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
-    const claim = writer && repo && desk ? { repo, desk, pid, host: hostname(), time: now(), branch: arg('branch') || undefined, why } : undefined;
+    const scope = claimScope(arg('worktree') || arg('branch'));
+    const claim = writer && repo && desk ? { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why } : undefined;
 
     if (dryRun) { console.log(`[dry-run] brief ${paths.brief}${claim ? `, claim ${claim.repo} for ${claim.desk}` : ''}`); return; }
 
@@ -1697,8 +1709,8 @@ function cmdBrief(): void {
     // The same holder briefing again is a rerun; any other holder is refused, unless the grant is an orphan (its run died before the rows were written).
     const itemLocks = join(claimsDir, 'briefs');
     const itemId = String(target.id);
-    const itemLock = { id: itemId, repo, desk, holder, pid: process.pid, host: hostname(), time: now() };
-    type Grant = { id?: string; repo?: string; desk?: string; holder?: string; pid?: number; host?: string; time?: string };
+    const itemLock = { id: itemId, repo, scope, desk, holder, pid: process.pid, host: hostname(), time: now() };
+    type Grant = { id?: string; repo?: string; scope?: string; desk?: string; holder?: string; pid?: number; host?: string; time?: string };
     const readGrant = (id: string): Grant | null => readClaimIn(itemLocks, id) as Grant | null;
     const hasBriefRow = (id: string): boolean => readLedger().some((r) => r.kind === 'brief' && r.briefs === id);
     /** A grant is an orphan when its run is gone (this host, dead pid) and wrote no brief row: nothing holds the item. */
@@ -1744,23 +1756,23 @@ function cmdBrief(): void {
     let tookClaim = false;
     let ownedClaim = false;
     if (claim) {
-        const linkError = acquireClaimLock(claimsDir, claim.repo, claim);
-        if (linkError) {
-            if (!('code' in linkError && linkError.code === 'EEXIST')) { dropItemLock(); throw linkError; }
-            const held = readClaim(claim.repo);
-            // The desk's own claim is not a second holder: a desk is told to claim before it dispatches.
-            if (!(held && held.desk === claim.desk)) {
+        let taken;
+        try { taken = acquireRepoClaim(claimsDir, claim.repo, scope, claim); } catch (e) { dropItemLock(); throw e; }
+        if (taken.status !== 'taken') {
+            const held = taken.held;
+            // The desk's own claim is not a second holder: a desk is told to claim before it dispatches. A conflicting claim under another key is.
+            if (taken.status === 'conflict' || !(held && held.desk === claim.desk)) {
                 dropItemLock();
-                console.error(`${claim.repo} is already claimed by ${describeClaim(held)}${held?.why ? ` (${held.why})` : ''}. No brief was written.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
+                console.error(`${claimKey(claim.repo, scope)} is already claimed by ${describeClaim(held)}${held?.why ? ` (${held.why})` : ''}. No brief was written.${held && claimStaleness(held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
                 process.exit(1);
             }
             ownedClaim = held.why === why;
         } else tookClaim = true;
         // Another live grant on this repo, whoever took the repo claim, means another item's writer holds it.
-        const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && !id.endsWith('.reclaim') && readGrant(id)?.repo === claim.repo && !orphan(readGrant(id), id)) : undefined;
+        const otherGrant = existsSync(itemLocks) ? readdirSync(itemLocks).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).find((id) => id !== itemId && !id.endsWith('.reclaim') && readGrant(id)?.repo === claim.repo && scopesConflict(readGrant(id)?.scope, scope) && !orphan(readGrant(id), id)) : undefined;
         if (otherGrant) {
             dropItemLock();
-            if (tookClaim) { try { unlinkSync(claimPath(claim.repo)); } catch { /* already gone */ } }
+            if (tookClaim) { try { unlinkSync(claimPath(claimKey(claim.repo, scope))); } catch { /* already gone */ } }
             console.error(`${claim.repo} already has a writer brief for item ${otherGrant} (holder ${readGrant(otherGrant)?.holder ?? '?'}). No brief was written.`);
             process.exit(1);
         }
@@ -1770,7 +1782,7 @@ function cmdBrief(): void {
     const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
     // A claim row counts only if no release of the repo came after it: a re-brief after `release` takes a new claim and needs its own row.
     const lastIndex = (pred: (r: LedgerRow) => boolean): number => ledgerNow.reduce((at, r, i) => (pred(r) ? i : at), -1);
-    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo);
+    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
     if (briefed && existsSync(paths.brief) && !tookClaim && !tookItem && !claimRowMissing) {
         console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
         console.log(`report ${paths.report}`);
@@ -1778,7 +1790,7 @@ function cmdBrief(): void {
         console.log(`Agent prompt: ${agentPrompt(paths.brief, paths.report)}`);
         return;
     }
-    const rollBack = () => { dropItemLock(); if (tookClaim && claim) { try { unlinkSync(claimPath(claim.repo)); } catch { /* already gone */ } } };
+    const rollBack = () => { dropItemLock(); if (tookClaim && claim) { try { unlinkSync(claimPath(claimKey(claim.repo, scope))); } catch { /* already gone */ } } };
     try {
         mkdirSync(outDir, { recursive: true });
         writeFileSync(paths.brief, text);
@@ -1790,7 +1802,7 @@ function cmdBrief(): void {
         const ids = [...ledgerNow];
         const row = <E extends object>(r: E): E & { id: string } => { const out = { id: newId(ids), ...r }; ids.push(out); return out; };
         const batch = [
-            ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claim.repo} for ${claim.desk}: ${why}`, ...usage })] : []),
+            ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, scope, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claimKey(claim.repo, scope)} for ${claim.desk}: ${why}`, ...usage })] : []),
             ...(!briefed && isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
             ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
         ];

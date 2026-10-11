@@ -1045,9 +1045,9 @@ test('release is for the holding desk only; --force overrides; both leave a ledg
     assert.equal(other.code, 1);
     assert.match(other.err, /held by desk alpha/);
     assert.equal(run('release', 'repo-y', ...MARK).code, 1);   // no desk, no force
-    assert.ok(existsSync(lockFile('repo-y')));
+    assert.ok(existsSync(lockFile('repo-y@feat-x')));
     assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 0);
-    assert.equal(existsSync(lockFile('repo-y')), false);
+    assert.equal(existsSync(lockFile('repo-y@feat-x')), false);
     assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 1);   // not claimed any more
     assert.equal(run('claim', 'repo-y', '--desk', 'beta', ...MARK).code, 0);
     assert.equal(run('release', 'repo-y', '--force', ...MARK).code, 0);
@@ -1055,6 +1055,31 @@ test('release is for the holding desk only; --force overrides; both leave a ledg
         [['claim', 'alpha'], ['released', 'alpha'], ['claim', 'beta'], ['released', 'beta']]);
     assert.equal(run('claim', '../evil', '--desk', 'alpha', ...MARK).code, 1);
     assert.equal(run('claim', 'repo-z', ...MARK).code, 1);   // needs --desk
+});
+
+test('two worktrees of one repo can each be claimed; a whole-repo claim and the same worktree are refused; release is per worktree', () => {
+    assert.equal(run('claim', 'repo-w', '--desk', 'alpha', '--worktree', 'wt-a', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-w', '--desk', 'beta', '--branch', 'fix/b', ...MARK).code, 0);
+    assert.ok(existsSync(lockFile('repo-w@wt-a')) && existsSync(lockFile('repo-w@fix-b')));
+    assert.equal(run('claim', 'repo-w', '--desk', 'gamma', '--worktree', 'wt-a', ...MARK).code, 1, 'same worktree');
+    const whole = run('claim', 'repo-w', '--desk', 'gamma', ...MARK);
+    assert.equal(whole.code, 1, 'a whole-repo claim conflicts with scoped ones');
+    assert.match(whole.err, /conflicts/);
+    const listed = parse(run('claims', '--json').out).claims.filter((c) => c.repo === 'repo-w');
+    assert.deepEqual(listed.map((c) => c.scope).sort(), ['fix-b', 'wt-a']);
+    assert.equal(run('claim', 'repo-w', '--desk', 'beta', '--worktree', 'wt-c', ...MARK).code, 0);
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', ...MARK).code, 1, 'two scoped claims by the desk: the scope must be named');
+    assert.equal(run('release', 'repo-w@wt-a', '--desk', 'alpha', ...MARK).code, 0);
+    assert.ok(existsSync(lockFile('repo-w@fix-b')), 'the other worktree keeps its claim');
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', '--worktree', 'wt-c', ...MARK).code, 0);
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', ...MARK).code, 0, 'one scoped claim left: it is the one meant');
+});
+
+test('an old whole-repo lock is still honoured against a scoped claim, and released by repo name', () => {
+    assert.equal(run('claim', 'repo-o', '--desk', 'alpha', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-o', '--desk', 'beta', '--worktree', 'wt-b', ...MARK).code, 1);
+    assert.equal(run('release', 'repo-o', '--desk', 'alpha', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-o', '--desk', 'beta', '--worktree', 'wt-b', ...MARK).code, 0);
 });
 
 test('claims lists claims and flags a dead pid and an old claim as stale; claim rows are not items', () => {
