@@ -113,7 +113,7 @@ test('usage and read errors exit 2, never a silent pass', () => {
 });
 
 test('renderBlock links by vault path when two pages share a name, and mergeIndex keeps text after the end marker', () => {
-    const mk = (path: string): LibraryPage => ({ path, repo: 'alpha', kind: 'how-to', title: 't', readWhen: '', components: [], stream: '', status: 'superseded', verifiedAt: '', body: '', links: [] });
+    const mk = (path: string): LibraryPage => ({ path, repo: 'alpha', kind: 'how-to', title: 't', readWhen: '', components: [], stream: '', status: 'superseded', verifiedAt: '', verifiedRaw: '', body: '', links: [] });
     const block = renderBlock([mk('Projects/alpha/Knowledge/x.md'), mk('Projects/alpha/Runbooks/x.md')]);
     assert.match(block, /\[\[Projects\/alpha\/Knowledge\/x\]\]: how-to, no Read when line \(verified never SUPERSEDED\)/);
     const merged = mergeIndex(`top\n${START}\nold\n${END}\ntail\n`, block);

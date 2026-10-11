@@ -5,9 +5,13 @@
  * secret or PHI shape anywhere in the file.
  *
  *   node scripts/library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]
+ *   node scripts/library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]
  *
  * With no page arguments it reads every page under Projects/<repo>/Knowledge (all of it) and Projects/<repo>/Runbooks (only files whose
  * frontmatter says `type: library`), one subfolder deep. Named pages (absolute, or relative to the vault) are checked instead.
+ * `--stale` is a separate report, not a rule: for each page it asks git whether a file the facts cite as evidence changed after `verified-at`
+ * (lib/library/stale.ts), looking in <code-root>/<repo> (default $MAESTRO_CONTAINER_ROOT). It lists stale pages, then those it could not check and why,
+ * and always exits 0 (a stale page never fails a roll); 2 on a usage error.
  * It prints each finding as `path:line  rule  message`; a secret hit names the shape and the line, never the matched text. It writes nothing.
  * Exit codes: 0 every page passes; 1 any finding; 2 a usage or read error (no vault, a named page that cannot be read, a --repo that does not exist, or no pages found at all), never a silent pass.
  */
@@ -20,31 +24,38 @@ import { checkPage } from './lib/library/rules.ts';
 import type { Finding } from './lib/library/rules.ts';
 import { locateBlock } from './lib/library/index-page.ts';
 import type { Scanner } from './lib/library/scan.ts';
+import { checkStaleness, realGit } from './lib/library/stale.ts';
+import type { PageStaleness } from './lib/library/stale.ts';
+import { readLibrary } from './lib/library/pages.ts';
 
-const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]';
+const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]\n       library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]';
 const LIBRARY_FOLDERS = ['Knowledge', 'Runbooks'] as const;
 
-interface Options { vault: string; repo?: string; json: boolean; pages: string[] }
+interface Options { vault: string; repo?: string; json: boolean; pages: string[]; stale: boolean; codeRoot?: string }
 export interface PageReport { path: string; findings: Finding[] }
 
 export function parseOptions(argv: string[]): Options | string {
   let vault = VAULT_ROOT;
   let repo: string | undefined;
   let json = false;
+  let stale = false;
+  let codeRoot: string | undefined;
   const pages: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i] as string;
     if (a === '--json') json = true;
-    else if (a === '--vault' || a === '--repo') {
+    else if (a === '--stale') stale = true;
+    else if (a === '--vault' || a === '--repo' || a === '--code-root') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return `${a} needs a value`;
-      if (a === '--vault') vault = v; else repo = v;
+      if (a === '--vault') vault = v; else if (a === '--repo') repo = v; else codeRoot = v;
       i += 1;
     } else if (a.startsWith('--')) return `unknown argument ${a}`;
     else pages.push(a);
   }
   if (!vault) return 'vault root is not set; set VAULT_ROOT (or vault_root in the local config) or pass --vault <path>';
-  return { vault, repo, json, pages };
+  if (stale && pages.length) return '--stale checks the whole library; it takes no page arguments';
+  return { vault, repo, json, pages, stale, ...(codeRoot ? { codeRoot } : {}) };
 }
 
 /** Real directories and files only: a symlink is skipped, so a link in a library folder cannot lead the check outside the vault. */
@@ -133,10 +144,30 @@ export function render(reports: PageReport[], extra: PageReport[] = []): string[
   ];
 }
 
+/** The stale report's text: the stale pages with what changed, then the pages it could not check. */
+export function renderStale(rows: PageStaleness[]): string[] {
+  const of = (state: PageStaleness['state']): PageStaleness[] => rows.filter((r) => r.state === state);
+  return [
+    ...of('stale').map((r) => `${r.path}  STALE  ${r.detail}`),
+    ...of('unchecked').map((r) => `${r.path}  unchecked  ${r.detail}`),
+    `library-check --stale: ${rows.length} page${rows.length === 1 ? '' : 's'}, ${of('stale').length} stale, ${of('unchecked').length} unchecked, ${of('fresh').length} fresh`,
+  ];
+}
+
+function mainStale(o: Options): number {
+  const codeRoot = o.codeRoot ?? (process.env.MAESTRO_CONTAINER_ROOT || null);
+  const rows = checkStaleness(readLibrary(o.vault, o.repo), codeRoot, realGit);
+  if (!rows.length) { console.error('library-check: no library pages found; nothing was checked'); return 2; }
+  if (o.json) console.log(JSON.stringify(rows, null, 2)); else renderStale(rows).forEach((l) => console.log(l));
+  return 0;
+}
+
 function main(argv: string[]): number {
   const o = parseOptions(argv);
   if (typeof o === 'string') { console.error(`library-check: ${o}\n${USAGE}`); return 2; }
   if (!existsSync(join(o.vault, 'Projects'))) { console.error(`library-check: no Projects folder under ${o.vault}`); return 2; }
+  if (o.stale && o.repo && !/^[\w.-]+$/.test(o.repo)) { console.error('library-check: --repo must be a plain project folder name'); return 2; }
+  if (o.stale) return mainStale(o);
   const named = o.pages.map((p) => (isAbsolute(p) ? relative(o.vault, p) : p));
   const unreadable = named.filter((p) => !insideVault(o.vault, p));
   if (unreadable.length) { console.error(`library-check: cannot read, or outside the vault: ${unreadable.join(', ')}`); return 2; }

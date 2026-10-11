@@ -213,3 +213,20 @@ test('composed-by must be the composer: any other writer fails the real CLI', ()
   assert.equal(r.status, 1);
   assert.match(r.stdout, /vocabulary {2}composed-by must be "composer"/);
 });
+
+test('--stale lists a page whose cited file changed after verified-at, exits 0, and takes no page arguments', () => {
+  const root = vault();
+  const code = mkdtempSync(join(tmpdir(), 'code-'));
+  const repo = join(code, REPO);
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'sync.ts'), 'x\n');
+  const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com', GIT_AUTHOR_DATE: '2026-10-09T10:00:00Z', GIT_COMMITTER_DATE: '2026-10-09T10:00:00Z' };
+  for (const args of [['init', '-q'], ['add', 'src/sync.ts'], ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'chore: fixture']]) spawnSync('git', ['-C', repo, ...args], { env });
+  // The page's verified-at carries a sha git does not know, so use a date-only variant by rewriting the page.
+  writeFileSync(join(root, PAGE), frontmatter({ 'verified-at': '2026-10-08' }) + BODY);
+  const r = run(root, '--stale', '--code-root', code);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /orchard-sync\.md {2}STALE {2}changed since 2026-10-08: src\/sync\.ts/);
+  assert.match(r.stdout, /1 pages?, 1 stale/);
+  assert.equal(typeof parseOptions(['--stale', 'a.md']), 'string');
+});
