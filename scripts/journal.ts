@@ -175,6 +175,7 @@ import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, stale
 import { fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
+import { withhold } from './lib/withhold.ts';
 import { buildStart, homeCounts, startLines, unreadableHome, viewDay } from './lib/start/start-here.ts';
 import type { UnreachableNotes } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
@@ -2045,10 +2046,11 @@ function cmdPrime() {
     refreshBoard();
     // Before the board and outside its 40-line cap: a missing or stale handoff after a compaction must not be missed. Stdout carries it into the session; stderr makes a hook log show it too. Exit stays 0, since a failing SessionStart hook can drop its output.
     const continuity = continuityLines(readLedger(), newestHandoff(dir));
-    continuity.forEach((l) => { console.log(l); console.error(l); });
-    primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...windowWarning(), ...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(l));
+    // Everything `prime` prints goes through `withhold`: a secret-shaped stream name or id in the ledger must not reach session context from here either.
+    continuity.forEach((l) => { console.log(withhold(l)); console.error(withhold(l)); });
+    primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...windowWarning(), ...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(withhold(l)));
     // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
-    compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(l));
+    compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(withhold(l)));
 }
 
 // ── status page ─────────────────────────────────────────────────────────────
@@ -2121,7 +2123,7 @@ function cmdStartHere() {
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
     const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), now: nowAt });
     if (asJson) console.log(JSON.stringify(s, null, 2));
-    else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(l));
+    else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(withhold(l)));
 }
 
 /** `week set "<goal> | <Stream>" ...` and `week show`: this week's goals in <status dir>/week.md. */

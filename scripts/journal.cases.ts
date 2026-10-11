@@ -2812,3 +2812,26 @@ test('prime fails loudly after a compaction whose handoff is missing or older th
     run('log', 'precompact incomplete: handoff: boom (trigger auto)', '--kind', 'note', ...MARK);
     assert.match(run('prime').out.split('\n')[0], /^!! precompact incomplete: handoff: boom/);
 });
+
+test('prime and start-here withhold a secret-shaped stream name or id instead of printing it (MAESTRO-168)', () => {
+    const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
+    const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
+    const now = new Date().toISOString();
+    const rows = [
+        { id: 'sec1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: token, text: 'work in an odd stream', model: 'x', used: ['x'] },
+        { id: key, ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'work with an odd id', model: 'x', used: ['x'] },
+        { id: 'ask1', ts: now, date: now.slice(0, 10), kind: 'question', stream: token, text: 'odd stream ask?', door: 'two-way', recommend: 'yes', model: 'x', used: ['x'] },
+        { id: 'ok1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'ordinary work', model: 'x', used: ['x'] },
+    ];
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    for (const cmd of [['prime'], ['start-here']]) {
+        const r = run(...cmd);
+        assert.equal(r.code, 0, r.err);
+        const all = `${r.out}\n${r.err}`;
+        assert.ok(!all.includes(token), `${cmd[0]} printed the token-shaped stream`);
+        assert.ok(!all.includes(key), `${cmd[0]} printed the key-shaped id`);
+        assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} still shows ordinary work`);
+        assert.match(r.out, /\[withheld: secret shape\]/);
+    }
+});
