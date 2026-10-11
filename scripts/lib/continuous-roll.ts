@@ -19,6 +19,10 @@ export const PRECOMPACT_INCOMPLETE = 'precompact incomplete';
 export const PRECOMPACT_STARTED = 'precompact started';
 /** Written by a person (or `journal.ts log`) to dismiss an alarm whose cause needs no handoff. */
 export const PRECOMPACT_ACK = 'precompact ack';
+/** Written into the marker when the hook had to rewrite a handoff that was more than REPAIR_ALARM_MS behind: the continuity tick was not keeping up. */
+export const PRECOMPACT_REPAIRED = 'precompact: repaired';
+/** Two tick intervals: a handoff this far behind at compaction means the tick is not running (a healthy one is at most one interval behind). */
+export const REPAIR_ALARM_MS = 2 * 300_000;
 const SNAPSHOT_MAX_FILE_BYTES = 1_000_000;
 const SNAPSHOT_MAX_FILES = 300;
 const SNAPSHOT_MAX_TOTAL_BYTES = 20_000_000;
@@ -299,7 +303,15 @@ const tagOf = (r: LedgerRow): string => (r.text ?? '').match(/session ([\w-]+)\)
  * "started" row, so rows other writers add while the hook runs are not counted), the handoff missed work and the line says so.
  */
 export function continuityLines(rows: LedgerRow[], handoff: { name: string; at: string } | null): string[] {
-    return [...thrashLines(rows), ...markerLines(rows, handoff)];
+    return [...thrashLines(rows), ...repairLines(rows), ...markerLines(rows, handoff)];
+}
+
+/** The newest `precompact: repaired` marker with no later ack and no later marker that needed no repair: the tick is not keeping up. */
+function repairLines(rows: LedgerRow[]): string[] {
+    const r = rows.findLastIndex((x) => x.kind === 'note' && starts(x, PRECOMPACT_REPAIRED));
+    if (r < 0) return [];
+    if (rows.slice(r + 1).some((x) => starts(x, PRECOMPACT_ACK) || (isMark(x) && starts(x, `${PRECOMPACT_MARK}:`) && !starts(x, PRECOMPACT_REPAIRED)))) return [];
+    return [`!! ${clip(rows[r].text ?? '', 200)} (${rows[r].ts}): the continuity tick is not keeping up. Is the \`continuity\` watch registered and the loop alive? Dismiss with \`${ACK}\`.`];
 }
 
 /** The newest thrash row with no later ack: one loud line pointing at the setting. */

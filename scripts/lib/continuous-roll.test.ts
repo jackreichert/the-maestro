@@ -352,3 +352,24 @@ test('continuityLines shows a thrash row until a later ack and never reads it as
   assert.deepEqual(continuityLines(acked, null), []);
   assert.equal(continuityLines([thr], null).length, 1, 'with no marker row the thrash line still shows');
 });
+
+test('continuityLines: a repaired marker says the tick is not keeping up until an ack or a clean marker follows', () => {
+  const work = { kind: 'wip', ts: at(10), text: 'work' };
+  const repaired = { kind: 'note', ts: at(20), text: 'precompact: repaired, handoff rewritten (37 min behind), snapshot copied 0 (1 current), decisions raised 0 in 0 ask(s) (trigger auto, session ab12cd34)' };
+  const handoff = { name: 'h.md', at: at(21) };
+  const lines = continuityLines([work, repaired], handoff);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^!! precompact: repaired.*the continuity tick is not keeping up\. Is the `continuity` watch registered and the loop alive\?/);
+  assert.deepEqual(continuityLines([work, repaired, { kind: 'note', ts: at(25), text: 'precompact ack' }], handoff), [], 'an ack clears it');
+  assert.deepEqual(continuityLines([work, repaired, { kind: 'note', ts: at(25), text: 'precompact: all current (trigger auto, session ab12cd34)' }], { name: 'h.md', at: at(26) }), [], 'a later run that needed no repair clears it');
+  const small = { kind: 'note', ts: at(20), text: 'precompact: handoff rewritten (4 min behind), snapshot copied 0 (1 current), decisions raised 0 in 0 ask(s) (trigger auto, session ab12cd34)' };
+  assert.deepEqual(continuityLines([work, small], handoff), [], 'a small repair raises nothing');
+});
+
+test('continuityLines: an incomplete row is cleared by a later repaired row of the same session', () => {
+  const bad = { kind: 'note', ts: at(20), text: 'precompact incomplete: handoff: boom (trigger auto, session ab12cd34)' };
+  const fixed = { kind: 'note', ts: at(30), text: 'precompact: repaired, handoff rewritten (30 min behind) (trigger auto, session ab12cd34)' };
+  const lines = continuityLines([{ kind: 'wip', ts: at(10), text: 'w' }, bad, fixed], { name: 'h.md', at: at(31) });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /not keeping up/);
+});

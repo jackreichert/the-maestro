@@ -23,7 +23,7 @@ import { openStore } from '../lib/journal/store.ts';
 import { readAutocompact, triggerTokens } from '../lib/autocompact.ts';
 import type { AutocompactSetting } from '../lib/autocompact.ts';
 import { AUTOCOMPACT_FLOOR } from '../local-config.ts';
-import { COMPACTION_THRASH, errorLine, handoffFresh, HOOK_USED, newestHandoff, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_STARTED, snapshotDirty, thrash, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
+import { COMPACTION_THRASH, errorLine, handoffFresh, HOOK_USED, newestHandoff, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_REPAIRED, PRECOMPACT_STARTED, REPAIR_ALARM_MS, snapshotDirty, thrash, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { resolveWindowId, windowEnv } from '../lib/window-id.ts';
 
@@ -111,11 +111,12 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   const handoff = done.handoff.reason;
   const handoffRepaired = done.handoff.repaired;
   const allCurrent = !handoffRepaired && !raised && !(snap?.copied ?? 0);
+  const repaired = done.handoff.repaired && Number.isFinite(done.handoff.behindMs) && done.handoff.behindMs > REPAIR_ALARM_MS;
   const text = failed.length
     ? `${PRECOMPACT_INCOMPLETE}: ${failed.join('; ')} (trigger ${trigger})`
     : allCurrent
       ? `${PRECOMPACT_MARK}: all current (trigger ${trigger})`
-      : `${PRECOMPACT_MARK}: ${handoff}, snapshot copied ${snap?.copied ?? 0} (${snap?.current ?? 0} current), decisions raised ${count} in ${raised} ask(s) (trigger ${trigger})`;
+      : `${repaired ? `${PRECOMPACT_REPAIRED},` : `${PRECOMPACT_MARK}:`} ${handoff}, snapshot copied ${snap?.copied ?? 0} (${snap?.current ?? 0} current), decisions raised ${count} in ${raised} ask(s) (trigger ${trigger})`;
   if (!deps.journal(['log', text, '--kind', 'note', ...MARKS]).ok) console.error(`precompact hook: could not append the marker row: ${text}`);
   return text;
 }
