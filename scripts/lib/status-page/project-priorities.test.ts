@@ -56,7 +56,7 @@ test('the file round-trips, and previousFile finds Friday for a Monday', () => {
   const path = join(prioritiesDir(v, 'arya-scraper'), '2026-10-12.md');
   const text = readFileSync(path, 'utf8');
   assert.match(text, /^---\ntype: priorities\nproject: arya-scraper\ndate: 2026-10-12\ncarried-from: 2026-10-09\nwritten-by: priorities set\n---\n\n## Today\n- ship it \| TeamSelect\n\n## Carried from 2026-10-09\n- old \| TeamSelect · 1 done, 0 in flight, 2 queued, 0 blocked\n\n## Next\n- `q1` queued thing\n$/);
-  assert.deepEqual(readProjectFile(path), { date: '2026-10-12', carriedFrom: '2026-10-09', today: [{ text: 'ship it', stream: 'TeamSelect' }], notSet: false, carriedCount: 1 });
+  assert.deepEqual(readProjectFile(path), { date: '2026-10-12', carriedFrom: '2026-10-09', writtenBy: 'priorities set', today: [{ text: 'ship it', stream: 'TeamSelect' }], notSet: false, carriedCount: 1, carried: f.carried });
   writeFileSync(join(prioritiesDir(v, 'arya-scraper'), '2026-10-09.md'), renderProjectFile(file({ date: '2026-10-09' })));
   writeFileSync(join(prioritiesDir(v, 'arya-scraper'), '2026-10-10.md'.replace('10-10', '10-11')), renderProjectFile(file({ date: '2026-10-11' })));
   assert.equal(previousFile(prioritiesDir(v, 'arya-scraper'), '2026-10-12')?.date, '2026-10-11');
@@ -125,4 +125,12 @@ test('carryPriorities: a container list already dated today is today\'s list; a 
   assert.deepEqual(out.problems, ['arya-avonlea: no vault folder Projects/arya-avonlea']);
   assert.match(readFileSync(join(prioritiesDir(v, 'arya-scraper'), '2026-10-12.md'), 'utf8'), /## Today\n- now \| TeamSelect\n\n?$/);
   assert.deepEqual(carryPriorities({ vault: v, today: '2026-10-12', rows: [], registry: null, homes, repoStreams: {}, containerProject: 'dev-env', container: null }), { written: [], problems: [] });
+});
+
+test('parseProjectFile returns who wrote the file and the carried items with their statuses', () => {
+  const text = renderProjectFile(file({ writtenBy: 'roll-maintenance', carriedFrom: '2026-10-11', today: [], carried: [{ item: { text: 'old', stream: 'TeamSelect' }, status: '1 done, 0 in flight, 0 queued, 0 blocked' }, { item: { text: 'a · b' }, status: '0 done, 1 in flight, 0 queued, 0 blocked' }] }));
+  const parsed = parseProjectFile(text);
+  assert.equal(parsed.writtenBy, 'roll-maintenance');
+  assert.deepEqual(parsed.carried, [{ item: { text: 'old', stream: 'TeamSelect' }, status: '1 done, 0 in flight, 0 queued, 0 blocked' }, { item: { text: 'a · b' }, status: '0 done, 1 in flight, 0 queued, 0 blocked' }]);
+  assert.equal(parseProjectFile(renderProjectFile(file())).writtenBy, 'priorities set');
 });

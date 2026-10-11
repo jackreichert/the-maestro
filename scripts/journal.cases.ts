@@ -2448,6 +2448,47 @@ test('priorities set also writes each mapped project\'s own file, and priorities
     rmSync(root, { recursive: true, force: true });
 });
 
+/** A temp vault root with the given project folders, and a runner for journal.ts with that vault root and the-maestro / options-app mapped to streams. */
+function projectVault(...names: string[]): { root: string; runIn: (...args: string[]) => Run; fileOf: (project: string, day: string) => string } {
+    const root = mkdtempSync(join(tmpdir(), 'journal-root-'));
+    for (const n of names) mkdirSync(join(root, 'Projects', n), { recursive: true });
+    const sd = join(vault, 'Status');
+    const runIn = (...args: string[]): Run => {
+        const r = spawnSync(process.execPath, [SCRIPT, ...args, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd,
+            env: { ...process.env, VAULT_ROOT: root, MAESTRO_WINDOW: 'testwin', MAESTRO_STATUS_REPO_STREAMS: 'the-maestro=Maestro,options-app=Options', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const fileOf = (project: string, day: string): string => {
+        const path = join(root, 'Projects', project, 'Status', 'priorities', `${day}.md`);
+        return existsSync(path) ? readFileSync(path, 'utf8') : '';
+    };
+    return { root, runIn, fileOf };
+}
+
+const ROLL_FILE = [
+    '---', 'type: priorities', 'project: the-maestro', 'date: 2030-01-02', 'carried-from: 2030-01-01', 'written-by: roll-maintenance', '---', '',
+    '## Today', '- not set yet', '', '## Carried from 2030-01-01', '- Unfinished A | Maestro · 0 done, 1 in flight, 0 queued, 0 blocked', '- Unfinished B | Maestro · 0 done, 1 in flight, 0 queued, 0 blocked', '',
+].join('\n');
+
+test('priorities set keeps the carried section roll wrote for the day and replaces only Today', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro');
+    const dir = join(root, 'Projects', 'the-maestro', 'Status', 'priorities');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '2030-01-02.md'), ROLL_FILE);
+    const set = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    const file = fileOf('the-maestro', '2030-01-02');
+    assert.match(file, /^carried-from: 2030-01-01$/m);
+    assert.match(file, /^written-by: priorities set$/m);
+    assert.match(file, /^## Today\n- New thing \| Maestro$/m);
+    assert.match(file, /^## Carried from 2030-01-01\n- Unfinished A \| Maestro · 0 done, 1 in flight, 0 queued, 0 blocked\n- Unfinished B \| Maestro · /m);
+    assert.equal(runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02').code, 0);
+    assert.equal(fileOf('the-maestro', '2030-01-02'), file, 'setting the same list again changes nothing');
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
     seedRegistry();
     const sd = join(vault, 'Status');

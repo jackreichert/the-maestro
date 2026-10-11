@@ -2105,7 +2105,8 @@ function writeProjectFiles(dirPath: string, day: string, items: Priority[]) {
     for (const [name, mine] of fanOut(items, route)) {
         try {
             const streams = [...new Set(mine.map((p) => p.stream).filter((s): s is string => Boolean(s)))];
-            const result = writeProjectPriorities(VAULT_ROOT, name, day, { project: name, date: day, carriedFrom: '', writtenBy: 'priorities set', today: mine, carried: [], next: nextItems(rows, registry, streams) });
+            const kept = readProjectFile(join(prioritiesDir(VAULT_ROOT, name), `${day}.md`));
+            const result = writeProjectPriorities(VAULT_ROOT, name, day, { project: name, date: day, carriedFrom: kept?.carriedFrom ?? '', writtenBy: 'priorities set', today: mine, carried: kept?.carried ?? [], next: nextItems(rows, registry, streams) });
             console.log(result === 'written' ? `wrote ${join(prioritiesDir(VAULT_ROOT, name), `${day}.md`)}` : `skipped ${name}: no vault folder Projects/${name}`);
         } catch (e) { console.error(`project ${name}: ${errorMessage(e).split('\n')[0].slice(0, 100)}`); }
     }
