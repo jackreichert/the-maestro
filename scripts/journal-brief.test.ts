@@ -232,6 +232,22 @@ test('briefText states the cap and the report path once each, and the repo role'
     assert.match(t, /You hold the repo claim/);
 });
 
+test('briefText sets the done criteria up front, falls back to asking the agent to write them, and lists the handoff contract once', () => {
+    const base = { id: 'ab12', text: 'obj', repo: 'r', library: 'lib', standing: 'rules', writer: true, reportPath: '/tmp/report-ab12.md' };
+    const given = briefText({ ...base, doneWhen: 'the widget test passes' });
+    assert.match(given, /## Done when\n\nthe widget test passes/);
+    assert.ok(given.indexOf('## Done when') < given.indexOf('## Library'), 'criteria come before the work');
+    assert.match(briefText(base), /gave no criteria\. Before you start, write the criteria/);
+    for (const part of ['confidence and what it was measured on', 'what you tried that failed', 'who owns the work if you stop']) assert.equal(given.split(part).length - 1, 1, part);
+});
+
+test('--done-when lands in the brief file', () => {
+    const id = start('fix the widget', '--repo', 'repo-a', '--stream', 'Alpha');
+    const r = run(['brief', id, '--out-dir', outDir, '--done-when', 'the widget builds', ...MARK], config);
+    assert.equal(r.code, 0, r.err);
+    assert.match(readFileSync(briefPaths(outDir, id).brief, 'utf8'), /## Done when\n\nthe widget builds/);
+});
+
 test('the library block comes from library-brief.ts when it is installed, asked for the item\'s repo and words', () => {
     const shelf = shelfWith("console.log('LIB repo=' + process.argv[process.argv.indexOf('--repo') + 1] + ' words=' + process.argv.at(-1));");
     const id = start('fix the widget', '--repo', 'repo-a', '--stream', 'Alpha');
