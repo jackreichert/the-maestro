@@ -1,9 +1,24 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync, linkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync, linkSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 
 /** A claim lock file: which desk holds a repo, from where and since when. */
 export interface ClaimFile { repo?: string; desk?: string; pid?: number | null; host?: string; time?: string; branch?: string; why?: string }
+
+/**
+ * A claim is keyed by repo alone (the legacy, whole-repo lock `<repo>.lock`) or by repo and scope (`<repo>@<scope>.lock`), the scope being a
+ * worktree name or branch. `@` is outside the repo-name alphabet, so a key splits unambiguously. Two claims on one repo coexist only when both
+ * are scoped and their scopes differ: a whole-repo claim, old or new, conflicts with every other claim on the repo.
+ */
+export const claimScope = (s: string | undefined | null): string | undefined => (s ?? '').replace(/[^\w.-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || undefined;
+export const claimKey = (repo: string, scope?: string): string => (scope ? `${repo}@${scope}` : repo);
+export const splitClaimKey = (key: string): { repo: string; scope?: string } => { const at = key.indexOf('@'); return at < 0 ? { repo: key } : { repo: key.slice(0, at), scope: key.slice(at + 1) }; };
+export const scopesConflict = (a?: string, b?: string): boolean => !a || !b || a === b;
+/** Keys of the claim locks on a repo (whole-repo and scoped), sorted. */
+export function claimKeysFor(claimsDir: string, repo: string): string[] {
+    if (!existsSync(claimsDir)) return [];
+    return readdirSync(claimsDir).filter((f) => f.endsWith('.lock')).map((f) => f.slice(0, -5)).filter((k) => k === repo || k.startsWith(`${repo}@`)).sort();
+}
 
 export const claimPath = (claimsDir: string, repo: string): string => join(claimsDir, `${repo}.lock`);
 /** A plain repo name (letters, digits, . _ -); anything else is a usage error through `die`. */
@@ -47,4 +62,29 @@ export function acquireClaimLock(claimsDir: string, repo: string, claim: ClaimFi
     try { linkSync(tmp, claimPath(claimsDir, repo)); } catch (e) { linkError = e instanceof Error ? e : new Error(String(e)); }
     unlinkSync(tmp);
     return linkError;
+}
+
+/** Outcome of {@link acquireRepoClaim}: taken, or refused because the same key (`exists`) or another claim that conflicts with it (`conflict`) is held. */
+export type RepoClaimOutcome = { status: 'taken' } | { status: 'exists' | 'conflict'; key: string; held: ClaimFile | null };
+
+/**
+ * Takes the claim for a repo and scope. The own-key link is the atomic step; a conflicting claim under another key is checked before and
+ * after it, and the second check backs the own claim out again, so a whole-repo claim and a scoped one racing never both stand (at worst both back off).
+ */
+export function acquireRepoClaim(claimsDir: string, repo: string, scope: string | undefined, claim: ClaimFile): RepoClaimOutcome {
+    const key = claimKey(repo, scope);
+    const conflicting = (): string | undefined => claimKeysFor(claimsDir, repo).find((k) => k !== key && scopesConflict(scope, splitClaimKey(k).scope));
+    const before = conflicting();
+    if (before) return { status: 'conflict', key: before, held: readClaim(claimsDir, before) };
+    const linkError = acquireClaimLock(claimsDir, key, claim);
+    if (linkError) {
+        if (!('code' in linkError && linkError.code === 'EEXIST')) throw linkError;
+        return { status: 'exists', key, held: readClaim(claimsDir, key) };
+    }
+    const after = conflicting();
+    if (after) {
+        unlinkSync(claimPath(claimsDir, key));
+        return { status: 'conflict', key: after, held: readClaim(claimsDir, after) };
+    }
+    return { status: 'taken' };
 }
