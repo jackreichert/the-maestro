@@ -95,3 +95,7 @@ export const realGit: Git = (cwd, since, files) => {
     });
   } catch { return null; }
 };
+
+/** The `library-stale` standing check's input from a staleness report. */
+export const summarize = (rows: PageStaleness[]): { pages: number; stale: string[]; unchecked: number } =>
+  ({ pages: rows.length, stale: rows.filter((r) => r.state === 'stale').map((r) => r.path), unchecked: rows.filter((r) => r.state === 'unchecked').length });
