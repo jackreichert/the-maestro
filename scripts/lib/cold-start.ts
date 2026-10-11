@@ -37,7 +37,7 @@ export function safe(raw: unknown, max: number): string {
 }
 
 /** A stream name or id as printed: scanned like every other field, so a secret-shaped one is withheld, never echoed. */
-const shown = (raw: unknown): string => safe(raw, 40) || '?';
+export const shown = (raw: unknown): string => safe(raw, 40) || '?';
 const streamOf = (i: { stream?: string }): string => i.stream || NO_STREAM;
 /** A ts as text: a row whose ts is not a string (a number, an object) is read as that value's text instead of throwing. */
 const tsOf = (ts: unknown): string => String(ts ?? '');

@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { parseLedger, readRegistry } from './lib/ledger-core.ts';
 import type { RegistryLookup } from './lib/ledger-core.ts';
-import { coldStart, coldStartCheck } from './lib/cold-start.ts';
+import { coldStart, coldStartCheck, shown } from './lib/cold-start.ts';
 import type { LibraryEntry } from './lib/cold-start.ts';
 import { parsePage, text } from './lib/library/page.ts';
 
@@ -69,7 +69,7 @@ export function main(argv: string[], now: Date = new Date()): number {
       const registry: RegistryLookup | null = reg ? readRegistry(reg) : null;
       const r = coldStartCheck({ rows: parseLedger(readFileSync(ledger, 'utf8')), registry, library, now, maxChars });
       console.log(r.statement);
-      for (const m of r.missing) console.error(`MISSING \`${m.id}\`: ${m.why}`);
+      for (const m of r.missing) console.error(`MISSING \`${shown(m.id)}\`: ${m.why}`);
       for (const p of r.problems) console.error(`PROBLEM: ${p}`);
       console.error(r.ok ? 'cold-start check: ok' : `cold-start check: FAILED (${r.missing.length} missing, ${r.problems.length} problems)`);
       return r.ok ? 0 : 1;

@@ -187,3 +187,16 @@ test('a huge ledger under a tiny cap is cut in linear time, and the closing line
   const shownOnPage = page.ids.asks.filter((id) => page.text.split('\n').slice(0, -1).some((l) => l.includes(`\`${id}\``))).length;
   assert.equal(named + more + shownOnPage, page.ids.asks.length, 'every open id is shown, named or counted');
 });
+
+test('check output never prints a secret-shaped id: the MISSING line shows the withheld marker', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cold-secret-'));
+  const log = console.log; const err = console.error; const out: string[] = []; const errs: string[] = [];
+  try {
+    const ledger = join(dir, 'ledger.jsonl');
+    writeFileSync(ledger, `${JSON.stringify(row({ id: FAKE_KEY, kind: 'question', stream: 'Beta', text: 'which one?' }))}\n`);
+    console.log = (...a: unknown[]) => { out.push(a.join(' ')); }; console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+    assert.equal(main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--max', '300'], NOW), 1);
+  } finally { console.log = log; console.error = err; rmSync(dir, { recursive: true, force: true }); }
+  assert.ok(![...out, ...errs].join('\n').includes(FAKE_KEY), 'neither stream carries the value');
+  assert.match(errs.join('\n'), /MISSING `\[withheld: secret shape\]`/);
+});
