@@ -335,9 +335,11 @@ test('formatDigest lists actionable events first and carries the report hint onl
   assert.equal(text, 'ACTION b (t): go | report: name the PR\ninfo a (t): fyi');
 });
 
-const cli = (dir: string, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args], {
-  encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' },
+/** Runs the CLI against `dir`. LaunchAgents is an empty directory unless `extraEnv` says otherwise, so a supervisor installed on the machine running the tests does not make `run` refuse. */
+const cliWith = (extraEnv: Record<string, string>, dir: string, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args], {
+  encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off', MAESTRO_LAUNCH_AGENTS_DIR: tempDir(), ...extraEnv }, timeout: 60_000,
 });
+const cli = (dir: string, ...args: string[]) => cliWith({}, dir, ...args);
 
 test('cli: run --once against an empty registry exits 0 cleanly', () => {
   const r = cli(tempDir(), 'run', '--once');
@@ -490,7 +492,7 @@ test('a pin of Infinity that reaches tick anyway still honours the floor', () =>
 
 /** Starts `run` (not --once) over a registry with one unknown-type watch, waits for a heartbeat that says it is asleep, and stops it. */
 async function runAndStop(dir: string, ...extra: string[]): Promise<void> {
-  const p = spawn(process.execPath, [SCRIPT, 'run', ...extra], { env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' }, stdio: 'ignore' });
+  const p = spawn(process.execPath, [SCRIPT, 'run', ...extra], { env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off', MAESTRO_LAUNCH_AGENTS_DIR: tempDir() }, stdio: 'ignore' });
   const closed = new Promise((resolve) => p.on('close', resolve));
   const file = join(dir, 'heartbeat.json');
   for (let i = 0; i < 100; i += 1) {
@@ -653,4 +655,30 @@ test('cli: events list after a crash mid-write shows every later event and warns
   assert.equal(r.status, EXIT.ok, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout).map((e: { fields: { number: number } }) => e.fields.number), [1, 2, 4, 5]);
   assert.match(r.stderr, /1 unreadable line/);
+});
+
+/** A LaunchAgents directory with the supervisor's plist in it: the supervisor is installed. */
+const installedAgents = (): string => { const d = tempDir(); writeFileSync(join(d, 'com.jackreichert.the-maestro-loop.plist'), '<plist/>'); return d; };
+
+test('cli: run (in-session form) refuses while the supervisor is installed, and says what to do instead', () => {
+  const dir = tempDir();
+  cli(dir, 'add', '--id', 'w1', '--type', 'nope', '--target', 'x');
+  const r = cliWith({ MAESTRO_LAUNCH_AGENTS_DIR: installedAgents() }, dir, 'run');
+  assert.equal(r.status, EXIT.usage);
+  assert.match(r.stderr, /supervisor is installed/);
+  assert.match(r.stderr, /events wait/);
+  assert.match(r.stderr, /--force/);
+  assert.equal(existsSync(join(dir, 'loop.lock')), false, 'a refused run takes no lock');
+});
+
+test('cli: with the supervisor installed, run --serve, run --once and run --force are not refused', () => {
+  const dir = tempDir();
+  const agents = installedAgents();
+  assert.equal(cliWith({ MAESTRO_LAUNCH_AGENTS_DIR: agents }, dir, 'run', '--once').status, EXIT.ok);
+  assert.equal(cliWith({ MAESTRO_LAUNCH_AGENTS_DIR: agents }, dir, 'run', '--force').status, EXIT.ok);
+  assert.equal(cliWith({ MAESTRO_LAUNCH_AGENTS_DIR: agents }, dir, 'run', '--serve', '--once').status, EXIT.usage, 'only the existing --once/--serve rule refuses this one');
+});
+
+test('cli: run is not refused when no supervisor is set up', () => {
+  assert.equal(cli(tempDir(), 'run').status, EXIT.ok);
 });

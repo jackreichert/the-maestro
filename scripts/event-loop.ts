@@ -4,7 +4,7 @@
  *
  *   event-loop.ts add --id <id> --type <type> --target <t> [--done-when <rule>] [--report <text>] [--ttl-hours N] [--interval S] [--notify | --no-notify] [--notify-overnight]
  *   event-loop.ts list [--json] | remove <id> | digest [--peek]
- *   event-loop.ts run [--once | --serve] [--interval N]
+ *   event-loop.ts run [--once | --serve | --force] [--interval N]
  *   event-loop.ts digest-wait [--timeout-hours N] | digests [--unseen] [--mark-seen]
  *   event-loop.ts adopt <queue-file> [--until ISO] | adopt --clear | adopt
  *   event-loop.ts events [list] [--unseen | --unhandled | --all] [--json] | events ack <id...> | events wait [--timeout-hours N] [--poll-seconds N]
@@ -39,6 +39,9 @@
  * Heartbeat: unless `--once`, `run` rewrites <event dir>/heartbeat.json on each tick and each sleep chunk (lib/heartbeat.ts), and sleeps in chunks of at most 60 s
  * against the wall clock (lib/wall-sleep.ts), so a lid closed mid-sleep costs under a minute, not the whole lid time.
  *
+ * One runner: while the launchd supervisor is installed (lib/supervisor-state.ts), a plain `run` refuses with exit 2, since it could only hold the supervisor's lock;
+ * `--serve` (the supervisor's own launch), `--once` and `--force` are not refused.
+ *
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
 import { spawnSync } from 'node:child_process';
@@ -63,6 +66,7 @@ import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './l
 import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
 import { registerWaiter } from './lib/waiters.ts';
+import { supervisorStatus } from './lib/supervisor-state.ts';
 import { CHUNK_SECONDS, sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
@@ -447,7 +451,7 @@ const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  suppressed: { type: 'boolean' }, hours: { type: 'string' }, once: { type: 'boolean' }, until: { type: 'string' }, clear: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
+  suppressed: { type: 'boolean' }, hours: { type: 'string' }, once: { type: 'boolean' }, force: { type: 'boolean' }, until: { type: 'string' }, clear: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
@@ -490,6 +494,7 @@ async function main(argv: string[]): Promise<number> {
       const { loadConfiguredTypes } = await import('./event-types/index.ts');
       const types = await loadConfiguredTypes();
       if (v.once && v.serve) return usage('--once and --serve cannot be combined');
+      if (!v.serve && !v.once && !v.force && supervisorStatus(dir).state !== 'absent') return usage('a loop supervisor is installed, so it is the one runner; an in-session `run` would only hold its lock. Wait on the inbox with `events wait` instead (or pass --force)');
       acquireLock(dir);
       return await run({ dir, types, once: v.once, serve: v.serve, pinned });
     } else if (cmd === 'adopt') {
@@ -510,7 +515,7 @@ async function main(argv: string[]): Promise<number> {
       // `digest-wait` is `events wait` under its old name: saved digests are moved into the inbox first (and again each poll), then it waits on the inbox.
       const done = await eventsCommand(dir, 'wait', [], v, () => { try { migrateDigests(dir, saved); } catch (err) { console.error(`digest-wait: could not move saved digests into the inbox: ${errorMessage(err)}`); } });
       return typeof done === 'string' ? usage(done) : done;
-    } else return usage('commands: add | list | remove <id> | adopt | digest | run [--once | --serve] | digest-wait | digests | events | triage-log');
+    } else return usage('commands: add | list | remove <id> | adopt | digest | run [--once | --serve | --force] | digest-wait | digests | events | triage-log');
   } catch (err) {
     return usage(errorMessage(err));
   }
