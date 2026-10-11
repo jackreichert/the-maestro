@@ -69,7 +69,7 @@ test('prints ledger stage dwell from a temp ledger and does not invent a waiter'
     assert.equal(j.dwell.waiting.find((w: { id: string }) => w.id === 'aaaa').waitsOn, 'unrecorded');
 });
 
-test('run quality counts send-backs on completed items and briefed runs with no report, and says rework is not recorded', () => {
+test('run quality counts send-backs on completed items and briefed runs with no report, and says how to record rework when none is', () => {
     const present = join(mkdtempSync(join(tmpdir(), 'flow-rep-')), 'report-aaaa.md');
     writeFileSync(present, 'done\n');
     const missing = join(tmpdir(), 'flow-rep-none', 'report-cccc.md');
@@ -82,9 +82,25 @@ test('run quality counts send-backs on completed items and briefed runs with no 
     ];
     const r = run('--vault', ledgerWith(withRuns), '--project', 'demo', '--now', '2026-10-07T12:00:00Z', '--json');
     const j = JSON.parse(r.out);
-    assert.deepEqual(j.runs, { completed: 1, retried: 1, retries: 2, retriesPerRun: 2, briefed: 2, silent: 1, silentIds: ['cccc'] });
+    assert.deepEqual(j.runs, { reworkRows: 0, reworked: 0, reworkedCompleted: 0, reworkPercent: 0, completed: 1, retried: 1, retries: 2, retriesPerRun: 2, briefed: 2, silent: 1, silentIds: ['cccc'] });
     const text = run('--vault', ledgerWith(withRuns), '--project', 'demo', '--now', '2026-10-07T12:00:00Z').out;
     assert.match(text, /retries {6}2 send-backs over 1 completed/);
     assert.match(text, /silent runs {2}1 of 2 briefed wrote no report: cccc/);
-    assert.match(text, /rework {7}not recorded/);
+    assert.match(text, /rework {7}0 of 1 completed \(0%\); 0 rework rows.*journal.ts log <id> --kind rework/);
+});
+
+test('rework rows in the window are counted per item and against completed items', () => {
+    const withRework = [
+        ...rows,
+        { id: 'r1', ts: '2026-10-06T13:00:00Z', date: '2026-10-06', kind: 'rework', reworks: 'aaaa', text: 'aaaa fixed by hand' },
+        { id: 'r2', ts: '2026-10-06T14:00:00Z', date: '2026-10-06', kind: 'rework', reworks: 'aaaa', text: 'aaaa again' },
+        { id: 'r3', ts: '2026-10-06T14:00:00Z', date: '2026-10-06', kind: 'rework', reworks: 'cccc', text: 'cccc is open, not completed' },
+        { id: 'r4', ts: '2026-09-01T14:00:00Z', date: '2026-09-01', kind: 'rework', reworks: 'aaaa', text: 'outside the window' },
+    ];
+    const j = JSON.parse(run('--vault', ledgerWith(withRework), '--project', 'demo', '--now', '2026-10-07T12:00:00Z', '--json').out);
+    assert.equal(j.runs.reworkRows, 3);
+    assert.equal(j.runs.reworked, 2);
+    assert.equal(j.runs.reworkedCompleted, 1);
+    assert.equal(j.runs.reworkPercent, 100);
+    assert.match(run('--vault', ledgerWith(withRework), '--project', 'demo', '--now', '2026-10-07T12:00:00Z').out, /rework {7}1 of 1 completed \(100%\); 3 rework rows on 2 items/);
 });
