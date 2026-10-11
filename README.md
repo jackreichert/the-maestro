@@ -55,7 +55,7 @@ You need Node.js 24 or newer (nothing is installed to run the scripts: they use 
 ```bash
 # 1. One copy, where your agent already loads skills. Symlink other harnesses to it; never clone twice.
 mkdir -p ~/.claude/skills
-git clone <this-repo-url> ~/.claude/skills/the-maestro
+git clone https://github.com/jackreichert/the-maestro ~/.claude/skills/the-maestro
 mkdir -p ~/.agents/skills && ln -s ~/.claude/skills/the-maestro ~/.agents/skills/the-maestro
 
 # 2. Tell the scripts where the ledger lives (a real folder you choose; there is no default and no guessing).
