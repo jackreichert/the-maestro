@@ -2,13 +2,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
 import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
-import { digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
+import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-store.ts';
+import { readInbox } from './lib/event-inbox.ts';
 import { commands, fillTemplate, LABEL, shq } from './install-loop-supervisor.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
 
@@ -82,8 +83,12 @@ test('the real supervisor process saves the fake loop digest under the ledger ro
   const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LOOP_BIN: fakeLoop(tempDir()), MAESTRO_SUPERVISOR_MAX_RUNS: '2' }) });
   assert.equal(r.status, 0, r.stderr);
   const dir = digestDir(ledger, 'proj');
-  assert.equal(unseenDigests(dir).length, 2);
-  assert.equal(digestBody(unseenDigests(dir)[0]), 'ACTION w1 (fake): changed');
+  // Each saved digest is then moved into the inbox, which marks it seen.
+  const files = readdirSync(dir).filter((f) => f.endsWith('.md'));
+  assert.equal(files.length, 2);
+  assert.equal(unseenDigests(dir).length, 0);
+  assert.equal(digestBody(join(dir, files[0])), 'ACTION w1 (fake): changed');
+  assert.ok(readInbox(join(ledger, 'Events')).length >= 1);
 });
 
 test('the supervisor refuses to start without a ledger root and writes nothing', () => {
@@ -253,7 +258,7 @@ test('the real supervisor kills a loop that is alive but silent, then relaunches
   const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: 20_000, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '2', MAESTRO_WATCHDOG_GRACE_MS: '1500', MAESTRO_WATCHDOG_INTERVAL_MS: '200' }) });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /is hung/);
-  assert.equal(unseenDigests(digestDir(ledger, 'proj')).length, 1);
+  assert.equal(readdirSync(digestDir(ledger, 'proj')).filter((f) => f.endsWith('.md')).length, 1);
 });
 
 test('the real supervisor rotates its log when it is over the limit, keeping the old text in .1', async () => {
@@ -273,4 +278,18 @@ test('the real supervisor rotates its log when it is over the limit, keeping the
   closeSync(fd);
   assert.match(readFileSync(`${log}.1`, 'utf8'), /^old line/);
   assert.ok(statSync(log).size < 1000);
+});
+
+test('the real supervisor moves a digest that was already saved and unseen into the inbox when it starts', () => {
+  const ledger = tempDir();
+  const dir = digestDir(ledger, 'proj');
+  saveDigest(dir, 'ACTION w9 (fake): left over from an older loop');
+  const bin = join(tempDir(), 'exit10.sh');
+  writeFileSync(bin, '#!/bin/sh\nexit 10\n');
+  chmodSync(bin, 0o755);
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: 20_000, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(unseenDigests(dir).length, 0);
+  assert.deepEqual(readInbox(join(ledger, 'Events')).map((e) => e.watch), ['w9']);
+  assert.match(r.stderr, /moved 1 saved digest/);
 });

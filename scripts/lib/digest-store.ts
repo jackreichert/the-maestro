@@ -49,8 +49,8 @@ const CLAIM = /^(.+\.md)\.claim-(\d+)-(\d+)$/;
 const CLAIM_MAX_AGE_MS = 10 * 60 * 1000;
 const isAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; } };
 
-/** A digest taken by this process: `text` is its body; `finish()` marks it seen (call after printing). */
-export interface Claimed { text: string; finish: () => void }
+/** A digest taken by this process: `text` is its body, `file` the digest's own path (its name carries the save time); `finish()` marks it seen (call after printing). */
+export interface Claimed { text: string; file: string; finish: () => void }
 
 /**
  * Claims every unseen digest, oldest first, by renaming `x.md` to `x.md.claim-<pid>-<ms>`; only the rename winner proceeds,
@@ -74,9 +74,16 @@ export function claimDigests(dir: string, now: number = Date.now(), pid: number 
   }
   return taken.map(({ target, claim }) => ({
     text: readFileSync(claim, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '').trimEnd(),
+    file: target,
     finish: () => {
       writeAtomic(target, `${SEEN}\n${readFileSync(claim, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '')}`);
       rmSync(claim, { force: true });
     },
   }));
+}
+
+/** The save time (ISO) a digest file's name carries, or null when the name is not one `saveDigest` made. */
+export function savedAt(file: string): string | null {
+  const m = file.match(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
+  return m ? `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z` : null;
 }

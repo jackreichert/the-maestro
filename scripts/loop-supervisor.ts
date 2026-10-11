@@ -27,6 +27,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { localClock } from './lib/cadence.ts';
 import { digestDir, saveDigest } from './lib/digest-store.ts';
+import { migrateDigests } from './lib/digest-migrate.ts';
 import { digestQueueOwners, queueActionableDigest, queuedFixKeys } from './lib/digest-queue.ts';
 import type { DigestFix } from './lib/digest-queue.ts';
 import { readHeartbeat, writeHeartbeat } from './lib/heartbeat.ts';
@@ -245,12 +246,21 @@ function beat(mode: HeartbeatMode, until: number, lastError: string): void {
   try { writeHeartbeat(EVENT_DIR, { pid: process.pid, at: new Date().toISOString(), tick: 0, watchesLive: 0, sleepingUntil: new Date(until).toISOString(), mode, lastError: lastError.slice(0, 200) }); } catch { /* advisory */ }
 }
 
+/** Moves unseen saved digests into the event inbox (at start, and after each digest an older loop makes the supervisor save). A failure is logged, never thrown. */
+function moveDigestsToInbox(dir: string): void {
+  try {
+    const r = migrateDigests(EVENT_DIR, dir);
+    if (r.digests) console.error(stamped(`moved ${r.digests} saved digest(s) into the inbox: ${r.added} added, ${r.duplicates} already there, ${r.refused} refused`));
+  } catch (err) { console.error(stamped(`could not move saved digests into the inbox: ${err instanceof Error ? err.message : String(err)}`)); }
+}
+
 async function main(): Promise<number> {
   if (!LEDGER_ROOT) { console.error(stamped('no ledger root; set LEDGER_ROOT (digests are saved only under it)')); return 2; }
   const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
   const max = Number(process.env.MAESTRO_SUPERVISOR_MAX_RUNS);
   console.error(stamped(`supervising; digests go to ${dir}`));
   writeRecord(EVENT_DIR, process.pid);
+  moveDigestsToInbox(dir);
   stopOnSignals(EVENT_DIR);
   await supervise({
     runLoop: launch,
@@ -260,7 +270,7 @@ async function main(): Promise<number> {
       log: (line) => console.error(stamped(line)),
       nap: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
     }),
-    save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); },
+    save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); moveDigestsToInbox(dir); },
     log: (line) => console.error(stamped(line)),
     queueDigest: (digest) => queueSavedDigest(digest, (line) => console.error(stamped(line)), {
       vault: LEDGER_ROOT,
