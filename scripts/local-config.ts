@@ -381,7 +381,10 @@ export const PR_SMELLS_REPOS = globListFile('pr_smells_repos');
 export const WAIVE_SIZE_GATE_OWNERS = repoGlobs(globListFile('waive_size_gate_owners'));
 
 /** Self-review repos: GitHub owners, or `owner/name` globs, whose PRs only you review, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can claim every repo. Their PRs do not count toward the review queue cap and are listed apart from the rest on the PR board. Default none, so every PR is counted and listed together. */
-export const SELF_REVIEW_REPOS = repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS', 'self_review_repos'));
+/** Review pool: GitHub owners (or `owner/name` globs) whose PRs other people review, comma-separated. Every repo outside the pool is treated as self-review, so a personal or stray repo never counts against the review cap. Default none (no pool: only self_review_repos are left out). */
+export const REVIEW_POOL_OWNERS = repoGlobs(globList('MAESTRO_REVIEW_POOL_OWNERS', 'review_pool_owners'));
+/** The self-review list every caller reads: self_review_repos, plus the review pool as `!`-prefixed entries (see lib/self-review.ts). */
+export const SELF_REVIEW_REPOS = [...repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS', 'self_review_repos')), ...REVIEW_POOL_OWNERS.map((g) => `!${g}`)];
 
 /** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. User config file only. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pickUserFile('pr_body_check_private'));
