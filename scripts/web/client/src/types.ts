@@ -110,6 +110,8 @@ export interface HomeEpic {
   verify: { required: boolean; verified: number };
   awaiting: number; unknowns: number; quietDays: number | null;
   tracker?: Ref; next?: HomeTicket;
+  /** Open PRs naming the epic or one of its open tickets, at most three; absent from a server that predates it. */
+  prs?: Ref[]; prsMore?: number;
 }
 
 /** Something the files cannot tell, with the fix in its text. `epic` names the epic block it counts toward. */
@@ -130,3 +132,15 @@ export interface StreamHome {
   unknowns: HomeUnknown[];
   freshness: { prs: { fetchedAt: string | null; stale: boolean } };
 }
+
+/** One open epic as `GET /api/epics` sends it: the counts, the next ticket and the PRs that name it. */
+export interface EpicLine {
+  id: string; title: string; note: Ref; tracker?: Ref; status: string;
+  total: number; closed: number; inProgress: number; blocked: number; notStarted: number;
+  awaiting: number; quietDays: number | null;
+  next?: { id: string; title: string; ref: Ref };
+  prs: Ref[]; prsMore?: number;
+}
+
+/** `GET /api/epics`: each stream's open epics, and the epics no stream claims. */
+export interface EpicsData { streams: { stream: string; epics: EpicLine[] }[]; unfiled: EpicLine[] }

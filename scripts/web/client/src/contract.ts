@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { EpicLine, EpicsData, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -176,7 +176,7 @@ const HOME_TICKET: Shape = {
 const HOME_EPIC: Shape = {
   id: str, title: str, note: ref, status: str, total: count, closed: count, inProgress: count, blocked: count, notStarted: count,
   verify: shape({ required: bool, verified: count }), awaiting: count, unknowns: count, quietDays: orNull(num),
-  tracker: opt(ref), next: opt(shape(HOME_TICKET)),
+  tracker: opt(ref), next: opt(shape(HOME_TICKET)), prs: opt(arrOf(ref)), prsMore: opt(count),
 };
 const RAIL_LINK: Shape = { label: str, kind: oneOf('note', 'tracker', 'pr', 'web'), url: str, meta: opt(str) };
 const RAIL_GROUP: Shape = { group: oneOf('pinned', 'epics', 'docs', 'prs', 'runbooks'), more: count };
@@ -218,4 +218,26 @@ export function sanitizeHome(x: unknown): { home: StreamHome; dropped: number } 
     + lost(left.inProgress, groups.inProgress) + lost(left.blocked, groups.blocked) + lost(left.notStarted, groups.notStarted);
   const truncated = count(left.truncated) ? left.truncated as number : 0;
   return { home: { stream: x.stream, epics, loose, left: { ...groups, truncated }, doneMeans, links, unknowns, freshness: { prs } }, dropped };
+}
+
+const EPIC_LINE: Shape = {
+  id: str, title: str, note: ref, status: str, total: count, closed: count, inProgress: count, blocked: count, notStarted: count,
+  awaiting: count, quietDays: orNull(num), tracker: opt(ref), next: opt(shape({ id: str, title: str, ref })), prs: arrOf(ref), prsMore: opt(count),
+};
+
+/**
+ * An EpicsData from an untrusted `GET /api/epics` body, or null when it has no usable shape. A line that fails its rules, or
+ * whose counts do not add up to its total (its fraction would state a denominator the numbers contradict), is dropped.
+ */
+export function sanitizeEpics(x: unknown): { data: EpicsData; dropped: number } | null {
+  if (!isObj(x) || !Array.isArray(x.streams) || !Array.isArray(x.unfiled)) return null;
+  let dropped = 0;
+  const lines = (list: unknown): EpicLine[] => {
+    const ok = validRows(list, EPIC_LINE).filter((e) => { const c = e as EpicLine; return c.closed + c.inProgress + c.blocked + c.notStarted === c.total; }) as EpicLine[];
+    dropped += lost(list, ok);
+    return ok;
+  };
+  const streams = x.streams.filter(isObj).filter((g) => str(g.stream)).map((g) => ({ stream: g.stream as string, epics: lines(g.epics) }));
+  dropped += x.streams.length - streams.length;
+  return { data: { streams, unfiled: lines(x.unfiled) }, dropped };
 }

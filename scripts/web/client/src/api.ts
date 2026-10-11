@@ -1,6 +1,6 @@
-import { sanitizeCharts, sanitizeHome, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
-import type { ChartsData, PodiumState, StreamHome } from './types.ts';
+import type { ChartsData, EpicsData, PodiumState, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -59,6 +59,15 @@ export async function loadHome(stream: string): Promise<Loaded<StreamHome> | nul
   try {
     const got = sanitizeHome(await getJson(`/api/streams/${encodeURIComponent(stream)}/home`));
     return got && { data: got.home, source: 'server', dropped: got.dropped };
+  } catch {
+    return null;
+  }
+}
+
+/** Every stream's open epics, or null when the server has none to give. No fixture stands in: a page without epic lines is complete. */
+export async function loadEpics(): Promise<EpicsData | null> {
+  try {
+    return sanitizeEpics(await getJson('/api/epics'))?.data ?? null;
   } catch {
     return null;
   }

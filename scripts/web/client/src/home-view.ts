@@ -87,6 +87,7 @@ function epicBlock(e: HomeEpic, listed: boolean): HTMLElement {
     h('p', { class: 'epic-meta' },
       counts ? h('span', { class: 'counts' }, counts) : null,
       e.next ? h('span', {}, 'Next: ', h('span', { class: 'mono' }, e.next.id), ' ', refLink({ label: e.next.title, url: e.next.ref.url })) : null,
+      e.prs?.length ? h('span', {}, e.prs.length === 1 && !e.prsMore ? 'PR: ' : 'PRs: ', ...e.prs.flatMap((p, i) => [i ? ' ' : '', refLink(p)]), e.prsMore ? ` and ${e.prsMore} more` : '') : null,
       awaiting ? h('span', {}, awaiting) : null,
       quiet ? h('span', {}, quiet) : null,
       jump ?? (unknowns ? h('span', {}, unknowns) : null)));
