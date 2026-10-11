@@ -14,3 +14,11 @@ export const home = (): Record<string, any> => ({
   freshness: { tickets: '2026-01-01T00:00:00Z', prs: { fetchedAt: null, stale: true }, tracker: null },
 });
 
+export const epicLine = (id: string, over: Record<string, unknown> = {}): Record<string, any> => ({
+  id, title: `Epic ${id}`, note: ref(id), status: 'open', total: 14, closed: 9, inProgress: 2, blocked: 1, notStarted: 2, awaiting: 1, quietDays: null, prs: [], ...over,
+});
+export const epics = (): Record<string, any> => ({
+  generatedAt: '2026-01-01T00:00:00Z',
+  streams: [{ stream: 'Avonlea', epics: [epicLine('avonlea-api-042', { next: { id: 'avonlea-api-051', title: 'Ticket avonlea-api-051', ref: ref('avonlea-api-051') }, prs: [{ label: 'avonlea-api#412', url: 'https://github.test/acme/avonlea-api/pull/412' }] })] }, { stream: 'Green Gables', epics: [] }],
+  unfiled: [epicLine('loop-lab-002', { total: 1, closed: 0, inProgress: 0, blocked: 0, notStarted: 1, awaiting: 0 })],
+});
