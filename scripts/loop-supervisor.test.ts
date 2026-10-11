@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, rmSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
@@ -10,7 +10,7 @@ import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-store.ts';
 import { readInbox } from './lib/event-inbox.ts';
-import { commands, fillTemplate, LABEL, shq } from './install-loop-supervisor.ts';
+import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq } from './install-loop-supervisor.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'loop-supervisor-test-'));
@@ -100,7 +100,7 @@ test('the supervisor refuses to start without a ledger root and writes nothing',
 test('install fills every placeholder, prints the launchctl commands, never runs them, and refuses while a loop holds the lock', () => {
   const ledger = tempDir();
   const out = join(tempDir(), 'x.plist');
-  const ok = spawnSync(process.execPath, [INSTALL, '--out', out], { encoding: 'utf8', env: envFor(ledger) });
+  const ok = spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch'], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir() }) });
   assert.equal(ok.status, 0, ok.stderr);
   const plist = readFileSync(out, 'utf8');
   assert.equal(/\{\{/.test(plist), false);
@@ -113,7 +113,7 @@ test('install fills every placeholder, prints the launchctl commands, never runs
   mkdirSync(events, { recursive: true });
   writeFileSync(join(events, 'loop.lock'), String(process.pid));
   const out2 = join(tempDir(), 'y.plist');
-  const refused = spawnSync(process.execPath, [INSTALL, '--out', out2], { encoding: 'utf8', env: envFor(ledger) });
+  const refused = spawnSync(process.execPath, [INSTALL, '--out', out2, '--allow-branch'], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir() }) });
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, new RegExp(`pid ${process.pid}`));
   assert.equal(existsSync(out2), false);
@@ -292,4 +292,39 @@ test('the real supervisor moves a digest that was already saved and unseen into 
   assert.equal(unseenDigests(dir).length, 0);
   assert.deepEqual(readInbox(join(ledger, 'Events')).map((e) => e.watch), ['w9']);
   assert.match(r.stderr, /moved 1 saved digest/);
+});
+
+test('the installer refuses while another maestro-loop plist is installed, but not for its own plist', () => {
+  const ledger = tempDir();
+  const agents = tempDir();
+  const out = join(agents, `${LABEL}.plist`);
+  writeFileSync(join(agents, 'com.example.maestro-loop-old.plist'), '<plist/>');
+  const run = () => spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch'], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: agents }) });
+  const refused = run();
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /com\.example\.maestro-loop-old\.plist/);
+  assert.equal(existsSync(out), false);
+  assert.deepEqual(otherLoopPlists(agents, out).map((p) => p.split('/').pop()), ['com.example.maestro-loop-old.plist']);
+  rmSync(join(agents, 'com.example.maestro-loop-old.plist'));
+  assert.equal(run().status, 0);
+  assert.equal(run().status, 0, 'installing again over its own plist is fine');
+});
+
+test('the installer refuses a checkout that is on a branch unless told otherwise; a detached one is the runtime worktree', () => {
+  const repo = tempDir();
+  const git = (...a: string[]) => spawnSync('git', ['-C', repo, '-c', 'core.hooksPath=/dev/null', '-c', 'user.email=t@example.com', '-c', 'user.name=t', ...a], { encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'chore: init');
+  assert.equal(checkedOutBranch(repo), 'main');
+  git('checkout', '-q', '--detach');
+  assert.equal(checkedOutBranch(repo), null);
+  assert.equal(checkedOutBranch(tempDir()), null);
+  const ledger = tempDir();
+  const install = (repoPath: string, ...flags: string[]) => spawnSync(process.execPath, [INSTALL, '--out', join(tempDir(), 'x.plist'), ...flags], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir(), MAESTRO_INSTALL_REPO: repoPath }) });
+  assert.equal(install(repo).status, 0);
+  git('checkout', '-q', 'main');
+  const refused = install(repo);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /is on branch main.*git worktree add --detach/);
+  assert.equal(install(repo, '--allow-branch').status, 0);
 });
