@@ -35,8 +35,18 @@ const SEP = '\x1f';
 const DEFAULT_MAX = 40;
 const MAX_REPOS = 60;
 
-const git = (repo: string, ...args: string[]): { ok: boolean; out: string } => {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+const DEFAULT_BUDGET_MS = 60_000;
+const CALL_MS = 15_000;
+
+/** The wall-clock allowance for one scan; `spent` turns true once a call was refused or cut short for lack of time. */
+interface Budget { until: number; spent: boolean }
+
+/** One git call, never longer than what is left of the budget; an exhausted budget answers "not ok" without spawning. */
+const git = (repo: string, budget: Budget, ...args: string[]): { ok: boolean; out: string } => {
+  const left = budget.until - Date.now();
+  if (left <= 0) { budget.spent = true; return { ok: false, out: '' }; }
+  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: Math.min(CALL_MS, left), maxBuffer: 64 * 1024 * 1024 });
+  if (r.error) budget.spent = true;
   return { ok: r.status === 0, out: (r.stdout ?? '').trim() };
 };
 
@@ -68,10 +78,10 @@ function repoDirs(container: string): string[] {
 }
 
 /** branch -> worktree path, from `git worktree list --porcelain` (detached worktrees have no branch and are skipped). */
-function worktrees(repo: string): Map<string, string> {
+function worktrees(repo: string, budget: Budget): Map<string, string> {
   const out = new Map<string, string>();
   let path = '';
-  for (const line of git(repo, 'worktree', 'list', '--porcelain').out.split('\n')) {
+  for (const line of git(repo, budget, 'worktree', 'list', '--porcelain').out.split('\n')) {
     if (line.startsWith('worktree ')) path = line.slice(9);
     else if (line.startsWith('branch refs/heads/')) out.set(line.slice(18), path);
   }
@@ -86,35 +96,61 @@ function inside(root: string, path: string): string {
   } catch { return ''; }
 }
 
-function unitsIn(container: string, folder: string, rows: VerdictRow[]): LocalUnit[] {
+/** Local branches of one repo whose tip no origin ref contains, without their commit counts (those are only worth computing for the units shown). */
+function candidatesIn(container: string, folder: string, budget: Budget): { folder: string; unit: LocalUnit }[] {
   const repo = join(container, folder);
   const name = basename(folder);
-  const remote = new Set(git(repo, 'for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin').out.split('\n'));
+  const remote = new Set(git(repo, budget, 'for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin').out.split('\n'));
   const base = BASES.find((b) => remote.has(b)) ?? 'main';
-  const trees = worktrees(repo);
+  const trees = worktrees(repo, budget);
+  // One rev-list names every commit some branch has and no origin ref has; a branch is unpushed exactly when its tip is one of them.
+  const unpushed = new Set(git(repo, budget, 'rev-list', '--branches', '--not', '--remotes=origin').out.split('\n'));
   const fmt = ['%(refname:short)', '%(objectname)', '%(committerdate:iso-strict)', '%(subject)'].join(SEP);
-  const out: LocalUnit[] = [];
-  for (const line of git(repo, 'for-each-ref', `--format=${fmt}`, 'refs/heads').out.split('\n').filter(Boolean)) {
+  const out: { folder: string; unit: LocalUnit }[] = [];
+  for (const line of git(repo, budget, 'for-each-ref', `--format=${fmt}`, 'refs/heads').out.split('\n').filter(Boolean)) {
     const [branch = '', head = '', at = '', subject = ''] = line.split(SEP);
-    if (!branch || PROTECTED.has(branch) || remote.has(branch)) continue;
-    const count = git(repo, 'rev-list', '--count', `refs/heads/${branch}`, '--not', '--remotes=origin');
-    const ahead = count.ok && /^\d+$/.test(count.out) ? Number(count.out) : 0;
-    if (ahead === 0) continue;
+    if (!branch || PROTECTED.has(branch) || remote.has(branch) || !unpushed.has(head)) continue;
     const tree = trees.get(branch);
     const where = (tree && inside(container, tree)) || folder;
     const id = localUnitId(name, branch);
-    out.push({ id, repo: name, branch, head, ahead, at, subject, where, checkedOut: tree !== undefined, base: `origin/${base}`, command: `git -C ${quote(folder)} difftool ${quote(`origin/${base}...${branch}`)}`, verdict: verdictState(rows, id, head) });
+    out.push({ folder, unit: { id, repo: name, branch, head, ahead: 1, at, subject, where, checkedOut: tree !== undefined, base: `origin/${base}`, command: `git -C ${quote(folder)} difftool ${quote(`origin/${base}...${branch}`)}`, verdict: { state: 'none' } } });
   }
   return out;
 }
 
-export function buildLocalReview(o: LocalReviewOptions): LocalReview {
+const unavailable = (generatedAt: string, reason: string): LocalReview => ({ generatedAt, available: false, reason, units: [], more: 0, notes: [] });
+
+/**
+ * Read the container's repos and build the queue, without any recorded verdicts (every unit is `none`). This is the slow part:
+ * it spawns git, so it runs in the snapshot producer (`local-review-snapshot.ts`), never inside a request.
+ * It is bounded: at most MAX_REPOS repos, one commit count per shown unit, and `budgetMs` of wall time in all; past that it
+ * stops asking git and says so in `notes`.
+ */
+export function scanLocalReview(o: LocalReviewOptions & { budgetMs?: number }): LocalReview {
   const generatedAt = o.now.toISOString();
-  if (!o.containerRoot) return { generatedAt, available: false, reason: 'No container folder is configured (set container_root), so local branches are not read.', units: [], more: 0, notes: [] };
-  let names: string[];
-  try { names = repoDirs(o.containerRoot); } catch { return { generatedAt, available: false, reason: 'The configured container folder cannot be read.', units: [], more: 0, notes: [] }; }
-  const rows = loadVerdicts(o.vault);
-  const all = names.flatMap((n) => unitsIn(o.containerRoot as string, n, rows)).sort((a, b) => b.at.localeCompare(a.at));
+  if (!o.containerRoot) return unavailable(generatedAt, 'No container folder is configured (set container_root), so local branches are not read.');
+  const budget: Budget = { until: Date.now() + (o.budgetMs ?? DEFAULT_BUDGET_MS), spent: false };
+  let folders: string[];
+  try { folders = repoDirs(o.containerRoot); } catch { return unavailable(generatedAt, 'The configured container folder cannot be read.'); }
+  const all = folders.flatMap((f) => candidatesIn(o.containerRoot as string, f, budget)).sort((a, b) => b.unit.at.localeCompare(a.unit.at));
   const max = o.max ?? DEFAULT_MAX;
-  return { generatedAt, available: true, units: all.slice(0, max), more: Math.max(0, all.length - max), notes: ['Read from local git only: no fetch, so a branch pushed from another machine can show here until this one fetches.'] };
+  const units = all.slice(0, max).map(({ folder, unit: u }) => {
+    const r = git(join(o.containerRoot as string, folder), budget, 'rev-list', '--count', `refs/heads/${u.branch}`, '--not', '--remotes=origin');
+    return r.ok && /^\d+$/.test(r.out) && Number(r.out) > 0 ? { ...u, ahead: Number(r.out) } : u;
+  });
+  const notes = ['Read from local git only: no fetch, so a branch pushed from another machine can show here until this one fetches.'];
+  if (budget.spent) notes.push('The scan ran out of time, so this list may be incomplete and the commit counts may show 1.');
+  return { generatedAt, available: true, units, more: Math.max(0, all.length - max), notes };
+}
+
+/** The scan with each unit's recorded verdict for its exact head applied; reading the verdict file is cheap, so this runs per request. */
+export function withVerdicts(review: LocalReview, vault: string): LocalReview {
+  if (!review.available || review.units.length === 0) return review;
+  const rows = loadVerdicts(vault);
+  return { ...review, units: review.units.map((u) => ({ ...u, verdict: verdictState(rows, u.id, u.head) })) };
+}
+
+/** Scan and apply verdicts in one go (spawns git: for tests and the producer, never for a request handler). */
+export function buildLocalReview(o: LocalReviewOptions & { budgetMs?: number }): LocalReview {
+  return withVerdicts(scanLocalReview(o), o.vault);
 }

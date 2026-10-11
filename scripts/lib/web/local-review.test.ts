@@ -9,7 +9,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordVerdict, localUnitId } from '../../review-verdict.ts';
-import { buildLocalReview, verdictState } from './local-review.ts';
+import { buildLocalReview, scanLocalReview, verdictState } from './local-review.ts';
+import { writeSnapshot } from './local-review-cache.ts';
 import { createWebServer } from './server.ts';
 
 const NOW = new Date('2026-10-11T15:00:00Z');
@@ -128,18 +129,20 @@ const clientDir = join(tmp, 'client');
 mkdirSync(clientDir, { recursive: true });
 writeFileSync(join(clientDir, 'index.html'), '<p>x</p>');
 const page = { streams: [], repoStreams: {}, vaultName: 'V', trackerUrlBase: '', ticketNotePath: '', trackerKeyPattern: 'x^', tz: 'UTC' };
-const server = createWebServer({ web: { vault: ledger, project: 'p', statusDir: join(ledger, 'Status'), page, containerRoot: container }, clientDir, now: () => NOW, log: () => {} });
+const server = createWebServer({ web: { vault: ledger, project: 'p', statusDir: join(ledger, 'Status'), page, containerRoot: container }, clientDir, now: () => NOW, log: () => {}, localReviewScan: (file) => { writeSnapshot(file, scanLocalReview({ containerRoot: container, vault: ledger, now: new Date() })); return Promise.resolve(); } });
 let port = 0;
 before(async () => { await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok)); port = (server.address() as AddressInfo).port; });
 after(() => { server.close(); });
 
-test('GET /api/local-review serves the queue as JSON', async () => {
-  const body = await new Promise<{ status: number; text: string }>((ok, fail) => {
+test('GET /api/local-review serves the queue as JSON once the snapshot is written', async () => {
+  const get = (): Promise<{ status: number; text: string }> => new Promise((ok, fail) => {
     const req = request({ host: '127.0.0.1', port, path: '/api/local-review', headers: { host: `127.0.0.1:${port}` } }, (res) => { let text = ''; res.on('data', (c) => { text += c; }); res.on('end', () => ok({ status: res.statusCode ?? 0, text })); });
     req.on('error', fail); req.end();
   });
-  assert.equal(body.status, 200);
-  const j = JSON.parse(body.text) as { available: boolean; units: { branch: string }[] };
+  type Body = { available: boolean; units: { branch: string }[]; scan: { state: string } };
+  let j = JSON.parse((await get()).text) as Body;
+  for (let i = 0; i < 50 && !j.available; i++) { await new Promise((ok) => setTimeout(ok, 100)); j = JSON.parse((await get()).text) as Body; }
   assert.equal(j.available, true);
+  assert.equal(j.scan.state, 'fresh');
   assert.ok(j.units.some((u) => u.branch === 'feat/local-one'));
 });
