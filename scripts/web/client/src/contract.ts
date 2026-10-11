@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -284,4 +284,22 @@ export function sanitizeEpics(x: unknown): { data: EpicsData; dropped: number } 
   const streams = x.streams.filter(isObj).filter((g) => str(g.stream)).map((g) => ({ stream: g.stream as string, epics: lines(g.epics) }));
   dropped += x.streams.length - streams.length;
   return { data: { streams, unfiled: lines(x.unfiled) }, dropped };
+}
+
+const LOCAL_UNIT: Shape = {
+  id: str, repo: str, branch: str, head: str, ahead: count, at: str, subject: str, where: str, checkedOut: bool, base: str, command: str,
+  verdict: shape({ state: oneOf('ship-it', 'needs-work', 'stale', 'none'), at: opt(str) }),
+};
+
+/**
+ * A LocalReview from an untrusted `GET /api/local-review` body, or null when it has no usable shape. A unit that fails its rules
+ * is dropped and counted. An unavailable queue must carry its reason: without one it would read as an empty queue, so it is refused.
+ */
+export function sanitizeLocalReview(x: unknown): { data: LocalReview; dropped: number } | null {
+  if (!isObj(x) || !bool(x.available) || !str(x.generatedAt) || !Array.isArray(x.units)) return null;
+  if (x.available === false && !(str(x.reason) && (x.reason as string).length > 0)) return null;
+  const units = validRows(x.units, LOCAL_UNIT) as LocalUnit[];
+  const notes = Array.isArray(x.notes) ? x.notes.filter((n): n is string => typeof n === 'string') : [];
+  const reason = str(x.reason) ? { reason: x.reason as string } : {};
+  return { data: { generatedAt: x.generatedAt as string, available: x.available as boolean, ...reason, units, more: count(x.more) ? x.more as number : 0, notes }, dropped: lost(x.units, units) };
 }
