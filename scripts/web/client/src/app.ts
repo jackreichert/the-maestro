@@ -1,10 +1,11 @@
 import './stream-board.ts';
 import './podium-chart.ts';
 import './priority-list.ts';
+import './epic-lines.ts';
 import './md-fragment.ts';
 import { h, s, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadHome, loadLinkHosts, loadState } from './api.ts';
+import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
@@ -21,9 +22,9 @@ import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
-import type { AskBusyDetail, ChartsData, PodiumState, StreamHome } from './types.ts';
+import type { AskBusyDetail, ChartsData, EpicsData, PodiumState, StreamHome } from './types.ts';
 
-interface Fresh { state: PodiumState; charts: ChartsData; dropped: number }
+interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; dropped: number }
 
 const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   :host { --pad: var(--space-4); }
@@ -207,6 +208,8 @@ export class PodiumApp extends HTMLElement {
   #root: ShadowRoot;
   #state: PodiumState | null = null;
   #charts: ChartsData | null = null;
+  // Open epics for the Board's rollups; null when the server gave none (sample data, an old server), which draws no epic lines.
+  #epics: EpicsData | null = null;
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
   #dropped = 0;
   #active = DASHBOARD;
@@ -251,10 +254,11 @@ export class PodiumApp extends HTMLElement {
     window.addEventListener('pointerup', this.#onRelease);
     window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
-    Promise.all([loadState(), loadCharts(), loadLinkHosts()]).then(([s, c]) => {
+    Promise.all([loadState(), loadCharts(), loadEpics(), loadLinkHosts()]).then(([s, c, e]) => {
       if (!this.isConnected) return;   // removed while loading: start nothing that disconnectedCallback has already missed
       this.#state = s.data;
       this.#charts = c.data;
+      this.#epics = s.source === 'server' ? e : null;
       this.#sources = { state: s.source, charts: c.source };
       this.#dropped = s.dropped + c.dropped;
       this.#active = parseFragment(location.hash, this.#ids());
@@ -288,8 +292,8 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
-        const [s, c] = await Promise.all([loadState(), loadCharts()]);
-        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, dropped: s.dropped + c.dropped } : null;
+        const [s, c, e] = await Promise.all([loadState(), loadCharts(), loadEpics()]);
+        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, dropped: s.dropped + c.dropped } : null;
       },
       seqOf: (f) => f.state.seq,
       apply: (f) => this.#adopt(f),
@@ -310,6 +314,7 @@ export class PodiumApp extends HTMLElement {
   #show(f: Fresh): void {
     this.#state = f.state;
     this.#charts = f.charts;
+    this.#epics = f.epics;
     this.#dropped = f.dropped;
     askState.prune(f.state.asks.map((a) => a.id));
     if (!this.#ids().includes(this.#active)) this.#active = DASHBOARD;   // the stream behind the open tab is gone
@@ -581,7 +586,10 @@ export class PodiumApp extends HTMLElement {
       ? `Priorities are from ${longDate(pri.date) || pri.date}. ${editable ? `Add one to start today's list.` : `Set today's with journal.ts priorities set.`}`
       : 'No priorities set for today.';
     const priorities = h('priority-list');
-    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note };
+    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note, epics: this.#epics ? Object.fromEntries(this.#epics.streams.map((g) => [g.stream, g.epics])) : {} };
+    const unfiled = this.#epics?.unfiled ?? [];
+    const unfiledList = unfiled.length ? h('epic-lines') : null;
+    if (unfiledList) unfiledList.epics = unfiled;
     const asks = askCards(st.asks, this.#sources.state === 'server', true, askPreview());
     const frag = fragmentFor(st.fragments, OVERVIEW);
     const md = frag ? h('md-fragment') : null;
@@ -594,6 +602,7 @@ export class PodiumApp extends HTMLElement {
           section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped }, itemRows(st.done, ctx))),
         h('div', { class: 'col' },
           section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: note, quiet: true }, priorities),
+          unfiledList ? section({ title: 'Unfiled epics', n: unfiled.length, tone: 'neutral', empty: '', quiet: true }, unfiledList) : null,
           section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(st.working, ctx)),
           section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
       h('div', { class: 'wide' },
