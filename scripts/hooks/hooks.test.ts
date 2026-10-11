@@ -189,7 +189,7 @@ test('precompact rewrites a stale handoff and says how far behind it was', () =>
   const { d, calls } = deps({ ...quiet(), readLedger: () => [rowAt('2026-10-09T11:40:00.000Z', 'later work')], newestHandoff: () => ({ name: 'HANDOFF-x.md', at: '2026-10-09T11:03:00.000Z' }) });
   const text = precompact({ transcript_path: '/t', trigger: 'auto' }, d);
   assert.equal(calls.filter((c) => c[0] === 'handoff').length, 1);
-  assert.match(text, /^precompact: handoff rewritten \(37 min behind\), snapshot copied 0 \(4 current\), decisions raised 0 in 0 ask\(s\) /);
+  assert.match(text, /^precompact: repaired, handoff rewritten \(37 min behind\), snapshot copied 0 \(4 current\), decisions raised 0 in 0 ask\(s\) /);
 });
 
 test('precompact: rows the hook and the loop wrote do not stale the handoff, but a repair is still reported when only the snapshot copied', () => {
@@ -242,4 +242,14 @@ test('two compactions two minutes apart leave a thrash row naming the setting, a
   assert.match(logs[1], /^compaction thrash: session abcdef12 compacted 2 time\(s\) in 10 min, 10k growth since the last \(setting 20% of 1000k = 200k, floor 100k\)$/);
   assert.deepEqual(calls.map((c) => c[0]), ['log', 'log', 'handoff', 'log'], 'every step still ran');
   assert.match(text, /^precompact: handoff rewritten/);
+});
+
+test('a handoff rewritten 37 minutes behind marks the row repaired; one 4 minutes behind does not', () => {
+  const min = (m: number): string => new Date(Date.parse(T) - m * 60_000).toISOString();
+  const run = (behind: number): string => {
+    const { d } = deps({ readLedger: () => [{ kind: 'wip', ts: min(1), text: 'work' }] as never, newestHandoff: () => ({ name: 'h.md', at: min(1 + behind) }), readTranscript: () => '' });
+    return precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d);
+  };
+  assert.match(run(37), /^precompact: repaired, handoff rewritten \(37 min behind\)/);
+  assert.match(run(4), /^precompact: handoff rewritten \(4 min behind\)/);
 });
