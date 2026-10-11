@@ -27,7 +27,7 @@ import { listWatches, lockHolder, markStanding, removeWatch } from './lib/watch-
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import type { TypeRegistry } from './event-types/index.ts';
 import type { Watch } from './lib/types.ts';
-import { claimDigests, digestDir, expireOld } from './lib/digest-store.ts';
+import { digestDir, drainDigests } from './lib/digest-store.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
@@ -157,11 +157,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     drainDigests: () => {
       if (!LEDGER_ROOT) return [];
       const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
-      expireOld(dir, now);
-      const taken = claimDigests(dir, now);
-      const texts = taken.map((t) => t.text);
-      taken.forEach((t) => t.finish());
-      return texts;
+      return drainDigests(dir, now);
     },
     loopHealth: () => liveLoopHealth(now).line,
     webProbe: () => { const url = podiumWebUrl(STATUS_PAGE_URI_SETTING); return { url, up: !url || connects(url) }; },

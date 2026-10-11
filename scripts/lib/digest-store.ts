@@ -50,7 +50,7 @@ const CLAIM_MAX_AGE_MS = 10 * 60 * 1000;
 const isAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; } };
 
 /** A digest taken by this process: `text` is its body; `finish()` marks it seen (call after printing). */
-export interface Claimed { text: string; finish: () => void }
+export interface Claimed { text: string; /** save time from the file name, null when it does not parse */ at: number | null; finish: () => void }
 
 /**
  * Claims every unseen digest, oldest first, by renaming `x.md` to `x.md.claim-<pid>-<ms>`; only the rename winner proceeds,
@@ -74,6 +74,7 @@ export function claimDigests(dir: string, now: number = Date.now(), pid: number 
   }
   return taken.map(({ target, claim }) => ({
     text: readFileSync(claim, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '').trimEnd(),
+    at: savedAt(target),
     finish: () => {
       writeAtomic(target, `${SEEN}\n${readFileSync(claim, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '')}`);
       rmSync(claim, { force: true });
@@ -90,13 +91,19 @@ function savedAt(file: string): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-/** Marks unseen digests older than `maxAgeMs` as seen, so an unread count cannot grow without bound; returns how many it expired. Claimed files are left to their claimer. */
-export function expireOld(dir: string, now: number = Date.now(), maxAgeMs: number = DIGEST_MAX_AGE_MS): number {
-  let n = 0;
-  for (const f of unseenDigests(dir)) {
-    const at = savedAt(f);
-    if (at === null || now - at <= maxAgeMs) continue;
-    try { writeAtomic(f, `${SEEN}\n${readFileSync(f, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '')}`); n += 1; } catch { /* leave it unseen; the next call retries */ }
+/**
+ * What a session start shows for the unread digests: the fresh ones in full, then one line counting those older than
+ * `maxAgeMs` (marked seen, files kept) so a weekend away never drops an ACTION digest without saying so.
+ */
+export function drainDigests(dir: string, now: number = Date.now(), maxAgeMs: number = DIGEST_MAX_AGE_MS): string[] {
+  const texts: string[] = [];
+  let expired = 0;
+  let oldest = now;
+  for (const c of claimDigests(dir, now)) {
+    const at = c.at;
+    if (at !== null && now - at > maxAgeMs) { expired += 1; oldest = Math.min(oldest, at); } else texts.push(c.text);
+    c.finish();
   }
-  return n;
+  if (expired > 0) texts.push(`${expired} older digest${expired === 1 ? '' : 's'} ${expired === 1 ? 'was' : 'were'} unread for over 24h and ${expired === 1 ? 'is' : 'are'} marked seen (oldest ${Math.floor((now - oldest) / DIGEST_MAX_AGE_MS)}d), in ${dir}`);
+  return texts;
 }

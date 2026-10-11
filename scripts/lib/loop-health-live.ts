@@ -1,7 +1,7 @@
 /** The real-world inputs for `loopHealth`: this machine's heartbeat, loop lock, supervisor record and config. Kept apart so loop-health.ts stays pure. */
 import { spawnSync } from 'node:child_process';
 import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT, LOOP_SUPERVISOR_REQUIRED, WATCH_TZ } from '../local-config.ts';
-import { digestDir, expireOld, unseenDigests } from './digest-store.ts';
+import { digestDir, unseenDigests } from './digest-store.ts';
 import { readHeartbeat } from './heartbeat.ts';
 import { loopHealth } from './loop-health.ts';
 import type { LoopHealth } from './loop-health.ts';
@@ -21,12 +21,10 @@ export function lastWake(): number | null {
   } catch { return null; }
 }
 
-/** Saved digests no session has read and under 24 h old (older ones are marked seen here); 0 with no ledger root or an unreadable store. */
-export function unreadDigestCount(): number {
+/** Saved digests no session has read, of any age (the footer only reads; the session-start drain is what marks old ones seen); 0 with no ledger root or an unreadable store. */
+export function unreadDigestCount(dir: string | null = LEDGER_ROOT ? digestDir(LEDGER_ROOT, CONTAINER_PROJECT) : null): number {
   try {
-    if (!LEDGER_ROOT) return 0;
-    const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
-    expireOld(dir);
+    if (!dir) return 0;
     return unseenDigests(dir).length;
   } catch { return 0; }
 }
