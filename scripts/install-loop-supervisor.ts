@@ -3,16 +3,17 @@
  * install-loop-supervisor.ts: fills the launchd plist template and PRINTS the launchctl commands. It never runs launchctl:
  * loading a LaunchAgent is a machine change you make yourself.
  *
- *   install-loop-supervisor.ts [--out <plist path>] [--log <log path>]
+ *   install-loop-supervisor.ts [--out <plist path>] [--log <log path>] [--allow-branch] [--force]
  *
  * Needs a ledger root (LEDGER_ROOT); digests and the supervisor log live under it. Refuses while any event loop holds the
  * lock, since launchd's loop would then exit 2 and sit idle. It also refuses, so there is only ever one runner, when another
  * `*maestro-loop*.plist` is in the LaunchAgents directory, and when this checkout is on a branch: launchd runs the supervisor
  * from this path after every relaunch, so it should be a runtime worktree detached at origin/main (`git worktree add --detach <path> origin/main`),
- * not a checkout whose branch an agent can move. `--allow-branch` overrides the branch check. Exit 0 wrote the plist, 2 refused or misconfigured.
+ * not a checkout whose branch an agent can move. `--allow-branch` overrides the branch check. It also refuses to replace an existing plist whose
+ * content differs (any detached checkout would otherwise become launchd's runtime); an identical rewrite is fine, `--force` replaces a different one. Exit 0 wrote the plist, 2 refused or misconfigured.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -58,9 +59,12 @@ export function checkedOutBranch(repo: string): string | null {
   return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
 }
 
+/** The REPO a plist runs the supervisor from (its first script path's checkout), or 'unknown'. */
+const repoOf = (plist: string): string => plist.match(/(\/[^<\s]*?)\/scripts\/loop-supervisor\.ts/)?.[1] ?? 'unknown';
+
 function main(argv: string[]): number {
   const fail = (msg: string): number => { console.error(`install-loop-supervisor: ${msg}`); return 2; };
-  const { values: v } = parseArgs({ args: argv, options: { out: { type: 'string' }, log: { type: 'string' }, 'allow-branch': { type: 'boolean' } } });
+  const { values: v } = parseArgs({ args: argv, options: { out: { type: 'string' }, log: { type: 'string' }, 'allow-branch': { type: 'boolean' }, force: { type: 'boolean' } } });
   if (!LEDGER_ROOT) return fail('no ledger root; set LEDGER_ROOT (or ledger_root in the config)');
   const holder = lockHolder(EVENT_DIR);
   if (holder !== null) {
@@ -74,6 +78,10 @@ function main(argv: string[]): number {
   const log = v.log ?? supervisorLogPath(LEDGER_ROOT, CONTAINER_PROJECT);
   const path = [...new Set([dirname(process.execPath), ...BASE_PATH])].join(':');
   const plist = fillTemplate(readFileSync(TEMPLATE, 'utf8'), { NODE: realpathSync(process.execPath), REPO, LEDGER_ROOT, PROJECT: CONTAINER_PROJECT, LOG: log, PATH: path });
+  if (!v.force && existsSync(out)) {
+    const existing = readFileSync(out, 'utf8');
+    if (existing !== plist) return fail(`${out} already exists and differs from what this checkout would write (existing ${repoOf(existing)}, new ${REPO}). Overwriting would repoint launchd's runtime. Check it, then pass --force to replace it.`);
+  }
   mkdirSync(dirname(out), { recursive: true });
   mkdirSync(dirname(log), { recursive: true });
   writeFileSync(out, plist);

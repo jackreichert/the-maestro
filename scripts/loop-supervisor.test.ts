@@ -328,3 +328,21 @@ test('the installer refuses a checkout that is on a branch unless told otherwise
   assert.match(refused.stderr, /is on branch main.*git worktree add --detach/);
   assert.equal(install(repo, '--allow-branch').status, 0);
 });
+
+test('the installer will not replace an existing plist that points at a different checkout, unless --force', () => {
+  const ledger = tempDir();
+  const out = join(tempDir(), `${LABEL}.plist`);
+  const install = (repoPath: string, ...flags: string[]) => spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch', ...flags], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir(), MAESTRO_INSTALL_REPO: repoPath }) });
+  const runtime = join(tempDir(), 'runtime');
+  const scratch = join(tempDir(), 'scratch');
+  assert.equal(install(runtime).status, 0);
+  const before = readFileSync(out, 'utf8');
+  assert.equal(install(runtime).status, 0, 'an identical rewrite is fine');
+  const refused = install(scratch);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /already exists and differs/);
+  assert.match(refused.stderr, /--force/);
+  assert.equal(readFileSync(out, 'utf8'), before, 'the existing plist is untouched');
+  assert.equal(install(scratch, '--force').status, 0);
+  assert.match(readFileSync(out, 'utf8'), new RegExp(scratch));
+});
