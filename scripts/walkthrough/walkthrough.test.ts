@@ -174,9 +174,7 @@ test('the playbook example first step passes as written when the CLI is logged i
   const md = readFileSync(new URL('../../playbooks/walkthrough.md', import.meta.url), 'utf8');
   const example = (md.split('## Example')[1] ?? '').match(/```zsh\n([\s\S]*?)```/)?.[1] ?? '';
   assert.ok(example.includes('login_say'), 'example block not found');
-  const bin = mkdtempSync(join(tmpdir(), 'walk-bin-'));
-  writeFileSync(join(bin, 'cloud-cli'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const r = run(`${example}\nWALK_STEPS=(login)\n`, ENTER, { PATH: `${bin}:${process.env.PATH ?? ''}` });
+  const r = run(`cloud-cli() { return 0; }\n${example}\nWALK_STEPS=(login)\n`, ENTER);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /PASS/);
 });
