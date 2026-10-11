@@ -21,11 +21,30 @@ export const WITHHELD = '[withheld: secret shape]';
 const NO_STREAM = 'other';
 const SECTION_WORK = '## Current work';
 const SECTION_ASKS = '## Decisions pending';
+const SECTION_PROJECTS = '## Projects';
 const SECTION_HOW = '## How to work';
 
 /** One library page, as the cold-start page needs it: where it is, what it is about and whether it is current. */
 export interface LibraryEntry { path: string; kind: string; stream: string; status: string; verifiedAt: string }
-export interface ColdInput { rows: LedgerRow[]; registry: RegistryLookup | null; library: LibraryEntry[]; /** Clock for ages; the caller passes it in. */ now: Date; maxChars?: number }
+/** One active project, as the page prints it. The caller reads the files; `now` and `next` are the first lines of the `## Now` and `## Next` sections of CONTEXT.md, or null when the section is missing. */
+export interface ProjectEntry {
+  project: string;
+  streams: string[];
+  contextPath: string;
+  now: string[] | null;
+  next: string[] | null;
+  priorities: { date: string; path: string; today: number; carried: number } | null;
+  previous: { date: string; path: string } | null;
+}
+export interface ColdInput {
+  rows: LedgerRow[]; registry: RegistryLookup | null; library: LibraryEntry[]; /** Clock for ages; the caller passes it in. */ now: Date; maxChars?: number;
+  /** Active projects, read by the caller; the page has a Projects section only when there are some. */
+  projects?: ProjectEntry[];
+  /** The day (YYYY-MM-DD) priorities are compared with; the UTC date of `now` when unset. */
+  today?: string;
+  /** `coldStartCheck` fails when the page is more than this many tokens (characters / 4). */
+  budgetTokens?: number;
+}
 export interface ColdStart { text: string; truncated: boolean; level: number; ids: { inFlight: string[]; blocked: string[]; queued: string[]; asks: string[] } }
 
 /** Text safe to print: whitespace collapsed, clipped, and replaced outright when a secret shape is found in it. */
@@ -101,6 +120,28 @@ function askLines(b: Folded, lv: Level, now: Date): string[] {
   });
 }
 
+const PROJECT_LINES = 3;
+
+/** The Projects section: per project a header, up to 3 Now and 3 Next lines (only when `withText`), and the priorities pointers, which always stay. Missing pieces are said. */
+function projectLines(projects: ProjectEntry[], lv: Level, withText: boolean, today: string): string[] {
+  const clip = Math.max(lv.text, 50);
+  const out: string[] = [];
+  for (const p of projects) {
+    out.push(`### ${shown(p.project)}${p.streams.length ? ` (${p.streams.map(shown).join(', ')})` : ''}`);
+    if (withText) {
+      out.push(...(p.now === null ? [`- Now: no \`## Now\` section in ${safe(p.contextPath, 120)}`] : p.now.slice(0, PROJECT_LINES).map((l) => `- Now: ${safe(l, clip)}`)));
+      out.push(...(p.next === null ? [`- Next: no \`## Next\` section in ${safe(p.contextPath, 120)}`] : p.next.slice(0, PROJECT_LINES).map((l) => `- Next: ${safe(l, clip)}`)));
+    }
+    if (!p.priorities) out.push('- Priorities: no priorities file');
+    else {
+      const f = p.priorities;
+      out.push(`- Priorities: ${f.date < today ? `no priorities file since ${safe(f.date, 10)}; newest is ` : ''}${safe(f.path, 120)} (${safe(f.date, 10)}, ${f.today} today, ${f.carried} carried)`);
+    }
+    if (p.previous) out.push(`- Previous priorities: ${safe(p.previous.path, 120)} (${safe(p.previous.date, 10)})`);
+  }
+  return out;
+}
+
 function howLines(streams: string[], library: LibraryEntry[], lv: Level): string[] {
   const out: string[] = [];
   for (const s of streams) {
@@ -112,19 +153,21 @@ function howLines(streams: string[], library: LibraryEntry[], lv: Level): string
   return out;
 }
 
-function render(b: Folded, library: LibraryEntry[], now: Date, lv: Level, withHow = true): string {
+function render(b: Folded, library: LibraryEntry[], now: Date, lv: Level, withHow = true, projects: ProjectEntry[] = [], withProjectText = true, today = now.toISOString().slice(0, 10)): string {
   const streams = [...new Set([...b.inFlight, ...b.blocked, ...b.queued].map(streamOf))].sort();
   const head = ['# Cold start', '', `Generated ${now.toISOString().slice(0, 16)}Z from the ledger and the library; read-only, regenerated at read time. Anything not here is in \`journal.ts start-here\`.`, ...(b.badTs ? [``, `Note: ${b.badTs} ledger row(s) have a ts that is not text; read as is, so their order and age may be off.`] : []), ''];
   return [
     ...head, SECTION_WORK, '', ...(streams.length ? workLines(b, streams, lv, now) : ['Nothing in flight, blocked or queued.']), '',
     SECTION_ASKS, '', ...(b.asks.length ? askLines(b, lv, now) : ['None.']), '',
+    ...(projects.length ? [SECTION_PROJECTS, '', ...projectLines(projects, lv, withProjectText, today), ''] : []),
     ...(withHow ? [SECTION_HOW, '', ...howLines(streams, library, lv), ''] : []),
   ].join('\n');
 }
 
 /**
  * The page: the fullest wording that fits `maxChars`. When even the shortest wording does not fit, the lowest-priority section
- * (How to work) goes first; only if the work and ask sections alone still do not fit are whole lines cut from the end, and the
+ * (How to work) goes first, then the Now and Next text of the Projects section (its priorities pointers stay); only if the work and ask
+ * sections alone still do not fit are whole lines cut from the end, and the
  * last line names every id that fell off (plain, no backticks, so `coldStartCheck` still counts it as missing). `truncated` is true.
  */
 export function coldStart(input: ColdInput): ColdStart {
@@ -132,13 +175,17 @@ export function coldStart(input: ColdInput): ColdStart {
   const b = foldBoard(input.rows, input.registry);
   const id = (xs: LedgerItem[]): string[] => xs.map((i) => i.id ?? '');
   const ids = { inFlight: id(b.inFlight), blocked: id(b.blocked), queued: id(b.queued), asks: id(b.asks) };
+  const projects = input.projects ?? [];
   for (let level = 0; level < LEVELS.length; level += 1) {
-    const text = render(b, input.library, input.now, LEVELS[level] as Level);
+    const text = render(b, input.library, input.now, LEVELS[level] as Level, true, projects, true, input.today);
     if (text.length <= max) return { text, truncated: false, level, ids };
   }
   const last = LEVELS.length - 1;
-  const lean = render(b, input.library, input.now, LEVELS[last] as Level, false);
-  if (lean.length <= max) return { text: lean, truncated: false, level: last, ids };
+  for (const withProjectText of [true, false]) {
+    const shrunk = render(b, input.library, input.now, LEVELS[last] as Level, false, projects, withProjectText, input.today);
+    if (shrunk.length <= max) return { text: shrunk, truncated: false, level: last, ids };
+  }
+  const lean = render(b, input.library, input.now, LEVELS[last] as Level, false, projects, false, input.today);
   return { text: cutWithDroppedIds(lean, [...ids.inFlight, ...ids.blocked, ...ids.asks, ...ids.queued], max), truncated: true, level: last, ids };
 }
 
@@ -204,8 +251,8 @@ export function currentWorkStatement(text: string): string {
   const lines = text.split('\n');
   const start = lines.indexOf(SECTION_WORK);
   if (start < 0) return '';
-  const end = lines.indexOf(SECTION_HOW, start);
-  return lines.slice(start, end < 0 ? undefined : end).join('\n').trim();
+  const ends = [SECTION_PROJECTS, SECTION_HOW].map((h) => lines.indexOf(h, start)).filter((i) => i >= 0);
+  return lines.slice(start, ends.length ? Math.min(...ends) : undefined).join('\n').trim();
 }
 
 export interface ColdCheck { ok: boolean; statement: string; missing: { id: string; why: string }[]; problems: string[] }
@@ -219,7 +266,9 @@ export function coldStartCheck(input: ColdInput): ColdCheck {
   const statement = currentWorkStatement(page.text);
   const missing = (Object.entries(page.ids) as [string, string[]][])
     .flatMap(([group, ids]) => ids.filter((id) => !statement.includes(`\`${id}\``)).map((id) => ({ id, why: `open ${group} item not in the current-work statement` })));
+  const tokens = Math.ceil(page.text.length / 4);
   const problems = [
+    ...(input.budgetTokens !== undefined && tokens > input.budgetTokens ? [`page is about ${tokens} tokens, over the budget of ${input.budgetTokens}`] : []),
     ...(page.truncated ? [`page cut at ${input.maxChars ?? COLD_START_MAX_CHARS} characters`] : []),
     ...scanText(page.text).map((h) => `secret shape ${h.rule} on page line ${h.line}`),
   ];

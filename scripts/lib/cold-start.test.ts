@@ -7,6 +7,8 @@ import type { LedgerRow } from './ledger-core.ts';
 import { COLD_START_MAX_CHARS, WITHHELD, coldStart, coldStartCheck, currentWorkStatement, safe } from './cold-start.ts';
 import type { LibraryEntry } from './cold-start.ts';
 import { main, readLibrary } from '../cold-start.ts';
+import { activeProjects, prioritiesDir, readProjectEntry, writeProjectPriorities } from './status-page/project-priorities.ts';
+import type { Homes } from './home/config.ts';
 import { scanText } from './library/scan.ts';
 
 const scanTextHits = (t: string): number => scanText(t).length;
@@ -199,4 +201,73 @@ test('check output never prints a secret-shaped id: the MISSING line shows the w
   } finally { console.log = log; console.error = err; rmSync(dir, { recursive: true, force: true }); }
   assert.ok(![...out, ...errs].join('\n').includes(FAKE_KEY), 'neither stream carries the value');
   assert.match(errs.join('\n'), /MISSING `\[withheld: secret shape\]`/);
+});
+
+/** A vault with two projects: one whose CONTEXT.md has Now and Next and a priorities file from the day before, one with neither. */
+function projectVault(): string {
+  const v = mkdtempSync(join(tmpdir(), 'cold-proj-'));
+  mkdirSync(join(v, 'Projects', 'proj-a'), { recursive: true });
+  mkdirSync(join(v, 'Projects', 'proj-b'), { recursive: true });
+  writeFileSync(join(v, 'Projects', 'proj-a', 'CONTEXT.md'), `# A\n\n## Now\n- wiring the importer\n- ${FAKE_KEY} leaked here\n\n## Next\n- ship the importer\n\n## Other\nignored\n`);
+  writeProjectPriorities(v, 'proj-a', '2026-10-09', { project: 'proj-a', date: '2026-10-09', carriedFrom: '2026-10-08', writtenBy: 'priorities set', today: [{ text: 'importer', stream: 'Alpha' }], carried: [{ item: { text: 'old' }, status: '0 done, 0 in flight, 0 queued, 0 blocked' }], next: [] });
+  return v;
+}
+const homes: Homes = { found: true, warnings: [], streams: { Alpha: { projects: ['proj-a'], epics: [], exclude: [], done: {}, docs: [], runbooks: [], pins: [] }, Beta: { projects: ['proj-b'], epics: [], exclude: [], done: {}, docs: [], runbooks: [], pins: [] } } };
+
+test('the Projects section points at each active project\'s Now, Next and priorities files, says what is missing and withholds a secret-shaped line', () => {
+  const v = projectVault();
+  try {
+    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'dev-env' });
+    assert.deepEqual(projects.map((p) => p.project).sort(), ['proj-a', 'proj-b']);
+    const page = coldStart({ ...input, projects, today: '2026-10-12' });
+    assert.match(page.text, /\n## Projects\n/);
+    assert.match(page.text, /### proj-a \(Alpha\)\n- Now: wiring the importer\n- Now: \[withheld: secret shape\]\n- Next: ship the importer\n- Priorities: no priorities file since 2026-10-09; newest is Projects\/proj-a\/Status\/priorities\/2026-10-09\.md \(2026-10-09, 1 today, 1 carried\)/);
+    assert.match(page.text, /### proj-b \(Beta\)\n- Now: no `## Now` section in Projects\/proj-b\/CONTEXT\.md\n- Next: no `## Next` section in Projects\/proj-b\/CONTEXT\.md\n- Priorities: no priorities file\n/);
+    assert.ok(!page.text.includes(FAKE_KEY));
+    assert.ok(!currentWorkStatement(page.text).includes('## Projects'), 'the statement is still work and asks only');
+    assert.equal(coldStart({ ...input, projects: [], today: '2026-10-12' }).text.includes('## Projects'), false);
+  } finally { rmSync(v, { recursive: true, force: true }); }
+});
+
+test('a tight cap drops the Projects Now and Next text first and keeps the priorities pointers', () => {
+  const v = projectVault();
+  try {
+    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'dev-env' });
+    let max = coldStart({ ...input, projects }).text.length;
+    let page = coldStart({ ...input, projects, maxChars: max });
+    while (!page.truncated && /- Now:/.test(page.text) && max > 0) { max -= 5; page = coldStart({ ...input, projects, maxChars: max }); }
+    const kept = page;
+    assert.ok(!kept.truncated, 'the Now text goes before any line is cut');
+    assert.doesNotMatch(kept.text, /- Now:/);
+    assert.doesNotMatch(kept.text, /## How to work/);
+    assert.match(kept.text, /- Priorities: .*2026-10-09\.md \(2026-10-09, 1 today, 1 carried\)/);
+  } finally { rmSync(v, { recursive: true, force: true }); }
+});
+
+test('readProjectEntry reads the newest two priorities files and a missing CONTEXT.md as missing sections', () => {
+  const v = projectVault();
+  try {
+    writeProjectPriorities(v, 'proj-a', '2026-10-12', { project: 'proj-a', date: '2026-10-12', carriedFrom: '', writtenBy: 'roll-maintenance', today: [], carried: [], next: [] });
+    const a = readProjectEntry(v, 'proj-a', ['Alpha']);
+    assert.deepEqual([a.priorities?.date, a.priorities?.today, a.previous?.date], ['2026-10-12', 0, '2026-10-09']);
+    assert.deepEqual([a.now, a.next], [['wiring the importer', `${FAKE_KEY} leaked here`], ['ship the importer']]);
+    const b = readProjectEntry(v, 'proj-b', []);
+    assert.deepEqual([b.now, b.next, b.priorities, b.previous], [null, null, null, null]);
+    assert.ok(prioritiesDir(v, 'proj-a').endsWith(join('proj-a', 'Status', 'priorities')));
+  } finally { rmSync(v, { recursive: true, force: true }); }
+});
+
+test('--budget makes check fail when the page is over it, and generate honours it as a cap', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cold-budget-'));
+  const log = console.log; const err = console.error; const errs: string[] = [];
+  try {
+    const ledger = join(dir, 'ledger.jsonl');
+    writeFileSync(ledger, `${ROWS.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    console.log = () => {}; console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+    assert.equal(main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--status-dir', join(dir, 'status'), '--budget', '10'], NOW), 1);
+    assert.match(errs.join('\n'), /PROBLEM: page is about \d+ tokens, over the budget of 10/);
+    errs.length = 0;
+    assert.equal(main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--status-dir', join(dir, 'status')], NOW), 0);
+    assert.equal(main(['check', '--ledger', ledger, '--budget', '0'], NOW), 2);
+  } finally { console.log = log; console.error = err; rmSync(dir, { recursive: true, force: true }); }
 });

@@ -19,6 +19,7 @@ import { plainName } from '../home/config.ts';
 import type { Homes } from '../home/config.ts';
 import { createExclusive } from '../journal/handoff.ts';
 import { safe } from '../cold-start.ts';
+import type { ProjectEntry } from '../cold-start.ts';
 import { parsePriority, ITEM_LINE } from './priorities.ts';
 import type { Priority } from './priorities.ts';
 
@@ -205,4 +206,61 @@ export function carryPriorities(input: CarryInput): { written: string[]; problem
     }
   }
   return { written, problems };
+}
+
+const MAX_CONTEXT_BYTES = 256 * 1024;
+export const PROJECTS_MAX = 5;
+
+/** The first `max` non-blank lines under `## <heading>` (to the next `## `), as written; null when the heading is missing. */
+export function sectionLines(text: string, heading: string, max = 3): string[] | null {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => new RegExp(`^##\\s+${heading}\\s*$`, 'i').test(l));
+  if (start < 0) return null;
+  const out: string[] = [];
+  for (const l of lines.slice(start + 1)) {
+    if (/^##\s/.test(l)) break;
+    const t = l.replace(/^\s*[-*]\s+/, '').trim();
+    if (t) out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+const dayFiles = (dir: string): { date: string; path: string }[] =>
+  (existsSync(dir) ? readdirSync(dir) : []).map((n) => n.match(DAY_FILE)?.[1]).filter((d): d is string => d !== undefined).sort().reverse().map((date) => ({ date, path: join(dir, `${date}.md`) }));
+
+/** One project as the cold-start page prints it: CONTEXT.md's Now and Next, and the newest two priorities files. Vault-relative paths only. Read-only; an unreadable file reads as missing. */
+export function readProjectEntry(vault: string, project: string, streams: string[]): ProjectEntry {
+  const contextPath = join('Projects', project, 'CONTEXT.md');
+  let context: string | null = null;
+  try { if (statSync(join(vault, contextPath)).size <= MAX_CONTEXT_BYTES) context = readFileSync(join(vault, contextPath), 'utf8'); } catch { /* no CONTEXT.md */ }
+  const files = dayFiles(prioritiesDir(vault, project));
+  const rel = (f: { date: string }): string => join('Projects', project, 'Status', 'priorities', `${f.date}.md`);
+  const newest = files[0];
+  const parsed = newest ? readProjectFile(newest.path) : null;
+  return {
+    project, streams, contextPath,
+    now: context === null ? null : sectionLines(context, 'Now'), next: context === null ? null : sectionLines(context, 'Next'),
+    priorities: newest ? { date: newest.date, path: rel(newest), today: parsed?.today.length ?? 0, carried: parsed?.carriedCount ?? 0 } : null,
+    previous: files[1] ? { date: files[1].date, path: rel(files[1]) } : null,
+  };
+}
+
+/** The projects of the streams with something open, at most PROJECTS_MAX by open count (then name), each read with `readProjectEntry`. */
+export function activeProjects(input: Omit<CarryInput, 'today' | 'container'>): ProjectEntry[] {
+  const { vault, rows, registry, homes, repoStreams, containerProject } = input;
+  const f = fold(rows, registry);
+  const perStream = new Map<string, number>();
+  for (const i of f.items) if (isOpen(i) && !f.hidden.has(i.id ?? '') && i.kind !== 'question' && i.kind !== 'decision') perStream.set(i.stream ?? '', (perStream.get(i.stream ?? '') ?? 0) + 1);
+  const perProject = new Map<string, { open: number; streams: string[] }>();
+  for (const [stream, count] of perStream) {
+    for (const project of projectsFor(stream || undefined, homes, repoStreams, containerProject)) {
+      const entry = perProject.get(project) ?? { open: 0, streams: [] };
+      entry.open += count;
+      if (stream && !entry.streams.includes(stream)) entry.streams.push(stream);
+      perProject.set(project, entry);
+    }
+  }
+  return [...perProject.entries()].sort((a, b) => b[1].open - a[1].open || a[0].localeCompare(b[0])).slice(0, PROJECTS_MAX)
+    .map(([project, e]) => readProjectEntry(vault, project, e.streams.sort()));
 }
