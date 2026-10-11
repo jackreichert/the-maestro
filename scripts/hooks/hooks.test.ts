@@ -78,12 +78,18 @@ test('precompact reports a missing transcript_path and an unset scripts_dir inst
   assert.match(precompact({}, d), /^precompact incomplete: decisions: no transcript_path in the hook input; snapshot: scripts_dir is not set/);
 });
 
-test('session-start context: only compact and clear print; the cold-start page sits before Start here so the cap never cuts it', () => {
+test('session-start context: every start reason prints the board and cold start; Start here is only the fallback', () => {
   const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : a[0] === 'start-here' ? { ok: true, out: 'start page' } : { ok: false, out: 'unknown' });
-  assert.equal(context('startup', run, () => ({ ok: true, out: 'cold' })), '');
-  const out = context('compact', run, () => ({ ok: true, out: '# Cold start\nwork' }));
-  assert.match(out, /== Board \(journal\.ts prime\) ==/);
-  assert.match(out, /== Cold start ==\n# Cold start\nwork\n\n== Start here ==\nstart page/);
+  assert.equal(context('other', run, () => ({ ok: true, out: 'cold' })), '');
+  for (const source of ['startup', 'resume', 'compact', 'clear']) {
+    const out = context(source, run, () => ({ ok: true, out: '# Cold start\nwork' }));
+    assert.match(out, /== Board \(journal\.ts prime\) ==/);
+    assert.match(out, /== Cold start ==\n# Cold start\nwork/);
+    assert.ok(!out.includes('== Start here =='), 'a working cold-start part needs no fallback');
+  }
+  const failed = context('startup', run, () => ({ ok: false, out: 'boom' }));
+  assert.match(failed, /== Cold start ==\nskipped: boom/);
+  assert.match(failed, /== Start here ==\nstart page/);
 });
 
 test('session-start is a fail-open fallback: a missing, failing or throwing cold-start part is named and the rest still prints', () => {
@@ -109,7 +115,7 @@ test('the settings snippet names both events with the matchers and passes flags 
   assert.equal(s.hooks.SessionEnd[0].matcher, 'clear|resume|logout|prompt_input_exit|other');
   assert.match(s.hooks.SessionEnd[0].hooks[0].command, /session-end-decisions\.ts' --project 'p'$/);
   assert.equal(s.hooks.SessionEnd[0].hooks[0].timeout, 30);
-  assert.equal(s.hooks.SessionStart[0].matcher, 'compact|clear');
+  assert.equal(s.hooks.SessionStart[0].matcher, 'startup|resume|compact|clear');
   assert.match(s.hooks.PreCompact[0].hooks[0].command, /precompact\.ts' --project 'p'$/);
   assert.equal(s.hooks.PreToolUse[0].matcher, 'Bash');
   assert.match(s.hooks.PreToolUse[0].hooks[0].command, /git-guard\.ts'$/, 'no pass-through flags reach the guard');
@@ -258,7 +264,7 @@ test('session-start context withholds a secret-shaped line from every part it in
   const token = `ghp_${'x'.repeat(36)}`;
   const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
   const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: `Today's streams: ok, ${token}\nplain line` } : { ok: true, out: `- \`${key}\` [Beta] something\nnormal` });
-  const out = context('compact', run, () => ({ ok: true, out: '# Cold start\nwork' }));
+  const out = context('compact', run, () => ({ ok: false, out: 'skip' }));
   assert.ok(!out.includes(token) && !out.includes(key), 'neither value is injected');
   assert.equal(out.split('[withheld: secret shape]').length - 1, 2);
   assert.match(out, /plain line/);

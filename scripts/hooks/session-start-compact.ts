@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * session-start-compact.ts: the SessionStart hook for the `compact` and `clear` sources. Whatever it prints becomes session
- * context, so the board, the Start-here page and the cold-start page (current work, decisions pending, library pointers) are re-read from disk instead of
- * summarized. Any other source prints nothing (the plain `prime` hook covers startup and resume).
+ * session-start-compact.ts: the SessionStart hook for every start reason (`startup`, `resume`, `compact`, `clear`).
+ * Whatever it prints becomes session context, so the board and the cold-start page (current work, decisions pending, library pointers) are re-read from
+ * disk instead of summarized. The Start-here page is the fallback: it prints only when the cold-start part failed or was skipped. Any other source prints nothing.
  * The hook is an optional, fail-open fallback: the same state is on disk (`cold-start.ts generate`, `journal.ts start-here`), so a
  * session that never runs it loses nothing it cannot read.
  *
@@ -20,7 +20,7 @@ import { scanText } from '../lib/library/scan.ts';
 
 const JOURNAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'journal.ts');
 const COLD_START = join(dirname(fileURLToPath(import.meta.url)), '..', 'cold-start.ts');
-export const SOURCES = ['compact', 'clear'];
+export const SOURCES = ['startup', 'resume', 'compact', 'clear'];
 /** About 5k tokens at four characters each. */
 export const MAX_CHARS = 20_000;
 
@@ -42,7 +42,7 @@ export type Run = (args: string[]) => { ok: boolean; out: string };
 /** Runs `cold-start.ts generate`; optional, so a checkout without it (or a failing run) only loses that part. */
 export type ColdRun = () => { ok: boolean; out: string };
 
-/** The context for a source: empty for any but compact and clear. */
+/** The context for a source: empty for an unknown source. */
 export function context(source: string, run: Run, cold?: ColdRun, warnings: string[] = []): string {
   if (!SOURCES.includes(source)) return '';
   const prime = run(['prime', '--source', source, '--no-update-check']);
@@ -50,9 +50,11 @@ export function context(source: string, run: Run, cold?: ColdRun, warnings: stri
   parts.push({ title: 'Board (journal.ts prime)', body: prime.ok ? prime.out : `prime failed: ${prime.out.split('\n').pop()}` });
   const page = cold ? safely(cold) : { ok: false, out: 'cold-start is not available in this checkout' };
   if (page.ok && page.out.trim()) parts.push({ title: 'Cold start', body: page.out });
-  else parts.push({ title: 'Cold start', body: `skipped: ${page.out.split('\n').pop() || 'no output'}. \`cold-start.ts generate\` and \`journal.ts start-here\` have the same state.` });
-  const start = run(['start-here']);
-  parts.push({ title: 'Start here', body: start.ok ? start.out : `start-here failed: ${start.out.split('\n').pop()}` });
+  else {
+    parts.push({ title: 'Cold start', body: `skipped: ${page.out.split('\n').pop() || 'no output'}. \`cold-start.ts generate\` and \`journal.ts start-here\` have the same state.` });
+    const start = run(['start-here']);
+    parts.push({ title: 'Start here', body: start.ok ? start.out : `start-here failed: ${start.out.split('\n').pop()}` });
+  }
   return assemble(parts);
 }
 
