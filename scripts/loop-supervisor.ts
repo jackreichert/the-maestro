@@ -19,6 +19,7 @@
  * HANG_GRACE_MS past its declared wake time is killed (SIGTERM, then SIGKILL) and relaunched at once (lib/loop-watchdog.ts).
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run --serve`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches,
  * MAESTRO_WATCHDOG_GRACE_MS and MAESTRO_WATCHDOG_INTERVAL_MS shrink the watchdog's timing.
+ * Its log (<ledger root>/Projects/<project>/Journal/Supervisor/loop-supervisor.log, written by launchd) is rotated at 5 MB on each wait chunk, keeping one old file (lib/log-rotate.ts).
  */
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
@@ -33,7 +34,8 @@ import { createWatchdog, HANG_GRACE_MS } from './lib/loop-watchdog.ts';
 import type { HeartbeatMode } from './lib/heartbeat.ts';
 import { openStore } from './lib/journal/store.ts';
 import { sleepUntil } from './lib/wall-sleep.ts';
-import { clearRecord, writeRecord } from './lib/supervisor-state.ts';
+import { clearRecord, supervisorLogPath, writeRecord } from './lib/supervisor-state.ts';
+import { LOG_MAX_BYTES, rotateLog } from './lib/log-rotate.ts';
 import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WATCH_TZ } from './local-config.ts';
 import { DEFAULT_ALERT_QUIET_HOURS, runAlerts } from './lib/alert-policy.ts';
 import { readInbox } from './lib/event-inbox.ts';
@@ -141,7 +143,7 @@ export function waitWithAlerts({ beat, alertTick, log, now = Date.now, nap }: Wa
 /** The loop launched most recently while it runs, so a stop signal can reach it. */
 let running: ChildProcess | null = null;
 
-/** Test hooks: the watchdog's grace and check interval, in ms. Unset in production. */
+/** Test hooks: the watchdog's grace and check interval in ms, and the log size limit in bytes. Unset in production. */
 const envMs = (name: string, fallback: number): number => { const n = Number(process.env[name]); return n > 0 ? n : fallback; };
 
 /** Launches the real loop (or MAESTRO_LOOP_BIN) once in serve mode, collecting its output and watching its heartbeat for a hang. */
@@ -237,8 +239,9 @@ export function queueSavedDigest(digest: string, log: (line: string) => void, op
 
 const stamped = (line: string): string => `${new Date().toISOString()} loop-supervisor: ${line}`;
 
-/** The supervisor's own heartbeat while it waits. Never throws: it is advisory. */
+/** The supervisor's own heartbeat while it waits (and, at each one, a check that its log is under 5 MB). Never throws: both are advisory. */
 function beat(mode: HeartbeatMode, until: number, lastError: string): void {
+  rotateLog(supervisorLogPath(LEDGER_ROOT, CONTAINER_PROJECT), envMs('MAESTRO_LOG_MAX_BYTES', LOG_MAX_BYTES));
   try { writeHeartbeat(EVENT_DIR, { pid: process.pid, at: new Date().toISOString(), tick: 0, watchesLive: 0, sleepingUntil: new Date(until).toISOString(), mode, lastError: lastError.slice(0, 200) }); } catch { /* advisory */ }
 }
 

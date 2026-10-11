@@ -2,14 +2,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
 import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import { commands, fillTemplate, LABEL, shq } from './install-loop-supervisor.ts';
+import { supervisorLogPath } from './lib/supervisor-state.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'loop-supervisor-test-'));
 const SUPERVISOR = new URL('./loop-supervisor.ts', import.meta.url).pathname;
@@ -253,4 +254,23 @@ test('the real supervisor kills a loop that is alive but silent, then relaunches
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /is hung/);
   assert.equal(unseenDigests(digestDir(ledger, 'proj')).length, 1);
+});
+
+test('the real supervisor rotates its log when it is over the limit, keeping the old text in .1', async () => {
+  const ledger = tempDir();
+  const bin = join(tempDir(), 'exit0.sh');
+  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  chmodSync(bin, 0o755);
+  const log = supervisorLogPath(ledger, 'proj');
+  mkdirSync(dirname(log), { recursive: true });
+  writeFileSync(log, 'old line\n'.repeat(200));
+  const fd = openSync(log, 'a');
+  const p = spawn(process.execPath, [SUPERVISOR], { stdio: ['ignore', fd, fd], env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_LOG_MAX_BYTES: '1000' }) });
+  const closed = new Promise<number | null>((resolve) => p.on('close', resolve));
+  for (let i = 0; i < 200 && !existsSync(`${log}.1`); i += 1) await new Promise((r) => setTimeout(r, 50));
+  p.kill('SIGTERM');
+  await closed;
+  closeSync(fd);
+  assert.match(readFileSync(`${log}.1`, 'utf8'), /^old line/);
+  assert.ok(statSync(log).size < 1000);
 });
