@@ -173,3 +173,17 @@ test('the cut line names exactly the ids missing from the shown lines, and a big
   for (const id of page.ids.asks) assert.ok(page.text.includes(id), `${id} neither shown nor named`);
   assert.equal(coldStartCheck({ ...input, rows, maxChars: 3000 }).ok, false);
 });
+
+test('a huge ledger under a tiny cap is cut in linear time, and the closing line accounts for every open id', { timeout: 5000 }, () => {
+  const rows: LedgerRow[] = [];
+  for (let n = 0; n < 2000; n += 1) rows.push(row({ id: `y${String(n).padStart(4, '0')}`, kind: 'question', stream: 'Beta', text: `question ${n}` }));
+  const page = coldStart({ ...input, rows, maxChars: 600 });
+  assert.equal(page.truncated, true);
+  assert.ok(page.text.length <= 600, `${page.text.length}`);
+  const closing = page.text.split('\n').pop() ?? '';
+  const more = Number(closing.match(/ … and (\d+) more open ids not named$/)?.[1] ?? 0);
+  const named = closing.replace(/^.*open ids not shown: /, '').replace(/ … and \d+ more open ids not named$/, '').split(' ').filter(Boolean).length;
+  assert.ok(more > 0, closing.slice(0, 120));
+  const shownOnPage = page.ids.asks.filter((id) => page.text.split('\n').slice(0, -1).some((l) => l.includes(`\`${id}\``))).length;
+  assert.equal(named + more + shownOnPage, page.ids.asks.length, 'every open id is shown, named or counted');
+});

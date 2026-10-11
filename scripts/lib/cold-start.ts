@@ -142,19 +142,61 @@ export function coldStart(input: ColdInput): ColdStart {
   return { text: cutWithDroppedIds(lean, [...ids.inFlight, ...ids.blocked, ...ids.asks, ...ids.queued], max), truncated: true, level: last, ids };
 }
 
-/** Whole lines kept from the top while a closing line, naming the open ids no longer on the page, still fits in `max`. */
+/** For each backticked token on the lines (every adjacent pair of backticks), the index of the first line holding it. */
+function firstLineOfTokens(lines: string[]): Map<string, number> {
+  const first = new Map<string, number>();
+  lines.forEach((line, idx) => {
+    let open = line.indexOf('`');
+    while (open >= 0) {
+      const close = line.indexOf('`', open + 1);
+      if (close < 0) break;
+      const token = line.slice(open + 1, close);
+      if (!first.has(token)) first.set(token, idx);
+      open = close;
+    }
+  });
+  return first;
+}
+
+/**
+ * Whole lines kept from the top while a closing line, naming the open ids no longer on the page, still fits in `max`: the most
+ * lines whose output fits. Linear in lines plus ids: each id's first line is found once, and the closing line's length is kept
+ * as lines are dropped. When even no line fits, the closing line names as many ids as fit and ends `… and K more open ids not named`.
+ */
 function cutWithDroppedIds(text: string, ids: string[], max: number): string {
   const lines = text.split('\n');
-  const tail = (kept: string): string => {
-    const gone = ids.filter((i) => !kept.includes(`\`${shown(i)}\``)).map(shown);
-    return `… cut at ${max} characters; open ids not shown: ${gone.join(' ') || 'none'}`;
-  };
+  const names = ids.map(shown);
+  const head = `… cut at ${max} characters; open ids not shown: `;
+  const first = firstLineOfTokens(lines);
+  const firstOf = names.map((n) => first.get(n) ?? Infinity);
+  const goneAt = new Map<number, number[]>();
+  firstOf.forEach((idx, k) => { if (Number.isFinite(idx)) goneAt.set(idx, [...(goneAt.get(idx) ?? []), k]); });
+  const gone = new Set<number>();
+  let namesLen = 0;
+  const add = (k: number): void => { gone.add(k); namesLen += (names[k] as string).length; };
+  firstOf.forEach((idx, k) => { if (idx === Infinity) add(k); });
+  // keptLen[n] = length of the first n lines joined by newlines.
+  const keptLen: number[] = [0];
+  lines.forEach((l, i) => keptLen.push(keptLen[i] as number + l.length + (i ? 1 : 0)));
   for (let n = lines.length; n > 0; n -= 1) {
-    const kept = lines.slice(0, n).join('\n');
-    const out = `${kept}\n${tail(kept)}`;
-    if (out.length <= max) return out;
+    const tailLen = head.length + (gone.size ? namesLen + gone.size - 1 : 4);
+    if ((keptLen[n] as number) + 1 + tailLen <= max) {
+      const goneNames = names.filter((_, k) => gone.has(k));
+      return `${lines.slice(0, n).join('\n')}\n${head}${goneNames.join(' ') || 'none'}`;
+    }
+    for (const k of goneAt.get(n - 1) ?? []) add(k);
   }
-  return tail('').slice(0, max);
+  // No whole line fits: name as many ids as fit, and count the rest exactly.
+  const suffix = (rest: number): string => (rest ? ` … and ${rest} more open ids not named` : '');
+  let used = head.length;
+  let fit = 0;
+  for (; fit < names.length; fit += 1) {
+    const next = used + (fit ? 1 : 0) + (names[fit] as string).length;
+    if (next + suffix(names.length - fit - 1).length > max) break;
+    used = next;
+  }
+  const out = `${head}${names.slice(0, fit).join(' ') || (names.length ? '' : 'none')}${suffix(names.length - fit)}`;
+  return out.slice(0, max);
 }
 
 /** The "Current work" and "Decisions pending" sections of a page: the statement a cold session reads and states. */
