@@ -223,3 +223,34 @@ test('queueSavedDigest writes one journal item and a second pass does not write 
   const fixes = ledger.split('\n').filter((l) => l.includes('fix acme/widget#4 CONFLICT https://github.com/acme/widget/pull/4'));
   assert.equal(fixes.length, 1, logs.join('\n') || ledger);
 });
+
+test('a hung loop (killed by the watchdog) is relaunched at once, with a log line and no back-off sleep', async () => {
+  const r = await drive([{ code: null, hung: true }, { code: 0 }]);
+  assert.deepEqual(r.slept, [DELAYS.idle]);
+  assert.match(r.logs.join('\n'), /hung/);
+  assert.equal(r.launches, 2);
+});
+
+test('the real supervisor launches the loop in serve mode', () => {
+  const ledger = tempDir();
+  const dir = tempDir();
+  const bin = join(dir, 'args-loop.sh');
+  writeFileSync(bin, `#!/bin/sh\necho "$@" > "${join(dir, 'args')}"\necho "ACTION w1 (fake): x"\nexit 10\n`);
+  chmodSync(bin, 0o755);
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: 20_000, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(dir, 'args'), 'utf8').trim(), 'run --serve');
+});
+
+test('the real supervisor kills a loop that is alive but silent, then relaunches it', () => {
+  const ledger = tempDir();
+  const dir = tempDir();
+  const bin = join(dir, 'hang-loop.sh');
+  // First launch: replace the shell with sleep, so the kill reaches the process that is actually running and nothing is orphaned. Second launch: end cleanly.
+  writeFileSync(bin, `#!/bin/sh\nif [ -f "${join(dir, 'ran')}" ]; then echo "ACTION w1 (fake): x"; exit 10; fi\ntouch "${join(dir, 'ran')}"\nexec sleep 60\n`);
+  chmodSync(bin, 0o755);
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: 20_000, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '2', MAESTRO_WATCHDOG_GRACE_MS: '1500', MAESTRO_WATCHDOG_INTERVAL_MS: '200' }) });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /is hung/);
+  assert.equal(unseenDigests(digestDir(ledger, 'proj')).length, 1);
+});
