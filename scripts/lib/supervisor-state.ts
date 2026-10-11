@@ -52,6 +52,9 @@ export function readRecord(eventDir: string): SupervisorRecord | null {
   } catch { return null; }
 }
 
+/** True when this process was launched by the supervisor the record names: its parent pid is the recorded pid. */
+export const launchedBySupervisor = (eventDir: string, parentPid: number = process.ppid): boolean => readRecord(eventDir)?.pid === parentPid;
+
 /** What state the supervisor is in, with the one line `prime` prints for `dead` (empty otherwise). `plist` and `alive` are injectable. */
 export function supervisorStatus(eventDir: string, { plist = plistPath(), alive = defaultAlive }: { plist?: string; alive?: (pid: number) => boolean } = {}): SupervisorStatus {
   const record = readRecord(eventDir);

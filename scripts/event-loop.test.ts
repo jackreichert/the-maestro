@@ -679,6 +679,20 @@ test('cli: with the supervisor installed, run --serve, run --once and run --forc
   assert.equal(cliWith({ MAESTRO_LAUNCH_AGENTS_DIR: agents }, dir, 'run', '--serve', '--once').status, EXIT.usage, 'only the existing --once/--serve rule refuses this one');
 });
 
+test('cli: a plain run launched by the recorded supervisor is not refused (an old supervisor launches plain run), but a second runner is', () => {
+  const dir = tempDir();
+  const env = { MAESTRO_LAUNCH_AGENTS_DIR: installedAgents() };
+  // The CLI's parent is this test process: record it as the supervisor. An accepted plain run loops forever, so bound it and look at how it ended.
+  writeFileSync(join(dir, 'supervisor.json'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  const asSupervisor = spawnSync(process.execPath, [SCRIPT, 'run'], { encoding: 'utf8', timeout: 4_000, killSignal: 'SIGKILL', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off', ...env } });
+  assert.doesNotMatch(asSupervisor.stderr, /supervisor is installed/, 'plain run under the recorded supervisor must not be refused (exit 2 makes the old supervisor back off forever)');
+  assert.notEqual(asSupervisor.status, EXIT.usage);
+  writeFileSync(join(dir, 'supervisor.json'), JSON.stringify({ pid: process.pid + 1, startedAt: new Date().toISOString() }));
+  const other = cliWith(env, dir, 'run');
+  assert.equal(other.status, EXIT.usage);
+  assert.match(other.stderr, /supervisor is installed/);
+});
+
 test('cli: run is not refused when no supervisor is set up', () => {
   assert.equal(cli(tempDir(), 'run').status, EXIT.ok);
 });

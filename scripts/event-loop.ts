@@ -40,7 +40,7 @@
  * against the wall clock (lib/wall-sleep.ts), so a lid closed mid-sleep costs under a minute, not the whole lid time.
  *
  * One runner: while the launchd supervisor is installed (lib/supervisor-state.ts), a plain `run` refuses with exit 2, since it could only hold the supervisor's lock;
- * `--serve` (the supervisor's own launch), `--once` and `--force` are not refused.
+ * `--serve` (the supervisor's own launch), `--once` and `--force` are not refused, and neither is a plain `run` whose parent process is the recorded supervisor (an older supervisor still running after an update launches plain `run`; refusing it would make it back off and retry forever).
  *
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
@@ -66,7 +66,7 @@ import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './l
 import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
 import { registerWaiter } from './lib/waiters.ts';
-import { supervisorStatus } from './lib/supervisor-state.ts';
+import { launchedBySupervisor, supervisorStatus } from './lib/supervisor-state.ts';
 import { CHUNK_SECONDS, sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
@@ -494,7 +494,7 @@ async function main(argv: string[]): Promise<number> {
       const { loadConfiguredTypes } = await import('./event-types/index.ts');
       const types = await loadConfiguredTypes();
       if (v.once && v.serve) return usage('--once and --serve cannot be combined');
-      if (!v.serve && !v.once && !v.force && supervisorStatus(dir).state !== 'absent') return usage('a loop supervisor is installed, so it is the one runner; an in-session `run` would only hold its lock. Wait on the inbox with `events wait` instead (or pass --force)');
+      if (!v.serve && !v.once && !v.force && !launchedBySupervisor(dir) && supervisorStatus(dir).state !== 'absent') return usage('a loop supervisor is installed, so it is the one runner; an in-session `run` would only hold its lock. Wait on the inbox with `events wait` instead (or pass --force)');
       acquireLock(dir);
       return await run({ dir, types, once: v.once, serve: v.serve, pinned });
     } else if (cmd === 'adopt') {
