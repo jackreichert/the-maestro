@@ -33,7 +33,7 @@ export function footerOneLine({ rows, queue, loop, session, window, leases }: Fo
         ...(sum((r) => r.blocked) ? [`${sum((r) => r.blocked)} blocked`] : []),
     ].join(' · ');
     const sess = session.available
-        ? `Session: ${session.turns} turns (${session.pct}%) · ${session.readK}k/turn${session.advice ? ` · ${session.advice}` : ''}`
+        ? `Session: ${session.turns} turns · ${session.ctxK}k/${session.triggerK}k (${session.pct}%) · ${session.readK}k/turn${session.advice ? ` · ${session.advice}` : ''}`
         : `Session: unavailable (${session.unavailable})`;
     return [`Ledger: ${ledger}`, queue ? plain(queue) : '', loop ? plain(loop) : '', window ? `Window: ${window}` : '', leases ?? '', sess].filter(Boolean).join(' | ');
 }

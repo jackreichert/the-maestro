@@ -46,7 +46,7 @@ function board(): BoardStatus & { footerText: string[] } {
   };
   const g = groups(ctx);
   const done = g.doneOn(TODAY, { sinceRoll: true });
-  const session: SessionStatus = { available: true, turns: 86, pct: 47, rollTurns: 180, readK: 129, advice: 'roll soon' };
+  const session: SessionStatus = { available: true, turns: 86, ctxK: 142, triggerK: 200, pct: 71, readK: 129, advice: 'roll soon' };
   return {
     inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, done,
     footer: { ledger: footerRows(g, done), session }, footerText: footerLines(g, done),
@@ -83,7 +83,7 @@ test('the Status section ends with the agents line and the session line formatte
   const s = section(page(b), '## Status');
   assert.ok(s.includes('**Agents:** 5 in flight on the ledger (the live agent roster is shown in each reply\'s footer)'));
   assert.ok(s.includes(sessionText(b.footer!.session)));
-  assert.ok(s.includes('**Session:** 86 turns (47% of 180 roll) · 129k read/turn · roll soon'));
+  assert.ok(s.includes('**Session:** 86 turns · ctx 142k of ~200k (71%) · 129k read/turn · roll soon'));
   assert.equal(section(page(b), '## Status').length > 0 && page(b).trimEnd().split('\n').includes('## Status'), true);
 });
 

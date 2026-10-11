@@ -24,9 +24,8 @@ gh_org: <github-org>        # PR board scope; omit for no org filter
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
-roll_turns: 180                # turns that count as 100% on the status footer's Session line; default 180
-roll_read_per_turn: 350000     # ... and mean cache-read per turn that counts as 100% (a plain number); default 350000
-roll_warn_pct: 60              # Session line says "roll soon" at this percent of either; 1..100, below roll_at_pct; default 60
+autocompact_floor: 100000      # lowest autocompact trigger (tokens) that does not warn; default 100000
+roll_warn_pct: 60              # Session line says "roll soon" at this percent of the autocompact trigger; 1..100, below roll_at_pct; default 60
 roll_at_pct: 90                # ... and "roll now" at this percent; a pair with warn >= roll falls back to 60/90; default 90
 ledger_root: /path/to/ledger
 vault_root: /path/to/vault
