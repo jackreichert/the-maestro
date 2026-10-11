@@ -9,17 +9,22 @@
  * (--oldest N caps the list). p85 is the number to quote as a service level: "85% of items finish within p85 days".
  * The same report names ledger stage dwell: time in queued, in flight, blocked, and awaiting a person, the stage with
  * the longest current dwell, and the top 5 longest-waiting open items with the gate, ticket, or person the row already
- * names, or "unrecorded". Pull-request stages are not printed.
+ * names, or "unrecorded". Pull-request stages are not printed. A run-quality block counts send-backs (retries) per
+ * completed item and silent runs (briefed, no report file); see lib/run-quality.ts.
  * Root and project resolve as journal.ts does: --vault, then $LEDGER_ROOT, then $VAULT_ROOT; --project or the
  * configured project. Definitions live in lib/flow.ts. Run it by hand on Friday; this slice does not wire it into the roll.
  */
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { fold } from './lib/ledger-core.ts';
 import { flowReport, renderFlow } from './lib/flow.ts';
+import { renderRunQuality, runQuality } from './lib/run-quality.ts';
 import { openStore } from './lib/journal/store.ts';
 import { parseArgs } from './lib/journal/args.ts';
+
+/** Size of a report file in bytes, or null when it is not there. */
+const reportSize = (path: string): number | null => { try { return statSync(path).size; } catch { return null; } };
 
 export function main(argv: string[]): number {
     const { arg, has } = parseArgs(['flow', ...argv]);
@@ -37,8 +42,10 @@ export function main(argv: string[]): number {
         return 2;
     }
     const store = openStore({ vault, project, dryRun: true });
-    const report = flowReport(fold(store.readLedger(), store.loadRegistry()).items, now, days);
-    console.log(has('json') ? JSON.stringify(report, null, 2) : renderFlow(report, oldest));
+    const rows = store.readLedger();
+    const report = flowReport(fold(rows, store.loadRegistry()).items, now, days);
+    const runs = runQuality(rows, now, days, reportSize);
+    console.log(has('json') ? JSON.stringify({ ...report, runs }, null, 2) : [renderFlow(report, oldest), ...renderRunQuality(runs)].join('\n'));
     return 0;
 }
 

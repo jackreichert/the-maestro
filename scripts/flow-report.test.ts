@@ -68,3 +68,23 @@ test('prints ledger stage dwell from a temp ledger and does not invent a waiter'
     assert.deepEqual(j.dwell.stages.map((s: { stage: string }) => s.stage), ['queued', 'in flight', 'blocked', 'awaiting a person']);
     assert.equal(j.dwell.waiting.find((w: { id: string }) => w.id === 'aaaa').waitsOn, 'unrecorded');
 });
+
+test('run quality counts send-backs on completed items and briefed runs with no report, and says rework is not recorded', () => {
+    const present = join(mkdtempSync(join(tmpdir(), 'flow-rep-')), 'report-aaaa.md');
+    writeFileSync(present, 'done\n');
+    const missing = join(tmpdir(), 'flow-rep-none', 'report-cccc.md');
+    const withRuns = [
+        ...rows,
+        { id: 'q1', ts: '2026-10-06T10:30:00Z', date: '2026-10-06', kind: 'queue', queues: 'aaaa', text: 'sent back' },
+        { id: 'q2', ts: '2026-10-06T11:00:00Z', date: '2026-10-06', kind: 'queue', queues: 'aaaa', text: 'sent back again' },
+        { id: 'b1', ts: '2026-10-06T09:00:00Z', date: '2026-10-06', kind: 'brief', briefs: 'aaaa', report: present, text: 'brief aaaa' },
+        { id: 'b2', ts: '2026-10-05T13:00:00Z', date: '2026-10-05', kind: 'brief', briefs: 'cccc', report: missing, text: 'brief cccc' },
+    ];
+    const r = run('--vault', ledgerWith(withRuns), '--project', 'demo', '--now', '2026-10-07T12:00:00Z', '--json');
+    const j = JSON.parse(r.out);
+    assert.deepEqual(j.runs, { completed: 1, retried: 1, retries: 2, retriesPerRun: 2, briefed: 2, silent: 1, silentIds: ['cccc'] });
+    const text = run('--vault', ledgerWith(withRuns), '--project', 'demo', '--now', '2026-10-07T12:00:00Z').out;
+    assert.match(text, /retries {6}2 send-backs over 1 completed/);
+    assert.match(text, /silent runs {2}1 of 2 briefed wrote no report: cccc/);
+    assert.match(text, /rework {7}not recorded/);
+});
