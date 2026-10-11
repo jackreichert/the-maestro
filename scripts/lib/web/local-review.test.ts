@@ -40,6 +40,13 @@ sh(alpha, 'worktree', 'add', '-q', '-b', 'feat/in-tree', join(container, '.workt
 commit(join(container, '.worktrees-alpha-tree'), 'tree.txt');
 sh(alpha, 'branch', 'develop');   // a protected name with no new commits: never listed
 mkdirSync(join(container, 'not-a-repo'));
+// A repo one folder down (like skills/the-maestro) is read too; its folder stays container-relative.
+mkdirSync(join(container, 'skills'));
+const gamma = join(container, 'skills', 'gamma');
+sh(tmp, 'clone', '-q', origin, gamma);
+sh(gamma, 'switch', '-q', '-c', 'feat/nested-local');
+commit(gamma, 'g.txt');
+sh(gamma, 'switch', '-q', 'staging');
 mkdirSync(join(ledger, 'Projects', 'p', 'Journal'), { recursive: true });
 
 const build = (): ReturnType<typeof buildLocalReview> => buildLocalReview({ containerRoot: container, vault: ledger, now: NOW });
@@ -47,7 +54,7 @@ const build = (): ReturnType<typeof buildLocalReview> => buildLocalReview({ cont
 test('lists only local branches with commits no origin ref has and no remote twin, newest first', () => {
   const r = build();
   assert.equal(r.available, true);
-  assert.deepEqual(r.units.map((u) => u.branch).sort(), ['feat/in-tree', 'feat/local-one']);
+  assert.deepEqual(r.units.map((u) => u.branch).sort(), ['feat/in-tree', 'feat/local-one', 'feat/nested-local']);
   const one = r.units.find((u) => u.branch === 'feat/local-one');
   assert.equal(one?.ahead, 2);
   assert.equal(one?.repo, 'alpha');
@@ -83,6 +90,14 @@ test('the verdict follows the head: pass, needs work, then stale after a new com
   assert.equal(after?.ahead, 3);
 });
 
+test('a repo one folder down is scanned: unit id uses its folder name, paths stay container-relative', () => {
+  const u = build().units.find((x) => x.branch === 'feat/nested-local');
+  assert.equal(u?.id, 'local:gamma#feat/nested-local');
+  assert.equal(u?.repo, 'gamma');
+  assert.equal(u?.where, 'skills/gamma');
+  assert.equal(u?.command, "git -C 'skills/gamma' difftool 'origin/staging...feat/nested-local'");
+});
+
 test('verdictState: a row for another unit does not count', () => {
   const row = { pr: 'local:alpha#other', head: 'a'.repeat(40), verdict: 'SHIP IT' as const, reviewer: 'r', fixer: 'f', at: 'x' };
   assert.deepEqual(verdictState([row], 'local:alpha#feat/x', 'a'.repeat(40)), { state: 'none' });
@@ -106,7 +121,7 @@ test('no container configured, or an unreadable one, says why instead of an empt
 test('the cap keeps the newest units and counts the rest', () => {
   const r = buildLocalReview({ containerRoot: container, vault: ledger, now: NOW, max: 1 });
   assert.equal(r.units.length, 1);
-  assert.equal(r.more, 1);
+  assert.equal(r.more, 2);
 });
 
 const clientDir = join(tmp, 'client');

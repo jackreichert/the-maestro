@@ -7,7 +7,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { basename, isAbsolute, join, relative } from 'node:path';
 import { loadVerdicts, localUnitId, verdictFor } from '../../review-verdict.ts';
 import type { VerdictRow } from '../../review-verdict.ts';
 
@@ -33,6 +33,7 @@ const PROTECTED = new Set(['main', 'staging', 'develop']);
 const BASES = ['staging', 'develop', 'main'];
 const SEP = '\x1f';
 const DEFAULT_MAX = 40;
+const MAX_REPOS = 60;
 
 const git = (repo: string, ...args: string[]): { ok: boolean; out: string } => {
   const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
@@ -49,11 +50,21 @@ export function verdictState(rows: VerdictRow[], id: string, head: string): { st
   return old ? { state: 'stale', at: old.at } : { state: 'none' };
 }
 
-/** Git repos directly under the container. */
+const isRepo = (dir: string): boolean => statSync(join(dir, '.git'), { throwIfNoEntry: false })?.isDirectory() ?? false;
+const subdirs = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.')).map((d) => d.name).sort();
+
+/**
+ * Container-relative folders of the git repos in the container: its direct children, and one level further down inside a child
+ * that is not itself a repo (`skills/the-maestro`). A linked worktree has a `.git` file, not a folder, so it is never listed
+ * twice: its branches come from the owning repo's worktree list. At most `MAX_REPOS`, so a huge folder cannot make a long scan.
+ */
 function repoDirs(container: string): string[] {
-  return readdirSync(container, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith('.') && statSync(join(container, d.name, '.git'), { throwIfNoEntry: false })?.isDirectory())
-    .map((d) => d.name).sort();
+  const found: string[] = [];
+  for (const top of subdirs(container)) {
+    if (isRepo(join(container, top))) { found.push(top); continue; }
+    try { for (const sub of subdirs(join(container, top))) if (isRepo(join(container, top, sub))) found.push(join(top, sub)); } catch { /* an unreadable folder is skipped */ }
+  }
+  return found.slice(0, MAX_REPOS);
 }
 
 /** branch -> worktree path, from `git worktree list --porcelain` (detached worktrees have no branch and are skipped). */
@@ -75,8 +86,9 @@ function inside(root: string, path: string): string {
   } catch { return ''; }
 }
 
-function unitsIn(container: string, name: string, rows: VerdictRow[]): LocalUnit[] {
-  const repo = join(container, name);
+function unitsIn(container: string, folder: string, rows: VerdictRow[]): LocalUnit[] {
+  const repo = join(container, folder);
+  const name = basename(folder);
   const remote = new Set(git(repo, 'for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin').out.split('\n'));
   const base = BASES.find((b) => remote.has(b)) ?? 'main';
   const trees = worktrees(repo);
@@ -89,9 +101,9 @@ function unitsIn(container: string, name: string, rows: VerdictRow[]): LocalUnit
     const ahead = count.ok && /^\d+$/.test(count.out) ? Number(count.out) : 0;
     if (ahead === 0) continue;
     const tree = trees.get(branch);
-    const where = (tree && inside(container, tree)) || name;
+    const where = (tree && inside(container, tree)) || folder;
     const id = localUnitId(name, branch);
-    out.push({ id, repo: name, branch, head, ahead, at, subject, where, checkedOut: tree !== undefined, base: `origin/${base}`, command: `git -C ${quote(name)} difftool ${quote(`origin/${base}...${branch}`)}`, verdict: verdictState(rows, id, head) });
+    out.push({ id, repo: name, branch, head, ahead, at, subject, where, checkedOut: tree !== undefined, base: `origin/${base}`, command: `git -C ${quote(folder)} difftool ${quote(`origin/${base}...${branch}`)}`, verdict: verdictState(rows, id, head) });
   }
   return out;
 }
