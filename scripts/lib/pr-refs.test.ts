@@ -3,13 +3,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mergedRows, prRefs } from './pr-refs.ts';
 
-const owner = (r: string) => (r === 'svc' ? 'acme/svc' : undefined);
+const owner = (r: string, strict = false) => (r === 'svc' ? 'acme/svc' : r === 'arya-tool' && strict ? 'acme/arya-tool' : r === 'svc2' && !strict ? 'acme/svc2' : undefined);
 
 test('a row names PRs as owner/repo#N, a pull URL, or #N beside its own repo', () => {
   assert.deepEqual(prRefs({ text: 'follow-ups for acme/svc#483' }, owner), [{ repo: 'acme/svc', number: 483 }]);
   assert.deepEqual(prRefs({ text: 'x', refs: ['https://github.com/acme/svc/pull/12'] }, owner), [{ repo: 'acme/svc', number: 12 }]);
   assert.deepEqual(prRefs({ text: 'merge prep #488 and PR 7', repo: 'svc' }, owner).map((r) => r.number).sort(), [488, 7]);
   assert.deepEqual(prRefs({ text: 'merge prep #488', repo: 'unknown' }, owner), []);
+  assert.deepEqual(prRefs({ text: 'svc #488 merge prep' }, owner), [{ repo: 'acme/svc', number: 488 }]);
+  assert.deepEqual(prRefs({ text: 'tool #601 fix' }, owner), [{ repo: 'acme/arya-tool', number: 601 }]);
+  assert.deepEqual(prRefs({ text: 'svc2 #5 and merge #6' }, owner), [], 'a name only the org fallback could resolve is not a repo');
   assert.deepEqual(prRefs({ text: 'ledger id a#1 is not a PR' }, owner), []);
 });
 

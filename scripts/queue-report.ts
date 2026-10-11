@@ -23,14 +23,14 @@ import { parseArgs } from './lib/journal/args.ts';
 
 const ghBin = (): string => process.env.MAESTRO_GH_BIN || 'gh';
 
-/** `owner/name` for a repo directory under the container root, from its origin URL, else `gh_org/<repo>`; undefined when neither is known. */
-function ownerOf(repo: string): string | undefined {
+/** `owner/name` for a repo directory under the container root, from its origin URL, else (not when `strict`) `gh_org/<repo>`; undefined when neither is known. */
+function ownerOf(repo: string, strict = false): string | undefined {
     if (CONTAINER_ROOT) {
         const r = spawnSync('git', ['-C', join(CONTAINER_ROOT, repo), 'remote', 'get-url', 'origin'], { encoding: 'utf8', timeout: 5000 });
         const m = r.status === 0 ? /[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\s*$/.exec(r.stdout) : null;
         if (m) return m[1];
     }
-    return GH_ORG ? `${GH_ORG}/${repo}` : undefined;
+    return GH_ORG && !strict ? `${GH_ORG}/${repo}` : undefined;
 }
 
 function stateOf(ref: PrRef): string | undefined {
