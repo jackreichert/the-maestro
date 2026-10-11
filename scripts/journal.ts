@@ -83,6 +83,7 @@
  *   journal.ts claim <repo> --desk <stream> [--worktree w | --branch b] [--why "..."] [--pid n]   take a repo lock (Claims/<repo>.lock, or <repo>@<scope>.lock with a worktree or branch)
  *   journal.ts release <repo> --desk <stream> [--force]   drop it; only the holding desk may, unless --force
  *   journal.ts query [--stream S] [--id X] [--status open|inflight|queued|blocked|done|dropped|resolved|closed|all] [--date D | --since D --until D] [--model M] [--limit N] [--json]   read-only, capped (default 50, max 200) filters over every item, newest first
+ *   journal.ts ready-to-push [--repo R] [--json]        my local branches with commits on no remote (held back from push), per repo of the container; read-only git
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--read-only] [--details-file f] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
@@ -134,7 +135,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { CONTAINER_PROJECT, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES } from './local-config.ts';
+import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -160,6 +161,7 @@ import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
+import { containerRepos, heldBranches, heldLines } from './lib/journal/ready-to-push.ts';
 import { filterProblem, queryItems, queryLines, QUERY_STATUSES } from './lib/journal/query.ts';
 import type { QueryStatus } from './lib/journal/query.ts';
 import { claimPath as claimPathIn, validRepo as validRepoIn, readClaim as readClaimIn, pidAlive, claimStaleness, describeClaim, acquireClaimLock, acquireRepoClaim, claimKey, claimKeysFor, claimScope, scopesConflict, splitClaimKey } from './lib/journal/claims.ts';
@@ -1652,6 +1654,16 @@ function cmdQuery() {
     if (asJson) console.log(JSON.stringify(result, null, 2)); else queryLines(result).forEach((l) => console.log(l));
 }
 
+/** `ready-to-push`: held branches across the container's repos (or `--repo`). Reads git only; never fetches, never pushes. */
+function cmdReadyToPush() {
+    if (!CONTAINER_ROOT) die('No container root. Set container_root in the local config (MAESTRO_CONTAINER_ROOT).');
+    if (!GIT_EMAILS.length) die('No git_emails in the local config (MAESTRO_GIT_EMAILS): without them no branch can be shown to be mine.');
+    const only = arg('repo') ?? undefined;
+    if (only) validRepo(only);
+    const held = containerRepos(CONTAINER_ROOT, only).flatMap(([name, dir]) => heldBranches(dir, name, { emails: GIT_EMAILS, protectedNames: PROTECTED_BRANCHES, keyPattern: TRACKER_KEY_PATTERN }));
+    if (asJson) console.log(JSON.stringify({ held }, null, 2)); else heldLines(held).forEach((l) => console.log(l));
+}
+
 function cmdClaims() {
     const hours = Number(arg('stale-hours', '12'));
     const files = existsSync(claimsDir) ? readdirSync(claimsDir).filter((n) => n.endsWith('.lock')).sort() : [];
@@ -2321,6 +2333,7 @@ switch (cmd) {
     case 'release': cmdRelease(); break;
     case 'claims': cmdClaims(); break;
     case 'query': cmdQuery(); break;
+    case 'ready-to-push': cmdReadyToPush(); break;
     case 'brief': cmdBrief(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;

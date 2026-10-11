@@ -2861,3 +2861,17 @@ test('query filters read-only and capped: by stream, status and id, refuses bad 
     for (const bad of [['--limit', '0'], ['--limit', '9999'], ['--status', 'nope'], ['--date', 'today']]) assert.equal(run('query', ...bad).code, 1, bad.join(' '));
     assert.equal(ledger().length, before, 'a query writes nothing');
 });
+
+test('ready-to-push lists my branches that no remote holds, and refuses without a container root or emails', () => {
+    const container = mkdtempSync(join(tmpdir(), 'rtp-'));
+    const repo = join(container, 'proj');
+    mkdirSync(repo);
+    const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 'me@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 'me@example.com', GIT_CONFIG_GLOBAL: '/dev/null' };
+    const git = (...a: string[]) => assert.equal(spawnSync('git', a, { cwd: repo, env }).status, 0, a.join(' '));
+    git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a'), 'a'); git('add', 'a'); git('commit', '-q', '-m', 'base');
+    git('switch', '-q', '-c', 'feat/MAESTRO-9-held'); writeFileSync(join(repo, 'b'), 'b'); git('add', 'b'); git('commit', '-q', '-m', 'held work');
+    const out = runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push', '--json');
+    assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/MAESTRO-9-held']);
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('MAESTRO-9'), false, 'not my commits');
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: '', MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push').code, 1);
+});
