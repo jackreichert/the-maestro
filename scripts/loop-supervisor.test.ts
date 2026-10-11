@@ -13,6 +13,7 @@ import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-s
 import { readInbox } from './lib/event-inbox.ts';
 import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq } from './install-loop-supervisor.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
+import { cleanEnv, notifyCalls } from './lib/test-env.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'loop-supervisor-test-'));
 const SUPERVISOR = new URL('./loop-supervisor.ts', import.meta.url).pathname;
@@ -99,7 +100,15 @@ function fakeLoop(dir: string): string {
   chmodSync(bin, 0o755);
   return bin;
 }
-const envFor = (ledger: string, extra: Record<string, string> = {}) => ({ ...process.env, LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: join(ledger, 'Events'), ...extra });
+/** Every env a real supervisor or installer ran with; the `after` hook below fails the file if any of them reached a notify command. */
+const envsUsed: NodeJS.ProcessEnv[] = [];
+/** The env for a spawned supervisor or installer: built clean (temp HOME, no user config, a recording notify stub), never from `process.env`. */
+const envFor = (ledger: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv => {
+  const env = { ...cleanEnv(), LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: join(ledger, 'Events'), ...extra };
+  envsUsed.push(env);
+  return env;
+};
+after(() => { for (const env of envsUsed) assert.deepEqual(notifyCalls(env), [], 'a test supervisor sent a notification'); });
 
 test('the real supervisor process saves the fake loop digest under the ledger root only', () => {
   const ledger = tempDir();

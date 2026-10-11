@@ -16,6 +16,7 @@ import * as reminder from './event-types/reminder.ts';
 import { notifyChoice } from './lib/notify.ts';
 import { appendEvents, inboxPath, readInbox } from './lib/event-inbox.ts';
 import { acquireLock, addWatch, appendDigest, listWatches, loadState, readDigest } from './lib/watch-registry.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
 const tempDir = () => mkdtempSync(join(tmpdir(), 'event-loop-test-'));
@@ -334,7 +335,7 @@ test('formatDigest lists actionable events first and carries the report hint onl
 });
 
 const cli = (dir: string, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args], {
-  encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' },
+  encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' },
 });
 
 test('cli: run --once against an empty registry exits 0 cleanly', () => {
@@ -485,7 +486,7 @@ test('a pin of Infinity that reaches tick anyway still honours the floor', () =>
 
 /** Starts `run` (not --once) over a registry with one unknown-type watch, waits for a heartbeat that says it is asleep, and stops it. */
 async function runAndStop(dir: string, ...extra: string[]): Promise<void> {
-  const p = spawn(process.execPath, [SCRIPT, 'run', ...extra], { env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' }, stdio: 'ignore' });
+  const p = spawn(process.execPath, [SCRIPT, 'run', ...extra], { env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' }, stdio: 'ignore' });
   const closed = new Promise((resolve) => p.on('close', resolve));
   const file = join(dir, 'heartbeat.json');
   for (let i = 0; i < 100; i += 1) {
@@ -517,7 +518,7 @@ test('cli: run --once leaves no heartbeat, so a one-off never reads as a dead lo
 
 /** Starts `run --serve` over `dir`, polls (up to 10 s) until `ready()` holds, and returns whether the process was still alive at that point; always stops it. */
 async function serveUntil(dir: string, ready: () => boolean): Promise<{ alive: boolean; ready: boolean; code: number | null }> {
-  const p = spawn(process.execPath, [SCRIPT, 'run', '--serve'], { env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' }, stdio: 'ignore' });
+  const p = spawn(process.execPath, [SCRIPT, 'run', '--serve'], { env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir, MAESTRO_WATCH_QUIET_HOURS: 'off' }, stdio: 'ignore' });
   const closed = new Promise<number | null>((resolve) => p.on('close', resolve));
   let ok = false;
   for (let i = 0; i < 200 && !ok && p.exitCode === null; i += 1) {
@@ -629,7 +630,7 @@ test('cli: events wait prints an unseen actionable event, marks it seen and exit
 
 test('cli: events wait wakes on an event appended while it waits', async () => {
   const dir = tempDir();
-  const p = spawn(process.execPath, [SCRIPT, 'events', 'wait', '--poll-seconds', '0.1'], { env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir }, stdio: ['ignore', 'pipe', 'inherit'] });
+  const p = spawn(process.execPath, [SCRIPT, 'events', 'wait', '--poll-seconds', '0.1'], { env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir }, stdio: ['ignore', 'pipe', 'inherit'] });
   let out = '';
   p.stdout.on('data', (d) => { out += d; });
   const closed = new Promise<number | null>((resolve) => p.on('close', resolve));

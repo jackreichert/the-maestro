@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearRecord, readRecord, recordPath, supervisorStatus, writeRecord } from './lib/supervisor-state.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'supervisor-state-test-'));
 const SUPERVISOR = new URL('./loop-supervisor.ts', import.meta.url).pathname;
@@ -66,7 +67,7 @@ test('clearRecord removes only its own pid record', () => {
 test('the real supervisor writes its record, and SIGTERM during a sleep removes it and exits 0', async () => {
   const events = tempDir();
   const ledger = tempDir();
-  const env = { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: events, LEDGER_ROOT: ledger, MAESTRO_LOOP_BIN: '/usr/bin/true' };
+  const env = { ...cleanEnv(), MAESTRO_EVENT_DIR: events, LEDGER_ROOT: ledger, MAESTRO_LOOP_BIN: '/usr/bin/true' };
   const child = spawn(process.execPath, [SUPERVISOR], { env, stdio: 'ignore' });
   const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
   await waitFor(() => readRecord(events)?.pid === child.pid);
@@ -80,7 +81,7 @@ test('the real supervisor writes its record, and SIGTERM during a sleep removes 
 
 test('a supervisor killed with SIGKILL leaves its record, which then reads as dead', async () => {
   const events = tempDir();
-  const env = { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: events, LEDGER_ROOT: tempDir(), MAESTRO_LOOP_BIN: '/usr/bin/true' };
+  const env = { ...cleanEnv(), MAESTRO_EVENT_DIR: events, LEDGER_ROOT: tempDir(), MAESTRO_LOOP_BIN: '/usr/bin/true' };
   const child = spawn(process.execPath, [SUPERVISOR], { env, stdio: 'ignore' });
   const exited = new Promise((resolve) => child.on('exit', resolve));
   await waitFor(() => readRecord(events)?.pid === child.pid);
@@ -92,7 +93,7 @@ test('a supervisor killed with SIGKILL leaves its record, which then reads as de
 test('a second supervisor that cannot start (no ledger root) leaves the record alone', () => {
   const events = tempDir();
   writeRecord(events, 31337);
-  const r = spawnSync(process.execPath, [SUPERVISOR], { env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: events, LEDGER_ROOT: '' }, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [SUPERVISOR], { env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events, LEDGER_ROOT: '' }, encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.equal(readRecord(events)?.pid, 31337);
 });

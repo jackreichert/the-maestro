@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXIT, claimFor } from './event-loop.ts';
 import { appendEvents, mark, readInbox } from './lib/event-inbox.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
 const MIN = 60_000;
@@ -25,7 +26,7 @@ function world(rows: Record<string, unknown>[]): World {
 
 const cli = (w: World, window: string, ...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args, '--window', window], {
   encoding: 'utf8',
-  env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: w.events, MAESTRO_WATCH_QUIET_HOURS: 'off', LEDGER_ROOT: w.root, VAULT_ROOT: w.root, MAESTRO_PROJECT: 'p', MAESTRO_STATUS_REPO_STREAMS: '' },
+  env: { ...cleanEnv(), MAESTRO_EVENT_DIR: w.events, MAESTRO_WATCH_QUIET_HOURS: 'off', LEDGER_ROOT: w.root, VAULT_ROOT: w.root, MAESTRO_PROJECT: 'p', MAESTRO_STATUS_REPO_STREAMS: '' },
 });
 const wait = (w: World, window: string) => cli(w, window, 'events', 'wait', '--timeout-hours', '0.00003', '--poll-seconds', '0.05');
 const thread = (repo: string, n: number) => ({ watch: 'prs', type: 'pr-watch', at: '2026-10-01T12:00:00.000Z', summary: `THREAD ${repo}#${n} by someone: u`, actionable: true, report: '' });
@@ -67,7 +68,7 @@ test('with no ledger configured every event is unowned and the first window to a
   const w = world([item, held('w1', -1)]);
   appendEvents(w.events, [thread('acme/api', 4)]);
   const bare = (window: string) => spawnSync(process.execPath, [SCRIPT, 'events', 'wait', '--window', window, '--timeout-hours', '0.00003', '--poll-seconds', '0.05'], {
-    encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: w.events, LEDGER_ROOT: '', VAULT_ROOT: '' },
+    encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: w.events, LEDGER_ROOT: '', VAULT_ROOT: '' },
   });
   assert.equal(bare('w2').status, EXIT.actionable);
   assert.equal(bare('w1').status, EXIT.ok);

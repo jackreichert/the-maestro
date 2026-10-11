@@ -10,6 +10,7 @@ import type { TypeRegistry } from './event-types/index.ts';
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import type { EventType } from './lib/types.ts';
 import { DEFAULT_TTL_MS, addWatch, listWatches, paths, removeWatch, renewWatch } from './lib/watch-registry.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const SCRIPT = new URL('./event-loop.ts', import.meta.url).pathname;
 const HOUR = 3600 * 1000;
@@ -95,7 +96,7 @@ test('a corrupt renew line is skipped; the watch keeps its previous expiry', () 
 
 test('cli add marks a standing type renew unless --ttl-hours is given, and a one-shot type never', () => {
   const dir = tempDir();
-  const add = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, 'add', ...args], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
+  const add = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, 'add', ...args], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir } });
   assert.equal(add('--id', 'inb', '--type', 'inbox', '--target', 'true').status, 0);
   assert.equal(add('--id', 'inb2', '--type', 'inbox', '--target', 'true', '--ttl-hours', '2').status, 0);
   assert.equal(add('--id', 'rem', '--type', 'reminder', '--target', '2099-01-01T09:00:00Z').status, 0);

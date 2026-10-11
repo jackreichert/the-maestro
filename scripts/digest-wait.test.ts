@@ -6,11 +6,12 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { digestBody, digestDir, claimDigests, saveDigest, unseenDigests } from './lib/digest-store.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'digest-wait-test-'));
 const EVENT_LOOP = new URL('./event-loop.ts', import.meta.url).pathname;
 const NOON = Date.parse('2026-10-01T12:00:00Z');
-const envFor = (ledger: string, extra: Record<string, string> = {}) => ({ ...process.env, LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: join(ledger, 'Events'), ...extra });
+const envFor = (ledger: string, extra: Record<string, string> = {}) => ({ ...cleanEnv(), LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: join(ledger, 'Events'), ...extra });
 
 test('digest store: saved unseen, listed oldest first, marked seen idempotently, never overwritten', () => {
   const dir = join(tempDir(), 'Digests');

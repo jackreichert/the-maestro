@@ -9,6 +9,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendEvents } from './event-inbox.ts';
+import { cleanEnv } from './test-env.ts';
 
 const JOURNAL = new URL('../journal.ts', import.meta.url).pathname;
 const LOOP = new URL('../event-loop.ts', import.meta.url).pathname;
@@ -23,7 +24,7 @@ function setup() {
   const cwd = mkdtempSync(join(tmpdir(), 'tandem-e2e-cwd-'));
   const events = join(vault, 'Events');
   const env = {
-    ...process.env, VAULT_ROOT: vault, LEDGER_ROOT: vault, MAESTRO_PROJECT: PROJECT, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WINDOW: '', CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: '',
+    ...cleanEnv(), VAULT_ROOT: vault, LEDGER_ROOT: vault, MAESTRO_PROJECT: PROJECT, MAESTRO_WINDOW: '', CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: '',
     MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_EVENT_DIR: events, MAESTRO_WATCH_QUIET_HOURS: 'off', MAESTRO_STATUS_REPO_STREAMS: '',
   };
   const exec = (script: string, args: string[]): Promise<Run> => new Promise((resolve) => {
