@@ -65,7 +65,7 @@ export function loadVerdicts(root: string): VerdictRow[] {
 export function verdictFor(rows: VerdictRow[], pr: string, head: string | undefined): VerdictRow | undefined {
   if (!head || head.length < 7) return undefined;
   const h = head.toLowerCase();
-  return rows.filter((r) => r.pr === pr && (h.startsWith(r.head) || r.head.startsWith(h))).at(-1);
+  return rows.filter((r) => r.pr === pr && (h.startsWith(r.head.toLowerCase()) || r.head.toLowerCase().startsWith(h))).at(-1);
 }
 
 function main(argv: string[]): number {

@@ -88,6 +88,12 @@ test('verdictState: a row for another unit does not count', () => {
   assert.deepEqual(verdictState([row], 'local:alpha#feat/x', 'a'.repeat(40)), { state: 'none' });
 });
 
+test('verdictState: a row recorded with an upper-case sha still matches the lower-case head', () => {
+  const head = 'abcdef0123456789abcdef0123456789abcdef01';
+  const row = { pr: 'local:alpha#feat/x', head: head.toUpperCase(), verdict: 'SHIP IT' as const, reviewer: 'r', fixer: 'f', at: 'x' };
+  assert.equal(verdictState([row], 'local:alpha#feat/x', head).state, 'ship-it');
+});
+
 test('no container configured, or an unreadable one, says why instead of an empty list', () => {
   const none = buildLocalReview({ vault: ledger, now: NOW });
   assert.equal(none.available, false);

@@ -8,7 +8,7 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
-import { loadVerdicts, localUnitId } from '../../review-verdict.ts';
+import { loadVerdicts, localUnitId, verdictFor } from '../../review-verdict.ts';
 import type { VerdictRow } from '../../review-verdict.ts';
 
 export type VerdictState = 'ship-it' | 'needs-work' | 'stale' | 'none';
@@ -42,11 +42,10 @@ const git = (repo: string, ...args: string[]): { ok: boolean; out: string } => {
 const quote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** The state of one unit's verdict at its current head: a row for this head decides; rows for other heads only mean "stale". */
-export function verdictState(rows: readonly VerdictRow[], id: string, head: string): { state: VerdictState; at?: string } {
-  const mine = rows.filter((r) => r.pr === id);
-  const exact = mine.filter((r) => head.startsWith(r.head) || r.head.startsWith(head)).at(-1);
+export function verdictState(rows: VerdictRow[], id: string, head: string): { state: VerdictState; at?: string } {
+  const exact = verdictFor(rows, id, head);
   if (exact) return { state: exact.verdict === 'SHIP IT' ? 'ship-it' : 'needs-work', at: exact.at };
-  const old = mine.at(-1);
+  const old = rows.filter((r) => r.pr === id).at(-1);
   return old ? { state: 'stale', at: old.at } : { state: 'none' };
 }
 
@@ -76,7 +75,7 @@ function inside(root: string, path: string): string {
   } catch { return ''; }
 }
 
-function unitsIn(container: string, name: string, rows: readonly VerdictRow[]): LocalUnit[] {
+function unitsIn(container: string, name: string, rows: VerdictRow[]): LocalUnit[] {
   const repo = join(container, name);
   const remote = new Set(git(repo, 'for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin').out.split('\n'));
   const base = BASES.find((b) => remote.has(b)) ?? 'main';
