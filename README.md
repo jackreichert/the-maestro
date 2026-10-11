@@ -65,7 +65,7 @@ export VAULT_ROOT="/absolute/path/to/your/vault"
 node ~/.claude/skills/the-maestro/scripts/journal.ts status --project my-workspace
 ```
 
-The first `status` creates `$VAULT_ROOT/Projects/my-workspace/Journal/`. If it says the vault path is not set, the agent process did not inherit `VAULT_ROOT`: fix your shell profile or pass `--vault <path>` on that command.
+`status` only reads, so on a new vault it prints an empty ledger; the first entry you log (below) creates `$VAULT_ROOT/Projects/my-workspace/Journal/`. If it says the vault path is not set, the agent process did not inherit `VAULT_ROOT`: fix your shell profile or pass `--vault <path>` on that command.
 
 Then open an agent session **in the container directory** and ask it to orchestrate something small. If the skill does not load, the harness is not reading that skills directory: check the product's skill path and add another symlink.
 
