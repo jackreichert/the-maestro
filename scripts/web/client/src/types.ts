@@ -160,3 +160,13 @@ export interface EpicLine {
 
 /** `GET /api/epics`: each stream's open epics, and the epics no stream claims. */
 export interface EpicsData { streams: { stream: string; epics: EpicLine[] }[]; unfiled: EpicLine[] }
+
+/** One local branch waiting for a re-review before it is pushed, as `GET /api/local-review` sends it. `where` and the command are container-relative. */
+export interface LocalUnit {
+  id: string; repo: string; branch: string; head: string; ahead: number; at: string; subject: string;
+  where: string; checkedOut: boolean; base: string; command: string;
+  verdict: { state: 'ship-it' | 'needs-work' | 'stale' | 'none'; at?: string };
+}
+
+/** `GET /api/local-review`. `available: false` carries the reason, so "not read" never looks like "nothing waiting". */
+export interface LocalReview { generatedAt: string; available: boolean; reason?: string; units: LocalUnit[]; more: number; notes: string[] }

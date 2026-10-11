@@ -1,6 +1,6 @@
-import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
-import type { ChartsData, EpicsData, PodiumState, StreamHome } from './types.ts';
+import type { ChartsData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -68,6 +68,15 @@ export async function loadHome(stream: string): Promise<Loaded<StreamHome> | nul
 export async function loadEpics(): Promise<EpicsData | null> {
   try {
     return sanitizeEpics(await getJson('/api/epics'))?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The local review queue, or null when the server has none to give (sample data, an old server, an unusable body). */
+export async function loadLocalReview(): Promise<LocalReview | null> {
+  try {
+    return sanitizeLocalReview(await getJson('/api/local-review'))?.data ?? null;
   } catch {
     return null;
   }
