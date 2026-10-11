@@ -79,19 +79,21 @@ const unknown = args.filter((a) => a !== '--remote' && a !== '--keep');
 if (unknown.length) { console.error(`usage: fresh-install-smoke.ts [--remote] [--keep] (unknown: ${unknown.join(' ')})`); process.exit(2); }
 const remote = args.includes('--remote');
 const keep = args.includes('--keep');
-  const root = mkdtempSync(join(tmpdir(), 'maestro-smoke-'));
+  // Handlers go in before the temp dir exists, so no signal can arrive after the dir does and before they are armed.
+  let root = '';
+  // The outer `timeout` (or Ctrl-C) sends a signal: stop the running step and remove the temp dir before exiting.
+  const onSignal = (sig: NodeJS.Signals) => {
+    killRunning();
+    if (!keep && root) rmSync(root, { recursive: true, force: true });
+    process.exit(128 + (sig === 'SIGINT' ? 2 : sig === 'SIGHUP' ? 1 : 15));
+  };
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, onSignal);
+  root = mkdtempSync(join(tmpdir(), 'maestro-smoke-'));
   const home = join(root, 'home');
   const vault = join(root, 'vault');
   spawnSync('mkdir', ['-p', home, vault]);
   // Keep the caller's PATH (node, npm, git) but nothing that could leak an existing install or vault.
   const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR, LANG: 'C.UTF-8' };
-  // The outer `timeout` (or Ctrl-C) sends a signal: stop the running step and remove the temp dir before exiting.
-  const onSignal = (sig: NodeJS.Signals) => {
-    killRunning();
-    if (!keep) rmSync(root, { recursive: true, force: true });
-    process.exit(128 + (sig === 'SIGINT' ? 2 : sig === 'SIGHUP' ? 1 : 15));
-  };
-  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, onSignal);
   try {
     const block = rewrite(quickStartBlock(readFileSync(join(repo, 'README.md'), 'utf8')), remote ? null : repo, vault);
     await step('quick start', 'bash', ['-euo', 'pipefail', '-c', block], home, env);
