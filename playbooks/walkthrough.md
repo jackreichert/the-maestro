@@ -28,11 +28,12 @@ The steps file is zsh, sourced by the template. Per step id `X`:
 | `X_TITLE` | Short heading. |
 | `X_say()` | A function that prints what to do: the URL, where to click, which variable name to fill. |
 | `X_check()` | A function that returns 0 when the step worked. Command variables are functions, never strings. |
-| `X_NEEDS=(NAME ...)` | Optional. Environment variable names that must be set; checked by name only. |
+| `X_NEEDS=(NAME ...)` | Optional. Environment variable names that must be set; checked by name only. The walkthrough is its own process, so a variable the user exports in their shell after launching it is never seen: list only variables already exported before launch, and say so in the first step. |
 | `X_KIND` | `action` (default), `plan` or `apply`. |
 
 Rules for the file:
 
+- **Credentials created during the walkthrough** go in a durable place the check can see (the CLI's own login state, a credential file), and the check asks the CLI (as `login_check` does below), not `X_NEEDS`.
 - **Names only for secrets.** Say which variable to set, never a value. Look a credential up by name with `env-where NAME`; do not open the file it names.
 - **Plan before apply, with counts.** A `plan` step's check must print one line `PLAN add=N change=N destroy=N replace=N`. The template shows the counts, and stops the run if destroy or replace is above zero. An `apply` step is refused unless the step before it was a plan that passed, and one plan covers one apply.
 - **Print with `print -r --`**, never plain `print --`, in `X_say`. Without `-r`, zsh expands `\n` and `\t`, so a `sed` or `printf` command shown for pasting reaches the user changed. The template does the same for titles.
@@ -49,9 +50,8 @@ WALK_TITLE="Move the reports job to the new queue"
 WALK_STEPS=(login plan apply smoke)
 
 login_TITLE="Sign in to the cloud console"
-login_NEEDS=(CLOUD_API_TOKEN)
 login_say() {
-  print -r -- "  Open the console, create an API token, and export it as CLOUD_API_TOKEN."
+  print -r -- "  Open the console and run: cloud-cli login"
 }
 login_check() { cloud-cli whoami }
 
