@@ -2514,6 +2514,26 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
 });
 
+test('review-queue: answers by setting the exit code, never process.exit, so piped output is not cut (MAESTRO-162)', () => {
+    // process.exit drops what a pipe has not yet taken (a reader behind `| head` or a busy one); the fix is to let the process drain. A preload records any process.exit call.
+    const spy = join(mkdtempSync(join(tmpdir(), 'exit-spy-')), 'spy.mjs');
+    const log = `${spy}.log`;
+    writeFileSync(spy, `import { appendFileSync } from 'node:fs';\nconst real = process.exit.bind(process);\nprocess.exit = (c) => { appendFileSync(${JSON.stringify(log)}, \`exit \${c}\\n\`); real(c); };\n`);
+    const gate = (nodes: unknown[]) => {
+        const r = spawnSync(process.execPath, [SCRIPT, 'review-queue', '--cap', '2', '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd, env: { ...installGhStub({ pages: [nodes] }), NODE_OPTIONS: `--import ${spy}`, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const room = gate([prNode(1)]);
+    assert.equal(room.code, 0, room.err);
+    assert.match(room.out, /review queue: 1 of 2/);
+    const full = gate([prNode(1), prNode(2), prNode(3)]);
+    assert.equal(full.code, 1, 'a full queue still exits 1');
+    assert.match(full.out, /Queue full/);
+    assert.equal(existsSync(log) ? readFileSync(log, 'utf8') : '', '', 'no process.exit call on the answer path');
+});
+
 test('review-queue: PRs in a self_review_repos repo are not counted, and the answer says how many were left out', () => {
     const mine = (n: number, isDraft = false) => prNode(n, { isDraft, repository: { nameWithOwner: 'example-owner/tool' } });
     const stub = installGhStub({ pages: [[prNode(1), prNode(2), mine(3), mine(4), mine(5), mine(6, true)]] });
