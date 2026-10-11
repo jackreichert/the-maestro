@@ -868,7 +868,7 @@ test('handoff fills Session metrics from the newest session, and says so when th
     assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /unavailable \(no sessions in /);
     const turn = (id: string) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 1 } } });
     writeFileSync(join(projects, 'cccccccc-now.jsonl'), `${[1, 2, 3].map((n) => turn(`t${n}`)).join('\n')}\n`);
-    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* 3 turns · ctx 100k of ~200k \(50%\) · 100k read\/turn/);
+    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* cccccccc · 3 turns · ctx 100k of ~200k \(50%\) · 100k read\/turn/);
 });
 
 test('handoff --update-context points CONTEXT.md at the new handoff once, replacing an old link, and touches nothing else', () => {
