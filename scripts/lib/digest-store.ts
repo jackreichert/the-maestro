@@ -4,7 +4,7 @@
  * `<!-- seen: false -->`, flipped to `true` once something has shown the digest to a session.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 const UNSEEN = '<!-- seen: false -->';
 const SEEN = '<!-- seen: true -->';
@@ -79,4 +79,24 @@ export function claimDigests(dir: string, now: number = Date.now(), pid: number 
       rmSync(claim, { force: true });
     },
   }));
+}
+
+export const DIGEST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** The save time encoded in a digest file name (`2026-10-06T14-35-00-123Z[_001].md`), or null when it does not parse. */
+function savedAt(file: string): number | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/.exec(basename(file));
+  const t = m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Marks unseen digests older than `maxAgeMs` as seen, so an unread count cannot grow without bound; returns how many it expired. Claimed files are left to their claimer. */
+export function expireOld(dir: string, now: number = Date.now(), maxAgeMs: number = DIGEST_MAX_AGE_MS): number {
+  let n = 0;
+  for (const f of unseenDigests(dir)) {
+    const at = savedAt(f);
+    if (at === null || now - at <= maxAgeMs) continue;
+    try { writeAtomic(f, `${SEEN}\n${readFileSync(f, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '')}`); n += 1; } catch { /* leave it unseen; the next call retries */ }
+  }
+  return n;
 }

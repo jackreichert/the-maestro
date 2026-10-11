@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { digestBody, digestDir, claimDigests, saveDigest, unseenDigests } from './lib/digest-store.ts';
+import { digestBody, digestDir, claimDigests, expireOld, saveDigest, unseenDigests } from './lib/digest-store.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'digest-wait-test-'));
 const EVENT_LOOP = new URL('./event-loop.ts', import.meta.url).pathname;
@@ -89,4 +89,14 @@ test('a live claim is left alone until it is ten minutes old', () => {
   assert.equal(claimDigests(dir, t).length, 1);
   assert.equal(claimDigests(dir, t + 60000).length, 0);
   assert.equal(claimDigests(dir, t + 11 * 60000).length, 1);
+});
+
+test('expireOld marks unseen digests older than 24 h as seen and keeps newer ones', () => {
+  const dir = join(tempDir(), 'Digests');
+  const old = saveDigest(dir, 'ACTION old', NOON - 25 * 3600_000);
+  saveDigest(dir, 'ACTION fresh', NOON - 2 * 3600_000);
+  assert.equal(expireOld(dir, NOON), 1);
+  assert.deepEqual(unseenDigests(dir).map((f) => digestBody(f)), ['ACTION fresh']);
+  assert.equal(digestBody(old), 'ACTION old');
+  assert.equal(expireOld(dir, NOON), 0);
 });
