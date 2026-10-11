@@ -159,6 +159,20 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   });
 }
 
+/** The epics no stream claims (no rule decides, or two streams tie), counted the same way a stream's own are. A ticket with no children is not an epic and is left out. */
+export function unfiledEpics(inp: Omit<HomeInput, 'stream'>): EpicSummary[] {
+  if (!inp.vault) return [];
+  const forest = buildForest(inp.vault.tickets);
+  const links: LedgerLink[] = inp.ledger.filter((f) => f.stream && inp.streams.includes(f.stream)).map((f) => ({ stream: f.stream as string, ticket: f.ticket }));
+  const mapping = mapUnits(forest, inp.homes, inp.streams, links);
+  const facts = new Map<string, LedgerFact[]>();
+  for (const f of inp.ledger) facts.set(f.ticket, [...(facts.get(f.ticket) ?? []), f]);
+  const nested = new Set(mapping.units.filter((u) => forest.parentOf.has(u)));
+  const ctx: Ctx = { inp: { ...inp, stream: '' }, forest, facts, own: (id) => subtree(forest, id, nested), verifyRequired: (id) => forest.byId.get(id)?.labels.includes('verify-required') ?? false };
+  const ids = mapping.units.filter((u) => !mapping.claims.has(u) && forest.children(u).length > 0);
+  return ids.map((id) => epicSummary(ctx, id, [])).sort((a, b) => (newest(ctx, b.id) ?? '').localeCompare(newest(ctx, a.id) ?? '') || a.id.localeCompare(b.id));
+}
+
 interface Ctx { inp: HomeInput; forest: Forest; facts: Map<string, LedgerFact[]>; own: (id: string) => string[]; verifyRequired: (epic: string) => boolean }
 
 const prState = (inp: HomeInput): { fetchedAt: string | null; stale: boolean } => ({
@@ -226,6 +240,7 @@ function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
   const rows = open.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   const next = rows.find((o) => bucketOf(ctx, o) === 'inProgress') ?? rows.find((o) => bucketOf(ctx, o) === 'notStarted');
   const tree = new Set(below.map((b) => b.id));
+  const named = prsNaming(inp.prs, [id, key ?? '', ...open.flatMap((o) => [o.id, trackerKey(inp.page, o) ?? ''])]);
   return {
     id, title: clip(t.title, TITLE_MAX), note: noteRef(inp.page, t), ...(key ? { tracker: trackerRef(inp.page, key) } : {}), status: t.status,
     total: roll.total, closed: roll.closed, ...counts,
@@ -233,6 +248,7 @@ function epicSummary(ctx: Ctx, id: string, unknowns: Unknown[]): EpicSummary {
     points: pointed ? { done: roll.ptsDone, total: roll.ptsTotal, pointedOpen, open: open.length } : null,
     ...(next ? { next: row(ctx, next) } : {}),
     awaiting: [...tree, id].reduce((n, x) => n + (ctx.facts.get(x) ?? []).filter((f) => f.state === 'ask').length, 0),
+    prs: named.shown, ...(named.more ? { prsMore: named.more } : {}),
     docs: { groups: [], unattributedRecent: 0 }, brief: { state: 'missing' }, unknowns: 0, quietDays: quiet(daysSince(newest(ctx, id), inp.now)),
   };
 }
