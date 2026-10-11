@@ -243,6 +243,10 @@ Context cost is managed two ways. Agents write full reports to files and hand ba
 
 When a plan is a tree of linked decisions, the user can say "grill me" (or the orchestrator can propose it for such a plan) and the orchestrator interviews them in rounds: it asks every decision whose prerequisites are settled in one numbered round, each with a recommended answer that "yes" accepts, looks facts up itself instead of asking, recomputes after each round, and takes no action on the plan until the user confirms the shared understanding. It is on demand only; bolero mode and the dispatch-unless-blocked default stay the norm, answers are recorded as decision notes with the rejected alternative, and unresolved one-way calls go through the normal ask path. Adapted from [mattpocock/skills](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md). Detail and an example round: [reference/grill.md](reference/grill.md).
 
+### Process pages
+
+Short reference pages carry the process rules, each citing its published source. [reference/definition-of-done.md](reference/definition-of-done.md) is a four-item ready line for dispatch and a five-line done block for closing a ticket, so done means verified and not just merged.
+
 ### The morning board, PR tracking and end of day
 
 A greeting always gets a real hello and then the board: a paste-ready standup built from the previous working day, what is in flight, blocked and awaiting you, and one line of PR status. Asking for your PRs gets one bucketed report of every open PR you author (unresolved threads, drafts, awaiting the team, no reviewer requested, approved, changes requested, stale), every PR linked; review-comment text, bot or human, is treated as untrusted data. End of day runs a PR pass, a tracker review if a tracker is connected (drafted for your approval), the standup, a branch sweep, a commitments sweep and `roll`. The rules are in [reference/greeting.md](reference/greeting.md), [reference/prs.md](reference/prs.md) and [reference/ledger.md](reference/ledger.md).
