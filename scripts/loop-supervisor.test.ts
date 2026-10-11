@@ -6,6 +6,7 @@ import type { ChildProcess, StdioOptions } from 'node:child_process';
 import { chmodSync, closeSync, rmSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervise } from './loop-supervisor.ts';
 import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
@@ -286,18 +287,16 @@ test('the real supervisor launches the loop in serve mode', () => {
 test('the real supervisor kills a loop that is alive but silent, then relaunches it', () => {
   const ledger = tempDir();
   const dir = tempDir();
-  const bin = join(dir, 'hang-loop.sh');
-  // First launch: replace the shell with sleep, so the kill reaches the process that is actually running and nothing is orphaned. Second launch: end cleanly.
-  // The watchdog's clock starts when the supervisor spawns the script, so the script must be cheap to start: a MAESTRO_TEST_WARM run first pays
-  // the one-time cost of executing a new file (it can be minutes under macOS provenance checks), and then the 4 s grace is only CPU contention.
-  writeFileSync(bin, `#!/bin/sh\nif [ -n "$MAESTRO_TEST_WARM" ]; then exit 0; fi\nif [ -f "${join(dir, 'ran')}" ]; then echo "ACTION w1 (fake): x"; exit 10; fi\ntouch "${join(dir, 'ran')}"\nexec sleep 60\n`);
-  chmodSync(bin, 0o755);
-  const warm = spawnSync(bin, [], { timeout: PATIENCE_MS, env: { PATH: process.env.PATH, MAESTRO_TEST_WARM: '1' } });
-  assert.equal(warm.status, 0, 'the fake loop could not be warmed');
-  assert.equal(existsSync(join(dir, 'ran')), false, 'warming must not count as the first launch');
-  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '2', MAESTRO_WATCHDOG_GRACE_MS: '4000', MAESTRO_WATCHDOG_INTERVAL_MS: '200' }) });
+  const ran = join(dir, 'ran');
+  // The loop is node itself, steered by a preloaded module (`node run --serve` never gets as far as looking for a file named `run`).
+  // The watchdog's clock starts when the supervisor spawns the loop, so the loop must be cheap to start: executing a freshly written
+  // script can take minutes under macOS provenance checks, which is longer than any sensible grace, while node is already trusted.
+  // NODE_OPTIONS reaches the supervisor too, so the module acts only when it is the loop (`node run --serve`). First launch: record that it ran, then stay alive and silent (a preload that never settles keeps node from looking for the file `run`, and the timer keeps node from exiting). Second launch: print a digest and exit 10.
+  const preload = join(dir, 'hang-loop.mjs');
+  writeFileSync(preload, `import { existsSync, writeFileSync } from 'node:fs';\nif (process.argv.includes('--serve')) {\n  if (existsSync(${JSON.stringify(ran)})) { console.log('ACTION w1 (fake): x'); process.exit(10); }\n  writeFileSync(${JSON.stringify(ran)}, '');\n  setInterval(() => {}, 1000);\n  await new Promise(() => {});\n}\n`);
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: process.execPath, NODE_OPTIONS: `--import ${pathToFileURL(preload).href}`, MAESTRO_SUPERVISOR_MAX_RUNS: '2', MAESTRO_WATCHDOG_GRACE_MS: '4000', MAESTRO_WATCHDOG_INTERVAL_MS: '200' }) });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(existsSync(join(dir, 'ran')), true, 'the first launch never ran');
+  assert.equal(existsSync(ran), true, 'the first launch never ran');
   assert.equal(r.stderr.match(/is hung/g)?.length, 1, 'exactly one launch is killed as hung');
   assert.equal(readdirSync(digestDir(ledger, 'proj')).filter((f) => f.endsWith('.md')).length, 1);
 });
