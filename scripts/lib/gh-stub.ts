@@ -70,3 +70,21 @@ export function prNode(number: number, overrides: Record<string, unknown> = {}) 
 /** Splits nodes into pages of `size`, the way the search API serves them. */
 export const paged = <T>(nodes: T[], size = 50): T[][] =>
   Array.from({ length: Math.ceil(nodes.length / size) }, (_, i) => nodes.slice(i * size, (i + 1) * size));
+
+/**
+ * The same answers as the stub script, in-process: a `Run` for code that takes an injected gh caller.
+ * No child process, so it cannot stall when the machine is loaded.
+ */
+export function ghStubRun(config: GhStubConfig): (cmd: string, args: string[]) => { status: number | null; stdout: string; stderr: string } {
+  return (_cmd, args) => {
+    const cursor = args.find((a) => a.startsWith('after='));
+    const page = cursor ? Number(cursor.slice('after=p'.length)) : 0;
+    if (args[0] === 'api' && args[1] === 'user') return { status: 0, stdout: 'me\n', stderr: '' };
+    if (args[0] === 'api' && config.failOnPage === page) return { status: 1, stdout: '', stderr: 'HTTP 502: bad gateway\n' };
+    if (args[0] === 'api') {
+      const body = { data: { search: { pageInfo: { hasNextPage: page < config.pages.length - 1, endCursor: `p${page + 1}` }, nodes: config.pages[page] } } };
+      return { status: 0, stdout: `${JSON.stringify(body)}\n`, stderr: '' };
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  };
+}

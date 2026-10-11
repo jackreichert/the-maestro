@@ -113,17 +113,20 @@ export const realIo: RefreshIo = {
   snapshotAt: () => {
     try { return freshestSnapshotAt(LEDGER_ROOT || VAULT_ROOT); } catch { return 0; }
   },
-  refreshSnapshot: () => {
-    try {
-      if (!LEDGER_ROOT && !VAULT_ROOT) return 'no ledger root configured';
-      const path = currentPath(LEDGER_ROOT || VAULT_ROOT);
-      const snap = fetchLive(ghRun);
-      mkdirSync(dirname(path), { recursive: true });
-      writeAtomic(path, `${JSON.stringify(snap, null, 2)}\n`);
-      return undefined;
-    } catch (e) { return firstLine(e) || 'unknown error'; }
-  },
+  refreshSnapshot: () => refreshSnapshotWith(ghRun),
 };
+
+/** One search written to the current-state file; `run` is the gh caller, so a test can answer in-process instead of spawning. Returns the failure reason, never throws. */
+export function refreshSnapshotWith(run: Run): string | undefined {
+  try {
+    if (!LEDGER_ROOT && !VAULT_ROOT) return 'no ledger root configured';
+    const path = currentPath(LEDGER_ROOT || VAULT_ROOT);
+    const snap = fetchLive(run);
+    mkdirSync(dirname(path), { recursive: true });
+    writeAtomic(path, `${JSON.stringify(snap, null, 2)}\n`);
+    return undefined;
+  } catch (e) { return firstLine(e) || 'unknown error'; }
+}
 
 const ghRun: Run = (cmd, args) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: SNAPSHOT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
