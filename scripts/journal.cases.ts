@@ -2837,3 +2837,12 @@ test('prime fails loudly after a compaction whose handoff is missing or older th
     run('log', 'precompact incomplete: handoff: boom (trigger auto)', '--kind', 'note', ...MARK);
     assert.match(run('prime').out.split('\n')[0], /^!! precompact incomplete: handoff: boom/);
 });
+
+test('web needs no --project when the config names none: it falls back to the container project, as web.ts does', () => {
+    const r = spawnSync(process.execPath, [SCRIPT, 'web', '--port', '0', '--vault', vault, '--status-dir', join(vault, 'status')], {
+        encoding: 'utf8', cwd: emptyCwd, timeout: 4000,
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '', MAESTRO_PROJECT: '', MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off' },
+    });
+    assert.doesNotMatch(r.stderr, /Pass --project/);
+    assert.match(r.stdout, /Podium web: http:\/\/127\.0\.0\.1:\d+\//);
+});
