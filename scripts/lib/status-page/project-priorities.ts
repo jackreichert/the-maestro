@@ -156,6 +156,13 @@ export function writeProjectPriorities(vault: string, project: string, today: st
   return 'written';
 }
 
+/** The projects whose file for `day` was written by `priorities set`, by name. A folder that is not a plain project name is ignored. */
+export function projectsSetOn(vault: string, day: string): string[] {
+  const root = join(vault, 'Projects');
+  if (!existsSync(root)) return [];
+  return readdirSync(root).filter((name) => plainName(name) && readProjectFile(join(prioritiesDir(vault, name), `${day}.md`))?.writtenBy === 'priorities set');
+}
+
 /** Reads and parses a project file; null when it is missing or unreadable. */
 export function readProjectFile(path: string): ReturnType<typeof parseProjectFile> | null {
   try { return parseProjectFile(readFileSync(path, 'utf8')); } catch { return null; }

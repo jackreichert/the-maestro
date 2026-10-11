@@ -2489,6 +2489,22 @@ test('priorities set keeps the carried section roll wrote for the day and replac
     rmSync(root, { recursive: true, force: true });
 });
 
+test('priorities set again without a stream clears that project\'s Today and Next but keeps its carry-over', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    const dir = join(root, 'Projects', 'options-app', 'Status', 'priorities');
+    assert.equal(runIn('priorities', 'set', 'New thing | Maestro', 'Opt work | Options', '--date', '2030-01-02').code, 0);
+    writeFileSync(join(dir, '2030-01-02.md'), readFileSync(join(dir, '2030-01-02.md'), 'utf8').replace('carried-from: none', 'carried-from: 2030-01-01') + '\n## Carried from 2030-01-01\n- Old opt | Options · 0 done, 1 in flight, 0 queued, 0 blocked\n');
+    const again = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(again.code, 0, again.err);
+    assert.match(runIn('priorities', 'show', '--repo', 'options-app', '--date', '2030-01-02').out, /Priorities not set for today/);
+    const file = fileOf('options-app', '2030-01-02');
+    assert.doesNotMatch(file, /Opt work/);
+    assert.match(file, /^## Today\n- not set yet$/m);
+    assert.match(file, /^## Carried from 2030-01-01\n- Old opt \| Options · /m);
+    assert.match(fileOf('the-maestro', '2030-01-02'), /^## Today\n- New thing \| Maestro$/m);
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
     seedRegistry();
     const sd = join(vault, 'Status');

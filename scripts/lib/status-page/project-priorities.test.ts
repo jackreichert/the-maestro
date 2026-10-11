@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { carryPriorities, fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
+import { carryPriorities, fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, projectsSetOn, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
 import type { ProjectFile } from './project-priorities.ts';
 import type { Homes } from '../home/config.ts';
 import type { LedgerRow } from '../ledger-core.ts';
@@ -133,4 +133,13 @@ test('parseProjectFile returns who wrote the file and the carried items with the
   assert.equal(parsed.writtenBy, 'roll-maintenance');
   assert.deepEqual(parsed.carried, [{ item: { text: 'old', stream: 'TeamSelect' }, status: '1 done, 0 in flight, 0 queued, 0 blocked' }, { item: { text: 'a · b' }, status: '0 done, 1 in flight, 0 queued, 0 blocked' }]);
   assert.equal(parseProjectFile(renderProjectFile(file())).writtenBy, 'priorities set');
+});
+
+test('projectsSetOn lists the projects priorities set wrote for the day, not roll-written ones or other days', () => {
+  const v = vaultWith('a-proj', 'b-proj', 'c-proj');
+  writeProjectPriorities(v, 'a-proj', '2026-10-12', file({ project: 'a-proj' }));
+  writeProjectPriorities(v, 'b-proj', '2026-10-12', file({ project: 'b-proj', writtenBy: 'roll-maintenance' }));
+  writeProjectPriorities(v, 'c-proj', '2026-10-13', file({ project: 'c-proj', date: '2026-10-13' }));
+  assert.deepEqual(projectsSetOn(v, '2026-10-12'), ['a-proj']);
+  assert.deepEqual(projectsSetOn(join(v, 'nothing'), '2026-10-12'), []);
 });
