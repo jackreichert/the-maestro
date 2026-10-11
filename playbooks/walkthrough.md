@@ -35,6 +35,7 @@ Rules for the file:
 
 - **Names only for secrets.** Say which variable to set, never a value. Look a credential up by name with `env-where NAME`; do not open the file it names.
 - **Plan before apply, with counts.** A `plan` step's check must print one line `PLAN add=N change=N destroy=N replace=N`. The template shows the counts, and stops the run if destroy or replace is above zero. An `apply` step is refused unless the step before it was a plan that passed, and one plan covers one apply.
+- **Print with `print -r --`**, never plain `print --`, in `X_say`. Without `-r`, zsh expands `\n` and `\t`, so a `sed` or `printf` command shown for pasting reaches the user changed. The template does the same for titles.
 - **Zsh paste rules** for anything the user will copy from `X_say`: no inline `#` comments on a command line, command variables as functions, and one line per command.
 - **One focused task per step**, so the instructions fit on one screen.
 - Do not run the walkthrough yourself: it waits on a human. Check the file with `zsh -n <steps-file>` and trace that every value a later step needs is produced by an earlier one.
@@ -50,22 +51,22 @@ WALK_STEPS=(login plan apply smoke)
 login_TITLE="Sign in to the cloud console"
 login_NEEDS=(CLOUD_API_TOKEN)
 login_say() {
-  print -- "  Open the console, create an API token, and export it as CLOUD_API_TOKEN."
+  print -r -- "  Open the console, create an API token, and export it as CLOUD_API_TOKEN."
 }
 login_check() { cloud-cli whoami }
 
 plan_TITLE="Plan the queue change"
 plan_KIND=plan
-plan_say() { print -- "  The check runs the plan for you. Press Enter to start it." }
+plan_say() { print -r -- "  The check runs the plan for you. Press Enter to start it." }
 plan_check() { ./scripts/plan-queue.sh }
 
 apply_TITLE="Apply the queue change"
 apply_KIND=apply
-apply_say() { print -- "  Counts above are from the plan you just passed. Press Enter to apply." }
+apply_say() { print -r -- "  Counts above are from the plan you just passed. Press Enter to apply." }
 apply_check() { ./scripts/apply-queue.sh }
 
 smoke_TITLE="Confirm one job runs"
-smoke_say() { print -- "  Trigger one test job from the console." }
+smoke_say() { print -r -- "  Trigger one test job from the console." }
 smoke_check() { ./scripts/check-job.sh }
 ```
 

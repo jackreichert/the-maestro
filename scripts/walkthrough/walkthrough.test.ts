@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -146,4 +146,26 @@ test('bad usage and a malformed steps file exit 2', () => {
   const r = run('WALK_STEPS=(orphan)\n', '');
   assert.equal(r.code, 2);
   assert.match(r.out, /no orphan_say function/);
+});
+
+test('titles and say text keep backslashes literally (no escape expansion)', () => {
+  const steps = `
+WALK_TITLE='Fake C:\\new\\tmp'
+WALK_STEPS=(one)
+one_TITLE='C:\\new\\tmp'
+one_say() { print -r -- "  printf '%s\\n' done | sed 's/a\\tb/x/'"; }
+one_check() { return 0; }
+`;
+  const r = run(steps, ENTER);
+  assert.equal(r.code, 0, r.out);
+  assert.ok(r.out.includes('Fake C:\\new\\tmp (1 steps)'), r.out);
+  assert.ok(r.out.includes('Step 1 of 1: C:\\new\\tmp'), r.out);
+  assert.ok(r.out.includes("printf '%s\\n' done | sed 's/a\\tb/x/'"), r.out);
+});
+
+test('the playbook example prints say text with print -r', () => {
+  const md = readFileSync(new URL('../../playbooks/walkthrough.md', import.meta.url), 'utf8');
+  const example = md.split('## Example')[1] ?? '';
+  assert.ok(/_say\(\)/.test(example));
+  assert.ok(!/print --/.test(example), 'example uses print without -r');
 });

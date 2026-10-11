@@ -9,20 +9,20 @@ emulate -L zsh
 setopt no_unset pipe_fail
 
 die_usage() {
-  print -u2 -- "walkthrough: $1"
+  print -r -u2 -- "walkthrough: $1"
   exit 2
 }
 
 pause() {
   local reply
-  print -n -- "  Press Enter when done (q to stop): "
+  print -n -r -- "  Press Enter when done (q to stop): "
   if ! read -r reply; then
-    print -- ""
-    print -- "  Input ended. Stopping."
+    print -r -- ""
+    print -r -- "  Input ended. Stopping."
     exit 1
   fi
   if [[ $reply == q ]]; then
-    print -- "  Stopped by you."
+    print -r -- "  Stopped by you."
     exit 1
   fi
 }
@@ -34,9 +34,9 @@ check_needs() {
   local missing=0
   for name in $needs; do
     if [[ -n ${(P)name:-} ]]; then
-      print -- "  needs $name: set"
+      print -r -- "  needs $name: set"
     else
-      print -- "  needs $name: MISSING"
+      print -r -- "  needs $name: MISSING"
       missing=1
     fi
   done
@@ -57,9 +57,9 @@ parse_plan_line() {
 }
 
 fail_step() {
-  print -- "  FAIL: $1"
-  print -- ""
-  print -- "Stopped at step $2 of $3. Fix it and run the walkthrough again."
+  print -r -- "  FAIL: $1"
+  print -r -- ""
+  print -r -- "Stopped at step $2 of $3. Fix it and run the walkthrough again."
   exit 1
 }
 
@@ -69,15 +69,15 @@ run_step() {
   local kind=${(P)kind_var:-action}
   local title=${(P)title_var:-$id}
 
-  print -- ""
-  print -- "Step $n of $total: $title"
-  print -- ""
+  print -r -- ""
+  print -r -- "Step $n of $total: $title"
+  print -r -- ""
   "${id}_say"
-  print -- ""
+  print -r -- ""
 
   if [[ $kind == apply ]]; then
     [[ $LAST_PLAN_OK == 1 ]] || fail_step "apply step needs a passed plan step before it" $n $total
-    print -- "  Plan counts: add=$PLAN_ADD change=$PLAN_CHANGE destroy=$PLAN_DESTROY replace=$PLAN_REPLACE"
+    print -r -- "  Plan counts: add=$PLAN_ADD change=$PLAN_CHANGE destroy=$PLAN_DESTROY replace=$PLAN_REPLACE"
   fi
 
   pause
@@ -93,7 +93,7 @@ run_step() {
   if [[ $kind == plan ]]; then
     LAST_PLAN_OK=0
     parse_plan_line "$out" || fail_step "plan step printed no valid PLAN add=N change=N destroy=N replace=N line" $n $total
-    print -- "  Plan counts: add=$PLAN_ADD change=$PLAN_CHANGE destroy=$PLAN_DESTROY replace=$PLAN_REPLACE"
+    print -r -- "  Plan counts: add=$PLAN_ADD change=$PLAN_CHANGE destroy=$PLAN_DESTROY replace=$PLAN_REPLACE"
     if (( PLAN_DESTROY > 0 || PLAN_REPLACE > 0 )); then
       fail_step "plan destroys or replaces resources; do not apply" $n $total
     fi
@@ -102,7 +102,7 @@ run_step() {
     LAST_PLAN_OK=0
   fi
 
-  print -- "  PASS"
+  print -r -- "  PASS"
 }
 
 main() {
@@ -121,14 +121,14 @@ main() {
     (( $+functions[${id}_check] )) || die_usage "step $id has no ${id}_check function"
   done
 
-  print -- "${WALK_TITLE:-Walkthrough} (${#WALK_STEPS} steps)"
+  print -r -- "${WALK_TITLE:-Walkthrough} (${#WALK_STEPS} steps)"
   local n=0
   for id in $WALK_STEPS; do
     n=$(( n + 1 ))
     run_step $id $n ${#WALK_STEPS}
   done
-  print -- ""
-  print -- "All ${#WALK_STEPS} steps passed."
+  print -r -- ""
+  print -r -- "All ${#WALK_STEPS} steps passed."
 }
 
 main "$@"
