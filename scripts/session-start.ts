@@ -10,8 +10,9 @@
  * 2. Marks live watches of a standing type that lack the `renew` flag (see `repairStandingWatches`).
  * 3. Reports the status page's age (the mtime of The-Podium.md). A page older than 15 minutes means nothing is refreshing it.
  * 4. Reports `Podium web: down` when the footer link (`status_page_uri`, when it is an http loopback URL) does not answer a short local connect. Silent when the link is up or not an http URL.
- * 5. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop itself: a loop must be launched by the orchestrator with
- *    run_in_background (its exit wakes the orchestrator), and a detached child would exit unseen. With no loop it prints the exact command.
+ * 5. Reports the loop's heartbeat verdict (`Loop:`, silent when no loop is set up or required) and whether an event loop holds the lock. It never starts the loop: the launchd
+ *    supervisor is the only runner (an in-session `run` is refused while it is installed). It prints one command to run with run_in_background, `events wait`, which blocks until
+ *    an event for this window is in the inbox, so the session is woken by it. With no loop running it also says how the supervisor is restarted or installed.
  *
  * Exit 0 when nothing failed, 1 when a watch could not be registered (or the registry could not be read), 2 on a usage or configuration error (no status directory).
  */
@@ -29,6 +30,7 @@ import type { TypeRegistry } from './event-types/index.ts';
 import type { Watch } from './lib/types.ts';
 import { digestDir, drainDigests } from './lib/digest-store.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
+import { LABEL } from './lib/supervisor-state.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 /** The watches a session needs, keyed by the id used when one is missing. retro-due is here so the periodic retro review never depends on someone remembering to register it. */
@@ -47,9 +49,7 @@ export interface StartDeps {
   lockHolder: () => number | null;
   /** When the page was last written, or null when there is none. */
   pageWrittenAt: (statusDir: string) => number | null;
-  /** The command that starts the loop, ready to paste. */
-  loopCommand: string;
-  /** The command that waits for the supervisor's saved digests. */
+  /** The command that waits on the event inbox (`events wait`), ready to paste. The only command a session runs for the loop. */
   waitCommand: string;
   /** Marks live watches of a standing type that lack the flag; returns their ids. Absent where nothing repairs. */
   repairStanding?: () => string[];
@@ -110,8 +110,8 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   if (health) lines.push(health);
   const holder = deps.lockHolder();
   lines.push(holder === null
-    ? `Event loop: NOT RUNNING. Start it now with run_in_background: ${deps.loopCommand}`
-    : `Event loop: running (pid ${holder}). A loop this session did not start is the launchd supervisor's: wait on it with run_in_background: ${deps.waitCommand}`);
+    ? `Event loop: NOT RUNNING. No session starts it: the launchd supervisor is the only runner (restart: ${restartCommand()}; not installed yet: node scripts/install-loop-supervisor.ts). Events already in the inbox still reach you: wait on it with run_in_background: ${deps.waitCommand}`
+    : `Event loop: running (pid ${holder}), the launchd supervisor's. Wait on the inbox with run_in_background: ${deps.waitCommand}`);
   return { lines, failed };
 }
 
@@ -133,6 +133,9 @@ export function connects(url: string, timeoutMs = 1500): boolean {
   return r.status === 0;
 }
 
+/** The launchctl line that restarts the supervisor (printed, never run). */
+const restartCommand = (): string => `launchctl kickstart -k gui/${process.getuid?.() ?? 501}/${LABEL}`;
+
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
 
 /** The real world: `event-loop.ts add` for registration, the mtime of the page file, the lock file. */
@@ -151,8 +154,7 @@ export function realDeps(now: number = Date.now()): StartDeps {
     },
     lockHolder: () => lockHolder(EVENT_DIR),
     pageWrittenAt: (dir) => { const file = join(dir, PODIUM_FILE); return existsSync(file) ? statSync(file).mtimeMs : null; },
-    loopCommand: `node ${shq(loop)} run`,
-    waitCommand: `node ${shq(loop)} digest-wait`,
+    waitCommand: `node ${shq(loop)} events wait`,
     repairStanding: () => repairStandingWatches(EVENT_DIR, BUILTIN_TYPES, now),
     drainDigests: () => {
       if (!LEDGER_ROOT) return [];

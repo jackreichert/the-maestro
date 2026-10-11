@@ -27,24 +27,25 @@ function world(over: Partial<StartDeps> & { held?: Watch[] } = {}) {
   const added: string[] = [];
   const removed: string[] = [];
   const deps: StartDeps = {
-    now: NOW, tz: 'UTC', loopCommand: 'node loop run',
+    now: NOW, tz: 'UTC',
     watches: () => over.held ?? [],
     removeWatch: (id) => { removed.push(id); },
     addWatch: (id, type) => { added.push(`${id}:${type}`); return { ok: true, message: 'added' }; },
-    lockHolder: () => null, waitCommand: 'node loop digest-wait',
+    lockHolder: () => null, waitCommand: 'node loop events wait',
     pageWrittenAt: () => NOW - 4 * 60_000,
     ...over,
   };
   return { deps, added, removed };
 }
 
-test('a fresh session registers every needed watch, reports the page age and prints the loop command', () => {
+test('a fresh session registers every needed watch, reports the page age, and with no loop running says who runs it and prints the one wait command', () => {
   const w = world();
   const r = sessionStart('/s', w.deps);
   assert.deepEqual(w.added, ['status-watch:status-watch', 'status-refresh:status-refresh', 'retro-due:retro-due', 'whats-next:whats-next']);
   assert.equal(r.failed, false);
   assert.match(lineOf(r, 'Status page'), /Status page: updated 4 min ago \(2:56 PM UTC\)$/);
-  assert.match(lineOf(r, 'Event loop'), /NOT RUNNING.*run_in_background: node loop run$/);
+  assert.match(lineOf(r, 'Event loop'), /NOT RUNNING.*only runner.*launchctl kickstart -k gui\/\d+\/com\.jackreichert\.the-maestro-loop.*run_in_background: node loop events wait$/);
+  assert.equal(/node loop run\b/.test(r.lines.join('\n')), false, 'no session is told to start a loop');
 });
 
 test('live watches are left alone, whatever their id, and a loop holding the lock is reported', () => {
@@ -53,7 +54,8 @@ test('live watches are left alone, whatever their id, and a loop holding the loc
   assert.deepEqual(w.added, []);
   assert.deepEqual(w.removed, []);
   assert.match(r.lines[0], /already registered \(mine/);
-  assert.match(lineOf(r, 'Event loop'), /running \(pid 4242\).*supervisor.*node loop digest-wait$/);
+  assert.match(lineOf(r, 'Event loop'), /running \(pid 4242\).*supervisor.*node loop events wait$/);
+  assert.equal(/digest-wait/.test(r.lines.join('\n')), false);
 });
 
 test('an expired watch the loop has not retired yet is removed and registered again', () => {
