@@ -5,7 +5,8 @@
  *
  *   install-hooks.ts
  *
- * Both entries have a 10 s timeout, far above the hook's own run time, which is local reads only and fails open. There is no Stop hook.
+ * `print-settings-snippet.ts` now prints these two entries together with the roll hooks, so one paste covers everything; this
+ * command stays for the event hooks alone. Both entries have a 10 s timeout, far above the hook's own run time, which is local reads only and fails open. There is no Stop hook.
  */
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

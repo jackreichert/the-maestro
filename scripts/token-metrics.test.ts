@@ -224,11 +224,11 @@ test('emptyDirWarning and sessionStatus say when the folder was only guessed fro
     const empty = mkdtempSync(join(tmpdir(), 'tm-empty-'));
     assert.match(emptyDirWarning(empty, true), /Neither is set.*guess.*working directory/);
     assert.doesNotMatch(emptyDirWarning(empty, false), /guess/);
-    assert.deepEqual(sessionStatus(empty, 180, 350000, 85, 90, true), {
+    assert.deepEqual(sessionStatus(empty, 200000, undefined, 85, 90, true), {
         available: false,
         unavailable: `no sessions in ${empty}; set projects_dir or container_root (this folder was guessed from the working directory)`,
     });
-    assert.deepEqual(sessionStatus(empty, 180, 350000, 85, 90, false), { available: false, unavailable: `no sessions in ${empty}; set projects_dir` });
+    assert.deepEqual(sessionStatus(empty, 200000, undefined, 85, 90, false), { available: false, unavailable: `no sessions in ${empty}; set projects_dir` });
 });
 
 // The default folder when run from a directory other than the container: no flags, a throwaway HOME, a clean environment.
@@ -260,65 +260,51 @@ test('CLI from another directory: with nothing set it warns that the folder was 
     assert.match(r.err, /Neither is set, so this folder is only a guess from the current working directory/);
 });
 
-test('sessionLine reports the newest session against the thresholds', () => {
+const turnAt = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
+
+test('sessionLine reports the newest session\'s context against the autocompact trigger', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
     assert.match(sessionLine(dir), /^\*\*Session:\*\* unavailable/);
-    const u = (read: number) => ({ input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 });
-    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: u(read) } });
-    writeFileSync(join(dir, 's2.jsonl'), `${line('a', 100000)}\n${line('a', 100000)}\n${line('b', 300000)}\n`);
-    assert.equal(sessionLine(dir, 4, 350000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn');
-    assert.equal(sessionLine(dir, 2, 350000), '**Session:** 2 turns (100% of 2 roll) · 200k read/turn · roll now');
-    assert.equal(sessionLine(dir, 4, 200000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn · roll now');
+    writeFileSync(join(dir, 's2.jsonl'), `${turnAt('a', 100000)}\n${turnAt('a', 100000)}\n${turnAt('b', 300000)}\n`);
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.equal(sessionLine(dir, 400_000), '**Session:** 2 turns · ctx 300k of ~400k (75%) · 200k read/turn · roll soon');
+    assert.equal(sessionLine(dir, 330_000), '**Session:** 2 turns · ctx 300k of ~330k (90%) · 200k read/turn · roll now');
 });
 
 test('sessionStatus gives the numbers sessionLine prints', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
     assert.deepEqual(sessionStatus(dir), { available: false, unavailable: `no sessions in ${dir}; set projects_dir` });
-    const u = (read: number) => ({ input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 });
-    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: u(read) } });
-    writeFileSync(join(dir, 's2.jsonl'), `${line('a', 100000)}\n${line('b', 300000)}\n`);
-    assert.deepEqual(sessionStatus(dir, 4, 350000), { available: true, turns: 2, pct: 50, rollTurns: 4, readK: 200, advice: '' });
-    assert.deepEqual(sessionStatus(dir, 2, 350000), { available: true, turns: 2, pct: 100, rollTurns: 2, readK: 200, advice: 'roll now' });
+    writeFileSync(join(dir, 's2.jsonl'), `${turnAt('a', 100000)}\n${turnAt('b', 300000)}\n`);
+    assert.deepEqual(sessionStatus(dir, 1_000_000), { available: true, turns: 2, ctxK: 300, triggerK: 1000, pct: 30, readK: 200, advice: '' });
+    assert.deepEqual(sessionStatus(dir, 150_000), { available: true, turns: 2, ctxK: 300, triggerK: 150, pct: 200, readK: 200, advice: 'roll now' });
 });
 
-test('sessionLine counts turns and read/turn since the last compact, not the whole transcript', () => {
+test('sessionLine measures the turns since the last compact, and a compaction resets the context', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-compact-'));
-    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
     const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
-    writeFileSync(join(dir, 's.jsonl'), `${[line('a', 900000), line('b', 900000), line('c', 900000), boundary, line('d', 100000), line('e', 300000)].join('\n')}\n`);
-    assert.equal(sessionLine(dir, 4, 350000), '**Session:** 2 turns (50% of 4 roll) · 200k read/turn');
+    writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
 });
 
-test('sessionLine grades the advice: roll soon from the warn percent, roll now from the roll percent, either metric', () => {
+test('sessionLine grades the advice on the last turn\'s context: roll soon from the warn percent, roll now from the roll percent', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-grade-'));
-    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
-    const turnsLine = (turns: number, read: number, rollTurns: number, rollRead: number, warn: number | undefined = 85, at?: number) => {
-        writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: turns }, (_, i) => line(`m${i}`, read)).join('\n')}\n`);
-        return sessionLine(dir, rollTurns, rollRead, warn, at).replace(/^.* read\/turn/, '');
+    // One turn whose context is exactly `ctx` (1 fresh token plus the cache read); the trigger is 100000, so ctx is the percent in thousands.
+    const at = (ctx: number, warn: number | undefined = 85, roll?: number) => {
+        writeFileSync(join(dir, 's.jsonl'), `${turnAt('m', ctx - 1)}\n`);
+        return sessionLine(dir, 100_000, undefined, warn, roll).replace(/^.* read\/turn/, '');
     };
-    // Turns metric, roll_turns 100 and a read cap far out of reach: boundaries 84/85/89/90/100 and past it.
-    for (const [turns, want] of [[84, ''], [85, ' · roll soon'], [89, ' · roll soon'], [90, ' · roll now'], [100, ' · roll now'], [120, ' · roll now']] as const) {
-        assert.equal(turnsLine(turns, 1, 100, 1e9), want, `${turns} of 100 turns`);
+    for (const [ctx, want] of [[84_999, ''], [85_000, ' · roll soon'], [89_999, ' · roll soon'], [90_000, ' · roll now'], [100_000, ' · roll now'], [120_000, ' · roll now']] as const) {
+        assert.equal(at(ctx), want, `${ctx} of 100000`);
     }
-    // Read metric, roll_read 1000 and a turn cap far out of reach.
-    for (const [read, want] of [[840, ''], [850, ' · roll soon'], [899, ' · roll soon'], [900, ' · roll now'], [1000, ' · roll now']] as const) {
-        assert.equal(turnsLine(2, read, 1e6, 1000), want, `${read} of 1000 read/turn`);
-    }
-    assert.equal(turnsLine(153, 1, 180, 1e9), ' · roll soon', '85% of the default 180 is exactly 153 turns');
-    assert.equal(turnsLine(152, 1, 180, 1e9), '');
-    assert.equal(turnsLine(162, 1, 180, 1e9), ' · roll now', '90% of 180 is 162');
-    // The shipped default warns at 60%: 108 of 180 turns.
-    turnsLine(107, 1, 180, 1e9);
-    assert.doesNotMatch(sessionLine(dir, 180, 1e9), /roll soon/, '107 of 180 is under 60%');
-    turnsLine(108, 1, 180, 1e9);
-    assert.match(sessionLine(dir, 180, 1e9), /roll soon$/, '108 of 180 is exactly 60%');
-    // Either metric trips it; the stronger level wins.
-    assert.equal(turnsLine(95, 860, 100, 1000), ' · roll now', 'turns at roll level beats read at warn level');
-    assert.equal(turnsLine(86, 950, 100, 1000), ' · roll now', 'read at roll level beats turns at warn level');
-    // Custom percents; the displayed percent stays the share of the full roll_turns.
-    assert.equal(turnsLine(50, 1, 100, 1e9, 50, 60), ' · roll soon');
-    assert.equal(turnsLine(60, 1, 100, 1e9, 50, 60), ' · roll now');
-    assert.match(sessionLine(dir, 100, 1e9, 50, 60), /^\*\*Session:\*\* 60 turns \(60% of 100 roll\)/);
+    // The shipped default warns at 60%.
+    writeFileSync(join(dir, 's.jsonl'), `${turnAt('m', 59_998)}\n`);
+    assert.doesNotMatch(sessionLine(dir, 100_000), /roll soon/, '59999 of 100000 is under 60%');
+    writeFileSync(join(dir, 's.jsonl'), `${turnAt('m', 59_999)}\n`);
+    assert.match(sessionLine(dir, 100_000), /roll soon$/, '60000 of 100000 is exactly 60%');
+    // Custom percents.
+    assert.equal(at(50_000, 50, 60), ' · roll soon');
+    assert.equal(at(60_000, 50, 60), ' · roll now');
+    assert.match(sessionLine(dir, 100_000, undefined, 50, 60), /\(60%\)/);
 });
 
 test('sessionLine degrades to unavailable instead of throwing when the directory cannot be read', () => {
@@ -329,11 +315,10 @@ test('sessionLine degrades to unavailable instead of throwing when the directory
 
 test('sessionLine truncates so the rendered numbers never claim a threshold the roll decision has not reached', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-trunc-'));
-    const line = (id: string, read: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: read, output_tokens: 1 } } });
-    writeFileSync(join(dir, 's.jsonl'), `${line('a', 349500)}\n`);
-    assert.equal(sessionLine(dir, 1000, 350000, 100, 100), '**Session:** 1 turns (0% of 1000 roll) · 349k read/turn');
-    writeFileSync(join(dir, 's.jsonl'), `${Array.from({ length: 399 }, (_, i) => line(`m${i}`, 1)).join('\n')}\n`);
-    assert.match(sessionLine(dir, 400, 350000, 100, 100), /\(99% of 400 roll\)(?! · roll now)/);
+    writeFileSync(join(dir, 's.jsonl'), `${turnAt('a', 349500)}\n`);
+    assert.equal(sessionLine(dir, 1_000_000, undefined, 100, 100), '**Session:** 1 turns · ctx 349k of ~1000k (34%) · 349k read/turn');
+    writeFileSync(join(dir, 's.jsonl'), `${turnAt('a', 198_999)}\n`);
+    assert.match(sessionLine(dir, 200_000, undefined, 100, 100), /\(99%\)(?! · roll now)/);
 });
 
 // A table row as toRow writes it: 22 cells, with the cost columns filled from the arguments.
@@ -532,10 +517,10 @@ test('sessionStatus with a session id reads that transcript, not the newest, and
     writeFileSync(join(dir, 'aaaa1111-mine.jsonl'), `${line('a', 100000)}\n${line('b', 100000)}\n`);
     writeFileSync(join(dir, 'bbbb2222-other.jsonl'), `${line('c', 300000)}\n`);
     utimesSync(join(dir, 'aaaa1111-mine.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
-    assert.deepEqual(sessionStatus(dir, 4, 350000), { available: true, turns: 1, pct: 25, rollTurns: 4, readK: 300, advice: 'roll soon' }, 'newest by mtime is the other window');
-    assert.deepEqual(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'aaaa1111-mine'), { available: true, turns: 2, pct: 50, rollTurns: 4, readK: 100, advice: '' });
-    assert.equal(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'aaaa1111').available, true, 'a unique prefix names it');
-    assert.deepEqual(sessionStatus(dir, 4, 350000, undefined, undefined, false, 'nope'), { available: false, unavailable: `no session "nope" in ${dir}` });
+    assert.deepEqual(sessionStatus(dir, 400_000), { available: true, turns: 1, ctxK: 300, triggerK: 400, pct: 75, readK: 300, advice: 'roll soon' }, 'newest by mtime is the other window');
+    assert.deepEqual(sessionStatus(dir, 400_000, undefined, undefined, undefined, false, 'aaaa1111-mine'), { available: true, turns: 2, ctxK: 100, triggerK: 400, pct: 25, readK: 100, advice: '' });
+    assert.equal(sessionStatus(dir, 400_000, undefined, undefined, undefined, false, 'aaaa1111').available, true, 'a unique prefix names it');
+    assert.deepEqual(sessionStatus(dir, 400_000, undefined, undefined, undefined, false, 'nope'), { available: false, unavailable: `no session "nope" in ${dir}` });
     assert.equal(sessionFileById(dir, '../x'), null);
     writeFileSync(join(dir, 'aaaa1111-twin.jsonl'), `${line('d', 1)}\n`);
     assert.equal(sessionFileById(dir, 'aaaa1111'), null, 'an ambiguous prefix names nothing');

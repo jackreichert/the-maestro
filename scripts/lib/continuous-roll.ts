@@ -211,6 +211,52 @@ export function handoffFresh(rows: LedgerRow[], handoff: { name: string; at: str
     return { fresh: false, behindMs: Math.max(0, Date.parse(lastRowTs) - Date.parse(handoff.at)) || 0, lastRowTs };
 }
 
+/** Written by PreCompact when compactions come too close together; the prefix deliberately is not `precompact`, so it is never mistaken for a hook result row. */
+export const COMPACTION_THRASH = 'compaction thrash';
+/** Two compactions closer than this, or with less context growth between them than THRASH_MIN_GROWTH, count as thrash. */
+export const THRASH_MIN_INTERVAL_MS = 10 * 60_000;
+export const THRASH_MIN_GROWTH = 20_000;
+
+/** The compactions in a transcript, from `compact_boundary` rows: timestamp and the token counts the harness recorded (numbers only, no other field is read). */
+export function compactions(transcript: string): { ts: string; pre: number; post: number }[] {
+    const out: { ts: string; pre: number; post: number }[] = [];
+    for (const line of transcript.split('\n')) {
+        if (!line.includes('compact_boundary')) continue;
+        let row: { type?: string; subtype?: string; timestamp?: string; compactMetadata?: { preTokens?: unknown; postTokens?: unknown } };
+        try { row = JSON.parse(line); } catch { continue; }
+        if (row.type !== 'system' || row.subtype !== 'compact_boundary' || !row.timestamp) continue;
+        const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        out.push({ ts: row.timestamp, pre: n(row.compactMetadata?.preTokens), post: n(row.compactMetadata?.postTokens) });
+    }
+    return out;
+}
+
+/** The context of the last assistant turn: input, cache-write and cache-read tokens (the sum token-metrics counts as growth); 0 with none. */
+export function lastContext(transcript: string): number {
+    const lines = transcript.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].includes('"usage"')) continue;
+        let row: { type?: string; message?: { usage?: Record<string, unknown> } };
+        try { row = JSON.parse(lines[i]); } catch { continue; }
+        const u = row.message?.usage;
+        if (row.type !== 'assistant' || !u) continue;
+        const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        return n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens);
+    }
+    return 0;
+}
+
+/** Whether the compaction happening now (at `nowMs`) follows the newest earlier one too closely or with too little growth. No earlier compaction is no thrash. `recent` counts boundaries in the last 10 minutes plus this one. */
+export function thrash(transcript: string, nowMs: number): { thrash: boolean; recent: number; sinceMs: number; growth: number } {
+    const all = compactions(transcript);
+    const last = all.at(-1);
+    if (!last) return { thrash: false, recent: 1, sinceMs: Infinity, growth: Infinity };
+    const sinceMs = Math.max(0, nowMs - Date.parse(last.ts));
+    const growth = Math.max(0, lastContext(transcript) - last.post);
+    const recent = all.filter((c) => nowMs - Date.parse(c.ts) < THRASH_MIN_INTERVAL_MS).length + 1;
+    return { thrash: sinceMs < THRASH_MIN_INTERVAL_MS || growth < THRASH_MIN_GROWTH, recent, sinceMs, growth };
+}
+
 const REMEDY = '`journal.ts handoff --all --delta` (or `--force --out <file>` once the day\'s suffixes are used up)';
 const ACK = `journal.ts log "${PRECOMPACT_ACK}" --kind note --model <name> --used tool:journal.ts`;
 
@@ -229,6 +275,17 @@ const tagOf = (r: LedgerRow): string => (r.text ?? '').match(/session ([\w-]+)\)
  * "started" row, so rows other writers add while the hook runs are not counted), the handoff missed work and the line says so.
  */
 export function continuityLines(rows: LedgerRow[], handoff: { name: string; at: string } | null): string[] {
+    return [...thrashLines(rows), ...markerLines(rows, handoff)];
+}
+
+/** The newest thrash row with no later ack: one loud line pointing at the setting. */
+function thrashLines(rows: LedgerRow[]): string[] {
+    const t = rows.findLastIndex((r) => r.kind === 'note' && starts(r, COMPACTION_THRASH));
+    if (t < 0 || rows.slice(t + 1).some((r) => starts(r, PRECOMPACT_ACK))) return [];
+    return [`!! ${clip(rows[t].text ?? '', 260)} (${rows[t].ts}). Check CLAUDE_AUTOCOMPACT_PCT_OVERRIDE with \`print-settings-snippet.ts\`, then dismiss with \`${ACK}\`.`];
+}
+
+function markerLines(rows: LedgerRow[], handoff: { name: string; at: string } | null): string[] {
     const k = rows.findLastIndex(isMark);
     if (k < 0) return [];
     const mark = rows[k];

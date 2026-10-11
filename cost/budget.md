@@ -89,9 +89,11 @@ Measured across all sessions to 2026-09-25 (`token-metrics.ts --curve`): average
 turn is about 160k in a session's first 100 turns, 350k in turns 100–199, and 500k+ from turn 200.
 
 **Roll to a fresh session** at end of day, or earlier once the Session line says so. `token-metrics.ts`
-and `journal.ts status --footer` measure two things against two limits: turns against `roll_turns`
-(default 180) and mean cache-read per turn against `roll_read_per_turn` (default 350000). Either one
-reaching a percentage of its limit trips the level: **`roll soon` at `roll_warn_pct` (default 60)**
+and `journal.ts status --footer` measure the last turn's context against the autocompact trigger (the
+live `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, else the native ~967k; `scripts/lib/autocompact.ts`), so the
+levels fire before the compaction. The old `roll_turns` and `roll_read_per_turn` limits are retired: with
+the trigger at 200k a session compacts at about 80 to 110 turns, so 180 turns never fired. Reaching a
+percentage of the trigger trips the level: **`roll soon` at `roll_warn_pct` (default 60)**
 and **`roll now` at `roll_at_pct` (default 90)**. You cannot start the fresh session yourself;
 only Jack can compact or open one.
 
