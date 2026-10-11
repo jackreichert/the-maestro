@@ -245,7 +245,7 @@ When a plan is a tree of linked decisions, the user can say "grill me" (or the o
 
 ### Process pages
 
-Short reference pages carry the process rules, each citing its published source. [reference/definition-of-done.md](reference/definition-of-done.md) is a four-item ready line for dispatch and a five-line done block for closing a ticket, so done means verified and not just merged.
+Short reference pages carry the process rules, each citing its published source. [reference/definition-of-done.md](reference/definition-of-done.md) is a four-item ready line for dispatch and a five-line done block for closing a ticket, so done means verified and not just merged. [reference/raid.md](reference/raid.md) is one page per hard deadline with four tables (risks, assumptions, issues, dependencies), reviewed weekly in under ten minutes.
 
 ### The morning board, PR tracking and end of day
 

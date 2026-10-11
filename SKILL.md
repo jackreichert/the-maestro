@@ -135,6 +135,7 @@ Each row names the one file to read, or says not to read further. Read only what
 | "the Podium", the status page, "what's on the page", an `> answer:` or tick the user left on it, the `Podium:` footer link | Read [podium/SKILL.md](podium/SKILL.md). |
 | "bolero", "keep looping until the queue is done", "work the queue", "loop until done" | Read [bolero/SKILL.md](bolero/SKILL.md): scout the queue, work it in lanes, merge locally to test, stop only when blocked. |
 | Writing a brief for work that will close a ticket, or closing one | Read [reference/definition-of-done.md](reference/definition-of-done.md): the four-item ready line before dispatch, the five-line done block before close. |
+| A hard external date drives several streams, or its risks are scattered | Read [reference/raid.md](reference/raid.md): one page per deadline with risks, assumptions, issues and dependencies. |
 | "grill me", or a decision that forks into dependent choices | Read [reference/grill.md](reference/grill.md): on demand only; ask the ready decisions in one numbered round with recommendations, look facts up yourself, take no action until the user confirms. |
 | `git`, `pr`, "commit this", "push", "open a PR" | Read [reference/git.md](reference/git.md) in full before any git write. This is the safety gate. |
 | "PRs", "my PRs", "PR status", "open PRs" | Read [reference/prs.md](reference/prs.md): run the query, report the full bucketed board, links mandatory. |
