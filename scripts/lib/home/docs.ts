@@ -50,7 +50,8 @@ function ticketIds(raw: string | undefined): string[] {
 }
 
 /** A document's header: title (frontmatter `title`, else its first `# ` heading, else the file name), status, the first date of `updated`, `last-updated`, `date`, `created`, the tickets it names and its kind. */
-export function docHeader(head: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean; stream?: string } {
+export function docHeader(rawHead: string, fileName: string, folder: DocFolder = 'Plans'): { title: string; status?: string; updated?: string; kind: DocKind; tickets: string[]; projectLevel: boolean; stream?: string } {
+  const head = rawHead.replace(/\r\n?/g, '\n');
   const fm = head.match(/^---\n([\s\S]*?)\n---\n?/);
   /** The value of a key; a key with no value on its line takes the `- item` lines right under it as a list. */
   const raw = (k: string): string | undefined => {
