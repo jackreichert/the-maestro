@@ -65,7 +65,8 @@ const DEFAULT_BUDGET_TOKENS = 10_000;
 function readProjects(vault: string, statusDir: string, rows: ReturnType<typeof parseLedger>, registry: RegistryLookup | null): ProjectEntry[] {
   if (!vault) return [];
   try {
-    const homes = readHomes(statusDir, Object.keys(registry?.streams ?? {}));
+    const known = [...new Set([...Object.keys(registry?.streams ?? {}), ...rows.flatMap((r) => (typeof r.stream === 'string' && r.stream ? [r.stream] : []))])];
+    const homes = readHomes(statusDir, known);
     return activeProjects({ vault, rows, registry, homes, repoStreams: STATUS_REPO_STREAMS, containerProject: CONTAINER_PROJECT });
   } catch { return []; }
 }

@@ -104,13 +104,20 @@ test('CLI: generate prints the page, check passes on a fixture and fails (exit 1
     mkdirSync(join(lib, 'Projects', 'alpha', 'Runbooks'), { recursive: true });
     writeFileSync(join(lib, 'Projects', 'alpha', 'Runbooks', 'ship-alpha.md'), '---\ntype: library\nkind: runbook\nstream: Alpha\nstatus: current\nverified-at: 2026-10-09\n---\nbody\n');
     writeFileSync(join(lib, 'Projects', 'alpha', 'Runbooks', 'plain.md'), '---\ntype: note\nstream: Alpha\n---\n');
-    assert.deepEqual(readLibrary(lib).map((p) => p.path), [join('Projects', 'alpha', 'Runbooks', 'ship-alpha.md')]);
+    mkdirSync(join(lib, 'Projects', 'beta', 'Knowledge'), { recursive: true });
+    writeFileSync(join(lib, 'Projects', 'beta', 'Knowledge', 'rollout.md'), '---\ntype: library\nkind: how-it-works\nstream: Beta\nstatus: current\nverified-at: 2026-10-08\n---\nbody\n');
+    mkdirSync(join(lib, 'Projects', 'proj-a'), { recursive: true });
+    const status = join(dir, 'status');
+    mkdirSync(status, { recursive: true });
+    writeFileSync(join(status, 'stream-homes.json'), JSON.stringify({ version: 1, streams: { Alpha: { projects: ['proj-a'] }, Beta: { projects: ['proj-a'] } } }));
+    writeProjectPriorities(lib, 'proj-a', '2026-10-09', { project: 'proj-a', date: '2026-10-09', carriedFrom: '', writtenBy: 'priorities set', today: [{ text: 'x' }], carried: [], next: [] });
+    assert.deepEqual(readLibrary(lib).map((p) => p.path), [join('Projects', 'alpha', 'Runbooks', 'ship-alpha.md'), join('Projects', 'beta', 'Knowledge', 'rollout.md')]);
     const log = console.log; const err = console.error; const out: string[] = [];
     console.log = (...a: unknown[]) => { out.push(a.join(' ')); }; console.error = () => {};
     try {
-      assert.equal(main(['check', '--ledger', ledger, '--library', lib], NOW), 0);
+      assert.equal(main(['check', '--ledger', ledger, '--library', lib, '--status-dir', status], NOW), 0);
       assert.match(out.join('\n'), /`aaa1`/);
-      assert.equal(main(['check', '--ledger', ledger, '--library', lib, '--max', '300'], NOW), 1);
+      assert.equal(main(['check', '--ledger', ledger, '--library', lib, '--status-dir', status, '--max', '300'], NOW), 1);
       assert.equal(main(['check', '--ledger', join(dir, 'nope.jsonl')], NOW), 2);
       assert.equal(main(['bogus'], NOW), 2);
     } finally { console.log = log; console.error = err; }
@@ -267,7 +274,22 @@ test('--budget makes check fail when the page is over it, and generate honours i
     assert.equal(main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--status-dir', join(dir, 'status'), '--budget', '10'], NOW), 1);
     assert.match(errs.join('\n'), /PROBLEM: page is about \d+ tokens, over the budget of 10/);
     errs.length = 0;
-    assert.equal(main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--status-dir', join(dir, 'status')], NOW), 0);
+    main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--status-dir', join(dir, 'status')], NOW);
+    assert.doesNotMatch(errs.join('\n'), /over the budget/, 'the default budget is far above this page');
     assert.equal(main(['check', '--ledger', ledger, '--budget', '0'], NOW), 2);
   } finally { console.log = log; console.error = err; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('check fails for an active stream with no carry-over or no how-to, passes once both exist, and a Monday counts Friday', () => {
+  const rows: LedgerRow[] = [row({ id: 'k1', kind: 'wip', stream: 'Alpha', text: 'work' })];
+  const entry = (date: string | null) => ({ project: 'proj-a', streams: ['Alpha'], contextPath: 'Projects/proj-a/CONTEXT.md', now: ['n'], next: ['x'], priorities: date ? { date, path: `Projects/proj-a/Status/priorities/${date}.md`, today: 1, carried: 0 } : null, previous: null });
+  const page = (projects: ReturnType<typeof entry>[], library: LibraryEntry[], today: string) => coldStartCheck({ rows, registry: null, library, now: NOW, projects, today });
+  const bare = page([entry(null)], [], '2026-10-12');
+  assert.equal(bare.ok, false);
+  assert.deepEqual(bare.problems, ['stream Alpha: no carry-over (a priorities file dated 2026-10-09 or later in one of its projects)', 'stream Alpha: no how-to (no current library page)']);
+  assert.equal(page([entry('2026-10-09')], [LIB[0] as LibraryEntry], '2026-10-12').ok, true, 'on a Monday, Friday counts');
+  assert.equal(page([entry('2026-10-08')], [LIB[0] as LibraryEntry], '2026-10-12').ok, false, 'Thursday is too old for a Monday');
+  assert.equal(page([entry('2026-10-11')], [LIB[0] as LibraryEntry], '2026-10-12').ok, true, 'yesterday counts');
+  assert.equal(page([entry('2026-10-08')], [LIB[0] as LibraryEntry], '2026-10-09').ok, true, 'on a Friday, Thursday counts');
+  assert.equal(coldStartCheck({ rows, registry: null, library: [], now: NOW }).ok, true, 'without projects the stream checks are skipped');
 });

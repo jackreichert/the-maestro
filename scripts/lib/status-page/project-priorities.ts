@@ -209,7 +209,6 @@ export function carryPriorities(input: CarryInput): { written: string[]; problem
 }
 
 const MAX_CONTEXT_BYTES = 256 * 1024;
-export const PROJECTS_MAX = 5;
 
 /** The first `max` non-blank lines under `## <heading>` (to the next `## `), as written; null when the heading is missing. */
 export function sectionLines(text: string, heading: string, max = 3): string[] | null {
@@ -246,7 +245,7 @@ export function readProjectEntry(vault: string, project: string, streams: string
   };
 }
 
-/** The projects of the streams with something open, at most PROJECTS_MAX by open count (then name), each read with `readProjectEntry`. */
+/** The projects of the streams with something open, most open first (then by name), each read with `readProjectEntry`. The page shows the first few. */
 export function activeProjects(input: Omit<CarryInput, 'today' | 'container'>): ProjectEntry[] {
   const { vault, rows, registry, homes, repoStreams, containerProject } = input;
   const f = fold(rows, registry);
@@ -261,6 +260,6 @@ export function activeProjects(input: Omit<CarryInput, 'today' | 'container'>): 
       perProject.set(project, entry);
     }
   }
-  return [...perProject.entries()].sort((a, b) => b[1].open - a[1].open || a[0].localeCompare(b[0])).slice(0, PROJECTS_MAX)
+  return [...perProject.entries()].sort((a, b) => b[1].open - a[1].open || a[0].localeCompare(b[0]))
     .map(([project, e]) => readProjectEntry(vault, project, e.streams.sort()));
 }

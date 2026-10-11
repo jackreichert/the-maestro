@@ -175,7 +175,7 @@ export function coldStart(input: ColdInput): ColdStart {
   const b = foldBoard(input.rows, input.registry);
   const id = (xs: LedgerItem[]): string[] => xs.map((i) => i.id ?? '');
   const ids = { inFlight: id(b.inFlight), blocked: id(b.blocked), queued: id(b.queued), asks: id(b.asks) };
-  const projects = input.projects ?? [];
+  const projects = (input.projects ?? []).slice(0, PROJECTS_SHOWN);
   for (let level = 0; level < LEVELS.length; level += 1) {
     const text = render(b, input.library, input.now, LEVELS[level] as Level, true, projects, true, input.today);
     if (text.length <= max) return { text, truncated: false, level, ids };
@@ -255,11 +255,36 @@ export function currentWorkStatement(text: string): string {
   return lines.slice(start, ends.length ? Math.min(...ends) : undefined).join('\n').trim();
 }
 
+/** The day a carry-over must be dated on or after: yesterday, or Friday when `today` (YYYY-MM-DD) is a Monday. */
+export function previousWorkingDay(today: string): string {
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - (d.getUTCDay() === 1 ? 3 : 1));
+  return d.toISOString().slice(0, 10);
+}
+
+/** How many projects the page lists. The caller may pass more (the check looks at all of them); the page shows the first few. */
+export const PROJECTS_SHOWN = 5;
+
+/** Per active stream (something open, not the no-stream bucket): a carry-over in one of its projects and a current library page. Only when the caller supplied projects. */
+function streamProblems(input: ColdInput): string[] {
+  if (!input.projects) return [];
+  const b = foldBoard(input.rows, input.registry);
+  const streams = [...new Set([...b.inFlight, ...b.blocked, ...b.queued].map(streamOf))].filter((s) => s !== NO_STREAM).sort();
+  const since = previousWorkingDay(input.today ?? input.now.toISOString().slice(0, 10));
+  const same = (a: string, c: string): boolean => a.toLowerCase() === c.toLowerCase();
+  return streams.flatMap((s) => [
+    ...(input.projects?.some((p) => p.streams.some((x) => same(x, s)) && p.priorities && p.priorities.date >= since) ? [] : [`stream ${shown(s)}: no carry-over (a priorities file dated ${since} or later in one of its projects)`]),
+    ...(input.library.some((l) => l.status === 'current' && same(l.stream, s)) ? [] : [`stream ${shown(s)}: no how-to (no current library page)`]),
+  ]);
+}
+
 export interface ColdCheck { ok: boolean; statement: string; missing: { id: string; why: string }[]; problems: string[] }
 
 /**
  * The cold-start test: from the ledger rows and the library alone (no transcript), build the page, take its statement and fail
- * when any open in-flight, blocked, queued or ask id is not in it, when the page was cut, or when a secret shape is on it.
+ * when any open in-flight, blocked, queued or ask id is not in it, when the page was cut, or when a secret shape is on it. When the caller
+ * supplies `projects`, it also fails for each active stream with no carry-over (a priorities file dated the previous working day or later
+ * in one of its projects) or no current library page. Without `projects` the stream checks are skipped: it cannot judge what it was not given.
  */
 export function coldStartCheck(input: ColdInput): ColdCheck {
   const page = coldStart(input);
@@ -271,6 +296,7 @@ export function coldStartCheck(input: ColdInput): ColdCheck {
     ...(input.budgetTokens !== undefined && tokens > input.budgetTokens ? [`page is about ${tokens} tokens, over the budget of ${input.budgetTokens}`] : []),
     ...(page.truncated ? [`page cut at ${input.maxChars ?? COLD_START_MAX_CHARS} characters`] : []),
     ...scanText(page.text).map((h) => `secret shape ${h.rule} on page line ${h.line}`),
+    ...streamProblems(input),
   ];
   return { ok: !missing.length && !problems.length, statement, missing, problems };
 }
