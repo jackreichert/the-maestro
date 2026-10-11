@@ -14,6 +14,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # tickets-parity runs the real xenophon ticket.mjs and refuses to skip when CI=true.
+      - uses: actions/checkout@v4
+        with:
+          repository: jackreichert/xenophon
+          path: xenophon
+      # The walkthrough tests spawn zsh.
+      - run: sudo apt-get update && sudo apt-get install -y zsh
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -21,3 +28,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          XENOPHON_TICKET_SCRIPT: ${{ github.workspace }}/xenophon/scripts/ticket.mjs
+          MAESTRO_NOTIFY_COMMAND: /usr/bin/true
