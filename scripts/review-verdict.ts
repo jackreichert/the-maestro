@@ -21,6 +21,10 @@ export type Verdict = 'SHIP IT' | 'NEEDS WORK';
 /** One recorded re-review. `head` is the commit sha reviewed; `fixer` the agent that pushed the fixes. */
 export interface VerdictRow { pr: string; head: string; verdict: Verdict; reviewer: string; fixer: string; at: string }
 
+/** A PR (`owner/repo#123`) or a local unit, a branch with no PR yet (`local:<repo>#<branch>`, the repo's folder name). */
+export const UNIT_ID = /^(?:[^/\s]+\/[^#\s]+#\d+|local:[^/#\s]+#\S+)$/;
+export const localUnitId = (repo: string, branch: string): string => `local:${repo}#${branch}`;
+
 export const verdictsPath = (root: string): string => join(root, 'Projects', CONTAINER_PROJECT, 'Journal', 'verdicts.jsonl');
 
 const normalize = (raw: string): Verdict | null => {
@@ -32,7 +36,7 @@ const normalize = (raw: string): Verdict | null => {
 export function recordVerdict(root: string, row: Omit<VerdictRow, 'at' | 'verdict'> & { verdict: string }, now = new Date()): VerdictRow {
   const verdict = normalize(row.verdict);
   if (!verdict) throw new Error('--verdict must be "SHIP IT" or "NEEDS WORK"');
-  if (!/^[^/\s]+\/[^#\s]+#\d+$/.test(row.pr)) throw new Error('--pr must look like owner/repo#123');
+  if (!UNIT_ID.test(row.pr)) throw new Error('--pr must look like owner/repo#123, or local:<repo>#<branch> for a branch with no PR');
   if (!/^[0-9a-f]{7,40}$/i.test(row.head)) throw new Error('--head must be a commit sha (7 to 40 hex characters)');
   const reviewer = row.reviewer.trim();
   const fixer = row.fixer.trim();
@@ -69,7 +73,7 @@ function main(argv: string[]): number {
   const arg = (f: string): string => { const i = rest.indexOf(f); return i >= 0 ? (rest[i + 1] ?? '') : ''; };
   const root = arg('--vault') || LEDGER_ROOT || VAULT_ROOT;
   if ((cmd !== 'record' && cmd !== 'show') || !arg('--pr') || !root) {
-    console.error('usage: node scripts/review-verdict.ts record|show --pr <owner/repo#N> [--head <sha> --verdict "SHIP IT"|"NEEDS WORK" --reviewer <id> --fixer <id>] [--vault <ledger root>]');
+    console.error('usage: node scripts/review-verdict.ts record|show --pr <owner/repo#N|local:repo#branch> [--head <sha> --verdict "SHIP IT"|"NEEDS WORK" --reviewer <id> --fixer <id>] [--vault <ledger root>]');
     return 2;
   }
   try {

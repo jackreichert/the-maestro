@@ -103,6 +103,20 @@ export interface HomeTicket {
   tracker?: Ref; points?: number; prsMore?: number; quietDays: number | null;
 }
 
+/** A document of an epic. `url` is built by the server (obsidian://open for a note, http(s) for an outside document). */
+export interface DocItem { title: string; kind: string; project: string; ticket: string; status?: string; updated?: string; url?: string }
+export interface EpicDocs { groups: { kind: string; items: DocItem[]; more: number }[]; unattributedRecent: number }
+
+/** A run of text in a brief; `link.url` was built by the server. */
+export interface Inline { text: string; strong?: true; em?: true; code?: true; link?: { url: string; kind: 'web' | 'note' } }
+/** A brief as a typed tree: no Markdown and no HTML reach the page. */
+export type Block =
+  | { type: 'heading'; level: 3 | 4; runs: Inline[] }
+  | { type: 'paragraph'; runs: Inline[] }
+  | { type: 'quote'; runs: Inline[] }
+  | { type: 'list'; ordered: boolean; items: { runs: Inline[]; children: { runs: Inline[] }[] }[] };
+export interface EpicBrief { state: 'fresh' | 'stale' | 'missing' | 'too-long' | 'unreadable'; updated?: string; staleBecause?: string[]; ref?: Ref; blocks?: Block[] }
+
 /** One epic's progress and what to do next, as the server counted it. */
 export interface HomeEpic {
   id: string; title: string; note: Ref; status: string;
@@ -112,6 +126,8 @@ export interface HomeEpic {
   tracker?: Ref; next?: HomeTicket;
   /** Open PRs naming the epic or one of its open tickets, at most three; absent from a server that predates it. */
   prs?: Ref[]; prsMore?: number;
+  /** Absent from a server that predates epic documents. */
+  docs?: EpicDocs; brief?: EpicBrief;
 }
 
 /** Something the files cannot tell, with the fix in its text. `epic` names the epic block it counts toward. */

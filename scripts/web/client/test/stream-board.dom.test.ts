@@ -43,3 +43,23 @@ test('an epic on the home base names the PRs that carry its ticket ids, and says
   assert.match(meta!, /PRs: avonlea-api#412 and 2 more/);
   cleanup();
 });
+
+test('an epic block shows a stale-brief badge outside its fold, keeps the brief and documents inside it, and a closed epic shows no badge', async () => {
+  const stream = st.streams[0];
+  const h1 = { ...home(), stream } as unknown as StreamHome;
+  const [open, closed] = h1.epics as unknown as Record<string, unknown>[];
+  open!.brief = { state: 'stale', updated: '2026-01-01', staleBecause: ['3 tickets changed'], blocks: [{ type: 'paragraph', runs: [{ text: 'Status text.' }] }] };
+  open!.docs = { groups: [{ kind: 'plan', items: [{ title: 'Rollout plan', kind: 'plan', project: 'p', ticket: 't', url: 'obsidian://open?vault=Fictional&file=plan' }], more: 0 }], unattributedRecent: 0 };
+  closed!.status = 'closed';
+  closed!.brief = { state: 'missing' };
+  const { root, cleanup } = await mount<Board>('../src/stream-board.ts', 'stream-board', { stream, state: st, home: h1 });
+  const badges = [...root.querySelectorAll('.brief-badge')];
+  assert.equal(badges.length, 1, 'the closed epic has none');
+  assert.ok(badges[0]!.closest('details') === null, 'the badge is not hidden inside the closed fold');
+  const fold = root.querySelector('details[data-fold="epic-docs-avonlea-api-042"]');
+  assert.ok(fold);
+  assert.match(fold!.querySelector('summary')?.textContent ?? '', /Brief and documents/);
+  assert.match(fold!.textContent ?? '', /Status text\./);
+  assert.match(fold!.textContent ?? '', /Rollout plan/);
+  cleanup();
+});
