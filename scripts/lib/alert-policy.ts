@@ -6,7 +6,8 @@
  *   - away: an actionable event counts only when no session has seen it for AWAY_MS (10 min), and it is not handled;
  *   - kind allowlist: changes-requested, conflict, approved-unmerged, reminder, notion-changed, and a human thread or reply. Never a bot thread,
  *     never an info event, never a text from Jack;
- *   - health: loop DOWN or STALLED for HEALTH_AFTER_MS (15 min) in waking hours, a check that keeps failing, and the first healthy start ever seen;
+ *   - health: loop DOWN or STALLED for HEALTH_AFTER_MS (15 min) in waking hours (one text per outage), one "recovered" text when the loop is healthy again after such a text,
+ *     RESTART_LIMIT restarts within RESTART_WINDOW_MS (one text per burst), and a check that keeps failing. A normal start texts nothing;
  *   - rate limit: at most one text per RATE_MS (20 min); everything pending goes out as one batched line;
  *   - quiet hours (default 23:00-07:00): nothing is sent; what is still pending goes out as one morning line.
  *
@@ -26,6 +27,9 @@ import type { LoopHealth } from './loop-health.ts';
 export const AWAY_MS = 10 * 60_000;
 export const RATE_MS = 20 * 60_000;
 export const HEALTH_AFTER_MS = 15 * 60_000;
+/** This many abnormal restarts (hung, refused or crashed launches) inside the window is one text. */
+export const RESTART_LIMIT = 5;
+export const RESTART_WINDOW_MS = 60 * 60_000;
 export const DEFAULT_ALERT_QUIET_HOURS = '23:00-07:00';
 const MAX_REMEMBERED = 200;
 const MAX_LISTED = 3;
@@ -46,15 +50,17 @@ export interface AlertState {
   alerted: string[];
   /** When the loop was first seen DOWN or STALLED in this stretch; 0 when it is fine. */
   badSince: number;
-  /** True once a DOWN or STALLED stretch has been texted, until the loop is seen healthy again. */
+  /** True once a DOWN or STALLED stretch has been texted; it stays true until the "recovered" text has gone out. */
   badAlerted: boolean;
-  /** True once the first-start text went out. */
-  startSent: boolean;
+  /** Epoch ms of recent abnormal restarts, pruned to RESTART_WINDOW_MS. */
+  restarts: number[];
+  /** True once the restart-burst text went out, until the count in the window falls back under RESTART_LIMIT. */
+  restartAlerted: boolean;
   /** Sends in a row that failed (non-zero exit, error or timeout); each doubles the wait before the next try, up to MAX_BACKOFF_DOUBLINGS. 0 after a send that worked. */
   failures: number;
 }
 
-export const emptyState = (): AlertState => ({ lastSentAt: 0, alerted: [], badSince: 0, badAlerted: false, startSent: false, failures: 0 });
+export const emptyState = (): AlertState => ({ lastSentAt: 0, alerted: [], badSince: 0, badAlerted: false, restarts: [], restartAlerted: false, failures: 0 });
 
 export interface AlertConfig { quietHours: string; tz: string }
 
@@ -80,11 +86,15 @@ const inQuiet = (now: number, cfg: AlertConfig): boolean => {
 
 export interface DecideInput { now: number; entries: InboxEntry[]; health: LoopHealth; state: AlertState; config: AlertConfig }
 
-/** What to send now, if anything, and the state afterwards. Events count as alerted, and the send time moves, only when `text` is non-null; with no text only the health clock (`badSince`, `badAlerted`) can change. */
+/** What to send now, if anything, and the state afterwards. Events count as alerted, and the send time moves, only when `text` is non-null; with no text only the health clock (`badSince`) and the restart list can change. */
 export function decide({ now, entries, health, state, config }: DecideInput): Decision {
   const next: AlertState = { ...state, alerted: [...state.alerted] };
   const bad = health.state === 'down' || health.state === 'stalled';
-  if (bad) { if (!next.badSince) next.badSince = now; } else { next.badSince = 0; next.badAlerted = false; }
+  if (bad) { if (!next.badSince) next.badSince = now; } else next.badSince = 0;
+  const healthy = health.state === 'ok' || health.state === 'quiet' || health.state === 'running';
+  next.restarts = state.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
+  const burst = next.restarts.length >= RESTART_LIMIT;
+  if (!burst) next.restartAlerted = false;
 
   const known = new Set(state.alerted);
   const due = entries.filter((e) => e.actionable && !e.handled && !e.seen && !known.has(e.id) && now - Date.parse(e.at) >= AWAY_MS);
@@ -98,15 +108,18 @@ export function decide({ now, entries, health, state, config }: DecideInput): De
   if (failing.length) { parts.push(`${failing.length} loop check${failing.length === 1 ? '' : 's'} failing`); ids.push(...failing.map((e) => e.id)); }
   const badDue = bad && !next.badAlerted && now - next.badSince >= HEALTH_AFTER_MS;
   if (badDue) parts.push(`loop ${health.state === 'down' ? 'DOWN' : 'STALLED'}`);
-  const startDue = !next.startSent && !bad && (health.state === 'ok' || health.state === 'quiet' || health.state === 'running');
-  if (startDue) parts.push('loop started');
+  const recoveredDue = healthy && next.badAlerted;
+  if (recoveredDue) parts.push('loop recovered');
+  const burstDue = burst && !next.restartAlerted;
+  if (burstDue) parts.push(`loop restarted ${next.restarts.length} times in an hour`);
 
-  if (!parts.length || inQuiet(now, config) || now - state.lastSentAt < RATE_MS * 2 ** Math.min(state.failures, MAX_BACKOFF_DOUBLINGS)) return { text: null, state: { ...state, badSince: next.badSince, badAlerted: next.badAlerted }, ids: [] };
+  if (!parts.length || inQuiet(now, config) || now - state.lastSentAt < RATE_MS * 2 ** Math.min(state.failures, MAX_BACKOFF_DOUBLINGS)) return { text: null, state: { ...state, badSince: next.badSince, restarts: next.restarts, restartAlerted: next.restartAlerted }, ids: [] };
   next.lastSentAt = now;
   next.failures = 0;
   next.alerted = [...next.alerted, ...ids].slice(-MAX_REMEMBERED);
   if (badDue) next.badAlerted = true;
-  if (startDue) next.startSent = true;
+  if (recoveredDue) next.badAlerted = false;
+  if (burstDue) next.restartAlerted = true;
   return { text: `maestro: ${parts.join('; ')}`, state: next, ids };
 }
 
@@ -117,7 +130,7 @@ export function readAlertState(eventDir: string): AlertState {
   try {
     const r = JSON.parse(readFileSync(alertsPath(eventDir), 'utf8')) as Partial<AlertState>;
     const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
-    return { lastSentAt: num(r.lastSentAt), badSince: num(r.badSince), badAlerted: r.badAlerted === true, startSent: r.startSent === true, failures: Math.min(Math.floor(num(r.failures)), MAX_BACKOFF_DOUBLINGS), alerted: Array.isArray(r.alerted) ? r.alerted.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{12}$/.test(x)).slice(-MAX_REMEMBERED) : [] };
+    return { lastSentAt: num(r.lastSentAt), badSince: num(r.badSince), badAlerted: r.badAlerted === true, restartAlerted: r.restartAlerted === true, restarts: Array.isArray(r.restarts) ? r.restarts.filter((x): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0).slice(-RESTART_LIMIT * 4) : [], failures: Math.min(Math.floor(num(r.failures)), MAX_BACKOFF_DOUBLINGS), alerted: Array.isArray(r.alerted) ? r.alerted.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{12}$/.test(x)).slice(-MAX_REMEMBERED) : [] };
   } catch { return emptyState(); }
 }
 
@@ -147,11 +160,11 @@ export function runAlerts({ eventDir, command, now, entries, health, config, run
     if (!command.length) return null;
     const state = existsSync(alertsPath(eventDir)) ? readAlertState(eventDir) : emptyState();
     const d = decide({ now, entries, health, state, config });
-    if (!d.text) { if (d.state.badSince !== state.badSince || d.state.badAlerted !== state.badAlerted) writeAlertState(eventDir, d.state); return null; }
+    if (!d.text) { if (d.state.badSince !== state.badSince || d.state.restarts.length !== state.restarts.length || d.state.restartAlerted !== state.restartAlerted) writeAlertState(eventDir, d.state); return null; }
     const r = run(command[0] as string, [...command.slice(1), d.text]);
     if (r?.error || r?.status) {
-      // The notifier may have delivered before it failed (non-zero exit, or killed by the timeout), so the attempt counts against the rate limit; events, the DOWN/STALLED text and the start text stay unsent for the retry (only the health clock moves; badSince 0 means the loop recovered, so the flag clears).
-      writeAlertState(eventDir, { ...state, badSince: d.state.badSince, badAlerted: d.state.badSince ? state.badAlerted : false, lastSentAt: now, failures: Math.min(state.failures + 1, MAX_BACKOFF_DOUBLINGS) });
+      // The notifier may have delivered before it failed (non-zero exit, or killed by the timeout), so the attempt counts against the rate limit; events and the DOWN, recovered and restart texts stay unsent for the retry (only the health clock and the restart list move).
+      writeAlertState(eventDir, { ...state, badSince: d.state.badSince, restarts: d.state.restarts, lastSentAt: now, failures: Math.min(state.failures + 1, MAX_BACKOFF_DOUBLINGS) });
       console.error(`alert send failed: ${r.error?.message ?? `exit ${r.status}`}`);
       return null;
     }
@@ -161,4 +174,12 @@ export function runAlerts({ eventDir, command, now, entries, health, config, run
     console.error(`alert tick failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
+}
+
+/** Records one abnormal restart (a hung, refused or crashed launch) for the burst rule. Never throws. */
+export function noteRestart(eventDir: string, now: number): void {
+  try {
+    const state = readAlertState(eventDir);
+    writeAlertState(eventDir, { ...state, restarts: [...state.restarts.filter((t) => now - t < RESTART_WINDOW_MS), now] });
+  } catch (err) { console.error(`restart note failed: ${err instanceof Error ? err.message : String(err)}`); }
 }

@@ -38,7 +38,7 @@ import { sleepUntil } from './lib/wall-sleep.ts';
 import { clearRecord, supervisorLogPath, writeRecord } from './lib/supervisor-state.ts';
 import { LOG_MAX_BYTES, rotateLog } from './lib/log-rotate.ts';
 import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WATCH_TZ } from './local-config.ts';
-import { DEFAULT_ALERT_QUIET_HOURS, runAlerts } from './lib/alert-policy.ts';
+import { DEFAULT_ALERT_QUIET_HOURS, noteRestart, runAlerts } from './lib/alert-policy.ts';
 import { readInbox } from './lib/event-inbox.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 
@@ -58,6 +58,8 @@ export interface SuperviseDeps {
   log: (line: string) => void;
   /** Called with the digest text after a successful save. A throw is logged; it does not stop the loop. */
   queueDigest?: (digest: string) => void;
+  /** Called once per abnormal launch (hung, refused, crashed); the alert policy counts these. */
+  onRestart?: () => void;
   now?: () => number;
   maxRuns?: number;
 }
@@ -88,9 +90,10 @@ export function quietSleepSeconds(stdout: string, now: number): number | null {
 const lastLine = (text: string): string => text.trim().split('\n').pop() ?? '';
 
 /** The supervision loop. Returns only when `maxRuns` launches are done (never, in production). */
-export async function supervise({ runLoop, sleep, save, log, queueDigest, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
+export async function supervise({ runLoop, sleep, save, log, queueDigest, onRestart, now = Date.now, maxRuns = Infinity }: SuperviseDeps): Promise<void> {
   for (let runs = 0; runs < maxRuns; runs += 1) {
     const { code, stdout, stderr, hung } = await runLoop();
+    if (hung || (code !== 0 && code !== 10 && code !== 3)) { try { onRestart?.(); } catch { /* advisory */ } }
     if (hung) {
       log('event-loop was hung and was killed; relaunching');
     } else if (code === 10) {
@@ -270,6 +273,7 @@ async function main(): Promise<number> {
       log: (line) => console.error(stamped(line)),
       nap: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
     }),
+    onRestart: () => noteRestart(EVENT_DIR, Date.now()),
     save: (digest) => { console.error(stamped(`digest saved: ${saveDigest(dir, digest)}`)); moveDigestsToInbox(dir); },
     log: (line) => console.error(stamped(line)),
     queueDigest: (digest) => queueSavedDigest(digest, (line) => console.error(stamped(line)), {
