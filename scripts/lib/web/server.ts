@@ -19,6 +19,7 @@ import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { buildEpics, buildHome } from './home.ts';
+import { buildLocalReview } from './local-review.ts';
 import { TOKEN_PATH, WRITE_PATHS as PRIORITY_PATHS, handleWrite } from './priorities-write.ts';
 import { ANSWER_PATH, handleAnswer } from './answer-write.ts';
 import { DEFAULT_PRIORITIES_MAX } from '../status-page/priorities.ts';
@@ -73,6 +74,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
+    { method: 'GET', pattern: /^\/api\/local-review$/, handler: () => buildLocalReview({ containerRoot: o.web.containerRoot, vault: o.web.vault, now: now() }) },
     { method: 'GET', pattern: /^\/api\/link-hosts$/, handler: () => ({ atlassian: o.trustedAtlassianHosts ?? [] }) },
     { method: 'GET', pattern: /^\/api\/charts$/, handler: (u) => buildCharts(o.web, daysParam(u), now()) },
   ];

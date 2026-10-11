@@ -35,6 +35,8 @@ export interface WebConfig {
   vaultRoot?: string;
   /** `priorities_max`: the cap the page shows and the write path enforces. Default 5. */
   prioritiesMax?: number;
+  /** `container_root`: the folder whose repos the local review queue reads; absent means the queue says it is not configured. */
+  containerRoot?: string;
 }
 
 const MAX_FRAGMENT_BYTES = 64 * 1024;
