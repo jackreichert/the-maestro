@@ -391,3 +391,22 @@ test('recordRan writes a ran line for a live cadence row only: a checked, retire
   assert.equal(recordRan(file, 'merge-sweep', 'x', new Date(NOON).toISOString()), false, 'a retired row stays retired');
   assert.equal(readEvents(file).filter((e) => e.op === 'ran').length, 1);
 });
+
+test('cli: library-fresh reads the library from this machine, so a stale page fails the row and a missing vault fails it too', () => {
+  const { vault, events } = setup();
+  const code = mkdtempSync(join(tmpdir(), 'standing-code-'));
+  const repo = join(code, 'avonlea-api');
+  mkdirSync(join(repo, 'src'), { recursive: true });
+  writeFileSync(join(repo, 'src', 'sync.ts'), 'x\n');
+  const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com', GIT_AUTHOR_DATE: '2026-10-09T10:00:00Z', GIT_COMMITTER_DATE: '2026-10-09T10:00:00Z' };
+  for (const args of [['init', '-q'], ['add', 'src/sync.ts'], ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'chore: fixture']]) spawnSync('git', ['-C', repo, ...args], { env: gitEnv });
+  const pageDir = join(vault, 'Projects', 'avonlea-api', 'Knowledge');
+  mkdirSync(pageDir, { recursive: true });
+  writeFileSync(join(pageDir, 'orchard-sync.md'), '---\ntype: library\nkind: how-it-works\nrepo: avonlea-api\nstream: Maestro\ncomponents: [orchard-sync]\nstatus: current\nverified-at: 2026-10-08\n---\n# Orchard sync\n\nRead when: you change the sync.\n\n## Facts\n\n- The sync runs nightly (verified 2026-10-08, src/sync.ts:1).\n');
+  const run = (root: string) => spawnSync(process.execPath, [JOURNAL, 'standing', 'list', '--vault', vault, '--project', 'test-proj'], {
+    encoding: 'utf8', cwd: tmpdir(),
+    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: root, MAESTRO_EVENT_DIR: events, MAESTRO_LAUNCH_AGENTS_DIR: join(events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: code, MAESTRO_PROJECTS_DIR: tmpdir() },
+  }).stdout;
+  assert.match(run(vault), /FAILING library-fresh:.*1 of 1 pages stale/);
+  assert.match(run(''), /FAILING library-fresh:.*vault/i);
+});
