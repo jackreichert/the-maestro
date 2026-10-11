@@ -17,7 +17,7 @@ const transcript = JSON.stringify({ type: 'user', timestamp: '2026-10-09T11:00:0
 
 function deps(over: Partial<PrecompactDeps> = {}): { d: PrecompactDeps; calls: string[][] } {
   const calls: string[][] = [];
-  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], newestHandoff: () => null, readTranscript: () => transcript, handoffPath: (d, w) => `/j/HANDOFF-${d}-precompact-${w}.md`, snapshot: () => ({ worktrees: 2, copied: 5, current: 3, skipped: 1, partial: false, capped: false }), now: () => new Date(T), ...over } };
+  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], newestHandoff: () => null, readTranscript: () => transcript, handoffPath: (d, w) => `/j/HANDOFF-${d}-precompact-${w}.md`, snapshot: () => ({ worktrees: 2, copied: 5, current: 3, skipped: 1, partial: false, capped: false }), now: () => new Date(T), autocompact: () => ({ pct: 20, window: null, source: 'env' }), ...over } };
 }
 
 test('precompact writes the handoff delta, raises the decision and ends with a marker row', () => {
@@ -231,4 +231,15 @@ test('session-start context puts the autocompact warnings first, and prints none
   const out = context('compact', run, () => ({ ok: true, out: 'cold' }), ['too low']);
   assert.ok(out.startsWith('== Autocompact ==\n!! too low\n\n== Board'));
   assert.ok(!context('compact', run, () => ({ ok: true, out: 'cold' })).includes('Autocompact'));
+});
+
+test('two compactions two minutes apart leave a thrash row naming the setting, and the handoff, snapshot and marker rows still follow', () => {
+  const boundaryRow = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-09T11:58:00.000Z', compactMetadata: { preTokens: 180000, postTokens: 15000 } });
+  const turnRow = JSON.stringify({ type: 'assistant', timestamp: '2026-10-09T11:59:00.000Z', message: { role: 'assistant', usage: { input_tokens: 5, cache_creation_input_tokens: 1000, cache_read_input_tokens: 24000 } } });
+  const { d, calls } = deps({ readTranscript: () => [boundaryRow, turnRow].join('\n') });
+  const text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto', session_id: 'abcdef1234' }, d);
+  const logs = calls.filter((c) => c[0] === 'log').map((c) => c[1]);
+  assert.match(logs[1], /^compaction thrash: session abcdef12 compacted 2 time\(s\) in 10 min, 10k growth since the last \(setting 20% of 1000k = 200k, floor 100k\)$/);
+  assert.deepEqual(calls.map((c) => c[0]), ['log', 'log', 'handoff', 'log'], 'every step still ran');
+  assert.match(text, /^precompact: handoff rewritten/);
 });

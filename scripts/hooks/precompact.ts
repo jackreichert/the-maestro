@@ -19,7 +19,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, CONTAINER_ROOT, LEDGER_ROOT, SCRIPTS_SHELF_DIR, VAULT_ROOT } from '../local-config.ts';
 import { openStore } from '../lib/journal/store.ts';
-import { errorLine, handoffFresh, HOOK_USED, newestHandoff, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_STARTED, snapshotDirty, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
+import { readAutocompact, triggerTokens } from '../lib/autocompact.ts';
+import type { AutocompactSetting } from '../lib/autocompact.ts';
+import { AUTOCOMPACT_FLOOR } from '../local-config.ts';
+import { COMPACTION_THRASH, errorLine, handoffFresh, HOOK_USED, newestHandoff, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_STARTED, snapshotDirty, thrash, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { resolveWindowId, windowEnv } from '../lib/window-id.ts';
 
@@ -42,6 +45,8 @@ export interface PrecompactDeps {
   /** Copies the snapshot until `deadline` (epoch ms); null when no scripts shelf is configured. */
   snapshot: (date: string, deadline: number) => { worktrees: number; copied: number; current: number; skipped: number; partial: boolean; capped: boolean } | null;
   now: () => Date;
+  /** The effective autocompact setting, named in a thrash row. */
+  autocompact: () => AutocompactSetting;
 }
 
 export interface PrecompactInput { transcript_path?: string; trigger?: string; session_id?: string }
@@ -91,6 +96,19 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
     try { return fn(); } catch (e) { failed.push(`${name}: ${(e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 100)}`); return null; }
   };
   const date = deps.now().toISOString().slice(0, 10);
+  // Compactions too close together: say so loudly, but never skip a step (a guard that skipped the handoff could lose state).
+  // The transcript is read once and shared with the decision scan; a read failure here is the decisions step's to report, so this never adds a failed step.
+  let cached: string | undefined;
+  const rawRead = deps.readTranscript;
+  const readOnce = (path: string): string => (cached ??= rawRead(path));
+  deps = { ...deps, readTranscript: readOnce };
+  try {
+    const t = thrash(readOnce(input.transcript_path ?? ''), started);
+    if (t.thrash) {
+      const s = deps.autocompact();
+      deps.journal(['log', `${COMPACTION_THRASH}: session ${(input.session_id ?? 'unknown').slice(0, 8)} compacted ${t.recent} time(s) in 10 min, ${Math.round(t.growth / 1000)}k growth since the last (setting ${s.pct ?? 'unset'}% of ${Math.round((s.window ?? 1_000_000) / 1000)}k = ${Math.round(triggerTokens(s) / 1000)}k, floor ${Math.round(AUTOCOMPACT_FLOOR / 1000)}k)`, '--kind', 'note', ...MARKS]);
+    }
+  } catch { cached = undefined; /* the decisions step reads again and names any failure */ }
   // Decisions first, so the asks they raise are in the ledger before the handoff is judged and written.
   const found = { raised: 0, count: 0 };
   step('decisions', () => { Object.assign(found, raiseDecisions(input, deps)); });
@@ -136,6 +154,7 @@ export function realDeps(argv: string[]): PrecompactDeps {
     readTranscript: (p) => readFileSync(p, 'utf8'),
     snapshot: (date, deadline) => (SCRIPTS_SHELF_DIR && CONTAINER_ROOT ? snapshotDirty(CONTAINER_ROOT, join(SCRIPTS_SHELF_DIR, 'scratch', 'snapshots', date), Date.now(), deadline) : null),
     now: () => new Date(),
+    autocompact: () => readAutocompact(),
   };
 }
 
