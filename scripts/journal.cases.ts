@@ -502,8 +502,8 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
     assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
     // The item above was started (and so leased) by `testwin`, a different window from the session pinned below, so the pinned footers count that lease as another window's.
-    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns · 100k/200k (50%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
     assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
@@ -517,8 +517,8 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.equal(multi.find((l) => l.startsWith('**Window:**')), '**Window:** aaaaaaaa-min', 'the footer names the window of the session it measures');
     const unpinned = status([]);
     assert.equal(unpinned.find((l) => l.startsWith('**Window:**')), undefined, 'without a pinned session the newest transcript is not shown under MAESTRO_WINDOW\'s name');
-    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
-    assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
+    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** bbbbbbbb · 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
+    assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** aaaaaaaa · 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
 });
 
 test('status --json carries the footer numbers, and they match what status --footer prints', () => {
