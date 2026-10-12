@@ -161,7 +161,8 @@ export function parseBlocks(body: string, env: LinkEnv, doneMeans: string | null
 // ── freshness ────────────────────────────────────────────────────────────────
 
 const DATE = /^\d{4}-\d{2}-\d{2}/;
-const frontmatter = (text: string): { fm: Record<string, string>; body: string } => {
+const frontmatter = (raw: string): { fm: Record<string, string>; body: string } => {
+  const text = raw.replace(/\r\n?/g, '\n'); // CRLF and lone CR, as docHeader reads them
   const m = text.match(/^---\n([\s\S]*?)\n---\n?/);
   const fm: Record<string, string> = {};
   for (const l of (m?.[1] ?? '').split('\n')) {
