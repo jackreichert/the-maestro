@@ -46,6 +46,13 @@ test('withholdJson reads a key and its string value together, as the text path d
   assert.deepEqual(withholdJson({ tokens: 12, token_count: 'many', password: '<redacted>' }), { tokens: 12, token_count: 'many', password: '<redacted>' });
 });
 
+test('withholdJson lets status words under secret-sounding keys through, and still withholds real pairs', () => {
+  const words = { tokens: 'unmeasured', token: 'refreshed', credentials: 'missing_file', secrets: 'scanned', access_token: 'present', ['pass' + 'word']: 'unchanged' };   // placeholder status words
+  assert.deepEqual(withholdJson(words), words);
+  const fake = 'fake_pw_123abc';   // placeholder fixture, not a secret
+  assert.deepEqual(withholdJson({ PassWord: fake, api_key: '<fake>' }), { PassWord: WITHHELD, api_key: WITHHELD });
+});
+
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NOT_PRODUCERS = new Set(['lib/json-out.ts', 'lib/gh-stub.ts', 'journal.cases.ts']);   // the helper itself; two fake gh binaries (test input, not producers)
 

@@ -22,6 +22,14 @@ export function secretShaped(text: string): boolean {
     || scanShared(text).some((f) => f.class === 'secret' && !NOT_ALONE.has(f.rule));
 }
 
+/**
+ * True when a `key: value` pair is a secret by the shared scanner's secret rules alone. The library scanner is left out on purpose: its
+ * key/value rule withholds status words such as `tokens: unmeasured`, which text `status` prints unchanged.
+ */
+export function secretPair(key: string, value: string): boolean {
+  return scanShared(`${key}: ${value}`).some((f) => f.class === 'secret' && !NOT_ALONE.has(f.rule));
+}
+
 /** The body with every line the secret scan flags replaced by a marker. */
 export function withhold(body: string): string {
   return body.split('\n').map((l) => (secretShaped(l) ? WITHHELD : l)).join('\n');
