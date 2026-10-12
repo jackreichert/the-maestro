@@ -37,8 +37,12 @@ const PARKED = /\b(on hold|hold for now|parked|paused|frozen|deferred|waiting (o
 /** What `guidanceLines` may also know: asks waiting on Jack (their ids are never "do first"), where each gated item's gate stands (a gate not reported as cleared counts as waiting) and today's priorities (preferred when any item matches). */
 export interface GuidanceContext { awaiting?: LedgerItem[]; priorities?: Priority[]; gates?: Map<string, 'cleared' | 'waiting' | 'unknown'> }
 
-/** Whether an item answers a priority: it names the item's id, shares its stream, or its text appears in the item's. */
-const matchesPriority = (i: LedgerItem, ps: Priority[]): boolean => ps.some((p) => p.text.toLowerCase().includes(String(i.id).toLowerCase()) || (!!p.stream && !!i.stream && p.stream.toLowerCase() === i.stream.toLowerCase()) || (p.text.length > 3 && i.text?.toLowerCase().includes(p.text.toLowerCase())));
+const escapeRe = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Whether `needle` appears in `hay` as whole words, case-insensitively: "auth" is not in "author". */
+const hasWord = (hay: string, needle: string): boolean => needle.trim().length > 0 && new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRe(needle.trim())}(?![\\p{L}\\p{N}_])`, 'iu').test(hay);
+
+/** Whether an item answers a priority: the priority names the item's id, shares its stream, or the item's text and the priority's contain one another as whole words. */
+const matchesPriority = (i: LedgerItem, ps: Priority[]): boolean => ps.some((p) => hasWord(p.text, String(i.id)) || (!!p.stream && !!i.stream && p.stream.toLowerCase() === i.stream.toLowerCase()) || (p.text.length > 3 && hasWord(i.text ?? '', p.text)));
 
 /** Hours an in-flight item must have run to count as stalled: the floor, or a multiple of the median finished item, whichever is longer. */
 export function stallThresholdHours(items: LedgerItem[], nowMs: number): number {

@@ -94,6 +94,16 @@ test('do first obeys the structured gate: a waiting gate is skipped, a cleared o
     assert.doesNotMatch(guidanceLines([waiting], [], [], [waiting], '2026-10-12', NOW, {}).join('\n'), /Do first/);
 });
 
+test('priority text matches whole words: "auth" does not pick the author item', () => {
+    const author = item({ id: 'a1', text: 'fake_update_author_field', ts: '2026-10-12T09:00:00Z' });
+    const auth = item({ id: 'a2', text: 'fake auth token refresh', ts: '2026-10-12T09:00:00Z' });
+    const out = (ps: { text: string }[]) => guidanceLines([author, auth], [], [author, auth], [], '2026-10-12', NOW, { priorities: ps }).join('\n');
+    assert.match(out([{ text: 'auth' }, { text: 'auth refresh' }]), /Do first: a2 fake auth token refresh$/m);
+    assert.match(out([{ text: 'auth' }]), /Do first: a2 /);
+    assert.match(out([{ text: 'look at a2 today' }]), /Do first: a2 /);
+    assert.match(out([{ text: 'a22 only' }]), /Do first: a1 /);
+});
+
 test('the note stays within a header and four lines', () => {
     const a = item({ id: 'a1', text: 'x', tokens: '1k', ts: '2026-10-01T00:00:00Z' });
     assert.ok(guidanceLines([a], [], [a], [], '2026-10-12', NOW).length <= 5);
