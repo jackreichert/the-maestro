@@ -39,7 +39,8 @@ test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and k
       env: { PATH: `${bin}:${process.env.PATH}`, HOME: tmp, TMPDIR: scratch, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
     });
     const closed = new Promise<number | null>((res) => child.on('close', (code) => res(code)));
-    for (let i = 0; i < 200 && !existsSync(pidfile); i++) await new Promise((r) => setTimeout(r, 50));
+    // Up to 60 s, returning as soon as the fake git has run: the first run of a freshly written executable can take far longer than 10 s under load (a macOS provenance scan).
+    for (let i = 0; i < 1200 && !existsSync(pidfile); i++) await new Promise((r) => setTimeout(r, 50));
     assert.ok(existsSync(pidfile), 'the clone step started');
     const stepPid = Number(readFileSync(pidfile, 'utf8').trim());
     assert.equal(readdirSync(scratch).filter((d) => d.startsWith('maestro-smoke-')).length, 1, 'the smoke created its temp dir');
