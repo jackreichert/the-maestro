@@ -7,6 +7,8 @@ import type { LedgerRow } from './ledger-core.ts';
 import { COLD_START_MAX_CHARS, WITHHELD, coldStart, coldStartCheck, currentWorkStatement, safe } from './cold-start.ts';
 import type { LibraryEntry } from './cold-start.ts';
 import { main, readLibrary } from '../cold-start.ts';
+import { activeProjects, prioritiesDir, readProjectEntry, writeProjectPriorities } from './status-page/project-priorities.ts';
+import type { Homes } from './home/config.ts';
 import { scanText } from './library/scan.ts';
 
 const scanTextHits = (t: string): number => scanText(t).length;
@@ -102,13 +104,20 @@ test('CLI: generate prints the page, check passes on a fixture and fails (exit 1
     mkdirSync(join(lib, 'Projects', 'alpha', 'Runbooks'), { recursive: true });
     writeFileSync(join(lib, 'Projects', 'alpha', 'Runbooks', 'ship-alpha.md'), '---\ntype: library\nkind: runbook\nstream: Alpha\nstatus: current\nverified-at: 2026-10-09\n---\nbody\n');
     writeFileSync(join(lib, 'Projects', 'alpha', 'Runbooks', 'plain.md'), '---\ntype: note\nstream: Alpha\n---\n');
-    assert.deepEqual(readLibrary(lib).map((p) => p.path), [join('Projects', 'alpha', 'Runbooks', 'ship-alpha.md')]);
+    mkdirSync(join(lib, 'Projects', 'beta', 'Knowledge'), { recursive: true });
+    writeFileSync(join(lib, 'Projects', 'beta', 'Knowledge', 'rollout.md'), '---\ntype: library\nkind: how-it-works\nstream: Beta\nstatus: current\nverified-at: 2026-10-08\n---\nbody\n');
+    mkdirSync(join(lib, 'Projects', 'proj-a'), { recursive: true });
+    const status = join(dir, 'status');
+    mkdirSync(status, { recursive: true });
+    writeFileSync(join(status, 'stream-homes.json'), JSON.stringify({ version: 1, streams: { Alpha: { projects: ['proj-a'] }, Beta: { projects: ['proj-a'] } } }));
+    writeProjectPriorities(lib, 'proj-a', '2026-10-09', { project: 'proj-a', date: '2026-10-09', carriedFrom: '', writtenBy: 'priorities set', today: [{ text: 'x' }], carried: [], next: [] });
+    assert.deepEqual(readLibrary(lib).map((p) => p.path), [join('Projects', 'alpha', 'Runbooks', 'ship-alpha.md'), join('Projects', 'beta', 'Knowledge', 'rollout.md')]);
     const log = console.log; const err = console.error; const out: string[] = [];
     console.log = (...a: unknown[]) => { out.push(a.join(' ')); }; console.error = () => {};
     try {
-      assert.equal(main(['check', '--ledger', ledger, '--library', lib], NOW), 0);
+      assert.equal(main(['check', '--ledger', ledger, '--library', lib, '--status-dir', status], NOW), 0);
       assert.match(out.join('\n'), /`aaa1`/);
-      assert.equal(main(['check', '--ledger', ledger, '--library', lib, '--max', '300'], NOW), 1);
+      assert.equal(main(['check', '--ledger', ledger, '--library', lib, '--status-dir', status, '--max', '300'], NOW), 1);
       assert.equal(main(['check', '--ledger', join(dir, 'nope.jsonl')], NOW), 2);
       assert.equal(main(['bogus'], NOW), 2);
     } finally { console.log = log; console.error = err; }
@@ -172,4 +181,115 @@ test('the cut line names exactly the ids missing from the shown lines, and a big
   assert.ok(page.text.length <= 3000);
   for (const id of page.ids.asks) assert.ok(page.text.includes(id), `${id} neither shown nor named`);
   assert.equal(coldStartCheck({ ...input, rows, maxChars: 3000 }).ok, false);
+});
+
+test('a huge ledger under a tiny cap is cut in linear time, and the closing line accounts for every open id', { timeout: 5000 }, () => {
+  const rows: LedgerRow[] = [];
+  for (let n = 0; n < 2000; n += 1) rows.push(row({ id: `y${String(n).padStart(4, '0')}`, kind: 'question', stream: 'Beta', text: `question ${n}` }));
+  const page = coldStart({ ...input, rows, maxChars: 600 });
+  assert.equal(page.truncated, true);
+  assert.ok(page.text.length <= 600, `${page.text.length}`);
+  const closing = page.text.split('\n').pop() ?? '';
+  const more = Number(closing.match(/ … and (\d+) more open ids not named$/)?.[1] ?? 0);
+  const named = closing.replace(/^.*open ids not shown: /, '').replace(/ … and \d+ more open ids not named$/, '').split(' ').filter(Boolean).length;
+  assert.ok(more > 0, closing.slice(0, 120));
+  const shownOnPage = page.ids.asks.filter((id) => page.text.split('\n').slice(0, -1).some((l) => l.includes(`\`${id}\``))).length;
+  assert.equal(named + more + shownOnPage, page.ids.asks.length, 'every open id is shown, named or counted');
+});
+
+test('check output never prints a secret-shaped id: the MISSING line shows the withheld marker', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cold-secret-'));
+  const log = console.log; const err = console.error; const out: string[] = []; const errs: string[] = [];
+  try {
+    const ledger = join(dir, 'ledger.jsonl');
+    writeFileSync(ledger, `${JSON.stringify(row({ id: FAKE_KEY, kind: 'question', stream: 'Beta', text: 'which one?' }))}\n`);
+    console.log = (...a: unknown[]) => { out.push(a.join(' ')); }; console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+    assert.equal(main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--max', '300'], NOW), 1);
+  } finally { console.log = log; console.error = err; rmSync(dir, { recursive: true, force: true }); }
+  assert.ok(![...out, ...errs].join('\n').includes(FAKE_KEY), 'neither stream carries the value');
+  assert.match(errs.join('\n'), /MISSING `\[withheld: secret shape\]`/);
+});
+
+/** A vault with two projects: one whose CONTEXT.md has Now and Next and a priorities file from the day before, one with neither. */
+function projectVault(): string {
+  const v = mkdtempSync(join(tmpdir(), 'cold-proj-'));
+  mkdirSync(join(v, 'Projects', 'proj-a'), { recursive: true });
+  mkdirSync(join(v, 'Projects', 'proj-b'), { recursive: true });
+  writeFileSync(join(v, 'Projects', 'proj-a', 'CONTEXT.md'), `# A\n\n## Now\n- wiring the importer\n- ${FAKE_KEY} leaked here\n\n## Next\n- ship the importer\n\n## Other\nignored\n`);
+  writeProjectPriorities(v, 'proj-a', '2026-10-09', { project: 'proj-a', date: '2026-10-09', carriedFrom: '2026-10-08', writtenBy: 'priorities set', today: [{ text: 'importer', stream: 'Alpha' }], carried: [{ item: { text: 'old' }, status: '0 done, 0 in flight, 0 queued, 0 blocked' }], next: [] });
+  return v;
+}
+const homes: Homes = { found: true, warnings: [], streams: { Alpha: { projects: ['proj-a'], epics: [], exclude: [], done: {}, docs: [], runbooks: [], pins: [] }, Beta: { projects: ['proj-b'], epics: [], exclude: [], done: {}, docs: [], runbooks: [], pins: [] } } };
+
+test('the Projects section points at each active project\'s Now, Next and priorities files, says what is missing and withholds a secret-shaped line', () => {
+  const v = projectVault();
+  try {
+    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'dev-env' });
+    assert.deepEqual(projects.map((p) => p.project).sort(), ['proj-a', 'proj-b']);
+    const page = coldStart({ ...input, projects, today: '2026-10-12' });
+    assert.match(page.text, /\n## Projects\n/);
+    assert.match(page.text, /### proj-a \(Alpha\)\n- Now: wiring the importer\n- Now: \[withheld: secret shape\]\n- Next: ship the importer\n- Priorities: no priorities file since 2026-10-09; newest is Projects\/proj-a\/Status\/priorities\/2026-10-09\.md \(2026-10-09, 1 today, 1 carried\)/);
+    assert.match(page.text, /### proj-b \(Beta\)\n- Now: no `## Now` section in Projects\/proj-b\/CONTEXT\.md\n- Next: no `## Next` section in Projects\/proj-b\/CONTEXT\.md\n- Priorities: no priorities file\n/);
+    assert.ok(!page.text.includes(FAKE_KEY));
+    assert.ok(!currentWorkStatement(page.text).includes('## Projects'), 'the statement is still work and asks only');
+    assert.equal(coldStart({ ...input, projects: [], today: '2026-10-12' }).text.includes('## Projects'), false);
+  } finally { rmSync(v, { recursive: true, force: true }); }
+});
+
+test('a tight cap drops the Projects Now and Next text first and keeps the priorities pointers', () => {
+  const v = projectVault();
+  try {
+    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'dev-env' });
+    let max = coldStart({ ...input, projects }).text.length;
+    let page = coldStart({ ...input, projects, maxChars: max });
+    while (!page.truncated && /- Now:/.test(page.text) && max > 0) { max -= 5; page = coldStart({ ...input, projects, maxChars: max }); }
+    const kept = page;
+    assert.ok(!kept.truncated, 'the Now text goes before any line is cut');
+    assert.doesNotMatch(kept.text, /- Now:/);
+    assert.doesNotMatch(kept.text, /## How to work/);
+    assert.match(kept.text, /- Priorities: .*2026-10-09\.md \(2026-10-09, 1 today, 1 carried\)/);
+  } finally { rmSync(v, { recursive: true, force: true }); }
+});
+
+test('readProjectEntry reads the newest two priorities files and a missing CONTEXT.md as missing sections', () => {
+  const v = projectVault();
+  try {
+    writeProjectPriorities(v, 'proj-a', '2026-10-12', { project: 'proj-a', date: '2026-10-12', carriedFrom: '', writtenBy: 'roll-maintenance', today: [], carried: [], next: [] });
+    const a = readProjectEntry(v, 'proj-a', ['Alpha']);
+    assert.deepEqual([a.priorities?.date, a.priorities?.today, a.previous?.date], ['2026-10-12', 0, '2026-10-09']);
+    assert.deepEqual([a.now, a.next], [['wiring the importer', `${FAKE_KEY} leaked here`], ['ship the importer']]);
+    const b = readProjectEntry(v, 'proj-b', []);
+    assert.deepEqual([b.now, b.next, b.priorities, b.previous], [null, null, null, null]);
+    assert.ok(prioritiesDir(v, 'proj-a').endsWith(join('proj-a', 'Status', 'priorities')));
+  } finally { rmSync(v, { recursive: true, force: true }); }
+});
+
+test('--budget makes check fail when the page is over it, and generate honours it as a cap', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cold-budget-'));
+  const log = console.log; const err = console.error; const errs: string[] = [];
+  try {
+    const ledger = join(dir, 'ledger.jsonl');
+    writeFileSync(ledger, `${ROWS.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    console.log = () => {}; console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+    assert.equal(main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--status-dir', join(dir, 'status'), '--budget', '10'], NOW), 1);
+    assert.match(errs.join('\n'), /PROBLEM: page is about \d+ tokens, over the budget of 10/);
+    errs.length = 0;
+    main(['check', '--ledger', ledger, '--library', join(dir, 'none'), '--status-dir', join(dir, 'status')], NOW);
+    assert.doesNotMatch(errs.join('\n'), /over the budget/, 'the default budget is far above this page');
+    assert.equal(main(['check', '--ledger', ledger, '--budget', '0'], NOW), 2);
+  } finally { console.log = log; console.error = err; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('check fails for an active stream with no carry-over or no how-to, passes once both exist, and a Monday counts Friday', () => {
+  const rows: LedgerRow[] = [row({ id: 'k1', kind: 'wip', stream: 'Alpha', text: 'work' })];
+  const entry = (date: string | null) => ({ project: 'proj-a', streams: ['Alpha'], contextPath: 'Projects/proj-a/CONTEXT.md', now: ['n'], next: ['x'], priorities: date ? { date, path: `Projects/proj-a/Status/priorities/${date}.md`, today: 1, carried: 0 } : null, previous: null });
+  const page = (projects: ReturnType<typeof entry>[], library: LibraryEntry[], today: string) => coldStartCheck({ rows, registry: null, library, now: NOW, projects, today });
+  const bare = page([entry(null)], [], '2026-10-12');
+  assert.equal(bare.ok, false);
+  assert.deepEqual(bare.problems, ['stream Alpha: no carry-over (a priorities file dated 2026-10-09 or later in one of its projects)', 'stream Alpha: no how-to (no current library page)']);
+  assert.equal(page([entry('2026-10-09')], [LIB[0] as LibraryEntry], '2026-10-12').ok, true, 'on a Monday, Friday counts');
+  assert.equal(page([entry('2026-10-08')], [LIB[0] as LibraryEntry], '2026-10-12').ok, false, 'Thursday is too old for a Monday');
+  assert.equal(page([entry('2026-10-11')], [LIB[0] as LibraryEntry], '2026-10-12').ok, true, 'yesterday counts');
+  assert.equal(page([entry('2026-10-08')], [LIB[0] as LibraryEntry], '2026-10-09').ok, true, 'on a Friday, Thursday counts');
+  assert.equal(coldStartCheck({ rows, registry: null, library: [], now: NOW }).ok, true, 'without projects the stream checks are skipped');
 });

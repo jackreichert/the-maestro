@@ -24,9 +24,8 @@ gh_org: <github-org>        # PR board scope; omit for no org filter
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
-roll_turns: 180                # turns that count as 100% on the status footer's Session line; default 180
-roll_read_per_turn: 350000     # ... and mean cache-read per turn that counts as 100% (a plain number); default 350000
-roll_warn_pct: 60              # Session line says "roll soon" at this percent of either; 1..100, below roll_at_pct; default 60
+autocompact_floor: 100000      # lowest autocompact trigger (tokens) that does not warn; default 100000
+roll_warn_pct: 60              # Session line says "roll soon" at this percent of the autocompact trigger; 1..100, below roll_at_pct; default 60
 roll_at_pct: 90                # ... and "roll now" at this percent; a pair with warn >= roll falls back to 60/90; default 90
 ledger_root: /path/to/ledger
 vault_root: /path/to/vault
@@ -57,6 +56,7 @@ pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid 
 pr_body_check_stack: on         # stacked PR needs a Stack section naming its base PR; also pr_body_check_order (Review order line over pr_review_order_min_files code files, default 3); on by default
 pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off; file-only
 waive_size_gate_owners: example-owner # GitHub owners (or owner/name globs, comma-separated) whose repos skip the PR size limits in pr-open.ts (not the mixed code/mechanical refusal); a bare owner means owner/*; default none, so the gate holds everywhere; file-only
+review_pool_owners: example-org # GitHub owners (or owner/name globs, comma-separated) whose PRs other people review; every repo outside the pool counts as self-review, so personal repos never fill review_queue_cap; default none
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on

@@ -11,11 +11,15 @@
  * State { ranDay, retryAt, error, last } is the whole memory (last: counts of the newest clean run, for the playbook, never an event).
  * Scheduling: a 15 minute check, singleton, renews, no idle back-off; it never notifies unless the watch is added with --notify.
  */
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMaintainLine } from '../lib/journal/maintain.ts';
-import { localDate } from '../lib/status-page/priorities.ts';
-import { WATCH_TZ } from '../local-config.ts';
+import { readHomes } from '../lib/home/config.ts';
+import { openStore } from '../lib/journal/store.ts';
+import { localDate, parsePriorities, PRIORITIES_FILE } from '../lib/status-page/priorities.ts';
+import { carryPriorities } from '../lib/status-page/project-priorities.ts';
+import { CONTAINER_PROJECT, LEDGER_ROOT, STATUS_REPO_STREAMS, statusDirFor, VAULT_ROOT, WATCH_TZ } from '../local-config.ts';
 import type { MaintainResult } from '../lib/journal/maintain.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
@@ -42,6 +46,8 @@ export interface MaintenanceIo {
   localDay(now: number): string;
   /** Runs maintain and returns its result; throws when it could not (crash, timeout, no result line). */
   maintain(target: string, today: string, run: Run): MaintainResult;
+  /** Starts today's per-project priorities file from yesterday's list; throws when it could not read what it needs. */
+  carry(today: string): { written: string[]; problems: string[] };
 }
 
 const JOURNAL = fileURLToPath(new URL('../journal.ts', import.meta.url));
@@ -55,10 +61,21 @@ export const realIo: MaintenanceIo = {
     const why = (r.stderr || r.stdout).trim().split('\n').pop() ?? '';
     throw new Error(`maintain printed no result (exit ${r.status}${why ? `: ${why.slice(0, 160)}` : ''})`);
   },
+  carry: (today) => {
+    if (!VAULT_ROOT) throw new Error('carry: vault_root is not set');
+    const store = openStore({ vault: LEDGER_ROOT || VAULT_ROOT, project: CONTAINER_PROJECT, dryRun: false, warn: () => {} });
+    const statusDir = statusDirFor(CONTAINER_PROJECT);
+    const file = statusDir && existsSync(join(statusDir, PRIORITIES_FILE)) ? parsePriorities(readFileSync(join(statusDir, PRIORITIES_FILE), 'utf8')) : null;
+    const registry = store.loadRegistry();
+    return carryPriorities({
+      vault: VAULT_ROOT, today, rows: store.readLedger(), registry, homes: readHomes(statusDir, Object.keys(registry?.streams ?? {})), repoStreams: STATUS_REPO_STREAMS,
+      containerProject: CONTAINER_PROJECT, container: file?.date ? file : null,
+    });
+  },
 };
 
 const firstLine = (e: unknown): string => (e instanceof Error ? e.message : String(e)).split('\n')[0] || 'unknown error';
-const describe = (r: MaintainResult): string => `archived ${r.archivedDays.length} day(s), swept ${r.sweep ? `${r.sweep.removed} removed, ${r.sweep.pruned} pruned, ${r.sweep.kept} kept` : 'nothing'}`;
+const describe = (r: MaintainResult, carried: string[]): string => `archived ${r.archivedDays.length} day(s), swept ${r.sweep ? `${r.sweep.removed} removed, ${r.sweep.pruned} pruned, ${r.sweep.kept} kept` : 'nothing'}, carried ${carried.length} project(s)`;
 
 export function check(target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 'run'>, io: MaintenanceIo = realIo): RollMaintenanceState {
   const prev = (ctx.prev as RollMaintenanceState | null | undefined) ?? { ranDay: '', retryAt: 0, error: '', last: '' };
@@ -66,7 +83,11 @@ export function check(target: string, ctx: Pick<CheckContext, 'now' | 'prev' | '
   if (prev.ranDay === today || ctx.now < prev.retryAt) return prev;
   try {
     const r = io.maintain(target, today, ctx.run as Run);
-    if (r.ok) return { ranDay: today, retryAt: 0, error: '', last: describe(r) };
+    if (r.ok) {
+      const carried = io.carry(today);
+      if (carried.problems.length) return { ...prev, retryAt: ctx.now + RETRY_MS, error: `carry: ${carried.problems.join('; ')}`.slice(0, 300) };
+      return { ranDay: today, retryAt: 0, error: '', last: describe(r, carried.written) };
+    }
     return { ...prev, retryAt: ctx.now + RETRY_MS, error: r.problems.join('; ').slice(0, 300) || 'maintain reported a failure' };
   } catch (e) {
     // A throw would only count towards the loop's "check keeps failing" notice; the retry and the alert are this type's own.

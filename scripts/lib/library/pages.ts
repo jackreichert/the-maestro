@@ -20,6 +20,8 @@ export interface LibraryPage {
   status: string;
   /** `YYYY-MM-DD`, or '' when absent; any `@sha` suffix is dropped. */
   verifiedAt: string;
+  /** The `verified-at` field as written, `@sha` suffix included; '' when absent. */
+  verifiedRaw: string;
   /** The page below its frontmatter. */
   body: string;
   /** Link targets as written (anchor, alias and `.md` removed) and where each came from: `body` or a frontmatter key. */
@@ -46,6 +48,7 @@ export function readLibrary(vault: string, repo?: string): LibraryPage[] {
       stream: text(p, 'stream'),
       status: text(p, 'status'),
       verifiedAt: text(p, 'verified-at').split('@')[0]?.trim() ?? '',
+      verifiedRaw: text(p, 'verified-at').trim(),
       body,
       links: [
         ...LINK_FIELDS.flatMap((k) => list(p, k).map((t) => ({ target: linkTarget(t), via: k }))),

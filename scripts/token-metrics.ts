@@ -49,9 +49,10 @@ import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ModelPrice } from './local-config.ts';
 import { family } from './lib/model-family.ts';
+import { readAutocompact, triggerTokens } from './lib/autocompact.ts';
 import { sessionText } from './lib/session-text.ts';
 import type { SessionStatus } from './lib/session-text.ts';
-import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_TURNS, ROLL_READ_PER_TURN, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
+import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
 
@@ -249,16 +250,18 @@ export function collect(projectsDir: string): { days: Map<string, DayStats>; ses
 }
 
 /**
- * The most recently modified session in `dir`: { session, turns, readPerTurn }, or null when there is none. Both figures cover only
+ * The most recently modified session in `dir`: { session, turns, readPerTurn, ctx }, or null when there is none. The figures cover only
  * the run since the last compaction marker (the turns from the last one with since === 1 onward), not the whole transcript.
+ * `ctx` is the last turn's context (fresh + cache write + cache read), 0 with no turns.
  */
-export function currentSession(dir: string, sessionId?: string): { session: string; turns: number; readPerTurn: number } | null {
+export function currentSession(dir: string, sessionId?: string): { session: string; turns: number; readPerTurn: number; ctx: number } | null {
     const newest = sessionId !== undefined ? sessionFileById(dir, sessionId) : newestSessionFile(dir);
     if (!newest) return null;
     const all = scanFile(newest).turns;
     const turns = all.slice(Math.max(0, all.findLastIndex((t) => t.since === 1)));
     const read = turns.reduce((n, t) => n + t.read, 0);
-    return { session: basename(newest, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0 };
+    const lastTurn = turns.at(-1);
+    return { session: basename(newest, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0, ctx: lastTurn ? lastTurn.fresh + lastTurn.write + lastTurn.read : 0 };
 }
 
 /** The full path of the most recently modified session transcript in `dir`, or null when there is none. The one place "newest session" is decided. */
@@ -280,24 +283,29 @@ export function sessionFileById(dir: string, id: string): string | null {
     return hits.length === 1 ? join(dir, `${hits[0]}.jsonl`) : null;
 }
 
-/** The current session (the newest transcript, or session `sessionId` when given) measured against the roll thresholds (see `sessionLine` for the rules). */
-export function sessionStatus(dir: string, rollTurns: number = ROLL_TURNS, rollRead: number = ROLL_READ_PER_TURN, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT, guessed: boolean = guessedFromCwd(dir), sessionId?: string): SessionStatus {
+/**
+ * The current session (the newest transcript, or session `sessionId` when given) measured against the autocompact trigger: the
+ * last turn's context against `trigger` tokens (default: the live autocompact setting, see lib/autocompact.ts), so `roll soon` and
+ * `roll now` fire before the compaction, not never. `_retiredReadLimit` is the old read-per-turn slot, kept only so the positional
+ * call in journal.ts (`undefined` for every threshold, then the session id) still lines up; it is ignored and goes with that call.
+ */
+export function sessionStatus(dir: string, trigger: number = triggerTokens(readAutocompact()), _retiredReadLimit?: number, warnPct: number = ROLL_WARN_PCT, rollPct: number = ROLL_AT_PCT, guessed: boolean = guessedFromCwd(dir), sessionId?: string): SessionStatus {
     let s;
     try { s = currentSession(dir, sessionId); } catch (e) { const err = e as NodeJS.ErrnoException; return { available: false, unavailable: `${err.code || err.message.split('\n')[0]} reading ${dir}` }; }
     if (!s && sessionId !== undefined) return { available: false, unavailable: `no session ${JSON.stringify(sessionId.replace(/[^\w-]/g, '?').slice(0, 40))} in ${dir}` };
     if (!s) return { available: false, unavailable: `no sessions in ${dir}; set projects_dir${guessed ? ' or container_root (this folder was guessed from the working directory)' : ''}` };
-    // Cross-multiplied so 85% of 180 is exactly 153 turns, with no float division at the boundary.
-    const reached = (pct: number): boolean => s.turns * 100 >= pct * rollTurns || s.readPerTurn * 100 >= pct * rollRead;
+    // Cross-multiplied so 85% of 200k is exactly 170k, with no float division at the boundary.
+    const reached = (pct: number): boolean => s.ctx * 100 >= pct * trigger;
     const advice = reached(rollPct) ? 'roll now' : reached(warnPct) ? 'roll soon' : '';
-    return { available: true, turns: s.turns, pct: Math.floor((s.turns / rollTurns) * 100), rollTurns, readK: Math.floor(s.readPerTurn / 1000), advice };
+    return { available: true, session: s.session, turns: s.turns, ctxK: Math.floor(s.ctx / 1000), triggerK: Math.floor(trigger / 1000), pct: Math.floor((s.ctx / trigger) * 100), readK: Math.floor(s.readPerTurn / 1000), advice };
 }
 
 /**
  * The status-footer Session line for the current session, e.g.
- * `**Session:** 86 turns (48% of 180 roll) · 129k read/turn`. The turn count and read/turn mean are since the last compact, not the
- * whole transcript. The shown percent is of the full roll_turns. At `warnPct` of either
- * metric (turns vs rollTurns, mean read/turn vs rollRead) it ends with `roll soon`; at `rollPct` of either, `roll now` instead.
- * With no session on disk it says so rather than vanishing, so a misconfigured projects_dir is visible.
+ * `**Session:** 86 turns · ctx 142k of ~200k (71%) · 129k read/turn · roll soon`. The turn count, context and read/turn mean are
+ * since the last compact. The percent is the last turn's context over the autocompact trigger. At `warnPct` of the trigger it ends
+ * with `roll soon`; at `rollPct`, `roll now` instead. With no session on disk it says so rather than vanishing, so a misconfigured
+ * projects_dir is visible.
  */
 export const sessionLine = (...args: Parameters<typeof sessionStatus>): string => sessionText(sessionStatus(...args));
 

@@ -26,14 +26,14 @@ export function footerOneLine({ rows, queue, loop, session, window, leases }: Fo
     const sum = (pick: (r: FooterRow) => number): number => rows.reduce((n, r) => n + pick(r), 0);
     const ledger = [
         `${sum((r) => r.done)} done`,
-        `${sum((r) => r.inflight)} in flight`,
+        `${sum((r) => r.inflight)} in flight${sum((r) => r.stale ?? 0) ? ` (${sum((r) => r.stale ?? 0)} stale)` : ''}`,
         ...(sum((r) => r.queued) ? [`${sum((r) => r.queued)} queued`] : []),
         `${sum((r) => r.awaiting)} awaiting`,
         ...(sum((r) => r.paste) ? [`${sum((r) => r.paste)} to run`] : []),
         ...(sum((r) => r.blocked) ? [`${sum((r) => r.blocked)} blocked`] : []),
     ].join(' · ');
     const sess = session.available
-        ? `Session: ${session.turns} turns (${session.pct}%) · ${session.readK}k/turn${session.advice ? ` · ${session.advice}` : ''}`
+        ? `Session: ${session.session ? `${session.session} · ` : ''}${session.turns} turns · ${session.ctxK}k/${session.triggerK}k (${session.pct}%) · ${session.readK}k/turn${session.advice ? ` · ${session.advice}` : ''}`
         : `Session: unavailable (${session.unavailable})`;
     return [`Ledger: ${ledger}`, queue ? plain(queue) : '', loop ? plain(loop) : '', window ? `Window: ${window}` : '', leases ?? '', sess].filter(Boolean).join(' | ');
 }

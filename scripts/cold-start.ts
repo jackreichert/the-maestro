@@ -3,25 +3,31 @@
  * cold-start.ts: prints the cold-start page (current work per stream, in-flight agents with their report paths, decisions pending,
  * how-to pointers into the library) from the ledger and the library, and checks it.
  *
- *   cold-start.ts [generate] [--vault <ledger-root>] [--project <name>] [--library <vault-root>] [--max <chars>]
- *   cold-start.ts check --ledger <ledger.jsonl> [--registry <streams.json>] [--library <vault-root>] [--max <chars>]
+ *   cold-start.ts [generate] [--vault <ledger-root>] [--project <name>] [--library <vault-root>] [--max <chars>] [--budget <tokens>] [--status-dir <dir>]
+ *   cold-start.ts check --ledger <ledger.jsonl> [--registry <streams.json>] [--library <vault-root>] [--max <chars>] [--budget <tokens>] [--status-dir <dir>]
  *
  * `generate` reads <ledger-root>/Projects/<project>/Journal/ledger.jsonl and the library under Projects/<repo>/Knowledge and
- * Runbooks of --library (default: the configured vault root); it writes nothing. `check` is the cold-start test: no transcript,
+ * Runbooks of --library (default: the configured vault root); it writes nothing. A Projects section reads, for each project of an
+ * active stream (stream-homes.json in --status-dir, else `status_repo_streams`, else the container project; at most 5), the `## Now` and
+ * `## Next` lines of its CONTEXT.md and its newest two priorities files. `--budget` (default 10000 tokens, characters / 4) caps `generate` and
+ * makes `check` fail when the page is over it. `check` is the cold-start test: no transcript,
  * only the ledger file and the library; it prints the statement and exits 1 when an open in-flight, blocked, queued or ask item is
  * missing from it, the page was cut, or a secret shape is on it. Exit 2 on a usage or read error. Both read-only.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
+import { CONTAINER_PROJECT, LEDGER_ROOT, STATUS_REPO_STREAMS, statusDirFor, VAULT_ROOT, WATCH_TZ } from './local-config.ts';
 import { parseLedger, readRegistry } from './lib/ledger-core.ts';
 import type { RegistryLookup } from './lib/ledger-core.ts';
-import { coldStart, coldStartCheck } from './lib/cold-start.ts';
-import type { LibraryEntry } from './lib/cold-start.ts';
+import { COLD_START_MAX_CHARS, coldStart, coldStartCheck, shown } from './lib/cold-start.ts';
+import type { LibraryEntry, ProjectEntry } from './lib/cold-start.ts';
+import { readHomes } from './lib/home/config.ts';
+import { localDate } from './lib/status-page/priorities.ts';
+import { activeProjects } from './lib/status-page/project-priorities.ts';
 import { parsePage, text } from './lib/library/page.ts';
 
-const USAGE = 'Usage: cold-start.ts [generate] [--vault <ledger-root>] [--project <name>] [--library <vault-root>] [--max <chars>] | check --ledger <ledger.jsonl> [--registry <streams.json>] [--library <vault-root>] [--max <chars>]';
+const USAGE = 'Usage: cold-start.ts [generate] [--vault <ledger-root>] [--project <name>] [--library <vault-root>] [--max <chars>] [--budget <tokens>] [--status-dir <dir>] | check --ledger <ledger.jsonl> [--registry <streams.json>] [--library <vault-root>] [--max <chars>] [--budget <tokens>] [--status-dir <dir>]';
 const FOLDERS = ['Knowledge', 'Runbooks'] as const;
 
 const dirs = (p: string): string[] => (existsSync(p) ? readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : []);
@@ -53,12 +59,29 @@ function flag(argv: string[], name: string): string | undefined {
   return k >= 0 && argv[k + 1] && !argv[k + 1]!.startsWith('--') ? argv[k + 1] : undefined;
 }
 
+const DEFAULT_BUDGET_TOKENS = 10_000;
+
+/** The active projects for the page, read from the vault; none when no vault is configured or reading fails (the page is a pointer list, not a guarantee). */
+function readProjects(vault: string, statusDir: string, rows: ReturnType<typeof parseLedger>, registry: RegistryLookup | null): ProjectEntry[] {
+  if (!vault) return [];
+  try {
+    const known = [...new Set([...Object.keys(registry?.streams ?? {}), ...rows.flatMap((r) => (typeof r.stream === 'string' && r.stream ? [r.stream] : []))])];
+    const homes = readHomes(statusDir, known);
+    return activeProjects({ vault, rows, registry, homes, repoStreams: STATUS_REPO_STREAMS, containerProject: CONTAINER_PROJECT });
+  } catch { return []; }
+}
+
 export function main(argv: string[], now: Date = new Date()): number {
   const sub = argv[0] && !argv[0].startsWith('--') ? argv[0] : 'generate';
   if (!['generate', 'check'].includes(sub)) { console.error(USAGE); return 2; }
   const maxRaw = flag(argv, 'max');
   const maxChars = maxRaw ? Number(maxRaw) : undefined;
   if (maxRaw && !(Number(maxRaw) > 0)) { console.error(USAGE); return 2; }
+  const budgetRaw = flag(argv, 'budget');
+  if (budgetRaw && !(Number(budgetRaw) > 0)) { console.error(USAGE); return 2; }
+  const budgetTokens = budgetRaw ? Number(budgetRaw) : DEFAULT_BUDGET_TOKENS;
+  const statusDir = flag(argv, 'status-dir') ?? statusDirFor(CONTAINER_PROJECT);
+  const today = localDate(now, WATCH_TZ);
   const libRoot = flag(argv, 'library') ?? VAULT_ROOT;
   const library = libRoot ? readLibrary(libRoot) : [];
   try {
@@ -67,9 +90,10 @@ export function main(argv: string[], now: Date = new Date()): number {
       if (!ledger || !existsSync(ledger)) { console.error(`${USAGE}\nledger file not found`); return 2; }
       const reg = flag(argv, 'registry');
       const registry: RegistryLookup | null = reg ? readRegistry(reg) : null;
-      const r = coldStartCheck({ rows: parseLedger(readFileSync(ledger, 'utf8')), registry, library, now, maxChars });
+      const rows = parseLedger(readFileSync(ledger, 'utf8'));
+      const r = coldStartCheck({ rows, registry, library, now, maxChars, today, budgetTokens, projects: readProjects(libRoot, statusDir, rows, registry) });
       console.log(r.statement);
-      for (const m of r.missing) console.error(`MISSING \`${m.id}\`: ${m.why}`);
+      for (const m of r.missing) console.error(`MISSING \`${shown(m.id)}\`: ${m.why}`);
       for (const p of r.problems) console.error(`PROBLEM: ${p}`);
       console.error(r.ok ? 'cold-start check: ok' : `cold-start check: FAILED (${r.missing.length} missing, ${r.problems.length} problems)`);
       return r.ok ? 0 : 1;
@@ -79,7 +103,9 @@ export function main(argv: string[], now: Date = new Date()): number {
     const ledgerPath = join(ledgerRoot, 'Projects', project, 'Journal', 'ledger.jsonl');
     if (!ledgerRoot || !existsSync(ledgerPath)) { console.error(`${USAGE}\nno ledger at ${ledgerPath}`); return 2; }
     const registry = readRegistry(join(ledgerRoot, 'Projects', project, 'streams.json'));
-    console.log(coldStart({ rows: parseLedger(readFileSync(ledgerPath, 'utf8')), registry, library, now, maxChars }).text);
+    const rows = parseLedger(readFileSync(ledgerPath, 'utf8'));
+    const cap = Math.min(maxChars ?? COLD_START_MAX_CHARS, budgetTokens * 4);
+    console.log(coldStart({ rows, registry, library, now, maxChars: cap, today, projects: readProjects(libRoot, statusDir, rows, registry) }).text);
     return 0;
   } catch (e) {
     console.error(`cold-start: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);

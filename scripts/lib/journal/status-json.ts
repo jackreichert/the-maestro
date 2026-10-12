@@ -28,7 +28,7 @@ export function statusJson(g: Groups, d: string, session: SessionStatus, done?: 
     return {
         date: d,
         inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done: view.all,
-        footer: { ledger: footerRows(g, view.all, view.sinceRoll), session },
+        footer: { ledger: footerRows(g, view.all, view.sinceRoll, leases ? { today: d, leased: new Set(leases.held.map((h) => h.item)) } : undefined), session },
         ...(leases ? { leases } : {}),
     };
 }

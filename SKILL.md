@@ -81,24 +81,24 @@ End every reply with the live agent roster and the ledger count. Call `ListAgent
 ```
 **Agents:** `trace-client-id` running 4m · `map-amada-uat` completed
 **Ledger:** 4 done today · 2 in flight · 1 awaiting you
-**Session:** 86 turns (48% of 180 roll) · 129k read/turn
+**Session:** 86 turns · ctx 142k of ~200k (71%) · 129k read/turn · roll soon
 ```
 
 `journal.ts status --footer` prints the Ledger lines, one per active stream when streams are in use,
 then the Session line for the current session (the newest transcript in `projects_dir`, or the one named by `--session <id>`; at 60% of
-a roll threshold it ends `· roll soon`, at 90% `· roll now`). `status --footer --line` prints the same facts as one line (ledger totals, review queue, loop, session); with two windows open, pass `--session <id>` so each reads its own transcript
+the autocompact trigger it ends `· roll soon`, at 90% `· roll now`). `status --footer --line` prints the same facts as one line (ledger totals, review queue, loop, session); with two windows open, pass `--session <id>` so each reads its own transcript
 ([reference/ledger.md#the-footer-lines](reference/ledger.md#the-footer-lines)).
 
 **Which form to paste.** The script's default stays the multi-line form above. On an ordinary reply, paste `status --footer --line` instead:
 
 ```
-Ledger: 0 done · 2 in flight · 0 awaiting | Loop: ok <1 min | Session: 103 turns (57%) · 159k/turn
+Ledger: 0 done · 2 in flight · 0 awaiting | Loop: ok <1 min | Session: 103 turns · 142k/200k (71%) · 159k/turn · roll soon
 ```
 
 Paste the full multi-line footer only on a session-opening greeting, a status, board or PR-board request, or when the user asks for it. Either way the text comes from the script, never from memory, and the `roll soon` / `roll now` ending is on both.
 
 Say "none running" when nothing is live; that's still information. When relaying an agent's result,
-the Session line carries the turn count and read/turn. **`roll soon`:** finish in-flight relays,
+the Session line carries the turn count, the context against the autocompact trigger and read/turn. **`roll soon`:** finish in-flight relays,
 start no new long dispatch chains, and say so in one line. **`roll now`:** run the roll yourself,
 unasked (`journal.ts triage`, then `roll`, then `handoff --all --delta`), then open EVERY reply
 with one line asking Jack to compact (`/compact` or a fresh session; only he can) until the Session
@@ -134,6 +134,9 @@ Each row names the one file to read, or says not to read further. Read only what
 | Cost, token usage, what did today cost, model/agent choice, long session | Read [cost/SKILL.md](cost/SKILL.md). |
 | "the Podium", the status page, "what's on the page", an `> answer:` or tick the user left on it, the `Podium:` footer link | Read [podium/SKILL.md](podium/SKILL.md). |
 | "bolero", "keep looping until the queue is done", "work the queue", "loop until done" | Read [bolero/SKILL.md](bolero/SKILL.md): scout the queue, work it in lanes, merge locally to test, stop only when blocked. |
+| Writing a brief for work that will close a ticket, or closing one | Read [reference/definition-of-done.md](reference/definition-of-done.md): the four-item ready line before dispatch, the five-line done block before close. |
+| A hard external date drives several streams, or its risks are scattered | Read [reference/raid.md](reference/raid.md): one page per deadline with risks, assumptions, issues and dependencies. |
+| Starting or reviewing a long-running stream, or the Monday bet | Read [reference/appetite.md](reference/appetite.md): appetite, cut-first line and the circuit breaker. |
 | "grill me", or a decision that forks into dependent choices | Read [reference/grill.md](reference/grill.md): on demand only; ask the ready decisions in one numbered round with recommendations, look facts up yourself, take no action until the user confirms. |
 | `git`, `pr`, "commit this", "push", "open a PR" | Read [reference/git.md](reference/git.md) in full before any git write. This is the safety gate. |
 | "PRs", "my PRs", "PR status", "open PRs" | Read [reference/prs.md](reference/prs.md): run the query, report the full bucketed board, links mandatory. |

@@ -73,3 +73,20 @@ test('without a vault root the endpoint still answers and says why', async () =>
   s2.close();
   assert.deepEqual(JSON.parse(body).unknowns.filter((u: { kind: string }) => u.kind === 'no-vault').length, 1);
 });
+
+test('GET /api/epics lists each stream\'s open epics with their counts, and touches nothing', async () => {
+  const roots = [fx.root, ledgerRoot];
+  const before = roots.map(snapshot);
+  const r = await hit('/api/epics');
+  assert.equal(r.status, 200);
+  const data = JSON.parse(r.body);
+  assert.deepEqual(data.streams.map((s: { stream: string }) => s.stream), ['Avonlea', 'Green Gables']);
+  const ava = data.streams[0].epics.find((e: { id: string }) => e.id === 'avonlea-api-042');
+  assert.deepEqual([ava.total, ava.closed, ava.inProgress, ava.blocked, ava.notStarted, ava.awaiting], [10, 4, 1, 2, 3, 2], 'the same counts the stream home base gives');
+  assert.deepEqual(ava.next.id, 'avonlea-api-045');
+  assert.ok(data.streams[1].epics.some((e: { id: string }) => e.id === 'green-gables-001'), 'a label claims the epic for its stream');
+  assert.deepEqual(data.unfiled.map((e: { id: string }) => e.id), ['loop-lab-002'], 'an epic no stream claims (here the parent loop, in a project no stream lists) is listed, not dropped');
+  assertNoCanary(r.body);
+  assert.ok(!r.body.includes(fx.root) && !r.body.includes(ledgerRoot), 'no absolute path in the response');
+  assert.deepEqual(roots.map(snapshot), before, 'vault, ledger and status dir are byte-identical');
+});

@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { LedgerRow } from '../lib/ledger-core.ts';
 import { continuityLines } from '../lib/continuous-roll.ts';
 import { decisionsOnly, precompact } from './precompact.ts';
@@ -15,7 +17,7 @@ const transcript = JSON.stringify({ type: 'user', timestamp: '2026-10-09T11:00:0
 
 function deps(over: Partial<PrecompactDeps> = {}): { d: PrecompactDeps; calls: string[][] } {
   const calls: string[][] = [];
-  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], newestHandoff: () => null, readTranscript: () => transcript, handoffPath: (d, w) => `/j/HANDOFF-${d}-precompact-${w}.md`, snapshot: () => ({ worktrees: 2, copied: 5, current: 3, skipped: 1, partial: false, capped: false }), now: () => new Date(T), ...over } };
+  return { calls, d: { journal: (a) => { calls.push(a); return { ok: true, out: '' }; }, readLedger: () => [], newestHandoff: () => null, readTranscript: () => transcript, handoffPath: (d, w) => `/j/HANDOFF-${d}-precompact-${w}.md`, snapshot: () => ({ worktrees: 2, copied: 5, current: 3, skipped: 1, partial: false, capped: false }), now: () => new Date(T), autocompact: () => ({ pct: 20, window: null, source: 'env' }), ...over } };
 }
 
 test('precompact writes the handoff delta, raises the decision and ends with a marker row', () => {
@@ -76,12 +78,18 @@ test('precompact reports a missing transcript_path and an unset scripts_dir inst
   assert.match(precompact({}, d), /^precompact incomplete: decisions: no transcript_path in the hook input; snapshot: scripts_dir is not set/);
 });
 
-test('session-start context: only compact and clear print; the cold-start page sits before Start here so the cap never cuts it', () => {
+test('session-start context: every start reason prints the board and cold start; Start here is only the fallback', () => {
   const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : a[0] === 'start-here' ? { ok: true, out: 'start page' } : { ok: false, out: 'unknown' });
-  assert.equal(context('startup', run, () => ({ ok: true, out: 'cold' })), '');
-  const out = context('compact', run, () => ({ ok: true, out: '# Cold start\nwork' }));
-  assert.match(out, /== Board \(journal\.ts prime\) ==/);
-  assert.match(out, /== Cold start ==\n# Cold start\nwork\n\n== Start here ==\nstart page/);
+  assert.equal(context('other', run, () => ({ ok: true, out: 'cold' })), '');
+  for (const source of ['startup', 'resume', 'compact', 'clear']) {
+    const out = context(source, run, () => ({ ok: true, out: '# Cold start\nwork' }));
+    assert.match(out, /== Board \(journal\.ts prime\) ==/);
+    assert.match(out, /== Cold start ==\n# Cold start\nwork/);
+    assert.ok(!out.includes('== Start here =='), 'a working cold-start part needs no fallback');
+  }
+  const failed = context('startup', run, () => ({ ok: false, out: 'boom' }));
+  assert.match(failed, /== Cold start ==\nskipped: boom/);
+  assert.match(failed, /== Start here ==\nstart page/);
 });
 
 test('session-start is a fail-open fallback: a missing, failing or throwing cold-start part is named and the rest still prints', () => {
@@ -95,7 +103,7 @@ test('session-start is a fail-open fallback: a missing, failing or throwing cold
 
 test('session-start context passes --source to prime and caps the output', () => {
   const seen: string[][] = [];
-  const out = context('clear', (a) => { seen.push(a); return { ok: true, out: 'x'.repeat(30_000) }; });
+  const out = context('clear', (a) => { seen.push(a); return { ok: true, out: Array.from({ length: 4000 }, (_, n) => `line ${n}`).join('\n') }; });
   assert.deepEqual(seen[0], ['prime', '--source', 'clear', '--no-update-check']);
   assert.ok(out.length < 20_300 && /cut at 20000/.test(out));
   assert.equal(assemble([{ title: 'a', body: 'b' }]), '== a ==\nb');
@@ -107,7 +115,7 @@ test('the settings snippet names both events with the matchers and passes flags 
   assert.equal(s.hooks.SessionEnd[0].matcher, 'clear|resume|logout|prompt_input_exit|other');
   assert.match(s.hooks.SessionEnd[0].hooks[0].command, /session-end-decisions\.ts' --project 'p'$/);
   assert.equal(s.hooks.SessionEnd[0].hooks[0].timeout, 30);
-  assert.equal(s.hooks.SessionStart[0].matcher, 'compact|clear');
+  assert.equal(s.hooks.SessionStart[0].matcher, 'startup|resume|compact|clear');
   assert.match(s.hooks.PreCompact[0].hooks[0].command, /precompact\.ts' --project 'p'$/);
   assert.equal(s.hooks.PreToolUse[0].matcher, 'Bash');
   assert.match(s.hooks.PreToolUse[0].hooks[0].command, /git-guard\.ts'$/, 'no pass-through flags reach the guard');
@@ -187,7 +195,7 @@ test('precompact rewrites a stale handoff and says how far behind it was', () =>
   const { d, calls } = deps({ ...quiet(), readLedger: () => [rowAt('2026-10-09T11:40:00.000Z', 'later work')], newestHandoff: () => ({ name: 'HANDOFF-x.md', at: '2026-10-09T11:03:00.000Z' }) });
   const text = precompact({ transcript_path: '/t', trigger: 'auto' }, d);
   assert.equal(calls.filter((c) => c[0] === 'handoff').length, 1);
-  assert.match(text, /^precompact: handoff rewritten \(37 min behind\), snapshot copied 0 \(4 current\), decisions raised 0 in 0 ask\(s\) /);
+  assert.match(text, /^precompact: repaired, handoff rewritten \(37 min behind\), snapshot copied 0 \(4 current\), decisions raised 0 in 0 ask\(s\) /);
 });
 
 test('precompact: rows the hook and the loop wrote do not stale the handoff, but a repair is still reported when only the snapshot copied', () => {
@@ -196,4 +204,69 @@ test('precompact: rows the hook and the loop wrote do not stale the handoff, but
   const text = precompact({ transcript_path: '/t', trigger: 'auto' }, d);
   assert.equal(calls.some((c) => c[0] === 'handoff'), false);
   assert.match(text, /^precompact: handoff current, snapshot copied 2 \(1 current\), decisions raised 0 in 0 ask\(s\) /);
+});
+
+const SNIPPET_CLI = join(dirname(fileURLToPath(import.meta.url)), 'print-settings-snippet.ts');
+const runSnippet = (args: string[]) => spawnSync(process.execPath, [SNIPPET_CLI, ...args], { encoding: 'utf8', env: { ...process.env, MAESTRO_CLAUDE_SETTINGS: '/nonexistent', CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '' }, timeout: 20_000 });
+
+test('the one snippet holds the roll hooks and the event-inject entries, and no settings-env block without the flag', () => {
+  const r = runSnippet([]);
+  assert.equal(r.status, 0);
+  const s = JSON.parse(r.stdout) as Record<string, unknown> & { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
+  assert.deepEqual(Object.keys(s.hooks).sort(), ['PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'UserPromptSubmit']);
+  assert.equal(s.hooks.SessionStart.length, 2);
+  assert.equal(s.hooks.SessionStart[1].matcher, undefined);
+  assert.match(s.hooks.SessionStart[1].hooks[0].command, /event-inject\.ts'$/);
+  assert.equal(s.hooks.UserPromptSubmit.length, 1);
+  assert.deepEqual(Object.keys(s), ['hooks']);
+  assert.match(r.stderr, /autocompact: unset% of 1000k window \(source default\)/);
+});
+
+test('--autocompact-pct adds the settings env block; a value under the floor is refused with exit 2 and nothing on stdout', () => {
+  const ok = runSnippet(['--autocompact-pct', '20']);
+  assert.equal(ok.status, 0);
+  assert.deepEqual(Object.entries(JSON.parse(ok.stdout) as Record<string, unknown>).find(([k]) => k !== 'hooks')?.[1], { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20' });
+  const low = runSnippet(['--autocompact-pct', '5']);
+  assert.equal(low.status, 2);
+  assert.equal(low.stdout, '');
+  assert.match(low.stderr, /refused/);
+});
+
+test('session-start context puts the autocompact warnings first, and prints none when there are none', () => {
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: 'Board x' } : { ok: true, out: 'start page' });
+  const out = context('compact', run, () => ({ ok: true, out: 'cold' }), ['too low']);
+  assert.ok(out.startsWith('== Autocompact ==\n!! too low\n\n== Board'));
+  assert.ok(!context('compact', run, () => ({ ok: true, out: 'cold' })).includes('Autocompact'));
+});
+
+test('two compactions two minutes apart leave a thrash row naming the setting, and the handoff, snapshot and marker rows still follow', () => {
+  const boundaryRow = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-09T11:58:00.000Z', compactMetadata: { preTokens: 180000, postTokens: 15000 } });
+  const turnRow = JSON.stringify({ type: 'assistant', timestamp: '2026-10-09T11:59:00.000Z', message: { role: 'assistant', usage: { input_tokens: 5, cache_creation_input_tokens: 1000, cache_read_input_tokens: 24000 } } });
+  const { d, calls } = deps({ readTranscript: () => [boundaryRow, turnRow].join('\n') });
+  const text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto', session_id: 'abcdef1234' }, d);
+  const logs = calls.filter((c) => c[0] === 'log').map((c) => c[1]);
+  assert.match(logs[1], /^compaction thrash: session abcdef12 compacted 2 time\(s\) in 10 min, 10k growth since the last \(setting 20% of 1000k = 200k, floor 100k\)$/);
+  assert.deepEqual(calls.map((c) => c[0]), ['log', 'log', 'handoff', 'log'], 'every step still ran');
+  assert.match(text, /^precompact: handoff rewritten/);
+});
+
+test('a handoff rewritten 37 minutes behind marks the row repaired; one 4 minutes behind does not', () => {
+  const min = (m: number): string => new Date(Date.parse(T) - m * 60_000).toISOString();
+  const run = (behind: number): string => {
+    const { d } = deps({ readLedger: () => [{ kind: 'wip', ts: min(1), text: 'work' }] as never, newestHandoff: () => ({ name: 'h.md', at: min(1 + behind) }), readTranscript: () => '' });
+    return precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d);
+  };
+  assert.match(run(37), /^precompact: repaired, handoff rewritten \(37 min behind\)/);
+  assert.match(run(4), /^precompact: handoff rewritten \(4 min behind\)/);
+});
+
+test('session-start context withholds a secret-shaped line from every part it injects', () => {
+  const token = `ghp_${'x'.repeat(36)}`;
+  const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
+  const run = (a: string[]) => (a[0] === 'prime' ? { ok: true, out: `Today's streams: ok, ${token}\nplain line` } : { ok: true, out: `- \`${key}\` [Beta] something\nnormal` });
+  const out = context('compact', run, () => ({ ok: false, out: 'skip' }));
+  assert.ok(!out.includes(token) && !out.includes(key), 'neither value is injected');
+  assert.equal(out.split('[withheld: secret shape]').length - 1, 2);
+  assert.match(out, /plain line/);
+  assert.match(out, /normal/);
 });

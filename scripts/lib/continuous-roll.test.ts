@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { continuityLines, isAllScopeHandoff, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { compactions, continuityLines, isAllScopeHandoff, lastContext, thrash, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 
 const line = (o: object): string => JSON.stringify(o);
 const T0 = '2026-10-09T12:00:00.000Z';
@@ -323,4 +323,53 @@ test('snapshotDirty: a file reverted to yesterday\'s bytes after a same-day edit
   const r = snapshotDirty(container, today);
   assert.equal(r.copied, 1, 'the revert differs from today\'s copy, so it is copied');
   assert.equal(readFileSync(join(today, 'w1', 'new.ts'), 'utf8'), original);
+});
+
+const boundary = (ts: string, post: number): string => line({ type: 'system', subtype: 'compact_boundary', timestamp: ts, compactMetadata: { preTokens: 180_000, postTokens: post, durationMs: 1 } });
+const turn = (ts: string, ctx: number): string => line({ type: 'assistant', timestamp: ts, message: { role: 'assistant', usage: { input_tokens: 5, cache_creation_input_tokens: 5_000, cache_read_input_tokens: ctx - 5_005 } } });
+
+test('thrash: a short interval or too little growth is thrash; a long interval with real growth, and a first compaction, are not', () => {
+  const now = Date.parse(at(0));
+  assert.deepEqual(compactions(boundary(at(-3), 15_000)).map((c) => [c.pre, c.post]), [[180_000, 15_000]]);
+  assert.equal(lastContext(turn(at(-1), 40_000)), 40_000);
+  const close = thrash([boundary(at(-3), 15_000), turn(at(-1), 40_000)].join('\n'), now);
+  assert.equal(close.thrash, true, 'interval under 10 minutes');
+  assert.equal(close.recent, 2);
+  const flat = thrash([boundary(at(-30), 15_000), turn(at(-1), 25_000)].join('\n'), now);
+  assert.equal(flat.thrash, true, 'growth of 10k is under 20k');
+  assert.equal(flat.growth, 10_000);
+  assert.equal(thrash([boundary(at(-30), 15_000), turn(at(-1), 150_000)].join('\n'), now).thrash, false);
+  assert.equal(thrash(turn(at(-1), 150_000), now).thrash, false, 'no boundary yet');
+});
+
+test('continuityLines shows a thrash row until a later ack and never reads it as a precompact result', () => {
+  const thr = { kind: 'note', ts: at(5), text: 'compaction thrash: session ab12cd34 compacted 2 time(s) in 10 min, 3k growth since the last (setting 20% of 1000k = 200k, floor 100k)' };
+  const started = { kind: 'note', ts: at(4), text: 'precompact started (trigger auto, session ab12cd34)' };
+  const lines = continuityLines([started, thr], null);
+  assert.ok(lines.some((l) => /^!! compaction thrash: session ab12cd34.*CLAUDE_AUTOCOMPACT_PCT_OVERRIDE.*print-settings-snippet\.ts/.test(l)));
+  assert.ok(lines.some((l) => /never finished/.test(l)), 'a started row followed only by a thrash row still reads as never finished');
+  const acked = [thr, { kind: 'note', ts: at(6), text: 'precompact ack' }];
+  assert.deepEqual(continuityLines(acked, null), []);
+  assert.equal(continuityLines([thr], null).length, 1, 'with no marker row the thrash line still shows');
+});
+
+test('continuityLines: a repaired marker says the tick is not keeping up until an ack or a clean marker follows', () => {
+  const work = { kind: 'wip', ts: at(10), text: 'work' };
+  const repaired = { kind: 'note', ts: at(20), text: 'precompact: repaired, handoff rewritten (37 min behind), snapshot copied 0 (1 current), decisions raised 0 in 0 ask(s) (trigger auto, session ab12cd34)' };
+  const handoff = { name: 'h.md', at: at(21) };
+  const lines = continuityLines([work, repaired], handoff);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^!! precompact: repaired.*the continuity tick is not keeping up\. Is the `continuity` watch registered and the loop alive\?/);
+  assert.deepEqual(continuityLines([work, repaired, { kind: 'note', ts: at(25), text: 'precompact ack' }], handoff), [], 'an ack clears it');
+  assert.deepEqual(continuityLines([work, repaired, { kind: 'note', ts: at(25), text: 'precompact: all current (trigger auto, session ab12cd34)' }], { name: 'h.md', at: at(26) }), [], 'a later run that needed no repair clears it');
+  const small = { kind: 'note', ts: at(20), text: 'precompact: handoff rewritten (4 min behind), snapshot copied 0 (1 current), decisions raised 0 in 0 ask(s) (trigger auto, session ab12cd34)' };
+  assert.deepEqual(continuityLines([work, small], handoff), [], 'a small repair raises nothing');
+});
+
+test('continuityLines: an incomplete row is cleared by a later repaired row of the same session', () => {
+  const bad = { kind: 'note', ts: at(20), text: 'precompact incomplete: handoff: boom (trigger auto, session ab12cd34)' };
+  const fixed = { kind: 'note', ts: at(30), text: 'precompact: repaired, handoff rewritten (30 min behind) (trigger auto, session ab12cd34)' };
+  const lines = continuityLines([{ kind: 'wip', ts: at(10), text: 'w' }, bad, fixed], { name: 'h.md', at: at(31) });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /not keeping up/);
 });

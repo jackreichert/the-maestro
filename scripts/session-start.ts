@@ -20,13 +20,14 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONTAINER_PROJECT, EVENT_DIR, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
+import { CONTAINER_PROJECT, EVENT_DIR, LEDGER_ROOT, STATUS_PAGE_URI_SETTING, statusDirFor, WATCH_TZ } from './local-config.ts';
 import { podiumWebUrl } from './lib/status-page/links.ts';
 import { PODIUM_FILE } from './lib/status-page/seen.ts';
 import { listWatches, lockHolder, markStanding, removeWatch } from './lib/watch-registry.ts';
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import type { TypeRegistry } from './event-types/index.ts';
 import type { Watch } from './lib/types.ts';
+import { digestDir, drainDigests } from './lib/digest-store.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,8 @@ export interface StartDeps {
   waitCommand: string;
   /** Marks live watches of a standing type that lack the flag; returns their ids. Absent where nothing repairs. */
   repairStanding?: () => string[];
+  /** Takes every unseen digest (marking each seen after) and returns their texts; absent where there is no digest store. */
+  drainDigests?: () => string[];
   /** The `Loop:` verdict line (heartbeat age, STALLED, DOWN...); empty or absent when there is nothing to say. */
   loopHealth?: () => string;
   /** The Podium web link and whether a connect to it succeeded; absent (or an empty url) where the footer link is not an http URL. */
@@ -101,6 +104,8 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
   }
   const web = deps.webProbe?.();
   if (web?.url && !web.up) lines.push(`Podium web: down (nothing answers at ${web.url}); the page link in the footer will not open. Restart it: \`journal.ts web\``);
+  const drained = deps.drainDigests?.() ?? [];
+  if (drained.length) lines.push(`Unread digests (${drained.length}), shown once and now marked seen:`, ...drained);
   const health = deps.loopHealth?.().replace(/\*\*/g, '');
   if (health) lines.push(health);
   const holder = deps.lockHolder();
@@ -149,6 +154,11 @@ export function realDeps(now: number = Date.now()): StartDeps {
     loopCommand: `node ${shq(loop)} run`,
     waitCommand: `node ${shq(loop)} digest-wait`,
     repairStanding: () => repairStandingWatches(EVENT_DIR, BUILTIN_TYPES, now),
+    drainDigests: () => {
+      if (!LEDGER_ROOT) return [];
+      const dir = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
+      return drainDigests(dir, now);
+    },
     loopHealth: () => liveLoopHealth(now).line,
     webProbe: () => { const url = podiumWebUrl(STATUS_PAGE_URI_SETTING); return { url, up: !url || connects(url) }; },
   };

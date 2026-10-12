@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, statSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -19,6 +19,10 @@ export const PRECOMPACT_INCOMPLETE = 'precompact incomplete';
 export const PRECOMPACT_STARTED = 'precompact started';
 /** Written by a person (or `journal.ts log`) to dismiss an alarm whose cause needs no handoff. */
 export const PRECOMPACT_ACK = 'precompact ack';
+/** Written into the marker when the hook had to rewrite a handoff that was more than REPAIR_ALARM_MS behind: the continuity tick was not keeping up. */
+export const PRECOMPACT_REPAIRED = 'precompact: repaired';
+/** Two tick intervals: a handoff this far behind at compaction means the tick is not running (a healthy one is at most one interval behind). */
+export const REPAIR_ALARM_MS = 2 * 300_000;
 const SNAPSHOT_MAX_FILE_BYTES = 1_000_000;
 const SNAPSHOT_MAX_FILES = 300;
 const SNAPSHOT_MAX_TOTAL_BYTES = 20_000_000;
@@ -42,6 +46,30 @@ export function userMessages(transcript: string): UserMessage[] {
     }
     return out;
 }
+
+/** How recently a transcript must have been written to count as a live session. */
+export const LIVE_WINDOW_MS = 6 * 3_600_000;
+
+/**
+ * The transcripts of interactive sessions written to in the last `windowMs`: top-level `*.jsonl` files of one project folder (a subagent's
+ * transcript lives in a subfolder and is never read), and only those with a user row from the `cli` entrypoint, so a headless run (`sdk-cli`) never counts.
+ * Unreadable files are skipped: a transcript vanishing mid-scan is not an error.
+ */
+export function liveTranscripts(dir: string, nowMs: number, windowMs: number = LIVE_WINDOW_MS): { path: string; text: string }[] {
+    const out: { path: string; text: string }[] = [];
+    for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.jsonl')) : []) {
+        const path = join(dir, name);
+        try {
+            const st = statSync(path);
+            if (!st.isFile() || nowMs - st.mtimeMs > windowMs) continue;
+            const text = readFileSync(path, 'utf8');
+            if (text.split('\n').some((l) => l.includes('"entrypoint"') && l.includes('"user"') && isCliUserRow(l))) out.push({ path, text });
+        } catch { /* gone or unreadable */ }
+    }
+    return out;
+}
+
+const isCliUserRow = (line: string): boolean => { try { const r = JSON.parse(line) as { type?: string; entrypoint?: string }; return r.type === 'user' && r.entrypoint === 'cli'; } catch { return false; } };
 
 /** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to Jack, not a fact. */
 export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from now on|standing|always|never|ok(?:ay)? to|you may|let'?s go with|instead of|stop doing|do not|don'?t|yes,? (?:do|merge|push|open))\b/i;
@@ -172,8 +200,8 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
     return result;
 }
 
-/** True for a handoff file known to cover the whole ledger: `--all` output (`HANDOFF-<date>[b]-all.md`) and the hook's own `-precompact-` files. Single-stream and custom `--out` names have an unknown scope and do not qualify. */
-export const isAllScopeHandoff = (name: string): boolean => /^HANDOFF-.*(-all|-precompact-.+)\.md$/.test(name);
+/** True for a handoff file known to cover the whole ledger: `--all` output (`HANDOFF-<date>[b]-all.md`), the hook's own `-precompact-` files and the continuity tick's `-live` file. Single-stream and custom `--out` names have an unknown scope and do not qualify. */
+export const isAllScopeHandoff = (name: string): boolean => /^HANDOFF-.*(-all|-live|-precompact-.+)\.md$/.test(name);
 
 /**
  * Newest `generated_at` among the handoff files in `dir` (marker, else mtime), as an ISO string with its file name; null when none.
@@ -211,6 +239,52 @@ export function handoffFresh(rows: LedgerRow[], handoff: { name: string; at: str
     return { fresh: false, behindMs: Math.max(0, Date.parse(lastRowTs) - Date.parse(handoff.at)) || 0, lastRowTs };
 }
 
+/** Written by PreCompact when compactions come too close together; the prefix deliberately is not `precompact`, so it is never mistaken for a hook result row. */
+export const COMPACTION_THRASH = 'compaction thrash';
+/** Two compactions closer than this, or with less context growth between them than THRASH_MIN_GROWTH, count as thrash. */
+export const THRASH_MIN_INTERVAL_MS = 10 * 60_000;
+export const THRASH_MIN_GROWTH = 20_000;
+
+/** The compactions in a transcript, from `compact_boundary` rows: timestamp and the token counts the harness recorded (numbers only, no other field is read). */
+export function compactions(transcript: string): { ts: string; pre: number; post: number }[] {
+    const out: { ts: string; pre: number; post: number }[] = [];
+    for (const line of transcript.split('\n')) {
+        if (!line.includes('compact_boundary')) continue;
+        let row: { type?: string; subtype?: string; timestamp?: string; compactMetadata?: { preTokens?: unknown; postTokens?: unknown } };
+        try { row = JSON.parse(line); } catch { continue; }
+        if (row.type !== 'system' || row.subtype !== 'compact_boundary' || !row.timestamp) continue;
+        const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        out.push({ ts: row.timestamp, pre: n(row.compactMetadata?.preTokens), post: n(row.compactMetadata?.postTokens) });
+    }
+    return out;
+}
+
+/** The context of the last assistant turn: input, cache-write and cache-read tokens (the sum token-metrics counts as growth); 0 with none. */
+export function lastContext(transcript: string): number {
+    const lines = transcript.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].includes('"usage"')) continue;
+        let row: { type?: string; message?: { usage?: Record<string, unknown> } };
+        try { row = JSON.parse(lines[i]); } catch { continue; }
+        const u = row.message?.usage;
+        if (row.type !== 'assistant' || !u) continue;
+        const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        return n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens);
+    }
+    return 0;
+}
+
+/** Whether the compaction happening now (at `nowMs`) follows the newest earlier one too closely or with too little growth. No earlier compaction is no thrash. `recent` counts boundaries in the last 10 minutes plus this one. */
+export function thrash(transcript: string, nowMs: number): { thrash: boolean; recent: number; sinceMs: number; growth: number } {
+    const all = compactions(transcript);
+    const last = all.at(-1);
+    if (!last) return { thrash: false, recent: 1, sinceMs: Infinity, growth: Infinity };
+    const sinceMs = Math.max(0, nowMs - Date.parse(last.ts));
+    const growth = Math.max(0, lastContext(transcript) - last.post);
+    const recent = all.filter((c) => nowMs - Date.parse(c.ts) < THRASH_MIN_INTERVAL_MS).length + 1;
+    return { thrash: sinceMs < THRASH_MIN_INTERVAL_MS || growth < THRASH_MIN_GROWTH, recent, sinceMs, growth };
+}
+
 const REMEDY = '`journal.ts handoff --all --delta` (or `--force --out <file>` once the day\'s suffixes are used up)';
 const ACK = `journal.ts log "${PRECOMPACT_ACK}" --kind note --model <name> --used tool:journal.ts`;
 
@@ -229,6 +303,25 @@ const tagOf = (r: LedgerRow): string => (r.text ?? '').match(/session ([\w-]+)\)
  * "started" row, so rows other writers add while the hook runs are not counted), the handoff missed work and the line says so.
  */
 export function continuityLines(rows: LedgerRow[], handoff: { name: string; at: string } | null): string[] {
+    return [...thrashLines(rows), ...repairLines(rows), ...markerLines(rows, handoff)];
+}
+
+/** The newest `precompact: repaired` marker with no later ack and no later marker that needed no repair: the tick is not keeping up. */
+function repairLines(rows: LedgerRow[]): string[] {
+    const r = rows.findLastIndex((x) => x.kind === 'note' && starts(x, PRECOMPACT_REPAIRED));
+    if (r < 0) return [];
+    if (rows.slice(r + 1).some((x) => starts(x, PRECOMPACT_ACK) || (isMark(x) && starts(x, `${PRECOMPACT_MARK}:`) && !starts(x, PRECOMPACT_REPAIRED)))) return [];
+    return [`!! ${clip(rows[r].text ?? '', 200)} (${rows[r].ts}): the continuity tick is not keeping up. Is the \`continuity\` watch registered and the loop alive? Dismiss with \`${ACK}\`.`];
+}
+
+/** The newest thrash row with no later ack: one loud line pointing at the setting. */
+function thrashLines(rows: LedgerRow[]): string[] {
+    const t = rows.findLastIndex((r) => r.kind === 'note' && starts(r, COMPACTION_THRASH));
+    if (t < 0 || rows.slice(t + 1).some((r) => starts(r, PRECOMPACT_ACK))) return [];
+    return [`!! ${clip(rows[t].text ?? '', 260)} (${rows[t].ts}). Check CLAUDE_AUTOCOMPACT_PCT_OVERRIDE with \`print-settings-snippet.ts\`, then dismiss with \`${ACK}\`.`];
+}
+
+function markerLines(rows: LedgerRow[], handoff: { name: string; at: string } | null): string[] {
     const k = rows.findLastIndex(isMark);
     if (k < 0) return [];
     const mark = rows[k];
