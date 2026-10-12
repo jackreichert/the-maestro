@@ -8,6 +8,7 @@ import { fold, mapStreamWith } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { parseArgs } from './args.ts';
+import { CURRENT_ROW_CAP, CURRENT_ARCHIVE_CAP } from './current.ts';
 import { activeStreams, archivedRetros, footerDone, footerLines, footerRows, groups, inStream, noStream, render, standupText, streamPageLink } from './board.ts';
 import type { BoardContext } from './board.ts';
 
@@ -147,7 +148,11 @@ test('standupText and render list Queued apart from In flight, and only when som
     assert.doesNotMatch(text.split('## Queued')[0].split('# Everything else')[0], /later alpha/);
     render(ctx, true);
     const current = readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8');
-    assert.match(current, /## In flight\n\n_none_\n\n## Queued\n\n- `qqq1` later alpha/);
+    assert.match(current, /## In flight\n\n- `bbbb` untagged job\n/);
+    assert.match(current, /3 queued · 0 blocked/, 'CURRENT counts the queue');
+    assert.doesNotMatch(current, /later alpha/, 'and leaves the rows to the stream page');
+    assert.match(readFileSync(join(ctx.dir, 'Streams', 'Alpha.md'), 'utf8'), /## Queued\n\n- `qqq1` later alpha/);
+    assert.match(readFileSync(join(ctx.dir, 'Streams', 'Other.md'), 'utf8'), /## Queued\n\n- `qqq4` later loose/);
 });
 
 test('standupText lists shipped work by stream and the notes', () => {
@@ -162,8 +167,8 @@ test('render writes CURRENT.md and one page per active stream, and a dry run wri
     render(ctx, true);
     const current = readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8');
     assert.match(current, /^---\ngenerated: true\nupdated: 2026-10-03\n---\n/);
-    assert.match(current, /Stream page: \[\[Streams\/Beta\]\]/);
-    assert.deepEqual(readdirSync(join(ctx.dir, 'Streams')).sort(), ['Beta.md']);
+    assert.match(current, /- \[\[Streams\/Beta\]\]: 1 awaiting/);
+    assert.deepEqual(readdirSync(join(ctx.dir, 'Streams')).sort(), ['Beta.md', 'Other.md']);
     const dry = ctxFor({ dryRun: true });
     render(dry, true);
     assert.deepEqual(readdirSync(dry.dir), []);
@@ -179,8 +184,8 @@ test('archive and unarchive rows for the reserved none stream are skipped, not k
     const ctx = ctxFor({ readLedger: () => withNone });
     assert.deepEqual([...archivedRetros(ctx)], []);
     render(ctx, true);
-    assert.match(readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8'), /Stream page: \[\[Streams\/Beta\]\]/);
-    assert.deepEqual(readdirSync(join(ctx.dir, 'Streams')).sort(), ['Beta.md']);
+    assert.match(readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8'), /- \[\[Streams\/Beta\]\]: 1 awaiting/);
+    assert.deepEqual(readdirSync(join(ctx.dir, 'Streams')).sort(), ['Beta.md', 'Other.md']);
     const real = ctxFor({ readLedger: () => [...withNone, { id: 'jjjj', kind: 'archive', ts: `${TODAY}T14:00:00Z`, date: TODAY, text: 'archived stream Beta', stream: 'Beta', ids: ['cccc'], retro: '/x/Beta-retro.md' }] });
     assert.deepEqual([...archivedRetros(real)], [['Beta', '/x/Beta-retro.md']]);
 });
@@ -200,4 +205,43 @@ test('the footer splits in-flight rows 3 days old or more with no lease out as s
     assert.equal(row?.stale, 1);
     assert.match(footerLines(g, [], undefined, live).join('\n'), /3 in flight \(1 stale, 3d\+ with no lease\)/);
     assert.equal(footerRows(g, [], undefined, { today, leased: new Set(['old1', 'old2']) })[0]?.stale, undefined);
+});
+
+test('CURRENT.md caps its rows and clips long text, and the full row stays on the stream page', () => {
+    const many: LedgerRow[] = Array.from({ length: CURRENT_ROW_CAP + 3 }, (_, n) => ({
+        id: `w${String(n).padStart(3, '0')}`, kind: 'wip', ts: `${TODAY}T09:00:00Z`, date: TODAY, text: n === 0 ? `long ${'x'.repeat(400)} END` : `job ${n}`, stream: 'Alpha',
+    }));
+    const ctx = ctxFor({ readLedger: () => many });
+    render(ctx, true);
+    const current = readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8');
+    assert.equal(current.split('\n').filter((l) => l.startsWith('- `w')).length, CURRENT_ROW_CAP);
+    assert.match(current, /- _3 more: see the stream pages below\._/);
+    assert.match(current, /\[\[Streams\/Alpha\]\]: 15 in flight/);
+    assert.doesNotMatch(current, / END/);
+    const page = readFileSync(join(ctx.dir, 'Streams', 'Alpha.md'), 'utf8');
+    assert.match(page, / END/);
+    assert.equal(page.split('\n').filter((l) => l.startsWith('- `w')).length, CURRENT_ROW_CAP + 3);
+});
+
+test('CURRENT.md shows priorities first when the context has them, and no section otherwise', () => {
+    const ctx = ctxFor({ priorities: () => ['ship the thing', 'fix the other'] });
+    render(ctx, true);
+    assert.match(readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8'), /## Priorities\n\n1\. ship the thing\n2\. fix the other\n\n## In flight/);
+    const bare = ctxFor();
+    render(bare, true);
+    assert.doesNotMatch(readFileSync(join(bare.dir, 'CURRENT.md'), 'utf8'), /## Priorities/);
+});
+
+test('older dated archives are reached through a generated Archive page, not inlined in CURRENT.md', () => {
+    const days = Array.from({ length: CURRENT_ARCHIVE_CAP + 2 }, (_, n) => `2026-09-${String(10 + n).padStart(2, '0')}`);
+    const rolled: LedgerRow[] = [...rows, ...days.flatMap((d, n) => [
+        { id: `n${n}`, kind: 'note', ts: `${d}T19:00:00Z`, date: d, text: 'a day' },
+        { id: `r${n}`, kind: 'rolled', ts: `${d}T20:00:00Z`, date: d, text: 'rolled' },
+    ] as LedgerRow[])];
+    const ctx = ctxFor({ readLedger: () => rolled, rollPoint: (entries, d) => entries.filter((e) => e.kind === 'rolled' && e.date === d).pop()?.ts });
+    render(ctx, true);
+    const current = readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8');
+    assert.match(current, /- 3 older: \[\[Archive\]\]/);
+    const index = readFileSync(join(ctx.dir, 'Archive.md'), 'utf8');
+    for (const d of days) assert.match(index, new RegExp(`\\[\\[${d}\\]\\]`));
 });

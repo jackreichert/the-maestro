@@ -442,9 +442,9 @@ test('archived items are hidden by default and shown with --include-archived; un
     assert.equal(parse(shown).done.length, 1);
     assert.match(run('standup', '--include-archived').out, /ship the widget/);
     const current = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
-    assert.doesNotMatch(current(), /ship the widget/);
+    assert.doesNotMatch(current(), /\[\[Streams\/Launch\]\]: /, 'the archived stream has no counts on CURRENT');
     run('render', '--include-archived');
-    assert.match(current(), /ship the widget/);
+    assert.match(current(), /\[\[Streams\/Launch\]\]: 1 done/, 'its finished work counts again; done rows are not inlined on the slim CURRENT');
 
     assert.equal(run('unarchive', 'Launch', ...MARK).code, 0);
     assert.equal(registry().streams.Launch.status, 'active');
@@ -658,7 +658,9 @@ test('roll keeps queued items open, archives only finished work, and says how ma
     assert.deepEqual(parse<Doc>(run('status', '--json').out).queued.map((i) => i.id).sort(), [later, parked].sort());
     const archive = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `${new Date().toISOString().slice(0, 10)}.md`), 'utf8');
     assert.match(archive, /## Queued[^]*later job/, 'the dated note shows what was queued');
-    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
+    const curNow = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
+    assert.match(curNow, /2 queued/, 'CURRENT counts the queue; the rows are on the page');
+    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Launch.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
     assert.equal(run('roll').code, 0, 'a second roll changes nothing about the queue');
     assert.equal(parse<Doc>(run('status', '--json').out).queued.length, 2);
 });
@@ -1165,7 +1167,7 @@ test('roll commits the changed ledger files when ledger_git_autocommit is on, by
     assert.equal(git(vault, 'log', '-1', '--format=%s').stdout.trim(), `chore(ledger): roll ${day}`);
     const files = git(vault, 'show', '--name-only', '--format=', 'HEAD').stdout.trim().split('\n').sort();
     assert.deepEqual(files, [
-        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/ledger.jsonl',
+        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/Streams/Other.md', 'Projects/test-proj/Journal/ledger.jsonl',
     ].sort());
     assert.equal(git(vault, 'status', '--porcelain').stdout.trim(), '');
     assert.match(runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll').out, /committed \d+ path\(s\)/);   // a re-roll appends a row, so it commits again
@@ -1211,7 +1213,7 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     run('start', 'loose', ...MARK);
     const r = run('render');
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /3 stream page\(s\)/);
+    assert.match(r.out, /4 stream page\(s\)/);   // Launch, Maestro, Quiet, and Other for the item with no stream
 
     const launch = readFileSync(streamPage('Launch'), 'utf8');
     assert.match(launch, /^stream: Launch$/m);
@@ -1224,13 +1226,15 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     assert.match(section2(readFileSync(streamPage('Maestro'), 'utf8'), 'Awaiting you'), /maestro question\?/);
     assert.match(readFileSync(streamPage('Quiet'), 'utf8'), /## In flight\n\n_none_/);
 
-    const cur = currentMd();   // still the whole board, grouped by stream, with links
-    assert.match(cur, /# Launch\n\nStream page: \[\[Streams\/Launch\]\]/);
-    assert.match(cur, /# Maestro\n\nStream page: \[\[Streams\/Maestro\]\]/);
+    const cur = currentMd();   // slim: open rows plus a link and counts per stream page
+    assert.match(cur, /- \[\[Streams\/Launch\]\]: 2 in flight, 1 blocked, 1 done/);
+    assert.match(cur, /- \[\[Streams\/Maestro\]\]: 1 awaiting/);
     assert.match(cur, /launch work/);
+    assert.doesNotMatch(cur, /launch blocker|finished thing/, 'blocked and done rows are on the stream page only');
     assert.match(cur, /maestro question\?/);
     assert.match(cur, /loose/);
-    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Other.md')), false);
+    assert.match(cur, /- \[\[Streams\/Other\]\]: 1 item\(s\) with no stream/);
+    assert.match(readFileSync(streamPage('Other'), 'utf8'), /loose/, 'items with no stream stay reachable on the Other page');
 });
 const section2 = (text: string, title: string) => text.split(new RegExp(`^## ${title}.*$`, 'm'))[1].split(/^## /m)[0];
 
@@ -2054,7 +2058,7 @@ test('paste asks show apart from the questions in status, the footer and CURRENT
     const j = statusJson();
     assert.deepEqual([j.awaiting.length, j.paste.length, j.paste[0].paste], [1, 1, f]);
     const cur = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
-    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);
+    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);   // asks stay on CURRENT
 });
 
 test('handoff section 4 is generated from the Needs-Jack and paste boxes, text plus options and the block file', () => {
