@@ -41,7 +41,7 @@ function fixture(): WebConfig {
   writeFileSync(join(statusDir, 'ticket-map.json'), JSON.stringify({ 'FAKE-12': ['ask1'] }));
   mkdirSync(join(statusDir, 'fragments'));
   writeFileSync(join(statusDir, 'fragments', 'ops.md'), 'Handover **note**');
-  const page = { streams: [], repoStreams: { widgets: 'widgets' }, vaultName: 'sample', trackerUrlBase: 'https://tracker.example.test/browse/', ticketNotePath: 'Tickets/{id}', trackerKeyPattern: 'FAKE-\\d+', tz: 'America/New_York' };
+  const page = { streams: [], repoStreams: { widgets: 'widgets' }, vaultName: 'sample', trackerUrlBase: 'https://tracker.example.test/browse/', ticketNotePath: 'Tickets/{id}', trackerKeyPattern: 'FAKE-\\d+', tz: 'America/New_York', prOwners: ['acme'] };
   return { vault, project: 'p', statusDir, page };
 }
 
