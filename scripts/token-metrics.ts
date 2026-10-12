@@ -58,14 +58,13 @@ import { family } from './lib/model-family.ts';
 import { readAutocompact, triggerTokens } from './lib/autocompact.ts';
 import { sessionText } from './lib/session-text.ts';
 import { toolReadOnly } from './lib/tool-class.ts';
+import { FAMILIES, kindsOf, dollars, priceKey } from './lib/pricing.ts';
+import type { Usage, Kinds, Dollars } from './lib/pricing.ts';
 import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 import { printJson } from './lib/json-out.ts';
 
-const FAMILIES = ['opus', 'sonnet', 'haiku'];
 
-/** Per-turn tokens: uncached input, cache writes (total, and the 5m/1h split when usage gives one), cache reads, output. */
-export interface Usage { fresh: number; write: number; write5m: number; write1h: number; read: number; out: number }
 /** The only fields of a transcript line that survive `pick`. */
 export interface Picked {
     type: string; subtype: string; role: string; ts: string; id: string; model: string; originKind: string;
@@ -78,14 +77,12 @@ export interface ToolResult { id: string; chars: number }
 /** A tool result carried into the context: which tool and file it came from, and its size in tokens (estimated from characters). */
 export interface CarriedResult { tool: string; file: string; tokens: number }
 /** A deduplicated API response. `growth` is context growth since the previous turn (unset for the first). */
+export type { Usage, Kinds, Dollars };
+export { kindsOf, dollars };
 export interface Turn extends Usage { date: string; model: string; since: number; growth?: number; gapSec?: number; tools?: ToolUse[]; results?: CarriedResult[] }
 export interface TurnEvent { date: string; kind: string }
 export interface ScanResult { turns: Turn[]; events: TurnEvent[]; reports: { date: string; tokens: number }[] }
-/** Tokens by price kind: fresh input, 5m and 1h cache writes, cache reads, output. */
-export interface Kinds { fresh: number; w5: number; w1: number; read: number; out: number }
 export type FamilyKinds = Record<string, Kinds>;
-/** Dollars in the four report categories, and their total. */
-export interface Dollars { read: number; write: number; output: number; input: number; total: number }
 export type Prices = Record<string, ModelPrice> | null;
 /** One day's (or one session's) counters, as emptyStats builds them. */
 export interface Stats {
@@ -432,11 +429,6 @@ function addExpiry(s: Stats, t: Turn): void {
 }
 const zeroKinds = (): Kinds => ({ fresh: 0, w5: 0, w1: 0, read: 0, out: 0 });
 const addKinds = (a: Kinds, b: Kinds): void => { for (const k of Object.keys(a) as (keyof Kinds)[]) a[k] += b[k]; };
-/** A turn's tokens by price kind. A write is 5m unless usage split it into 5m and 1h. */
-export function kindsOf(t: Usage): Kinds {
-    const split = t.write5m + t.write1h > 0;
-    return { fresh: t.fresh, w5: split ? t.write5m : t.write, w1: split ? t.write1h : 0, read: t.read, out: t.out };
-}
 /** Per model family, cache-read tokens (the token mix) and tokens by price kind for `who`: `orch` (orchestrator) or `sub` (subagents). */
 function addMix(s: Stats, t: Usage & { model: string }, who: 'orch' | 'sub'): void {
     const f = family(t.model);
@@ -519,13 +511,6 @@ export function parseKinds(text: unknown): FamilyKinds {
 }
 
 // --- pricing ---------------------------------------------------------------------
-/** Prices apply to opus, sonnet and haiku by name; any other family (fable included) takes the optional `other` row. */
-const priceKey = (f: string): string => (FAMILIES.includes(f) ? f : 'other');
-/** Dollars for `k` tokens at `p` (dollars per MTok), split into the four report categories. */
-export function dollars(k: Kinds, p: ModelPrice): Dollars {
-    const d = { read: (k.read * p.cache_read) / 1e6, write: (k.w5 * p.cache_write_5m + k.w1 * p.cache_write_1h) / 1e6, output: (k.out * p.output) / 1e6, input: (k.fresh * p.input) / 1e6 };
-    return { ...d, total: d.read + d.write + d.output + d.input };
-}
 /** Dollars per family for { family: kinds }; a family with no price row (an `other` model with no `other` price) is left out. */
 export function priceFamilies(byFamily: FamilyKinds | undefined, prices: Prices): Record<string, Dollars> {
     return Object.fromEntries(Object.entries(byFamily || {}).filter(([f]) => prices && prices[priceKey(f)]).map(([f, k]) => [f, dollars(k, (prices as Record<string, ModelPrice>)[priceKey(f)] as ModelPrice)]));
