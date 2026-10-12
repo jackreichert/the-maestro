@@ -279,7 +279,7 @@ async function main(): Promise<number> {
     const now = Date.now();
     const entries = readInbox(EVENT_DIR);
     runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now, entries, health: liveLoopHealth(), config: { quietHours: process.env.MAESTRO_ALERT_QUIET_HOURS || DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } });
-    runWakeTick({ eventDir: EVENT_DIR, now, entries, launchCommand: WAKE_LAUNCH_COMMAND, transcriptsDir: CLAUDE_PROJECTS_DIR });
+    runWakeTick({ eventDir: EVENT_DIR, now, entries, launchCommand: WAKE_LAUNCH_COMMAND, notifyCommand: NOTIFY_COMMAND, transcriptsDir: CLAUDE_PROJECTS_DIR });
   };
   await supervise({
     runLoop: () => launch(alertTick),

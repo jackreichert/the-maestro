@@ -68,6 +68,9 @@ export interface Decision { text: string | null; state: AlertState; ids: string[
 
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
+/** True when the alert policy would text this entry (its kind is on the allow-list). Exported so the session launcher does not double-text it. */
+export const alertable = (e: InboxEntry): boolean => describe(e) !== null;
+
 /** `arya-scraper#542 conflict`: kind and repo and number only, each re-checked here. null when the kind is not texted. */
 function describe(e: InboxEntry): string | null {
   const f = cleanFields(e.fields);
