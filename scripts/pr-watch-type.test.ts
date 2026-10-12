@@ -12,6 +12,7 @@ import { installGhStub, paged, prNode } from './lib/gh-stub.ts';
 import type { GhStubConfig } from './lib/gh-stub.ts';
 import type { CadenceConfig } from './lib/cadence.ts';
 import type { CheckContext, Run, Watch, WatchEvent } from './lib/types.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const NOON = Date.parse('2026-10-01T12:00:00Z');
 const DAY: CadenceConfig = { quietHours: 'off' };
@@ -239,7 +240,7 @@ test('watch_min_interval raises the type floor; quiet mode slow keeps the watch 
 test('add refuses a second pr-watch watch, under either name', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pr-watch-single-'));
   const script = new URL('./event-loop.ts', import.meta.url).pathname;
-  const add = (id: string, type: string) => spawnSync(process.execPath, [script, 'add', '--id', id, '--type', type, '--target', 'open-prs'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
+  const add = (id: string, type: string) => spawnSync(process.execPath, [script, 'add', '--id', id, '--type', type, '--target', 'open-prs'], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir } });
   assert.match(add('a', 'pr-review').stdout, /added a/);
   assert.match(add('b', 'pr-watch').stderr, /watch "a" already runs pr-watch \(as pr-review\)/);
   assert.match(add('c', 'pr-review').stderr, /already runs/);

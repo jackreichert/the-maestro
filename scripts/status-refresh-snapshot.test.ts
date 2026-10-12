@@ -1,7 +1,7 @@
 // Run: node --test scripts/status-refresh-snapshot.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ghStubRun, prNode } from './lib/gh-stub.ts';
@@ -10,6 +10,13 @@ import { ghStubRun, prNode } from './lib/gh-stub.ts';
 const ledger = mkdtempSync(join(tmpdir(), 'sr-snap-ledger-'));
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.LEDGER_ROOT = ledger;
+// The search is answered in-process (ghStubRun), and PATH holds a `gh` that records a call and fails: any refresh that
+// reaches for the real gh (a 60 s network call under load) trips the marker and fails the suite instead of timing out.
+const realGhCalled = join(mkdtempSync(join(tmpdir(), 'sr-snap-realgh-')), 'called');
+const poisonDir = mkdtempSync(join(tmpdir(), 'sr-snap-poison-'));
+writeFileSync(join(poisonDir, 'gh'), `#!/bin/sh\ntouch '${realGhCalled}'\nexit 1\n`);
+chmodSync(join(poisonDir, 'gh'), 0o755);
+process.env.PATH = `${poisonDir}:${process.env.PATH}`;
 const { realIo, refreshSnapshotWith } = await import('./event-types/status-refresh.ts');
 const { currentPath, snapshotPath } = await import('./prs-snapshot.ts');
 
@@ -31,4 +38,8 @@ test('a failed gh search returns the reason, leaves the current-state file as it
   assert.match(why ?? '', /gh api graphql failed: HTTP 502/);
   assert.equal(readFileSync(path, 'utf8'), before);
   assert.ok(existsSync(path));
+});
+
+test('the refresh never runs the gh found on PATH', () => {
+  assert.equal(existsSync(realGhCalled), false, 'the PATH gh was called');
 });

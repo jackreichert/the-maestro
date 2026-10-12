@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -176,8 +176,42 @@ const HOME_TICKET: Shape = {
 const HOME_EPIC: Shape = {
   id: str, title: str, note: ref, status: str, total: count, closed: count, inProgress: count, blocked: count, notStarted: count,
   verify: shape({ required: bool, verified: count }), awaiting: count, unknowns: count, quietDays: orNull(num),
-  tracker: opt(ref), next: opt(shape(HOME_TICKET)),
+  tracker: opt(ref), next: opt(shape(HOME_TICKET)), prs: opt(arrOf(ref)), prsMore: opt(count),
 };
+const INLINE: Check = shape({ text: str, strong: opt(bool), em: opt(bool), code: opt(bool), link: opt(shape({ url: str, kind: oneOf('web', 'note') })) });
+const RUNS = arrOf(INLINE);
+const BLOCK_RULES: Record<string, Check> = {
+  heading: shape({ level: (v) => v === 3 || v === 4, runs: RUNS }),
+  paragraph: shape({ runs: RUNS }),
+  quote: shape({ runs: RUNS }),
+  list: shape({ ordered: bool, items: arrOf(shape({ runs: RUNS, children: arrOf(shape({ runs: RUNS })) })) }),
+};
+const DOC_ITEM: Shape = { title: str, kind: str, project: str, ticket: str, status: opt(str), updated: opt(str), url: opt(str) };
+const BRIEF_STATES = oneOf('fresh', 'stale', 'missing', 'too-long', 'unreadable');
+
+/** A brief from an untrusted value: a block of an unknown type or shape is skipped, and a brief whose state is unrecognised is dropped whole. Each loss counts one. */
+function sanitizeBrief(v: unknown): { value?: EpicBrief; dropped: number } {
+  if (v === undefined) return { dropped: 0 };
+  if (!isObj(v) || !BRIEF_STATES(v.state) || !opt(str)(v.updated) || !opt(arrOf(str))(v.staleBecause) || !opt(ref)(v.ref)) return { dropped: 1 };
+  const raw = Array.isArray(v.blocks) ? v.blocks : [];
+  const blocks = raw.filter((b) => isObj(b) && typeof b.type === 'string' && Object.hasOwn(BLOCK_RULES, b.type) && (BLOCK_RULES[b.type] as Check)(b)) as Block[];
+  return { value: { ...(v as unknown as EpicBrief), ...(Array.isArray(v.blocks) ? { blocks } : {}) }, dropped: raw.length - blocks.length };
+}
+
+/** A docs shelf from an untrusted value: a document that fails its rules is dropped from its group and counted; a group that is not a group is dropped too. */
+function sanitizeDocs(v: unknown): { value?: EpicDocs; dropped: number } {
+  if (v === undefined) return { dropped: 0 };
+  if (!isObj(v) || !Array.isArray(v.groups) || !count(v.unattributedRecent)) return { dropped: 1 };
+  let dropped = 0;
+  const groups = v.groups.flatMap((g): EpicDocs['groups'] => {
+    if (!isObj(g) || !str(g.kind) || !count(g.more) || !Array.isArray(g.items)) { dropped += 1; return []; }
+    const items = validRows(g.items, DOC_ITEM) as DocItem[];
+    dropped += lost(g.items, items);
+    return [{ kind: g.kind as string, items, more: g.more as number }];
+  });
+  return { value: { groups, unattributedRecent: v.unattributedRecent as number }, dropped };
+}
+
 const RAIL_LINK: Shape = { label: str, kind: oneOf('note', 'tracker', 'pr', 'web'), url: str, meta: opt(str) };
 const RAIL_GROUP: Shape = { group: oneOf('pinned', 'epics', 'docs', 'prs', 'runbooks'), more: count };
 const DONE_MEANS: Shape = { epic: str, text: str };
@@ -195,6 +229,16 @@ export function sanitizeHome(x: unknown): { home: StreamHome; dropped: number } 
     const c = e as HomeEpic;
     return c.closed + c.inProgress + c.blocked + c.notStarted === c.total;
   }) as HomeEpic[];
+  let extras = 0;
+  for (const e of epics) {
+    const b = sanitizeBrief((e as unknown as Record<string, unknown>).brief);
+    const d = sanitizeDocs((e as unknown as Record<string, unknown>).docs);
+    extras += b.dropped + d.dropped;
+    delete e.brief;
+    delete e.docs;
+    if (b.value) e.brief = b.value;
+    if (d.value) e.docs = d.value;
+  }
   const groups = {
     inProgress: validRows(left.inProgress, HOME_TICKET) as HomeTicket[],
     blocked: validRows(left.blocked, HOME_TICKET) as HomeTicket[],
@@ -214,8 +258,48 @@ export function sanitizeHome(x: unknown): { home: StreamHome; dropped: number } 
   const prs = isObj(x.freshness) && isObj(x.freshness.prs) && bool(x.freshness.prs.stale) && orNull(str)(x.freshness.prs.fetchedAt)
     ? { fetchedAt: x.freshness.prs.fetchedAt as string | null, stale: x.freshness.prs.stale as boolean }
     : { fetchedAt: null, stale: true };
-  const dropped = lost(x.epics, epics) + lost(x.loose, loose) + lost(x.unknowns, unknowns) + lost(x.doneMeans, doneMeans) + linksDropped
+  const dropped = extras + lost(x.epics, epics) + lost(x.loose, loose) + lost(x.unknowns, unknowns) + lost(x.doneMeans, doneMeans) + linksDropped
     + lost(left.inProgress, groups.inProgress) + lost(left.blocked, groups.blocked) + lost(left.notStarted, groups.notStarted);
   const truncated = count(left.truncated) ? left.truncated as number : 0;
   return { home: { stream: x.stream, epics, loose, left: { ...groups, truncated }, doneMeans, links, unknowns, freshness: { prs } }, dropped };
+}
+
+const EPIC_LINE: Shape = {
+  id: str, title: str, note: ref, status: str, total: count, closed: count, inProgress: count, blocked: count, notStarted: count,
+  awaiting: count, quietDays: orNull(num), tracker: opt(ref), next: opt(shape({ id: str, title: str, ref })), prs: arrOf(ref), prsMore: opt(count),
+};
+
+/**
+ * An EpicsData from an untrusted `GET /api/epics` body, or null when it has no usable shape. A line that fails its rules, or
+ * whose counts do not add up to its total (its fraction would state a denominator the numbers contradict), is dropped.
+ */
+export function sanitizeEpics(x: unknown): { data: EpicsData; dropped: number } | null {
+  if (!isObj(x) || !Array.isArray(x.streams) || !Array.isArray(x.unfiled)) return null;
+  let dropped = 0;
+  const lines = (list: unknown): EpicLine[] => {
+    const ok = validRows(list, EPIC_LINE).filter((e) => { const c = e as EpicLine; return c.closed + c.inProgress + c.blocked + c.notStarted === c.total; }) as EpicLine[];
+    dropped += lost(list, ok);
+    return ok;
+  };
+  const streams = x.streams.filter(isObj).filter((g) => str(g.stream)).map((g) => ({ stream: g.stream as string, epics: lines(g.epics) }));
+  dropped += x.streams.length - streams.length;
+  return { data: { streams, unfiled: lines(x.unfiled) }, dropped };
+}
+
+const LOCAL_UNIT: Shape = {
+  id: str, repo: str, branch: str, head: str, ahead: count, at: str, subject: str, where: str, checkedOut: bool, base: str, command: str,
+  verdict: shape({ state: oneOf('ship-it', 'needs-work', 'stale', 'none'), at: opt(str) }),
+};
+
+/**
+ * A LocalReview from an untrusted `GET /api/local-review` body, or null when it has no usable shape. A unit that fails its rules
+ * is dropped and counted. An unavailable queue must carry its reason: without one it would read as an empty queue, so it is refused.
+ */
+export function sanitizeLocalReview(x: unknown): { data: LocalReview; dropped: number } | null {
+  if (!isObj(x) || !bool(x.available) || !str(x.generatedAt) || !Array.isArray(x.units)) return null;
+  if (x.available === false && !(str(x.reason) && (x.reason as string).length > 0)) return null;
+  const units = validRows(x.units, LOCAL_UNIT) as LocalUnit[];
+  const notes = Array.isArray(x.notes) ? x.notes.filter((n): n is string => typeof n === 'string') : [];
+  const reason = str(x.reason) ? { reason: x.reason as string } : {};
+  return { data: { generatedAt: x.generatedAt as string, available: x.available as boolean, ...reason, units, more: count(x.more) ? x.more as number : 0, notes }, dropped: lost(x.units, units) };
 }

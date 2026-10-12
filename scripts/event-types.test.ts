@@ -18,6 +18,7 @@ import * as prWatch from './event-types/pr-watch.ts';
 import type { CadenceConfig } from './lib/cadence.ts';
 import type { NotifyRun } from './lib/notify.ts';
 import type { CheckContext, EventType, Run, RunResult, Watch } from './lib/types.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const ok = (stdout: string, status = 0): RunResult => ({ status, stdout, stderr: '' });
@@ -258,7 +259,7 @@ test('pr-review (alias of pr-watch): retiring or removing the watch deletes the 
   addWatch(dir, { id: 'w2', type: 'pr-review', target: 'open-prs' });
   writeFileSync(join(dir, 'pr-review-w2.json'), '{}');
   const script = new URL('./event-loop.ts', import.meta.url).pathname;
-  const r = spawnSync(process.execPath, [script, 'remove', 'w2'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir } });
+  const r = spawnSync(process.execPath, [script, 'remove', 'w2'], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir } });
   assert.match(r.stdout, /removed w2/);
   assert.equal(existsSync(join(dir, 'pr-review-w2.json')), false);
 });
@@ -322,7 +323,7 @@ test('reminder: quiet hours hold it until morning unless --notify-overnight', ()
 test('cli: reminder add refuses a bad or past target and stores a future one with a lifetime past its target', () => {
   const dir = mkdtempSync(join(tmpdir(), 'events-'));
   const cli = (...args: string[]) => spawnSync(process.execPath, [join(ROOT, 'scripts', 'event-loop.ts'), ...args], {
-    encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_EVENT_DIR: dir },
+    encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: dir },
   });
   const add = (id: string, target: string, ...more: string[]) => cli('add', '--id', id, '--type', 'reminder', '--target', target, '--report', 'x', ...more);
   assert.equal(add('a', 'soon').status, 2);

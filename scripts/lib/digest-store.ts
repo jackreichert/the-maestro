@@ -4,7 +4,7 @@
  * `<!-- seen: false -->`, flipped to `true` once something has shown the digest to a session.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 const UNSEEN = '<!-- seen: false -->';
 const SEEN = '<!-- seen: true -->';
@@ -49,8 +49,8 @@ const CLAIM = /^(.+\.md)\.claim-(\d+)-(\d+)$/;
 const CLAIM_MAX_AGE_MS = 10 * 60 * 1000;
 const isAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; } };
 
-/** A digest taken by this process: `text` is its body; `finish()` marks it seen (call after printing). */
-export interface Claimed { text: string; finish: () => void }
+/** A digest taken by this process: `text` is its body, `file` the digest's own path (its name carries the save time), `at` that time in ms (null when the name does not parse); `finish()` marks it seen (call after printing). */
+export interface Claimed { text: string; file: string; at: number | null; finish: () => void }
 
 /**
  * Claims every unseen digest, oldest first, by renaming `x.md` to `x.md.claim-<pid>-<ms>`; only the rename winner proceeds,
@@ -74,9 +74,43 @@ export function claimDigests(dir: string, now: number = Date.now(), pid: number 
   }
   return taken.map(({ target, claim }) => ({
     text: readFileSync(claim, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '').trimEnd(),
+    file: target,
+    at: savedAtMs(target),
     finish: () => {
       writeAtomic(target, `${SEEN}\n${readFileSync(claim, 'utf8').replace(/^<!-- seen: (true|false) -->\n/, '')}`);
       rmSync(claim, { force: true });
     },
   }));
+}
+
+/** The save time (ISO) a digest file's name carries, or null when the name is not one `saveDigest` made. */
+export function savedAt(file: string): string | null {
+  const m = file.match(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/);
+  return m ? `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z` : null;
+}
+
+export const DIGEST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** The save time encoded in a digest file name (`2026-10-06T14-35-00-123Z[_001].md`), or null when it does not parse. */
+function savedAtMs(file: string): number | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/.exec(basename(file));
+  const t = m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * What a session start shows for the unread digests: the fresh ones in full, then one line counting those older than
+ * `maxAgeMs` (marked seen, files kept) so a weekend away never drops an ACTION digest without saying so.
+ */
+export function drainDigests(dir: string, now: number = Date.now(), maxAgeMs: number = DIGEST_MAX_AGE_MS): string[] {
+  const texts: string[] = [];
+  let expired = 0;
+  let oldest = now;
+  for (const c of claimDigests(dir, now)) {
+    const at = c.at;
+    if (at !== null && now - at > maxAgeMs) { expired += 1; oldest = Math.min(oldest, at); } else texts.push(c.text);
+    c.finish();
+  }
+  if (expired > 0) texts.push(`${expired} older digest${expired === 1 ? '' : 's'} ${expired === 1 ? 'was' : 'were'} unread for over 24h and ${expired === 1 ? 'is' : 'are'} marked seen (oldest ${Math.floor((now - oldest) / DIGEST_MAX_AGE_MS)}d), in ${dir}`);
+  return texts;
 }

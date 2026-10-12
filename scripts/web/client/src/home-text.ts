@@ -1,5 +1,5 @@
 /** The words and counts of the stream home base: progress sentences, the Clear line, row notes. Pure and DOM-free so node:test covers it. */
-import type { HomeEpic, HomeTicket, RailGroup, RailLink, StreamHome } from './types.ts';
+import type { EpicLine, HomeEpic, HomeTicket, RailGroup, RailLink, StreamHome } from './types.ts';
 
 /** An epic or ticket this many days without a change is called quiet, as a fact about its note. */
 export const QUIET_DAYS = 14;
@@ -143,4 +143,9 @@ export function railCount(groups: RailGroup[]): number {
 /** What a link is, in words, so an icon never stands alone: "note" opens in Obsidian, "tracker" is the ticket system, "web" is any other site. */
 export function kindWord(kind: RailLink['kind']): string {
   return kind === 'note' ? 'note' : kind === 'tracker' ? 'tracker' : kind === 'pr' ? 'pull request' : 'web';
+}
+
+/** The plain facts in an epic's rollup line, in order: progress with its denominator, the open counts, what waits on the user, quiet. */
+export function rollupFacts(e: Pick<EpicLine, 'closed' | 'total' | 'inProgress' | 'blocked' | 'notStarted' | 'awaiting' | 'quietDays'>): string[] {
+  return [progressSentence(e), openCounts(e), awaitingLabel(e.awaiting), quietNote(e.quietDays)].filter((x): x is string => !!x);
 }

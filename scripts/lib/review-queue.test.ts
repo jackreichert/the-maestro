@@ -82,15 +82,16 @@ test('the cap passed in applies to either source', () => {
 test('boardQueue reads the stored snapshot for the board and footer, and flags a stale one', () => {
   const now = new Date('2026-10-06T12:00:00Z');
   const snap = (takenAt: string, ...drafts: boolean[]) => ({ prs: prs(...drafts), takenAt });
-  assert.deepEqual(boardQueue(snap('2026-10-06T11:30:00Z', false, false, false, true), 4, now), { text: 'review queue: 3 of 4', footer: '**Review queue:** 3 of 4' });
-  assert.equal(boardQueue(snap('2026-10-06T11:30:00Z', false, false, false, false), 4, now)?.text, 'review queue: 4 of 4 (full)');
+  assert.deepEqual(boardQueue(snap('2026-10-06T11:55:00Z', false, false, false, true), 4, now), { text: 'review queue: 3 of 4', footer: '**Review queue:** 3 of 4' });
+  assert.equal(boardQueue(snap('2026-10-06T11:55:00Z', false, false, false, false), 4, now)?.text, 'review queue: 4 of 4 (full)');
   assert.equal(boardQueue(snap('2026-10-06T07:00:00Z', false), 4, now)?.text, 'review queue: 1 of 4 (snapshot 5h old)');
   assert.equal(boardQueue(null, 4, now), null);
 });
 
-test('staleSuffix is silent under an hour or with no usable time, and counts days past two', () => {
+test('staleSuffix is silent under ten minutes or with no usable time, names minutes under an hour, and counts days past two', () => {
   const now = new Date('2026-10-06T12:00:00Z');
-  assert.equal(staleSuffix('2026-10-06T11:10:00Z', now), '');
+  assert.equal(staleSuffix('2026-10-06T11:55:00Z', now), '');
+  assert.equal(staleSuffix('2026-10-06T11:10:00Z', now), ' (snapshot 50m old)');
   assert.equal(staleSuffix(undefined, now), '');
   assert.equal(staleSuffix('garbage', now), '');
   assert.equal(staleSuffix('2026-10-03T12:00:00Z', now), ' (snapshot 3d old)');
@@ -117,11 +118,17 @@ test('a PR with no repo is counted even when self-review repos are set', () => {
 
 test('the push gate and the board line apply the same exclusion', () => {
   const stored = { prs: [inRepo('org/a'), inRepo('me/tool'), inRepo('me/tool')], takenAt: '2026-01-01T00:00:00Z' };
-  const now = new Date('2026-01-01T00:30:00Z');
+  const now = new Date('2026-01-01T00:05:00Z');
   const fail = { fetchLive: () => { throw new Error('offline'); }, readStored: () => stored };
   const r = readQueue(fail, 4, now, ['me/*']);
   assert.ok(r.ok && r.queue.count === 1 && r.queue.selfReview === 2);
   assert.equal(readQueue({ fetchLive: () => stored, readStored: () => null }, 2, now, ['me/*']).ok && queueExitCode(readQueue({ fetchLive: () => stored, readStored: () => null }, 2, now, ['me/*'])), 0);
   assert.equal(boardQueue(stored, 4, now, ['me/*'])?.text, 'review queue: 1 of 4');
   assert.equal(boardQueue(stored, 4, now)?.text, 'review queue: 3 of 4');
+});
+
+test('with a review pool the queue counts only pool repos: personal and stray repos are left out and reported as self-review', () => {
+  const prs = [{ isDraft: false, repo: 'avonlea/a' }, { isDraft: false, repo: 'avonlea/b' }, { isDraft: false, repo: 'jackreichert/the-maestro' }, { isDraft: false, repo: 'femmebot/google-type' }, { isDraft: true, repo: 'avonlea/c' }];
+  assert.deepEqual(reviewQueue(prs, 2, ['!avonlea/*']), { count: 2, cap: 2, full: true, selfReview: 2 });
+  assert.equal(reviewQueue(prs, 4, []).count, 4, 'without a pool every non-draft PR counts');
 });

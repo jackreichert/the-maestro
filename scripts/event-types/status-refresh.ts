@@ -128,8 +128,11 @@ export function refreshSnapshotWith(run: Run): string | undefined {
   } catch (e) { return firstLine(e) || 'unknown error'; }
 }
 
+/** `gh` is looked up on PATH, or is the file in MAESTRO_GH_BIN (tests point it at a fake so a refresh can never reach GitHub). */
+const ghBinary = (cmd: string): string => (cmd === 'gh' && process.env.MAESTRO_GH_BIN) || cmd;
+
 const ghRun: Run = (cmd, args) => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: SNAPSHOT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
+  const r = spawnSync(ghBinary(cmd), args, { encoding: 'utf8', timeout: SNAPSHOT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
 };
 

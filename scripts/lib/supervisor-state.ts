@@ -20,6 +20,8 @@ export interface SupervisorStatus { state: 'absent' | 'running' | 'dead'; pid?: 
 /** Where launchd's per-user agents live; MAESTRO_LAUNCH_AGENTS_DIR moves it (tests, unusual setups). */
 export const launchAgentsDir = (): string => process.env.MAESTRO_LAUNCH_AGENTS_DIR || join(homedir(), 'Library', 'LaunchAgents');
 export const plistPath = (): string => join(launchAgentsDir(), `${LABEL}.plist`);
+/** The supervisor's log, where launchd sends its output (the installer writes this path into the plist). */
+export const supervisorLogPath = (ledgerRoot: string, project: string): string => join(ledgerRoot, 'Projects', project, 'Journal', 'Supervisor', 'loop-supervisor.log');
 export const recordPath = (eventDir: string): string => join(eventDir, 'supervisor.json');
 
 const defaultAlive = (pid: number): boolean => {

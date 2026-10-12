@@ -484,11 +484,11 @@ test('status --footer ends with the Session line for the newest session, and say
         encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent', ...extra },
     }).stdout.trim().split('\n').pop();
     const pct = (n: string, extra = {}) => line({ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: n, ...extra });
-    assert.equal(pct('20'), '**Session:** 4 turns · ctx 100k of ~200k (50%) · 100k read/turn');
-    assert.equal(pct('15'), '**Session:** 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', '66% is past the 60% default');
-    assert.equal(pct('10'), '**Session:** 4 turns · ctx 100k of ~100k (100%) · 100k read/turn · roll now');
-    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 60/90 defaults apply');
-    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** 4 turns · ctx 100k of ~150k (66%) · 100k read/turn', 'configured percents are honoured by the footer');
+    assert.equal(pct('20'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~200k (50%) · 100k read/turn');
+    assert.equal(pct('15'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', '66% is past the 60% default');
+    assert.equal(pct('10'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~100k (100%) · 100k read/turn · roll now');
+    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 60/90 defaults apply');
+    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
 test('status --footer --line is one line; --session pins a transcript and --stdin reads its id, while the default stays multi-line', () => {
@@ -500,11 +500,11 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent' },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
-    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
+    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
     // The item above was started (and so leased) by `testwin`, a different window from the session pinned below, so the pinned footers count that lease as another window's.
-    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns · 100k/200k (50%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns · 100k/200k (50%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'bad stdin falls back to the newest, still without a window');
+    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
     assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
@@ -517,8 +517,8 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.equal(multi.find((l) => l.startsWith('**Window:**')), '**Window:** aaaaaaaa-min', 'the footer names the window of the session it measures');
     const unpinned = status([]);
     assert.equal(unpinned.find((l) => l.startsWith('**Window:**')), undefined, 'without a pinned session the newest transcript is not shown under MAESTRO_WINDOW\'s name');
-    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
-    assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
+    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** bbbbbbbb · 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
+    assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** aaaaaaaa · 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
 });
 
 test('status --json carries the footer numbers, and they match what status --footer prints', () => {
@@ -868,7 +868,7 @@ test('handoff fills Session metrics from the newest session, and says so when th
     assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /unavailable \(no sessions in /);
     const turn = (id: string) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 1 } } });
     writeFileSync(join(projects, 'cccccccc-now.jsonl'), `${[1, 2, 3].map((n) => turn(`t${n}`)).join('\n')}\n`);
-    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* 3 turns · ctx 100k of ~200k \(50%\) · 100k read\/turn/);
+    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* cccccccc · 3 turns · ctx 100k of ~200k \(50%\) · 100k read\/turn/);
 });
 
 test('handoff --update-context points CONTEXT.md at the new handoff once, replacing an old link, and touches nothing else', () => {
@@ -1045,9 +1045,9 @@ test('release is for the holding desk only; --force overrides; both leave a ledg
     assert.equal(other.code, 1);
     assert.match(other.err, /held by desk alpha/);
     assert.equal(run('release', 'repo-y', ...MARK).code, 1);   // no desk, no force
-    assert.ok(existsSync(lockFile('repo-y')));
+    assert.ok(existsSync(lockFile('repo-y@feat-x')));
     assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 0);
-    assert.equal(existsSync(lockFile('repo-y')), false);
+    assert.equal(existsSync(lockFile('repo-y@feat-x')), false);
     assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 1);   // not claimed any more
     assert.equal(run('claim', 'repo-y', '--desk', 'beta', ...MARK).code, 0);
     assert.equal(run('release', 'repo-y', '--force', ...MARK).code, 0);
@@ -1055,6 +1055,31 @@ test('release is for the holding desk only; --force overrides; both leave a ledg
         [['claim', 'alpha'], ['released', 'alpha'], ['claim', 'beta'], ['released', 'beta']]);
     assert.equal(run('claim', '../evil', '--desk', 'alpha', ...MARK).code, 1);
     assert.equal(run('claim', 'repo-z', ...MARK).code, 1);   // needs --desk
+});
+
+test('two worktrees of one repo can each be claimed; a whole-repo claim and the same worktree are refused; release is per worktree', () => {
+    assert.equal(run('claim', 'repo-w', '--desk', 'alpha', '--worktree', 'wt-a', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-w', '--desk', 'beta', '--branch', 'fix/b', ...MARK).code, 0);
+    assert.ok(existsSync(lockFile('repo-w@wt-a')) && existsSync(lockFile('repo-w@fix-b')));
+    assert.equal(run('claim', 'repo-w', '--desk', 'gamma', '--worktree', 'wt-a', ...MARK).code, 1, 'same worktree');
+    const whole = run('claim', 'repo-w', '--desk', 'gamma', ...MARK);
+    assert.equal(whole.code, 1, 'a whole-repo claim conflicts with scoped ones');
+    assert.match(whole.err, /conflicts/);
+    const listed = parse(run('claims', '--json').out).claims.filter((c) => c.repo === 'repo-w');
+    assert.deepEqual(listed.map((c) => c.scope).sort(), ['fix-b', 'wt-a']);
+    assert.equal(run('claim', 'repo-w', '--desk', 'beta', '--worktree', 'wt-c', ...MARK).code, 0);
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', ...MARK).code, 1, 'two scoped claims by the desk: the scope must be named');
+    assert.equal(run('release', 'repo-w@wt-a', '--desk', 'alpha', ...MARK).code, 0);
+    assert.ok(existsSync(lockFile('repo-w@fix-b')), 'the other worktree keeps its claim');
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', '--worktree', 'wt-c', ...MARK).code, 0);
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', ...MARK).code, 0, 'one scoped claim left: it is the one meant');
+});
+
+test('an old whole-repo lock is still honoured against a scoped claim, and released by repo name', () => {
+    assert.equal(run('claim', 'repo-o', '--desk', 'alpha', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-o', '--desk', 'beta', '--worktree', 'wt-b', ...MARK).code, 1);
+    assert.equal(run('release', 'repo-o', '--desk', 'alpha', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-o', '--desk', 'beta', '--worktree', 'wt-b', ...MARK).code, 0);
 });
 
 test('claims lists claims and flags a dead pid and an old claim as stale; claim rows are not items', () => {
@@ -2424,6 +2449,126 @@ test('priorities set and show round-trip through the status dir, with a stream s
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
 
+test('priorities set also writes each mapped project\'s own file, and priorities show --repo reads it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-root-'));
+    mkdirSync(join(root, 'Projects', 'the-maestro'), { recursive: true });
+    const sd = join(vault, 'Status');
+    const runIn = (...args: string[]): Run => {
+        const r = spawnSync(process.execPath, [SCRIPT, ...args, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd,
+            env: { ...process.env, VAULT_ROOT: root, MAESTRO_WINDOW: 'testwin', MAESTRO_STATUS_REPO_STREAMS: 'the-maestro=Maestro', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const set = runIn('priorities', 'set', 'Ship the widget | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    const file = readFileSync(join(root, 'Projects', 'the-maestro', 'Status', 'priorities', '2030-01-02.md'), 'utf8');
+    assert.match(file, /^written-by: priorities set$/m);
+    assert.match(file, /^## Today\n- Ship the widget \| Maestro$/m);
+    const shown = runIn('priorities', 'show', '--repo', 'the-maestro', '--date', '2030-01-02');
+    assert.equal(shown.code, 0, shown.err);
+    assert.match(shown.out, /^Priorities for 2030-01-02:\n1\. Ship the widget \[Maestro\]\n/);
+    assert.match(runIn('priorities', 'show', '--repo', 'nowhere', '--date', '2030-01-02').out, /Priorities not set for today/);
+    assert.equal(existsSync(join(root, 'Projects', 'dev-env')), false, 'a project with no vault folder is not created');
+    rmSync(root, { recursive: true, force: true });
+});
+
+/** A temp vault root with the given project folders, and a runner for journal.ts with that vault root and the-maestro / options-app mapped to streams. */
+function projectVault(...names: string[]): { root: string; runIn: (...args: string[]) => Run; fileOf: (project: string, day: string) => string } {
+    const root = mkdtempSync(join(tmpdir(), 'journal-root-'));
+    for (const n of names) mkdirSync(join(root, 'Projects', n), { recursive: true });
+    const sd = join(vault, 'Status');
+    const runIn = (...args: string[]): Run => {
+        const r = spawnSync(process.execPath, [SCRIPT, ...args, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd,
+            env: { ...process.env, VAULT_ROOT: root, MAESTRO_WINDOW: 'testwin', MAESTRO_STATUS_REPO_STREAMS: 'the-maestro=Maestro,options-app=Options', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const fileOf = (project: string, day: string): string => {
+        const path = join(root, 'Projects', project, 'Status', 'priorities', `${day}.md`);
+        return existsSync(path) ? readFileSync(path, 'utf8') : '';
+    };
+    return { root, runIn, fileOf };
+}
+
+const ROLL_FILE = [
+    '---', 'type: priorities', 'project: the-maestro', 'date: 2030-01-02', 'carried-from: 2030-01-01', 'written-by: roll-maintenance', '---', '',
+    '## Today', '- not set yet', '', '## Carried from 2030-01-01', '- Unfinished A | Maestro · 0 done, 1 in flight, 0 queued, 0 blocked', '- Unfinished B | Maestro · 0 done, 1 in flight, 0 queued, 0 blocked', '',
+].join('\n');
+
+test('priorities set keeps the carried section roll wrote for the day and replaces only Today', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro');
+    const dir = join(root, 'Projects', 'the-maestro', 'Status', 'priorities');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '2030-01-02.md'), ROLL_FILE);
+    const set = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    const file = fileOf('the-maestro', '2030-01-02');
+    assert.match(file, /^carried-from: 2030-01-01$/m);
+    assert.match(file, /^written-by: priorities set$/m);
+    assert.match(file, /^## Today\n- New thing \| Maestro$/m);
+    assert.match(file, /^## Carried from 2030-01-01\n- Unfinished A \| Maestro · 0 done, 1 in flight, 0 queued, 0 blocked\n- Unfinished B \| Maestro · /m);
+    assert.equal(runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02').code, 0);
+    assert.equal(fileOf('the-maestro', '2030-01-02'), file, 'setting the same list again changes nothing');
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('priorities set again without a stream clears that project\'s Today and Next but keeps its carry-over', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    const dir = join(root, 'Projects', 'options-app', 'Status', 'priorities');
+    assert.equal(runIn('priorities', 'set', 'New thing | Maestro', 'Opt work | Options', '--date', '2030-01-02').code, 0);
+    writeFileSync(join(dir, '2030-01-02.md'), readFileSync(join(dir, '2030-01-02.md'), 'utf8').replace('carried-from: none', 'carried-from: 2030-01-01') + '\n## Carried from 2030-01-01\n- Old opt | Options · 0 done, 1 in flight, 0 queued, 0 blocked\n');
+    const again = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(again.code, 0, again.err);
+    assert.match(runIn('priorities', 'show', '--repo', 'options-app', '--date', '2030-01-02').out, /Priorities not set for today/);
+    const file = fileOf('options-app', '2030-01-02');
+    assert.doesNotMatch(file, /Opt work/);
+    assert.match(file, /^## Today\n- not set yet$/m);
+    assert.match(file, /^## Carried from 2030-01-01\n- Old opt \| Options · /m);
+    assert.match(fileOf('the-maestro', '2030-01-02'), /^## Today\n- New thing \| Maestro$/m);
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('priorities set clears a dropped project\'s Today even when roll wrote it, and keeps its carry-over', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    const dir = join(root, 'Projects', 'options-app', 'Status', 'priorities');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '2030-01-02.md'), ROLL_FILE.replace('project: the-maestro', 'project: options-app').replace('- not set yet', '- Opt work | Options'));
+    const set = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    assert.match(runIn('priorities', 'show', '--repo', 'options-app', '--date', '2030-01-02').out, /Priorities not set for today/);
+    const file = fileOf('options-app', '2030-01-02');
+    assert.doesNotMatch(file, /Opt work/);
+    assert.match(file, /^## Carried from 2030-01-01\n- Unfinished A \| Maestro · /m);
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('a project write that fails makes priorities set exit 1 after the other projects are written', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    mkdirSync(join(root, 'Projects', 'options-app', 'Status'), { recursive: true });
+    writeFileSync(join(root, 'Projects', 'options-app', 'Status', 'priorities'), 'blocker');
+    const set = runIn('priorities', 'set', 'Opt work | Options', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 1);
+    assert.match(set.err, /project options-app: /);
+    assert.match(fileOf('the-maestro', '2030-01-02'), /^## Today\n- New thing \| Maestro$/m);
+    assert.match(set.out, /^wrote .*priorities\.md$/m, 'the container list is still written');
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('priorities set for a past day writes nothing, not the container list either, and exits 1', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro');
+    const today = new Date().toLocaleDateString('en-CA');
+    assert.equal(runIn('priorities', 'set', 'Today thing | Maestro', '--date', today).code, 0);
+    const set = runIn('priorities', 'set', 'Old | Maestro', '--date', '2020-01-01');
+    assert.equal(set.code, 1);
+    assert.match(set.err, /refusing to set priorities for 2020-01-01: it is before today/);
+    assert.equal(set.out, '', 'nothing was written');
+    assert.equal(fileOf('the-maestro', '2020-01-01'), '', 'history is not rewritten');
+    assert.match(runIn('priorities', 'show').out, /^Priorities for \d{4}-\d\d-\d\d:\n1\. Today thing \[Maestro\]\n/, "today's list is intact");
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
     seedRegistry();
     const sd = join(vault, 'Status');
@@ -2512,6 +2657,26 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     const fallback = gate(broken);
     assert.equal(fallback.code, 1);
     assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
+});
+
+test('review-queue: answers by setting the exit code, never process.exit, so piped output is not cut (MAESTRO-162)', () => {
+    // process.exit drops what a pipe has not yet taken (a reader behind `| head` or a busy one); the fix is to let the process drain. A preload records any process.exit call.
+    const spy = join(mkdtempSync(join(tmpdir(), 'exit-spy-')), 'spy.mjs');
+    const log = `${spy}.log`;
+    writeFileSync(spy, `import { appendFileSync } from 'node:fs';\nconst real = process.exit.bind(process);\nprocess.exit = (c) => { appendFileSync(${JSON.stringify(log)}, \`exit \${c}\\n\`); real(c); };\n`);
+    const gate = (nodes: unknown[]) => {
+        const r = spawnSync(process.execPath, [SCRIPT, 'review-queue', '--cap', '2', '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd, env: { ...installGhStub({ pages: [nodes] }), NODE_OPTIONS: `--import ${spy}`, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const room = gate([prNode(1)]);
+    assert.equal(room.code, 0, room.err);
+    assert.match(room.out, /review queue: 1 of 2/);
+    const full = gate([prNode(1), prNode(2), prNode(3)]);
+    assert.equal(full.code, 1, 'a full queue still exits 1');
+    assert.match(full.out, /Queue full/);
+    assert.equal(existsSync(log) ? readFileSync(log, 'utf8') : '', '', 'no process.exit call on the answer path');
 });
 
 test('review-queue: PRs in a self_review_repos repo are not counted, and the answer says how many were left out', () => {
@@ -2811,4 +2976,65 @@ test('prime fails loudly after a compaction whose handoff is missing or older th
     assert.doesNotMatch(run('prime').out, /HANDOFF STALE/);
     run('log', 'precompact incomplete: handoff: boom (trigger auto)', '--kind', 'note', ...MARK);
     assert.match(run('prime').out.split('\n')[0], /^!! precompact incomplete: handoff: boom/);
+});
+
+test('prime and start-here withhold a secret-shaped stream name or id instead of printing it (MAESTRO-168)', () => {
+    const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
+    const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
+    const now = new Date().toISOString();
+    const rows = [
+        { id: 'sec1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: token, text: 'work in an odd stream', model: 'x', used: ['x'] },
+        { id: key, ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'work with an odd id', model: 'x', used: ['x'] },
+        { id: 'ask1', ts: now, date: now.slice(0, 10), kind: 'question', stream: token, text: 'odd stream ask?', door: 'two-way', recommend: 'yes', model: 'x', used: ['x'] },
+        { id: 'ok1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'ordinary work', model: 'x', used: ['x'] },
+    ];
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    for (const cmd of [['prime'], ['start-here']]) {
+        const r = run(...cmd);
+        assert.equal(r.code, 0, r.err);
+        const all = `${r.out}\n${r.err}`;
+        assert.ok(!all.includes(token), `${cmd[0]} printed the token-shaped stream`);
+        assert.ok(!all.includes(key), `${cmd[0]} printed the key-shaped id`);
+        assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} still shows ordinary work`);
+        assert.match(r.out, /\[withheld: secret shape\]/);
+    }
+});
+
+test('web needs no --project when the config names none: it falls back to the container project, as web.ts does', () => {
+    const r = spawnSync(process.execPath, [SCRIPT, 'web', '--port', '0', '--vault', vault, '--status-dir', join(vault, 'status')], {
+        encoding: 'utf8', cwd: emptyCwd, timeout: 4000,
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '', MAESTRO_PROJECT: '', MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off' },
+    });
+    assert.doesNotMatch(r.stderr, /Pass --project/);
+    assert.match(r.stdout, /Podium web: http:\/\/127\.0\.0\.1:\d+\//);
+});
+
+test('query filters read-only and capped: by stream, status and id, refuses bad filters, writes no row', () => {
+    const a = idOf(run('start', 'alpha job', '--stream', 'Alpha', ...MARK).out);
+    const b = idOf(run('start', 'beta job', '--stream', 'Beta', ...MARK).out);
+    run('done', b, ...MARK);
+    const before = ledger().length;
+    type Q = { total: number; shown: number; rows: { id: string }[] };
+    assert.deepEqual(parse<Q>(run('query', '--stream', 'Alpha', '--json').out).rows.map((r) => r.id), [a]);
+    assert.deepEqual(parse<Q>(run('query', '--status', 'done', '--json').out).rows.map((r) => r.id), [b]);
+    assert.equal(parse<Q>(run('query', '--id', a, '--json').out).total, 1);
+    assert.equal(parse<Q>(run('query', '--limit', '1', '--json').out).shown, 1);
+    assert.match(run('query').out, /alpha job/);
+    for (const bad of [['--limit', '0'], ['--limit', '9999'], ['--status', 'nope'], ['--date', 'today']]) assert.equal(run('query', ...bad).code, 1, bad.join(' '));
+    assert.equal(ledger().length, before, 'a query writes nothing');
+});
+
+test('ready-to-push lists my branches that no remote holds, and refuses without a container root or emails', () => {
+    const container = mkdtempSync(join(tmpdir(), 'rtp-'));
+    const repo = join(container, 'proj');
+    mkdirSync(repo);
+    const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 'me@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 'me@example.com', GIT_CONFIG_GLOBAL: '/dev/null' };
+    const git = (...a: string[]) => assert.equal(spawnSync('git', a, { cwd: repo, env }).status, 0, a.join(' '));
+    git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a'), 'a'); git('add', 'a'); git('commit', '-q', '-m', 'base');
+    git('switch', '-q', '-c', 'feat/MAESTRO-9-held'); writeFileSync(join(repo, 'b'), 'b'); git('add', 'b'); git('commit', '-q', '-m', 'held work');
+    const out = runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push', '--json');
+    assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/MAESTRO-9-held']);
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('MAESTRO-9'), false, 'not my commits');
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: '', MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push').code, 1);
 });
