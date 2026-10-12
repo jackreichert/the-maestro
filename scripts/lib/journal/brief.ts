@@ -22,6 +22,8 @@ export interface BriefInput {
     standing: string;
     /** Task-specific text the dispatcher wrote (anchors, scope, verify), appended as given. */
     details?: string;
+    /** What must be true for the work to count as done, set by the dispatcher before the agent starts. */
+    doneWhen?: string;
     /** Whether this brief's agent writes to the repo (and so holds the repo claim). */
     writer: boolean;
     reportPath: string;
@@ -61,8 +63,9 @@ export function briefText(b: BriefInput): string {
         `# Brief ${b.id}`,
         `## Objective\n\n${b.text}\n\n${facts.join('\n')}`,
         b.details?.trim() ? `## Task details\n\n${b.details.trim()}` : '',
+        `## Done when\n\n${b.doneWhen?.trim() || 'The dispatcher gave no criteria. Before you start, write the criteria you will check yourself against as the first lines of your report file.'}`,
         `## Library\n\n${b.library}`,
-        `## Report\n\nWrite the full report to ${b.reportPath}. Hand back only a headline paragraph under ${HAND_BACK_WORDS} words plus that path: outcome, numbers, links, decisions needed, what is left open. If tests failed or a step was skipped, say so in the headline.`,
+        `## Report\n\nWrite the full report to ${b.reportPath}. Hand back only a headline paragraph under ${HAND_BACK_WORDS} words plus that path: outcome, numbers, links, decisions needed, what is left open. If tests failed or a step was skipped, say so in the headline.\n\nThe report file states, so the next reader can pick the work up without you: the done criteria and whether each was met; your confidence and what it was measured on (a command and its result, not a feeling); what you tried that failed, with why; and who owns the work if you stop part-way (name the branch or worktree and the next step).`,
         `## Standing rules\n\n${b.standing.trim()}`,
     ];
     return sections.filter(Boolean).join('\n\n') + '\n';

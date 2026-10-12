@@ -75,10 +75,14 @@ export function queueText(r: QueueReading): string[] {
   return [`${reviewQueueLine(r.queue)} (${where})`, ...(r.queue.full ? ['Queue full: hold pushes of new PRs (keep working locally); fixes to PRs already open still go out.'] : [])];
 }
 
-/** `5h`, `3d`: how old a snapshot is, for the board line; empty when it is under an hour old or its time is unknown (the board reads it without a network call, so only a stale one is flagged). */
+/** How old a snapshot must be before the board names its age: the loop refreshes the stored PR board on its idle tick, so a few minutes is normal and ten is a sign the refresh is not running. */
+export const STALE_SNAPSHOT_MS = 10 * 60_000;
+
+/** ` (snapshot 40m old)`, `5h`, `3d`: how old a snapshot is, for the board line; empty when it is under ten minutes old or its time is unknown (the board reads it without a network call, so a PR merged since then still shows as open until the next refresh). */
 export function staleSuffix(takenAt: string | undefined, now: Date): string {
   const ms = takenAt ? now.getTime() - Date.parse(takenAt) : Number.NaN;
-  if (!Number.isFinite(ms) || ms < 36e5) return '';
+  if (!Number.isFinite(ms) || ms < STALE_SNAPSHOT_MS) return '';
+  if (ms < 36e5) return ` (snapshot ${Math.floor(ms / 60_000)}m old)`;
   const hours = Math.floor(ms / 36e5);
   return ` (snapshot ${hours >= 48 ? `${Math.floor(hours / 24)}d` : `${hours}h`} old)`;
 }
