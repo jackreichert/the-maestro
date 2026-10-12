@@ -10,6 +10,7 @@
  */
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { printJson } from '../lib/json-out.ts';
 
 const HOOKS = dirname(fileURLToPath(import.meta.url));
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
@@ -21,6 +22,6 @@ export function eventHooksSnippet(): object {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  console.log(JSON.stringify(eventHooksSnippet(), null, 2));
+  printJson(eventHooksSnippet());
   console.error('Printed only: merge the "hooks" entries into your settings file yourself. Nothing was edited.');
 }

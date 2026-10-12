@@ -23,6 +23,7 @@ function rig(transcriptText = `${row('cli')}\n`, lockDir = mkdtempSync(join(tmpd
   let handoffAt: string | null = null;
   let snapshots = 0;
   let snapshotFail = false;
+  let cutOff: number | null = null;
   const io: ContinuityIo = {
     transcripts: () => [{ path: '/t.jsonl', text: transcriptText }],
     handoffPath: (d) => `/j/HANDOFF-${d}-live.md`,
@@ -36,12 +37,12 @@ function rig(transcriptText = `${row('cli')}\n`, lockDir = mkdtempSync(join(tmpd
       },
       readLedger: () => ledger,
       newestHandoff: () => (handoffAt ? { name: 'HANDOFF-x-live.md', at: handoffAt } : null),
-      snapshot: () => { snapshots++; if (snapshotFail) throw new Error('disk full'); return { worktrees: 1, copied: 0, current: 1, skipped: 0, partial: false, capped: false }; },
+      snapshot: () => { snapshots++; if (snapshotFail) throw new Error('disk full'); return cutOff === null ? { worktrees: 1, copied: 0, current: 1, skipped: 0, partial: false, capped: false } : { worktrees: 0, copied: 0, current: 0, skipped: 0, scanned: cutOff, partial: true, capped: false }; },
     },
   };
   let state: ContinuityState | null = null;
   return {
-    calls, lockDir, snapshots: () => snapshots, failSnapshot: (v: boolean) => { snapshotFail = v; },
+    calls, lockDir, snapshots: () => snapshots, failSnapshot: (v: boolean) => { snapshotFail = v; }, cutOffAfter: (n: number | null) => { cutOff = n; },
     at: (now: number) => { const prev = state; state = cont.check('/projects', { now, prev }, io); return { state, events: cont.diff(prev, state) }; },
   };
 }
@@ -120,4 +121,13 @@ test('in the loop: a failure is an actionable event and success is silent', () =
   r.failSnapshot(true);
   const failed = tick({ dir, types, ctx: { run: () => ({ status: 0, stdout: '', stderr: '' }) }, config: { quietHours: 'off' }, now: T0 + 600_000 });
   assert.deepEqual(failed.events.map((e) => [e.summary, e.actionable]), [['continuity tick failed: snapshot: disk full', true]]);
+});
+
+test('a tick whose snapshot was cut off after reading some worktrees is not a failure; one that read none is', () => {
+  const some = rig();
+  some.cutOffAfter(40);
+  assert.equal(some.at(T0).state.error, '', 'the next tick resumes after the 40 it read');
+  const none = rig();
+  none.cutOffAfter(0);
+  assert.match(none.at(T0).state.error, /^snapshot: time budget reached after 0 worktree\(s\)/);
 });

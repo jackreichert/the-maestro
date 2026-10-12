@@ -30,6 +30,7 @@ import { checkStaleness, realGit } from './lib/library/stale.ts';
 import type { PageStaleness } from './lib/library/stale.ts';
 import { readLibrary } from './lib/library/pages.ts';
 import { coverage, renderCoverage } from './lib/library/coverage.ts';
+import { printJson } from './lib/json-out.ts';
 
 const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]\n       library-check.ts --coverage [--vault <root>] [--repo <name>] [--json]\n       library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]';
 const LIBRARY_FOLDERS = ['Knowledge', 'Runbooks'] as const;
@@ -164,7 +165,7 @@ function mainStale(o: Options): number {
   const codeRoot = o.codeRoot ?? (process.env.MAESTRO_CONTAINER_ROOT || null);
   const rows = checkStaleness(readLibrary(o.vault, o.repo), codeRoot, realGit);
   if (!rows.length) { console.error('library-check: no library pages found; nothing was checked'); return 2; }
-  if (o.json) console.log(JSON.stringify(rows, null, 2)); else renderStale(rows).forEach((l) => console.log(l));
+  if (o.json) printJson(rows); else renderStale(rows).forEach((l) => console.log(l));
   return 0;
 }
 
@@ -175,7 +176,7 @@ function mainCoverage(o: Options): number {
   const projects = (o.repo ? [o.repo] : dirs(join(o.vault, 'Projects'))).filter((p) => ['CONTEXT.md', 'INDEX.md'].some((f) => existsSync(join(o.vault, 'Projects', p, f))));
   const covers = new Map(pages.map((p) => [p.path, list(parsePage(p.path, readFileSync(join(o.vault, p.path), 'utf8')), 'covers')]));
   const rows = coverage(pages, (path) => covers.get(path) ?? [], projects);
-  if (o.json) console.log(JSON.stringify(rows, null, 2)); else renderCoverage(rows).forEach((l) => console.log(l));
+  if (o.json) printJson(rows); else renderCoverage(rows).forEach((l) => console.log(l));
   return 0;
 }
 
@@ -196,7 +197,7 @@ function main(argv: string[]): number {
   const reports = checkVault(o.vault, pages);
   // Named pages are checked alone; the generated INDEX.md files are part of a whole run.
   const indexes = named.length ? [] : indexReports(o.vault, o.repo);
-  if (o.json) console.log(JSON.stringify([...reports, ...indexes], null, 2)); else render(reports, indexes).forEach((l) => console.log(l));
+  if (o.json) printJson([...reports, ...indexes]); else render(reports, indexes).forEach((l) => console.log(l));
   return reports.some((r) => r.findings.length) || indexes.length ? 1 : 0;
 }
 

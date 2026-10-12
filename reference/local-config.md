@@ -93,6 +93,7 @@ status_streams: Alpha, Beta # stream order on the Podium
 status_repo_streams: api=Alpha, web=Beta # repo (short name) to stream for the PR tables; last resort after ledger evidence and stream-overrides.json
 tracker_url_base: https://tracker.example.com/browse/ # tracker key links; omit for plain text
 scripts_dir: /path/to/scripts # shared scripts shelf: README.md index, scratch/, helpers/; a leading ~/ is expanded; omit to turn the shelf protocol off
+memory_dir: /path/to/memory # where `decide --scope working-rule` writes memory files and MEMORY.md; a leading ~/ is expanded; omit to refuse working rules
 ```
 ````
 
