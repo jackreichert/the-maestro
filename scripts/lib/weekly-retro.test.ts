@@ -60,7 +60,7 @@ test('a task finished twice in the window is listed as repeated, with its ids; o
     const done = (id: string, text: string, day: string): LedgerRow[] => [row(id, `2026-10-0${day}T00:00:00Z`, 'wip', { text }), row(`${id}d`, `2026-10-0${day}T06:00:00Z`, 'done', { closes: id })];
     const r = retro([
         ...done('a', 'Sweep merged branches in Avonlea #412', '5'), ...done('b', 'sweep merged branches in Narnia', '7'),
-        ...done('c', 'Write the cutover plan for Bayada', '6'),
+        ...done('c', 'Write the cutover plan for Bakery', '6'),
         ...done('e', 'Sweep merged branches in the-maestro', '1'),
         ...done('f', 'ok', '6'), ...done('g', 'ok', '7'),
     ]);

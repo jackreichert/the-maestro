@@ -224,7 +224,7 @@ const homes: Homes = { found: true, warnings: [], streams: { Alpha: { projects: 
 test('the Projects section points at each active project\'s Now, Next and priorities files, says what is missing and withholds a secret-shaped line', () => {
   const v = projectVault();
   try {
-    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'dev-env' });
+    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'example-container' });
     assert.deepEqual(projects.map((p) => p.project).sort(), ['proj-a', 'proj-b']);
     const page = coldStart({ ...input, projects, today: '2026-10-12' });
     assert.match(page.text, /\n## Projects\n/);
@@ -239,7 +239,7 @@ test('the Projects section points at each active project\'s Now, Next and priori
 test('a tight cap drops the Projects Now and Next text first and keeps the priorities pointers', () => {
   const v = projectVault();
   try {
-    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'dev-env' });
+    const projects = activeProjects({ vault: v, rows: ROWS, registry: null, homes, repoStreams: {}, containerProject: 'example-container' });
     let max = coldStart({ ...input, projects }).text.length;
     let page = coldStart({ ...input, projects, maxChars: max });
     while (!page.truncated && /- Now:/.test(page.text) && max > 0) { max -= 5; page = coldStart({ ...input, projects, maxChars: max }); }

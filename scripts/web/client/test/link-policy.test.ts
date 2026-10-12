@@ -52,7 +52,7 @@ test('a trusted host over http, or on a path no rule names, falls back to a safe
 });
 
 test('obsidian links carry no target', () => {
-  const u = 'obsidian://open?vault=ExampleVault&file=Projects%2Fdev-env%2FCONTEXT';
+  const u = 'obsidian://open?vault=ExampleVault&file=Projects%2Fexample-container%2FCONTEXT';
   const a = linkAttrs(u);
   assert.equal(a?.href, u);
   assert.equal(a && 'target' in a, false);

@@ -41,7 +41,7 @@ test('names, placeholders and ordinary prose are clean', () => {
     'tokens: 12 rows',
     'postgres://orchard_user:<password>@db.example.net/orchard',
     'password: $ORCHARD_PASSWORD',
-    'proxy on localhost:5439, 12 rows, verified 2026-10-08',
+    'proxy on localhost:5999, 12 rows, verified 2026-10-08',
     'contact support@example.com',
   ].join('\n');
   assert.deepEqual(scanText(clean), []);
@@ -78,14 +78,14 @@ test('ordinary evidence is not mistaken for a token: shas, digests, uuids, ledge
     `sha256 ${'0123456789abcdef'.repeat(4)}`,
     'md5 9e107d9d372bb6826bd81d3542a419d6',
     'uuid 3f2b8c1e-5d4a-4b7e-9c10-a1b2c3d4e5f6',
-    'ledger id k7q2 and ticket MAESTRO-149',
-    'src/lib/library/scan.ts:24 and /Users/someone/dev-env/skills/the-maestro/scripts/library-check.ts#L40',
+    'ledger id k7q2 and ticket AV-149',
+    'src/lib/library/scan.ts:24 and /home/someone/src/skills/the-maestro/scripts/library-check.ts#L40',
     'https://github.com/example-org/avonlea-api/blob/0123456789abcdef0123456789abcdef01234567/packages/orchard/src/sync.ts#L40-L52',
     'packages/orchard/src/harvest-export/HarvestExportHandler',
     'decision-orchard-row-id-column-added-before-the-harvest-sync-slug',
     'verifyOrchardSyncScheduleBeforeEveryHarvestExportRun',
     'Projects/avonlea-api/Knowledge/orchard-sync-nightly-schedule-and-retries',
-    'TEAMSELECT_DB_NAME_FOR_THE_STAGING_INTERIM_DATABASE_CLUSTER',
+    'AVONLEA_DB_NAME_FOR_THE_STAGING_ORCHARD_CLUSTER',
     '-'.repeat(40), '='.repeat(40),
   ].join('\n');
   assert.deepEqual(scanText(evidence), []);

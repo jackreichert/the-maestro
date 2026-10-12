@@ -29,8 +29,8 @@ test('expandTokens links known paths, shows a line as text, and leaves unknown p
 });
 
 test('diffAnchor matches a known answer from a real private-repo PR link', () => {
-    // sha256('packages/teamselect-api/src/utils/partner-api.ts'), the hex in a real .../pull/<n>/changes#diff-<hex>R25-R31 link.
-    assert.equal(diffAnchor('packages/teamselect-api/src/utils/partner-api.ts'), 'diff-60c3f13bafde03a49d9d9bae1b582d31f14a82a779a918ddf90d3bd2e29455ea');
+    // sha256('packages/avonlea-api/src/sync.ts'), the hex in a real .../pull/<n>/changes#diff-<hex>R25-R31 link.
+    assert.equal(diffAnchor('packages/avonlea-api/src/sync.ts'), 'diff-b1afaaa04ed098bb89d115cee7378fd32ae56addc7637c19e38748937d9572c0');
 });
 
 test('expandTokens writes the verified line anchors: R25, R25-R31 and L10-L12', () => {
