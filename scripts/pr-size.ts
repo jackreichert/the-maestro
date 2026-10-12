@@ -25,6 +25,7 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { printJson } from './lib/json-out.ts';
 import {
   PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_WIDE_MAX_CODE_FILES, PR_WIDE_MAX_CODE_LINES, PR_TEST_GLOBS, PR_CONFIG_GLOBS, PR_DOCS_GLOBS, PR_MECHANICAL_GLOBS,
 } from './local-config.ts';
@@ -219,7 +220,7 @@ function main() {
   if (g.status !== 0) { console.error(`pr-size: git diff failed: ${(g.stderr || '').trim()}`); process.exit(2); }
   const classify = makeClassifier({ mechanical: PR_MECHANICAL_GLOBS, test: PR_TEST_GLOBS, config: PR_CONFIG_GLOBS, docs: PR_DOCS_GLOBS });
   const result = assess(parseNumstat(g.stdout), { maxFiles: PR_MAX_CODE_FILES, maxLines: PR_MAX_CODE_LINES, wideMaxFiles: PR_WIDE_MAX_CODE_FILES, wideMaxLines: PR_WIDE_MAX_CODE_LINES, classify });
-  console.log(json ? JSON.stringify(result, null, 2) : render(result));
+  if (json) printJson(result); else console.log(render(result));
   // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
   process.exitCode = result.verdict === 'PASS' ? 0 : 1;
 }

@@ -26,6 +26,7 @@ import { openStore } from './lib/journal/store.ts';
 import { fold, isOpen } from './lib/ledger-core.ts';
 import { itemText } from './lib/journal/format.ts';
 import { STANDING_FILE, liveRows, readEvents } from './lib/standing.ts';
+import { printJson } from './lib/json-out.ts';
 import { KEYWORD_NOTE, exitCodeOf, extractCandidates, humanTurns, judge, publicView } from './lib/commitments.ts';
 import type { Known, Verdict } from './lib/commitments.ts';
 
@@ -94,7 +95,7 @@ function main(): void {
     let turns;
     try { turns = humanTurns(readFileSync(transcript, 'utf8')); } catch (e) { console.error(`commitments-sweep: cannot read ${transcript}: ${e instanceof Error ? e.message : String(e)}`); process.exit(2); }
     const verdicts = judge(extractCandidates(turns), knownItems(opts.vault, opts.project));
-    console.log(opts.json ? JSON.stringify({ transcript, humanTurns: turns.length, note: KEYWORD_NOTE, candidates: verdicts.map(publicView) }, null, 2) : render(transcript, verdicts, turns.length));
+    if (opts.json) printJson({ transcript, humanTurns: turns.length, note: KEYWORD_NOTE, candidates: verdicts.map(publicView) }); else console.log(render(transcript, verdicts, turns.length));
     process.exitCode = exitCodeOf(verdicts);
 }
 

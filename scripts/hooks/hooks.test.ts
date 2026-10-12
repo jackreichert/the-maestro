@@ -270,3 +270,18 @@ test('session-start context withholds a secret-shaped line from every part it in
   assert.match(out, /plain line/);
   assert.match(out, /normal/);
 });
+
+test('precompact fails loudly with one actionable line when the continuity watch is not registered and live', () => {
+  const { d, calls } = deps({ watchProblem: () => 'not registered; run `node scripts/event-loop.ts add --id continuity --type continuity --target <transcripts dir> --ttl-hours 72`' });
+  const text = precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d);
+  assert.match(text, /^precompact incomplete: continuity watch: not registered; run `node scripts\/event-loop\.ts add --id continuity/);
+  assert.ok(calls.some((c) => c[0] === 'handoff'), 'the other steps still ran');
+  assert.deepEqual(calls.at(-1)?.slice(0, 2), ['log', text]);
+  const ok = deps({ watchProblem: () => null });
+  assert.match(precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, ok.d), /^precompact: handoff rewritten/);
+});
+
+test('a throwing watch check fails open and is named, never aborts the hook', () => {
+  const { d } = deps({ watchProblem: () => { throw new Error('registry unreadable'); } });
+  assert.match(precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d), /^precompact incomplete: continuity watch: registry unreadable/);
+});

@@ -186,6 +186,28 @@ export interface CarryInput {
   container: { date: string; items: Priority[] } | null;
 }
 
+export interface CarriedInput {
+  vault: string;
+  project: string;
+  today: string;
+  rows: LedgerRow[];
+  registry: RegistryLookup | null;
+  /** Container-list items fanned out to this project, to carry alongside the project's own previous Today items. */
+  fromContainer: Priority[];
+  /** The date of the container list `fromContainer` came from; only set when that list is carried. */
+  containerDate?: string;
+}
+
+/** What a project's file for `today` carries: its previous file's Today items plus `fromContainer`, each with its stream's status. The carry and the priorities sync share this. */
+export function carriedInto(input: CarriedInput): { carriedFrom: string; carried: ProjectFile['carried'] } {
+  const { vault, project, today, rows, registry, fromContainer, containerDate } = input;
+  const prev = previousFile(prioritiesDir(vault, project), today);
+  const own = prev ? readProjectFile(prev.path) : null;
+  const items = [...(own?.today ?? []), ...fromContainer].filter((p, i, all) => all.findIndex((q) => q.text === p.text && q.stream === p.stream) === i);
+  const carriedFrom = [prev?.date, containerDate].filter((d): d is string => Boolean(d)).sort().pop() ?? '';
+  return { carriedFrom, carried: items.map((item) => ({ item, status: streamStatus(rows, registry, item.stream, carriedFrom || today) })) };
+}
+
 /**
  * Starts today's file for each project that had priorities before, written by roll: yesterday's Today items (the project's own previous
  * file plus the container list fanned out to it) become `Carried from <date>` with each stream's status, and Today says `not set yet`
@@ -203,18 +225,15 @@ export function carryPriorities(input: CarryInput): { written: string[]; problem
   const problems: string[] = [];
   for (const project of candidates) {
     try {
-      const prev = previousFile(prioritiesDir(vault, project), today);
-      const own = prev ? readProjectFile(prev.path) : null;
-      const fromContainer = !asToday && container && container.date < today ? fanned.get(project) ?? [] : [];
-      const items = [...(own?.today ?? []), ...fromContainer].filter((p, i, all) => all.findIndex((q) => q.text === p.text && q.stream === p.stream) === i);
+      const useContainer = !asToday && container !== null && container.date < today;
+      const fromContainer = useContainer ? fanned.get(project) ?? [] : [];
       const todayItems = asToday ? fanned.get(project) ?? [] : [];
-      if (!items.length && !todayItems.length) continue;
-      const dates = [prev?.date, !asToday && container && container.date < today ? container.date : ''].filter((d): d is string => Boolean(d)).sort();
-      const carriedFrom = dates[dates.length - 1] ?? '';
+      const { carriedFrom, carried } = carriedInto({ vault, project, today, rows, registry, fromContainer, containerDate: useContainer ? container?.date : undefined });
+      if (!carried.length && !todayItems.length) continue;
       const projectStreams = streams.filter((s) => route(s).includes(project));
       const result = writeProjectPriorities(vault, project, today, {
         project, date: today, carriedFrom, writtenBy: 'roll-maintenance', today: todayItems,
-        carried: items.map((item) => ({ item, status: streamStatus(rows, registry, item.stream, carriedFrom || today) })),
+        carried,
         next: nextItems(rows, registry, projectStreams),
       });
       if (result === 'written') written.push(project);

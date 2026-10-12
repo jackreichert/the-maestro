@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -231,6 +232,29 @@ test('curate closes a pending learned row with the page sha, the ledger still ve
   assert.deepEqual(pendingLearned(f.ledger()).map((r) => r.id), ['lrn2']);
   assert.equal(f.cli('curate', 'lrn1', '--reject', 'again', '--holder', holder, ...MARKS).code, 1);
   assert.equal(f.cli('curate', 'zzzz', '--reject', 'unknown', '--holder', holder, ...MARKS).code, 1);
+  const { problems } = verifyLedger({ ledgerPath: join(f.root, 'Projects', PROJECT, 'Journal', 'ledger.jsonl'), approvals: new Set(), approvableKinds: new Set(), autocommit: false, dryRun: false, vault: f.root });
+  assert.deepEqual(problems, []);
+});
+
+test('curate --refresh re-records the page sha after a refresh write, twice in a row, so the latest curated sha always matches the disk', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  const onDisk = (): string => createHash('sha256').update(readFileSync(join(f.root, PAGE))).digest('hex');
+  const latest = (): string => String([...f.ledger()].reverse().find((r) => r.kind === 'curated' && r.page === PAGE)?.pageSha);
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  assert.equal(latest(), onDisk());
+  for (const edit of ['Refreshed once.', 'Refreshed twice.']) {
+    assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD.replace('runs nightly at 02:00', `runs nightly at 02:00 (${edit})`)), '--holder', holder).code, 0);
+    assert.notEqual(latest(), onDisk(), 'a refresh write alone leaves the recorded sha behind');
+    const r = f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(latest(), onDisk(), 'step 6 sees no human edit after the refresh is recorded');
+  }
+  assert.equal(f.cli('curate', 'lrn1', '--page', `Projects/${REPO}/Knowledge/other.md`, '--refresh', '--holder', holder, ...MARKS).code, 1, 'a page this learned row never composed');
+  assert.equal(f.cli('curate', 'lrn1', '--reject', 'x', '--refresh', '--holder', holder, ...MARKS).code, 1);
+  assert.deepEqual(pendingLearned(f.ledger()), []);
   const { problems } = verifyLedger({ ledgerPath: join(f.root, 'Projects', PROJECT, 'Journal', 'ledger.jsonl'), approvals: new Set(), approvableKinds: new Set(), autocommit: false, dryRun: false, vault: f.root });
   assert.deepEqual(problems, []);
 });

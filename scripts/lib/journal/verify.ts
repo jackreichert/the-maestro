@@ -55,7 +55,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         if (row.kind === 'miss') for (const p of missProblems(row)) problems.push({ line, id: row.id, problem: `miss: ${p}` });
         if (row.kind === 'curated') for (const p of curatedProblems(row, closableIds)) problems.push({ line, id: row.id, problem: `curated: ${p}` });
         if (row.kind === 'learned') for (const p of learnedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `learned: ${p}` });
-        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes', 'briefs']) missing(line, row, field, row[field]);
+        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes', 'briefs', 'nexts']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
     problems.sort((a, b) => a.line - b.line);
