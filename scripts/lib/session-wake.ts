@@ -93,8 +93,8 @@ export interface WakeTickDeps {
 }
 
 /**
- * One tick: decide, act, record. Returns the decision. Never throws: a broken launcher or an unreadable inbox must not stop the supervisor.
- * Every launch is logged to wake-launch.jsonl and counted in wake-launch.json whether or not the command worked.
+ * One tick: decide, record, act. Returns the decision. Never throws: a broken launcher or an unreadable inbox must not stop the supervisor.
+ * The launch is counted in wake-launch.json before the command runs, and only if that save worked, so a full disk cannot turn into a launch every tick. It is logged to wake-launch.jsonl whether or not the command worked.
  */
 export function runWakeTick({ eventDir, now, entries, launchCommand, transcriptsDir, run = (cmd, args) => spawnSync(cmd, args, { stdio: 'ignore', timeout: 30_000 }), alive }: WakeTickDeps): WakeDecision {
   try {
@@ -107,9 +107,10 @@ export function runWakeTick({ eventDir, now, entries, launchCommand, transcripts
     });
     if (d.action === 'none') return d;
     const [cmd, ...args] = launchCommand;
+    // Reserve the slot first: if the history cannot be saved the throw lands in the catch below and nothing launches, so the cap can never be open-ended.
+    writeWakeState(eventDir, { launches: [...state.launches.filter((t) => now - t < DAY_MS), now] });
     const r = run(cmd as string, [...args, WAKE_PROMPT]);
     const ok = !(r?.error || r?.status);
-    writeWakeState(eventDir, { launches: [...state.launches.filter((t) => now - t < DAY_MS), now] });
     appendFileSync(wakeLogPath(eventDir), `${JSON.stringify({ at: new Date(now).toISOString(), action: d.action, reason: d.reason, ok })}\n`);
     if (!ok) console.error(`wake launch failed: ${r?.error?.message ?? `exit ${r?.status}`}`);
     return d;

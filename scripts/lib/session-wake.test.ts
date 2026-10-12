@@ -102,3 +102,15 @@ test('with no launch command the tick does nothing and never texts', () => {
     assert.deepEqual(d, { action: 'none', reason: 'no-command' });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a history file that cannot be written blocks the launch, so the cap cannot be bypassed', () => {
+  const dir = tmp();
+  try {
+    mkdirSync(join(dir, 'wake-launch.json'));
+    let launches = 0;
+    for (let i = 0; i < 5; i += 1) {
+      runWakeTick({ eventDir: dir, now: NOW + i * 60_000, entries: [entry()], launchCommand: ['x'], transcriptsDir: '', run: () => { launches += 1; return { status: 0 }; } });
+    }
+    assert.equal(launches, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
