@@ -795,6 +795,10 @@ The one write path to library pages. `library-write.ts begin` takes the composer
 
 With `--stale [--code-root <dir>]` the generated line also carries STALE for a page whose cited evidence changed since it was verified (the same judgement as `library-check.ts --stale`); it is opt-in because the line then depends on git state.
 
+### Library eval
+
+`playbooks/library-eval.md` measures whether a fresh agent finds answers in the library: a Haiku runner answers ten questions using only `find`, the project `INDEX.md` files and the pages, a Sonnet grader marks each pass, partial, fail or ungraded against the expected answers, and Opus settles a disputed grade. The target is 8 of 10 at two hops or fewer.
+
 ### library-brief.ts
 
 `library-brief.ts --repo <repo> "<task words>" [--tickets-vault <vault>] [--json]` prints a `Library pages for this task` block for a dispatch brief: up to three absolute page paths with their read-when lines, and a warning on a stale page. It ranks like `find` (it asks `ledger-index.ts find`). With no match it still prints the block, saying none were found; a failed lookup exits 2 so the block is never silently missing. `journal.ts brief` runs it for the item's repo and refuses to write a brief when it fails.
