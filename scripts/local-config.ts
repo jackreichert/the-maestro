@@ -73,10 +73,25 @@ const overlayPath = OVERLAY ? overlayCandidates(OVERLAY).find((p) => existsSync(
 const overlay = readConfig(overlayPath) || {};
 
 /** One setting: the environment variable if set (even empty), else the user file, else the overlay file. */
-const pick = (envName: string, key: string, fallback = ''): string => process.env[envName] ?? user[key] ?? overlay[key] ?? fallback;
+const pick = (envName: string, key: string, fallback = ''): string => {
+  const value = process.env[envName] ?? user[key] ?? overlay[key] ?? fallback;
+  picked.set(key, { key, envName, value, source: process.env[envName] !== undefined ? `env ${envName}` : user[key] !== undefined ? userPath : overlay[key] !== undefined ? overlayPath : 'default' });
+  return value;
+};
 
 /** A pr-open gate setting: the user config file only. The environment and the overlay file are ignored, so neither can lift the gate. */
-const pickUserFile = (key: string, fallback = ''): string => user[key] ?? fallback;
+const pickUserFile = (key: string, fallback = ''): string => {
+  const value = user[key] ?? fallback;
+  picked.set(key, { key, envName: '', value, source: user[key] !== undefined ? userPath : 'default' });
+  return value;
+};
+
+/** One setting as resolved: its config key, environment variable (empty for user-file-only gate settings), raw value and where the value came from. */
+export interface ResolvedSetting { key: string; envName: string; value: string; source: string }
+const picked = new Map<string, ResolvedSetting>();
+
+/** Every setting this process resolved, sorted by key, with the file or environment variable each value came from. `default` means no source set it. */
+export const resolvedSettings = (): ResolvedSetting[] => [...picked.values()].sort((a, b) => a.key.localeCompare(b.key));
 
 /** The config files that were read: the user file and the overlay's config.md (either may be empty). */
 export { userPath, overlayPath };

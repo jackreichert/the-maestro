@@ -513,3 +513,28 @@ test('notes_check_since defaults to 7d and reads the file and the env', () => {
     assert.equal(show().NOTES_CHECK_SINCE, '2026-09-01');
     assert.equal(show({ MAESTRO_NOTES_CHECK_SINCE: 'all' }).NOTES_CHECK_SINCE, 'all');
 });
+
+/** Resolves `resolvedSettings()` in a child process with a throwaway HOME and the given config text and environment. */
+function resolved(config: string, env: Record<string, string> = {}): Record<string, { value: string; source: string }> {
+    const file = join(home, 'config.md');
+    write(file, config);
+    const code = `import('${new URL('./local-config.ts', import.meta.url).href}').then((m) => console.log(JSON.stringify(m.resolvedSettings())))`;
+    const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH ?? '', HOME: home, MAESTRO_LOCAL_CONFIG: file, ...env } });
+    assert.equal(r.status, 0, r.stderr);
+    const list = JSON.parse(r.stdout) as { key: string; value: string; source: string }[];
+    return Object.fromEntries(list.map((s) => [s.key, s]));
+}
+
+test('resolvedSettings names the source of each value: environment, user file or default', () => {
+    const s = resolved(block('gh_org: file-org\ngh_login: file-login'), { MAESTRO_GH_LOGIN: 'env-login' });
+    assert.deepEqual(s.gh_org, { key: 'gh_org', envName: 'MAESTRO_GH_ORG', value: 'file-org', source: join(home, 'config.md') });
+    assert.equal(s.gh_login?.value, 'env-login');
+    assert.equal(s.gh_login?.source, 'env MAESTRO_GH_LOGIN');
+    assert.equal(s.lease_ttl_minutes?.source, 'default');
+});
+
+test('resolvedSettings lists user-file-only gate settings with no environment name', () => {
+    const s = resolved(block('pr_body_check_voice: off'), { MAESTRO_PR_BODY_CHECK_VOICE: 'on' });
+    assert.equal(s.pr_body_check_voice?.value, 'off');
+    assert.equal(s.pr_body_check_voice?.envName, '');
+});
