@@ -6,6 +6,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+/** The footer's day is passed with `--date`, so the test never depends on which timezone's date is "today" when it runs (UTC and the watch zone differ for part of every day). */
+const TODAY = '2026-10-12';
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
 
 /** A temp ledger with two queued rows (one naming MAESTRO-266 in repo `proj`) and a temp container whose `proj` repo has a branch for that key. */
@@ -14,10 +16,10 @@ function fixture(): { vault: string; container: string } {
     const vault = join(root, 'vault');
     const container = join(root, 'container');
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
-    const old = new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10);
+    const old = '2026-10-06';
     const rows = [
         { id: 'aaaa', ts: `${old}T10:00:00Z`, date: old, kind: 'wip', queued: true, stream: 's', text: 'nothing named here' },
-        { id: 'bbbb', ts: new Date().toISOString(), date: new Date().toISOString().slice(0, 10), kind: 'wip', queued: true, stream: 's', repo: 'proj', text: 'rework MAESTRO-266' },
+        { id: 'bbbb', ts: `${TODAY}T10:00:00Z`, date: TODAY, kind: 'wip', queued: true, stream: 's', repo: 'proj', text: 'rework MAESTRO-266' },
     ];
     writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
     mkdirSync(join(container, 'proj'), { recursive: true });
@@ -28,7 +30,7 @@ function fixture(): { vault: string; container: string } {
 
 test('--footer shows the oldest queued age and the rows that already have a built branch', () => {
     const { vault, container } = fixture();
-    const r = spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+    const r = spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--date', TODAY, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '', MAESTRO_CONTAINER_ROOT: container, MAESTRO_UPDATE_CHECK: 'off', MAESTRO_EVENT_DIR: join(vault, 'Events') },
     });
     assert.match(r.stdout, /^\*\*Queue:\*\* oldest 6d \(aaaa\); 1 of 2 already built \(branch exists\)$/m, r.stdout + r.stderr);
