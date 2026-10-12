@@ -59,6 +59,7 @@ import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest
 import { migrateDigests } from './lib/digest-migrate.ts';
 import { readTriageLog, sweepSuppressed, triageEvents } from './lib/digest-triage.ts';
 import type { Triage } from './lib/digest-triage.ts';
+import { configuredTriage } from './lib/haiku-triage.ts';
 import { realQuietDeps } from './lib/quiet-wakes.ts';
 import type { QuietDeps } from './lib/quiet-wakes.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
@@ -264,7 +265,7 @@ function heartbeatWriter(dir: string, enabled: boolean): (over?: { sleepingUntil
 }
 
 /** What `run` is given beyond the registry: `serve` is daemon mode, `sleep` and `signal` exist for tests (an aborted signal ends the loop, with exit 0). */
-interface RunOptions { dir: string; types: TypeRegistry; once?: boolean; serve?: boolean; pinned?: number; sleep?: (seconds: number) => Promise<void>; signal?: AbortSignal }
+interface RunOptions { dir: string; types: TypeRegistry; once?: boolean; serve?: boolean; pinned?: number; sleep?: (seconds: number) => Promise<void>; signal?: AbortSignal; triage?: Triage }
 
 /**
  * Moves the digest's pending events into the inbox. The digest file is claimed first (renamed to `digest.jsonl.<pid>.drain`), appended from there and
@@ -292,7 +293,7 @@ async function wait(next: Interval | Stop, { beat, serve, sleep: nap, signal }: 
   await sleepUntil(Date.now() + seconds * 1000, { sleep: guarded, onChunk: (until) => beat({ sleepingUntil: until }) });
 }
 
-async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep, signal }: RunOptions): Promise<number> {
+async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep, signal, triage = configuredTriage() }: RunOptions): Promise<number> {
   const ctx = { run: defaultRun, config: { inboxCommand: INBOX_COMMAND }, dir };
   const beat = heartbeatWriter(dir, !once);
   const quiet = realQuietDeps();
@@ -300,7 +301,7 @@ async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep
     for (;;) {
       if (!serve && !listWatches(dir).length) { console.log('no watches registered'); return EXIT.ok; }
       try {
-        tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND, quiet });
+        tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND, quiet, triage });
         sweepTriage(dir);
         if (serve) drainDigestToInbox(dir);
       } catch (err) { beat({ lastError: errorMessage(err).split('\n')[0] }); throw err; }

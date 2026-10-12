@@ -30,6 +30,7 @@ export function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     MAESTRO_EVENT_DIR: join(dir, 'events'),
     MAESTRO_NOTIFY_COMMAND: JSON.stringify(notifyStub(dir, log)),
     [NOTIFY_LOG_VAR]: log,
+    MAESTRO_TRIAGE: 'off',
   };
   for (const name of PASS_THROUGH) if (process.env[name] !== undefined) env[name] = process.env[name];
   return { ...env, ...extra };

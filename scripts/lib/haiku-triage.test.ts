@@ -1,7 +1,8 @@
 // Run: node --test scripts/lib/haiku-triage.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { haikuTriage, parseAnswer } from './haiku-triage.ts';
+import { configuredTriage, haikuTriage, parseAnswer } from './haiku-triage.ts';
+import { rulesOnlyTriage } from './digest-triage.ts';
 import type { ModelRun } from './haiku-triage.ts';
 
 const INPUT = { watch: 'w', type: 'pr-watch', kind: 'thread', summary: 'THREAD org/repo#7 by dependabot[bot]: https://github.com/org/repo/pull/7#r1' };
@@ -41,4 +42,10 @@ test('the model call is bounded, tool-less, uses the haiku model and gets the li
   assert.equal(a[a.indexOf('--tools') + 1], '');
   assert.ok(seen?.input.includes(INPUT.summary));
   assert.ok(!a.some((x) => x.includes(INPUT.summary)), 'line must not be in argv');
+});
+
+test('configuredTriage is the Haiku seam unless MAESTRO_TRIAGE=off, which keeps the rules-only seam', () => {
+  assert.equal(configuredTriage({ MAESTRO_TRIAGE: 'off' }), rulesOnlyTriage);
+  assert.notEqual(configuredTriage({}), rulesOnlyTriage);
+  assert.equal(typeof configuredTriage({}), 'function');
 });

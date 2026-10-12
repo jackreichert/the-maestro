@@ -6,6 +6,7 @@
  * requires a reason before a noise answer suppresses anything.
  */
 import { spawnSync } from 'node:child_process';
+import { rulesOnlyTriage } from './digest-triage.ts';
 import type { Triage, TriageAnswer, TriageInput } from './digest-triage.ts';
 
 /** Runs a command with `input` on stdin. A runner may report only what it knows; a missing `status` counts as failure. */
@@ -52,3 +53,6 @@ export function haikuTriage({ run = defaultRun, timeoutMs = TRIAGE_TIMEOUT_MS }:
     } catch (err) { return unsure(`haiku call failed: ${err instanceof Error ? err.message : String(err)}`); }
   };
 }
+
+/** The seam the running loop uses: Haiku, unless `MAESTRO_TRIAGE=off` (tests and offline use), which keeps the rules-only seam that never suppresses. */
+export const configuredTriage = (env: NodeJS.ProcessEnv = process.env): Triage => (env.MAESTRO_TRIAGE === 'off' ? rulesOnlyTriage : haikuTriage());
