@@ -19,14 +19,14 @@ export function recoveryFromFlags(flags: { worktree?: string | null; branch?: st
 /** The branch checked out in a directory, or undefined when it is not a git worktree, is detached, or git fails. */
 export function currentBranch(dir: string): string | undefined {
     if (!existsSync(dir)) return undefined;
-    const r = spawnSync('git', ['-C', dir, 'branch', '--show-current'], { encoding: 'utf8' });
+    const r = spawnSync('git', ['--no-optional-locks', '-C', dir, 'branch', '--show-current'], { encoding: 'utf8' });
     return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : undefined;
 }
 
-/** What git says about a live worktree: short status and the last commits, or the reason it could not be read. */
+/** What git says about a live worktree: short status and the last commits (read without taking `index.lock` or refreshing the index, so a live agent's `git add` is never blocked), or the reason it could not be read. */
 export function worktreeState(dir: string): { status: string; log: string } {
     const git = (args: string[]): string => {
-        const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+        const r = spawnSync('git', ['--no-optional-locks', '-C', dir, ...args], { encoding: 'utf8' });
         return r.status === 0 ? r.stdout.trim() : `(git ${args[0]} failed: ${(r.stderr || 'no output').trim().split('\n')[0]})`;
     };
     return { status: git(['status', '--short', '--branch']), log: git(['log', '-5', '--oneline']) };

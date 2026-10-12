@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recoveryFromFlags, recoverPrompt } from './lib/journal/recover.ts';
@@ -130,4 +130,19 @@ test('recoverPrompt reads the injected git state', () => {
     const text = recoverPrompt({ item: { id: 'ab12', text: 't', worktree: wt, branch: 'b' }, library: 'LIB', state: () => ({ status: 'S', log: 'L' }) });
     assert.match(text, /S\nLast commits:\nL/);
     assert.match(text, /\nLIB\n/);
+});
+
+test('recover leaves the worktree .git/index untouched (read-only, no optional locks)', () => {
+    const wt = liveWorktree('feat/FAKE-1-ro');
+    const id = start('read only', '--repo', 'repo-a', '--worktree', wt, '--next', 'x');
+    const index = join(wt, '.git', 'index');
+    // A stat-dirty tracked file makes plain `git status` refresh and rewrite the index.
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(join(wt, 'a.txt'), old, old);
+    utimesSync(index, old, old);
+    const before = { mtime: statSync(index).mtimeMs, bytes: readFileSync(index) };
+    const r = run(['recover', id]);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(statSync(index).mtimeMs, before.mtime, 'index mtime changed');
+    assert.ok(readFileSync(index).equals(before.bytes), 'index contents changed');
 });
