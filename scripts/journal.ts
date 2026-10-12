@@ -27,6 +27,7 @@
  *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
+ *                                             add --how-do-i when the question is a how-do-I the library could not answer: it is also logged as a `miss` (source ask)
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
  *   journal.ts ask "<question>" [--recommend "<what you would do>"] [--door one-way|two-way] [--default "<what happens if silent>"] [--decide-by 2026-10-09|2d|6h] [--class expedite|fixed-date|standard|intangible]
  *                                             a decision made cheap to answer. No --door means one-way; a one-way ask is refused a --default; no --recommend warns. `ask --help` prints this
@@ -560,6 +561,11 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     append(entry);
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
+    // `ask --how-do-i`: the question is a how-do-I the library could not answer, so it is also a miss for the composer.
+    if (ask && has('how-do-i')) {
+        const missed = recordMiss(text, 'ask', entry.repo, usageFromArgs());
+        console.error('line' in missed ? `(also logged as a library miss: ${missed.line.split('  ')[1]})` : `(not logged as a library miss: ${missed.errors.join(' ')})`);
+    }
     return entry;
 }
 
