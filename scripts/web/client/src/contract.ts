@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeTicket, HomeUnknown, PodiumState, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -302,4 +302,21 @@ export function sanitizeLocalReview(x: unknown): { data: LocalReview; dropped: n
   const notes = Array.isArray(x.notes) ? x.notes.filter((n): n is string => typeof n === 'string') : [];
   const reason = str(x.reason) ? { reason: x.reason as string } : {};
   return { data: { generatedAt: x.generatedAt as string, available: x.available as boolean, ...reason, units, more: count(x.more) ? x.more as number : 0, notes }, dropped: lost(x.units, units) };
+}
+
+const PROJECT_ROW: Shape = {
+  stream: str, projects: arrOf(str), status: orNull(shape({ text: str, from: oneOf('context', 'priority') })), rank: orNull(count),
+  asks: count, inflight: count, blocked: count, prs: count, oldestOpenDays: orNull(count), lastShipped: orNull(str), shippedWeek: count,
+  state: oneOf('waiting on you', 'blocked', 'moving', 'quiet'),
+};
+const HOME_LINK: Shape = { label: str, kind: oneOf('pin', 'context', 'library'), stream: str, url: str };
+const WEEK: Shape = { start: str, total: count, byStream: recordOf(count) };
+
+/** ProjectsData from an untrusted `GET /api/projects` body, or null when it has no usable shape. Rows, links and weeks that fail their rules are dropped and counted. */
+export function sanitizeProjects(x: unknown): { data: ProjectsData; dropped: number } | null {
+  if (!isObj(x) || !str(x.generatedAt) || !str(x.today) || !Array.isArray(x.rows)) return null;
+  const rows = validRows(x.rows, PROJECT_ROW) as ProjectRow[];
+  const links = validRows(x.links, HOME_LINK) as HomeLink[];
+  const weeks = validRows(x.weeks, WEEK) as WeekCount[];
+  return { data: { generatedAt: x.generatedAt as string, today: x.today as string, rows, links, weeks }, dropped: lost(x.rows, rows) + lost(x.links, links) + lost(x.weeks, weeks) };
 }

@@ -1,6 +1,6 @@
-import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeProjects, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
-import type { ChartsData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
+import type { ChartsData, EpicsData, LocalReview, PodiumState, ProjectsData, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -46,6 +46,9 @@ export const loadState = (): Promise<Loaded<PodiumState>> => loadWithFallback('/
   const got = sanitizeState(x);
   return got && { data: got.state, dropped: got.dropped };
 });
+
+/** Home's status rows, links and weekly counts; the bundled sample stands in only when no server answers, like the board's own data. */
+export const loadProjects = (): Promise<Loaded<ProjectsData>> => loadWithFallback('/api/projects', '/fixtures/projects.json', sanitizeProjects);
 
 export const loadCharts = (): Promise<Loaded<ChartsData>> => loadWithFallback('/api/charts?days=14', '/fixtures/charts.json', (x) => {
   return sanitizeCharts(x);
