@@ -373,3 +373,24 @@ test('continuityLines: an incomplete row is cleared by a later repaired row of t
   assert.equal(lines.length, 1);
   assert.match(lines[0], /not keeping up/);
 });
+
+test('snapshotDirty resumes after the last worktree it read, so a budget too small for the whole list still reaches every worktree', () => {
+  const container = mkdtempSync(join(tmpdir(), 'cr-many-'));
+  for (const n of ['a', 'b', 'c', 'd']) {
+    const wt = join(container, '.worktrees', n);
+    mkdirSync(wt, { recursive: true });
+    assert.equal(spawnSync('git', ['-C', wt, 'init', '-q'], { encoding: 'utf8' }).status, 0);
+    writeFileSync(join(wt, `${n}.ts`), `export const ${n} = 1;\n`);
+  }
+  const dest = join(container, 'snap');
+  // A clock that advances 1 per reading and a deadline of 2.5: each run reads two worktrees.
+  const run = (): ReturnType<typeof snapshotDirty> => { let t = 0; return snapshotDirty(container, dest, Date.now(), 2.5, () => t++); };
+  const first = run();
+  assert.deepEqual({ scanned: first.scanned, partial: first.partial, copied: first.copied }, { scanned: 3, partial: true, copied: 3 });
+  const second = run();
+  assert.deepEqual({ scanned: second.scanned, partial: second.partial }, { scanned: 3, partial: true });
+  for (const n of ['a', 'b', 'c', 'd']) assert.ok(existsSync(join(dest, n, `${n}.ts`)), `${n} reached across runs`);
+  const third = snapshotDirty(container, dest);
+  assert.equal(third.partial, false, 'an unhurried run finishes the walk');
+  assert.ok(!existsSync(join(container, '.snapshot-cursor')), 'and clears the cursor');
+});
