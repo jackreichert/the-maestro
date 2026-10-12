@@ -21,8 +21,8 @@ export async function libraryRule(): Promise<'absent' | 'works' | 'broken'> {
   try {
     const m = (await import('../library/rules.ts')) as unknown as { RULES?: readonly { id: string }[]; bareIds?: (line: string, repos: ReadonlySet<string>) => string[] };
     if (!m.RULES?.some((r) => r.id === 'plain-language') || typeof m.bareIds !== 'function') return 'absent';
-    const flagged = m.bareIds('- The sync follows MAESTRO-149 here.', new Set());
-    const spared = m.bareIds('- The sync retries nightly (verified 2026-10-08, MAESTRO-149).', new Set());
+    const flagged = m.bareIds('- The sync follows AV-149 here.', new Set());
+    const spared = m.bareIds('- The sync retries nightly (verified 2026-10-08, AV-149).', new Set());
     return flagged.length === 1 && spared.length === 0 ? 'works' : 'broken';
   } catch { return 'absent'; }
 }

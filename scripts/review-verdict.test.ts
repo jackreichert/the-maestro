@@ -72,10 +72,10 @@ test('the CLI records, shows and refuses', () => {
 
 test('a local unit (a branch with no PR) records and is found like a PR; a malformed id is refused', () => {
   const r = root();
-  const unit = localUnitId('the-maestro', 'feat/MAESTRO-9-thing');
-  assert.equal(unit, 'local:the-maestro#feat/MAESTRO-9-thing');
+  const unit = localUnitId('the-maestro', 'feat/AV-9-thing');
+  assert.equal(unit, 'local:the-maestro#feat/AV-9-thing');
   recordVerdict(r, { ...base, pr: unit });
   assert.equal(verdictFor(loadVerdicts(r), unit, SHA)?.verdict, 'SHIP IT');
-  assert.equal(verdictFor(loadVerdicts(r), 'local:other#feat/MAESTRO-9-thing', SHA), undefined, 'another repo');
+  assert.equal(verdictFor(loadVerdicts(r), 'local:other#feat/AV-9-thing', SHA), undefined, 'another repo');
   for (const bad of ['local:#x', 'local:repo#', 'local:a/b#c', 'local:repo', 'org/repo']) assert.throws(() => recordVerdict(r, { ...base, pr: bad }), /--pr must look like/, bad);
 });

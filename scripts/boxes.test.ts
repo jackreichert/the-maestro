@@ -19,7 +19,7 @@ test('classify: first matching rule wins, approvals before the generic rule', ()
 
 test('classify notes: a finding needs no ticket on it, a learning is kept, the rest is noise', () => {
     assert.equal(classify({ kind: 'note', text: 'follow-up: restart the watcher next session' }), BOX.FINDING);
-    assert.equal(classify({ kind: 'note', text: 'follow-up filed as the-maestro-016' }), BOX.NOISE);
+    assert.equal(classify({ kind: 'note', text: 'follow-up filed as avonlea-api-016' }), BOX.NOISE);
     assert.equal(classify({ kind: 'note', text: 'follow-up', ticket: 'X-1' }), BOX.NOISE);
     assert.equal(classify({ kind: 'note', text: 'the outage had a cause in the fixture clock' }), BOX.NOISE);
     assert.equal(classify({ kind: 'note', text: 'lesson: the clock was wrong' }), BOX.LEARNING);
@@ -49,7 +49,7 @@ import { activeDeferrals } from './lib/ledger-core.ts';
 test('parseGate accepts the three forms and nothing else', () => {
     assert.deepEqual(parseGate('gh:pr:org/repo#9'), { type: 'gh:pr', repo: 'org/repo', number: 9 });
     assert.deepEqual(parseGate('date:2026-10-09'), { type: 'date', date: '2026-10-09' });
-    assert.deepEqual(parseGate('ticket:the-maestro-013'), { type: 'ticket', id: 'the-maestro-013' });
+    assert.deepEqual(parseGate('ticket:avonlea-api-013'), { type: 'ticket', id: 'avonlea-api-013' });
     for (const bad of ['', null, 'gh:pr:repo', 'date:2026-02-30', 'ticket:', 'gh:run:1', 'ticket:a b']) assert.equal(parseGate(bad), null, String(bad));
 });
 

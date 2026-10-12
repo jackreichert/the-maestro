@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
 
-/** A temp ledger with two queued rows (one naming MAESTRO-266 in repo `proj`) and a temp container whose `proj` repo has a branch for that key. */
+/** A temp ledger with two queued rows (one naming AV-266 in repo `proj`) and a temp container whose `proj` repo has a branch for that key. */
 function fixture(nowMs = Date.now()): { vault: string; container: string } {
     const root = mkdtempSync(join(tmpdir(), 'fq-'));
     const vault = join(root, 'vault');
@@ -17,12 +17,12 @@ function fixture(nowMs = Date.now()): { vault: string; container: string } {
     const old = new Date(nowMs - 6 * 864e5).toISOString().slice(0, 10);
     const rows = [
         { id: 'aaaa', ts: `${old}T10:00:00Z`, date: old, kind: 'wip', queued: true, stream: 's', text: 'nothing named here' },
-        { id: 'bbbb', ts: new Date(nowMs).toISOString(), date: new Date(nowMs).toISOString().slice(0, 10), kind: 'wip', queued: true, stream: 's', repo: 'proj', text: 'rework MAESTRO-266' },
+        { id: 'bbbb', ts: new Date(nowMs).toISOString(), date: new Date(nowMs).toISOString().slice(0, 10), kind: 'wip', queued: true, stream: 's', repo: 'proj', text: 'rework AV-266' },
     ];
     writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
     mkdirSync(join(container, 'proj'), { recursive: true });
     const git = (...a: string[]) => spawnSync('git', ['-C', join(container, 'proj'), '-c', 'user.email=t@example.com', '-c', 'user.name=t', ...a], { encoding: 'utf8' });
-    git('init', '-q'); git('commit', '-q', '--allow-empty', '-m', 'chore: init'); git('branch', 'feat/MAESTRO-266-x');
+    git('init', '-q'); git('commit', '-q', '--allow-empty', '-m', 'chore: init'); git('branch', 'feat/AV-266-x');
     return { vault, container };
 }
 

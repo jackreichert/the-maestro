@@ -33,15 +33,15 @@ function fixture() {
 
 test('lists my unpushed keyed and unkeyed branches, never protected, pushed or someone else\'s work', () => {
     const { container, dir } = fixture();
-    sh(dir, ME, 'switch', '-q', '-c', 'feat/MAESTRO-1-held'); commit(dir, ME, 'a.txt');
+    sh(dir, ME, 'switch', '-q', '-c', 'feat/AV-1-held'); commit(dir, ME, 'a.txt');
     sh(dir, ME, 'switch', '-q', '-c', 'scratch', 'main'); commit(dir, ME, 'b.txt');
-    sh(dir, ME, 'switch', '-q', '-c', 'feat/MAESTRO-2-pushed', 'main'); commit(dir, ME, 'c.txt'); sh(dir, ME, 'push', '-q', 'origin', 'feat/MAESTRO-2-pushed');
-    sh(dir, ME, 'switch', '-q', '-c', 'feat/MAESTRO-3-theirs', 'main'); commit(dir, 'other@example.com', 'd.txt');
+    sh(dir, ME, 'switch', '-q', '-c', 'feat/AV-2-pushed', 'main'); commit(dir, ME, 'c.txt'); sh(dir, ME, 'push', '-q', 'origin', 'feat/AV-2-pushed');
+    sh(dir, ME, 'switch', '-q', '-c', 'feat/AV-3-theirs', 'main'); commit(dir, 'other@example.com', 'd.txt');
     sh(dir, ME, 'switch', '-q', 'main');
     const held = heldBranches(dir, 'proj', OPTS);
-    assert.deepEqual(held.map((h) => h.branch).sort(), ['feat/MAESTRO-1-held', 'scratch']);
+    assert.deepEqual(held.map((h) => h.branch).sort(), ['feat/AV-1-held', 'scratch']);
     assert.equal(held.find((h) => h.branch === 'scratch')?.keyed, false);
-    assert.equal(held.find((h) => h.branch === 'feat/MAESTRO-1-held')?.unpushed, 1);
+    assert.equal(held.find((h) => h.branch === 'feat/AV-1-held')?.unpushed, 1);
     assert.match(heldLines(held).join('\n'), /scratch.*NO TRACKER KEY/);
     assert.deepEqual(containerRepos(container).map(([n]) => n), ['proj']);
     assert.deepEqual(containerRepos(container, 'none'), []);
@@ -49,7 +49,7 @@ test('lists my unpushed keyed and unkeyed branches, never protected, pushed or s
 
 test('a branch pushed and then extended lists only the newer commits; a non-repo gives nothing', () => {
     const { container, dir } = fixture();
-    sh(dir, ME, 'switch', '-q', '-c', 'feat/MAESTRO-4-more'); commit(dir, ME, 'a.txt'); sh(dir, ME, 'push', '-q', 'origin', 'feat/MAESTRO-4-more'); commit(dir, ME, 'b.txt');
+    sh(dir, ME, 'switch', '-q', '-c', 'feat/AV-4-more'); commit(dir, ME, 'a.txt'); sh(dir, ME, 'push', '-q', 'origin', 'feat/AV-4-more'); commit(dir, ME, 'b.txt');
     const [h] = heldBranches(dir, 'proj', OPTS);
     assert.equal(h?.unpushed, 1);
     assert.equal(h?.hasRemoteBranch, true);

@@ -1748,10 +1748,10 @@ test('handoff lists the worktrees a sweep would keep under Cleanup candidates, a
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
-// ── rules, pending decisions and the status header (MAESTRO-13) ─────────────
+// ── rules, pending decisions and the status header ─────────────
 
 test('a decision is a record: log --kind decision never shows as awaiting', () => {
-    assert.equal(run('log', 'Jack rule: always squash', '--kind', 'decision', ...MARK).code, 0);
+    assert.equal(run('log', 'Samwise rule: always squash', '--kind', 'decision', ...MARK).code, 0);
     assert.deepEqual(statusJson().awaiting, []);
     assert.doesNotMatch(run('status').out, /Awaiting you/);
     assert.deepEqual(run('status', '--footer').out.split('\n')[0], '**Ledger:** 0 done today · 0 in flight · 0 awaiting you');
@@ -1774,7 +1774,7 @@ test('ask takes only question or decision', () => {
     assert.throws(() => ledger());
 });
 
-// ── ask fields: recommend, default, door, decide-by, class (the-maestro-094, 098) ──
+// ── ask fields: recommend, default, door, decide-by, class ──
 
 test('ask stores its decision fields on the row and the fold exposes them', () => {
     const r = run('ask', 'use the nightly window?', '--recommend', 'Yes, 01:00 to 03:00', '--door', 'two-way', '--default', 'apply the window', '--decide-by', '2d', '--class', 'intangible', ...MARK);
@@ -1925,7 +1925,7 @@ test('rule resolves a relative ref against the cwd, and the digest leaves pendin
     assert.deepEqual(untagged, ['relative ref rule']);
 });
 
-// ── boxes, triage, roll --strict, ask --paste (MAESTRO-14) ──────────────────
+// ── boxes, triage, roll --strict, ask --paste ──────────────────
 
 const blockFile = (name = 'block.sh') => { const f = join(tv, name); writeFileSync(f, 'echo hi\n'); return f; };
 const triageJson = (...a: string[]) => parse(run('triage', '--json', ...a).out);
@@ -1933,8 +1933,8 @@ const boxIds = (t: Doc, box: number) => (t.byBox[box] || []).map((i) => i.text);
 
 function triageWorld() {
     const memo = blockFile('memory.md');
-    run('rule', 'Jack rule: branch from staging', '--ref', memo, ...MARK);
-    run('log', 'Jack rule: no merge on red', '--kind', 'decision', ...MARK);
+    run('rule', 'Samwise rule: branch from staging', '--ref', memo, ...MARK);
+    run('log', 'Samwise rule: no merge on red', '--kind', 'decision', ...MARK);
     run('log', 'may delete merged branches', '--kind', 'decision', '--approval', 'standing', ...MARK);
     run('log', 'close one PR', '--kind', 'decision', '--approval', 'one-off', '--ref', memo, ...MARK);
     run('ask', 'Ship Friday or Monday, which one?', ...MARK);
@@ -1942,7 +1942,7 @@ function triageWorld() {
     run('start', 'building the thing', ...MARK);
     run('log', 'waiting on a deploy', '--kind', 'blocked', ...MARK);
     run('log', 'follow-up: fix the cwd default next session', ...MARK);
-    run('log', 'follow-up: tracked in the-maestro-016', ...MARK);
+    run('log', 'follow-up: tracked in avonlea-api-016', ...MARK);
     run('log', 'learned that the cause was the cwd', ...MARK);
     run('log', 'posted reply', ...MARK);
     return { memo };
@@ -1951,7 +1951,7 @@ function triageWorld() {
 test('triage boxes every item by kind, text and approval, and says what it would do', () => {
     triageWorld();
     const t = triageJson();
-    assert.deepEqual(boxIds(t, 1), ['Jack rule: branch from staging', 'Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 1), ['Samwise rule: branch from staging', 'Samwise rule: no merge on red']);
     assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
     assert.deepEqual(boxIds(t, 3), ['close one PR']);
     assert.deepEqual(boxIds(t, 4), ['Ship Friday or Monday, which one?']);
@@ -1959,7 +1959,7 @@ test('triage boxes every item by kind, text and approval, and says what it would
     assert.deepEqual([boxIds(t, 6), boxIds(t, 7)], [['waiting on a deploy'], ['building the thing']]);
     assert.deepEqual(boxIds(t, 8), ['follow-up: fix the cwd default next session']);
     assert.deepEqual(boxIds(t, 9), ['learned that the cause was the cwd']);
-    assert.deepEqual(boxIds(t, 11), ['follow-up: tracked in the-maestro-016', 'posted reply']);
+    assert.deepEqual(boxIds(t, 11), ['follow-up: tracked in avonlea-api-016', 'posted reply']);
     const text = run('triage').out;
     assert.match(text, /Box 4 Needs Jack \(1\)/);
     assert.match(text, /Box 1 Decisions \/ rules \(2\)[^]*NO REF/);
@@ -1991,7 +1991,7 @@ test('triage --apply closes only the rules and approvals whose ref is an existin
     assert.ok(added.every((e) => e.kind === 'resolved' && e.text === `recorded → ${memo}` && e.refs?.[0] === memo));
     assert.deepEqual(before, ledger().slice(0, before.length), 'append-only: existing rows untouched');
     const t = triageJson();
-    assert.deepEqual(boxIds(t, 1), ['Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 1), ['Samwise rule: no merge on red']);
     assert.deepEqual(boxIds(t, 3), []);
     assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
 });
@@ -2032,7 +2032,7 @@ test('roll --strict refuses before changing anything; plain roll warns and carri
 
 test('roll --strict passes once the blockers are fixed', () => {
     const memo = blockFile('memory.md');
-    run('rule', 'Jack rule: x', '--ref', memo, ...MARK);
+    run('rule', 'Samwise rule: x', '--ref', memo, ...MARK);
     const id = idOf(run('start', 'finished work', ...MARK).out);
     run('done', id, ...MARK);
     assert.equal(run('roll', '--strict').code, 0);
@@ -2076,8 +2076,8 @@ test('handoff section 4 is generated from the Needs-Jack and paste boxes, text p
 
 test('triage --apply never closes a question on its wording, even with a ref file', () => {
     const memo = blockFile('plan.md');
-    const id = idOf(run('ask', 'Jack: which branch ships first, A or B', '--ref', memo, ...MARK).out);
-    assert.deepEqual(boxIds(triageJson(), 4), ['Jack: which branch ships first, A or B']);
+    const id = idOf(run('ask', 'Samwise: which branch ships first, A or B', '--ref', memo, ...MARK).out);
+    assert.deepEqual(boxIds(triageJson(), 4), ['Samwise: which branch ships first, A or B']);
     assert.match(run('triage', '--apply').out, /closed 0 recorded/);
     assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
 });
@@ -2090,13 +2090,13 @@ test('triage --apply only closes decisions dated on --date, whatever --since say
 });
 
 test('handoff section 4 keeps every open question: one boxed as a rule by its approval still appears under Needs Jack', () => {
-    const id = idOf(run('ask', 'Jack: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
+    const id = idOf(run('ask', 'Samwise: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
     run('approve-tag', id, '--approval', 'one-off');
     const sec = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
     assert.match(sec, /\*\*Needs Jack\*\*[^]*pick a stream name/);
 });
 
-// ── prime, gates, defer (MAESTRO-15) ────────────────────────────────────────
+// ── prime, gates, defer ────────────────────────────────────────
 
 const inDays = (n: number): string => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 
@@ -2116,11 +2116,11 @@ test('--gate is validated before anything is written, and only goes on blocked r
     assert.equal(run('log', 'waiting', '--kind', 'note', '--gate', 'date:2099-01-01', ...MARK).code, 1);
     assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ...MARK).code, 1);
     assert.throws(() => ledger(), 'nothing was written');
-    for (const ok of ['gh:pr:owner/repo#12', 'gh:pr:repo#3', 'date:2099-01-01', 'ticket:the-maestro-013']) {
+    for (const ok of ['gh:pr:owner/repo#12', 'gh:pr:repo#3', 'date:2099-01-01', 'ticket:avonlea-api-013']) {
         assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ok, ...MARK).code, 0, ok);
     }
     assert.equal(ledger().length, 4);
-    assert.match(run('status').out, /waiting .*gate: ticket:the-maestro-013/);
+    assert.match(run('status').out, /waiting .*gate: ticket:avonlea-api-013/);
 });
 
 test('resume reports date gates as waiting or cleared, and never writes', () => {
@@ -2369,7 +2369,7 @@ test('prime and triage flag pending transitions when there are some, and say not
     assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
 });
 
-// ── --project from the local config (MAESTRO-3) ─────────────────────────────
+// ── --project from the local config ─────────────────────────────
 
 test('--project defaults to the configured project; an explicit one wins; with neither it refuses', () => {
     const cfgHome = mkdtempSync(join(tmpdir(), 'journal-cfg-'));
@@ -2628,7 +2628,7 @@ test('prime prints the not-set line when a status dir exists and today\'s priori
     assert.doesNotMatch(run('prime', '--status-dir', sd).out, /Priorities not set/);
 });
 
-// ── review queue gate (MAESTRO-90) ──────────────────────────────────────────
+// ── review queue gate ──────────────────────────────────────────
 
 test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed read falls back to the snapshot or exits 2', () => {
     const gh = (nodes: unknown[]) => installGhStub({ pages: [nodes] });
@@ -2665,7 +2665,7 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
 });
 
-test('review-queue: answers by setting the exit code, never process.exit, so piped output is not cut (MAESTRO-162)', () => {
+test('review-queue: answers by setting the exit code, never process.exit, so piped output is not cut', () => {
     // process.exit drops what a pipe has not yet taken (a reader behind `| head` or a busy one); the fix is to let the process drain. A preload records any process.exit call.
     const spy = join(mkdtempSync(join(tmpdir(), 'exit-spy-')), 'spy.mjs');
     const log = `${spy}.log`;
@@ -2774,7 +2774,7 @@ const warmedGhStub = (config: Parameters<typeof installGhStub>[0]): NodeJS.Proce
     return env;
 };
 
-test('status --footer refreshes a stale review-queue snapshot from a live read, and says unknown when it cannot (MAESTRO-136)', () => {
+test('status --footer refreshes a stale review-queue snapshot from a live read, and says unknown when it cannot', () => {
     const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
     mkdirSync(journalDir, { recursive: true });
     const old = new Date(Date.now() - 11 * 36e5).toISOString();
@@ -2789,7 +2789,7 @@ test('status --footer refreshes a stale review-queue snapshot from a live read, 
     assert.match(footer(broken), /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
 });
 
-test('status --footer bounds a slow live read, then reuses a successful one (MAESTRO-285)', () => {
+test('status --footer bounds a slow live read, then reuses a successful one', () => {
     const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
     mkdirSync(journalDir, { recursive: true });
     const old = new Date(Date.now() - 11 * 36e5).toISOString();
@@ -3030,7 +3030,7 @@ test('prime fails loudly after a compaction whose handoff is missing or older th
     assert.match(run('prime').out.split('\n')[0], /^!! precompact incomplete: handoff: boom/);
 });
 
-test('prime and start-here withhold a secret-shaped stream name or id instead of printing it (MAESTRO-168)', () => {
+test('prime and start-here withhold a secret-shaped stream name or id instead of printing it', () => {
     const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
     const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
     const now = new Date().toISOString();
@@ -3053,7 +3053,7 @@ test('prime and start-here withhold a secret-shaped stream name or id instead of
     }
 });
 
-test('start-here --json and status --json withhold a secret-shaped stream name or id and still parse (MAESTRO-310)', () => {
+test('start-here --json and status --json withhold a secret-shaped stream name or id and still parse', () => {
     const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
     const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
     const now = new Date().toISOString();
@@ -3106,9 +3106,9 @@ test('ready-to-push lists my branches that no remote holds, and refuses without 
     const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 'me@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 'me@example.com', GIT_CONFIG_GLOBAL: '/dev/null' };
     const git = (...a: string[]) => assert.equal(spawnSync('git', a, { cwd: repo, env }).status, 0, a.join(' '));
     git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a'), 'a'); git('add', 'a'); git('commit', '-q', '-m', 'base');
-    git('switch', '-q', '-c', 'feat/MAESTRO-9-held'); writeFileSync(join(repo, 'b'), 'b'); git('add', 'b'); git('commit', '-q', '-m', 'held work');
+    git('switch', '-q', '-c', 'feat/AV-9-held'); writeFileSync(join(repo, 'b'), 'b'); git('add', 'b'); git('commit', '-q', '-m', 'held work');
     const out = runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push', '--json');
-    assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/MAESTRO-9-held']);
-    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('MAESTRO-9'), false, 'not my commits');
+    assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/AV-9-held']);
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('AV-9'), false, 'not my commits');
     assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: '', MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push').code, 1);
 });

@@ -128,12 +128,12 @@ test('the push gate and the board line apply the same exclusion', () => {
 });
 
 test('with a review pool the queue counts only pool repos: personal and stray repos are left out and reported as self-review', () => {
-  const prs = [{ isDraft: false, repo: 'avonlea/a' }, { isDraft: false, repo: 'avonlea/b' }, { isDraft: false, repo: 'jackreichert/the-maestro' }, { isDraft: false, repo: 'femmebot/google-type' }, { isDraft: true, repo: 'avonlea/c' }];
+  const prs = [{ isDraft: false, repo: 'avonlea/a' }, { isDraft: false, repo: 'avonlea/b' }, { isDraft: false, repo: 'samwise/notes' }, { isDraft: false, repo: 'rosie/garden' }, { isDraft: true, repo: 'avonlea/c' }];
   assert.deepEqual(reviewQueue(prs, 2, ['!avonlea/*']), { count: 2, cap: 2, full: true, selfReview: 2 });
   assert.equal(reviewQueue(prs, 4, []).count, 4, 'without a pool every non-draft PR counts');
 });
 
-test('footerQueue refreshes a snapshot older than 30 minutes and prints the live count, not the old one (MAESTRO-136)', () => {
+test('footerQueue refreshes a snapshot older than 30 minutes and prints the live count, not the old one', () => {
   const now = new Date('2026-01-01T12:00:00Z');
   const old = { prs: prs(false, false, false, false), takenAt: '2026-01-01T01:00:00Z' };
   const calls: string[] = [];
@@ -153,7 +153,7 @@ test('footerQueue says unknown, not an old number, when a stale snapshot cannot 
   assert.equal(footerQueue(null, 4, now, [], down), null, 'no snapshot at all: the line stays absent');
 });
 
-test('footerQueue on a fresh snapshot words the count like the live read: over the cap says by how much (MAESTRO-285)', () => {
+test('footerQueue on a fresh snapshot words the count like the live read: over the cap says by how much', () => {
   const now = new Date('2026-01-01T12:00:00Z');
   const takenAt = '2026-01-01T11:55:00Z';
   const never = () => { throw new Error('a fresh snapshot must not trigger a live read'); };
