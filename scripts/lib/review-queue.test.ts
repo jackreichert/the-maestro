@@ -152,3 +152,26 @@ test('footerQueue says unknown, not an old number, when a stale snapshot cannot 
   assert.equal(footerQueue({ prs: prs(false) }, 4, now, [], down), '**Review queue:** unknown (snapshot of unknown age; live refresh failed)');
   assert.equal(footerQueue(null, 4, now, [], down), null, 'no snapshot at all: the line stays absent');
 });
+
+test('footerQueue on a fresh snapshot words the count like the live read: over the cap says by how much (MAESTRO-285)', () => {
+  const now = new Date('2026-01-01T12:00:00Z');
+  const takenAt = '2026-01-01T11:55:00Z';
+  const never = () => { throw new Error('a fresh snapshot must not trigger a live read'); };
+  const open = (n: number) => ({ prs: prs(...new Array(n).fill(false)), takenAt });
+  assert.equal(footerQueue(open(7), 4, now, [], never), '**Review queue:** 7 of 4 (full, 3 over the cap)');
+  assert.equal(footerQueue(open(4), 4, now, [], never), '**Review queue:** 4 of 4 (full)');
+  assert.equal(footerQueue(open(2), 4, now, [], never), '**Review queue:** 2 of 4');
+  const live = () => ({ prs: prs(...new Array(7).fill(false)) });
+  assert.equal(footerQueue({ prs: [], takenAt: '2026-01-01T01:00:00Z' }, 4, now, [], live), footerQueue(open(7), 4, now, [], never)?.replace(/ \(snapshot.*$/, ''), 'both paths print the same text');
+});
+
+test('footerQueue switches from the snapshot to a live read at exactly 30 minutes', () => {
+  const now = new Date('2026-01-01T12:00:00Z');
+  let lives = 0;
+  const refresh = () => { lives++; return { prs: prs(false, false, false) }; };
+  const snap = (takenAt: string) => ({ prs: prs(false), takenAt });
+  assert.equal(footerQueue(snap('2026-01-01T11:30:01Z'), 4, now, [], refresh), '**Review queue:** 1 of 4 (snapshot 29m old)');
+  assert.equal(lives, 0, '29m59s old: still the snapshot');
+  assert.equal(footerQueue(snap('2026-01-01T11:30:00Z'), 4, now, [], refresh), '**Review queue:** 3 of 4');
+  assert.equal(lives, 1, 'exactly 30m old: live');
+});

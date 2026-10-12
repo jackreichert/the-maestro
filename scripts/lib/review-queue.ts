@@ -87,6 +87,9 @@ export function staleSuffix(takenAt: string | undefined, now: Date): string {
   return ` (snapshot ${hours >= 48 ? `${Math.floor(hours / 24)}d` : `${hours}h`} old)`;
 }
 
+/** `3 of 4`, `4 of 4 (full)`, `7 of 4 (full, 3 over the cap)`: the one wording for the count, shared by the board, the snapshot footer and the live footer. */
+const queueCount = (q: ReviewQueue): string => `${q.count} of ${q.cap}${q.full ? ` (full${q.count > q.cap ? `, ${q.count - q.cap} over the cap` : ''})` : ''}`;
+
 /**
  * The board's review queue from the stored snapshot, no network: `review queue: 3 of 4` (plus `(full)` and a stale-snapshot note), or
  * null when there is no usable snapshot. The footer uses the same text with `**Review queue:**` as its label.
@@ -94,7 +97,7 @@ export function staleSuffix(takenAt: string | undefined, now: Date): string {
 export function boardQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[] = []): { text: string; footer: string } | null {
   if (!stored) return null;
   const q = reviewQueue(stored.prs, cap, selfReview);
-  const tail = `${q.count} of ${q.cap}${q.full ? ' (full)' : ''}${staleSuffix(stored.takenAt, now)}`;
+  const tail = `${queueCount(q)}${staleSuffix(stored.takenAt, now)}`;
   return { text: `review queue: ${tail}`, footer: `**Review queue:** ${tail}` };
 }
 
@@ -112,7 +115,7 @@ export function footerQueue(stored: { prs: readonly QueuePr[]; takenAt?: string 
   if (ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview)?.footer ?? null;
   try {
     const q = reviewQueue(refresh().prs, cap, selfReview);
-    return `**Review queue:** ${q.count} of ${q.cap}${q.full ? ` (full${q.count > q.cap ? `, ${q.count - q.cap} over the cap` : ''})` : ''}`;
+    return `**Review queue:** ${queueCount(q)}`;
   } catch {
     const age = staleSuffix(stored.takenAt, now).replace(/^ \(snapshot (.*) old\)$/, '$1');
     return `**Review queue:** unknown (snapshot ${age ? `${age} old` : 'of unknown age'}; live refresh failed)`;
