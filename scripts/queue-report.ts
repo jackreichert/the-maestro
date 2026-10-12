@@ -21,6 +21,7 @@ import { gitBranches, queueHygiene } from './lib/queue-hygiene.ts';
 import { openStore } from './lib/journal/store.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { toolCommand } from './lib/tool-bin.ts';
+import { printJson } from './lib/json-out.ts';
 
 /** `owner/name` for a repo directory under the container root, from its origin URL, else (not when `strict`) `gh_org/<repo>`; undefined when neither is known. */
 function ownerOf(repo: string, strict = false): string | undefined {
@@ -53,7 +54,7 @@ export function main(argv: string[]): number {
         return lists.get(dir) as string[];
     };
     const built = queueHygiene(items.filter(isQueued), new Date().toISOString().slice(0, 10), TRACKER_KEY_PATTERN, branchesOf).built;
-    if (has('json')) { console.log(JSON.stringify({ merged, built }, null, 2)); return 0; }
+    if (has('json')) { printJson({ merged, built }); return 0; }
     console.log(`Open rows naming a merged PR (${merged.length}); nothing was closed:`);
     for (const m of merged) console.log(`  ${m.id}  ${m.text}\n      ${m.prs.map((p) => `${p.ref.repo}#${p.ref.number} ${p.state}`).join(', ')}${m.allMerged ? '' : '  (other PRs on this row are not merged)'}\n      close if you agree: journal.ts done ${m.id}`);
     console.log(`\nQueued rows with a built branch (${built.length}):`);

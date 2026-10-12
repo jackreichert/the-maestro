@@ -6,6 +6,7 @@
  *   event-loop.ts list [--json] | remove <id> | digest [--peek]
  *   event-loop.ts run [--once | --serve] [--interval N]
  *   event-loop.ts digest-wait [--timeout-hours N] | digests [--unseen] [--mark-seen]
+ *   event-loop.ts adopt <queue-file> [--until ISO] | adopt --clear | adopt
  *   event-loop.ts events [list] [--unseen | --unhandled | --all] [--json] | events ack <id...> | events wait [--timeout-hours N] [--poll-seconds N]
  *
  * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
@@ -41,7 +42,8 @@
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -49,6 +51,7 @@ import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, STATUS_REPO_STREAMS, VAULT_ROOT, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
+import { adoptLine, clearAdopt, readAdopt, writeAdopt } from './lib/adopt.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import { migrateDigests } from './lib/digest-migrate.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
@@ -62,6 +65,7 @@ import type { TypeRegistry } from './event-types/index.ts';
 import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult, Watch, WatchEvent, WatchState } from './lib/types.ts';
 import type { NotifyRun } from './lib/notify.ts';
 import { resolveWindowId, windowEnv } from './lib/window-id.ts';
+import { printJson } from './lib/json-out.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 import { toolCommand } from './lib/tool-bin.ts';
@@ -329,7 +333,25 @@ export function claimFor(dir: string, window: string | undefined, beforeMark: ()
   beforeMark();
   mark(dir, 'seen', mine.map((e) => e.id), Date.now(), window);
   const after = new Map(readInbox(dir).map((e) => [e.id, e]));
-  return mine.filter((e) => owners.get(e.id) !== undefined || after.get(e.id)?.seenBy === me);
+  const won = mine.filter((e) => owners.get(e.id) !== undefined || after.get(e.id)?.seenBy === me);
+  return won.filter((e) => takeClaim(dir, me, e.id));
+}
+
+/**
+ * Of several callers that share one window id (the event-inject hook and a background `events wait` in one session), exactly one takes an event: the one that
+ * creates its claim file. The `seen` rows cannot tell them apart, since all carry the same window. `wx` is an exclusive create, so the loser gets EEXIST.
+ * The claim is per window and event; another window's claim never blocks this one.
+ */
+function takeClaim(dir: string, window: string, id: string): boolean {
+  const claims = join(dir, 'claims');
+  mkdirSync(claims, { recursive: true });
+  try {
+    writeFileSync(join(claims, createHash('sha256').update(`${window}\0${id}`).digest('hex').slice(0, 32)), '', { flag: 'wx' });
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
 }
 
 /** Blocks until an event for this window is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). `beforePoll` runs before every look (the `digest-wait` alias moves saved digests in there). */
@@ -354,7 +376,7 @@ async function eventsCommand(dir: string, sub: string | undefined, ids: string[]
     const shown = entries.filter(listFilter(v, window));
     // `list` shows every event to every window (nothing is hidden by routing); `--json` adds `owner` where a window owns the event now.
     const owners = ownersOf(shown);
-    console.log(v.json ? JSON.stringify(shown.map((e) => (owners.get(e.id) ? { ...e, owner: owners.get(e.id) } : e))) : shown.map(formatEntry).join('\n') || 'no events');
+    if (v.json) printJson(shown.map((e) => (owners.get(e.id) ? { ...e, owner: owners.get(e.id) } : e)), { compact: true }); else console.log(shown.map(formatEntry).join('\n') || 'no events');
     return EXIT.ok;
   }
   if (sub === 'ack') {
@@ -376,7 +398,7 @@ const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
+  once: { type: 'boolean' }, until: { type: 'string' }, clear: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
@@ -406,7 +428,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(`added ${w.id} (${w.type} ${w.target}), expires ${w.expires}`);
     } else if (cmd === 'list') {
       const ws = listWatches(dir);
-      console.log(v.json ? JSON.stringify(ws) : ws.map((w) => `${w.id}\t${w.type}\t${w.target}\texpires ${w.expires}`).join('\n') || 'no watches registered');
+      if (v.json) printJson(ws, { compact: true }); else console.log(ws.map((w) => `${w.id}\t${w.type}\t${w.target}\texpires ${w.expires}`).join('\n') || 'no watches registered');
     } else if (cmd === 'remove') {
       const watch = listWatches(dir).find((w) => w.id === arg);
       console.log(removeWatch(dir, String(arg), 'removed by user') ? `removed ${arg}` : `no live watch ${arg}`);
@@ -421,6 +443,11 @@ async function main(argv: string[]): Promise<number> {
       if (v.once && v.serve) return usage('--once and --serve cannot be combined');
       acquireLock(dir);
       return await run({ dir, types, once: v.once, serve: v.serve, pinned });
+    } else if (cmd === 'adopt') {
+      // The record every SessionStart prints: which queue file a fresh session reads and works. No argument shows it; --clear removes it.
+      if (v.clear) console.log(clearAdopt(dir) ? 'adopt record cleared' : 'no adopt record');
+      else if (arg === undefined) console.log(adoptLine(readAdopt(dir)) || 'no live adopt record');
+      else { const a = writeAdopt(dir, arg, { until: v.until }); console.log(`adopted ${a.file} until ${a.until}`); }
     } else if (cmd === 'events') {
       const done = await eventsCommand(dir, arg, rest, v);
       return typeof done === 'string' ? usage(done) : done;
@@ -431,7 +458,7 @@ async function main(argv: string[]): Promise<number> {
       // `digest-wait` is `events wait` under its old name: saved digests are moved into the inbox first (and again each poll), then it waits on the inbox.
       const done = await eventsCommand(dir, 'wait', [], v, () => { try { migrateDigests(dir, saved); } catch (err) { console.error(`digest-wait: could not move saved digests into the inbox: ${errorMessage(err)}`); } });
       return typeof done === 'string' ? usage(done) : done;
-    } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests | events');
+    } else return usage('commands: add | list | remove <id> | adopt | digest | run [--once | --serve] | digest-wait | digests | events');
   } catch (err) {
     return usage(errorMessage(err));
   }

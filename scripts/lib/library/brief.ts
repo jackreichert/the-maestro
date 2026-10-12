@@ -1,9 +1,12 @@
 /** The "Library pages for this task" block of a dispatch brief. Pure; library-brief.ts finds the pages and prints it. */
 import { join } from 'node:path';
 import type { FoundPage } from './find.ts';
-import { safeLine } from './safe-text.ts';
+import { safeLine as scanLine, WITHHELD } from './safe-text.ts';
+import { WITHHELD as JSON_WITHHELD } from '../withhold.ts';
 
 export const BRIEF_PAGES = 3;
+/** `find --json` already withholds a secret-shaped field in place; the brief shows that as its own marker, which says where to look. */
+const safeLine = (raw: string, max: number): string => (raw === JSON_WITHHELD ? WITHHELD : scanLine(raw, max));
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** Up to three pages as absolute paths with their read-when lines and a freshness note, so the agent opens them before it re-derives anything. With no page, a line saying so and how to search again. */

@@ -16,9 +16,9 @@ const CSS = `${BASE_CSS}
   figure { margin: 0; }
   figcaption { margin: 0 0 var(--space-3); font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-semibold); color: var(--text-primary); }
   svg { width: 100%; height: auto; display: block; overflow: visible; }
-  .grid { stroke: var(--border); stroke-width: 1; shape-rendering: crispEdges; }
-  .base { stroke: var(--border-strong); stroke-width: 1; shape-rendering: crispEdges; }
-  .tick { fill: var(--text-muted); font-size: 12px; font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
+  .grid { stroke: var(--chart-grid); stroke-width: var(--hairline-width); shape-rendering: crispEdges; }
+  .base { stroke: var(--chart-axis); stroke-width: var(--hairline-width); shape-rendering: crispEdges; }
+  .tick { fill: var(--chart-label); font-size: var(--chart-label-size); font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
   .mark { transition: opacity var(--dur-fast) var(--ease-out); }
   @media (hover: hover) { svg:hover .mark { opacity: 0.55; } svg .mark:hover { opacity: 1; } }
   ul.legend { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: var(--space-3) 0 0; padding: 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
