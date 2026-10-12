@@ -405,7 +405,7 @@ node scripts/podium-gate.ts --json          # the results as JSON
 |---|---|
 | `tokens` | `theme.css` carries the type, grid, hairline, chart and status tokens, and the three fonts are served from the Podium's own origin with no off-origin link on the page |
 | `home` | `/api/projects` has a status row for every stream, with links and a weekly series; `/api/charts` has a throughput series; `/api/state` has the needs-you (asks) and done lists |
-| `shared-docs` | every stream's home payload has a `shared` list whose items carry a title, author and date and no absolute path |
+| `shared-docs` | every project tab (`projects[].docs.shared` in the stream home payload) has a list whose items carry a title, author and date and no absolute path; a `{state: 'missing'}` entry reads as not built |
 | `handover` | every project in every stream's home payload can answer the six new-engineer questions: what the project is, how to run it locally, how to run its tests, what is blocked, what was decided and where, and what to do next |
 | `plain-language` | this checkout's library check flags a bare ticket id in page prose and spares one cited as evidence |
 

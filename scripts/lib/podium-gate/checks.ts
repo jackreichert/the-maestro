@@ -90,21 +90,36 @@ async function homes(p: Probe): Promise<{ homes: [string, Json][] } | { why: str
   return { homes: got };
 }
 
+/** The `docs.shared` of one project tab: a list, a `{state:'missing'}` entry, or absent (not built). */
+const sharedOf = (proj: Json): unknown => (isObj(proj.docs) ? proj.docs.shared : undefined);
+const isMissing = (v: unknown): boolean => v === undefined || (isObj(v) && v.state === 'missing');
+
 const shared: Check = {
   id: 'shared-docs', title: 'Shared documents: handed-over documents listed on the project tab',
   async run(p) {
     const h = await homes(p);
     if ('why' in h) return out('fail', h.why);
-    if (h.homes.every(([, d]) => !('shared' in d))) return out('not-built', 'the stream home payload has no `shared` list yet');
     const bad: string[] = [];
+    const unbuilt: string[] = [];
+    let tabs = 0;
     for (const [name, d] of h.homes) {
-      if (!Array.isArray(d.shared)) { bad.push(`${name}: shared is not a list`); continue; }
-      for (const it of d.shared) {
-        if (!isObj(it) || typeof it.title !== 'string' || typeof it.by !== 'string' || typeof it.date !== 'string') bad.push(`${name}: an item lacks title, by or date`);
-        else if (JSON.stringify(it).includes('/Users/') || /"(?:path|url)":"\//.test(JSON.stringify(it))) bad.push(`${name}: "${it.title}" exposes an absolute path`);
+      for (const proj of Array.isArray(d.projects) ? d.projects : []) {
+        if (!isObj(proj)) continue;
+        const label = String(proj.project ?? name);
+        const list = sharedOf(proj);
+        if (isMissing(list)) { unbuilt.push(label); continue; }
+        tabs += 1;
+        if (!Array.isArray(list)) { bad.push(`${label}: docs.shared is not a list`); continue; }
+        for (const it of list) {
+          if (!isObj(it) || typeof it.title !== 'string' || typeof it.by !== 'string' || typeof it.date !== 'string') bad.push(`${label}: an item lacks title, by or date`);
+          else if (JSON.stringify(it).includes('/Users/') || /"(?:path|url)":"\//.test(JSON.stringify(it))) bad.push(`${label}: "${it.title}" exposes an absolute path`);
+        }
       }
     }
-    return bad.length ? out('fail', bad.join('; ')) : out('pass', `${h.homes.length} stream(s) list their shared documents with title, author and date, and no absolute path`);
+    if (bad.length) return out('fail', bad.join('; '));
+    if (unbuilt.length) return out('not-built', `no shared documents recorded yet (docs.shared is missing) for: ${unbuilt.join(', ')}`);
+    if (tabs === 0) return out('not-built', 'the stream home payload has no per-project `docs.shared` list yet');
+    return out('pass', `${tabs} project tab(s) list their shared documents with title, author and date, and no absolute path`);
   },
 };
 
