@@ -42,6 +42,8 @@
  *                                             add: --trigger --action --who and (--check <name> | --every-hours N). done: runs the row's check and refuses if it fails; a row with no check needs --evidence. check exits 1 when any row needs attention
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
+ *   journal.ts decide "<decision>" --why "<rationale>" [--rejected "<alt>"] [--consequence "<text>"] [--scope project|working-rule] [--topic <slug>] [--repo <project>] [--msg "[msg ...]"] [--new] --model ... --used ...
+ *                                             write a decision down on the turn it is said: --scope project (default) adds a dated entry to Projects/<repo, else project>/DECISIONS.md under --tickets-vault (else $VAULT_ROOT), while the row goes to --project's ledger; working-rule writes a memory file and its MEMORY.md line under memory_dir (the same --topic updates, never duplicates). Also records one decision row naming the file. Refuses with nothing written when --why is missing, a field looks like a secret, or the file cannot be written; refuses (nothing written) when an earlier decision on the topic exists unless --new; --msg takes the decision-scan marker so that message is not raised again
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
  *   journal.ts stamp <id> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
@@ -136,7 +138,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS } from './local-config.ts';
+import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -203,6 +205,8 @@ import type { CheckContext, StandingRow } from './lib/standing.ts';
 import { readLibrary } from './lib/library/pages.ts';
 import { checkStaleness, realGit, summarize } from './lib/library/stale.ts';
 import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
+import { decideProblems, relatedDecision, renderEntry, topicSlug, writeProjectDecision, writeWorkingRule } from './lib/journal/decide.ts';
+import type { Scope, Written } from './lib/journal/decide.ts';
 import { createReader } from './lib/vault/reader.ts';
 import { TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from './lib/vault/tickets.ts';
 import { DOC_DIR_SCOPES, DOC_FILE_SCOPES } from './lib/home/docs.ts';
@@ -591,6 +595,35 @@ function cmdLearned(): void {
     append(entry);
     if (!dryRun) render(true);
     console.log(`learned  ${entry.id}  ${entry.text}${seen.kind === 'refresh' ? `  (re-checked: supersedes ${seen.id})` : ''}`);
+}
+
+/** `decide "<decision>" --why ...`: the file first (DECISIONS.md or a memory file), then the ledger row that names it; if the row cannot be written the file is put back. Idempotent: an entry already on disk writes nothing. */
+function cmdDecide(): void {
+    const scope = arg('scope', 'project') as Scope;
+    const input = { decision: arg('text') || positional.join(' '), why: arg('why') || '', rejected: arg('rejected') || undefined, consequence: arg('consequence') || undefined, scope, date: arg('date', today()), topic: arg('topic') || undefined };
+    const problems = decideProblems(input);
+    const decisionsProject = arg('repo') || project;   // the file belongs to the project the decision is about; the row stays in --project's ledger
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(decisionsProject) || decisionsProject.includes('..')) problems.push('--repo must be a plain project name (letters, digits, . _ -), since it names the DECISIONS.md folder.');
+    const marker = arg('msg') || '';   // the scan's [msg <ts> <hash>] marker: on the row text, it tells the decision scan this message is answered
+    if (marker && !/^\[msg \S+ [0-9a-f]{6}\]$/.test(marker)) problems.push('--msg must be the scan marker exactly as printed, like "[msg 2026-10-11T10:00:00.000Z 1a2b3c]".');
+    if (scope === 'working-rule' && !MEMORY_DIR) problems.push('--scope working-rule needs memory_dir (env MAESTRO_MEMORY_DIR) set to the directory that holds the memory files.');
+    if (problems.length) die(`decide: refused, nothing written.\n${problems.map((p) => `  - ${p}`).join('\n')}`);
+    const usage = usageFromArgs();   // before any write: a missing --model exits here, not after the file is written
+    const decisionsPath = join(ticketsBase(), 'Projects', decisionsProject, 'DECISIONS.md');
+    const entries = readLedger();
+    const related = relatedDecision(input.decision, existsSync(decisionsPath) ? readFileSync(decisionsPath, 'utf8') : null, entries);
+    const already = scope === 'project' ? (existsSync(decisionsPath) && readFileSync(decisionsPath, 'utf8').includes(renderEntry(input).trimEnd())) : existsSync(join(MEMORY_DIR, `${topicSlug(input)}.md`));   // the same entry, or a working rule's own topic, is a repeat or an update, not a duplicate
+    if (related && !already && !has('new')) die(`decide: refused, nothing written. An earlier decision on this topic is already recorded (${related.source}): ${related.text}\n  Rewording it would write a second entry. If this is a different decision, or a reversal that says what it reverses, run it again with --new.`);
+    if (dryRun) { console.log(`decide  (dry run)  ${scope === 'project' ? decisionsPath : MEMORY_DIR}`); return; }
+    let written: Written;
+    try { written = scope === 'project' ? writeProjectDecision(decisionsPath, input) : writeWorkingRule(MEMORY_DIR, input); } catch (e) { die(`decide: could not write the file, nothing recorded (${e instanceof Error ? e.message : String(e)}).`); }
+    if (written.kind === 'unchanged') { console.log(`decide  already recorded  ${written.path}`); return; }
+    try {
+        append({ id: newId(entries), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), refs: [written.path], ...usage });
+    } catch (e) { written.undo(); die(`decide: the ledger row could not be written, the file was put back (${e instanceof Error ? e.message : String(e)}).`); }
+    render(true);
+    if (related) console.log(`Closest earlier decision (${related.source}): ${related.text}\n  If this reverses it, the new entry should say so.`);
+    console.log(`decide  ${written.kind}  ${written.path}`);
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -2414,6 +2447,7 @@ switch (cmd) {
     case 'queue': cmdQueue(); break;
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
+    case 'decide': cmdDecide(); break;
     case 'learned': cmdLearned(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;

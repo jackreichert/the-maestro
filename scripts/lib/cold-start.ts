@@ -3,7 +3,7 @@
  * library at read time (so it is never stale) and bounded in size. Pure: nothing here reads a file, the clock or a process.
  *
  * Sections: Current work (per stream: in flight with its brief and report path, blocked, queued, last note), Decisions pending
- * (open asks), How to work (current library pages per active stream, then the commands that print the full views).
+ * (open asks), Decisions recorded (written down since the previous working day, each with the file it is in), How to work (current library pages per active stream, then the commands that print the full views).
  *
  * Guarantees, each enforced where it is applied:
  *  - Every open in-flight, blocked and ask id is in the text at every size level; only wording shrinks, then the How to work
@@ -21,6 +21,7 @@ export const WITHHELD = '[withheld: secret shape]';
 const NO_STREAM = 'other';
 const SECTION_WORK = '## Current work';
 const SECTION_ASKS = '## Decisions pending';
+const SECTION_RECORDED = '## Decisions recorded';
 const SECTION_PROJECTS = '## Projects';
 const SECTION_HOW = '## How to work';
 
@@ -153,12 +154,25 @@ function howLines(streams: string[], library: LibraryEntry[], lv: Level): string
   return out;
 }
 
-function render(b: Folded, library: LibraryEntry[], now: Date, lv: Level, withHow = true, projects: ProjectEntry[] = [], withProjectText = true, today = now.toISOString().slice(0, 10)): string {
+const RECORDED_SHOWN = 8;
+
+/** Decisions written down (a decision row that names a file, such as `journal.ts decide` writes) since the previous working day, newest first, as lines with their file links. A pending decision is an ask, not a record. */
+function recordedLines(rows: LedgerRow[], today: string, lv: Level): string[] {
+  const since = previousWorkingDay(today);
+  const hits = rows.filter((r) => r.kind === 'decision' && !r.pending && Array.isArray(r.refs) && r.refs.length > 0 && String(r.date ?? '') >= since)
+    .sort((x, y) => tsOf(y.ts).localeCompare(tsOf(x.ts)));
+  const lines = hits.slice(0, RECORDED_SHOWN).map((r) => `- ${safe(r.date, 10)} ${lv.text ? safe(r.text, Math.max(lv.text, 50)) : ''} · ${(r.refs as unknown[]).slice(0, 2).map((f) => safe(f, 120)).join(', ')}`.replace(/ {2,}/g, ' '));
+  return hits.length > RECORDED_SHOWN ? [...lines, `- … and ${hits.length - RECORDED_SHOWN} more: \`journal.ts query\``] : lines;
+}
+
+function render(b: Folded, library: LibraryEntry[], now: Date, lv: Level, withHow = true, projects: ProjectEntry[] = [], withProjectText = true, today = now.toISOString().slice(0, 10), rows: LedgerRow[] = []): string {
+  const recorded = withHow ? recordedLines(rows, today, lv) : [];
   const streams = [...new Set([...b.inFlight, ...b.blocked, ...b.queued].map(streamOf))].sort();
   const head = ['# Cold start', '', `Generated ${now.toISOString().slice(0, 16)}Z from the ledger and the library; read-only, regenerated at read time. Anything not here is in \`journal.ts start-here\`.`, ...(b.badTs ? [``, `Note: ${b.badTs} ledger row(s) have a ts that is not text; read as is, so their order and age may be off.`] : []), ''];
   return [
     ...head, SECTION_WORK, '', ...(streams.length ? workLines(b, streams, lv, now) : ['Nothing in flight, blocked or queued.']), '',
     SECTION_ASKS, '', ...(b.asks.length ? askLines(b, lv, now) : ['None.']), '',
+    ...(recorded.length ? [SECTION_RECORDED, '', ...recorded, ''] : []),
     ...(projects.length ? [SECTION_PROJECTS, '', ...projectLines(projects, lv, withProjectText, today), ''] : []),
     ...(withHow ? [SECTION_HOW, '', ...howLines(streams, library, lv), ''] : []),
   ].join('\n');
@@ -177,7 +191,7 @@ export function coldStart(input: ColdInput): ColdStart {
   const ids = { inFlight: id(b.inFlight), blocked: id(b.blocked), queued: id(b.queued), asks: id(b.asks) };
   const projects = (input.projects ?? []).slice(0, PROJECTS_SHOWN);
   for (let level = 0; level < LEVELS.length; level += 1) {
-    const text = render(b, input.library, input.now, LEVELS[level] as Level, true, projects, true, input.today);
+    const text = render(b, input.library, input.now, LEVELS[level] as Level, true, projects, true, input.today, input.rows);
     if (text.length <= max) return { text, truncated: false, level, ids };
   }
   const last = LEVELS.length - 1;
@@ -251,7 +265,7 @@ export function currentWorkStatement(text: string): string {
   const lines = text.split('\n');
   const start = lines.indexOf(SECTION_WORK);
   if (start < 0) return '';
-  const ends = [SECTION_PROJECTS, SECTION_HOW].map((h) => lines.indexOf(h, start)).filter((i) => i >= 0);
+  const ends = [SECTION_RECORDED, SECTION_PROJECTS, SECTION_HOW].map((h) => lines.indexOf(h, start)).filter((i) => i >= 0);
   return lines.slice(start, ends.length ? Math.min(...ends) : undefined).join('\n').trim();
 }
 
