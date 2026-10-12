@@ -74,6 +74,7 @@ tracker_key_pattern: \bABC-\d+\b  # regex for tracker keys in a PR title or bran
 local_key_prefixes: MAESTRO,MITHRIL  # key prefixes no tracker holds (local keys of personal repos); never counted as pending transitions; `none` clears; default MAESTRO,MITHRIL
 sweep_budget_seconds: 300     # the worktree sweep stops at the next repo boundary once over this many seconds, and names what it skipped; default 300
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.ts offers it; default 60
+stall_minutes: 90              # the stall event type reports a dispatched agent with no progress this long; default 90
 sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a worktree as a live skill; ~/.claude/skills and <container>/.claude/skills always count
 sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
 env_store_root: ~/dev-env/.env-store  # where environment files live outside worktrees, as <root>/<repo>/<project>/; a worktree whose env files are symlinks into it is safe for the sweep to remove; default shown

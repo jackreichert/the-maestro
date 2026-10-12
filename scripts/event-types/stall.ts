@@ -1,0 +1,151 @@
+/**
+ * stall: wakes the orchestrator when a dispatched agent has made no progress for `stall_minutes` (default 90), with the item id and the
+ * evidence. The loop cannot stop a Claude Code subagent, so it only reports; playbooks/event-types/stall.md says what the orchestrator does.
+ * Target is the container directory (the folder holding the repos, where each repo and its worktrees live). One watch.
+ *
+ * A candidate is an item in flight (open `wip`, not queued) with a writer brief: its `claim` row (text ends `: brief <id>`, no later `released` of the
+ * same repo and scope) names the repo and the worktree or branch the agent works in. Items with no claim (read-only briefs, work done in the
+ * orchestrator itself) have no place to look for evidence, so they are never judged: a stall is only reported when it can be shown.
+ *
+ * Progress is the newest of: the dispatch itself (the item's latest brief or claim row, so a fresh dispatch starts a new clock), the worktree's
+ * HEAD, reflog and index files (a commit, checkout or `git add`), and the mtimes of the files `git status` lists as changed or untracked (an edit).
+ * Why these and not the lease: a lease belongs to the orchestrator window and any row that window writes renews it, so it says nothing about
+ * the subagent. The agent writes no ledger rows of its own until it hands back. Commits alone miss an agent that edits for an hour before its
+ * first commit, so edited files count too. Ignored files (node_modules, build output, caches) are not read: a test run's churn does not hide a
+ * stall, and a quiet test run is covered by the threshold, not by a signal.
+ *
+ * Fires once per stall: state.announced[id] holds the progress time a stall was reported at. The same stall never repeats on later ticks;
+ * the item is reported again only if the agent makes progress and then stalls again (or is re-dispatched and stalls). Closed or no longer
+ * in-flight items are forgotten. A repo or worktree git cannot read is skipped, never counted as a stall.
+ * State { announced: { <id>: progress epoch ms }, fresh: Finding[] } where `fresh` is only what this check newly found. Epoch ms throughout.
+ */
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { claimScope } from '../lib/journal/claims.ts';
+import { fold, isInFlight, parseLedger } from '../lib/ledger-core.ts';
+import type { LedgerRow } from '../lib/ledger-core.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, STALL_MINUTES, VAULT_ROOT } from '../local-config.ts';
+import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
+
+export interface Finding { id: string; repo: string; worktree: string; idleMs: number; lastAt: number; last: string }
+export interface StallState { announced: Record<string, number>; fresh: Finding[] }
+
+export const interval = 300;
+export const renews = true;
+export const network = false;
+export const backoff = false;
+export const singleton = true;
+
+/** Most changed files whose mtime is read per worktree; a worktree this dirty is not idle anyway. */
+export const MAX_STAT_FILES = 2000;
+const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
+export const defaultTtlMs = (): number => THREE_DAYS_MS;
+
+export function validate(target: string): void {
+  if (!existsSync(target) || !statSync(target).isDirectory()) throw new Error(`stall target must be the container directory (the folder holding your repos), got "${target}"`);
+}
+
+export interface WorktreeRef { path: string; branch: string }
+
+/** The outside world; tests replace it. */
+export interface StallIo {
+  /** Minutes without progress that make a stall. */
+  stallMinutes: number;
+  rows(): LedgerRow[];
+  /** The linked worktrees of a repo (never its main checkout), or null when the repo or git cannot be read. */
+  worktrees(repo: string): WorktreeRef[] | null;
+  /** The newest sign of work in a worktree, or null when it cannot be read. */
+  activity(dir: string): { at: number; what: string } | null;
+}
+
+const ledgerPath = (): string => join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONFIGURED_PROJECT || CONTAINER_PROJECT, 'Journal', 'ledger.jsonl');
+
+export function realIo(target: string, run: Run): StallIo {
+  const git = (dir: string, ...args: string[]): string | null => {
+    try { const r = run('git', ['-C', dir, '--no-optional-locks', ...args]); return r.status === 0 ? r.stdout : null; } catch { return null; }
+  };
+  const repoDir = (repo: string): string | null => [join(target, repo), join(target, 'skills', repo)].find((d) => existsSync(join(d, '.git'))) ?? null;
+  const mtime = (p: string): number => { try { return statSync(p).mtimeMs; } catch { return 0; } };
+  return {
+    stallMinutes: STALL_MINUTES,
+    rows: () => { try { return parseLedger(readFileSync(ledgerPath(), 'utf8')); } catch { return []; } },
+    worktrees: (repo) => {
+      const dir = repoDir(repo);
+      const out = dir && git(dir, 'worktree', 'list', '--porcelain');
+      if (!out) return null;
+      const blocks = out.split(/\n\n+/).map((b) => b.split('\n'));
+      return blocks.slice(1).flatMap((lines) => {
+        const path = lines.find((l) => l.startsWith('worktree '))?.slice(9);
+        const branch = lines.find((l) => l.startsWith('branch '))?.slice(7).replace(/^refs\/heads\//, '') ?? '';
+        return path ? [{ path, branch }] : [];
+      });
+    },
+    activity: (dir) => {
+      const gitDir = git(dir, 'rev-parse', '--absolute-git-dir')?.trim();
+      const status = git(dir, 'status', '--porcelain', '--untracked-files=all');
+      if (!gitDir || status === null) return null;
+      const stamps: { at: number; what: string }[] = ['HEAD', 'logs/HEAD', 'index'].map((f) => ({ at: mtime(join(gitDir, f)), what: `git ${f}` }));
+      for (const line of status.split('\n').filter(Boolean).slice(0, MAX_STAT_FILES)) {
+        const file = line.slice(3).split(' -> ').pop() as string;
+        stamps.push({ at: mtime(join(dir, file.replace(/^"|"$/g, '').replace(/\/$/, ''))), what: `edited ${file}` });
+      }
+      return stamps.reduce((a, b) => (b.at > a.at ? b : a));
+    },
+  };
+}
+
+const ms = (ts: unknown): number => { const t = typeof ts === 'string' ? Date.parse(ts) : NaN; return Number.isFinite(t) ? t : 0; };
+
+interface Candidate { id: string; repo: string; scope: string; branch: string; dispatchedAt: number }
+
+/** In-flight items with a live writer claim from `journal.ts brief`, and when each was dispatched. */
+function candidates(rows: LedgerRow[]): Candidate[] {
+  const { items } = fold(rows, null);
+  return items.filter(isInFlight).flatMap((item) => {
+    const id = item.id as string;
+    const claims = rows.map((r, i) => ({ r, i })).filter(({ r }) => r.kind === 'claim' && typeof r.text === 'string' && r.text.endsWith(`: brief ${id}`) && typeof r.repo === 'string');
+    const last = claims.at(-1);
+    if (!last) return [];
+    const { repo, scope, branch } = last.r as LedgerRow & { repo: string; scope?: string; branch?: string };
+    const released = rows.some((r, i) => i > last.i && r.kind === 'released' && r.repo === repo && (r.scope ?? undefined) === (scope ?? undefined));
+    if (released || (!scope && !branch)) return [];
+    const briefs = rows.filter((r) => r.kind === 'brief' && r.briefs === id).map((r) => ms(r.ts));
+    const dispatchedAt = Math.max(ms(item.ts), ms(item.stateTs), ms(last.r.ts), ...briefs);
+    return [{ id, repo, scope: scope ?? '', branch: branch ?? '', dispatchedAt }];
+  });
+}
+
+const isTheirs = (w: WorktreeRef, c: Candidate): boolean => (c.branch !== '' && w.branch === c.branch) || (c.scope !== '' && (claimScope(basename(w.path)) === c.scope || claimScope(w.branch) === c.scope));
+
+export function check(_target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 'run'>, io?: StallIo): StallState {
+  const prev = (ctx.prev as StallState | null | undefined) ?? { announced: {}, fresh: [] };
+  const use = io ?? realIo(_target, ctx.run);
+  const limit = use.stallMinutes * 60_000;
+  const cands = candidates(use.rows());
+  const announced: Record<string, number> = {};
+  const fresh: Finding[] = [];
+  const lists = new Map<string, WorktreeRef[] | null>();
+  for (const c of cands) {
+    if (prev.announced[c.id] !== undefined) announced[c.id] = prev.announced[c.id] as number; // kept until it progresses or leaves the board
+    if (!lists.has(c.repo)) lists.set(c.repo, use.worktrees(c.repo));
+    const wt = (lists.get(c.repo) ?? []).find((w) => isTheirs(w, c));
+    const seen = wt ? use.activity(wt.path) : null;
+    if (!wt || !seen) continue;
+    const lastAt = Math.max(c.dispatchedAt, seen.at);
+    const last = seen.at >= c.dispatchedAt ? seen.what : 'dispatch';
+    if (ctx.now - lastAt < limit) { delete announced[c.id]; continue; }
+    if (announced[c.id] === lastAt) continue;
+    announced[c.id] = lastAt;
+    fresh.push({ id: c.id, repo: c.repo, worktree: basename(wt.path), idleMs: ctx.now - lastAt, lastAt, last });
+  }
+  return { announced, fresh };
+}
+
+const duration = (msec: number): string => { const m = Math.round(msec / 60_000); return m >= 120 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${m}m`; };
+
+/** One actionable event per stall newly found by this check. Evidence: how long, the newest signal and when, the worktree. */
+export const diff = (_prev: StallState | null, next: StallState): WatchEvent[] =>
+  next.fresh.map((f) => ({
+    summary: `stalled ${f.id} (${f.repo}, worktree ${f.worktree}): no progress for ${duration(f.idleMs)}; newest sign ${f.last} at ${new Date(f.lastAt).toISOString().slice(0, 16)}Z. Run the stall-reset playbook.`,
+    actionable: true,
+  }));
