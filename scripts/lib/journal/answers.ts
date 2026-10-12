@@ -30,7 +30,7 @@ export interface RecordOptions {
   today: () => string;
 }
 
-const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
+export const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
 /** The open ask whose id is `needle` (exactly, else as the only prefix match), or null. */
 export function openAsk(entries: LedgerRow[], needle: string): LedgerRow | null {
