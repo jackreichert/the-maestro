@@ -50,7 +50,7 @@ test('withholdJson lets status words under secret-sounding keys through, and sti
   const words = { tokens: 'unmeasured', token: 'refreshed', credentials: 'missing_file', secrets: 'scanned', access_token: 'present', ['pass' + 'word']: 'unchanged' };   // placeholder status words
   assert.deepEqual(withholdJson(words), words);
   const fake = 'fake_pw_123abc';   // placeholder fixture, not a secret
-  assert.deepEqual(withholdJson({ PassWord: fake, api_key: '<fake>' }), { PassWord: WITHHELD, api_key: WITHHELD });
+  assert.deepEqual(withholdJson({ PassWord: fake, api_key: fake }), { PassWord: WITHHELD, api_key: WITHHELD });
 });
 
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..');
