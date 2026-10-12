@@ -24,7 +24,7 @@ function walk(value: unknown): unknown {
       for (let n = 2; Object.hasOwn(out, key); n += 1) key = `${WITHHELD} ${n}`;
       out[key] = walk(v);
     }
-    return out;
+    return { ...out };   // back to an ordinary object for callers; spread defines each key as an own property, `__proto__` included
   }
   return value;
 }
