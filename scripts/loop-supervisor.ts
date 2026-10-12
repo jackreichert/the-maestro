@@ -12,6 +12,7 @@
  * Digests are written only under the ledger root; with no ledger root the supervisor refuses to start (exit 2).
  * While it runs it keeps <event dir>/supervisor.json ({ pid, startedAt }); a stop by SIGTERM or SIGINT removes it, so `prime` can tell a
  * supervisor that was stopped from one that died (lib/supervisor-state.ts).
+ * With `wake_launch_command` set, the same tick starts a session when an actionable event has waited with no waiter and no live session (lib/session-wake.ts).
  * Text alerts (lib/alert-policy.ts) tick on the watchdog timer while the loop runs and on each wait chunk while it does not.
  * While it waits (idle, quiet hours or crash back-off) it sleeps in chunks of at most 60 s against the wall clock, so a closed lid costs
  * under a minute, and rewrites <event dir>/heartbeat.json each chunk with mode `idle`, `quiet` or `backoff`, so a supervisor between loop launches
@@ -38,10 +39,11 @@ import { openStore } from './lib/journal/store.ts';
 import { sleepUntil } from './lib/wall-sleep.ts';
 import { clearRecord, supervisorLogPath, writeRecord } from './lib/supervisor-state.ts';
 import { LOG_MAX_BYTES, rotateLog } from './lib/log-rotate.ts';
-import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WATCH_TZ } from './local-config.ts';
+import { CLAUDE_PROJECTS_DIR, CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY_COMMAND, SELF_REVIEW_REPOS, WAKE_LAUNCH_COMMAND, WATCH_TZ } from './local-config.ts';
 import { DEFAULT_ALERT_QUIET_HOURS, noteRestart, runAlerts } from './lib/alert-policy.ts';
 import { readInbox } from './lib/event-inbox.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
+import { runWakeTick } from './lib/session-wake.ts';
 import { overrideCommand } from './lib/tool-bin.ts';
 
 const EVENT_LOOP = fileURLToPath(new URL('./event-loop.ts', import.meta.url));
@@ -274,7 +276,12 @@ async function main(): Promise<number> {
   writeRecord(EVENT_DIR, process.pid);
   moveDigestsToInbox(dir);
   stopOnSignals(EVENT_DIR);
-  const alertTick = (): void => { runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now: Date.now(), entries: readInbox(EVENT_DIR), health: liveLoopHealth(), config: { quietHours: process.env.MAESTRO_ALERT_QUIET_HOURS || DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } }); };
+  const alertTick = (): void => {
+    const now = Date.now();
+    const entries = readInbox(EVENT_DIR);
+    runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now, entries, health: liveLoopHealth(), config: { quietHours: process.env.MAESTRO_ALERT_QUIET_HOURS || DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } });
+    runWakeTick({ eventDir: EVENT_DIR, now, entries, launchCommand: WAKE_LAUNCH_COMMAND, notifyCommand: NOTIFY_COMMAND, transcriptsDir: CLAUDE_PROJECTS_DIR });
+  };
   await supervise({
     runLoop: () => launch(alertTick),
     sleep: waitWithAlerts({

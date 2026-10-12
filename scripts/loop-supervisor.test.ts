@@ -3,7 +3,7 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess, StdioOptions } from 'node:child_process';
-import { closeSync, rmSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, rmSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { stubEnv, writeStub, type Stub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -14,6 +14,7 @@ import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-store.ts';
 import { appendEvents, readInbox } from './lib/event-inbox.ts';
 import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq } from './install-loop-supervisor.ts';
+import { WAKE_PROMPT } from './lib/session-wake.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
 import { cleanEnv, notifyCalls } from './lib/test-env.ts';
 
@@ -413,5 +414,32 @@ test('a normal start with an empty inbox and a loop that stays up sends no text'
     assert.equal(await waitFor(() => existsSync(join(events, 'supervisor.json'))), true, 'the supervisor never started');
     await new Promise((r) => setTimeout(r, 2000));
     assert.deepEqual(notifyCalls(env), []);
+  } finally { p.kill('SIGTERM'); await closed; killTree(p); }
+});
+
+test('the real supervisor runs wake_launch_command with the fixed prompt for an old unseen event nobody is listening to, and only once', async () => {
+  const ledger = tempDir();
+  const events = join(ledger, 'Events');
+  mkdirSync(events, { recursive: true });
+  appendEvents(events, [{ watch: 'w1', type: 'reminder', at: new Date(Date.now() - 20 * 60_000).toISOString(), summary: 'SENTINEL free text, not an alertable kind', actionable: true, report: '' }]);
+  const dir = tempDir();
+  const marker = join(dir, 'launches.log');
+  const launcher = join(dir, 'launcher.sh');
+  writeFileSync(launcher, `printf '%s\\n' "$*" >> '${marker}'\n`);
+  const bin = join(dir, 'exit0.sh');
+  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  chmodSync(bin, 0o755);
+  const { p, closed } = startSupervisor(envFor(ledger, {
+    MAESTRO_LOOP_BIN: bin,
+    MAESTRO_WAKE_LAUNCH_COMMAND: JSON.stringify(['/bin/sh', launcher, '--flag']),
+    MAESTRO_PROJECTS_DIR: join(dir, 'no-sessions'),
+    MAESTRO_ALERT_QUIET_HOURS: 'off',
+    MAESTRO_WATCHDOG_INTERVAL_MS: '100',
+  }));
+  try {
+    assert.equal(await waitFor(() => existsSync(marker)), true, 'the launch command never ran');
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.deepEqual(readFileSync(marker, 'utf8').trim().split('\n'), [`--flag ${WAKE_PROMPT}`]);
+    assert.doesNotMatch(readFileSync(join(events, 'wake-launch.jsonl'), 'utf8'), /SENTINEL/);
   } finally { p.kill('SIGTERM'); await closed; killTree(p); }
 });

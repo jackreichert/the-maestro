@@ -60,6 +60,7 @@ import type { InboxEntry } from './lib/event-inbox.ts';
 import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './lib/event-inbox.ts';
 import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
 import { writeHeartbeat } from './lib/heartbeat.ts';
+import { registerWaiter } from './lib/waiters.ts';
 import { CHUNK_SECONDS, sleepUntil } from './lib/wall-sleep.ts';
 import type { CadenceConfig, Interval, Stop } from './lib/cadence.ts';
 import { SLOW_QUIET_SECONDS, nextInterval, watchInterval } from './lib/cadence.ts';
@@ -392,6 +393,21 @@ async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, n
   }
 }
 
+/** Registers this process as `window`'s waiter and removes the record on exit or a signal; best effort, a registry failure never stops the wait. */
+function armWaiter(dir: string, window: string): () => void {
+  try {
+    const off = registerWaiter(dir, window);
+    const bye = (): void => { try { off(); } catch { /* nothing to do */ } };
+    const stop = (signal: NodeJS.Signals): void => { bye(); process.kill(process.pid, signal); };
+    for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.once(sig, stop);
+    process.once('exit', bye);
+    return () => { bye(); process.removeListener('exit', bye); for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.removeListener(sig, stop); };
+  } catch (err) {
+    console.error(`event-loop: could not register this waiter: ${errorMessage(err)}`);
+    return () => {};
+  }
+}
+
 /** `events [list|ack|wait]`. Returns the exit code, or a usage message. */
 async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string; window?: string; session?: string }, beforePoll?: () => void): Promise<number | string> {
   // The window that reads or acks is recorded on the seen and handled rows, so a later router can tell whose mark it is.
@@ -415,7 +431,9 @@ async function eventsCommand(dir: string, sub: string | undefined, ids: string[]
     const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
     const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
     if (!(hours > 0) || !(poll > 0)) return '--timeout-hours and --poll-seconds need positive numbers';
-    return eventsWait(dir, hours * 3600 * 1000, poll, sleep, window, beforePoll);
+    // The waiter registry (lib/waiters.ts) records this process for as long as it waits, so a hook can tell a session with no waiter armed.
+    const disarm = armWaiter(dir, window);
+    try { return await eventsWait(dir, hours * 3600 * 1000, poll, sleep, window, beforePoll); } finally { disarm(); }
   }
   return 'events commands: list | ack <id...> | wait';
 }
