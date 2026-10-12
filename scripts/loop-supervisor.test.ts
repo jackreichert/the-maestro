@@ -99,15 +99,15 @@ test('quiet-hours parsing: next occurrence in the zone, wrap past midnight, 12h 
  * (`node run --serve`; the supervisor, which shares NODE_OPTIONS, is untouched). Tests used to write an executable script instead, but the first
  * run of a freshly written executable can stall for minutes under load (a macOS provenance scan), which no sensible wait covers; node is already trusted.
  */
-function nodeLoop(body: string): NodeJS.ProcessEnv {
+function nodeLoop(body: string): Record<string, string> {
   const preload = join(tempDir(), 'loop.mjs');
   writeFileSync(preload, `import { appendFileSync, writeFileSync } from 'node:fs';\nif (process.argv.includes('--serve')) {\n${body}\n}\n`);
   return { MAESTRO_LOOP_BIN: process.execPath, NODE_OPTIONS: `--import ${pathToFileURL(preload).href}` };
 }
 /** A loop that prints a digest and exits 10. */
-const fakeLoop = (): NodeJS.ProcessEnv => nodeLoop(`console.log('ACTION w1 (fake): changed');\nprocess.exit(10);`);
+const fakeLoop = (): Record<string, string> => nodeLoop(`console.log('ACTION w1 (fake): changed');\nprocess.exit(10);`);
 /** A loop that exits 0 at once. */
-const exit0Loop = (): NodeJS.ProcessEnv => nodeLoop('process.exit(0);');
+const exit0Loop = (): Record<string, string> => nodeLoop('process.exit(0);');
 
 /** Every env a real supervisor or installer ran with; the `after` hook below fails the file if any of them reached a notify command. */
 const envsUsed: NodeJS.ProcessEnv[] = [];
