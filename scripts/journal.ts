@@ -178,7 +178,7 @@ import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summa
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { gitBranches, queueFooter as hygieneFooter, queueHygiene } from './lib/queue-hygiene.ts';
-import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
+import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, footerQueue, staleSuffix } from './lib/review-queue.ts';
 import { fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
@@ -900,7 +900,7 @@ function cmdStatus() {
     }
 
     const live = { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)) };
-    const queueFooter = boardReviewQueue()?.footer;
+    const queueFooter = has('footer') ? footerReviewQueue() ?? undefined : boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
         const sessionId = footerSessionId();
@@ -961,6 +961,9 @@ function cmdReviewQueue() {
     // Not process.exit: it drops output a pipe has not yet taken, so a slow reader would see a cut answer.
     process.exitCode = queueExitCode(reading);
 }
+
+/** The footer's review queue line: the stored snapshot when it is under 30 minutes old, else a live read, else `unknown` (never an old number). */
+const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, fetchLive);
 
 function cmdStandup() {
     console.log(standupText(arg('date', today())));

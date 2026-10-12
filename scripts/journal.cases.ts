@@ -2761,6 +2761,20 @@ test('status and status --footer show the review queue from the stored snapshot,
     assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
 });
 
+test('status --footer refreshes a stale review-queue snapshot from a live read, and says unknown when it cannot (MAESTRO-136)', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const old = new Date(Date.now() - 11 * 36e5).toISOString();
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: old, prs: [0, 1, 2, 3].map(() => ({ isDraft: false })) }));
+    const footer = (env: NodeJS.ProcessEnv) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+    }).stdout;
+    const live = installGhStub({ pages: [[1, 2, 3, 4, 5, 6].map((n) => prNode(n, { isDraft: false }))] });
+    assert.match(footer(live), /^\*\*Review queue:\*\* 6 of 4 \(full, 2 over the cap\)$/m, 'the live count, not the 11h-old 4');
+    const broken = installGhStub({ pages: [[]], failOnPage: 0 });
+    assert.match(footer(broken), /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
+});
+
 // ── window id ───────────────────────────────────────────────────────────────
 
 test('every row written carries the window id: --window, then --session, then MAESTRO_WINDOW, then a pid-based id', () => {

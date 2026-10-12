@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { reviewQueue, reviewQueueLine, readSnapshotPrs, readQueue, queueExitCode, queueText, boardQueue, staleSuffix } = await import('./review-queue.ts');
+const { reviewQueue, reviewQueueLine, readSnapshotPrs, readQueue, queueExitCode, queueText, boardQueue, staleSuffix, footerQueue } = await import('./review-queue.ts');
 
 const prs = (...drafts: boolean[]) => drafts.map((isDraft) => ({ isDraft }));
 
@@ -131,4 +131,24 @@ test('with a review pool the queue counts only pool repos: personal and stray re
   const prs = [{ isDraft: false, repo: 'avonlea/a' }, { isDraft: false, repo: 'avonlea/b' }, { isDraft: false, repo: 'jackreichert/the-maestro' }, { isDraft: false, repo: 'femmebot/google-type' }, { isDraft: true, repo: 'avonlea/c' }];
   assert.deepEqual(reviewQueue(prs, 2, ['!avonlea/*']), { count: 2, cap: 2, full: true, selfReview: 2 });
   assert.equal(reviewQueue(prs, 4, []).count, 4, 'without a pool every non-draft PR counts');
+});
+
+test('footerQueue refreshes a snapshot older than 30 minutes and prints the live count, not the old one (MAESTRO-136)', () => {
+  const now = new Date('2026-01-01T12:00:00Z');
+  const old = { prs: prs(false, false, false, false), takenAt: '2026-01-01T01:00:00Z' };
+  const calls: string[] = [];
+  const refresh = () => { calls.push('live'); return { prs: prs(...new Array(11).fill(false)) }; };
+  assert.equal(footerQueue(old, 4, now, [], refresh), '**Review queue:** 11 of 4 (full, 7 over the cap)');
+  assert.deepEqual(calls, ['live']);
+  const fresh = { prs: prs(false, false), takenAt: '2026-01-01T11:45:00Z' };
+  assert.equal(footerQueue(fresh, 4, now, [], refresh), '**Review queue:** 2 of 4 (snapshot 15m old)');
+  assert.deepEqual(calls, ['live'], 'a snapshot under 30 minutes old is not refreshed');
+});
+
+test('footerQueue says unknown, not an old number, when a stale snapshot cannot be refreshed or has no time', () => {
+  const now = new Date('2026-01-01T12:00:00Z');
+  const down = () => { throw new Error('gh failed'); };
+  assert.equal(footerQueue({ prs: prs(false), takenAt: '2026-01-01T01:00:00Z' }, 4, now, [], down), '**Review queue:** unknown (snapshot 11h old; live refresh failed)');
+  assert.equal(footerQueue({ prs: prs(false) }, 4, now, [], down), '**Review queue:** unknown (snapshot of unknown age; live refresh failed)');
+  assert.equal(footerQueue(null, 4, now, [], down), null, 'no snapshot at all: the line stays absent');
 });

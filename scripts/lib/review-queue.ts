@@ -97,3 +97,24 @@ export function boardQueue(stored: { prs: readonly QueuePr[]; takenAt?: string }
   const tail = `${q.count} of ${q.cap}${q.full ? ' (full)' : ''}${staleSuffix(stored.takenAt, now)}`;
   return { text: `review queue: ${tail}`, footer: `**Review queue:** ${tail}` };
 }
+
+/** A stored snapshot older than this is not shown on the footer: the footer reads the live queue instead (the loop's idle tick keeps the snapshot a few minutes old at most). */
+export const FOOTER_REFRESH_MS = 30 * 60_000;
+
+/**
+ * The footer's `**Review queue:**` line. A snapshot under 30 minutes old is shown as `boardQueue` shows it (no network). An older or
+ * undated one is refreshed through `refresh` (a live read) and the live count printed; if that read fails the line says `unknown` and
+ * names the snapshot's age, never the old number. With no snapshot at all the line is absent (null). A count above the cap says by how much.
+ */
+export function footerQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[], refresh: () => { prs: readonly QueuePr[] }): string | null {
+  if (!stored) return null;
+  const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
+  if (ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview)?.footer ?? null;
+  try {
+    const q = reviewQueue(refresh().prs, cap, selfReview);
+    return `**Review queue:** ${q.count} of ${q.cap}${q.full ? ` (full${q.count > q.cap ? `, ${q.count - q.cap} over the cap` : ''})` : ''}`;
+  } catch {
+    const age = staleSuffix(stored.takenAt, now).replace(/^ \(snapshot (.*) old\)$/, '$1');
+    return `**Review queue:** unknown (snapshot ${age ? `${age} old` : 'of unknown age'}; live refresh failed)`;
+  }
+}
