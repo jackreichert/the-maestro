@@ -37,6 +37,15 @@ test('a trigger is the window times the percent, else about 967k', () => {
   assert.equal(triggerTokens({ pct: 50, window: 2_000_000, source: 'env' }, 1_000_000), 500_000, 'the window is capped at the model window');
 });
 
+test('a decimal percent is accepted: 17.5 of a 1M window triggers at 175k, not the 967k default (MAESTRO-230)', () => {
+  assert.deepEqual(readAutocompact({ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '17.5' }, '/nonexistent/settings.json'), { pct: 17.5, window: null, source: 'env' });
+  assert.equal(triggerTokens({ pct: 17.5, window: 1_000_000, source: 'env' }), 175_000);
+  for (const bad of ['0', '0.0', '100.5', '-1', '1e1', '.5', '5.', 'abc', '']) {
+    assert.equal(readAutocompact({ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: bad }, '/nonexistent/settings.json').pct, null, `rejects ${JSON.stringify(bad)}`);
+  }
+  assert.equal(readAutocompact({ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '100' }, '/nonexistent/settings.json').pct, 100);
+});
+
 test('below the floor warns with the value, the trigger and the floor; at or above is quiet', () => {
   const warn = floorWarnings({ pct: 5, window: null, source: 'env' }, 100_000);
   assert.equal(warn.length, 1);
