@@ -135,3 +135,15 @@ test('with only a notify command, an event the alerts already text gets no secon
     assert.equal(d.action, 'none');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('with no command at all the tick does not look at waiters or transcripts', () => {
+  const dir = tmp();
+  try {
+    const off = registerWaiter(dir, 'w1');
+    let probed = 0;
+    const d = runWakeTick({ eventDir: dir, now: NOW, entries: [entry()], launchCommand: [], notifyCommand: [], transcriptsDir: '', alive: () => { probed += 1; return true; } });
+    off();
+    assert.deepEqual(d, { action: 'none', reason: 'no-command' });
+    assert.equal(probed, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

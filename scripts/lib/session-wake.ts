@@ -110,6 +110,8 @@ export interface WakeTickDeps {
  */
 export function runWakeTick({ eventDir, now, entries, launchCommand, notifyCommand, transcriptsDir, run = (cmd, args) => spawnSync(cmd, args, { stdio: 'ignore', timeout: 30_000 }), alive }: WakeTickDeps): WakeDecision {
   try {
+    // Nothing to run means nothing to decide: skip the waiter and transcript reads, which cost a file read per live session every tick.
+    if (!launchCommand.length && !notifyCommand.length) return { action: 'none', reason: 'no-command' };
     const state = readWakeState(eventDir);
     const d = decideWake({
       now, entries, state,
