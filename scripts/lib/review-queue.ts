@@ -14,11 +14,19 @@ export interface QueuePr { isDraft: boolean; repo?: string }
 export interface ReviewQueue { count: number; cap: number; full: boolean; selfReview: number }
 
 /**
- * Open non-draft PRs against the cap. The input is already scoped to open PRs by their author (PR_SEARCH). Full means count >= cap.
- * PRs in a `selfReview` repo (self_review_repos) are left out: the cap models other reviewers' attention, and these have none. A PR with no repo is counted.
+ * True when the PR's repo owner is in `owners` (`review_queue_orgs`, case-insensitive). No owners configured means no filter, and a PR with no repo
+ * is kept: the count fails closed toward counting, as it does for self-review, so a source that omits `repo` is never silently dropped.
  */
-export function reviewQueue(prs: readonly QueuePr[], cap: number, selfReview: readonly string[] = []): ReviewQueue {
-  const open = prs.filter((p) => !p.isDraft);
+export const inQueueOwners = (repo: string | undefined, owners: readonly string[]): boolean =>
+  !owners.length || !repo || owners.some((o) => o.toLowerCase() === repo.split('/')[0]!.toLowerCase());
+
+/**
+ * Open non-draft PRs against the cap. The input is already scoped to open PRs by their author (PR_SEARCH). Full means count >= cap.
+ * Only PRs whose repo owner is in `owners` (review_queue_orgs) count: a stale snapshot or another source cannot leak a personal repo's PR into the cap.
+ * PRs in a `selfReview` repo (self_review_repos) are left out too: the cap models other reviewers' attention, and these have none. A PR with no repo is counted.
+ */
+export function reviewQueue(prs: readonly QueuePr[], cap: number, selfReview: readonly string[] = [], owners: readonly string[] = []): ReviewQueue {
+  const open = prs.filter((p) => !p.isDraft && inQueueOwners(p.repo, owners));
   const { org, self } = splitSelfReview(open, selfReview);
   return { count: org.length, cap, full: org.length >= cap, selfReview: self.length };
 }
@@ -55,14 +63,14 @@ const MAX_FALLBACK_AGE_MS = 6 * 36e5;
  * The queue for the push gate. A live read is preferred; a failed one falls back to the stored snapshot, and the reading says so,
  * and one older than six hours (or undated) is refused, so a stale count is never passed off as current. With neither, the answer is unknown (ok: false), never "empty".
  */
-export function readQueue(src: QueueSources, cap: number, now: Date = new Date(), selfReview: readonly string[] = []): QueueReading {
+export function readQueue(src: QueueSources, cap: number, now: Date = new Date(), selfReview: readonly string[] = [], owners: readonly string[] = []): QueueReading {
   let liveError: string;
-  try { return { ok: true, queue: reviewQueue(src.fetchLive().prs, cap, selfReview), source: 'live' }; } catch (e) { liveError = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? ''; }
+  try { return { ok: true, queue: reviewQueue(src.fetchLive().prs, cap, selfReview, owners), source: 'live' }; } catch (e) { liveError = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? ''; }
   const stored = src.readStored();
   if (!stored) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and there is no usable snapshot` };
   const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
   if (!(ageMs <= MAX_FALLBACK_AGE_MS)) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and the stored snapshot is ${stored.takenAt ? `from ${stored.takenAt}, over ${MAX_FALLBACK_AGE_MS / 36e5} hours old` : 'of unknown age'}` };
-  return { ok: true, queue: reviewQueue(stored.prs, cap, selfReview), source: 'snapshot', takenAt: stored.takenAt, liveError };
+  return { ok: true, queue: reviewQueue(stored.prs, cap, selfReview, owners), source: 'snapshot', takenAt: stored.takenAt, liveError };
 }
 
 /** Exit code for the gate: 0 room to dispatch, 1 full, 2 unknown. */
@@ -94,9 +102,9 @@ const queueCount = (q: ReviewQueue): string => `${q.count} of ${q.cap}${q.full ?
  * The board's review queue from the stored snapshot, no network: `review queue: 3 of 4` (plus `(full)` and a stale-snapshot note), or
  * null when there is no usable snapshot. The footer uses the same text with `**Review queue:**` as its label.
  */
-export function boardQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[] = []): { text: string; footer: string } | null {
+export function boardQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[] = [], owners: readonly string[] = []): { text: string; footer: string } | null {
   if (!stored) return null;
-  const q = reviewQueue(stored.prs, cap, selfReview);
+  const q = reviewQueue(stored.prs, cap, selfReview, owners);
   const tail = `${queueCount(q)}${staleSuffix(stored.takenAt, now)}`;
   return { text: `review queue: ${tail}`, footer: `**Review queue:** ${tail}` };
 }
@@ -109,12 +117,12 @@ export const FOOTER_REFRESH_MS = 30 * 60_000;
  * undated one is refreshed through `refresh` (a live read) and the live count printed; if that read fails the line says `unknown` and
  * names the snapshot's age, never the old number. With no snapshot at all the line is absent (null). A count above the cap says by how much.
  */
-export function footerQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[], refresh: () => { prs: readonly QueuePr[] }): string | null {
+export function footerQueue(stored: { prs: readonly QueuePr[]; takenAt?: string } | null, cap: number, now: Date, selfReview: readonly string[], refresh: () => { prs: readonly QueuePr[] }, owners: readonly string[] = []): string | null {
   if (!stored) return null;
   const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
-  if (ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview)?.footer ?? null;
+  if (ageMs < FOOTER_REFRESH_MS) return boardQueue(stored, cap, now, selfReview, owners)?.footer ?? null;
   try {
-    const q = reviewQueue(refresh().prs, cap, selfReview);
+    const q = reviewQueue(refresh().prs, cap, selfReview, owners);
     return `**Review queue:** ${queueCount(q)}`;
   } catch {
     const age = staleSuffix(stored.takenAt, now).replace(/^ \(snapshot (.*) old\)$/, '$1');

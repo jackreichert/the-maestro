@@ -51,11 +51,13 @@ export interface ChartsInput {
   selfReview?: readonly string[];
   /** `review_queue_cap`; absent means the page has no queue to report. */
   reviewQueueCap?: number;
+  /** `review_queue_orgs`: only PRs in repos owned by these count toward the queue. Default none (no owner filter). */
+  reviewQueueOwners?: readonly string[];
 }
 
 /** All four charts for the last `days` page days ending today. */
 export function buildCharts(input: ChartsInput): Charts {
-  const { items, awaiting, prs, now, tz, days, selfReview = [], reviewQueueCap } = input;
+  const { items, awaiting, prs, now, tz, days, selfReview = [], reviewQueueCap, reviewQueueOwners = [] } = input;
   return {
     days: lastDays(now, tz, days),
     throughput: throughputByDay(items, days, tz, now),
@@ -64,7 +66,7 @@ export function buildCharts(input: ChartsInput): Charts {
     modelMix: modelMix(items, days, tz, now),
     doneItems: doneItems(items, days, tz, now),
     prAge: prAgeBuckets(prs, now, tz, selfReview),
-    reviewQueue: reviewQueueCap === undefined ? { unavailable: 'no review_queue_cap is configured' } : queueState(prs, reviewQueueCap, selfReview),
+    reviewQueue: reviewQueueCap === undefined ? { unavailable: 'no review_queue_cap is configured' } : queueState(prs, reviewQueueCap, selfReview, reviewQueueOwners),
   };
 }
 
@@ -159,8 +161,8 @@ export function prAgeBuckets(prs: Pr[], now: Date, tz: string, selfReview: reado
 }
 
 /** The same count `journal.ts review-queue` gates on (open, non-draft, not in a self-review repo), against the cap. */
-function queueState(prs: Pr[], cap: number, selfReview: readonly string[]): ReviewQueueState {
-  const q = reviewQueue(prs, cap, selfReview);
+function queueState(prs: Pr[], cap: number, selfReview: readonly string[], owners: readonly string[]): ReviewQueueState {
+  const q = reviewQueue(prs, cap, selfReview, owners);
   return { count: q.count, cap: q.cap };
 }
 

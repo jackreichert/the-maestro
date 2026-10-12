@@ -22,7 +22,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONFIGURED_PROJECT, GH_ORG, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
+import { CONFIGURED_PROJECT, GH_ORG, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
 import { readHomes } from './lib/home/config.ts';
 import { streamProjects } from './lib/library/stream-links.ts';
 import { noteExistsIn, vaultRootFor } from './lib/status-page/links.ts';
@@ -93,7 +93,7 @@ export function pageConfig(project = '', statusDir = ''): PageConfig {
   const hasNote = (p: string): boolean => noteExists(`Projects/${p}/CONTEXT.md`) || noteExists(`Projects/${p}/INDEX.md`);
   return {
     streams: STATUS_STREAMS, repoStreams: STATUS_REPO_STREAMS, vaultName: OBSIDIAN_VAULT, trackerUrlBase: TRACKER_URL_BASE,
-    ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ, reviewQueueCap: REVIEW_QUEUE_CAP, selfReviewRepos: SELF_REVIEW_REPOS, prOwners: GH_ORG ? [GH_ORG] : [],
+    ticketNotePath: TICKET_NOTE_PATH, trackerKeyPattern: TRACKER_KEY_PATTERN, tz: WATCH_TZ, reviewQueueCap: REVIEW_QUEUE_CAP, reviewQueueOwners: REVIEW_QUEUE_ORGS, selfReviewRepos: SELF_REVIEW_REPOS, prOwners: GH_ORG ? [GH_ORG] : [],
     project, noteExists,
     // the page's own stream is the known list, as on the web (any stream on the board counts); read per call, not at construction: the web server keeps this config for its lifetime and `stream-homes.json` is edited by hand
     streamProjects: (stream) => streamProjects(stream, (statusDir ? readHomes(statusDir, [stream]) : null)?.streams[stream]?.projects ?? [], STATUS_REPO_STREAMS, hasNote),

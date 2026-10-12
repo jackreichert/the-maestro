@@ -124,7 +124,7 @@ export function buildStream(cfg: WebConfig, name: string, now: Date = new Date()
 /** The chart data for the last `days` days (the caller clamps the range). Done items carry their ticket note as a link, like the board's rows. */
 export function buildCharts(cfg: WebConfig, days: number, now: Date = new Date()): ChartsData {
   const { inputs, g } = readBoard(cfg, now);
-  const c = reduceCharts({ items: g.items, awaiting: [...g.awaiting, ...g.paste], prs: inputs.prs, selfReview: cfg.page.selfReviewRepos ?? [], reviewQueueCap: cfg.page.reviewQueueCap, now, tz: cfg.page.tz, days });
+  const c = reduceCharts({ items: g.items, awaiting: [...g.awaiting, ...g.paste], prs: inputs.prs, selfReview: cfg.page.selfReviewRepos ?? [], reviewQueueCap: cfg.page.reviewQueueCap, reviewQueueOwners: cfg.page.reviewQueueOwners, now, tz: cfg.page.tz, days });
   const noteOf = new Map<string, string>();
   for (const [ticket, ids] of Object.entries(inputs.ticketMap)) for (const id of ids) noteOf.set(id, ticket);
   const doneItems = c.doneItems.map(({ ticket, ...d }) => {
