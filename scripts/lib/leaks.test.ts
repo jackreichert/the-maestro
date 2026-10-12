@@ -83,6 +83,26 @@ test('subagent cache TTL: avoided rewrites within the hour minus the extra paid 
     assert.deepEqual(report(small), []);
 });
 
+test('roll replay: past the threshold the context drops to the floor, reads are avoided, the new base is written once; a threshold that does not pay reports nothing', () => {
+    const at = (n: number) => `2026-09-26T10:${String(n).padStart(2, '0')}:00Z`;
+    // opus: read 0.2, 5m write 5 per MTok. Threshold 1M, floor 0.2M. Turn 1 reads 0.9M; turns 2..9 read 1.1M, 1.2M ... 1.8M.
+    const ctxs = [0.9, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8];
+    const orch = ctxs.map((c, i) => turn(at(i), 'claude-opus-5', use(0, 0, c * M, 0)));
+    const dir = fixture({ orch });
+    const roll = (d: string, rollTokens: number) => leaks(collectTranscripts(d), PRICES, { rollTokens, floorTokens: 0.2 * M });
+    // Rolling at turn 2 sets the base to 0.9M: every later read is 0.9M lower. 8 turns x 0.9M x 0.2 = 1.44, less 0.2M x 5 = 1.00.
+    const [l] = roll(dir, M);
+    assert.match(l.bucket, /^Compaction replayed at the roll threshold \(1000k tokens\)/);
+    assert.ok(Math.abs(l.usd - 0.44) < 1e-9, String(l.usd));
+    assert.match(l.detail[0], /1 session ran past it \(1 roll replayed\)/);
+    // Nothing passes a 2M threshold, so nothing to avoid. A session that never gets past it is untouched.
+    assert.deepEqual(roll(dir, 2 * M), []);
+    // Two turns past the threshold do not repay the 1.00 write.
+    assert.deepEqual(roll(fixture({ orch: ctxs.slice(0, 3).map((c, i) => turn(at(i), 'claude-opus-5', use(0, 0, c * M, 0))) }), M), []);
+    // Without a threshold the bucket is not computed at all.
+    assert.deepEqual(leaks(collectTranscripts(dir), PRICES), []);
+});
+
 test('--leaks CLI prints the ranked report and no content; without prices it says so', () => {
     const dir = fixture({ subs: [{ type: 'explorer', recs: [turn(T(0), 'claude-sonnet-5', use(M, 0, 9 * M, M / 10), [{ name: 'Read', input: { file_path: `/p/${SENTINEL}`.replace(SENTINEL, 'a.ts') } }])] }] });
     const r = run(dir);

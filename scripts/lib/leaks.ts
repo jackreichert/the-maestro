@@ -88,9 +88,51 @@ export function subagentCacheTtl(t: Transcripts, prices: Prices): Leak | null {
     };
 }
 
+/** The context a session starts from after a compaction or a roll, about 50 to 60k tokens (see lib/autocompact.ts). */
+export const POST_ROLL_TOKENS = 55_000;
+export interface LeakOptions { rollTokens?: number; floorTokens?: number }
+
+/**
+ * Orchestrator sessions replayed with a compaction at `rollTokens` of context. Each time a turn's context passes the threshold it is
+ * replaced by `floorTokens`, the carried tokens are no longer read, and the new base is written once at the 5m write price. The figure
+ * is the cache-read dollars avoided minus those writes; a threshold that does not pay for its rewrites reports nothing. Real compactions
+ * (a turn with since 1) reset the replay as they reset the session.
+ */
+export function rollReplay(t: Transcripts, prices: Prices, rollTokens: number, floorTokens: number = POST_ROLL_TOKENS): Leak | null {
+    let saved = 0;
+    let rewrite = 0;
+    let rolls = 0;
+    let sessions = 0;
+    let dropped = 0;
+    for (const turns of t.orch) {
+        let base = 0;
+        let rolled = false;
+        for (const x of turns) {
+            const p = rowFor(prices, family(x.model));
+            if (!p) continue;
+            if (x.since === 1) base = 0;
+            const ctx = x.fresh + x.write + x.read;
+            if (ctx - base > rollTokens) { base = ctx - floorTokens; rolls += 1; rolled = true; rewrite += (floorTokens * p.cache_write_5m) / 1e6; }
+            const cut = Math.min(x.read, base);
+            dropped += cut;
+            saved += (cut * p.cache_read) / 1e6;
+        }
+        if (rolled) sessions += 1;
+    }
+    const net = saved - rewrite;
+    if (net <= 0) return null;
+    return {
+        bucket: `Compaction replayed at the roll threshold (${Math.round(rollTokens / 1000)}k tokens)`,
+        usd: net,
+        detail: [`${plural(sessions, 'session')} ran past it (${plural(rolls, 'roll')} replayed); ${Math.round(dropped / 1e6)}M cache-read tokens avoided, ${usd(saved)}, less ${usd(rewrite)} to write the new bases`],
+        fix: 'roll at the threshold instead of running on: handoff and /clear (see cost/budget.md, Compaction is the roll)',
+    };
+}
+
 /** Every bucket with something to report, most dollars first. */
-export function leaks(t: Transcripts, prices: Prices): Leak[] {
-    return [readOnlySubagents(t, prices), subagentCacheTtl(t, prices)].filter((l): l is Leak => l !== null).sort((a, b) => b.usd - a.usd);
+export function leaks(t: Transcripts, prices: Prices, opts: LeakOptions = {}): Leak[] {
+    const roll = opts.rollTokens === undefined ? null : rollReplay(t, prices, opts.rollTokens, opts.floorTokens);
+    return [readOnlySubagents(t, prices), subagentCacheTtl(t, prices), roll].filter((l): l is Leak => l !== null).sort((a, b) => b.usd - a.usd);
 }
 
 /** The ranked report as text; says so when nothing avoidable was found. */

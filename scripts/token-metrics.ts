@@ -228,7 +228,9 @@ export function collectTranscripts(projectsDir: string): Transcripts {
 
 function printLeaks(projectsDir: string): void {
     if (!MODEL_PRICES) { console.log('Model prices are unset, so there are no dollars to rank. Set model_prices (or MAESTRO_MODEL_PRICES).'); return; }
-    console.log(formatLeaks(leaks(collectTranscripts(projectsDir), MODEL_PRICES)));
+    // The roll threshold in tokens: the roll-now percent of the live autocompact trigger.
+    const rollTokens = Math.round((triggerTokens(readAutocompact()) * ROLL_AT_PCT) / 100);
+    console.log(formatLeaks(leaks(collectTranscripts(projectsDir), MODEL_PRICES, { rollTokens })));
 }
 
 // --- collection ----------------------------------------------------------------
