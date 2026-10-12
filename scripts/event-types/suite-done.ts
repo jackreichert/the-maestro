@@ -11,11 +11,13 @@ import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
 export interface SuiteDoneState { state: 'running' | 'done' | 'lost'; summary: string }
 
-// Scheduling: a local file read every 30 s (the local floor). A suite finishes in minutes, so no idle back-off and a short default TTL.
+// Scheduling: a local file read every 30 s (the local floor). A suite finishes in minutes, so no idle back-off. It runs through quiet hours (a job started at
+// 22:30 ends overnight and must be reported, not expire unseen), and its TTL outlasts any quiet window.
 export const interval = 30;
 export const network = false;
 export const backoff = false;
-export const defaultTtlMs = (): number => 6 * 3600 * 1000;
+export const quietExempt = true;
+export const defaultTtlMs = (): number => 24 * 3600 * 1000;
 
 export function validate(target: string): void {
   if (jobStatus(target).state === 'unknown') throw new Error(`suite-done target must be an existing job id from suite-run.ts start, got "${target}" (looked in ${suitesDir()})`);

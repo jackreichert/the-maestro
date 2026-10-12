@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { tick } from './event-loop.ts';
+import { pace, tick } from './event-loop.ts';
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import * as suiteDone from './event-types/suite-done.ts';
 import { addWatch, listWatches, readDigest } from './lib/watch-registry.ts';
@@ -82,5 +82,31 @@ test('suite-done through the loop: the digest gets one actionable line when resu
     assert.deepEqual(retired.map((r) => r.id), ['suite-job-1']);
     assert.equal(listWatches(dir).length, 0);
     assert.equal(readDigest(dir).length, 1);
+  } finally { if (saved === undefined) delete process.env.MAESTRO_SUITE_DIR; else process.env.MAESTRO_SUITE_DIR = saved; }
+});
+
+test('suite-done runs in quiet hours: results landing overnight are reported, and the 24h TTL outlasts the quiet window', () => {
+  const base = mkdtempSync(join(tmpdir(), 'suites-'));
+  const dir = mkdtempSync(join(tmpdir(), 'loop-'));
+  const saved = process.env.MAESTRO_SUITE_DIR;
+  process.env.MAESTRO_SUITE_DIR = base;
+  try {
+    const START = Date.parse('2026-10-12T22:30:00Z');
+    const quiet = { quietHours: '23:00-07:00', quietMode: 'stop', tz: 'UTC' };
+    const deps = (now: number) => ({ dir, types: BUILTIN_TYPES, ctx: { run: () => ({ status: 0, stdout: '', stderr: '' }) }, config: quiet, now });
+    job(base, 'job-q');
+    const ttl = suiteDone.defaultTtlMs();
+    assert.ok(ttl >= 24 * 3600 * 1000);
+    const w = addWatch(dir, { id: 'suite-job-q', type: 'suite-done', target: 'job-q', ttlMs: ttl }, START);
+    assert.equal(Date.parse(w.expires) - START, ttl);
+    tick(deps(START));
+    const MIDNIGHT = Date.parse('2026-10-13T01:00:00Z');
+    assert.equal('stop' in pace({ dir, types: BUILTIN_TYPES, config: quiet, now: MIDNIGHT }), false, 'the loop does not stop for quiet hours while a suite watch is live');
+    job(base, 'job-q', { ...RESULTS, pass: true, tests: { exit: 0, pass: 10, fail: 0, cancelled: 0, failing: [] } });
+    const out = tick(deps(MIDNIGHT));
+    assert.deepEqual(out.skipped, []);
+    assert.equal(out.events.length, 1);
+    assert.match(out.events[0]?.summary ?? '', /PASS/);
+    assert.deepEqual(out.retired.map((r) => r.id), ['suite-job-q']);
   } finally { if (saved === undefined) delete process.env.MAESTRO_SUITE_DIR; else process.env.MAESTRO_SUITE_DIR = saved; }
 });
