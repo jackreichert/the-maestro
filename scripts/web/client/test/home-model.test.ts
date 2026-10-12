@@ -50,14 +50,14 @@ test('weeksChart: one column per period, one series per stream in page order, ab
   assert.deepEqual(weeksChart({ ...projects(), weeks: [] }, []), { labels: [], series: [] });
 });
 
-test('doneSpans: today and the week, grouped by stream with a link to its tab; ids the capped list lacks are counted', () => {
+test('doneSpans: today and the week, grouped by stream; ids the capped list lacks are counted', () => {
   const d = doneSpans(charts(), ['acme-widgets', 'ops']);
   assert.equal(d.today.n, 2);
   assert.deepEqual(d.today.groups.map((g) => [g.stream, g.n, g.items.length]), [['acme-widgets', 1, 1], ['ops', 1, 1]]);
   assert.deepEqual(d.week.groups.map((g) => [g.stream, g.n]), [['acme-widgets', 6], ['ops', 3], ['other', 1]], 'week counts come from the day totals, not the capped item list');
-  assert.match(d.today.groups[0].tab, /^#/);
   const weekIds = charts().throughput.slice(-7).flatMap((x) => x.ids).length;
   assert.equal(d.week.n, weekIds);
+  for (const span of [d.today, d.week]) assert.equal(span.groups.reduce((t, g) => t + g.n, 0), span.n, 'the header n and the group counts are the same total');
   assert.equal(d.missing, weekIds - d.week.groups.reduce((t, g) => t + g.items.length, 0));
   const none = doneSpans({ ...charts(), throughput: [], doneItems: [] }, []);
   assert.deepEqual([none.today.n, none.week.n, none.missing], [0, 0, 0]);
