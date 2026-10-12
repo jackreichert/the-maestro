@@ -77,6 +77,9 @@ export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from
 /** The message's own marker: its timestamp plus a short hash of its text, so two messages in the same millisecond never share one. It is the only memory of what was raised. */
 export const hitMarker = (m: UserMessage): string => `[msg ${m.ts} ${createHash('sha1').update(m.text).digest('hex').slice(0, 6)}]`;
 
+/** Ends every decision-scan ask: the way to answer it. `log --kind decision` leaves the decision in the ledger only; `decide` also writes it where it will be found. */
+export const DECIDE_HINT = ' -- answer each real decision with journal.ts decide "<decision>" --why "<reason>" (not log --kind decision), then resolve this ask';
+
 /** Decisions per ask row: a run raises every unhandled hit, in rows of this many, so a long session costs a few journal calls and never leaves a remainder to lose. */
 export const DECISIONS_PER_ASK = 20;
 
@@ -99,7 +102,7 @@ export function unledgeredDecisions(messages: UserMessage[], rows: LedgerRow[]):
     const raise: string[] = [];
     for (let i = 0; i < hits.length; i += DECISIONS_PER_ASK) {
         const batch = hits.slice(i, i + DECISIONS_PER_ASK);
-        raise.push(`unledgered decision? (${batch.length}) ${batch.map(line).join(' || ')}`);
+        raise.push(`unledgered decision? (${batch.length}) ${batch.map(line).join(' || ')}${DECIDE_HINT}`);
     }
     return { raise, count: hits.length };
 }

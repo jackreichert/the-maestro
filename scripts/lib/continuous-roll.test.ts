@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { compactions, continuityLines, isAllScopeHandoff, lastContext, thrash, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { DECIDE_HINT, compactions, continuityLines, isAllScopeHandoff, lastContext, thrash, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 
 const line = (o: object): string => JSON.stringify(o);
 const T0 = '2026-10-09T12:00:00.000Z';
@@ -183,6 +183,7 @@ test('every pending decision is raised in one run, oldest first, 20 per ask row'
   const msgs = Array.from({ length: 45 }, (_, n) => msg(n));
   const out = unledgeredDecisions(msgs, []);
   assert.deepEqual(out.raise.map((q) => /^unledgered decision\? \((\d+)\)/.exec(q)?.[1]), ['20', '20', '5']);
+  assert.ok(out.raise.every((q) => q.endsWith(DECIDE_HINT) && q.includes('journal.ts decide') && q.includes('not log --kind decision')), 'every scan ask says to answer with decide');
   assert.match(out.raise[0], /rule number 0 applies/);
   assert.equal(unledgeredDecisions(msgs, asRows(out.raise)).count, 0, 'a second run raises nothing');
 });
