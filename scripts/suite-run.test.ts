@@ -1,0 +1,124 @@
+// Run: node --test scripts/suite-run.test.ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { jobDir, jobStatus, parseTap, startJob, statusLine, suiteEnv } from './suite-run.ts';
+import type { JobStatus } from './suite-run.ts';
+
+const ROOT = new URL('..', import.meta.url).pathname;
+const SCRIPT = join(ROOT, 'scripts', 'suite-run.ts');
+const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
+
+/** A committed fixture repo holding the given { file: text }; hooks are off so no global commit hook judges it. */
+function fixture(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'suite-fixture-'));
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'feat: fixture']]) spawnSync('git', args, { cwd: dir, env: GIT_ENV });
+  return dir;
+}
+
+/** Polls a job once per 200 ms until it is no longer running (a test may wait; the code under test never does). */
+async function settled(id: string, base: string): Promise<JobStatus> {
+  for (let i = 0; i < 300; i += 1) {
+    const s = jobStatus(id, base);
+    if (s.state !== 'running') return s;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`job ${id} still running`);
+}
+
+const PASSING = "import { test } from 'node:test';\ntest('env is isolated', () => { if (process.env.MAESTRO_NOTIFY_COMMAND !== '/usr/bin/true' || !process.env.HOME?.includes('suite-run-home')) throw new Error(`env leaked: ${process.env.HOME}`); });\ntest('plain pass', () => {});\n";
+const FAILING = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('the broken one', () => assert.equal(1, 2));\n";
+
+test('start returns before the suite finishes, then results.json carries counts, failing names, sha and times', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const repo = fixture({ 'a.test.ts': PASSING, 'b.test.ts': FAILING });
+  const spec = startJob(repo, { tests: '*.test.ts', skipTsc: true, base });
+  assert.ok(existsSync(join(jobDir(spec.id, base), 'job.json')));
+  assert.ok(spec.workerPid > 0);
+  const done = await settled(spec.id, base);
+  assert.equal(done.state, 'done');
+  const r = done.results;
+  assert.ok(r);
+  assert.equal(r.pass, false);
+  assert.equal(r.head, spec.head);
+  assert.equal(r.head, spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim());
+  assert.equal(r.tests.pass, 2);
+  assert.equal(r.tests.fail, 1);
+  assert.equal(r.tests.cancelled, 0);
+  assert.notEqual(r.tests.exit, 0);
+  assert.deepEqual(r.tests.failing, ['the broken one']);
+  assert.deepEqual(r.tsc, { exit: null, skipped: true });
+  assert.equal(r.concurrency, 2);
+  assert.ok(Date.parse(r.endedAt) >= Date.parse(r.startedAt));
+  assert.match(statusLine(done), /FAIL at .*1 fail.*failing: the broken one/);
+});
+
+test('a clean suite passes, and the tests ran with the isolated env (a leak would fail the first test)', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const repo = fixture({ 'a.test.ts': PASSING });
+  const done = await settled(startJob(repo, { tests: '*.test.ts', skipTsc: true, base }).id, base);
+  assert.equal(done.results?.pass, true);
+  assert.equal(done.results?.tests.fail, 0);
+});
+
+test('tsc is run from the worktree: a type error fails the job, a clean tree passes, a missing tsc fails loudly', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const files = { 'a.test.ts': PASSING, 'tsconfig.json': JSON.stringify({ compilerOptions: { strict: true, noEmit: true, module: 'nodenext', moduleResolution: 'nodenext', allowImportingTsExtensions: true, types: ['node'], skipLibCheck: true }, include: ['*.ts'] }) };
+  const clean = fixture(files);
+  const bad = fixture({ ...files, 'bad.ts': 'export const n: number = "text";\n' });
+  const bare = fixture(files);
+  for (const dir of [clean, bad]) symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
+  const run = async (dir: string) => (await settled(startJob(dir, { tests: '*.test.ts', base }).id, base)).results;
+  assert.equal((await run(clean))?.pass, true);
+  const failed = await run(bad);
+  assert.equal(failed?.pass, false);
+  assert.notEqual(failed?.tsc.exit, 0);
+  assert.equal(failed?.tests.fail, 0);
+  const missing = await run(bare);
+  assert.equal(missing?.pass, false);
+  assert.equal(missing?.tsc.exit, 127);
+  assert.match(missing?.tsc.note ?? '', /--skip-tsc/);
+});
+
+test('status: unknown job, a worker that died without results, and bad ids', () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  assert.equal(jobStatus('nope', base).state, 'unknown');
+  mkdirSync(join(base, 'dead-1'));
+  writeFileSync(join(base, 'dead-1', 'job.json'), JSON.stringify({ id: 'dead-1', workerPid: 0 }));
+  assert.equal(jobStatus('dead-1', base).state, 'lost');
+  assert.match(statusLine(jobStatus('dead-1', base)), /lost/);
+  for (const id of ['../x', 'a/b', '', '..', '.']) assert.throws(() => jobDir(id, base), /not a job id/, id);
+});
+
+test('suiteEnv keeps the suite away from real state', () => {
+  const env = suiteEnv('/tmp/h', { HOME: '/Users/real', LEDGER_ROOT: '/real/ledger', PATH: '/bin' });
+  assert.equal(env.HOME, '/tmp/h');
+  assert.equal(env.MAESTRO_NOTIFY_COMMAND, '/usr/bin/true');
+  assert.equal(env.LEDGER_ROOT, '');
+  assert.equal(env.PATH, '/bin');
+  assert.equal('NODE_TEST_CONTEXT' in suiteEnv('/tmp/h', { NODE_TEST_CONTEXT: 'child-v8' }), false);
+});
+
+test('parseTap reads counts and names, once each, from node TAP output', () => {
+  const tap = 'TAP version 13\n    not ok 1 - inner one\n  not ok 2 - outer one\nnot ok 3 - /x/a.test.ts # SKIP\n# tests 5\n# pass 2\n# fail 2\n# cancelled 1\n';
+  assert.deepEqual(parseTap(tap), { pass: 2, fail: 2, cancelled: 1, failing: ['inner one', 'outer one', '/x/a.test.ts'] });
+  assert.deepEqual(parseTap(''), { pass: 0, fail: 0, cancelled: 0, failing: [] });
+});
+
+test('the CLI: start prints a job id and returns; status exits 4 while running or 0/1 when finished; no args is usage', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const repo = fixture({ 'a.test.ts': PASSING });
+  const env = { ...process.env, MAESTRO_SUITE_DIR: base, MAESTRO_LOCAL_CONFIG: '' };
+  const started = spawnSync(process.execPath, [SCRIPT, 'start', repo, '--tests', '*.test.ts', '--skip-tsc', '--json'], { encoding: 'utf8', env });
+  assert.equal(started.status, 0, started.stderr);
+  const { job } = JSON.parse(started.stdout) as { job: string };
+  await settled(job, base);
+  const status = spawnSync(process.execPath, [SCRIPT, 'status', job], { encoding: 'utf8', env });
+  assert.equal(status.status, 0, status.stdout + status.stderr);
+  assert.match(status.stdout, /PASS/);
+  assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', env }).status, 2);
+});
