@@ -32,7 +32,8 @@ export function weeksChart(p: ProjectsData, order: string[]): ChartData {
   return { labels: p.weeks.map((w) => w.start.slice(5)), series: streams.map((name) => ({ name, values: p.weeks.map((w) => w.byStream[name] ?? 0) })) };
 }
 
-export interface DoneGroup { stream: string; tab: string; items: ChartDoneItem[] }
+/** `n` is the stream's count from the per-day totals; `items` are the ones the capped item list still holds, so it may be shorter. */
+export interface DoneGroup { stream: string; tab: string; n: number; items: ChartDoneItem[] }
 export interface DoneSpan { n: number; groups: DoneGroup[] }
 /** What we got done: today, and the seven page days ending today. `missing` counts ids the server's capped item list no longer holds. */
 export interface Done { today: DoneSpan; week: DoneSpan; missing: number }
@@ -43,8 +44,10 @@ export function doneSpans(c: ChartsData, order: string[]): Done {
   const span = (days: ChartsData['throughput']): DoneSpan => {
     const ids = days.flatMap((d) => d.ids);
     const items = ids.flatMap((id) => { const it = byId.get(id); if (!it) missing += 1; return it ? [it] : []; });
-    const streams = [...new Set(items.map((i) => i.stream))].sort((a, b) => (order.indexOf(a) + 1 || 1e9) - (order.indexOf(b) + 1 || 1e9) || a.localeCompare(b));
-    return { n: ids.length, groups: streams.map((stream) => ({ stream, tab: formatFragment(streamTabId(stream)), items: items.filter((i) => i.stream === stream) })) };
+    const counts: Record<string, number> = {};
+    for (const d of days) for (const [s, n] of Object.entries(d.byStream)) counts[s] = (counts[s] ?? 0) + n;
+    const streams = Object.keys(counts).filter((s) => counts[s]! > 0).sort((a, b) => (order.indexOf(a) + 1 || 1e9) - (order.indexOf(b) + 1 || 1e9) || a.localeCompare(b));
+    return { n: ids.length, groups: streams.map((stream) => ({ stream, tab: formatFragment(streamTabId(stream)), n: counts[stream]!, items: items.filter((i) => i.stream === stream) })) };
   };
   const today = span(c.throughput.slice(-1));
   missing = 0;   // count once, over the week, which includes today

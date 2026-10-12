@@ -53,7 +53,8 @@ test('weeksChart: one column per period, one series per stream in page order, ab
 test('doneSpans: today and the week, grouped by stream with a link to its tab; ids the capped list lacks are counted', () => {
   const d = doneSpans(charts(), ['acme-widgets', 'ops']);
   assert.equal(d.today.n, 2);
-  assert.deepEqual(d.today.groups.map((g) => [g.stream, g.items.length]), [['acme-widgets', 1], ['ops', 1]]);
+  assert.deepEqual(d.today.groups.map((g) => [g.stream, g.n, g.items.length]), [['acme-widgets', 1, 1], ['ops', 1, 1]]);
+  assert.deepEqual(d.week.groups.map((g) => [g.stream, g.n]), [['acme-widgets', 6], ['ops', 3], ['other', 1]], 'week counts come from the day totals, not the capped item list');
   assert.match(d.today.groups[0].tab, /^#/);
   const weekIds = charts().throughput.slice(-7).flatMap((x) => x.ids).length;
   assert.equal(d.week.n, weekIds);
