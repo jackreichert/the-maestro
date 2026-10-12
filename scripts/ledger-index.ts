@@ -5,7 +5,7 @@
  *
  *   ledger-index.ts index                       full rebuild, atomic rename into place
  *   ledger-index.ts search "<fts query>" [--source ledger|tickets|handoffs|archive|library] [--stream X] [--limit 20] [--json]
- *   ledger-index.ts find "<fts query>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
+ *   ledger-index.ts find "<fts query>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json] [--exit-miss]
  *                                               library pages, best first: path, kind, read-when line, verified-at age, stale flag
  *   ledger-index.ts stats [--json]              counts per table, open items per stream
  *   ledger-index.ts query <name> [args] [--json]  named queries and read-only --sql; `query` lists them
@@ -399,6 +399,8 @@ function cmdFind(): void {
         const any = anyWordQuery(query);
         if (!hits.length && any) hits = findPages(db, any, opts, 'any');
     } finally { db.close(); }
+    // --exit-miss: an empty result is exit 4 (the caller logs the miss), not 0; any other outcome is unchanged.
+    if (!hits.length && has('exit-miss')) process.exitCode = 4;
     if (has('json')) { printJson(hits); return; }
     if (!hits.length) { console.log('(no library pages match)'); return; }
     if (hits[0].matched === 'any') console.log('(no page has every word; showing pages that match any)');

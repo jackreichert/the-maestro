@@ -15,6 +15,7 @@ import { describeFindings, scanFields, scanText as scanShared } from '../secret-
 import { COMPOSER, MAX_LINES } from './rules.ts';
 import { MAX_LINE, scanText as scanPage } from './scan.ts';
 import { COMPOSER_ITEM, REJECT_MAX, curatedProblems, pendingLearned } from './composer.ts';
+import { pendingMisses } from '../journal/miss.ts';
 import { WITHHELD, safeLine } from './safe-text.ts';
 
 /** How long a pass holds the lock without writing a row; any row it writes renews it. */
@@ -196,7 +197,7 @@ export function seedLastWrites(env: WriteEnv, holder: string | undefined): Outco
 export interface Marks { model?: string; used?: string[]; tokens?: string }
 
 /**
- * Close one pending learned row: with `page` (the page exists and passes the same checks now; its sha256 is recorded) or with `reject`
+ * Close one pending learned or miss row: with `page` (the page exists and passes the same checks now; its sha256 is recorded) or with `reject`
  * (a scanned, one-line reason). The row is checked with the same function `verify` runs, so the writer cannot append what `verify` flags.
  */
 export function curate(env: WriteEnv, holder: string | undefined, learnedId: string, how: { page?: string; reject?: string; refresh?: boolean; acceptHandEdit?: boolean }, marks: Marks = {}): Outcome<{ id: string }> {
@@ -208,7 +209,7 @@ export function curate(env: WriteEnv, holder: string | undefined, learnedId: str
     // A refresh re-records the sha of a page already composed from this learned row, so the next pass compares against the refresh, not the first curate.
     if (how.page === undefined || how.reject !== undefined) return refuse(1, '--refresh needs --page and no --reject');
     if (!rows.some((r) => r.kind === 'curated' && r.closes === learnedId && r.page === how.page)) return refuse(1, 'that id has no curated row for that page: a refresh re-records a page this learned row already composed');
-  } else if (!pendingLearned(rows).some((r) => r.id === learnedId)) return refuse(1, 'that id is not a pending learned row (unknown, or already curated)');
+  } else if (![...pendingLearned(rows), ...pendingMisses(rows)].some((r) => r.id === learnedId)) return refuse(1, 'that id is not a pending learned or miss row (unknown, or already curated)');
   const row: LedgerRow = { id: env.newId(rows), ts: env.now(), date: env.now().slice(0, 10), kind: 'curated', closes: learnedId, text: `${how.refresh ? 'refreshed' : 'curated'} ${learnedId}`, window: holder as string, ...marks };
   if (how.reject !== undefined) {
     const reason = how.reject.replace(/\s+/g, ' ').trim();
@@ -231,8 +232,8 @@ export function curate(env: WriteEnv, holder: string | undefined, learnedId: str
     row.page = page;
     row.pageSha = sha;
   }
-  const learnedIds = new Set(rows.filter((r) => r.kind === 'learned' && typeof r.id === 'string').map((r) => r.id as string));
-  const own = curatedProblems(row, learnedIds);
+  const closableIds = new Set(rows.filter((r) => (r.kind === 'learned' || r.kind === 'miss') && typeof r.id === 'string').map((r) => r.id as string));
+  const own = curatedProblems(row, closableIds);
   if (own.length) return refuse(1, ...own.map((p) => `curated row: ${p}`));
   env.append(row);
   return { ok: true, id: row.id as string };

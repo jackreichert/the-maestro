@@ -1,13 +1,14 @@
 /**
- * Test support: a fake `gh` on PATH so the PR scripts run offline.
+ * Test support: a fake `gh` behind MAESTRO_GH_BIN so the PR scripts run offline, with no executable written.
  *
- * `installGhStub(config)` writes an executable `gh` into a temp dir and returns the env to run a
- * script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
+ * `installGhStub(config)` writes the fake's script into a temp dir and returns the env (MAESTRO_GH_BIN and
+ * MAESTRO_GH_BIN_ARGS point at it through node) to run a script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
  * for the cursor `p<i>` the stub itself hands out as endCursor, so a script that ignores
  * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
  * `delayMs: n` makes `api graphql` sleep n ms before answering; `callLog: path` records each `api graphql` call. `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { stubEnv, writeStub } from './stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,14 +37,13 @@ else if (argv[0] === 'api' && cfg.delayMs) {
 else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPEN');
 `;
 
-/** Writes the stub and returns an env (PATH + config) for spawning a script against it. */
+/** Writes the stub and returns an env (the gh seam + config) for spawning a script against it. */
 export function installGhStub(config: GhStubConfig): NodeJS.ProcessEnv {
   const dir = mkdtempSync(join(tmpdir(), 'gh-stub-'));
-  writeFileSync(join(dir, 'gh'), STUB);
-  chmodSync(join(dir, 'gh'), 0o755);
+  const stub = writeStub(join(dir, 'gh.cjs'), STUB);
   const configPath = join(dir, 'config.json');
   writeFileSync(configPath, JSON.stringify(config));
-  return { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
+  return { ...process.env, ...stubEnv('MAESTRO_GH_BIN', stub), GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
 }
 
 /** A search node carrying every field the pr-watch event type and prs-snapshot.ts read. */

@@ -43,7 +43,7 @@ test('journal.ts status-page reads the ledger and gh, writes The-Podium.md, and 
 test('a gh failure still writes the page, with a warning that no PR data is cached', () => {
   const { statusDir, env } = setup();
   const broken = spawnSync(process.execPath, [JOURNAL, 'status-page', '--vault', mkdtempSync(join(tmpdir(), 'sp-l-')), '--project', 'proj', '--status-dir', statusDir], {
-    encoding: 'utf8', cwd, env: { ...env, PATH: '/nonexistent-dir' },
+    encoding: 'utf8', cwd, env: { ...env, MAESTRO_GH_BIN: '', MAESTRO_GH_BIN_ARGS: '', PATH: '/nonexistent-dir' },
   });
   assert.equal(broken.status, 0, broken.stderr);
   assert.match(broken.stderr, /status-page: GitHub read failed/);
