@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BUILTIN_TYPES } from './event-types/index.ts';
@@ -26,7 +26,9 @@ function rig(stallMinutes = 90) {
   let activityWhat = 'edited a.ts';
   let wts: WorktreeRef[] | null = [{ path: '/c/.worktrees/maestro-111', branch: 'feat/MAESTRO-315-stall' }];
   const reportTimes: Record<string, number> = {};
-  const io: StallIo = { stallMinutes, rows: () => rows, worktrees: () => wts, activity: () => ({ at: activityAt, what: activityWhat }), reportAt: (p) => reportTimes[p] ?? 0 };
+  let scratchAt = 0;
+  let liveNow: boolean | null = false;
+  const io: StallIo = { stallMinutes, rows: () => rows, worktrees: () => wts, activity: () => ({ at: activityAt, what: activityWhat }), reportAt: (p) => reportTimes[p] ?? 0, dispatchFiles: () => (scratchAt ? { at: scratchAt, what: 'wrote report-aaaa.md' } : null), live: () => liveNow };
   const append = (row: Record<string, unknown>): LedgerRow => { const r = { id: `r${++n}`, ts: new Date(now).toISOString(), date: '2026-10-11', ...row } as LedgerRow; rows.push(r); return r; };
   const dispatch = (id = 'aaaa', scope = 'maestro-111') => {
     append({ id, kind: 'wip', text: `build ${id}`, repo: 'the-maestro' });
@@ -38,6 +40,8 @@ function rig(stallMinutes = 90) {
     state: () => state as StallState,
     work: (what = 'edited a.ts') => { activityAt = now; activityWhat = what; },
     gone: () => { wts = null; },
+    scratch: () => { scratchAt = now; },
+    live: (v: boolean | null) => { liveNow = v; },
     writeReport: (id = 'aaaa') => { reportTimes[`/s/report-${id}.md`] = now; },
     step: (minutes: number) => { now += minutes * MIN; const next = stall.check('/c', { now, prev: state, run: defaultRun }, io); events.push(...stall.diff(state, next)); state = next; return next; },
     run: (minutes: number, every = 5) => { for (let m = 0; m < minutes; m += every) r.step(every); },
@@ -195,4 +199,64 @@ test('a report older than the latest dispatch is not a finish: a re-briefed agen
   r.run(100);
   assert.equal(r.events.length, 1);
   assert.match(r.events[0]?.summary ?? '', /^stalled redo /);
+});
+
+test('two 60 minute suites back to back, each writing only to the dispatch scratch files, are not a stall', () => {
+  const r = rig();
+  r.dispatch();
+  r.work();
+  r.run(60);
+  r.scratch();
+  r.run(60);
+  r.scratch();
+  r.run(60);
+  assert.deepEqual(r.events, [], '180 minutes with no worktree write but scratch writes every hour');
+  r.run(100);
+  assert.equal(r.events.length, 1, 'scratch writes stop: it stalls 90 minutes after the last');
+});
+
+test('a live process in the worktree is progress, however quiet the files; lsof missing changes nothing', () => {
+  const r = rig();
+  r.dispatch();
+  r.work();
+  r.live(true);
+  r.run(300);
+  assert.deepEqual(r.events, [], 'a process runs there');
+  r.live(false);
+  r.run(85);
+  assert.deepEqual(r.events, [], 'the clock restarts from the last time a process was seen');
+  r.run(10);
+  assert.equal(r.events.length, 1, 'the process is gone, 90 minutes quiet');
+  const n = rig();
+  n.dispatch();
+  n.live(null);
+  n.run(100);
+  assert.equal(n.events.length, 1, 'cannot tell: judged on files alone');
+});
+
+test('real io: live() sees a process whose cwd is in the worktree, and dispatchFiles() takes the report and scratch, not the brief', async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'stall-live-')));
+  const io = stall.realIo(home, defaultRun);
+  const wt = join(home, 'wt');
+  mkdirSync(join(wt, 'sub'), { recursive: true });
+  const probe = spawnSync('lsof', ['-v'], { encoding: 'utf8' });
+  const hasLsof = !probe.error;
+  const child = (await import('node:child_process')).spawn('sleep', ['30'], { cwd: join(wt, 'sub') });
+  try {
+    await new Promise((res) => setTimeout(res, 300));
+    if (hasLsof) {
+      assert.equal(io.live(wt), true, 'sleep runs in wt/sub');
+    } else assert.equal(io.live(wt), null);
+  } finally { child.kill(); }
+  if (hasLsof) { await new Promise((res) => setTimeout(res, 300)); assert.equal(io.live(wt), false, 'the process is gone'); }
+  const failing = stall.realIo(home, () => ({ status: 127, stdout: '', stderr: 'no lsof' }) as never);
+  assert.equal(failing.live(wt), null, 'no lsof: unknown, not false');
+  const dir = join(home, 'briefs');
+  mkdirSync(dir);
+  for (const f of ['brief-ab12.md', 'report-ab12.md', 'details-ab12.txt', 'report-zz99.md']) writeFileSync(join(dir, f), f);
+  const old = new Date(T0 - 5 * 3600_000);
+  for (const f of ['brief-ab12.md', 'report-ab12.md', 'report-zz99.md']) utimesSync(join(dir, f), old, old);
+  const got = io.dispatchFiles(join(dir, 'report-ab12.md'), 'ab12');
+  assert.equal(got?.what, 'wrote details-ab12.txt', 'the fresh scratch file wins; the brief and another item are ignored');
+  assert.equal(io.dispatchFiles(join(dir, 'report-nope.md'), 'nope'), null);
 });

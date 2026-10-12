@@ -144,7 +144,7 @@ test('a kept desk claim still gets a brief claim row naming the scope and branch
     assert.equal(rows().length, before, 'a rerun adds nothing');
     const stall = await import('./event-types/stall.ts');
     const T = Date.now() + 10 * 3600_000;
-    const io = { stallMinutes: 90, rows: () => rows() as never, worktrees: () => [{ path: '/c/repo-c-wt', branch: 'feat/x' }], activity: () => ({ at: Date.now(), what: 'edited a.ts' }), reportAt: () => 0 };
+    const io = { stallMinutes: 90, rows: () => rows() as never, worktrees: () => [{ path: '/c/repo-c-wt', branch: 'feat/x' }], activity: () => ({ at: Date.now(), what: 'edited a.ts' }), reportAt: () => 0, dispatchFiles: () => null, live: () => null };
     const next = stall.check('/c', { now: T, prev: null, run: (() => ({ status: 1, stdout: '', stderr: '' })) as never }, io);
     assert.deepEqual(next.fresh.map((f) => f.id), [id], 'the claim-first dispatch is watched');
 });

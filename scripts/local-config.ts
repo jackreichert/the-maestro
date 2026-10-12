@@ -427,7 +427,7 @@ export const SWEEP_IDLE_MINUTES = positiveInt(pick('MAESTRO_SWEEP_IDLE_MINUTES',
 
 /**
  * Minutes a dispatched agent may show no progress (no commit, no edited file in its worktree) before the `stall` event type reports it.
- * Default 90: long test runs under load go quiet for 20 to 40 minutes, so the default is more than double that.
+ * Default 90: one full test run under load takes 40 to 60 minutes and two can run back to back, so the report/scratch writes and a live process in the worktree count as progress too, and 90 is the margin on top of them.
  */
 export const STALL_MINUTES = positiveInt(pick('MAESTRO_STALL_MINUTES', 'stall_minutes'), 90);
 
