@@ -7,7 +7,7 @@
  * same repo and scope) names the repo and the worktree or branch the agent works in. Items with no claim (read-only briefs, work done in the
  * orchestrator itself) have no place to look for evidence, so they are never judged: a stall is only reported when it can be shown.
  *
- * Progress is the newest of: the dispatch itself (the item's latest brief or claim row, so a fresh dispatch starts a new clock), the newest report or scratch file the dispatch wrote (files beside the report path whose name holds the item id), a live process whose working directory is in the worktree (`lsof -a -d cwd`; when lsof is missing this signal is simply absent), the worktree's
+ * Progress is the newest of: the dispatch itself (the item's latest brief or claim row, so a fresh dispatch starts a new clock), the newest report or scratch file the dispatch wrote (files beside the report path whose name holds the item id), a live process that started after the dispatch and has its working directory in the worktree (`lsof -a -d cwd`; when lsof is missing this signal is simply absent; it extends the clock by at most one `stall_minutes` past the newest other sign), the worktree's
  * HEAD, reflog and index files (a commit, checkout or `git add`), and the mtimes of the files `git status` lists as changed or untracked (an edit).
  * Why these and not the lease: a lease belongs to the orchestrator window and any row that window writes renews it, so it says nothing about
  * the subagent. The agent writes no ledger rows of its own until it hands back. Commits alone miss an agent that edits for an hour before its
@@ -61,11 +61,20 @@ export interface StallIo {
   reportAt(report: string): number;
   /** The newest mtime among the dispatch's report and scratch files (files beside the report whose name holds the item id, except the brief itself), or null when none. */
   dispatchFiles(report: string, id: string): { at: number; what: string } | null;
-  /** True when a process (other than this one) has its working directory in the worktree, false when none, null when it cannot be told (no lsof). */
-  live(dir: string): boolean | null;
+  /** True when a process (other than this one) that started at or after `since` (epoch ms) has its working directory in the worktree, false when none, null when it cannot be told (no lsof). */
+  live(dir: string, since: number): boolean | null;
 }
 
 const ledgerPath = (): string => join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONFIGURED_PROJECT || CONTAINER_PROJECT, 'Journal', 'ledger.jsonl');
+
+/** False only when `ps` says the process started before `since`: a terminal tab or proxy that predates the dispatch is not the agent's. An unreadable start time counts. */
+function startedSince(run: Run, pid: string, since: number): boolean {
+  try {
+    const r = run('ps', ['-o', 'lstart=', '-p', pid]);
+    const started = r.status === 0 ? Date.parse(r.stdout.trim()) : NaN;
+    return !Number.isFinite(started) || started >= since - 1000; // lstart has one-second resolution
+  } catch { return true; }
+}
 
 export function realIo(target: string, run: Run): StallIo {
   const git = (dir: string, ...args: string[]): string | null => {
@@ -94,7 +103,7 @@ export function realIo(target: string, run: Run): StallIo {
       const stamps = names.filter((n) => n.includes(id) && !n.startsWith('brief-')).map((n) => ({ at: mtime(join(dirname(report), n)), what: `wrote ${n}` }));
       return stamps.length ? stamps.reduce((a, b) => (b.at > a.at ? b : a)) : null;
     },
-    live: (dir) => {
+    live: (dir, since) => {
       try {
         const r = run('lsof', ['-a', '-d', 'cwd', '-F', 'pn']);
         if (r.status !== 0 && !r.stdout) return null;
@@ -102,7 +111,7 @@ export function realIo(target: string, run: Run): StallIo {
         let pid = '';
         for (const line of r.stdout.split('\n')) {
           if (line.startsWith('p')) pid = line.slice(1);
-          else if (line.startsWith('n') && pid !== String(process.pid) && (line.slice(1) === root || line.slice(1).startsWith(root + sep))) return true;
+          else if (line.startsWith('n') && pid !== String(process.pid) && (line.slice(1) === root || line.slice(1).startsWith(root + sep)) && startedSince(run, pid, since)) return true;
         }
         return false;
       } catch { return null; }
@@ -164,12 +173,14 @@ export function check(_target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 
     const files = c.report ? use.dispatchFiles(c.report, c.id) : null;
     const signals = [seen, { at: c.dispatchedAt, what: 'dispatch' }, ...(files ? [files] : [])];
     const base = signals.reduce((x, y) => (y.at > x.at ? y : x));
-    // A live process in the worktree is the last test, asked only once the files have been quiet for half the limit: it covers a long run that
-    // writes nothing, and checking every tick from then on keeps the last-seen time within one tick of the run's end.
+    // A live process in the worktree (one that started after the dispatch) is the last test, asked only once the files have been quiet for half the
+    // limit: it covers a long run that writes nothing, and checking every tick from then on keeps the last-seen time within one tick of the run's end.
+    // It is bounded: it can push the clock at most one more `stall_minutes` past the newest other sign, or a hung command or stray process would hide a stall for good.
     let liveAt = prev.liveSeen?.[c.id] ?? 0;
-    if (ctx.now - base.at >= limit / 2 && use.live(wt.path) === true) liveAt = ctx.now;
+    if (ctx.now - base.at >= limit / 2 && use.live(wt.path, c.dispatchedAt) === true) liveAt = ctx.now;
     if (liveAt > base.at) liveSeen[c.id] = liveAt;
-    const { at: lastAt, what: last } = liveAt > base.at ? { at: liveAt, what: 'live process in the worktree' } : base;
+    const liveCounted = Math.min(liveAt, base.at + limit);
+    const { at: lastAt, what: last } = liveCounted > base.at ? { at: liveCounted, what: 'live process in the worktree' } : base;
     if (ctx.now - lastAt < limit) { delete announced[c.id]; continue; }
     if (announced[c.id] === lastAt) continue;
     announced[c.id] = lastAt;

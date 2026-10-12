@@ -215,23 +215,40 @@ test('two 60 minute suites back to back, each writing only to the dispatch scrat
   assert.equal(r.events.length, 1, 'scratch writes stop: it stalls 90 minutes after the last');
 });
 
-test('a live process in the worktree is progress, however quiet the files; lsof missing changes nothing', () => {
+test('a live process in the worktree is progress for at most one more stall_minutes; lsof missing changes nothing', () => {
   const r = rig();
   r.dispatch();
   r.work();
   r.live(true);
-  r.run(300);
-  assert.deepEqual(r.events, [], 'a process runs there');
+  r.run(120);
+  assert.deepEqual(r.events, [], 'two 60 minute suites: a process runs there');
   r.live(false);
-  r.run(85);
-  assert.deepEqual(r.events, [], 'the clock restarts from the last time a process was seen');
+  r.run(55);
+  assert.deepEqual(r.events, [], 'the cap is the newest file sign plus one stall_minutes, so 180 minutes in');
   r.run(10);
-  assert.equal(r.events.length, 1, 'the process is gone, 90 minutes quiet');
+  assert.equal(r.events.length, 1, 'the process is gone, past the cap');
   const n = rig();
   n.dispatch();
   n.live(null);
   n.run(100);
   assert.equal(n.events.length, 1, 'cannot tell: judged on files alone');
+});
+
+test('a process that never ends cannot hide a stall: it is reported once the live extension is used up', () => {
+  const r = rig();
+  r.dispatch();
+  r.work();
+  r.live(true);
+  r.run(175);
+  assert.deepEqual(r.events, [], 'inside the extension');
+  r.run(10);
+  assert.equal(r.events.length, 1, 'stalled after the cap');
+  assert.match((r.events as WatchEvent[])[0]?.summary ?? '', /^stalled aaaa /);
+  r.run(4000);
+  assert.equal(r.events.length, 1, 'and reported once');
+  r.work();
+  r.run(190);
+  assert.equal(r.events.length, 2, 'real progress re-arms it, and a forever process does not hide the next stall');
 });
 
 test('real io: live() sees a process whose cwd is in the worktree, and dispatchFiles() takes the report and scratch, not the brief', async () => {
@@ -245,12 +262,20 @@ test('real io: live() sees a process whose cwd is in the worktree, and dispatchF
   try {
     await new Promise((res) => setTimeout(res, 300));
     if (hasLsof) {
-      assert.equal(io.live(wt), true, 'sleep runs in wt/sub');
-    } else assert.equal(io.live(wt), null);
+      assert.equal(io.live(wt, 0), true, 'sleep runs in wt/sub');
+    } else assert.equal(io.live(wt, 0), null);
   } finally { child.kill(); }
-  if (hasLsof) { await new Promise((res) => setTimeout(res, 300)); assert.equal(io.live(wt), false, 'the process is gone'); }
+  if (hasLsof) { await new Promise((res) => setTimeout(res, 300)); assert.equal(io.live(wt, 0), false, 'the process is gone'); }
+  if (hasLsof) {
+    const sleeper = (await import('node:child_process')).spawn('sleep', ['30'], { cwd: join(wt, 'sub') });
+    try {
+      await new Promise((res) => setTimeout(res, 300));
+      assert.equal(io.live(wt, Date.now() - 60_000), true, 'started after the dispatch: counts');
+      assert.equal(io.live(wt, Date.now() + 60_000), false, 'started before the dispatch: a stray tab or proxy, ignored');
+    } finally { sleeper.kill(); }
+  }
   const failing = stall.realIo(home, () => ({ status: 127, stdout: '', stderr: 'no lsof' }) as never);
-  assert.equal(failing.live(wt), null, 'no lsof: unknown, not false');
+  assert.equal(failing.live(wt, 0), null, 'no lsof: unknown, not false');
   const dir = join(home, 'briefs');
   mkdirSync(dir);
   for (const f of ['brief-ab12.md', 'report-ab12.md', 'details-ab12.txt', 'report-zz99.md']) writeFileSync(join(dir, f), f);
