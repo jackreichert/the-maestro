@@ -3,9 +3,10 @@
  * Token-cost metrics for the orchestrator, read from Claude Code transcripts.
  *
  * Reads ONLY numeric usage fields, the model id, timestamps, and message
- * type/role/origin metadata. Message content is never read: every parsed line
- * goes straight through `pick()`, which copies the allowed fields and drops the
- * rest, and nothing else touches the parsed object. A test enforces this.
+ * type/role/origin metadata, plus for `--leaks` the tool names a turn called, the basename of the file a call names, the size
+ * (character count) of each tool result, and one boolean per call: whether it only reads (the Bash command line is matched and
+ * dropped). Message content is never kept: every parsed line goes straight through `pick()`, which copies the allowed fields and
+ * drops the rest, and nothing else touches the parsed object. A test enforces this.
  *
  *   node token-metrics.ts                      today: day summary + sessions
  *   node token-metrics.ts --date 2026-09-25    one day
@@ -14,6 +15,7 @@
  *   node token-metrics.ts --compare            day vs 7-day median vs baseline
  *   node token-metrics.ts --expiry             cache-expiry rewrites per day: count, average gap, dollars
  *   node token-metrics.ts --curve              cache-read per turn by turn-index bucket
+ *   node token-metrics.ts --leaks              avoidable spend by bucket, ranked, with the fix for each
  *   node token-metrics.ts --json               machine-readable day + sessions
  *
  * Flags: --projects-dir <dir> (default CLAUDE_PROJECTS_DIR in local-config.ts)
@@ -47,6 +49,10 @@
  *   gap and are never counted. Orchestrator and subagent transcripts both count. `--expiry` lists it per day.
  * - Turns since compact: the orchestrator turn count since the last compaction marker (compact_boundary or an
  *   isCompactSummary flag); a day keeps its longest run. A small agent finished in under 10 turns.
+ * - `--leaks` (lib/leaks.ts): four avoidable-spend buckets, each a replay of the transcripts under one change, priced from `model_prices`
+ *   on the same tokens: read-only subagents (every tool call read-only) repriced at Haiku; subagent cache writes on a 1h TTL instead of
+ *   5m (net of the dearer write); orchestrator compaction at the roll threshold (net of writing the new base); and tool results of about
+ *   2k tokens or more (estimated from characters) priced over every later turn until a compaction. Ranked by dollars, each with a fix.
  * - Targets (`cost_targets`) turn the cost metrics into PASS/MISS in the day summary and --compare.
  * - Fresh = input_tokens (uncached). Context = fresh + cache write + cache read.
  */
@@ -57,28 +63,36 @@ import type { ModelPrice } from './local-config.ts';
 import { family } from './lib/model-family.ts';
 import { readAutocompact, triggerTokens } from './lib/autocompact.ts';
 import { sessionText } from './lib/session-text.ts';
+import { leaks, formatLeaks } from './lib/leaks.ts';
+import type { Transcripts } from './lib/leaks.ts';
+import { toolReadOnly } from './lib/tool-class.ts';
+import { EXPIRY_GAP_SEC, EXPIRY_MIN_WRITE, isExpiryRewrite } from './lib/expiry.ts';
+import { FAMILIES, kindsOf, dollars, priceKey } from './lib/pricing.ts';
+import type { Usage, Kinds, Dollars } from './lib/pricing.ts';
 import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 import { printJson } from './lib/json-out.ts';
 
-const FAMILIES = ['opus', 'sonnet', 'haiku'];
 
-/** Per-turn tokens: uncached input, cache writes (total, and the 5m/1h split when usage gives one), cache reads, output. */
-export interface Usage { fresh: number; write: number; write5m: number; write1h: number; read: number; out: number }
 /** The only fields of a transcript line that survive `pick`. */
 export interface Picked {
     type: string; subtype: string; role: string; ts: string; id: string; model: string; originKind: string;
-    handback: boolean; compact: boolean; usage: Usage | null;
+    handback: boolean; compact: boolean; usage: Usage | null; tools: ToolUse[]; results: ToolResult[];
 }
+/** A tool call: its id, tool name, whether it only reads, and the basename of the file it names ('' when none). Never the input itself. */
+export interface ToolUse { id: string; name: string; readOnly: boolean; file: string }
+/** A tool result: the id of the call it answers and the size of its content in characters. Never the content. */
+export interface ToolResult { id: string; chars: number }
+/** A tool result carried into the context: which tool and file it came from, and its size in tokens (estimated from characters). */
+export interface CarriedResult { tool: string; file: string; tokens: number }
 /** A deduplicated API response. `growth` is context growth since the previous turn (unset for the first). */
-export interface Turn extends Usage { date: string; model: string; since: number; growth?: number; gapSec?: number }
+export { EXPIRY_GAP_SEC, EXPIRY_MIN_WRITE, isExpiryRewrite };
+export type { Usage, Kinds, Dollars };
+export { kindsOf, dollars };
+export interface Turn extends Usage { date: string; model: string; since: number; growth?: number; gapSec?: number; tools?: ToolUse[]; results?: CarriedResult[] }
 export interface TurnEvent { date: string; kind: string }
 export interface ScanResult { turns: Turn[]; events: TurnEvent[]; reports: { date: string; tokens: number }[] }
-/** Tokens by price kind: fresh input, 5m and 1h cache writes, cache reads, output. */
-export interface Kinds { fresh: number; w5: number; w1: number; read: number; out: number }
 export type FamilyKinds = Record<string, Kinds>;
-/** Dollars in the four report categories, and their total. */
-export interface Dollars { read: number; write: number; output: number; input: number; total: number }
 export type Prices = Record<string, ModelPrice> | null;
 /** One day's (or one session's) counters, as emptyStats builds them. */
 export interface Stats {
@@ -110,6 +124,20 @@ const TABLE_HEADER = [
     'Subagent tokens by model', 'Expiry rewrites', 'Expiry write tokens by model',
 ];
 
+/** Characters per token, for sizing tool results (which carry no usage of their own). */
+export const CHARS_PER_TOKEN = 4;
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+/** Content blocks of a message; a plain string content has none. */
+const blocksOf = (content: unknown): Record<string, unknown>[] => (Array.isArray(content) ? content.map((b) => obj(b) ?? {}) : []);
+/** Length of a tool result's content in characters: a string, or the text blocks of an array. The text itself is not kept. */
+const sizeOf = (content: unknown): number => (typeof content === 'string' ? content.length : blocksOf(content).reduce((n, b) => n + str(b.text).length, 0));
+const toolUses = (blocks: Record<string, unknown>[]): ToolUse[] => blocks.filter((b) => b.type === 'tool_use').map((b) => {
+    const input = obj(b.input) ?? {};
+    const name = str(b.name);
+    return { id: str(b.id), name, readOnly: toolReadOnly(name, str(input.command)), file: basename(str(input.file_path) || str(input.notebook_path) || str(input.path)) };
+});
+const toolResults = (blocks: Record<string, unknown>[]): ToolResult[] => blocks.filter((b) => b.type === 'tool_result').map((b) => ({ id: str(b.tool_use_id), chars: sizeOf(b.content) }));
+
 // --- the only function allowed to look at a parsed transcript line ----------
 export function pick(parsed: unknown): Picked {
     // A null line throws here, as before, and scanFile skips it.
@@ -120,6 +148,7 @@ export function pick(parsed: unknown): Picked {
     // The 5m/1h split of cache writes: two numeric fields of `cache_creation`, absent on older transcripts.
     const cc = obj(u?.cache_creation) ?? {};
     const origin = obj(o.origin);
+    const blocks = blocksOf(msg.content);
     return {
         type: typeof o.type === 'string' ? o.type : '',
         subtype: typeof o.subtype === 'string' ? o.subtype : '',
@@ -129,6 +158,8 @@ export function pick(parsed: unknown): Picked {
         model: typeof msg.model === 'string' ? msg.model : '',
         originKind: typeof origin?.kind === 'string' ? origin.kind : '',
         handback: Boolean(origin && origin.handback !== undefined),
+        tools: msg.role === 'assistant' ? toolUses(blocks) : [],
+        results: msg.role === 'user' ? toolResults(blocks) : [],
         // Compaction markers are two metadata flags, never the summary text: the system line with subtype
         // `compact_boundary`, and the `isCompactSummary` boolean on the user line that carries the summary.
         compact: (o.type === 'system' && o.subtype === 'compact_boundary') || o.isCompactSummary === true,
@@ -155,6 +186,7 @@ function main(argv: string[]): void {
 
     const warning = emptyDirWarning(projectsDir);
     if (warning) console.error(warning);
+    if (flag('leaks')) { printLeaks(projectsDir); return; }
     const { days, sessions, curve } = collect(projectsDir);
 
     if (flag('curve')) { printCurve(curve); return; }
@@ -183,6 +215,27 @@ function main(argv: string[]): void {
     if (days.has(date)) rows = new Map(rows).set(date, toRow(days.get(date) as DayStats));
     if (flag('compare')) printCompare(date, rows, baselineUntil);
     else if (!flag('json') && days.has(date)) printCost(date, rows, baselineUntil);
+}
+
+/** Every transcript's turns: the orchestrator's, and each subagent's with its agent type. */
+export function collectTranscripts(projectsDir: string): Transcripts {
+    const out: Transcripts = { orch: [], subs: [] };
+    for (const f of sessionFiles(projectsDir)) {
+        out.orch.push(scanFile(join(projectsDir, f)).turns);
+        const subDir = join(projectsDir, basename(f, '.jsonl'), 'subagents');
+        if (!existsSync(subDir)) continue;
+        for (const n of readdirSync(subDir).filter((x) => x.endsWith('.jsonl'))) {
+            out.subs.push({ type: agentType(join(subDir, n.replace(/\.jsonl$/, '.meta.json'))), turns: scanFile(join(subDir, n)).turns });
+        }
+    }
+    return out;
+}
+
+function printLeaks(projectsDir: string): void {
+    if (!MODEL_PRICES) { console.log('Model prices are unset, so there are no dollars to rank. Set model_prices (or MAESTRO_MODEL_PRICES).'); return; }
+    // The roll threshold in tokens: the roll-now percent of the live autocompact trigger.
+    const rollTokens = Math.round((triggerTokens(readAutocompact()) * ROLL_AT_PCT) / 100);
+    console.log(formatLeaks(leaks(collectTranscripts(projectsDir), MODEL_PRICES, { rollTokens })));
 }
 
 // --- collection ----------------------------------------------------------------
@@ -321,7 +374,8 @@ export function sessionStatus(dir: string, trigger: number = triggerTokens(readA
  */
 export const sessionLine = (...args: Parameters<typeof sessionStatus>): string => sessionText(sessionStatus(...args));
 
-function scanFile(path: string): ScanResult {
+/** Reads one transcript into deduplicated turns, wake-up events and handback reports. */
+export function scanFile(path: string): ScanResult {
     const turns: Turn[] = [];
     const events: TurnEvent[] = [];
     const reports: { date: string; tokens: number }[] = [];
@@ -330,16 +384,20 @@ function scanFile(path: string): ScanResult {
     let pending = null as { date: string; n: number } | null;
     let since = 0;
     let lastAt = null as number | null;
+    const toolById = new Map<string, ToolUse>();
+    let carried: CarriedResult[] = [];
     for (const line of readFileSync(path, 'utf8').split('\n')) {
         if (!line) continue;
         let rec: Picked;
         try { rec = pick(JSON.parse(line)); } catch { continue; }
-        if (rec.compact) { pending = null; last = null; since = 0; lastAt = null; continue; }
+        if (rec.compact) { pending = null; last = null; since = 0; lastAt = null; carried = []; continue; }
+        for (const u of rec.tools) toolById.set(u.id, u);
         if (rec.type === 'assistant' && rec.usage && rec.id) {
             const dup = seen.get(rec.id);
-            if (dup) { Object.assign(dup, rec.usage); continue; }
+            if (dup) { Object.assign(dup, rec.usage); if (rec.tools.length) dup.tools = [...(dup.tools || []), ...rec.tools]; continue; }
             since += 1;
-            const t: Turn = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage };
+            const t: Turn = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage, tools: rec.tools, results: carried };
+            carried = [];
             const at = Date.parse(rec.ts);
             if (lastAt !== null && Number.isFinite(at)) t.gapSec = Math.max(0, (at - lastAt) / 1000);
             lastAt = Number.isFinite(at) ? at : lastAt;
@@ -356,6 +414,10 @@ function scanFile(path: string): ScanResult {
             pending = null;
             last = t;
             continue;
+        }
+        for (const r of rec.results) {
+            const use = toolById.get(r.id);
+            if (use) carried.push({ tool: use.name, file: use.file, tokens: Math.round(r.chars / CHARS_PER_TOKEN) });
         }
         if (rec.role === 'user' && rec.originKind) {
             const kind = rec.originKind === 'peer' ? (rec.handback ? 'handback' : 'peer') : rec.originKind;
@@ -383,12 +445,6 @@ function addTurn(s: Stats, t: Turn): void {
     s.sinceCompact = Math.max(s.sinceCompact, t.since);
     addMix(s, t, 'orch');
 }
-/** A gap longer than this (seconds) is past the 5-minute prompt-cache lifetime. */
-export const EXPIRY_GAP_SEC = 300;
-/** A turn must write at least this many 5m cache tokens to count as a rewrite of a whole context, not new content. */
-export const EXPIRY_MIN_WRITE = 30_000;
-/** Whether `t` is a cache-expiry rewrite: idle past the cache lifetime, then a large 5m write. */
-export const isExpiryRewrite = (t: Turn): boolean => t.gapSec !== undefined && t.gapSec > EXPIRY_GAP_SEC && kindsOf(t).w5 >= EXPIRY_MIN_WRITE;
 /** Counts `t` into the day's expiry totals when it is a rewrite; only its 5m write is kept, which is all that was rewritten. */
 function addExpiry(s: Stats, t: Turn): void {
     if (!isExpiryRewrite(t)) return;
@@ -399,11 +455,6 @@ function addExpiry(s: Stats, t: Turn): void {
 }
 const zeroKinds = (): Kinds => ({ fresh: 0, w5: 0, w1: 0, read: 0, out: 0 });
 const addKinds = (a: Kinds, b: Kinds): void => { for (const k of Object.keys(a) as (keyof Kinds)[]) a[k] += b[k]; };
-/** A turn's tokens by price kind. A write is 5m unless usage split it into 5m and 1h. */
-export function kindsOf(t: Usage): Kinds {
-    const split = t.write5m + t.write1h > 0;
-    return { fresh: t.fresh, w5: split ? t.write5m : t.write, w1: split ? t.write1h : 0, read: t.read, out: t.out };
-}
 /** Per model family, cache-read tokens (the token mix) and tokens by price kind for `who`: `orch` (orchestrator) or `sub` (subagents). */
 function addMix(s: Stats, t: Usage & { model: string }, who: 'orch' | 'sub'): void {
     const f = family(t.model);
@@ -486,13 +537,6 @@ export function parseKinds(text: unknown): FamilyKinds {
 }
 
 // --- pricing ---------------------------------------------------------------------
-/** Prices apply to opus, sonnet and haiku by name; any other family (fable included) takes the optional `other` row. */
-const priceKey = (f: string): string => (FAMILIES.includes(f) ? f : 'other');
-/** Dollars for `k` tokens at `p` (dollars per MTok), split into the four report categories. */
-export function dollars(k: Kinds, p: ModelPrice): Dollars {
-    const d = { read: (k.read * p.cache_read) / 1e6, write: (k.w5 * p.cache_write_5m + k.w1 * p.cache_write_1h) / 1e6, output: (k.out * p.output) / 1e6, input: (k.fresh * p.input) / 1e6 };
-    return { ...d, total: d.read + d.write + d.output + d.input };
-}
 /** Dollars per family for { family: kinds }; a family with no price row (an `other` model with no `other` price) is left out. */
 export function priceFamilies(byFamily: FamilyKinds | undefined, prices: Prices): Record<string, Dollars> {
     return Object.fromEntries(Object.entries(byFamily || {}).filter(([f]) => prices && prices[priceKey(f)]).map(([f, k]) => [f, dollars(k, (prices as Record<string, ModelPrice>)[priceKey(f)] as ModelPrice)]));
