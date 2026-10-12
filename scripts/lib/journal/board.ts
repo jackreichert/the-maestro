@@ -216,7 +216,7 @@ export function render(ctx: BoardContext, quiet = false, includeArchived = false
 
     const doneToday = g.doneOn(d, { sinceRoll: true });
     const retros = archivedRetros(ctx);
-    const archiveDates = rolledDates.slice().reverse();
+    const archiveDates = rolledDates.filter((x): x is string => !!x).reverse();
     const out = renderCurrent({
         day: d, inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, doneToday,
         streams: activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, doneToday), pageLink: streamPageLink,
