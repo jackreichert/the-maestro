@@ -5,6 +5,7 @@
  * lines, so context lines never widen it. A pure deletion has no new-side line and yields no range.
  */
 import { spawnSync } from 'node:child_process';
+import { toolCommand } from './lib/tool-bin.ts';
 
 /** An inclusive new-side line range. */
 export interface Range { start: number; end: number }
@@ -60,6 +61,6 @@ export function hunkTokens(ranges: Map<string, Range[]>, only?: string): string[
 
 /** Runs `gh pr diff <pr>` in `repo`; returns the diff, or an error message. */
 export function prDiff(repo: string, pr: number): { diff: string } | { error: string } {
-  const r = spawnSync(process.env.MAESTRO_GH_BIN || 'gh', ['pr', 'diff', String(pr), '--color=never'], { cwd: repo, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const r = spawnSync(...toolCommand('gh', ['pr', 'diff', String(pr), '--color=never']), { cwd: repo, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   return r.status === 0 ? { diff: r.stdout } : { error: `gh pr diff ${pr} failed: ${(r.stderr || '').trim()}` };
 }

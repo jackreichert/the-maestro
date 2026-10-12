@@ -27,6 +27,7 @@ import { noteExistsIn, vaultRootFor } from './lib/status-page/links.ts';
 import { generate } from './lib/status-page/generate.ts';
 import type { GenerateDeps, GenerateResult, RawPr } from './lib/status-page/generate.ts';
 import type { PageConfig } from './lib/status-page/render.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
@@ -44,7 +45,7 @@ function fetchPrs(): RawPr[] {
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt) sleep(3000);
     try {
-      const out = execFileSync('gh', ['api', 'graphql', '-f', `query=${PR_QUERY}`], { encoding: 'utf8', maxBuffer: 64 << 20, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
+      const out = execFileSync(...toolCommand('gh', ['api', 'graphql', '-f', `query=${PR_QUERY}`]), { encoding: 'utf8', maxBuffer: 64 << 20, timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'] });
       return (JSON.parse(out).data.search.nodes as RawPr[]).filter((n) => n && n.number);
     } catch (e) { last = firstLine(e); }
   }

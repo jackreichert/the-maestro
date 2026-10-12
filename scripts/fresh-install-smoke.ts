@@ -9,7 +9,7 @@
  * temp HOME, with VAULT_ROOT pointing at a temp vault. Only two lines are rewritten: the clone source
  * (this checkout's HEAD, so the committed tree is what gets tested; `--remote` keeps the real URL) and the
  * vault path placeholder. Then, inside the clone, it runs `npm ci`, `npm run typecheck` and `npm test`.
- * SMOKE_TEST_TIMEOUT_S (default 600) caps the test step. SIGTERM, SIGINT and SIGHUP stop the running step and remove the temp dir. Exit 0 when every step passed, 1 on the first failure (the step is named), 2 on bad usage.
+ * SMOKE_TEST_TIMEOUT_S (default 600) caps the test step. SMOKE_BASH_ENV, a test hook, is handed to the steps as BASH_ENV (a file bash sources, so a test can shadow a tool without writing an executable). SIGTERM, SIGINT and SIGHUP stop the running step and remove the temp dir. Exit 0 when every step passed, 1 on the first failure (the step is named), 2 on bad usage.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
@@ -93,7 +93,7 @@ const keep = args.includes('--keep');
   const vault = join(root, 'vault');
   spawnSync('mkdir', ['-p', home, vault]);
   // Keep the caller's PATH (node, npm, git) but nothing that could leak an existing install or vault.
-  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR, LANG: 'C.UTF-8' };
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR, LANG: 'C.UTF-8', ...(process.env.SMOKE_BASH_ENV ? { BASH_ENV: process.env.SMOKE_BASH_ENV } : {}) };
   try {
     const block = rewrite(quickStartBlock(readFileSync(join(repo, 'README.md'), 'utf8')), remote ? null : repo, vault);
     await step('quick start', 'bash', ['-euo', 'pipefail', '-c', block], home, env);

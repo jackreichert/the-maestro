@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { toolCommand } from './lib/tool-bin.ts';
 
 const TOKEN = /\{\{file:([^#}]+?)(?:#([^}]*))?\}\}/g;
 
@@ -71,7 +72,6 @@ export const tokenProblems = (body: string): string[] =>
 /** The token paths in a body, in order of appearance. */
 export const tokenPaths = (body: string): string[] => [...body.matchAll(TOKEN)].map((m) => m[1]);
 
-const gh = (): string => process.env.MAESTRO_GH_BIN || 'gh';
 
 /**
  * Expands the tokens in a PR's body and writes it back with `gh pr edit --body-file`. Returns an error message
@@ -79,7 +79,7 @@ const gh = (): string => process.env.MAESTRO_GH_BIN || 'gh';
  * `body` is the text to expand; omit it to read the PR's current body.
  */
 export function linkPr(repo: string, pr: number, body?: string): string {
-  const view = spawnSync(gh(), ['pr', 'view', String(pr), '--json', 'url,body,files'], { cwd: repo, encoding: 'utf8' });
+  const view = spawnSync(...toolCommand('gh', ['pr', 'view', String(pr), '--json', 'url,body,files']), { cwd: repo, encoding: 'utf8' });
   if (view.status !== 0) return `gh pr view ${pr} failed: ${view.stderr.trim()}`;
   let info: { url: string; body: string; files: { path: string }[] };
   try { info = JSON.parse(view.stdout); } catch { return `gh pr view ${pr} returned something that is not JSON`; }
@@ -91,7 +91,7 @@ export function linkPr(repo: string, pr: number, body?: string): string {
   try {
     const file = join(dir, 'body.md');
     writeFileSync(file, result.body);
-    const edit = spawnSync(gh(), ['pr', 'edit', String(pr), '--body-file', file], { cwd: repo, encoding: 'utf8' });
+    const edit = spawnSync(...toolCommand('gh', ['pr', 'edit', String(pr), '--body-file', file]), { cwd: repo, encoding: 'utf8' });
     return edit.status === 0 ? '' : `gh pr edit ${pr} failed: ${edit.stderr.trim()}`;
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }

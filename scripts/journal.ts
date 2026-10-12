@@ -232,6 +232,7 @@ import { listWatches, lockHolder } from './lib/watch-registry.ts';
 import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 import { printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
@@ -1126,7 +1127,8 @@ function deadlineRun(totalMs: number): Run {
     return (cmd, args) => {
         const left = end - Date.now();
         if (left <= 0) return { status: null, stdout: '', stderr: 'timed out' };
-        const r = spawnSync((cmd === 'gh' && process.env.MAESTRO_GH_BIN) || cmd, args, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
+        const [bin, binArgs] = toolCommand(cmd, args);
+        const r = spawnSync(bin, binArgs, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
         return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
     };
 }
@@ -2207,7 +2209,8 @@ function cmdHandoff() {
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
 const tryRun: TryRun = (cmdName, args) => {
-    const r = spawnSync(cmdName, args, { encoding: 'utf8' });
+    const [bin, binArgs] = toolCommand(cmdName, args);
+    const r = spawnSync(bin, binArgs, { encoding: 'utf8' });
     return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 
