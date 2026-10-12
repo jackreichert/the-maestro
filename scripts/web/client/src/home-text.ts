@@ -1,5 +1,5 @@
 /** The words and counts of the stream home base: progress sentences, the Clear line, row notes. Pure and DOM-free so node:test covers it. */
-import type { EpicLine, HomeEpic, HomeTicket, RailGroup, RailLink, StreamHome } from './types.ts';
+import type { EpicLine, HomeEpic, HomeTicket, RailGroup, RailLink, SharedDoc, StreamHome } from './types.ts';
 
 /** An epic or ticket this many days without a change is called quiet, as a fact about its note. */
 export const QUIET_DAYS = 14;
@@ -143,4 +143,19 @@ export function railCount(groups: RailGroup[]): number {
 /** What a link is, in words, so an icon never stands alone: "note" opens in Obsidian, "tracker" is the ticket system, "web" is any other site. */
 export function kindWord(kind: RailLink['kind']): string {
   return kind === 'note' ? 'note' : kind === 'tracker' ? 'tracker' : kind === 'pr' ? 'pull request' : 'web';
+}
+
+/** What a shared document is, in words: "web" is a site, "note" opens in Obsidian, "file" is a local file with no link. */
+export function sharedKindWord(kind: SharedDoc['kind']): string {
+  return kind === 'note' ? 'note' : kind === 'file' ? 'file' : 'web';
+}
+
+/** The plain facts about a shared document, in order: who shared it and when, where a file without a link sits, and why it matters. */
+export function sharedFacts(d: Pick<SharedDoc, 'by' | 'date' | 'path' | 'url' | 'why'>): string[] {
+  return [`shared by ${d.by}${d.date ? ` on ${d.date}` : ''}`, d.url ? '' : d.path ?? '', d.why ?? ''].filter(Boolean);
+}
+
+/** The "Shared docs (n)" summary: what is listed plus what the server left out, so the count is never short. */
+export function sharedHeading(home: Pick<StreamHome, 'shared' | 'sharedMore'>): string {
+  return `Shared docs (${home.shared.length + home.sharedMore})`;
 }

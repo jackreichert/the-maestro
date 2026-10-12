@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeHome } from '../src/contract.ts';
-import { awaitingLabel, firstSentence, kindWord, railCount, railGroups, barSegments, capRows, clearAgainstHome, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence } from '../src/home-text.ts';
+import { awaitingLabel, firstSentence, kindWord, railCount, railGroups, barSegments, capRows, clearAgainstHome, clearLine, epicEnd, leftGroups, leftHeading, noEpicLine, openCounts, progressSentence, quietNote, ticketNotes, verifiedSentence, sharedFacts, sharedHeading, sharedKindWord } from '../src/home-text.ts';
 import { home } from './home-fixture.ts';
 
 test('the progress sentence always states its denominator, for every epic shape', () => {
@@ -106,4 +106,13 @@ test('the rail draws pinned, epics, docs and runbooks in that order, leaves out 
   assert.equal(railCount(groups), 7);
   assert.equal(railCount([]), 0);
   assert.deepEqual(['note', 'tracker', 'pr', 'web'].map((k) => kindWord(k as 'note')), ['note', 'tracker', 'pull request', 'web']);
+});
+
+test('shared document facts say who shared it and when, show a file path only when there is no link, and the heading counts every document', () => {
+  assert.deepEqual(sharedFacts({ by: 'user', date: '2026-10-05', url: 'https://example.com/x', why: 'the contract' }), ['shared by user on 2026-10-05', 'the contract']);
+  assert.deepEqual(sharedFacts({ by: 'user', date: '2026-10-05', path: 'repo/a.md' }), ['shared by user on 2026-10-05', 'repo/a.md']);
+  assert.deepEqual(sharedFacts({ by: 'user', date: '' }), ['shared by user']);
+  assert.deepEqual(['web', 'note', 'file'].map((k) => sharedKindWord(k as 'web')), ['web', 'note', 'file']);
+  assert.equal(sharedHeading({ shared: [], sharedMore: 0 }), 'Shared docs (0)');
+  assert.equal(sharedHeading({ shared: [{} as never, {} as never], sharedMore: 3 }), 'Shared docs (5)');
 });

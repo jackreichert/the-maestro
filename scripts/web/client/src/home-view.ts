@@ -2,9 +2,9 @@
 import { h, refLink } from './dom.ts';
 import { BRIEF_CSS, briefBadgeEl, briefView } from './epic-brief.ts';
 import { SHELF_CSS, docsShelf } from './docs-shelf.ts';
-import { awaitingLabel, barSegments, capRows, epicEnd, epicUnknownsLabel, firstSentence, kindWord, noEpicLine, openCounts, progressSentence, quietNote, railCount, railGroups, ticketNotes, unknownsHeading, verifiedSentence } from './home-text.ts';
+import { awaitingLabel, barSegments, capRows, epicEnd, epicUnknownsLabel, firstSentence, kindWord, noEpicLine, sharedFacts, sharedHeading, sharedKindWord, openCounts, progressSentence, quietNote, railCount, railGroups, ticketNotes, unknownsHeading, verifiedSentence } from './home-text.ts';
 import type { LeftGroups } from './home-text.ts';
-import type { HomeEpic, HomeTicket, RailLink, StreamHome } from './types.ts';
+import type { HomeEpic, HomeTicket, RailLink, SharedDoc, StreamHome } from './types.ts';
 
 /** Epics shown before "n more epics"; the most recently active come first, as the server sends them. */
 const EPIC_CAP = 3;
@@ -160,6 +160,11 @@ function railRow(l: RailLink): HTMLElement {
   return h('li', {}, refLink({ label: l.label, url: l.url }), h('span', { class: 'kind' }, kindWord(l.kind)), l.meta ? h('span', { class: 'meta' }, l.meta) : null);
 }
 
+/** One shared document: the title (a link when the server gave one), what it is in words, then who shared it, when and why. */
+function sharedRow(d: SharedDoc): HTMLElement {
+  return h('li', {}, refLink({ label: d.title, url: d.url }), h('span', { class: 'kind' }, sharedKindWord(d.kind)), h('span', { class: 'meta' }, sharedFacts(d).join(' · ')));
+}
+
 /** A disclosure that is open on a wide screen and closed on a narrow one, where the rail follows What's left. */
 function railFold(name: string, summary: string, open: boolean, ...body: (Node | null)[]): HTMLElement {
   return h('details', { class: 'fold', open, 'data-fold': `rail-${name}` }, h('summary', {}, summary), h('div', { class: 'fold-body' }, ...body));
@@ -173,8 +178,8 @@ export function railBody(home: StreamHome, wide: boolean): HTMLElement | null {
     return h('div', {}, h('p', { class: 'done-means' }, h('span', { class: 'done-epic' }, `${d.epic} `), head),
       more ? h('details', { class: 'fold', 'data-fold': `rail-done-${d.epic}` }, h('summary', {}, 'More'), h('p', { class: 'done-means' }, d.text)) : null);
   });
-  if (done.length === 0 && groups.length === 0) return null;
-  return h('div', { class: 'rail', role: 'group', 'aria-label': 'Done means and links' },
+  if (done.length === 0 && groups.length === 0 && home.shared.length === 0) return null;
+  return h('div', { class: 'rail', role: 'group', 'aria-label': 'Done means, links and shared documents' },
     done.length ? railFold('done', 'Done means', wide, ...done) : null,
     groups.length ? railFold('links', `Links (${railCount(home.links)})`, wide, ...groups.map((g) => {
       const { shown, rest } = capRows(g.items);
@@ -182,5 +187,7 @@ export function railBody(home: StreamHome, wide: boolean): HTMLElement | null {
         h('ul', { class: 'links', role: 'list' }, ...shown.map(railRow)),
         rest.length ? h('details', { class: 'fold', 'data-fold': `rail-links-${g.title}` }, h('summary', {}, `Show ${rest.length} more`), h('ul', { class: 'links', role: 'list' }, ...rest.map(railRow))) : null,
         g.more > 0 ? h('p', { class: 'truncated' }, `${g.more} more not listed.`) : null);
-    })) : null);
+    })) : null,
+    home.shared.length ? railFold('shared', sharedHeading(home), wide, h('ul', { class: 'links', role: 'list' }, ...home.shared.map(sharedRow)),
+      home.sharedMore > 0 ? h('p', { class: 'truncated' }, `${home.sharedMore} more not listed.`) : null) : null);
 }
