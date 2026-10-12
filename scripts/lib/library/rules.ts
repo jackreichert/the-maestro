@@ -3,6 +3,7 @@ import { bodyLinks, list, text } from './page.ts';
 import type { Page } from './page.ts';
 import { scanText } from './scan.ts';
 import type { Scanner } from './scan.ts';
+import { COVERS } from './coverage.ts';
 
 export const KINDS = ['how-to', 'how-it-works', 'runbook', 'decision', 'gotcha', 'tool'] as const;
 export const STATUSES = ['current', 'stale', 'superseded'] as const;
@@ -59,8 +60,9 @@ export const RULES: readonly Rule[] = [
   },
   {
     id: 'vocabulary',
-    check: (p) => [
+    check: (p, { scan }) => [
       ...(text(p, 'kind') && !oneOf(text(p, 'kind'), KINDS) ? [found('vocabulary', `kind is not one of ${KINDS.join(', ')}`)] : []),
+      ...list(p, 'covers').filter((c) => !oneOf(c, COVERS)).map((c) => found('vocabulary', `covers ${show(c, scan)} is not one of ${COVERS.join(', ')}`)),
       ...(text(p, 'composed-by') && text(p, 'composed-by') !== COMPOSER ? [found('vocabulary', `composed-by must be "${COMPOSER}" (the composer is the only writer of a page)`)] : []),
       ...(text(p, 'status') && !oneOf(text(p, 'status'), STATUSES) ? [found('vocabulary', `status is not one of ${STATUSES.join(', ')}`)] : []),
     ],
