@@ -17,7 +17,7 @@ function setup() {
   const statusDir = join(mkdtempSync(join(tmpdir(), 'sp-vault-')), 'Status');
   const env = {
     ...installGhStub({ pages: [[prNode(12, { title: 'feat: widgets FAKE-12', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', commits: { nodes: [] } })]] }),
-    LEDGER_ROOT: '', VAULT_ROOT: '', MAESTRO_STATUS_REPO_STREAMS: 'repo=Alpha', MAESTRO_STATUS_STREAMS: 'Alpha', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '',
+    LEDGER_ROOT: '', VAULT_ROOT: '', MAESTRO_STATUS_REPO_STREAMS: 'repo=Alpha', MAESTRO_STATUS_STREAMS: 'Alpha', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_GH_ORG: 'org', MAESTRO_CONTAINER_ROOT: '',
   };
   const run = (...args: string[]) => spawnSync(process.execPath, [JOURNAL, ...args, '--vault', ledger, '--project', 'proj', '--status-dir', statusDir], { encoding: 'utf8', cwd, env });
   assert.equal(run('ask', 'Merge widgets #12?', '--stream', 'Alpha', '--new-stream', ...MARK).status, 0);

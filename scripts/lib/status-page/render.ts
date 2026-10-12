@@ -57,6 +57,8 @@ export interface PageConfig {
   reviewQueueCap?: number;
   /** `self_review_repos`: PRs in these repos are not counted in the review queue. Absent: none. */
   selfReviewRepos?: string[];
+  /** Owners whose repos may appear in the PR list (the configured `gh_org`). Absent or empty means none: the PR list is withheld, never unscoped. */
+  prOwners?: string[];
 }
 
 /** Where the PR list came from: when GitHub was last read (null when never), and why the read just now failed, if it did. */
