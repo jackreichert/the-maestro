@@ -34,10 +34,17 @@ test('"usual" comes from finished items: a long-running history raises the bar',
     assert.doesNotMatch(guidanceLines([mid, done(1), done(2), done(3)], [], [mid], [], '2026-10-12', NOW).join('\n'), /Stalled/);
 });
 
-test('an open item with a rework row counts as stalled even when young', () => {
-    const a = item({ id: 'rwk1', text: 'edited by hand', ts: '2026-10-12T11:00:00Z' });
-    const out = guidanceLines([a], [{ kind: 'rework', reworks: 'rwk1' }], [a], [], '2026-10-12', NOW).join('\n');
-    assert.match(out, /Stalled \(1\): rwk1 edited by hand, reworked/);
+test('a rework row on a finished item is reported today', () => {
+    const done = item({ id: 'rwk1', text: 'edited after use', state: 'done', ts: '2026-10-10T11:00:00Z', closedBy: { kind: 'done', date: '2026-10-10', ts: '2026-10-10T12:00:00Z' } as LedgerRow });
+    const out = guidanceLines([done], [{ kind: 'rework', reworks: 'rwk1', date: '2026-10-12' }], [], [], '2026-10-12', NOW).join('\n');
+    assert.match(out, /Reworked today \(1\): rwk1 edited after use/);
+    assert.doesNotMatch(guidanceLines([done], [{ kind: 'rework', reworks: 'rwk1', date: '2026-10-11' }], [], [], '2026-10-12', NOW).join('\n'), /Reworked/);
+});
+
+test('a rework row on an open item is reported today, even when young', () => {
+    const a = item({ id: 'rwk2', text: 'edited by hand', ts: '2026-10-12T11:00:00Z' });
+    const out = guidanceLines([a], [{ kind: 'rework', reworks: 'rwk2', date: '2026-10-12' }, { kind: 'rework', reworks: 'rwk2', date: '2026-10-12' }], [a], [], '2026-10-12', NOW).join('\n');
+    assert.match(out, /Reworked today \(1\): rwk2 edited by hand/);
 });
 
 test('cost names the biggest item and the biggest stream', () => {
@@ -65,9 +72,9 @@ test('do first prefers a blocked item, then the first in flight; empty ledger sa
     assert.deepEqual(guidanceLines([], [], [], [], '2026-10-12', NOW), []);
 });
 
-test('the note stays within a header and three lines', () => {
+test('the note stays within a header and four lines', () => {
     const a = item({ id: 'a1', text: 'x', tokens: '1k', ts: '2026-10-01T00:00:00Z' });
-    assert.ok(guidanceLines([a], [], [a], [], '2026-10-12', NOW).length <= 4);
+    assert.ok(guidanceLines([a], [], [a], [], '2026-10-12', NOW).length <= 5);
 });
 
 test('readGuidance skips a missing or stale note', () => {

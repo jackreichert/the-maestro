@@ -11,8 +11,8 @@ export const STALL_FLOOR_HOURS = 24;
 export const STALL_MEDIAN_FACTOR = 3;
 /** How far back finished items set the "usual" duration. */
 export const HISTORY_DAYS = 14;
-/** Cap on the note: the three sections, one line each, plus a header. */
-export const GUIDANCE_MAX_LINES = 4;
+/** Cap on the note: the four sections, one line each, plus a header. */
+export const GUIDANCE_MAX_LINES = 5;
 
 const HOUR = 36e5;
 const label = (i: LedgerItem): string => `${i.id} ${clip(i.text, 60)}`;
@@ -40,18 +40,24 @@ export function stallThresholdHours(items: LedgerItem[], nowMs: number): number 
 
 /**
  * The guidance for the next session, derived from ledger data alone: what stalled (in flight far longer than finished items
- * usually take, or an open item that needed rework), what cost most (the biggest `--tokens` item and stream among items started or finished today
+ * usually take), what was reworked today (any item with a `rework` row dated today, finished or open), what cost most (the biggest `--tokens` item and stream among items started or finished today
  * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (the first blocked item, else the first in flight, in board order).
  * Empty when there is nothing to say; never a model call.
  */
 export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], inflight: LedgerItem[], blocked: LedgerItem[], d: string, nowMs: number): string[] {
     const limit = stallThresholdHours(items, nowMs);
-    const reworked = new Set(entries.filter((e) => e.kind === 'rework' && e.reworks).map((e) => e.reworks));
-    const stalled = [...inflight, ...blocked].map((i) => ({ i, age: (nowMs - startedAt(i)) / HOUR })).filter(({ i, age }) => reworked.has(i.id) || (inflight.includes(i) && age > limit));
+    const stalled = inflight.map((i) => ({ i, age: (nowMs - startedAt(i)) / HOUR })).filter(({ age }) => age > limit);
     stalled.sort((a, b) => b.age - a.age);
     const worst = stalled[0];
     const stalledLine = worst
-        ? `Stalled (${stalled.length}): ${label(worst.i)}, ${reworked.has(worst.i.id) ? 'reworked' : `${fmtHours(worst.age)} in flight (usual under ${fmtHours(limit)})`}${stalled.length > 1 ? ` +${stalled.length - 1} more` : ''}`
+        ? `Stalled (${stalled.length}): ${label(worst.i)}, ${fmtHours(worst.age)} in flight (usual under ${fmtHours(limit)})${stalled.length > 1 ? ` +${stalled.length - 1} more` : ''}`
+        : null;
+
+    // A rework row is found after use, so its target is usually finished: any item, open or done, counts.
+    const reworkedIds = [...new Set(entries.filter((e) => e.kind === 'rework' && e.reworks && e.date === d).map((e) => String(e.reworks)))];
+    const firstReworked = reworkedIds[0];
+    const reworkLine = firstReworked
+        ? `Reworked today (${reworkedIds.length}): ${(() => { const t = items.find((i) => i.id === firstReworked); return t ? label(t) : firstReworked; })()}${reworkedIds.length > 1 ? ` +${reworkedIds.length - 1} more` : ''}`
         : null;
 
     const open = new Set([...inflight, ...blocked]);
@@ -66,7 +72,7 @@ export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], infligh
     const first = blocked[0] ?? inflight[0];
     const firstLine = first ? `Do first: ${label(first)}${blocked[0] ? ' (blocked: clear the block)' : ''}` : null;
 
-    const lines = [stalledLine, costLine, firstLine].filter((l): l is string => l !== null);
+    const lines = [stalledLine, reworkLine, costLine, firstLine].filter((l): l is string => l !== null);
     return lines.length ? [`Guidance from the ${d} roll:`, ...lines.map((l) => `  ${l}`)] : [];
 }
 
