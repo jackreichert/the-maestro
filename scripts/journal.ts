@@ -632,9 +632,10 @@ function cmdStart(): void {
     const target = itemNamedByArg(fold(entries).items);
     if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
-    // The lease comes first: a window that does not get it writes nothing.
-    takeLease(target.id as string);
+    // A refused --branch/--worktree must exit before the lease is written: die() does not roll it back, and a --steal would take it from its owner.
     const where = recoveryFlags();
+    // The lease comes next: a window that does not get it writes nothing.
+    takeLease(target.id as string);
     if (!isQueued(target)) {
         if (Object.keys(where).length) writeNext(target, where, entries);
         console.log(`wip  ${target.id}  ${target.text}  (already in flight)`);

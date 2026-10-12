@@ -205,3 +205,25 @@ test('every journal.ts command in the recover playbook runs as written', () => {
     assert.match(run(['recover', id]).out, /Next step recorded: re-dispatched, resuming from the recorded state/);
     assert.match(run(['recover', id]).out, /next .* --model "<your model>" --used/);
 });
+
+for (const [flag, value] of [['--branch', 'bad..name'], ['--worktree', '/tmp/wt\nforged']] as const) {
+    test(`start <id> with a refused ${flag} writes no lease`, () => {
+        const queued = idOf(run(['queue', 'queued item', ...MARK]).out);
+        const before = rows().length;
+        const r = run(['start', queued, flag, value, '--window', 'w1', ...MARK]);
+        assert.equal(r.code, 1, r.out + r.err);
+        assert.equal(rows().length, before, 'a refused flag must write no row, lease included');
+        assert.equal(rows().filter((x) => x.kind === 'lease').length, 0);
+        assert.equal(run(['start', queued, '--window', 'w2', ...MARK]).code, 0, 'another window can still start the item');
+    });
+}
+
+test('start <id> --steal with a refused --branch leaves the owner\'s lease intact', () => {
+    const id = idOf(run(['start', 'owned', '--window', 'w1', '--repo', 'repo-a', ...MARK]).out);
+    const before = rows().length;
+    const r = run(['start', id, '--steal', '--window', 'w2', '--branch', 'bad..name', ...MARK]);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.equal(rows().length, before, 'the refused steal wrote nothing');
+    assert.equal(run(['start', id, '--window', 'w1', '--next', 'carry on', ...MARK]).code, 0, 'the owner is not locked out');
+    assert.equal(run(['start', id, '--window', 'w2', ...MARK]).code, 1, 'and w2 still does not hold it');
+});
