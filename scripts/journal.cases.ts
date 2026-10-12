@@ -2505,6 +2505,20 @@ test('priorities set again without a stream clears that project\'s Today and Nex
     rmSync(root, { recursive: true, force: true });
 });
 
+test('priorities set clears a dropped project\'s Today even when roll wrote it, and keeps its carry-over', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    const dir = join(root, 'Projects', 'options-app', 'Status', 'priorities');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '2030-01-02.md'), ROLL_FILE.replace('project: the-maestro', 'project: options-app').replace('- not set yet', '- Opt work | Options'));
+    const set = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    assert.match(runIn('priorities', 'show', '--repo', 'options-app', '--date', '2030-01-02').out, /Priorities not set for today/);
+    const file = fileOf('options-app', '2030-01-02');
+    assert.doesNotMatch(file, /Opt work/);
+    assert.match(file, /^## Carried from 2030-01-01\n- Unfinished A \| Maestro · /m);
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('a project write that fails makes priorities set exit 1 after the other projects are written', () => {
     const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
     mkdirSync(join(root, 'Projects', 'options-app', 'Status'), { recursive: true });

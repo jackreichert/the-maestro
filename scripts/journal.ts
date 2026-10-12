@@ -183,7 +183,7 @@ import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
 import { pageConfig } from './status-page.ts';
 import type { Priority, PrioritiesState } from './lib/status-page/priorities.ts';
-import { fanOut, nextItems, prioritiesDir, projectsFor, projectsSetOn, readProjectFile, writeProjectPriorities } from './lib/status-page/project-priorities.ts';
+import { fanOut, nextItems, prioritiesDir, projectsFor, projectsWithTodayOn, readProjectFile, writeProjectPriorities } from './lib/status-page/project-priorities.ts';
 import { readHomes } from './lib/home/config.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
@@ -2103,8 +2103,8 @@ function writeProjectFiles(dirPath: string, day: string, items: Priority[]) {
     const route = (s: string | undefined): string[] => projectsFor(s, homes, STATUS_REPO_STREAMS, CONTAINER_PROJECT);
     const rows = readLedger();
     const fanned = fanOut(items, route);
-    // A project an earlier `set` wrote today and this list no longer names is cleared, so a dropped item is neither shown nor carried.
-    const dropped = projectsSetOn(VAULT_ROOT, day).filter((name) => !fanned.has(name));
+    // A project with Today items for this day, whoever wrote them, and this list no longer names is cleared, so a dropped item is neither shown nor carried.
+    const dropped = projectsWithTodayOn(VAULT_ROOT, day).filter((name) => !fanned.has(name));
     for (const [name, mine] of [...fanned, ...dropped.map((name): [string, Priority[]] => [name, []])]) {
         try {
             const streams = [...new Set(mine.map((p) => p.stream).filter((s): s is string => Boolean(s)))];

@@ -156,11 +156,11 @@ export function writeProjectPriorities(vault: string, project: string, today: st
   return 'written';
 }
 
-/** The projects whose file for `day` was written by `priorities set`, by name. A folder that is not a plain project name is ignored. */
-export function projectsSetOn(vault: string, day: string): string[] {
+/** The projects whose file for `day` has Today items, by name, whoever wrote it (`priorities set` or roll). A folder that is not a plain project name is ignored. */
+export function projectsWithTodayOn(vault: string, day: string): string[] {
   const root = join(vault, 'Projects');
   if (!existsSync(root)) return [];
-  return readdirSync(root).filter((name) => plainName(name) && readProjectFile(join(prioritiesDir(vault, name), `${day}.md`))?.writtenBy === 'priorities set');
+  return readdirSync(root).filter((name) => plainName(name) && (readProjectFile(join(prioritiesDir(vault, name), `${day}.md`))?.today.length ?? 0) > 0);
 }
 
 /** Reads and parses a project file; null when it is missing or unreadable. */

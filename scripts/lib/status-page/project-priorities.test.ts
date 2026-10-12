@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { carryPriorities, fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, projectsSetOn, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
+import { carryPriorities, fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, projectsWithTodayOn, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
 import type { ProjectFile } from './project-priorities.ts';
 import type { Homes } from '../home/config.ts';
 import type { LedgerRow } from '../ledger-core.ts';
@@ -135,11 +135,12 @@ test('parseProjectFile returns who wrote the file and the carried items with the
   assert.equal(parseProjectFile(renderProjectFile(file())).writtenBy, 'priorities set');
 });
 
-test('projectsSetOn lists the projects priorities set wrote for the day, not roll-written ones or other days', () => {
-  const v = vaultWith('a-proj', 'b-proj', 'c-proj');
+test('projectsWithTodayOn lists the projects with Today items on the day, whoever wrote them, not empty ones or other days', () => {
+  const v = vaultWith('a-proj', 'b-proj', 'c-proj', 'd-proj');
   writeProjectPriorities(v, 'a-proj', '2026-10-12', file({ project: 'a-proj' }));
   writeProjectPriorities(v, 'b-proj', '2026-10-12', file({ project: 'b-proj', writtenBy: 'roll-maintenance' }));
+  writeProjectPriorities(v, 'd-proj', '2026-10-12', file({ project: 'd-proj', today: [] }));
   writeProjectPriorities(v, 'c-proj', '2026-10-13', file({ project: 'c-proj', date: '2026-10-13' }));
-  assert.deepEqual(projectsSetOn(v, '2026-10-12'), ['a-proj']);
-  assert.deepEqual(projectsSetOn(join(v, 'nothing'), '2026-10-12'), []);
+  assert.deepEqual(projectsWithTodayOn(v, '2026-10-12'), ['a-proj', 'b-proj']);
+  assert.deepEqual(projectsWithTodayOn(join(v, 'nothing'), '2026-10-12'), []);
 });
