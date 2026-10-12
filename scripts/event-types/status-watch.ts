@@ -6,18 +6,26 @@
  * An edit is held back until the page has been unchanged for SETTLE_MS (20 s), so a half-typed answer is not reported; the
  * baseline stays put meanwhile, so the edit is still new on the check that finds the page settled.
  *
+ * Before the baseline moves, every edit is written to the ledger (`answer` and `discuss` rows, lib/journal/answers.ts) when the
+ * ledger for this status directory is known, so the answer outlives the next regeneration and a dead session; the page renders
+ * it back from there; a page answer that only repeats the ledger's latest answer for that ask is that rendering, and is not reported. If that write throws, the baseline stays and the edit is found again on the next check.
+ *
  * Each check compares The-Podium.md with the baseline beside it (`.now-seen.md`) and reports only what is new, one actionable
  * event per ask (answer and tick together) and one for the priorities, then adopts The-Podium.md as the new baseline. A page the
  * generator wrote itself is recognised by its hash (`.now-seen.json`) and reported as nothing, so regenerating never fires.
- * The baseline moves in `check`, before the loop records the events: a crash in that instant loses them, which the
- * answer still on the page (until the next regeneration) makes visible to a person but not to the loop.
+ * The baseline moves in `check`, before the loop records the events: a crash in that instant loses the event, but not the
+ * answer, which is already in the ledger (with no ledger known, only the page, until the next regeneration, holds it).
  * The digest cuts a summary at 300 characters, so the decision comes before the answer; a summary ending in `...` has the
  * full text in `.now-seen.md` (the baseline just adopted), under the same ask id.
  * State { sha, fresh } is the page hash and the summaries to report this tick; `fresh` is empty on every quiet check.
  * `add` refuses a target that is not an existing directory.
  */
 import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, statusDirFor } from '../local-config.ts';
+import { latestRow, recordAnswer, squash } from '../lib/journal/answers.ts';
+import { openStore } from '../lib/journal/store.ts';
+import type { AnswerStore } from '../lib/journal/answers.ts';
 import { extractFields, unprocessed } from '../lib/status-page/inline.ts';
 import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
 import type { Unprocessed } from '../lib/status-page/inline.ts';
@@ -76,7 +84,45 @@ export function describe(u: Unprocessed, page: string): string[] {
   return out;
 }
 
-export function check(target: string, ctx?: Pick<CheckContext, 'now'>): StatusWatchState {
+/** Writes what a person did on the page into the ledger, at `nowMs`, and returns the edits that are really new. Throws when it cannot. */
+export type Recorder = (edits: Unprocessed, nowMs: number) => Unprocessed;
+/** The recorder for a status directory, or null when its ledger is not known (no ledger configured, or the directory is not the configured project's). */
+export type RecorderFor = (target: string) => Recorder | null;
+
+const RECORD_USAGE = { model: 'unrecorded', used: ['tool:status-watch'] };
+
+/**
+ * Records each answer, tick (as `(ticked)`, when it came with no words and the ask has no answer yet) and discuss mark against its open ask, one idempotent row each. An ask that is no longer open takes nothing: the event still fires.
+ * Returns the edits to report: a page answer equal to the ledger's latest answer for that ask, from whichever source, is the generator's rendering coming back (the page was saved before the baseline caught up), not something said, so it is dropped.
+ */
+export function recordEdits(store: AnswerStore, edits: Unprocessed, nowMs: number): Unprocessed {
+  const at = new Date(nowMs).toISOString();
+  const row = (kind: 'answer' | 'discuss', ask: string, text: string): void => {
+    recordAnswer(store, { kind, ask, text, source: 'page', usage: RECORD_USAGE, now: () => at, today: () => at.slice(0, 10) });
+  };
+  const entries = store.readLedger();
+  const answers = Object.fromEntries(Object.entries(edits.answers).filter(([id, text]) => latestRow(entries, 'answer', id)?.text !== squash(text)));
+  const novel = { ...edits, answers };
+  // A bare tick says "as proposed", so it must not replace words already recorded for the ask.
+  for (const id of new Set([...Object.keys(answers), ...edits.ticks])) {
+    const text = answers[id] ?? (latestRow(entries, 'answer', id) ? null : '(ticked)');
+    if (text !== null) row('answer', id, text);
+  }
+  for (const [id, topic] of Object.entries(edits.discuss)) row('discuss', id, topic);
+  return novel;
+}
+
+/** The configured ledger, but only for the project whose status directory this is: an answer must never land in another project's ledger. */
+export const recorderFor: RecorderFor = (target) => {
+  const ledger = LEDGER_ROOT || VAULT_ROOT;
+  const project = CONFIGURED_PROJECT || CONTAINER_PROJECT;
+  const home = statusDirFor(project);
+  if (!ledger || !home || resolve(home) !== resolve(target)) return null;
+  const store = openStore({ vault: ledger, project, dryRun: false, warn: () => {} });
+  return (edits, nowMs) => recordEdits(store, edits, nowMs);
+};
+
+export function check(target: string, ctx?: Pick<CheckContext, 'now'>, io?: RecorderFor): StatusWatchState {
   const page = readPodium(target);
   if (page === null) return { sha: '', fresh: [] };
   const hash = sha(page);
@@ -86,13 +132,16 @@ export function check(target: string, ctx?: Pick<CheckContext, 'now'>): StatusWa
   // The generator's own output, with no user edit copied into it, cannot hold an edit.
   const ownOutput = meta !== null && meta.generated_sha === hash && meta.carried === 0;
   const fields = extractFields(page);
-  const fresh = ownOutput ? [] : describe(unprocessed(fields, baselineText === null ? null : extractFields(baselineText), meta ? meta.priorities_seen : undefined), page);
+  const edits = ownOutput ? null : unprocessed(fields, baselineText === null ? null : extractFields(baselineText), meta ? meta.priorities_seen : undefined);
+  const pending = edits ? describe(edits, page) : [];
   // A page still being typed into holds an edit that may be half a sentence: leave the baseline alone and look again next check.
   // Without a clock (a direct call) there is nothing to settle against.
-  if (fresh.length && ctx && ctx.now - statSync(join(target, PODIUM_FILE)).mtimeMs < SETTLE_MS) return { sha: hash, fresh: [] };
+  if (pending.length && ctx && ctx.now - statSync(join(target, PODIUM_FILE)).mtimeMs < SETTLE_MS) return { sha: hash, fresh: [] };
+  // The ledger row comes first: a crash or a failed write here leaves the baseline alone, so the edit is found again next check.
+  const reported = edits ? ((io ?? recorderFor)(target)?.(edits, ctx?.now ?? Date.now()) ?? edits) : null;
   writeSeenPage(target, page);
   writeSeenMeta(target, { generated_sha: meta?.generated_sha ?? '', carried: meta?.carried ?? 0, priorities_seen: fields.priorities });
-  return { sha: hash, fresh };
+  return { sha: hash, fresh: reported ? describe(reported, page) : [] };
 }
 
 export const diff = (_prev: StatusWatchState | null, next: StatusWatchState): WatchEvent[] => next.fresh.map((summary) => ({ summary, actionable: true }));
