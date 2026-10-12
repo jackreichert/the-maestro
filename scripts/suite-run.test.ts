@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { jobDir, jobStatus, parseTap, startJob, statusLine, suiteEnv } from './suite-run.ts';
@@ -53,6 +53,8 @@ test('start returns before the suite finishes, then results.json carries counts,
   assert.deepEqual(r.tests.failing, ['the broken one']);
   assert.deepEqual(r.tsc, { exit: null, skipped: true });
   assert.equal(r.concurrency, 2);
+  assert.equal(r.timedOut, false);
+  assert.equal(r.killed, undefined);
   assert.ok(Date.parse(r.endedAt) >= Date.parse(r.startedAt));
   assert.match(statusLine(done), /FAIL at .*1 fail.*failing: the broken one/);
 });
@@ -168,4 +170,80 @@ test('a package.json typecheck script is what runs (and is recorded); without on
   assert.equal(noScript?.typecheck, 'tsc --noEmit');
   assert.equal(noScript?.tsc.exit, 127);
   assert.equal((await run({ 'package.json': pkg('exit 7') }, true))?.typecheck, 'skipped');
+});
+
+/** A fixture whose one test records its pid and HOME in `mark`, then hangs forever. */
+function hangingRepo(mark: string): string {
+  return fixture({ 'hang.test.ts': `import { test } from 'node:test';\nimport { writeFileSync } from 'node:fs';\ntest('hangs', async () => { writeFileSync(${JSON.stringify(mark)}, process.pid + '\\n' + process.env.HOME); setInterval(() => {}, 1000); await new Promise(() => {}); });\n` });
+}
+
+const gone = async (pid: number): Promise<boolean> => {
+  for (let i = 0; i < 50; i += 1) {
+    try { process.kill(pid, 0); } catch { return true; }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+};
+
+/** Waits (bounded) for the hanging test to write its mark; returns its pid and HOME. */
+async function marked(mark: string): Promise<{ pid: number; home: string }> {
+  for (let i = 0; i < 100; i += 1) {
+    if (existsSync(mark)) { const [pid, home] = readFileSync(mark, 'utf8').split('\n'); if (home) return { pid: Number(pid), home }; }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('the hanging test never started');
+}
+
+/** A bounded wait for results.json, so a regression that hangs the worker fails this test instead of the run. */
+async function results(id: string, base: string, seconds = 20): Promise<NonNullable<JobStatus['results']>> {
+  for (let i = 0; i < seconds * 5; i += 1) {
+    const r = jobStatus(id, base).results;
+    if (r) return r;
+    await new Promise((r2) => setTimeout(r2, 200));
+  }
+  throw new Error(`no results.json for ${id} after ${seconds}s`);
+}
+
+const reap = (...pids: number[]): void => { for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } } };
+
+test('a hung job is killed at --timeout-min: process group gone, temp HOME removed, results.json says timedOut and FAIL', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const mark = join(mkdtempSync(join(tmpdir(), 'suite-mark-')), 'mark');
+  const spec = startJob(hangingRepo(mark), { tests: '*.test.ts', skipTsc: true, timeoutMin: 0.05, base });
+  let pid = 0;
+  try {
+    const started = await marked(mark);
+    pid = started.pid;
+    const r = await results(spec.id, base);
+    assert.equal(r.timedOut, true);
+    assert.equal(r.pass, false);
+    assert.match(statusLine(jobStatus(spec.id, base)), /FAIL.*timed out/);
+    assert.equal(await gone(pid), true, 'the test process must not outlive the job');
+    assert.equal(existsSync(started.home), false, 'the temp HOME is removed');
+  } finally { reap(pid, spec.workerPid); }
+});
+
+test('SIGTERM to the worker kills its children, removes the temp HOME and still writes results.json with a killed note', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const mark = join(mkdtempSync(join(tmpdir(), 'suite-mark-')), 'mark');
+  const spec = startJob(hangingRepo(mark), { tests: '*.test.ts', skipTsc: true, base });
+  let pid = 0;
+  try {
+    const started = await marked(mark);
+    pid = started.pid;
+    process.kill(spec.workerPid, 'SIGTERM');
+    const r = await results(spec.id, base);
+    assert.match(r.killed ?? '', /SIGTERM/);
+    assert.equal(r.pass, false);
+    assert.equal(r.timedOut, false);
+    assert.match(statusLine(jobStatus(spec.id, base)), /FAIL.*killed/);
+    assert.equal(await gone(pid), true, 'the test process must not outlive the worker');
+    assert.equal(existsSync(started.home), false);
+  } finally { reap(pid, spec.workerPid); }
+});
+
+test('--timeout-min is validated on the CLI', () => {
+  const repo = fixture({ 'a.test.ts': PASSING });
+  const env = { ...process.env, MAESTRO_SUITE_DIR: mkdtempSync(join(tmpdir(), 'suite-jobs-')), MAESTRO_LOCAL_CONFIG: '' };
+  assert.equal(spawnSync(process.execPath, [SCRIPT, 'start', repo, '--timeout-min', '0', '--skip-tsc'], { encoding: 'utf8', env }).status, 2);
 });
