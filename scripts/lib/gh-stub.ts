@@ -7,9 +7,10 @@
  * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
  * `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export interface GhStubConfig { pages: unknown[][]; prState?: 'OPEN' | 'MERGED' | 'CLOSED'; failOnPage?: number; editLog?: string }
 
@@ -33,14 +34,30 @@ else if (argv[0] === 'api' && cfg.failOnPage === page) {
 else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPEN');
 `;
 
-/** Writes the stub and returns an env (PATH + config) for spawning a script against it. */
+/**
+ * The one stub executable for this machine, at a path named by its content. A freshly written executable can stall for minutes on its first run
+ * under load (a macOS provenance scan), so each call writing its own copy made every call a first run; sharing one pays that once and later runs
+ * (and later test files) find it already scanned. Written by rename, so a concurrent writer never leaves a half-written file.
+ */
+function stubBinary(): string {
+  const dir = join(tmpdir(), `maestro-gh-stub-${createHash('sha256').update(STUB).digest('hex').slice(0, 12)}`);
+  const bin = join(dir, 'gh');
+  if (!existsSync(bin)) {
+    mkdirSync(dir, { recursive: true });
+    const part = join(dir, `gh.${process.pid}.part`);
+    writeFileSync(part, STUB);
+    chmodSync(part, 0o755);
+    renameSync(part, bin);
+  }
+  return bin;
+}
+
+/** Writes the config and returns an env (PATH + config) for spawning a script against the shared stub. */
 export function installGhStub(config: GhStubConfig): NodeJS.ProcessEnv {
-  const dir = mkdtempSync(join(tmpdir(), 'gh-stub-'));
-  writeFileSync(join(dir, 'gh'), STUB);
-  chmodSync(join(dir, 'gh'), 0o755);
-  const configPath = join(dir, 'config.json');
+  const bin = stubBinary();
+  const configPath = join(mkdtempSync(join(tmpdir(), 'gh-stub-')), 'config.json');
   writeFileSync(configPath, JSON.stringify(config));
-  return { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
+  return { ...process.env, PATH: `${dirname(bin)}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
 }
 
 /** A search node carrying every field the pr-watch event type and prs-snapshot.ts read. */
