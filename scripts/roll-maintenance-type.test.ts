@@ -132,7 +132,7 @@ test('in the loop: success is silent, a failure is an actionable event, and the 
 });
 
 test('a clean new-day run carries the priorities and records the count; the same day asks neither again', () => {
-  const r = rig([OK], [{ written: ['arya-scraper', 'the-maestro'], problems: [] }]);
+  const r = rig([OK], [{ written: ['avonlea-api', 'the-maestro'], problems: [] }]);
   const first = r.at(T0);
   assert.equal(first.state.last, 'archived 1 day(s), swept 1 removed, 0 pruned, 2 kept, carried 2 project(s)');
   assert.deepEqual(first.events, []);
@@ -142,9 +142,9 @@ test('a clean new-day run carries the priorities and records the count; the same
 });
 
 test('a carry problem schedules the hourly retry and raises one event, and a failed maintain never reaches carry', () => {
-  const r = rig([OK, OK, { ...OK, ok: false, problems: ['no container'] }], [{ written: [], problems: ['arya-scraper: no vault folder Projects/arya-scraper'] }, { written: [], problems: ['arya-scraper: no vault folder Projects/arya-scraper'] }]);
+  const r = rig([OK, OK, { ...OK, ok: false, problems: ['no container'] }], [{ written: [], problems: ['avonlea-api: no vault folder Projects/avonlea-api'] }, { written: [], problems: ['avonlea-api: no vault folder Projects/avonlea-api'] }]);
   const bad = r.at(T0);
-  assert.deepEqual(bad.events.map((e) => [e.summary, e.actionable]), [['roll maintenance failed: carry: arya-scraper: no vault folder Projects/arya-scraper', true]]);
+  assert.deepEqual(bad.events.map((e) => [e.summary, e.actionable]), [['roll maintenance failed: carry: avonlea-api: no vault folder Projects/avonlea-api', true]]);
   assert.equal(bad.state.ranDay, '', 'the day is not marked done');
   r.at(T0 + 30 * 60_000);
   assert.equal(r.carried.length, 1, 'no retry inside the hour');

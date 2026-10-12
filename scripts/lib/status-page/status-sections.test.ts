@@ -21,7 +21,7 @@ const CONFIG: PageConfig = {
 const row = (id: string, kind: string, text: string, over: Partial<LedgerRow> = {}): LedgerRow =>
   ({ id, kind, ts: `${TODAY}T13:00:00Z`, date: TODAY, text, ...over }) as LedgerRow;
 const rows: LedgerRow[] = [
-  row('aa11', 'wip', 'wire the partner api FAKE-1', { stream: 'Rivendell', model: 'Model A', ts: `${TODAY}T11:00:00Z` }),
+  row('aa11', 'wip', 'wire the gate api FAKE-1', { stream: 'Rivendell', model: 'Model A', ts: `${TODAY}T11:00:00Z` }),
   row('aa12', 'wip', 'second rivendell job', { stream: 'Rivendell', model: 'Model B' }),
   row('bb21', 'wip', 'direct integration', { stream: 'Narnia', model: 'Model A', ts: `${TODAY}T14:30:00Z` }),
   row('cc31', 'wip', 'loose job'),

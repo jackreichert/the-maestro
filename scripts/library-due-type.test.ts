@@ -25,7 +25,7 @@ function rig() {
   const lease = { readLedger: () => rows, append: (r: LedgerRow) => { rows.push(r); version++; }, window: 'cmptest0001', now: () => new Date(now).toISOString(), dryRun: false };
   const r = {
     rows, events, at: () => now,
-    learned: (repo = 'dev-env') => append({ kind: 'learned', text: `fact ${n}`, repo }),
+    learned: (repo = 'example-container') => append({ kind: 'learned', text: `fact ${n}`, repo }),
     curate: (closes: string) => append({ kind: 'curated', closes, text: `curated ${closes}`, rejected: 'not durable' }),
     miss: (topic = 'index orchard rebuild') => append({ kind: 'miss', text: `question ${n}`, source: 'find', topic }),
     rolled: () => append({ kind: 'rolled', text: 'archived 0 item(s)' }),
@@ -46,13 +46,13 @@ test('zero pending rows over a simulated day emit nothing', () => {
 test('three rows emit once after ten quiet minutes, with the batch line', () => {
   const r = rig();
   r.run(120);
-  r.learned('arya-scraper'); r.learned('arya-scraper'); r.learned('dev-env');
+  r.learned('avonlea-api'); r.learned('avonlea-api'); r.learned('example-container');
   r.run(9 * 60);
   assert.equal(r.events.length, 0, 'not before ten minutes of quiet');
   r.run(2 * 60);
   assert.equal(r.events.length, 1);
   assert.equal(r.events[0]?.actionable, true);
-  assert.match(r.events[0]?.summary ?? '', /^library-due: 3 learned to compose \(arya-scraper 2, dev-env 1\), oldest \d+m$/);
+  assert.match(r.events[0]?.summary ?? '', /^library-due: 3 learned to compose \(avonlea-api 2, example-container 1\), oldest \d+m$/);
   r.run(3600);
   assert.equal(r.events.length, 1, 'silent until a pass begins');
 });
@@ -181,9 +181,9 @@ test('misses alone make the library due, counted apart from learned rows and gro
 test('learned rows and misses are reported side by side, and a curated row closing a miss clears it', () => {
   const r = rig();
   r.run(120);
-  r.learned('dev-env'); const m = r.miss();
+  r.learned('example-container'); const m = r.miss();
   r.run(11 * 60);
-  assert.match(r.events[0]?.summary ?? '', /^library-due: 1 learned to compose \(dev-env 1\), 1 miss to answer \(1 topic\)/);
+  assert.match(r.events[0]?.summary ?? '', /^library-due: 1 learned to compose \(example-container 1\), 1 miss to answer \(1 topic\)/);
   r.curate(m.id as string);
   const s = r.step(60);
   assert.equal(s.misses, 0);
