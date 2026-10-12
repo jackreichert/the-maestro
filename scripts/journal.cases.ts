@@ -3001,6 +3001,28 @@ test('prime and start-here withhold a secret-shaped stream name or id instead of
     }
 });
 
+test('start-here --json and status --json withhold a secret-shaped stream name or id and still parse (MAESTRO-310)', () => {
+    const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
+    const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
+    const now = new Date().toISOString();
+    const rows = [
+        { id: 'sec1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: token, text: 'work in an odd stream', model: 'x', used: ['x'] },
+        { id: key, ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'work with an odd id', model: 'x', used: ['x'] },
+        { id: 'ok1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'ordinary work', model: 'x', used: ['x'] },
+    ];
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    for (const cmd of [['start-here', '--json'], ['status', '--json']]) {
+        const r = run(...cmd);
+        assert.equal(r.code, 0, r.err);
+        assert.ok(!r.out.includes(token), `${cmd[0]} --json printed the token-shaped stream`);
+        assert.ok(!r.out.includes(key), `${cmd[0]} --json printed the key-shaped id`);
+        assert.doesNotThrow(() => JSON.parse(r.out), `${cmd[0]} --json no longer parses`);
+        assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} --json still shows ordinary work`);
+        assert.match(r.out, /\[withheld: secret shape\]/);
+    }
+});
+
 test('web needs no --project when the config names none: it falls back to the container project, as web.ts does', () => {
     const r = spawnSync(process.execPath, [SCRIPT, 'web', '--port', '0', '--vault', vault, '--status-dir', join(vault, 'status')], {
         encoding: 'utf8', cwd: emptyCwd, timeout: 4000,
