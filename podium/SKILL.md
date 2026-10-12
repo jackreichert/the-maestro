@@ -42,6 +42,10 @@ run again. A failed GitHub read still writes the page from cached PR data under 
 
 ## What the user can write on it
 
+An answer given with the page's buttons (`POST /api/asks/answer`) is already recorded and the ask is
+already closed, but the answer also lands in the note for the watcher, so it reaches you as an event
+too: `answered on the page, already recorded and closed: <text>`. Act on it; do not resolve it again.
+
 Only the asks and the priorities are editable; everything else is regenerated and typing there is
 ignored.
 

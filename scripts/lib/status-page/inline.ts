@@ -79,7 +79,11 @@ export function extractFields(page: string): InlineFields {
 }
 
 /** What differs from the baseline: answers and discuss marks new or changed, asks newly ticked, and priorities when they changed. */
-export interface Unprocessed { answers: Record<string, string>; discuss: Record<string, string>; ticks: string[]; priorities: string[] | null }
+export interface Unprocessed {
+  answers: Record<string, string>; discuss: Record<string, string>; ticks: string[]; priorities: string[] | null;
+  /** Ids among `answers` whose ask the ledger already closed with exactly that answer (given on the web page); set by the watcher's recorder, never by `unprocessed`. */
+  closed?: string[];
+}
 
 /**
  * Edits in `current` the baseline has not reported. `seenPriorities` is the list as last rendered or reported (it
