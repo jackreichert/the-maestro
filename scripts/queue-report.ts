@@ -20,8 +20,7 @@ import { mergedRows, type PrRef } from './lib/pr-refs.ts';
 import { gitBranches, queueHygiene } from './lib/queue-hygiene.ts';
 import { openStore } from './lib/journal/store.ts';
 import { parseArgs } from './lib/journal/args.ts';
-
-const ghBin = (): string => process.env.MAESTRO_GH_BIN || 'gh';
+import { toolCommand } from './lib/tool-bin.ts';
 
 /** `owner/name` for a repo directory under the container root, from its origin URL, else (not when `strict`) `gh_org/<repo>`; undefined when neither is known. */
 function ownerOf(repo: string, strict = false): string | undefined {
@@ -34,7 +33,7 @@ function ownerOf(repo: string, strict = false): string | undefined {
 }
 
 function stateOf(ref: PrRef): string | undefined {
-    const r = spawnSync(ghBin(), ['pr', 'view', String(ref.number), '--repo', ref.repo, '--json', 'state', '-q', '.state'], { encoding: 'utf8', timeout: 20_000 });
+    const r = spawnSync(...toolCommand('gh', ['pr', 'view', String(ref.number), '--repo', ref.repo, '--json', 'state', '-q', '.state']), { encoding: 'utf8', timeout: 20_000 });
     return r.status === 0 ? r.stdout.trim() || undefined : undefined;
 }
 

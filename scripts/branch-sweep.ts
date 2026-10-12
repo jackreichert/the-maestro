@@ -40,6 +40,7 @@ import {
 } from './local-config.ts';
 import { isEnvFile, isStoreLink, projectFromBranch } from './lib/env-store.ts';
 import { plistPath } from './lib/supervisor-state.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 export { isEnvFile };
 
@@ -92,7 +93,8 @@ interface Rule<A extends unknown[], V, RA extends unknown[] = A> { name: string;
 const errorOf = (e: unknown): Failure => (e instanceof Error ? e : new Error(String(e)));
 
 const run = (cmd: string, args: string[], opts: Record<string, unknown> = {}): CmdResult => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
+  const [bin, binArgs] = toolCommand(cmd, args);
+  const r = spawnSync(bin, binArgs, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
   return { ok: r.status === 0, status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 // --no-optional-locks: a scan must not refresh the index, or it would reset the idle clock it reads.

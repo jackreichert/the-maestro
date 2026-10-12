@@ -211,6 +211,7 @@ import { listWatches, lockHolder } from './lib/watch-registry.ts';
 import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'curated', 'rework'];
@@ -2003,7 +2004,8 @@ function cmdHandoff() {
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
 const tryRun: TryRun = (cmdName, args) => {
-    const r = spawnSync(cmdName, args, { encoding: 'utf8' });
+    const [bin, binArgs] = toolCommand(cmdName, args);
+    const r = spawnSync(bin, binArgs, { encoding: 'utf8' });
     return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 

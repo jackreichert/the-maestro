@@ -8,6 +8,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import type { Run } from './types.ts';
+import { toolCommand } from './tool-bin.ts';
 
 /** One search result node; the fields differ by query, so callers narrow it. */
 export type SearchNode = Record<string, unknown>;
@@ -18,7 +19,7 @@ interface GraphqlResponse { errors?: { message?: string }[]; data?: { search?: S
 const MAX_PAGES = 40;
 
 // The default runner throws on a failed gh; a caller's `run` (the event loop's ctx.run) returns { status, stdout, stderr } instead.
-const execGh: Run = (cmd, args) => ({ status: 0, stderr: '', stdout: execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }) });
+const execGh: Run = (cmd, args) => ({ status: 0, stderr: '', stdout: execFileSync(...toolCommand(cmd, args), { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }) });
 
 function fetchPage(query: string, after: string | null, run: Run): SearchPage {
   const cursorArgs = after ? ['-f', `after=${after}`] : [];

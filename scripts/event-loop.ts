@@ -64,6 +64,7 @@ import type { NotifyRun } from './lib/notify.ts';
 import { resolveWindowId, windowEnv } from './lib/window-id.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 /** What `tick` is given. Only `dir` and `types` are required. */
 export interface TickDeps {
@@ -105,7 +106,8 @@ const intervalFor = (watch: Watch, { types, config, now, recentEvents }: { types
 
 /** Runs a command and returns { status, stdout }; never throws on a non-zero exit (gh uses them for "pending"). */
 export const defaultRun: Run = (cmd, args): RunResult => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 32 * 1024 * 1024 });
+  const [bin, binArgs] = toolCommand(cmd, args);
+  const r = spawnSync(bin, binArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, maxBuffer: 32 * 1024 * 1024 });
   if (r.error) throw r.error;
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
