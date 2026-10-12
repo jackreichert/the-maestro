@@ -69,3 +69,12 @@ test('links: web links open a new tab with noopener, vault links go to the OS, a
   assert.match(web.getAttribute('rel') ?? '', /noopener/);
   assert.ok(links.filter((a) => a.getAttribute('href')?.startsWith('obsidian:')).every((a) => a.getAttribute('target') === null));
 });
+
+test('every count states when it was read: projects, done and each chart carry an as-of time', () => {
+  const el = draw(state(), charts(), { state: 'ok', data: projects() });
+  assert.match(text(sec(el, 'Projects')), /As of/);
+  assert.match(text(sec(el, 'What we got done')), /As of/);
+  const figures = [...sec(el, 'Trends').querySelectorAll('figure')];
+  assert.equal(figures.length, 2);
+  for (const f of figures) assert.match(text(f.querySelector('.asof')), /^As of /, 'each chart says when its data was read');
+});

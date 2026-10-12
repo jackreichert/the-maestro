@@ -64,7 +64,7 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
     h('div', { class: 'home-grid' },
       h('div', { class: 'a-needs' }, section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', hint: askHint(opts.live), action: asks?.more }, asks?.list ?? null)),
       h('div', { class: 'a-projects' }, section({ title: 'Projects', n: opts.projects.state === 'ok' ? opts.projects.data.rows.length : 0, tone: 'neutral', empty: 'No projects on the board yet.', quiet: true }, projectRows(opts.projects, st.tz))),
-      h('div', { class: 'a-done' }, section({ title: 'What we got done', n: 0, tone: 'neutral', empty: done ? 'Nothing finished this week yet.' : 'Done counts are missing: the charts data did not load.', quiet: true }, done && done.week.n > 0 ? doneBody(done.today, done.week, done.missing) : null)),
+      h('div', { class: 'a-done' }, section({ title: 'What we got done', n: 0, tone: 'neutral', empty: done ? 'Nothing finished this week yet.' : 'Done counts are missing: the charts data did not load.', quiet: true }, done && done.week.n > 0 ? doneBody(done.today, done.week, done.missing, asOf(st.generatedAt, st.tz)) : null)),
       h('div', { class: 'a-charts' }, section({ title: 'Trends', n: 0, tone: 'neutral', empty: '', quiet: true }, chartsBody(st, opts.projects))),
       h('div', { class: 'a-links' }, section({ title: 'Important links', n: 0, tone: 'neutral', empty: 'No links yet. Pin one to a stream, or give a project a CONTEXT note.', quiet: true }, linksBody(opts.projects)))));
 }
@@ -94,7 +94,7 @@ function projectRow(r: ProjectRow): HTMLElement {
     h('p', { class: 'facts' }, rowFacts(r).join(' · ')));
 }
 
-function doneBody(today: DoneSpan, week: DoneSpan, missing: number): HTMLElement {
+function doneBody(today: DoneSpan, week: DoneSpan, missing: number, read: HTMLElement): HTMLElement {
   const todayList = today.groups.length
     ? h('ul', { class: 'done' }, ...today.groups.map((g) => h('li', {}, streamTag(g.stream), h('ul', {}, ...g.items.map((i) => h('li', {}, i.text, i.ticket ? ' ' : null, i.ticket ? refLink(i.ticket) : null))))))
     : h('p', { class: 'loading' }, 'Nothing finished yet today.');
@@ -102,7 +102,8 @@ function doneBody(today: DoneSpan, week: DoneSpan, missing: number): HTMLElement
     h('div', { class: 'done-span' }, h('h3', {}, `Today · ${today.n}`), todayList),
     h('div', { class: 'done-span' }, h('h3', {}, `This week · ${week.n}`),
       h('ul', { class: 'done week' }, ...week.groups.map((g) => h('li', {}, streamTag(g.stream), h('span', { class: 'week-n' }, `${g.n} done`))))),
-    missing > 0 ? h('p', { class: 'home-note' }, `${missing} finished this week ${missing === 1 ? 'is' : 'are'} counted but not listed by name: the server keeps only the newest.`) : null);
+    missing > 0 ? h('p', { class: 'home-note' }, `${missing} finished this week ${missing === 1 ? 'is' : 'are'} counted but not listed by name: the server keeps only the newest.`) : null,
+    read);
 }
 
 function chartsBody(st: PodiumState, p: ProjectsLoad): HTMLElement {
@@ -110,15 +111,15 @@ function chartsBody(st: PodiumState, p: ProjectsLoad): HTMLElement {
   const sum = (d: ChartData): number => d.series.reduce((t, s) => t + s.values.reduce((a, b) => a + b, 0), 0);
   const weeks = p.state === 'ok' ? weeksChart(p.data, st.streams) : null;
   return h('div', { class: 'home-charts' },
-    weeks ? figure('stacked', 'Done per week, by stream', weeks, `n = ${sum(weeks)} finished over ${weeks.labels.length} seven-day periods ending today; each column starts on its date.`)
+    weeks ? figure('stacked', 'Done per week, by stream', weeks, `n = ${sum(weeks)} finished over ${weeks.labels.length} seven-day periods ending today; each column starts on its date.`, asOf(p.state === 'ok' ? p.data.generatedAt : st.generatedAt, st.tz))
       : pending(p, 'the weekly chart') ?? h('p', {}, ''),
-    figure('stacked', 'Open items by age', age.data, `n = ${sum(age.data)} open: ${st.asks.length} asks and ${st.working.length + st.blocked.length - age.undated} in flight or blocked${age.undated ? `; ${age.undated} with no start date left out` : ''}.`));
+    figure('stacked', 'Open items by age', age.data, `n = ${sum(age.data)} open: ${st.asks.length} asks and ${st.working.length + st.blocked.length - age.undated} in flight or blocked${age.undated ? `; ${age.undated} with no start date left out` : ''}.`, asOf(st.generatedAt, st.tz)));
 }
 
-function figure(kind: ChartKind, title: string, data: ChartData, caption: string): HTMLElement {
+function figure(kind: ChartKind, title: string, data: ChartData, caption: string, read: HTMLElement): HTMLElement {
   const chart = h('podium-chart', { kind, label: title });
   chart.data = data;
-  return h('figure', {}, chart, h('figcaption', {}, caption));
+  return h('figure', {}, chart, h('figcaption', {}, caption), read);
 }
 
 function linksBody(p: ProjectsLoad): HTMLElement | null {
