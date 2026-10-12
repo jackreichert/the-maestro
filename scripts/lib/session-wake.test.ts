@@ -147,3 +147,15 @@ test('with no command at all the tick does not look at waiters or transcripts', 
     assert.equal(probed, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a wake event that stays unseen gets at most MAX_PER_DAY fallback texts in 24 hours', () => {
+  const dir = tmp();
+  try {
+    let sent = 0;
+    const wake = entry({ type: 'wake', kind: 'other' });
+    for (let t = 0; t < 24 * 3_600_000; t += 60_000) {
+      runWakeTick({ eventDir: dir, now: NOW + t, entries: [wake], launchCommand: [], notifyCommand: ['say'], transcriptsDir: '', run: () => { sent += 1; return { status: 0 }; } });
+    }
+    assert.equal(sent, MAX_PER_DAY);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

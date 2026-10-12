@@ -6,7 +6,7 @@
  * A launch needs ALL of: an unseen actionable event older than GRACE_MS (a waiter or a hook usually reads it first), no live waiter (lib/waiters.ts),
  * no interactive transcript written in TRANSCRIPT_WINDOW_MS (a session is open and Jack is probably in it), at least MIN_GAP_MS since the last launch,
  * fewer than MAX_PER_DAY launches in 24 hours, and a configured `wake_launch_command`. Launching is off until the install opts in. With no launch
- * command but a `notify_command`, one fixed line (WAKE_NOTIFY_LINE, no event text) goes out, at most one per MIN_GAP_MS, and only when no pending
+ * command but a `notify_command`, one fixed line (WAKE_NOTIFY_LINE, no event text) goes out, under the same limits as a launch (MIN_GAP_MS apart, MAX_PER_DAY a day), and only when no pending
  * event is one the alert policy (lib/alert-policy.ts `alertable`) would text itself: allowed kinds already get exactly one text from the alerts,
  * but a wake event is kind `other` and would otherwise be silent. With neither command nothing happens.
  *
@@ -36,11 +36,11 @@ export type WakeReason = 'nothing-waiting' | 'within-grace' | 'waiter-live' | 's
 export interface WakeState {
   /** Epoch ms of recent launch attempts (a failed one counts: the command may have opened a window before it failed), pruned to a day. */
   launches: number[];
-  /** Epoch ms of the last fallback notification. */
-  notifiedAt: number;
+  /** Epoch ms of recent fallback texts, pruned to a day; they share MAX_PER_DAY and MIN_GAP_MS with launches but are counted apart. */
+  notifications: number[];
 }
 
-export const emptyWakeState = (): WakeState => ({ launches: [], notifiedAt: 0 });
+export const emptyWakeState = (): WakeState => ({ launches: [], notifications: [] });
 
 export interface WakeInput {
   now: number;
@@ -54,6 +54,12 @@ export interface WakeInput {
 
 export interface WakeDecision { action: WakeAction; reason: WakeReason }
 
+/** True when MAX_PER_DAY actions already happened in the last day, or one happened less than MIN_GAP_MS ago. */
+const limited = (times: number[], now: number): boolean => {
+  const recent = times.filter((t) => now - t < DAY_MS);
+  return recent.length >= MAX_PER_DAY || recent.some((t) => now - t < MIN_GAP_MS);
+};
+
 /** What to do now. Pure. The order of the guards is the order of the reasons: a quiet inbox is never "rate-limited". */
 export function decideWake({ now, entries, waiterLive, sessionActive, state, hasLaunchCommand, hasNotifyCommand }: WakeInput): WakeDecision {
   const pending = entries.filter((e) => e.actionable && !e.seen && !e.handled);
@@ -64,11 +70,9 @@ export function decideWake({ now, entries, waiterLive, sessionActive, state, has
   if (!hasLaunchCommand) {
     if (!hasNotifyCommand) return { action: 'none', reason: 'no-command' };
     if (pending.some(alertable)) return { action: 'none', reason: 'no-command' };
-    return now - state.notifiedAt < MIN_GAP_MS ? { action: 'none', reason: 'rate-limited' } : { action: 'notify', reason: 'notified' };
+    return limited(state.notifications, now) ? { action: 'none', reason: 'rate-limited' } : { action: 'notify', reason: 'notified' };
   }
-  const recent = state.launches.filter((t) => now - t < DAY_MS);
-  const limited = recent.length >= MAX_PER_DAY || recent.some((t) => now - t < MIN_GAP_MS);
-  return limited ? { action: 'none', reason: 'rate-limited' } : { action: 'launch', reason: 'launched' };
+  return limited(state.launches, now) ? { action: 'none', reason: 'rate-limited' } : { action: 'launch', reason: 'launched' };
 }
 
 export const wakeStatePath = (eventDir: string): string => join(eventDir, 'wake-launch.json');
@@ -79,7 +83,8 @@ export function readWakeState(eventDir: string): WakeState {
   try {
     const v = JSON.parse(readFileSync(wakeStatePath(eventDir), 'utf8')) as Partial<WakeState>;
     const times = Array.isArray(v.launches) ? v.launches.filter((t): t is number => Number.isFinite(t)) : [];
-    return { launches: times, notifiedAt: Number.isFinite(v.notifiedAt) ? (v.notifiedAt as number) : 0 };
+    const notified = Array.isArray(v.notifications) ? v.notifications.filter((t): t is number => Number.isFinite(t)) : [];
+    return { launches: times, notifications: notified };
   } catch { return emptyWakeState(); }
 }
 
@@ -126,7 +131,7 @@ export function runWakeTick({ eventDir, now, entries, launchCommand, notifyComma
     // Reserve the slot first: if the history cannot be saved the throw lands in the catch below and nothing runs, so the cap can never be open-ended.
     writeWakeState(eventDir, launching
       ? { ...state, launches: [...state.launches.filter((t) => now - t < DAY_MS), now] }
-      : { ...state, notifiedAt: now });
+      : { ...state, notifications: [...state.notifications.filter((t) => now - t < DAY_MS), now] });
     const r = run(cmd as string, [...args, launching ? WAKE_PROMPT : WAKE_NOTIFY_LINE]);
     const ok = !(r?.error || r?.status);
     appendFileSync(wakeLogPath(eventDir), `${JSON.stringify({ at: new Date(now).toISOString(), action: d.action, reason: d.reason, ok })}\n`);
