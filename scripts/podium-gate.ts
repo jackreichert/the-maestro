@@ -14,6 +14,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { render, runGate } from './lib/podium-gate/checks.ts';
 import { httpProbe } from './lib/podium-gate/probe.ts';
+import { printJson } from './lib/json-out.ts';
 import { startTempPodium } from './lib/podium-gate/temp-podium.ts';
 
 const USAGE = 'Usage: podium-gate.ts [--url <http://127.0.0.1:port/>] [--json]';
@@ -29,7 +30,8 @@ async function main(argv: string[]): Promise<number> {
     if ((await probe.get('/api/state')).status === 0) { console.error(`nothing answers at ${values.url}`); return 2; }
     const results = await runGate(probe);
     const { text, code } = render(results);
-    console.log(values.json ? JSON.stringify(results, null, 2) : `${temp ? 'Checked a temp Podium with fictional data.\n\n' : ''}${text}`);
+    if (values.json) printJson(results);
+    else console.log(`${temp ? 'Checked a temp Podium with fictional data.\n\n' : ''}${text}`);
     return code;
   } finally { await temp?.close(); }
 }
