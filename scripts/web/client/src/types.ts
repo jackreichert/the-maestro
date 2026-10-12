@@ -103,6 +103,20 @@ export interface HomeTicket {
   tracker?: Ref; points?: number; prsMore?: number; quietDays: number | null;
 }
 
+/** A document of an epic. `url` is built by the server (obsidian://open for a note, http(s) for an outside document). */
+export interface DocItem { title: string; kind: string; project: string; ticket: string; status?: string; updated?: string; url?: string }
+export interface EpicDocs { groups: { kind: string; items: DocItem[]; more: number }[]; unattributedRecent: number }
+
+/** A run of text in a brief; `link.url` was built by the server. */
+export interface Inline { text: string; strong?: true; em?: true; code?: true; link?: { url: string; kind: 'web' | 'note' } }
+/** A brief as a typed tree: no Markdown and no HTML reach the page. */
+export type Block =
+  | { type: 'heading'; level: 3 | 4; runs: Inline[] }
+  | { type: 'paragraph'; runs: Inline[] }
+  | { type: 'quote'; runs: Inline[] }
+  | { type: 'list'; ordered: boolean; items: { runs: Inline[]; children: { runs: Inline[] }[] }[] };
+export interface EpicBrief { state: 'fresh' | 'stale' | 'missing' | 'too-long' | 'unreadable'; updated?: string; staleBecause?: string[]; ref?: Ref; blocks?: Block[] }
+
 /** One epic's progress and what to do next, as the server counted it. */
 export interface HomeEpic {
   id: string; title: string; note: Ref; status: string;
@@ -110,6 +124,10 @@ export interface HomeEpic {
   verify: { required: boolean; verified: number };
   awaiting: number; unknowns: number; quietDays: number | null;
   tracker?: Ref; next?: HomeTicket;
+  /** Open PRs naming the epic or one of its open tickets, at most three; absent from a server that predates it. */
+  prs?: Ref[]; prsMore?: number;
+  /** Absent from a server that predates epic documents. */
+  docs?: EpicDocs; brief?: EpicBrief;
 }
 
 /** Something the files cannot tell, with the fix in its text. `epic` names the epic block it counts toward. */
@@ -130,3 +148,25 @@ export interface StreamHome {
   unknowns: HomeUnknown[];
   freshness: { prs: { fetchedAt: string | null; stale: boolean } };
 }
+
+/** One open epic as `GET /api/epics` sends it: the counts, the next ticket and the PRs that name it. */
+export interface EpicLine {
+  id: string; title: string; note: Ref; tracker?: Ref; status: string;
+  total: number; closed: number; inProgress: number; blocked: number; notStarted: number;
+  awaiting: number; quietDays: number | null;
+  next?: { id: string; title: string; ref: Ref };
+  prs: Ref[]; prsMore?: number;
+}
+
+/** `GET /api/epics`: each stream's open epics, and the epics no stream claims. */
+export interface EpicsData { streams: { stream: string; epics: EpicLine[] }[]; unfiled: EpicLine[] }
+
+/** One local branch waiting for a re-review before it is pushed, as `GET /api/local-review` sends it. `where` and the command are container-relative. */
+export interface LocalUnit {
+  id: string; repo: string; branch: string; head: string; ahead: number; at: string; subject: string;
+  where: string; checkedOut: boolean; base: string; command: string;
+  verdict: { state: 'ship-it' | 'needs-work' | 'stale' | 'none'; at?: string };
+}
+
+/** `GET /api/local-review`. `available: false` carries the reason, so "not read" never looks like "nothing waiting". */
+export interface LocalReview { generatedAt: string; available: boolean; reason?: string; units: LocalUnit[]; more: number; notes: string[] }

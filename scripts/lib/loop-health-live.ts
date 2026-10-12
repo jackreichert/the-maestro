@@ -21,9 +21,12 @@ export function lastWake(): number | null {
   } catch { return null; }
 }
 
-/** Saved digests no session has read; 0 with no ledger root or an unreadable store. */
-export function unreadDigestCount(): number {
-  try { return LEDGER_ROOT ? unseenDigests(digestDir(LEDGER_ROOT, CONTAINER_PROJECT)).length : 0; } catch { return 0; }
+/** Saved digests no session has read, of any age (the footer only reads; the session-start drain is what marks old ones seen); 0 with no ledger root or an unreadable store. */
+export function unreadDigestCount(dir: string | null = LEDGER_ROOT ? digestDir(LEDGER_ROOT, CONTAINER_PROJECT) : null): number {
+  try {
+    if (!dir) return 0;
+    return unseenDigests(dir).length;
+  } catch { return 0; }
 }
 
 /** The loop's health right now. Never throws: a broken read must not take the footer or prime down. */

@@ -168,3 +168,12 @@ test('connects is true for a listening port, false for a closed one and a bad UR
   assert.equal(connects('not a url'), false);
   assert.ok(Date.now() - t < 3000);
 });
+
+test('unread digests are drained into the report once, ahead of the loop line', () => {
+  const w = world({ drainDigests: () => ['ACTION pr merged', 'ACTION loop down'] });
+  const r = sessionStart('/s', w.deps);
+  const i = r.lines.findIndex((l) => l.startsWith('Unread digests (2)'));
+  assert.ok(i >= 0);
+  assert.deepEqual(r.lines.slice(i + 1, i + 3), ['ACTION pr merged', 'ACTION loop down']);
+  assert.equal(sessionStart('/s', world().deps).lines.some((l) => l.startsWith('Unread digests')), false);
+});

@@ -266,24 +266,24 @@ test('sessionLine reports the newest session\'s context against the autocompact 
     const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
     assert.match(sessionLine(dir), /^\*\*Session:\*\* unavailable/);
     writeFileSync(join(dir, 's2.jsonl'), `${turnAt('a', 100000)}\n${turnAt('a', 100000)}\n${turnAt('b', 300000)}\n`);
-    assert.equal(sessionLine(dir, 1_000_000), '**Session:** 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
-    assert.equal(sessionLine(dir, 400_000), '**Session:** 2 turns · ctx 300k of ~400k (75%) · 200k read/turn · roll soon');
-    assert.equal(sessionLine(dir, 330_000), '**Session:** 2 turns · ctx 300k of ~330k (90%) · 200k read/turn · roll now');
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s2 · 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.equal(sessionLine(dir, 400_000), '**Session:** s2 · 2 turns · ctx 300k of ~400k (75%) · 200k read/turn · roll soon');
+    assert.equal(sessionLine(dir, 330_000), '**Session:** s2 · 2 turns · ctx 300k of ~330k (90%) · 200k read/turn · roll now');
 });
 
 test('sessionStatus gives the numbers sessionLine prints', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-sess-'));
     assert.deepEqual(sessionStatus(dir), { available: false, unavailable: `no sessions in ${dir}; set projects_dir` });
     writeFileSync(join(dir, 's2.jsonl'), `${turnAt('a', 100000)}\n${turnAt('b', 300000)}\n`);
-    assert.deepEqual(sessionStatus(dir, 1_000_000), { available: true, turns: 2, ctxK: 300, triggerK: 1000, pct: 30, readK: 200, advice: '' });
-    assert.deepEqual(sessionStatus(dir, 150_000), { available: true, turns: 2, ctxK: 300, triggerK: 150, pct: 200, readK: 200, advice: 'roll now' });
+    assert.deepEqual(sessionStatus(dir, 1_000_000), { available: true, session: 's2', turns: 2, ctxK: 300, triggerK: 1000, pct: 30, readK: 200, advice: '' });
+    assert.deepEqual(sessionStatus(dir, 150_000), { available: true, session: 's2', turns: 2, ctxK: 300, triggerK: 150, pct: 200, readK: 200, advice: 'roll now' });
 });
 
 test('sessionLine measures the turns since the last compact, and a compaction resets the context', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-compact-'));
     const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
     writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
-    assert.equal(sessionLine(dir, 1_000_000), '**Session:** 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
 });
 
 test('sessionLine grades the advice on the last turn\'s context: roll soon from the warn percent, roll now from the roll percent', () => {
@@ -316,7 +316,7 @@ test('sessionLine degrades to unavailable instead of throwing when the directory
 test('sessionLine truncates so the rendered numbers never claim a threshold the roll decision has not reached', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-trunc-'));
     writeFileSync(join(dir, 's.jsonl'), `${turnAt('a', 349500)}\n`);
-    assert.equal(sessionLine(dir, 1_000_000, undefined, 100, 100), '**Session:** 1 turns · ctx 349k of ~1000k (34%) · 349k read/turn');
+    assert.equal(sessionLine(dir, 1_000_000, undefined, 100, 100), '**Session:** s · 1 turns · ctx 349k of ~1000k (34%) · 349k read/turn');
     writeFileSync(join(dir, 's.jsonl'), `${turnAt('a', 198_999)}\n`);
     assert.match(sessionLine(dir, 200_000, undefined, 100, 100), /\(99%\)(?! · roll now)/);
 });
@@ -517,8 +517,8 @@ test('sessionStatus with a session id reads that transcript, not the newest, and
     writeFileSync(join(dir, 'aaaa1111-mine.jsonl'), `${line('a', 100000)}\n${line('b', 100000)}\n`);
     writeFileSync(join(dir, 'bbbb2222-other.jsonl'), `${line('c', 300000)}\n`);
     utimesSync(join(dir, 'aaaa1111-mine.jsonl'), new Date(Date.now() - 60000), new Date(Date.now() - 60000));
-    assert.deepEqual(sessionStatus(dir, 400_000), { available: true, turns: 1, ctxK: 300, triggerK: 400, pct: 75, readK: 300, advice: 'roll soon' }, 'newest by mtime is the other window');
-    assert.deepEqual(sessionStatus(dir, 400_000, undefined, undefined, undefined, false, 'aaaa1111-mine'), { available: true, turns: 2, ctxK: 100, triggerK: 400, pct: 25, readK: 100, advice: '' });
+    assert.deepEqual(sessionStatus(dir, 400_000), { available: true, session: 'bbbb2222', turns: 1, ctxK: 300, triggerK: 400, pct: 75, readK: 300, advice: 'roll soon' }, 'newest by mtime is the other window');
+    assert.deepEqual(sessionStatus(dir, 400_000, undefined, undefined, undefined, false, 'aaaa1111-mine'), { available: true, session: 'aaaa1111', turns: 2, ctxK: 100, triggerK: 400, pct: 25, readK: 100, advice: '' });
     assert.equal(sessionStatus(dir, 400_000, undefined, undefined, undefined, false, 'aaaa1111').available, true, 'a unique prefix names it');
     assert.deepEqual(sessionStatus(dir, 400_000, undefined, undefined, undefined, false, 'nope'), { available: false, unavailable: `no session "nope" in ${dir}` });
     assert.equal(sessionFileById(dir, '../x'), null);

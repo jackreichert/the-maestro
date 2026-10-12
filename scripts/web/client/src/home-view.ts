@@ -1,5 +1,7 @@
 /** The stream home base, drawn: the epic strip, what is left, and what the files cannot tell. Text and counts come from home-text.ts. */
 import { h, refLink } from './dom.ts';
+import { BRIEF_CSS, briefBadgeEl, briefView } from './epic-brief.ts';
+import { SHELF_CSS, docsShelf } from './docs-shelf.ts';
 import { awaitingLabel, barSegments, capRows, epicEnd, epicUnknownsLabel, firstSentence, kindWord, noEpicLine, openCounts, progressSentence, quietNote, railCount, railGroups, ticketNotes, unknownsHeading, verifiedSentence } from './home-text.ts';
 import type { LeftGroups } from './home-text.ts';
 import type { HomeEpic, HomeTicket, RailLink, StreamHome } from './types.ts';
@@ -9,7 +11,7 @@ const EPIC_CAP = 3;
 /** The id the unknowns disclosure carries, so an epic block can open it. */
 const UNKNOWNS_ID = 'unknowns';
 
-export const HOME_CSS = `
+export const HOME_CSS = `${BRIEF_CSS}${SHELF_CSS}
   .epics { display: grid; gap: var(--space-4); margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
   .epic { display: grid; gap: var(--space-1); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); min-width: 0; }
   .epic h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--space-3); margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-medium); }
@@ -75,6 +77,12 @@ function epicBlock(e: HomeEpic, listed: boolean): HTMLElement {
     fold.open = true;
     fold.querySelector('summary')?.focus();
   });
+  const open = e.status !== 'closed';
+  const badge = open && e.brief ? briefBadgeEl(e.brief) : null;
+  const body = open && e.brief ? briefView(e.id, e.brief) : null;
+  const docs = e.docs ? docsShelf(e.docs) : null;
+  const shelf = body || docs ? [body, docs].filter((x): x is HTMLElement => x !== null) : null;
+  const shelfLabel = body && docs ? 'Brief and documents' : body ? 'Brief' : 'Documents';
   return h('li', { class: 'epic' },
     h('h3', {}, h('span', { class: 'id' }, e.id), h('span', { class: 'title' }, refLink({ label: e.title, url: e.note.url }))),
     h('p', { class: 'progress' }, progressSentence(e), verified ? h('span', { class: 'also' }, ` · ${verified}`) : null,
@@ -87,9 +95,12 @@ function epicBlock(e: HomeEpic, listed: boolean): HTMLElement {
     h('p', { class: 'epic-meta' },
       counts ? h('span', { class: 'counts' }, counts) : null,
       e.next ? h('span', {}, 'Next: ', h('span', { class: 'mono' }, e.next.id), ' ', refLink({ label: e.next.title, url: e.next.ref.url })) : null,
+      e.prs?.length ? h('span', {}, e.prs.length === 1 && !e.prsMore ? 'PR: ' : 'PRs: ', ...e.prs.flatMap((p, i) => [i ? ' ' : '', refLink(p)]), e.prsMore ? ` and ${e.prsMore} more` : '') : null,
       awaiting ? h('span', {}, awaiting) : null,
       quiet ? h('span', {}, quiet) : null,
-      jump ?? (unknowns ? h('span', {}, unknowns) : null)));
+      badge,
+      jump ?? (unknowns ? h('span', {}, unknowns) : null)),
+    shelf ? h('details', { class: 'fold', 'data-fold': `epic-docs-${e.id}` }, h('summary', {}, shelfLabel), ...shelf) : null);
 }
 
 /** The epics of the stream, newest activity first, at most three shown; with none, one teaching line says how to get progress. */
