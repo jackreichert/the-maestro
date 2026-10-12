@@ -2095,6 +2095,12 @@ function updateNotices(): string[] {
 /** The status directory: --status-dir, else the configured one, else <vault_root>/Projects/<project>/Status. Empty when none can be named. */
 const statusDir = (): string => arg('status-dir') || statusDirFor(project);
 const priorityDay = (): string => localDate(new Date(), WATCH_TZ);
+/** Today's priorities for the top of CURRENT.md: the texts, or none when no status dir exists or the list is not today's. */
+boardCtx.priorities = () => {
+    const dirPath = statusDir();
+    const state = dirPath && existsSync(dirPath) ? readPriorities(dirPath, priorityDay()) : null;
+    return state?.state === 'ok' ? state.items.map((p) => (p.stream ? `${p.text} [${p.stream}]` : p.text)) : [];
+};
 
 /** The not-set line for `prime`, only once a status directory exists (an install that never made a status page is not nagged). */
 function prioritiesNotice(): string[] {
@@ -2161,6 +2167,7 @@ function cmdPriorities() {
         const items = words.map(parsePriority);
         try { console.log(`wrote ${writePriorities(dirPath, day, items, PRIORITIES_MAX)}`); } catch (e) { die(errorMessage(e)); }
         writeProjectFiles(dirPath, day, items);
+        render(true);
     } else if (sub === 'show') {
         const target = arg('repo');
         const state = target ? readProjectState(target, day) : readPriorities(dirPath, day);

@@ -2449,6 +2449,7 @@ test('priorities set and show round-trip through the status dir, with a stream s
     const shown = parse<{ state: string; items: { text: string; stream?: string }[] }>(run('priorities', 'show', '--json', '--status-dir', sd).out);
     assert.equal(shown.state, 'ok');
     assert.deepEqual(shown.items, [{ text: 'Ship the widget', stream: 'Alpha' }, { text: 'Second thing' }]);
+    assert.match(currentMd(), /## Priorities\n\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/, 'priorities set re-renders CURRENT.md with the list on top');
     assert.equal(run('priorities', 'set', '--status-dir', sd).code, 1, 'no priorities is refused');
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
