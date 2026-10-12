@@ -324,6 +324,7 @@ export function sanitizeProjects(x: unknown): { data: ProjectsData; dropped: num
 const OPEN_PR: Shape = {
   number: count, title: str, url: str, base: str, head: str, isDraft: bool, review: oneOf('approved', 'changes-requested', 'none'), unresolved: count,
   mergeable: oneOf('mergeable', 'conflicting', 'unknown'), twins: arrOf(count), ageDays: opt(num), ticket: opt(ref),
+  sides: opt(shape({ develop: opt(shape({ number: count, url: str })), staging: opt(shape({ number: count, url: str })) })),
 };
 const OPEN_PRS_REPO: Shape = { repo: str, count, prs: arrOf(shape(OPEN_PR)) };
 

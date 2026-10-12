@@ -15,8 +15,8 @@ const pr = (over: Partial<OpenPrRow> = {}): OpenPrRow => ({
 const data = (over: Partial<OpenPrsData> = {}): OpenPrsData => ({
   generatedAt: '2026-10-12T15:00:00Z', prData: { fetchedAt: '2026-10-12T14:56:00Z', stale: false }, total: 3,
   groups: [
-    { id: 'team', label: 'Team repos', count: 2, repos: [{ repo: 'acme/widgets', count: 2, prs: [pr(), pr({ number: 9, url: 'https://github.com/acme/widgets/pull/9', base: 'staging', twins: [7], unresolved: 2, mergeable: 'conflicting', review: 'changes-requested', isDraft: false, ticket: { label: 'AB-1', url: 'https://acme.atlassian.net/browse/AB-1' } })] }] },
-    { id: 'self-review', label: 'Self-review repos', count: 1, repos: [{ repo: 'me/tool', count: 1, prs: [pr({ number: 3, url: 'https://github.com/me/tool/pull/3' })] }] },
+    { id: 'team', label: 'Team repos', count: 2, repos: [{ repo: 'acme/widgets', count: 2, prs: [pr({ sides: { develop: { number: 7, url: 'https://github.com/acme/widgets/pull/7' } } }), pr({ number: 9, url: 'https://github.com/acme/widgets/pull/9', base: 'staging', twins: [7], sides: { develop: { number: 7, url: 'https://github.com/acme/widgets/pull/7' }, staging: { number: 9, url: 'https://github.com/acme/widgets/pull/9' } }, unresolved: 2, mergeable: 'conflicting', review: 'changes-requested', isDraft: false, ticket: { label: 'AB-1', url: 'https://acme.atlassian.net/browse/AB-1' } })] }] },
+    { id: 'self-review', label: 'Self-review repos', count: 1, repos: [{ repo: 'me/tool', count: 1, prs: [pr({ number: 3, url: 'https://github.com/me/tool/pull/3', base: 'main' })] }] },
   ],
   ...over,
 });
@@ -35,8 +35,13 @@ test('PRs are grouped team then self-review, one table per repo with its count',
 test('a row shows its facts in words, a link to the PR, the twin pairing and the ticket link', async () => {
   const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model() });
   const rows = [...root.querySelectorAll('tbody tr')];
+  const first = rows[0].textContent?.replace(/\s+/g, ' ') ?? '';
   const second = rows[1].textContent?.replace(/\s+/g, ' ') ?? '';
-  assert.match(second, /#9 ↔ #7/);
+  assert.match(first, /develop #7/);
+  assert.match(first, /staging none/);
+  assert.match(second, /develop #7/);
+  assert.match(second, /staging #9/);
+  assert.doesNotMatch(second, /↔/);
   assert.match(second, /Ready/);
   assert.match(second, /Changes requested/);
   assert.match(second, /2 open/);

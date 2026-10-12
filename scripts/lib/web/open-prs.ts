@@ -7,7 +7,7 @@
 import { keysIn, trackerRef } from '../status-page/render.ts';
 import type { PageConfig } from '../status-page/render.ts';
 import type { PodiumState, PrCard } from './state.ts';
-import type { OpenPrRow, OpenPrsData, OpenPrsGroup, OpenPrsRepo } from '../../web/client/src/types.ts';
+import type { OpenPrRow, OpenPrSide, OpenPrSides, OpenPrsData, OpenPrsGroup, OpenPrsRepo } from '../../web/client/src/types.ts';
 
 const DAY_MS = 86_400_000;
 
@@ -28,12 +28,31 @@ function twinsOf(p: PrCard, mine: PrCard[]): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
+const sideOf = (p: PrCard): OpenPrSide => ({ number: p.number, url: p.url });
+
+/** The open PR on `base` that this one is paired with, by the same head branch or an explicit twin link. */
+function partner(p: PrCard, mine: PrCard[], base: 'develop' | 'staging'): PrCard | undefined {
+  return mine.find((o) => o.number !== p.number && o.base === base && (o.head === p.head || o.twinOf === p.number || p.twinOf === o.number));
+}
+
+/**
+ * Develop and staging of this PR, together. Only a PR whose base is one of those two gets it, so a PR into main
+ * is not told it is missing a staging twin. A side that is not open is omitted; the client says none.
+ */
+function sidesOf(p: PrCard, mine: PrCard[]): OpenPrSides | undefined {
+  if (p.base !== 'develop' && p.base !== 'staging') return undefined;
+  const develop = p.base === 'develop' ? p : partner(p, mine, 'develop');
+  const staging = p.base === 'staging' ? p : partner(p, mine, 'staging');
+  return { ...(develop ? { develop: sideOf(develop) } : {}), ...(staging ? { staging: sideOf(staging) } : {}) };
+}
+
 function row(p: PrCard, mine: PrCard[], page: PageConfig, now: Date): OpenPrRow {
   const key = keysIn(page, `${p.title} ${p.head}`)[0];
   const age = ageDays(p.createdAt, now);
+  const sides = sidesOf(p, mine);
   return {
     number: p.number, title: p.title, url: p.url, base: p.base, head: p.head, isDraft: p.isDraft, review: reviewOf(p.review),
-    unresolved: p.unresolved, mergeable: mergeableOf(p.mergeable), twins: twinsOf(p, mine),
+    unresolved: p.unresolved, mergeable: mergeableOf(p.mergeable), twins: twinsOf(p, mine), ...(sides ? { sides } : {}),
     ...(age !== undefined ? { ageDays: age } : {}),
     ...(key ? { ticket: (({ label, url }) => (url === undefined ? { label } : { label, url }))(trackerRef(page, key)) } : {}),
   };

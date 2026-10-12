@@ -1,6 +1,6 @@
 import { BASE_CSS, h, refLink, shadow } from './dom.ts';
 import { ago, askAge, clockTime } from './glance.ts';
-import type { OpenPrRow, OpenPrsRepo } from './types.ts';
+import type { OpenPrRow, OpenPrSide, OpenPrsRepo } from './types.ts';
 import type { OpenPrsModel } from './open-prs-store.ts';
 
 const CSS = `${BASE_CSS}
@@ -25,8 +25,10 @@ const CSS = `${BASE_CSS}
   th, td { padding: var(--space-2) var(--space-3) var(--space-2) 0; border-bottom: var(--hairline); text-align: left; vertical-align: top; }
   thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: var(--hairline); white-space: nowrap; }
   td.title { min-width: 16em; overflow-wrap: anywhere; }
-  td.pr, td.age { white-space: nowrap; }
-  .twin { color: var(--text-muted); }
+  td.pr, td.age, td.pair { white-space: nowrap; }
+  .side { display: block; }
+  .side-label { color: var(--text-muted); }
+  .missing { font-weight: var(--weight-semibold); }
   .bad { color: var(--critical); }
   .empty { margin: 0; color: var(--text-secondary); }
 `;
@@ -95,18 +97,26 @@ export class OpenPrs extends HTMLElement {
   }
 
   #repo(r: OpenPrsRepo): Node {
-    const head = h('tr', {}, ...['PR', 'Title', 'Base', 'State', 'Review', 'Threads', 'Merge', 'Age', 'Ticket'].map((t) => h('th', { scope: 'col' }, t)));
+    const head = h('tr', {}, ...['PR', 'Title', 'Develop / staging', 'State', 'Review', 'Threads', 'Merge', 'Age', 'Ticket'].map((t) => h('th', { scope: 'col' }, t)));
     return h('section', {},
       h('h3', { class: 'repo' }, r.repo, ' ', h('span', { class: 'n' }, `(${r.count})`)),
       h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, head), h('tbody', {}, ...r.prs.map((p) => this.#row(p))))));
   }
 
+  #side(label: string, side: OpenPrSide | undefined): Node {
+    return h('span', { class: 'side' }, h('span', { class: 'side-label' }, label), ' ', side ? refLink({ label: `#${side.number}`, url: side.url }) : h('span', { class: 'missing' }, 'none'));
+  }
+
+  #pair(p: OpenPrRow): Node {
+    if (!p.sides) return h('td', {}, p.base);
+    return h('td', { class: 'pair' }, this.#side('develop', p.sides.develop), this.#side('staging', p.sides.staging));
+  }
+
   #row(p: OpenPrRow): Node {
-    const twins = p.twins.length ? h('span', { class: 'twin' }, ` ↔ ${p.twins.map((n) => `#${n}`).join(', ')}`) : null;
     return h('tr', {},
-      h('td', { class: 'pr' }, refLink({ label: `#${p.number}`, url: p.url }), twins),
+      h('td', { class: 'pr' }, refLink({ label: `#${p.number}`, url: p.url })),
       h('td', { class: 'title' }, p.title),
-      h('td', {}, p.base),
+      this.#pair(p),
       h('td', {}, p.isDraft ? 'Draft' : 'Ready'),
       h('td', {}, REVIEW[p.review]),
       h('td', { class: p.unresolved > 0 ? 'bad' : '' }, p.unresolved > 0 ? `${p.unresolved} open` : '0'),
