@@ -1846,7 +1846,8 @@ function cmdBrief(): void {
     const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
     // A claim row counts only if no release of the repo came after it: a re-brief after `release` takes a new claim and needs its own row.
     const lastIndex = (pred: (r: LedgerRow) => boolean): number => ledgerNow.reduce((at, r, i) => (pred(r) ? i : at), -1);
-    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
+    // Kept desk claims need the row too: the stall detector finds the dispatch's repo, scope and branch from it.
+    const claimRowMissing = Boolean(claim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
     if (briefed && existsSync(paths.brief) && !tookClaim && !tookItem && !claimRowMissing) {
         console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
         console.log(`report ${paths.report}`);

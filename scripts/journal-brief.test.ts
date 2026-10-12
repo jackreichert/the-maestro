@@ -125,8 +125,28 @@ test('a desk that claimed the repo itself, as desks.md says, can brief its own i
     const r = run(['brief', id, '--out-dir', outDir, ...MARK]);
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /the desk's own claim, kept/);
-    assert.equal(rows().filter((x) => x.kind === 'claim').length, 1, 'no second claim row');
     assert.equal(existsSync(briefPaths(outDir, id).brief), true);
+});
+
+test('a kept desk claim still gets a brief claim row naming the scope and branch, so the stall detector watches it', async () => {
+    const id = start('job', '--repo', 'repo-c', '--stream', 'Cee');
+    assert.equal(run(['claim', 'repo-c', '--desk', 'Cee', '--worktree', 'repo-c-wt', ...MARK]).code, 0);
+    const r = run(['brief', id, '--desk', 'Cee', '--worktree', 'repo-c-wt', '--branch', 'feat/x', '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /the desk's own claim, kept/);
+    const row = rows().find((x) => x.kind === 'claim' && String(x.text).endsWith(`: brief ${id}`));
+    assert.ok(row, 'a claim row ending ": brief <id>" exists');
+    assert.equal(row.repo, 'repo-c');
+    assert.equal(row.scope, 'repo-c-wt');
+    assert.equal(row.branch, 'feat/x');
+    const before = rows().length;
+    assert.equal(run(['brief', id, '--desk', 'Cee', '--worktree', 'repo-c-wt', '--branch', 'feat/x', '--out-dir', outDir, ...MARK]).code, 0);
+    assert.equal(rows().length, before, 'a rerun adds nothing');
+    const stall = await import('./event-types/stall.ts');
+    const T = Date.now() + 10 * 3600_000;
+    const io = { stallMinutes: 90, rows: () => rows() as never, worktrees: () => [{ path: '/c/repo-c-wt', branch: 'feat/x' }], activity: () => ({ at: Date.now(), what: 'edited a.ts' }) };
+    const next = stall.check('/c', { now: T, prev: null, run: (() => ({ status: 1, stdout: '', stderr: '' })) as never }, io);
+    assert.deepEqual(next.fresh.map((f) => f.id), [id], 'the claim-first dispatch is watched');
 });
 
 test('another desk is still refused a repo the first desk claimed by hand', () => {
