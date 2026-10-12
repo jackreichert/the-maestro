@@ -515,13 +515,13 @@ test('notes_check_since defaults to 7d and reads the file and the env', () => {
 });
 
 /** Resolves `resolvedSettings()` in a child process with a throwaway HOME and the given config text and environment. */
-function resolved(config: string, env: Record<string, string> = {}): Record<string, { value: string; source: string }> {
+function resolved(config: string, env: Record<string, string> = {}): Record<string, { envName: string; value: string; source: string }> {
     const file = join(home, 'config.md');
     write(file, config);
     const code = `import('${new URL('./local-config.ts', import.meta.url).href}').then((m) => console.log(JSON.stringify(m.resolvedSettings())))`;
     const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH ?? '', HOME: home, MAESTRO_LOCAL_CONFIG: file, ...env } });
     assert.equal(r.status, 0, r.stderr);
-    const list = JSON.parse(r.stdout) as { key: string; value: string; source: string }[];
+    const list = JSON.parse(r.stdout) as { key: string; envName: string; value: string; source: string }[];
     return Object.fromEntries(list.map((s) => [s.key, s]));
 }
 
