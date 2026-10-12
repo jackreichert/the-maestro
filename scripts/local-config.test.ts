@@ -339,6 +339,18 @@ test('self_review_repos: default none, a bare owner means owner/*, a wildcard ow
     assert.equal(show({ MAESTRO_SELF_REVIEW_REPOS: 'solo/*' }).SELF_REVIEW_REPOS, 'solo/*');
 });
 
+test('review_queue_orgs: default is gh_org, else none; set, it scopes PR_SEARCH to the queue, self-review and pool owners; env wins', () => {
+    assert.equal(show().REVIEW_QUEUE_ORGS, '(unset)');
+    assert.equal(show().PR_SEARCH, 'is:pr is:open author:@me');
+    assert.equal(show({ MAESTRO_GH_ORG: 'my-org' }).REVIEW_QUEUE_ORGS, 'my-org');
+    assert.equal(show({ MAESTRO_GH_ORG: 'my-org' }).PR_SEARCH, 'is:pr is:open author:@me org:my-org', 'gh_org alone keeps its old search');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('review_queue_orgs: my-org, *, other-org/x\nself_review_repos: example-owner/tool'));
+    const v = show();
+    assert.equal(v.REVIEW_QUEUE_ORGS, 'my-org, other-org');
+    assert.equal(v.PR_SEARCH, 'is:pr is:open author:@me user:my-org user:other-org user:example-owner');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: 'solo' }).PR_SEARCH, 'is:pr is:open author:@me user:solo user:example-owner');
+});
+
 test('PR body settings: defaults on, file values, a check switch env var is ignored', () => {
     const checks = ['PR_BODY_CHECK_RISK', 'PR_BODY_CHECK_VERIFY', 'PR_BODY_CHECK_FORBIDDEN', 'PR_BODY_CHECK_DIAGRAM', 'PR_BODY_CHECK_STACK', 'PR_BODY_CHECK_ORDER', 'PR_BODY_CHECK_PRIVATE', 'PR_BODY_CHECK_VOICE', 'PR_BODY_CHECK_COUNTS'];
     const d = show();
