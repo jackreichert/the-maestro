@@ -48,6 +48,15 @@ test('cost names the biggest item and the biggest stream', () => {
     assert.match(out, /Cost most: a1 big \(300k tokens\); stream beta 350k in all/);
 });
 
+test('cost counts tokens recorded on done, and items finished today that started earlier', () => {
+    const closed = item({ id: 'big1', text: 'big job', tokens: 'unmeasured', stream: 'alpha', state: 'done', date: '2026-10-11', ts: '2026-10-11T09:00:00Z', closedBy: { kind: 'done', date: '2026-10-12', ts: '2026-10-12T10:00:00Z', tokens: '500k' } as LedgerRow });
+    const open = item({ id: 'sml1', text: 'small job', tokens: '10k', stream: 'beta', ts: '2026-10-12T09:00:00Z' });
+    const out = guidanceLines([closed, open], [], [open], [], '2026-10-12', NOW).join('\n');
+    assert.match(out, /Cost most: big1 big job \(500k tokens\); stream alpha 500k in all/);
+    const old = item({ ...closed, id: 'old1', closedBy: { kind: 'done', date: '2026-10-10', ts: '2026-10-10T10:00:00Z', tokens: '900k' } as LedgerRow });
+    assert.match(guidanceLines([old, open], [], [open], [], '2026-10-12', NOW).join('\n'), /Cost most: sml1/);
+});
+
 test('do first prefers a blocked item, then the first in flight; empty ledger says nothing', () => {
     const a = item({ id: 'f1', text: 'running', ts: '2026-10-12T09:00:00Z' });
     const b = item({ id: 'b1', text: 'stuck', kind: 'blocked', ts: '2026-10-12T09:00:00Z' });

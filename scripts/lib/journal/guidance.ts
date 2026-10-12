@@ -40,8 +40,8 @@ export function stallThresholdHours(items: LedgerItem[], nowMs: number): number 
 
 /**
  * The guidance for the next session, derived from ledger data alone: what stalled (in flight far longer than finished items
- * usually take, or an open item that needed rework), what cost most (the biggest `--tokens` item and stream among today's
- * rows and everything still open), and what to do first (the first blocked item, else the first in flight, in board order).
+ * usually take, or an open item that needed rework), what cost most (the biggest `--tokens` item and stream among items started or finished today
+ * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (the first blocked item, else the first in flight, in board order).
  * Empty when there is nothing to say; never a model call.
  */
 export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], inflight: LedgerItem[], blocked: LedgerItem[], d: string, nowMs: number): string[] {
@@ -55,7 +55,8 @@ export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], infligh
         : null;
 
     const open = new Set([...inflight, ...blocked]);
-    const costed = items.filter((i) => i.date === d || open.has(i)).map((i) => ({ i, n: tokenCount(i.tokens) })).filter((c) => c.n > 0);
+    const spent = (i: LedgerItem): number => tokenCount(i.closedBy?.tokens) || tokenCount(i.tokens);
+    const costed = items.filter((i) => i.date === d || i.closedBy?.date === d || open.has(i)).map((i) => ({ i, n: spent(i) })).filter((c) => c.n > 0);
     const byStream = new Map<string, number>();
     for (const { i, n } of costed) byStream.set(i.stream ?? 'none', (byStream.get(i.stream ?? 'none') ?? 0) + n);
     const topItem = costed.sort((a, b) => b.n - a.n)[0];
