@@ -20,7 +20,7 @@ The scripts read one small file. It is markdown, so it can sit inside an overlay
 ````markdown
 ```maestro-config
 overlay: <skill>            # or <plugin>:<skill>; omit for no overlay
-gh_org: <github-org>        # PR board scope; omit for no org filter
+gh_org: <github-org>        # PR board scope; the Podium PR list shows only repos owned by this org, and is empty with a warning when unset
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
@@ -115,7 +115,7 @@ The overlay's `config.md` is found from the overlay name (set in the user file o
 
 3. **Plugin skill** (`<plugin>:<skill>`): Claude Code records installed plugins in `~/.claude/plugins/installed_plugins.json`, an object `plugins` keyed `<plugin>@<marketplace>`, each entry a list whose items carry an `installPath`. The skill is at `<installPath>/skills/<skill>/config.md`.
 4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repo) and by its real path.
-5. **Ancestor container**: `<dir>/.claude/skills/<skill>/config.md` for each directory above this checkout that you own and others cannot write, so a checkout or worktree reached by its real path still finds its container's overlay.
+5. **Ancestor container**: `<dir>/.claude/skills/<skill>/config.md` for each directory above this checkout, so a checkout or worktree reached by its real path still finds its container's overlay. The overlay can name commands (`notify_command`), so a config found this way is used only after its symlinks are resolved and its real directory and every ancestor up to `/` are owned by you (or root) and not group- or world-writable; otherwise it is skipped.
 6. `~/.claude/skills/<skill>/config.md`.
 
 The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_GIT_EMAILS`, `MAESTRO_PROTECTED_BRANCHES`, `MAESTRO_SWEEP_MERGE_TARGETS`, `MAESTRO_SWEEP_IDLE_MINUTES`, `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS`, `MAESTRO_SWEEP_DISPOSABLE_IGNORED`, `MAESTRO_ENV_STORE_ROOT`, `MAESTRO_APPROVALS_REVIEW_DAY`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`, and the event loop overrides `MAESTRO_EVENT_DIR`, `MAESTRO_NOTIFY_COMMAND`, `MAESTRO_INBOX_COMMAND`, `MAESTRO_WATCH_NETWORK_FLOOR`, `MAESTRO_WATCH_LOCAL_FLOOR`, `MAESTRO_WATCH_TYPE_INTERVALS`, the scripts shelf override `MAESTRO_SCRIPTS_DIR`, and the Podium overrides `MAESTRO_STATUS_DIR`, `MAESTRO_PRIORITIES_MAX`, `MAESTRO_STATUS_PAGE_URI`, `MAESTRO_OBSIDIAN_VAULT`, `MAESTRO_STATUS_STREAMS`, `MAESTRO_STATUS_REPO_STREAMS`, `MAESTRO_TRACKER_URL_BASE` and `MAESTRO_TICKET_NOTE_PATH`. A variable that is set to the empty string counts as set.
