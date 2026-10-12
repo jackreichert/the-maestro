@@ -128,12 +128,15 @@ const isEvent = (e: unknown): e is StandingEvent => {
   return r.op === 'add' && typeof r.trigger === 'string' && typeof r.action === 'string' && typeof r.who === 'string' && validRow(r as unknown as StandingRow) === null;
 };
 
+/** True only for a name CHECKS defines itself: `in` would also accept `constructor`, `toString` and `__proto__`. */
+const isCheck = (name: string): boolean => Object.hasOwn(CHECKS, name);
+
 /** Why a row is not acceptable, or null. */
 export function validRow(row: StandingRow): string | null {
   if (!ID.test(row.id)) return `id must match ${ID}`;
   if (!row.trigger.trim() || !row.action.trim() || !row.who.trim()) return 'a row needs a trigger, an action and a who';
   if (row.check === undefined && row.everyHours === undefined) return 'a row needs a runtime check (--check) or a cadence (--every-hours), or nothing would ever flag it';
-  if (row.check !== undefined && !(row.check in CHECKS)) return `unknown check "${row.check}" (known: ${Object.keys(CHECKS).join(', ')})`;
+  if (row.check !== undefined && !isCheck(row.check)) return `unknown check "${row.check}" (known: ${Object.keys(CHECKS).join(', ')})`;
   if (row.everyHours !== undefined && !(Number.isFinite(row.everyHours) && row.everyHours > 0 && row.everyHours <= MAX_EVERY_HOURS)) return `--every-hours needs a positive number of at most ${MAX_EVERY_HOURS}`;
   return null;
 }
@@ -165,7 +168,7 @@ export function standingState(events: StandingEvent[], ctx: CheckContext): RowSt
   return liveRows(events).map((row) => {
     const lastRan = ran.get(row.id);
     if (row.check !== undefined) {
-      const check = CHECKS[row.check];
+      const check = isCheck(row.check) ? CHECKS[row.check] : undefined;
       if (!check) return { row, lastRan, status: 'failing', detail: `unknown check "${row.check}"` };
       let r: CheckResult;
       try { r = check(ctx); } catch (err) { r = { ok: false, detail: `check threw: ${err instanceof Error ? err.message : String(err)}` }; }
@@ -221,7 +224,7 @@ export const printableId = (id: string): string => (SAFE_ID.test(id) ? id : ID_W
 
 /** When a row is next due, in words made only of digits and fixed text: `ISO time`, `now` (never ran or failing), or `checked: <check name>`. */
 export function dueText(s: RowState): string {
-  if (s.row.check !== undefined) return `checked: ${s.row.check in CHECKS ? s.row.check : 'unknown check'}`;
+  if (s.row.check !== undefined) return `checked: ${isCheck(s.row.check) ? s.row.check : 'unknown check'}`;
   if (!s.lastRan || s.status !== 'ok') return 'now';
   const due = Date.parse(s.lastRan.at) + (s.row.everyHours ?? 0) * 3600_000;
   return Number.isFinite(due) && Math.abs(due) < 8.64e15 ? `${new Date(due).toISOString().slice(0, 16)}Z` : 'unknown';

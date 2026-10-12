@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { sessionFileById, pick, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
+import { sessionFileById, pick, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf, collect, expiryUsd, isExpiryRewrite } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
 import type { Comparison } from './token-metrics.ts';
 
@@ -283,7 +283,17 @@ test('sessionLine measures the turns since the last compact, and a compaction re
     const dir = mkdtempSync(join(tmpdir(), 'tm-compact-'));
     const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
     writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
-    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns since compact (3 before) · ctx 300k of ~1000k (30%) · 200k read/turn');
+});
+
+test('sessionLine says it counts since the last compact and how many turns came before, so a compaction does not silently reset it (MAESTRO-135)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-compact-say-'));
+    const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
+    writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns since compact (3 before) · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.deepEqual(sessionStatus(dir, 1_000_000), { available: true, session: 's', turns: 2, turnsBefore: 3, ctxK: 300, triggerK: 1000, pct: 30, readK: 200, advice: '' });
+    writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 100000), boundary, turnAt('b', 100000), boundary, turnAt('c', 100000)].join('\n')}\n`);
+    assert.match(sessionLine(dir, 1_000_000), /1 turns since compact \(2 before\)/, 'every earlier compaction counts');
 });
 
 test('sessionLine grades the advice on the last turn\'s context: roll soon from the warn percent, roll now from the roll percent', () => {
@@ -524,4 +534,82 @@ test('sessionStatus with a session id reads that transcript, not the newest, and
     assert.equal(sessionFileById(dir, '../x'), null);
     writeFileSync(join(dir, 'aaaa1111-twin.jsonl'), `${line('d', 1)}\n`);
     assert.equal(sessionFileById(dir, 'aaaa1111'), null, 'an ambiguous prefix names nothing');
+});
+
+// --- cache-expiry rewrites ---------------------------------------------------------
+const NOON = '2026-09-26T12:';
+/** A transcript dir: an orchestrator session and one subagent, written for the expiry rules (idle gap, large 5m write, compaction, 1h writes). */
+function expiryProjects(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-expiry-'));
+    const oneHour = (id: string, ts: string): Line => ({ type: 'assistant', timestamp: ts, message: { id, role: 'assistant', model: 'claude-opus-5-5', content: [], usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 140_000, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 140_000 } } } });
+    writeFileSync(join(dir, 'sess0001.jsonl'), jsonl([
+        ...assistant('a1', `${NOON}00:00Z`, [1, 100_000, 0, 10]),
+        ...assistant('a2', `${NOON}02:00Z`, [1, 50_000, 100_000, 10]),
+        ...assistant('a3', `${NOON}20:00Z`, [1, 140_000, 0, 10]),
+        ...assistant('a4', `${NOON}40:00Z`, [1, 10_000, 150_000, 10]),
+        { type: 'system', subtype: 'compact_boundary', timestamp: `${NOON}50:00Z` },
+        ...assistant('a5', `${NOON}59:00Z`, [1, 140_000, 0, 10]),
+        oneHour('a6', '2026-09-26T13:30:00Z'),
+    ]));
+    mkdirSync(join(dir, 'sess0001', 'subagents'), { recursive: true });
+    writeFileSync(join(dir, 'sess0001', 'subagents', 'agent-s.jsonl'), jsonl([
+        ...assistant('s1', `${NOON}00:00Z`, [1, 20_000, 0, 10], 'claude-sonnet-5'),
+        ...assistant('s2', `${NOON}10:00Z`, [1, 60_000, 0, 10], 'claude-sonnet-5'),
+        ...assistant('s3', `${NOON}12:00Z`, [1, 90_000, 0, 10], 'claude-sonnet-5'),
+    ]));
+    return dir;
+}
+/** The days of `dir` read in UTC: the transcript spans 90 minutes, which a far-east time zone could split across two local days. */
+function allDays(dir: string) {
+    const saved = process.env.TZ;
+    process.env.TZ = 'UTC';
+    try { return [...collect(dir).days.values()]; } finally { if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved; }
+}
+
+test('cache expiry: only an idle gap over 5 minutes with a large 5m write counts, in orchestrator and subagent transcripts', () => {
+    const [day, ...others] = allDays(expiryProjects());
+    assert.ok(day);
+    assert.equal(others.length, 0, 'every turn fell on one local day');
+    // a3 (18 min, 140k) and s2 (10 min, 60k). Not: first turns, a 2-minute gap, a small write, the turn after a compaction, a 1h write, a 2-minute subagent gap.
+    assert.equal(day.expiryTurns, 2);
+    assert.equal(day.expiryByFamily.opus?.w5, 140_000);
+    assert.equal(day.expiryByFamily.sonnet?.w5, 60_000);
+    assert.equal(day.expiryGapSec, 18 * 60 + 10 * 60);
+    near(expiryUsd(day.expiryByFamily, PRICES), (140_000 * 5 + 60_000 * 2.5) / 1e6);
+    assert.ok(Number.isNaN(expiryUsd(day.expiryByFamily, null)));
+});
+
+test('cache expiry: the gap and size thresholds are strict, and a turn with no previous turn is never one', () => {
+    const turn = { date: 'd', model: 'm', since: 2, fresh: 0, write: 30_000, write5m: 0, write1h: 0, read: 0, out: 0 };
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 301 }), true);
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 300 }), false);
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 301, write: 29_999 }), false);
+    assert.equal(isExpiryRewrite({ ...turn, since: 1 }), false);
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 3600, write: 0, write5m: 0, write1h: 90_000 }), false, 'a 1h write cannot have expired');
+});
+
+test('cache expiry: the table row carries the count and tokens, and compare prices them; a row from before the column is not scored', () => {
+    const [day] = allDays(expiryProjects());
+    const row = toRow(day as Parameters<typeof toRow>[0]);
+    assert.equal(row[22], '2');
+    assert.equal(row[23], 'opus 0/140000/0/0/0 · sonnet 0/60000/0/0/0');
+    const old = costRow('2026-09-25');
+    const rows = new Map([['2026-09-25', old], ['2026-09-26', row]]);
+    const c = compare('2026-09-26', rows, '2026-09-24', { prices: PRICES });
+    near(metric(c, 'Est. $ cache expiry').today, 0.85);
+    assert.ok(Number.isNaN(metric(c, 'Est. $ cache expiry').median7), 'the old row has no expiry column');
+    assert.equal(metric(c, 'Expiry rewrites').today, 2);
+    assert.ok(!byName(compare('2026-09-26', rows, '2026-09-24', { prices: null }), 'Est. $ cache expiry'));
+});
+
+test('CLI: the day summary and --expiry report the rewrites with dollars when prices are set, tokens when not', () => {
+    const dir = expiryProjects();
+    const go = (prices: string, ...a: string[]) => spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-26', ...a, '--projects-dir', dir, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', TZ: 'UTC', MAESTRO_MODEL_PRICES: prices } });
+    const priced = go(PRICES_TEXT);
+    assert.match(priced.stdout, /cache-expiry rewrites +2 turns, avg gap 14\.0 min, \$0\.85 \(opus \$0\.70 · sonnet \$0\.15\)/);
+    const perDay = go(PRICES_TEXT, '--expiry');
+    assert.match(perDay.stdout, /2026-09-26  2 turns, avg gap 14\.0 min, \$0\.85/);
+    const bare = go('', '--expiry');
+    assert.match(bare.stdout, /2026-09-26  2 turns, avg gap 14\.0 min, 200\.0k tokens rewritten \(prices unset\)/);
+    assert.match(bare.stdout, /Model prices are unset/);
 });

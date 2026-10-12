@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { compactions, continuityLines, isAllScopeHandoff, lastContext, thrash, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
+import { DECIDE_HINT, compactions, continuityLines, isAllScopeHandoff, lastContext, thrash, dirtyPaths, errorLine, handoffFresh, hitMarker, newestHandoff, snapshotDirty, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 
 const line = (o: object): string => JSON.stringify(o);
 const T0 = '2026-10-09T12:00:00.000Z';
@@ -183,8 +183,18 @@ test('every pending decision is raised in one run, oldest first, 20 per ask row'
   const msgs = Array.from({ length: 45 }, (_, n) => msg(n));
   const out = unledgeredDecisions(msgs, []);
   assert.deepEqual(out.raise.map((q) => /^unledgered decision\? \((\d+)\)/.exec(q)?.[1]), ['20', '20', '5']);
+  assert.ok(out.raise.every((q) => q.endsWith(DECIDE_HINT) && q.includes('journal.ts decide') && q.includes('not log --kind decision')), 'every scan ask says to answer with decide');
   assert.match(out.raise[0], /rule number 0 applies/);
   assert.equal(unledgeredDecisions(msgs, asRows(out.raise)).count, 0, 'a second run raises nothing');
+});
+
+test('a message recorded with decide --msg is not raised again, and the hint asks for the marker', () => {
+  const msgs = [msg(0), msg(1)];
+  const decided = { kind: 'decision', ts: at(2), text: `Rule zero recorded ${hitMarker(msgs[0])}`, refs: ['/v/Projects/p/DECISIONS.md'] };
+  const out = unledgeredDecisions(msgs, [decided]);
+  assert.equal(out.count, 1);
+  assert.ok(!out.raise[0].includes(hitMarker(msgs[0])) && out.raise[0].includes(hitMarker(msgs[1])));
+  assert.ok(DECIDE_HINT.includes('--msg') && DECIDE_HINT.includes('already recorded'));
 });
 
 test('another session compacting first cannot hide this transcript: there is no time cutoff, only the per-message marker', () => {
@@ -372,4 +382,25 @@ test('continuityLines: an incomplete row is cleared by a later repaired row of t
   const lines = continuityLines([{ kind: 'wip', ts: at(10), text: 'w' }, bad, fixed], { name: 'h.md', at: at(31) });
   assert.equal(lines.length, 1);
   assert.match(lines[0], /not keeping up/);
+});
+
+test('snapshotDirty resumes after the last worktree it read, so a budget too small for the whole list still reaches every worktree', () => {
+  const container = mkdtempSync(join(tmpdir(), 'cr-many-'));
+  for (const n of ['a', 'b', 'c', 'd']) {
+    const wt = join(container, '.worktrees', n);
+    mkdirSync(wt, { recursive: true });
+    assert.equal(spawnSync('git', ['-C', wt, 'init', '-q'], { encoding: 'utf8' }).status, 0);
+    writeFileSync(join(wt, `${n}.ts`), `export const ${n} = 1;\n`);
+  }
+  const dest = join(container, 'snap');
+  // A clock that advances 1 per reading and a deadline of 2.5: each run reads two worktrees.
+  const run = (): ReturnType<typeof snapshotDirty> => { let t = 0; return snapshotDirty(container, dest, Date.now(), 2.5, () => t++); };
+  const first = run();
+  assert.deepEqual({ scanned: first.scanned, partial: first.partial, copied: first.copied }, { scanned: 3, partial: true, copied: 3 });
+  const second = run();
+  assert.deepEqual({ scanned: second.scanned, partial: second.partial }, { scanned: 3, partial: true });
+  for (const n of ['a', 'b', 'c', 'd']) assert.ok(existsSync(join(dest, n, `${n}.ts`)), `${n} reached across runs`);
+  const third = snapshotDirty(container, dest);
+  assert.equal(third.partial, false, 'an unhurried run finishes the walk');
+  assert.ok(!existsSync(join(container, '.snapshot-cursor')), 'and clears the cursor');
 });

@@ -78,6 +78,29 @@ is in the block (measured 2026-09-25, `scripts/token-metrics.ts`):
   calls. A default Jira search returns full JSON with avatar URLs; `fields=key,summary,status` is
   the same answer at a fraction of the size.
 
+- **Never wait on a suite.** The prompt cache lives 5 minutes. An agent that idles longer than that
+  (usually on a full test suite) pays to write its whole context again on its next turn: on one
+  overnight run that was 685 rewrites, about $242 of $474, most of it Opus reviewers. So no agent
+  waits on a suite. The suite is a job with no model attached, and an agent only exists once its
+  results do:
+  1. `node scripts/suite-run.ts start <worktree>` runs tsc and `node --test` (or `--cmd "<command>"` for a repo without it) detached and returns a
+     job id; `results.json` (counts, failing names, head sha) lands in the job directory when it ends.
+     `suite-run.ts status <job>` looks once and never blocks.
+  2. The agent that started it exits with a findings note naming the job id. Nothing waits.
+  3. `start` registers the `suite-done` watch itself (`--no-watch` opts out), and that event type fires when `results.json` appears, quiet hours included; the orchestrator, woken by its
+     digest, starts a fresh reviewer with the diff and the results (batch several into one wake).
+  Each round then pays one cold start instead of repeated rewrites of a context near 140k tokens.
+  An agent that must pause for anything else keeps every gap under 4 minutes or writes its note and
+  exits.
+- **Reviewers run targeted tests plus tsc only.** The full suite is the job's, not the reviewer's.
+- **Re-reviews go to Sonnet.** Opus does the first review of a change; every re-review or fresh-review
+  round after it runs on Sonnet. A suite run that only needs numbers goes to Haiku.
+
+`token-metrics.ts` measures this: the day summary and `--expiry` report cache-expiry rewrites (a turn
+more than 5 minutes after the previous one in its transcript that writes at least 30k tokens to the
+5-minute cache) with their count, average gap and dollars by model, and `--compare` carries
+"Est. $ cache expiry" and "Expiry rewrites". The target is at least 40% less spent on cache rewrites on the next overnight run than on the one that cost $242 of them.
+
 The orchestrator follows the same rules for its own tool calls: `--json` + `--jq` for `gh`, `fields`
 on Jira, counts not logs, and never a whole file read into its own context when an agent could
 summarise it.

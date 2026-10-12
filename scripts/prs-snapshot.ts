@@ -49,6 +49,7 @@ import { searchAllPages } from './lib/gh-search.ts';
 import type { Run } from './lib/types.ts';
 import { isSelfReview, splitSelfReview } from './lib/self-review.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from './lib/draft-promotion.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 /** A review as the snapshot keeps it (the latest one per reviewer). */
 export interface SnapshotReview { author: string | undefined; state: string; submittedAt: string }
@@ -309,7 +310,7 @@ export function readyLines(snapshot: { prs: StoredPr[] }, twinRepos: string[] = 
     ];
 }
 
-const defaultRun: GhRun = (args) => spawnSync('gh', args, { encoding: 'utf8' });
+const defaultRun: GhRun = (args) => spawnSync(...toolCommand('gh', args), { encoding: 'utf8' });
 const pause = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
 /**

@@ -5,10 +5,12 @@
  * secret or PHI shape anywhere in the file.
  *
  *   node scripts/library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]
+ *   node scripts/library-check.ts --coverage [--vault <root>] [--repo <name>] [--json]
  *   node scripts/library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]
  *
  * With no page arguments it reads every page under Projects/<repo>/Knowledge (all of it) and Projects/<repo>/Runbooks (only files whose
  * frontmatter says `type: library`), one subfolder deep. Named pages (absolute, or relative to the vault) are checked instead.
+ * `--coverage` is a separate report too: for each project (a folder with a CONTEXT.md or INDEX.md, or any with library pages; no pages means missing all six) it lists which required page kinds (lib/library/coverage.ts) no page declares in its `covers` frontmatter list; it always exits 0 (2 on a usage error, including a `--repo` folder that does not exist).
  * `--stale` is a separate report, not a rule: for each page it asks git whether a file the facts cite as evidence changed after `verified-at`
  * (lib/library/stale.ts), looking in <code-root>/<repo> (default $MAESTRO_CONTAINER_ROOT). It lists stale pages, then those it could not check and why,
  * and always exits 0 (a stale page never fails a roll); 2 on a usage error.
@@ -27,11 +29,13 @@ import type { Scanner } from './lib/library/scan.ts';
 import { checkStaleness, realGit } from './lib/library/stale.ts';
 import type { PageStaleness } from './lib/library/stale.ts';
 import { readLibrary } from './lib/library/pages.ts';
+import { coverage, renderCoverage } from './lib/library/coverage.ts';
+import { printJson } from './lib/json-out.ts';
 
-const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]\n       library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]';
+const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]\n       library-check.ts --coverage [--vault <root>] [--repo <name>] [--json]\n       library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]';
 const LIBRARY_FOLDERS = ['Knowledge', 'Runbooks'] as const;
 
-interface Options { vault: string; repo?: string; json: boolean; pages: string[]; stale: boolean; codeRoot?: string }
+interface Options { vault: string; repo?: string; json: boolean; pages: string[]; stale: boolean; coverage: boolean; codeRoot?: string }
 export interface PageReport { path: string; findings: Finding[] }
 
 export function parseOptions(argv: string[]): Options | string {
@@ -39,12 +43,14 @@ export function parseOptions(argv: string[]): Options | string {
   let repo: string | undefined;
   let json = false;
   let stale = false;
+  let cover = false;
   let codeRoot: string | undefined;
   const pages: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i] as string;
     if (a === '--json') json = true;
     else if (a === '--stale') stale = true;
+    else if (a === '--coverage') cover = true;
     else if (a === '--vault' || a === '--repo' || a === '--code-root') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return `${a} needs a value`;
@@ -54,8 +60,9 @@ export function parseOptions(argv: string[]): Options | string {
     else pages.push(a);
   }
   if (!vault) return 'vault root is not set; set VAULT_ROOT (or vault_root in the local config) or pass --vault <path>';
-  if (stale && pages.length) return '--stale checks the whole library; it takes no page arguments';
-  return { vault, repo, json, pages, stale, ...(codeRoot ? { codeRoot } : {}) };
+  if (stale && cover) return '--stale and --coverage are separate reports; pick one';
+  if ((stale || cover) && pages.length) return '--stale and --coverage check the whole library; they take no page arguments';
+  return { vault, repo, json, pages, stale, coverage: cover, ...(codeRoot ? { codeRoot } : {}) };
 }
 
 /** Real directories and files only: a symlink is skipped, so a link in a library folder cannot lead the check outside the vault. */
@@ -158,7 +165,18 @@ function mainStale(o: Options): number {
   const codeRoot = o.codeRoot ?? (process.env.MAESTRO_CONTAINER_ROOT || null);
   const rows = checkStaleness(readLibrary(o.vault, o.repo), codeRoot, realGit);
   if (!rows.length) { console.error('library-check: no library pages found; nothing was checked'); return 2; }
-  if (o.json) console.log(JSON.stringify(rows, null, 2)); else renderStale(rows).forEach((l) => console.log(l));
+  if (o.json) printJson(rows); else renderStale(rows).forEach((l) => console.log(l));
+  return 0;
+}
+
+function mainCoverage(o: Options): number {
+  if (o.repo && !existsSync(join(o.vault, 'Projects', o.repo))) { console.error(`library-check: no project "${o.repo}" under ${join(o.vault, 'Projects')}`); return 2; }
+  const pages = readLibrary(o.vault, o.repo);
+  // A project with no library yet is the worst case, so it gets a row (a folder counts as a project when it has a CONTEXT.md or INDEX.md).
+  const projects = (o.repo ? [o.repo] : dirs(join(o.vault, 'Projects'))).filter((p) => ['CONTEXT.md', 'INDEX.md'].some((f) => existsSync(join(o.vault, 'Projects', p, f))));
+  const covers = new Map(pages.map((p) => [p.path, list(parsePage(p.path, readFileSync(join(o.vault, p.path), 'utf8')), 'covers')]));
+  const rows = coverage(pages, (path) => covers.get(path) ?? [], projects);
+  if (o.json) printJson(rows); else renderCoverage(rows).forEach((l) => console.log(l));
   return 0;
 }
 
@@ -166,8 +184,9 @@ function main(argv: string[]): number {
   const o = parseOptions(argv);
   if (typeof o === 'string') { console.error(`library-check: ${o}\n${USAGE}`); return 2; }
   if (!existsSync(join(o.vault, 'Projects'))) { console.error(`library-check: no Projects folder under ${o.vault}`); return 2; }
-  if (o.stale && o.repo && !/^[\w.-]+$/.test(o.repo)) { console.error('library-check: --repo must be a plain project folder name'); return 2; }
+  if ((o.stale || o.coverage) && o.repo && !/^[\w.-]+$/.test(o.repo)) { console.error('library-check: --repo must be a plain project folder name'); return 2; }
   if (o.stale) return mainStale(o);
+  if (o.coverage) return mainCoverage(o);
   const named = o.pages.map((p) => (isAbsolute(p) ? relative(o.vault, p) : p));
   const unreadable = named.filter((p) => !insideVault(o.vault, p));
   if (unreadable.length) { console.error(`library-check: cannot read, or outside the vault: ${unreadable.join(', ')}`); return 2; }
@@ -178,7 +197,7 @@ function main(argv: string[]): number {
   const reports = checkVault(o.vault, pages);
   // Named pages are checked alone; the generated INDEX.md files are part of a whole run.
   const indexes = named.length ? [] : indexReports(o.vault, o.repo);
-  if (o.json) console.log(JSON.stringify([...reports, ...indexes], null, 2)); else render(reports, indexes).forEach((l) => console.log(l));
+  if (o.json) printJson([...reports, ...indexes]); else render(reports, indexes).forEach((l) => console.log(l));
   return reports.some((r) => r.findings.length) || indexes.length ? 1 : 0;
 }
 

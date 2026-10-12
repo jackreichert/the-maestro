@@ -4,6 +4,7 @@ import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync, renameSync } from 'node:fs';
+import { stubEnv, writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
@@ -442,9 +443,9 @@ test('archived items are hidden by default and shown with --include-archived; un
     assert.equal(parse(shown).done.length, 1);
     assert.match(run('standup', '--include-archived').out, /ship the widget/);
     const current = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
-    assert.doesNotMatch(current(), /ship the widget/);
+    assert.doesNotMatch(current(), /\[\[Streams\/Launch\]\]: /, 'the archived stream has no counts on CURRENT');
     run('render', '--include-archived');
-    assert.match(current(), /ship the widget/);
+    assert.match(current(), /\[\[Streams\/Launch\]\]: 1 done/, 'its finished work counts again; done rows are not inlined on the slim CURRENT');
 
     assert.equal(run('unarchive', 'Launch', ...MARK).code, 0);
     assert.equal(registry().streams.Launch.status, 'active');
@@ -658,7 +659,9 @@ test('roll keeps queued items open, archives only finished work, and says how ma
     assert.deepEqual(parse<Doc>(run('status', '--json').out).queued.map((i) => i.id).sort(), [later, parked].sort());
     const archive = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `${new Date().toISOString().slice(0, 10)}.md`), 'utf8');
     assert.match(archive, /## Queued[^]*later job/, 'the dated note shows what was queued');
-    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
+    const curNow = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
+    assert.match(curNow, /2 queued/, 'CURRENT counts the queue; the rows are on the page');
+    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Launch.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
     assert.equal(run('roll').code, 0, 'a second roll changes nothing about the queue');
     assert.equal(parse<Doc>(run('status', '--json').out).queued.length, 2);
 });
@@ -1165,7 +1168,7 @@ test('roll commits the changed ledger files when ledger_git_autocommit is on, by
     assert.equal(git(vault, 'log', '-1', '--format=%s').stdout.trim(), `chore(ledger): roll ${day}`);
     const files = git(vault, 'show', '--name-only', '--format=', 'HEAD').stdout.trim().split('\n').sort();
     assert.deepEqual(files, [
-        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/ledger.jsonl',
+        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/GUIDANCE.md', 'Projects/test-proj/Journal/Streams/Other.md', 'Projects/test-proj/Journal/ledger.jsonl',
     ].sort());
     assert.equal(git(vault, 'status', '--porcelain').stdout.trim(), '');
     assert.match(runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll').out, /committed \d+ path\(s\)/);   // a re-roll appends a row, so it commits again
@@ -1211,7 +1214,7 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     run('start', 'loose', ...MARK);
     const r = run('render');
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /3 stream page\(s\)/);
+    assert.match(r.out, /4 stream page\(s\)/);   // Launch, Maestro, Quiet, and Other for the item with no stream
 
     const launch = readFileSync(streamPage('Launch'), 'utf8');
     assert.match(launch, /^stream: Launch$/m);
@@ -1224,13 +1227,15 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     assert.match(section2(readFileSync(streamPage('Maestro'), 'utf8'), 'Awaiting you'), /maestro question\?/);
     assert.match(readFileSync(streamPage('Quiet'), 'utf8'), /## In flight\n\n_none_/);
 
-    const cur = currentMd();   // still the whole board, grouped by stream, with links
-    assert.match(cur, /# Launch\n\nStream page: \[\[Streams\/Launch\]\]/);
-    assert.match(cur, /# Maestro\n\nStream page: \[\[Streams\/Maestro\]\]/);
+    const cur = currentMd();   // slim: open rows plus a link and counts per stream page
+    assert.match(cur, /- \[\[Streams\/Launch\]\]: 2 in flight, 1 blocked, 1 done/);
+    assert.match(cur, /- \[\[Streams\/Maestro\]\]: 1 awaiting/);
     assert.match(cur, /launch work/);
+    assert.doesNotMatch(cur, /launch blocker|finished thing/, 'blocked and done rows are on the stream page only');
     assert.match(cur, /maestro question\?/);
     assert.match(cur, /loose/);
-    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Other.md')), false);
+    assert.match(cur, /- \[\[Streams\/Other\]\]: 1 item\(s\) with no stream/);
+    assert.match(readFileSync(streamPage('Other'), 'utf8'), /loose/, 'items with no stream stay reachable on the Other page');
 });
 const section2 = (text: string, title: string) => text.split(new RegExp(`^## ${title}.*$`, 'm'))[1].split(/^## /m)[0];
 
@@ -2054,7 +2059,7 @@ test('paste asks show apart from the questions in status, the footer and CURRENT
     const j = statusJson();
     assert.deepEqual([j.awaiting.length, j.paste.length, j.paste[0].paste], [1, 1, f]);
     const cur = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
-    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);
+    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);   // asks stay on CURRENT
 });
 
 test('handoff section 4 is generated from the Needs-Jack and paste boxes, text plus options and the block file', () => {
@@ -2095,11 +2100,11 @@ test('handoff section 4 keeps every open question: one boxed as a rule by its ap
 
 const inDays = (n: number): string => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 
-/** A fake `gh` on PATH answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
-function ghStubDir() {
+/** A fake `gh` behind MAESTRO_GH_BIN answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
+function ghStubEnv(): Record<string, string> {
     const dir = mkdtempSync(join(tmpdir(), 'journal-gh-'));
-    writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`, { mode: 0o755 });
-    return dir;
+    const stub = writeStub(join(dir, 'gh.cjs'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`);
+    return stubEnv('MAESTRO_GH_BIN', stub);
 }
 
 test('--gate is validated before anything is written, and only goes on blocked rows', () => {
@@ -2133,8 +2138,8 @@ test('resume reports date gates as waiting or cleared, and never writes', () => 
 
 test('resume checks gh pr gates through gh pr view: merged clears, open waits, closed or failing is unknown', () => {
     const id = idOf(run('log', 'hold for the PR', '--kind', 'blocked', '--gate', 'gh:pr:owner/repo#42', ...MARK).out);
-    const dir = ghStubDir();
-    const env = (state: string) => ({ MAESTRO_RESUME_GH: 'on', PATH: `${dir}:${process.env.PATH}`, STUB_STATE: state });
+    const ghEnv = ghStubEnv();
+    const env = (state: string) => ({ MAESTRO_RESUME_GH: 'on', ...ghEnv, STUB_STATE: state });
     assert.match(runEnv(env('MERGED'), 'resume').out, new RegExp(`CLEARED\\s+${id} .*owner/repo#42 merged`));
     assert.match(runEnv(env('OPEN'), 'resume').out, new RegExp(`waiting\\s+${id} .*owner/repo#42 is open`));
     assert.match(runEnv(env('CLOSED'), 'resume').out, new RegExp(`UNKNOWN\\s+${id} .*closed without merging`));
@@ -2445,6 +2450,7 @@ test('priorities set and show round-trip through the status dir, with a stream s
     const shown = parse<{ state: string; items: { text: string; stream?: string }[] }>(run('priorities', 'show', '--json', '--status-dir', sd).out);
     assert.equal(shown.state, 'ok');
     assert.deepEqual(shown.items, [{ text: 'Ship the widget', stream: 'Alpha' }, { text: 'Second thing' }]);
+    assert.match(currentMd(), /## Priorities\n\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/, 'priorities set re-renders CURRENT.md with the list on top');
     assert.equal(run('priorities', 'set', '--status-dir', sd).code, 1, 'no priorities is refused');
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
@@ -2761,6 +2767,52 @@ test('status and status --footer show the review queue from the stored snapshot,
     assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
 });
 
+/** A gh stub already run once: the first run of a new executable can be slow on some machines, which would eat the footer's live-read budget. */
+const warmedGhStub = (config: Parameters<typeof installGhStub>[0]): NodeJS.ProcessEnv => {
+    const env = installGhStub(config);
+    spawnSync('gh', ['api', 'user'], { env, encoding: 'utf8' });
+    return env;
+};
+
+test('status --footer refreshes a stale review-queue snapshot from a live read, and says unknown when it cannot (MAESTRO-136)', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const old = new Date(Date.now() - 11 * 36e5).toISOString();
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: old, prs: [0, 1, 2, 3].map(() => ({ isDraft: false })) }));
+    const footer = (env: NodeJS.ProcessEnv) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+    }).stdout;
+    const live = warmedGhStub({ pages: [[1, 2, 3, 4, 5, 6].map((n) => prNode(n, { isDraft: false }))] });
+    assert.match(footer(live), /^\*\*Review queue:\*\* 6 of 4 \(full, 2 over the cap\)$/m, 'the live count, not the 11h-old 4');
+    rmSync(join(journalDir, 'prs-current.json'), { force: true }); // the live read above was saved; drop it so the failing read is the one under test
+    const broken = warmedGhStub({ pages: [[]], failOnPage: 0 });
+    assert.match(footer(broken), /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
+});
+
+test('status --footer bounds a slow live read, then reuses a successful one (MAESTRO-285)', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const old = new Date(Date.now() - 11 * 36e5).toISOString();
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: old, prs: [0, 1, 2, 3].map(() => ({ isDraft: false })) }));
+    const footer = (env: NodeJS.ProcessEnv) => {
+        const t0 = Date.now();
+        const out = spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        }).stdout;
+        return { out, ms: Date.now() - t0 };
+    };
+    const slow = footer(warmedGhStub({ pages: [[prNode(1)]], delayMs: 60_000 }));
+    assert.match(slow.out, /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
+    assert.ok(slow.ms < 25_000, `a hung gh must not hold the footer (took ${slow.ms} ms)`);
+    assert.equal(existsSync(join(journalDir, 'prs-current.json')), false, 'a failed read saves nothing');
+
+    const callLog = join(vault, 'gh-calls.log');
+    const quick = warmedGhStub({ pages: [[1, 2, 3].map((n) => prNode(n))], delayMs: 50, callLog });
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m);
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m, 'the second footer reuses the saved read');
+    assert.equal(readFileSync(callLog, 'utf8').trim().split('\n').length, 1, 'only one gh call across two footers');
+});
+
 // ── window id ───────────────────────────────────────────────────────────────
 
 test('every row written carries the window id: --window, then --session, then MAESTRO_WINDOW, then a pid-based id', () => {
@@ -2997,6 +3049,28 @@ test('prime and start-here withhold a secret-shaped stream name or id instead of
         assert.ok(!all.includes(token), `${cmd[0]} printed the token-shaped stream`);
         assert.ok(!all.includes(key), `${cmd[0]} printed the key-shaped id`);
         assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} still shows ordinary work`);
+        assert.match(r.out, /\[withheld: secret shape\]/);
+    }
+});
+
+test('start-here --json and status --json withhold a secret-shaped stream name or id and still parse (MAESTRO-310)', () => {
+    const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
+    const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
+    const now = new Date().toISOString();
+    const rows = [
+        { id: 'sec1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: token, text: 'work in an odd stream', model: 'x', used: ['x'] },
+        { id: key, ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'work with an odd id', model: 'x', used: ['x'] },
+        { id: 'ok1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'ordinary work', model: 'x', used: ['x'] },
+    ];
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    for (const cmd of [['start-here', '--json'], ['status', '--json']]) {
+        const r = run(...cmd);
+        assert.equal(r.code, 0, r.err);
+        assert.ok(!r.out.includes(token), `${cmd[0]} --json printed the token-shaped stream`);
+        assert.ok(!r.out.includes(key), `${cmd[0]} --json printed the key-shaped id`);
+        assert.doesNotThrow(() => JSON.parse(r.out), `${cmd[0]} --json no longer parses`);
+        assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} --json still shows ordinary work`);
         assert.match(r.out, /\[withheld: secret shape\]/);
     }
 });

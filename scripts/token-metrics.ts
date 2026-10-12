@@ -12,6 +12,7 @@
  *   node token-metrics.ts --write              upsert that day's row in the vault table
  *   node token-metrics.ts --all --write        backfill every day still on disk
  *   node token-metrics.ts --compare            day vs 7-day median vs baseline
+ *   node token-metrics.ts --expiry             cache-expiry rewrites per day: count, average gap, dollars
  *   node token-metrics.ts --curve              cache-read per turn by turn-index bucket
  *   node token-metrics.ts --json               machine-readable day + sessions
  *
@@ -39,6 +40,11 @@
  *   from `model_prices` (dollars per MTok), reported for the orchestrator and for subagents, by model and by category
  *   (read / write / output / input). A write counts as 5m unless usage splits it (cache_creation). The priced mix is each
  *   family's share of those dollars. With no `model_prices` only the token mix is shown; no prices are built in.
+ * - Cache-expiry rewrite: a turn whose gap since the previous turn in the same transcript is over 5 minutes (EXPIRY_GAP_SEC) and
+ *   which writes at least EXPIRY_MIN_WRITE tokens to the 5-minute cache. The prompt cache had lapsed, so the turn paid to write the
+ *   whole context again instead of reading it. Its cost is those 5m write tokens at the family's write price; a 1h write is not
+ *   counted (it cannot have expired in under an hour). The first turn of a transcript and the first after a compaction have no
+ *   gap and are never counted. Orchestrator and subagent transcripts both count. `--expiry` lists it per day.
  * - Turns since compact: the orchestrator turn count since the last compaction marker (compact_boundary or an
  *   isCompactSummary flag); a day keeps its longest run. A small agent finished in under 10 turns.
  * - Targets (`cost_targets`) turn the cost metrics into PASS/MISS in the day summary and --compare.
@@ -53,6 +59,7 @@ import { readAutocompact, triggerTokens } from './lib/autocompact.ts';
 import { sessionText } from './lib/session-text.ts';
 import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
+import { printJson } from './lib/json-out.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
 
@@ -64,7 +71,7 @@ export interface Picked {
     handback: boolean; compact: boolean; usage: Usage | null;
 }
 /** A deduplicated API response. `growth` is context growth since the previous turn (unset for the first). */
-export interface Turn extends Usage { date: string; model: string; since: number; growth?: number }
+export interface Turn extends Usage { date: string; model: string; since: number; growth?: number; gapSec?: number }
 export interface TurnEvent { date: string; kind: string }
 export interface ScanResult { turns: Turn[]; events: TurnEvent[]; reports: { date: string; tokens: number }[] }
 /** Tokens by price kind: fresh input, 5m and 1h cache writes, cache reads, output. */
@@ -79,6 +86,7 @@ export interface Stats {
     out: number; write: number; read: number; fresh: number;
     subagents: number; subTurns: number; subWakes: number; subByModel: Record<string, number>; subGrowth: number; subGrowthN: number;
     reportTokens: number; reportCount: number;
+    expiryTurns: number; expiryGapSec: number; expiryByFamily: FamilyKinds;
     mix: Record<string, { read: number }>; orch: FamilyKinds; sub: FamilyKinds; sinceCompact: number; subSmall: number; subOpus: number;
 }
 export type DayStats = Stats & { date: string; sessions: number };
@@ -99,7 +107,7 @@ const TABLE_HEADER = [
     'Date', 'Sessions', 'Turns', 'Prompts', 'Wakes (notif/handback)', 'Output', 'Cache write',
     'Cache read', 'Fresh', 'Read/turn', 'Subagents', 'Sub turns', 'Sub tokens by model', 'Avg report',
     'Sub growth/turn', 'Read by model', 'Orchestrator tokens by model', 'Max turns since compact', 'Small agents', 'Opus subagents', 'Opus sub tokens',
-    'Subagent tokens by model',
+    'Subagent tokens by model', 'Expiry rewrites', 'Expiry write tokens by model',
 ];
 
 // --- the only function allowed to look at a parsed transcript line ----------
@@ -150,10 +158,11 @@ function main(argv: string[]): void {
     const { days, sessions, curve } = collect(projectsDir);
 
     if (flag('curve')) { printCurve(curve); return; }
+    if (flag('expiry')) { printExpiry(days); return; }
 
     const todays = sessions.filter((s) => s.date === date);
     if (flag('json')) {
-        console.log(JSON.stringify({ day: days.get(date) || null, sessions: todays }, null, 2));
+        printJson({ day: days.get(date) || null, sessions: todays });
     } else {
         printDay(date, days.get(date));
         printSessions(todays);
@@ -219,7 +228,7 @@ export function collect(projectsDir: string): { days: Map<string, DayStats>; ses
         });
         const byDate = new Map<string, Stats>();
         const bucket = (d: string): Stats => { if (!byDate.has(d)) byDate.set(d, emptyStats()); return byDate.get(d) as Stats; };
-        for (const t of main.turns) addTurn(bucket(t.date), t);
+        for (const t of main.turns) { addTurn(bucket(t.date), t); addExpiry(bucket(t.date), t); }
         for (const e of main.events) addEvent(bucket(e.date), e);
         for (const r of main.reports) { const s = bucket(r.date); s.reportTokens += r.tokens; s.reportCount += 1; }
         for (const sub of subs) {
@@ -232,6 +241,7 @@ export function collect(projectsDir: string): { days: Map<string, DayStats>; ses
                 const st = bucket(t.date);
                 st.subTurns += 1;
                 addMix(st, t, 'sub');
+                addExpiry(st, t);
                 const fam = family(t.model);
                 st.subByModel[fam] = (st.subByModel[fam] || 0) + t.fresh + t.write + t.read + t.out;
                 if (t.growth !== undefined) { st.subGrowth += t.growth; st.subGrowthN += 1; }
@@ -250,18 +260,19 @@ export function collect(projectsDir: string): { days: Map<string, DayStats>; ses
 }
 
 /**
- * The most recently modified session in `dir`: { session, turns, readPerTurn, ctx }, or null when there is none. The figures cover only
- * the run since the last compaction marker (the turns from the last one with since === 1 onward), not the whole transcript.
+ * The most recently modified session in `dir`: { session, turns, turnsBefore, readPerTurn, ctx }, or null when there is none. The figures cover only
+ * the run since the last compaction marker (the turns from the last one with since === 1 onward), not the whole transcript; `turnsBefore` is the
+ * turns the transcript holds before that run (0 when it never compacted), so the footer can say a compaction happened.
  * `ctx` is the last turn's context (fresh + cache write + cache read), 0 with no turns.
  */
-export function currentSession(dir: string, sessionId?: string): { session: string; turns: number; readPerTurn: number; ctx: number } | null {
+export function currentSession(dir: string, sessionId?: string): { session: string; turns: number; turnsBefore: number; readPerTurn: number; ctx: number } | null {
     const newest = sessionId !== undefined ? sessionFileById(dir, sessionId) : newestSessionFile(dir);
     if (!newest) return null;
     const all = scanFile(newest).turns;
     const turns = all.slice(Math.max(0, all.findLastIndex((t) => t.since === 1)));
     const read = turns.reduce((n, t) => n + t.read, 0);
     const lastTurn = turns.at(-1);
-    return { session: basename(newest, '.jsonl').slice(0, 8), turns: turns.length, readPerTurn: turns.length ? read / turns.length : 0, ctx: lastTurn ? lastTurn.fresh + lastTurn.write + lastTurn.read : 0 };
+    return { session: basename(newest, '.jsonl').slice(0, 8), turns: turns.length, turnsBefore: all.length - turns.length, readPerTurn: turns.length ? read / turns.length : 0, ctx: lastTurn ? lastTurn.fresh + lastTurn.write + lastTurn.read : 0 };
 }
 
 /** The full path of the most recently modified session transcript in `dir`, or null when there is none. The one place "newest session" is decided. */
@@ -297,13 +308,14 @@ export function sessionStatus(dir: string, trigger: number = triggerTokens(readA
     // Cross-multiplied so 85% of 200k is exactly 170k, with no float division at the boundary.
     const reached = (pct: number): boolean => s.ctx * 100 >= pct * trigger;
     const advice = reached(rollPct) ? 'roll now' : reached(warnPct) ? 'roll soon' : '';
-    return { available: true, session: s.session, turns: s.turns, ctxK: Math.floor(s.ctx / 1000), triggerK: Math.floor(trigger / 1000), pct: Math.floor((s.ctx / trigger) * 100), readK: Math.floor(s.readPerTurn / 1000), advice };
+    return { available: true, session: s.session, turns: s.turns, ...(s.turnsBefore > 0 ? { turnsBefore: s.turnsBefore } : {}), ctxK: Math.floor(s.ctx / 1000), triggerK: Math.floor(trigger / 1000), pct: Math.floor((s.ctx / trigger) * 100), readK: Math.floor(s.readPerTurn / 1000), advice };
 }
 
 /**
  * The status-footer Session line for the current session, e.g.
  * `**Session:** 86 turns · ctx 142k of ~200k (71%) · 129k read/turn · roll soon`. The turn count, context and read/turn mean are
- * since the last compact. The percent is the last turn's context over the autocompact trigger. At `warnPct` of the trigger it ends
+ * since the last compact; after one the line says so (`2 turns since compact (137 before)`). The roll percent is context-based, so a compact
+ * lowers it for real. The percent is the last turn's context over the autocompact trigger. At `warnPct` of the trigger it ends
  * with `roll soon`; at `rollPct`, `roll now` instead. With no session on disk it says so rather than vanishing, so a misconfigured
  * projects_dir is visible.
  */
@@ -317,16 +329,20 @@ function scanFile(path: string): ScanResult {
     let last = null as Turn | null;
     let pending = null as { date: string; n: number } | null;
     let since = 0;
+    let lastAt = null as number | null;
     for (const line of readFileSync(path, 'utf8').split('\n')) {
         if (!line) continue;
         let rec: Picked;
         try { rec = pick(JSON.parse(line)); } catch { continue; }
-        if (rec.compact) { pending = null; last = null; since = 0; continue; }
+        if (rec.compact) { pending = null; last = null; since = 0; lastAt = null; continue; }
         if (rec.type === 'assistant' && rec.usage && rec.id) {
             const dup = seen.get(rec.id);
             if (dup) { Object.assign(dup, rec.usage); continue; }
             since += 1;
             const t: Turn = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage };
+            const at = Date.parse(rec.ts);
+            if (lastAt !== null && Number.isFinite(at)) t.gapSec = Math.max(0, (at - lastAt) / 1000);
+            lastAt = Number.isFinite(at) ? at : lastAt;
             seen.set(rec.id, t);
             if (last) {
                 const ctxBefore = last.fresh + last.write + last.read;
@@ -359,12 +375,27 @@ const emptyStats = (): Stats => ({
     turns: 0, prompts: 0, wakesNotif: 0, wakesHandback: 0, peerMsgs: 0,
     out: 0, write: 0, read: 0, fresh: 0,
     subagents: 0, subTurns: 0, subWakes: 0, subByModel: {}, subGrowth: 0, subGrowthN: 0, reportTokens: 0, reportCount: 0,
+    expiryTurns: 0, expiryGapSec: 0, expiryByFamily: {},
     mix: {}, orch: {}, sub: {}, sinceCompact: 0, subSmall: 0, subOpus: 0,
 });
 function addTurn(s: Stats, t: Turn): void {
     s.turns += 1; s.out += t.out; s.write += t.write; s.read += t.read; s.fresh += t.fresh;
     s.sinceCompact = Math.max(s.sinceCompact, t.since);
     addMix(s, t, 'orch');
+}
+/** A gap longer than this (seconds) is past the 5-minute prompt-cache lifetime. */
+export const EXPIRY_GAP_SEC = 300;
+/** A turn must write at least this many 5m cache tokens to count as a rewrite of a whole context, not new content. */
+export const EXPIRY_MIN_WRITE = 30_000;
+/** Whether `t` is a cache-expiry rewrite: idle past the cache lifetime, then a large 5m write. */
+export const isExpiryRewrite = (t: Turn): boolean => t.gapSec !== undefined && t.gapSec > EXPIRY_GAP_SEC && kindsOf(t).w5 >= EXPIRY_MIN_WRITE;
+/** Counts `t` into the day's expiry totals when it is a rewrite; only its 5m write is kept, which is all that was rewritten. */
+function addExpiry(s: Stats, t: Turn): void {
+    if (!isExpiryRewrite(t)) return;
+    s.expiryTurns += 1;
+    s.expiryGapSec += t.gapSec as number;
+    const f = family(t.model);
+    addKinds(s.expiryByFamily[f] || (s.expiryByFamily[f] = zeroKinds()), { ...zeroKinds(), w5: kindsOf(t).w5 });
 }
 const zeroKinds = (): Kinds => ({ fresh: 0, w5: 0, w1: 0, read: 0, out: 0 });
 const addKinds = (a: Kinds, b: Kinds): void => { for (const k of Object.keys(a) as (keyof Kinds)[]) a[k] += b[k]; };
@@ -391,7 +422,7 @@ function merge(a: Stats, b: Stats): void {
     for (const k of Object.keys(b) as (keyof Stats)[]) {
         if (k === 'subByModel') for (const [m, n] of Object.entries(b.subByModel)) a.subByModel[m] = (a.subByModel[m] || 0) + n;
         else if (k === 'mix') for (const [m, x] of Object.entries(b.mix)) { const c = a.mix[m] || (a.mix[m] = { read: 0 }); c.read += x.read; }
-        else if (k === 'orch' || k === 'sub') for (const [m, x] of Object.entries(b[k])) addKinds(a[k][m] || (a[k][m] = zeroKinds()), x);
+        else if (k === 'orch' || k === 'sub' || k === 'expiryByFamily') for (const [m, x] of Object.entries(b[k])) addKinds(a[k][m] || (a[k][m] = zeroKinds()), x);
         else if (k === 'sinceCompact') a[k] = Math.max(a[k] || 0, b[k]);
         else if (typeof b[k] === 'number') { const nk = k as NumericKey; a[nk] = (a[nk] || 0) + b[nk]; }
     }
@@ -491,6 +522,7 @@ export function toRow(s: DayStats): TableRow {
         compact(s.out), compact(s.write), compact(s.read), compact(s.fresh), compact(readPerTurn(s)),
         s.subagents, s.subTurns, byModel(s), compact(avgReport(s)), compact(subGrowth(s)),
         mixCell(s.mix, 'read'), kindsCell(s.orch), s.sinceCompact, s.subSmall, s.subOpus, compact(s.subByModel.opus || 0), kindsCell(s.sub),
+        s.expiryTurns, kindsCell(s.expiryByFamily),
     ].map(String);
 }
 
@@ -503,7 +535,24 @@ function printDay(date: string, s: DayStats | undefined): void {
     console.log(`  subagent context growth ≈ ${compact(subGrowth(s))} tokens/turn (tool results + hooks)`);
     console.log(`  avg report ≈ ${compact(avgReport(s))} tokens over ${s.reportCount} handback(s)`);
     console.log(`  model mix (cache read) ${mixLine(shares(readMix(s.mix)))}`);
+    console.log(`  cache-expiry rewrites  ${expiryLine(s, MODEL_PRICES)}`);
     printPriced(s, MODEL_PRICES);
+}
+/** Dollars of a day's cache-expiry rewrites, or NaN when `prices` is unset. */
+export const expiryUsd = (byFamily: FamilyKinds, prices: Prices): number => (prices ? sumDollars(Object.values(priceFamilies(byFamily, prices))).total : NaN);
+/** `12 turns, avg gap 12.5 min, $4.20 (opus $3.90 · sonnet $0.30)`; the dollars are left out while prices are unset. */
+function expiryLine(s: Stats, prices: Prices): string {
+    if (!s.expiryTurns) return 'none';
+    const gap = `${s.expiryTurns} turns, avg gap ${(s.expiryGapSec / s.expiryTurns / 60).toFixed(1)} min`;
+    if (!prices) return `${gap}, ${compact(Object.values(s.expiryByFamily).reduce((n, k) => n + k.w5, 0))} tokens rewritten (prices unset)`;
+    const fams = Object.entries(priceFamilies(s.expiryByFamily, prices)).sort((a, b) => b[1].total - a[1].total).map(([f, d]) => `${f} ${usd(d.total)}`).join(' · ');
+    return `${gap}, ${usd(expiryUsd(s.expiryByFamily, prices))} (${fams})`;
+}
+/** `--expiry`: one line per day with the cache-expiry rewrites it paid for. */
+function printExpiry(days: Map<string, DayStats>): void {
+    console.log(`Cache-expiry rewrites per day (gap over ${EXPIRY_GAP_SEC / 60} min, 5m write of at least ${compact(EXPIRY_MIN_WRITE)} tokens)`);
+    for (const [d, s] of days) console.log(`${d}  ${expiryLine(s, MODEL_PRICES)}`);
+    if (!MODEL_PRICES) console.log('Model prices are unset: tokens only. Set model_prices to see dollars.');
 }
 const readMix = (mix: Stats['mix']): Record<string, number> => Object.fromEntries(Object.entries(mix).map(([f, v]) => [f, v.read]));
 const usd = (n: number): string => `$${n.toFixed(2)}`;
@@ -568,7 +617,7 @@ export function writeTable(path: string, rows: Map<string, TableRow>): void {
     }
     // Rows written before a column existed are padded so every row is as wide as the header.
     const body = [...rows].sort((a, b) => a[0].localeCompare(b[0])).map(([, cells]) => `| ${TABLE_HEADER.map((h, i) => cells[i] ?? '-').join(' | ')} |`);
-    const align = TABLE_HEADER.map((h, i) => ([0, 12, 15, 16, 21].includes(i) ? '---' : '---:')).join('|');
+    const align = TABLE_HEADER.map((h, i) => ([0, 12, 15, 16, 21, 23].includes(i) ? '---' : '---:')).join('|');
     const table = [`| ${TABLE_HEADER.join(' | ')} |`, `|${align}|`, ...body];
     writeFileSync(path, `${[...head, ...table].join('\n')}\n`);
 }
@@ -594,6 +643,8 @@ const rowUsd = (who: 'orch' | 'sub', prices: Prices): MetricGetter => (r) => {
     return sumDollars(Object.values(priceFamilies(k, prices))).total;
 };
 const pricedShare = (fam: string, prices: Prices): MetricGetter => (r) => pricedShares(priceFamilies(joinKinds(rowKinds(r).orch, rowKinds(r).sub), prices))[fam];
+// Expiry columns: 22 rewrite count (a pre-column row reads '-', so NaN), 23 write tokens by model.
+const expiryCost = (prices: Prices): MetricGetter => (r) => (Number.isFinite(uncompact(r[22])) ? expiryUsd(parseKinds(r[23]), prices) : NaN);
 const smallRate: MetricGetter = (r) => { const n = uncompact(r[10]); return n ? uncompact(r[18]) / n : NaN; };
 const CORE_METRICS: Metric[] = [
     ['Turns', cell(2)], ['Wakes', cell(4)], ['Output', cell(5)], ['Cache read', cell(7)],
@@ -604,7 +655,7 @@ const CORE_METRICS: Metric[] = [
  * Every metric as [name, getter over a table row, options]. Options: cost (shown in the day summary), fmt (n, pct, ratio or usd),
  * worse (up, down or none: which move counts as a regression), target ([config key, scale, max|min]) or trend (lower is better, no target).
  * Dollar metrics exist only when `prices` is set. Columns are the table's: 4 wakes, 15 read by model, 16 orchestrator tokens by model,
- * 17 max turns since compact, 18 small agents, 19 Opus subagents, 20 Opus sub tokens, 21 subagent tokens by model.
+ * 17 max turns since compact, 18 small agents, 19 Opus subagents, 20 Opus sub tokens, 21 subagent tokens by model, 22 cache-expiry rewrites, 23 their 5m write tokens by model.
  */
 export function metricList(prices: Prices = MODEL_PRICES): Metric[] {
     const pct = { cost: true, fmt: 'pct' };
@@ -614,6 +665,7 @@ export function metricList(prices: Prices = MODEL_PRICES): Metric[] {
         ['Haiku share (priced)', pricedShare('haiku', prices), { ...pct, worse: 'none' }],
         ['Est. $ orchestrator', rowUsd('orch', prices), { cost: true, fmt: 'usd' }],
         ['Est. $ subagents', rowUsd('sub', prices), { cost: true, fmt: 'usd' }],
+        ['Est. $ cache expiry', expiryCost(prices), { cost: true, fmt: 'usd' }],
     ] : [];
     const list: Metric[] = [
         ...CORE_METRICS,
@@ -626,6 +678,7 @@ export function metricList(prices: Prices = MODEL_PRICES): Metric[] {
         ['Small-agent rate', smallRate, { cost: true, fmt: 'pct', trend: true }],
         ['Opus subagents', cell(19), { cost: true, worse: 'none' }],
         ['Opus sub tokens', cell(20), { cost: true, worse: 'none' }],
+        ['Expiry rewrites', cell(22), { cost: true }],
     ];
     return list;
 }

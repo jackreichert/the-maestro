@@ -29,8 +29,8 @@ test('digest store: saved unseen, listed oldest first, marked seen idempotently,
 });
 
 /** Starts `event-loop.ts digest-wait` and resolves with its exit code and stdout. */
-const waitProc = (ledger: string, args: string[]) => new Promise<{ code: number | null; out: string }>((resolve) => {
-  const p = spawn(process.execPath, [EVENT_LOOP, 'digest-wait', '--poll-seconds', '0.1', ...args], { env: envFor(ledger) });
+const waitProc = (ledger: string, args: string[], env: Record<string, string> = {}) => new Promise<{ code: number | null; out: string }>((resolve) => {
+  const p = spawn(process.execPath, [EVENT_LOOP, 'digest-wait', '--poll-seconds', '0.1', ...args], { env: envFor(ledger, env) });
   let out = '';
   p.stdout.on('data', (d) => { out += d; });
   p.on('close', (code) => resolve({ code, out }));
@@ -61,9 +61,10 @@ test('digest-wait takes an already-saved unseen digest at once; at the timeout i
 test('two waiters on one digest: exactly one prints it, the loser keeps waiting and exits 0', async () => {
   const ledger = tempDir();
   const dir = digestDir(ledger, 'proj');
-  const both = Promise.all([waitProc(ledger, ['--timeout-hours', '0.0008']), waitProc(ledger, ['--timeout-hours', '0.0008'])]);
-  await new Promise((r) => setTimeout(r, 600));
+  // Two windows: without MAESTRO_WINDOW both waiters would resolve to this test process as their parent and be one window, which
+  // may each take an unowned event when their reads overlap. The digest is saved first, so the waiters race for it from their first poll.
   saveDigest(dir, 'ACTION once (fake): changed');
+  const both = Promise.all(['win-a', 'win-b'].map((w) => waitProc(ledger, ['--timeout-hours', '0.0008'], { MAESTRO_WINDOW: w })));
   const r = await both;
   assert.deepEqual(r.map((x) => x.code).sort(), [0, 10]);
   assert.match(r.map((x) => x.out).join('').trim(), /^[0-9a-f]{12} new ACTION other once \(fake\)$/);

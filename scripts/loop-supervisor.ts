@@ -42,6 +42,7 @@ import { CONTAINER_PROJECT, COPILOT_ORGS, EVENT_DIR, GH_ORG, LEDGER_ROOT, NOTIFY
 import { DEFAULT_ALERT_QUIET_HOURS, noteRestart, runAlerts } from './lib/alert-policy.ts';
 import { readInbox } from './lib/event-inbox.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
+import { overrideCommand } from './lib/tool-bin.ts';
 
 const EVENT_LOOP = fileURLToPath(new URL('./event-loop.ts', import.meta.url));
 export const DELAYS = { idle: 300, usage: 300, crash: 30, quietCap: 12 * 3600, quietFallback: 300 };
@@ -157,8 +158,8 @@ const envMs = (name: string, fallback: number): number => { const n = Number(pro
  * on this one timer, and `waitWithAlerts` only ticks after the child is gone, so two ticks can never overlap (the policy's rate limit and saved state stop a repeat send).
  */
 function launch(alertTick: () => void): Promise<LoopResult> {
-  const bin = process.env.MAESTRO_LOOP_BIN;
-  const child = bin ? spawn(bin, ['run', '--serve'], { stdio: ['ignore', 'pipe', 'pipe'] }) : spawn(process.execPath, [EVENT_LOOP, 'run', '--serve'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const [bin, binArgs] = process.env.MAESTRO_LOOP_BIN ? overrideCommand('MAESTRO_LOOP_BIN', '', ['run', '--serve']) : [process.execPath, [EVENT_LOOP, 'run', '--serve']];
+  const child = spawn(bin, binArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
   running = child;
   let stdout = '';
   let stderr = '';

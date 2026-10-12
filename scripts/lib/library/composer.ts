@@ -34,14 +34,14 @@ export function composerLease(rows: readonly LedgerRow[], nowMs: number): { live
 }
 
 /**
- * Problems with one stored `curated` row, for `verify`: it must close an existing learned row, carry exactly one of `page` (a library page
+ * Problems with one stored `curated` row, for `verify`: it must close an existing learned or miss row, carry exactly one of `page` (a library page
  * path, with the sha256 of the bytes written) or `rejected` (one plain line), and nothing the write path does not set. Every free-text field
  * is scanned, so a hand-edited row cannot carry a value onto the ledger. A message never echoes a field's value.
  */
-export function curatedProblems(row: LedgerRow, learnedIds: ReadonlySet<string>): string[] {
+export function curatedProblems(row: LedgerRow, closableIds: ReadonlySet<string>): string[] {
   const out: string[] = [];
   const str = (k: string): string | undefined => (typeof row[k] === 'string' ? (row[k] as string) : undefined);
-  if (typeof row.closes !== 'string' || !learnedIds.has(row.closes)) out.push('closes must name a learned row');
+  if (typeof row.closes !== 'string' || !closableIds.has(row.closes)) out.push('closes must name a learned row or a miss row');
   const page = str('page');
   const rejected = str('rejected');
   if ((page === undefined) === (rejected === undefined)) out.push('needs exactly one of page and rejected');

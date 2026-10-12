@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { VAULT_ROOT } from './local-config.ts';
+import { printJson } from './lib/json-out.ts';
 import { briefBlock, BRIEF_PAGES } from './lib/library/brief.ts';
 import type { FoundPage } from './lib/library/find.ts';
 
@@ -47,7 +48,7 @@ function main(argv: string[]): number {
   let hits: FoundPage[];
   try { hits = JSON.parse(r.stdout) as FoundPage[]; } catch { hits = []; }
   if (r.status !== 0 || !Array.isArray(hits)) { console.error(`library-brief: the lookup failed${r.stderr ? `: ${r.stderr.trim().split('\n')[0]}` : ''}`); return 2; }
-  console.log(values.has('--json') ? JSON.stringify(hits, null, 2) : briefBlock(hits, vault, terms.join(' ')));
+  if (values.has('--json')) printJson(hits); else console.log(briefBlock(hits, vault, terms.join(' ')));
   return 0;
 }
 
