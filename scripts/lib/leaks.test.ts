@@ -64,6 +64,25 @@ test('read-only subagents: judged by the tools they called, repriced at Haiku, g
     assert.match(l.fix, /model: haiku/);
 });
 
+test('subagent cache TTL: avoided rewrites within the hour minus the extra paid on every 5m write, none reported when it costs more', () => {
+    const at = (iso: string) => `2026-09-26T${iso}Z`;
+    const write = (when: string, tokens: number) => turn(at(when), 'claude-sonnet-5', use(0, tokens, 0, 0));
+    // sonnet: 5m write 2.5, 1h write 4, read 0.2 per MTok. Rewrite avoided = 2M x (2.5 - 0.2) = 4.6; extra on a 2M write = 2M x 1.5 = 3.
+    const dir = fixture({ subs: [{ type: 'any', recs: [
+        write('10:00:00', 0.1 * M),
+        write('10:10:00', 2 * M), write('10:20:00', 2 * M), write('10:30:00', 2 * M), write('10:40:00', 2 * M),
+        write('12:40:00', 2 * M), // a 2h gap: a 1h TTL has lapsed too, so no rewrite avoided, but the write costs more
+    ] }], orch: [write('10:00:00', 50 * M)] });
+    const [l] = report(dir);
+    assert.equal(l.bucket, 'Subagent prompt cache on a 1h TTL instead of 5m');
+    assert.ok(Math.abs(l.usd - (4 * 4.6 - (0.15 + 5 * 3))) < 1e-9, String(l.usd));
+    assert.match(l.detail[0], /4 expiry rewrites within the hour avoided, \$18\.40; every 5m write at the 1h price costs \$15\.15 more/);
+    assert.match(l.fix, /subagentPromptCacheTtl/);
+    // One rewrite avoided (4.6) does not pay for the extra on two big writes (6.0): not a leak.
+    const small = fixture({ subs: [{ type: 'any', recs: [write('10:00:00', 2 * M), write('10:10:00', 2 * M)] }] });
+    assert.deepEqual(report(small), []);
+});
+
 test('--leaks CLI prints the ranked report and no content; without prices it says so', () => {
     const dir = fixture({ subs: [{ type: 'explorer', recs: [turn(T(0), 'claude-sonnet-5', use(M, 0, 9 * M, M / 10), [{ name: 'Read', input: { file_path: `/p/${SENTINEL}`.replace(SENTINEL, 'a.ts') } }])] }] });
     const r = run(dir);
