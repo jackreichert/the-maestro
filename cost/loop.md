@@ -4,7 +4,7 @@ Read this before the EOD standup's cost section, before touching the experiment 
 before proposing or applying any cost habit. It runs once, right after the cost line in
 [measure.md](measure.md), from `reference/ledger.md`'s end-of-day sequence.
 
-The idea, approved by the user 2026-09-25: measure every day, run each cost habit as a stated
+The idea: measure every day, run each cost habit as a stated
 experiment, and let the EOD routine decide what is adopted and what is reverted, from real numbers
 rather than a guess.
 
@@ -38,7 +38,7 @@ before it's called `adopted`.
 
 Changes to skills or memory that come out of the loop go to the user as **proposals**, not silent
 edits — the loop finds things, it doesn't rewrite the skill on its own. The only exception is the
-handful of habits the user already approved on 2026-09-25, which apply without asking each time:
+handful of habits the user has already approved, which apply without asking each time:
 the standing brief block, foreground waits, capped reports, lean tool output, Haiku routing for
 verifiable gathering, and session hygiene (all detailed in [budget.md](budget.md)).
 
@@ -47,21 +47,3 @@ verifiable gathering, and session hygiene (all detailed in [budget.md](budget.md
 On the last working day of the week, add one line to the standup: what was adopted, what was
 reverted, and the week's trend in cache read and wake-ups. Record the same line under the
 registry's own weekly-log table in the vault.
-
-## Worked example, 2026-09-27
-
-The day's numbers (`token-metrics.ts --compare`, cost line in [measure.md](measure.md)) closed the
-loop with a concrete regression and a concrete fix, not just a rule restated:
-
-- Wake-ups ran **+16%** against the recent trend, traced to a PR watcher polling every 2 minutes
-  instead of the standard cadence — see [budget.md#pr-watcher-cadence](budget.md#pr-watcher-cadence)
-  for the resulting rule.
-- Read/turn ran **+13%**, traced to a session that reached 316 turns without being rolled — past
-  the roll thresholds in [budget.md#session-hygiene](budget.md#session-hygiene).
-- Proposed adjustment, folded into the standing habits rather than left as a one-off: batch
-  bot-thread review rounds per repo (one pass handles every open bot thread in a repo) instead of
-  dispatching a fresh agent per wake-up — see
-  [budget.md#choosing-the-agent](budget.md#choosing-the-agent).
-
-This is the loop working as designed: a regression with a named cause, and a rule tightened because
-of it, not a habit adopted on faith.

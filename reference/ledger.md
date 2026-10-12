@@ -405,7 +405,7 @@ reads. This step brings the tracker up to date before the day's context is gone.
    user approves it. Comments are visible to the team and cannot really be taken back. Post only
    what they approve, then `log` one line that lists the keys commented on and the keys moved.
 
-Precedent, 2026-09-23: dated comments on four issues and four moved to *In Progress*, logged as
+Precedent: dated comments on four issues and four moved to *In Progress*, logged as
 two ledger lines.
 
 ### Commitments sweep

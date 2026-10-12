@@ -33,7 +33,7 @@ For a ledger item, `node scripts/journal.ts brief <id> --model ... --used ...` w
 
 Paste this block verbatim, once, at the end of the brief. Do not restate any of its rules elsewhere
 in the brief; write only what is specific to the task. The block is the contract, so a brief that
-paraphrases it drifts. Approved by the user 2026-09-25; PRs line updated 2026-10-01 (pr-open gate), approved by the user. PR text line added 2026-10-07; Report line changed to a file plus a headline 2026-10-07; the user should confirm both. Waits line updated 2026-10-02 (no output-file polling, foreground tests under a timeout); the user should confirm it. Learned line added 2026-10-08 (ledger-to-library slice L1); the user should confirm it. Necessity line added 2026-10-09 at the user's request. Report line tightened to a few lines 2026-10-08 (context cost); the user should confirm it.
+paraphrases it drifts.
 
 Print it with its slots filled by `node scripts/brief-block.ts`. It exits non-zero, printing
 nothing, if a slot has no value, so never paste a block you wrote by hand.

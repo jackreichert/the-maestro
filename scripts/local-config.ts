@@ -305,7 +305,7 @@ export const INBOX_COMMAND = argvList(pick('MAESTRO_INBOX_COMMAND', 'inbox_comma
 /** A positive integer setting; anything else (unset, zero, negative, text) falls back to the default. */
 const positiveInt = (raw: string, fallback: number): number => (/^\d+$/.test(raw.trim()) && Number(raw) > 0 ? Number(raw) : fallback);
 
-/** Pattern for tracker keys (ABC-123) in a PR title or branch, used by the pr-merged event type. Generic by default; an overlay narrows it (for one project, `\bAH-\d+\b`). An invalid pattern falls back to the default. */
+/** Pattern for tracker keys (ABC-123) in a PR title or branch, used by the pr-merged event type. Generic by default; an overlay narrows it (for one project, `\bAV-\d+\b`). An invalid pattern falls back to the default. */
 const DEFAULT_TRACKER_KEY_PATTERN = '\\b[A-Z][A-Z0-9]+-\\d+\\b';
 export const TRACKER_KEY_PATTERN = ((raw: string) => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })(pick('MAESTRO_TRACKER_KEY_PATTERN', 'tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
 
@@ -418,7 +418,7 @@ export const PR_BODY_CHECK_VOICE = switchOn(pickUserFile('pr_body_check_voice'))
 /** PR body: refuse counts the PR page already shows and a push makes stale (commits, files changed, lines, +120 -40) outside code. Best effort. Default on. User config file only. */
 export const PR_BODY_CHECK_COUNTS = switchOn(pickUserFile('pr_body_check_counts'));
 
-/** PR body: the author's names or logins, comma-separated, that must not appear in the third person ("Jack decided"). Default none. User config file only. */
+/** PR body: the author's names or logins, comma-separated, that must not appear in the third person ("Samwise decided"). Default none. User config file only. */
 export const PR_BODY_VOICE_NAMES = globListFile('pr_body_voice_names');
 
 /** Your git author emails (comma-separated), the authorship check branch-sweep.ts uses. Empty means the repo's own user.email. */

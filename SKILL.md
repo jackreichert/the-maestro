@@ -101,7 +101,7 @@ Say "none running" when nothing is live; that's still information. When relaying
 the Session line carries the turn count since the last compact, the context against the autocompact trigger and read/turn. **`roll soon`:** finish in-flight relays,
 start no new long dispatch chains, and say so in one line. **`roll now`:** run the roll yourself,
 unasked (`journal.ts triage`, then `roll`, then `handoff --all --delta`), then open EVERY reply
-with one line asking Jack to compact (`/compact` or a fresh session; only he can) until the Session
+with one line asking the user to compact (`/compact` or a fresh session; only they can) until the Session
 line drops below `roll soon`. Log work done after the roll as usual
 ([cost/budget.md#session-hygiene](cost/budget.md#session-hygiene)). Full formatting rules (more
 than two agents, killed/failed states, elapsed time): `reference/dispatch.md#status-footer`.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PODIUM GATE: checks a running Podium against Jack's v1 bar and reports each criterion as pass, fail or not built yet.
+ * PODIUM GATE: checks a running Podium against the v1 bar and reports each criterion as pass, fail or not built yet.
  *
  *   node scripts/podium-gate.ts                  start a temp Podium (fictional data, temp directory) and check it
  *   node scripts/podium-gate.ts --url <base>     check a Podium that is already running (`journal.ts web` prints its URL)

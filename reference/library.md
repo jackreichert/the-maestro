@@ -8,7 +8,7 @@ The library is the distilled layer above the ledger: one canonical page per fact
 |---|---|
 | `Projects/<repo>/Knowledge/<topic>.md` | How it works, gotchas, decision pointers, tool notes. One page per topic or component. |
 | `Projects/<repo>/Runbooks/<task>.md` | How to do a recurring thing, step by step, linking the helper that does it. |
-| `Projects/<repo>/Knowledge/flows/<flow>.md` | A flow that crosses repos. Lives under the project that owns the flow (`dev-env` for cross-repo flows). |
+| `Projects/<repo>/Knowledge/flows/<flow>.md` | A flow that crosses repos. Lives under the project that owns the flow (the container project for cross-repo flows). |
 | `Projects/<repo>/INDEX.md` | The repo's component list (frontmatter `components`) and a line per page. |
 
 `notes-check` and the stream tab read `Knowledge/` as well as Plans, Research, Reviews and Runbooks, one subfolder deep, so a page with a `stream:` field is listed on that stream's tab with no further step.
@@ -47,7 +47,7 @@ covers: [setup, run-local]  # optional: required page kinds this page satisfies 
 | `stream` | a stream name (the stream whose tab should list the page) |
 | `components` | only values in the `components` list of `Projects/<repo>/INDEX.md` |
 
-Adding a component is a deliberate edit to that list, so `interim-db`, `interimdb` and `cubhub` cannot all appear. A `decision` page is a pointer to DECISIONS.md and never restates the decision.
+Adding a component is a deliberate edit to that list, so `orchard-db`, `orcharddb` and `appleshed` cannot all appear. A `decision` page is a pointer to DECISIONS.md and never restates the decision.
 
 ## Coverage
 

@@ -125,7 +125,7 @@ function finalBar(): SVGSVGElement {
 }
 
 /**
- * <ask-card>: one decision awaiting Jack, drawn as a single row (id, decision, stream, age). Clicking the row, or Enter
+ * <ask-card>: one decision awaiting the user, drawn as a single row (id, decision, stream, age). Clicking the row, or Enter
  * or Space on the decision, opens the ask in place: its context, links and answer form. Saving an answer posts it to the server (answer-api.ts);
  * the ask then leaves the board on the next live update. Set `.ask`. The `open`
  * attribute reflects the state so the list around it can style an opened ask.

@@ -1,4 +1,4 @@
-/** The cue line (what Jack must see in two seconds), relative ages and clock times. Pure and DOM-free. */
+/** The cue line (what the user must see in two seconds), relative ages and clock times. Pure and DOM-free. */
 import type { CueKey } from './tabs.ts';
 import type { PodiumState } from './types.ts';
 
