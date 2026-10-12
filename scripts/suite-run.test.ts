@@ -104,7 +104,7 @@ test('suiteEnv keeps the suite away from real state', () => {
 });
 
 test('parseTap reads counts and names, once each, from node TAP output', () => {
-  const tap = 'TAP version 13\n    not ok 1 - inner one\n  not ok 2 - outer one\nnot ok 3 - /x/a.test.ts # SKIP\n# tests 5\n# pass 2\n# fail 2\n# cancelled 1\n';
+  const tap = 'TAP version 13\n    not ok 1 - inner one\n  not ok 2 - outer one\nnot ok 3 - /x/a.test.ts # failed\nnot ok 4 - todo one # TODO later\nnot ok 5 - skipped one # SKIP\n# tests 5\n# pass 2\n# fail 2\n# cancelled 1\n';
   assert.deepEqual(parseTap(tap), { pass: 2, fail: 2, cancelled: 1, failing: ['inner one', 'outer one', '/x/a.test.ts'] });
   assert.deepEqual(parseTap(''), { pass: 0, fail: 0, cancelled: 0, failing: [] });
 });

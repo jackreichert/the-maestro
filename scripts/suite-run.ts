@@ -113,10 +113,11 @@ export function startJob(worktree: string, opts: { tests?: string; skipTsc?: boo
   return spec;
 }
 
-/** One finished test run's counts and failing names, from node's TAP output. Nested failures count once by name. */
+/** One finished test run's counts and failing names, from node's TAP output. Nested failures count once by name; a `# TODO` or `# SKIP` line is not a failure. */
 export function parseTap(text: string): { pass: number; fail: number; cancelled: number; failing: string[] } {
   const total = (name: string): number => Number(new RegExp(`^# ${name} (\\d+)$`, 'm').exec(text)?.[1] ?? 0);
-  const failing = [...new Set([...text.matchAll(/^\s*not ok \d+ - (.+?)(?:\s+# .*)?$/gm)].map((m) => (m[1] as string).trim()))];
+  const lines = [...text.matchAll(/^\s*not ok \d+ - (.+)$/gm)].map((m) => m[1] as string).filter((l) => !/\s#\s*(TODO|SKIP)\b/i.test(l));
+  const failing = [...new Set(lines.map((l) => l.replace(/\s+# .*$/, '').trim()))];
   return { pass: total('pass'), fail: total('fail'), cancelled: total('cancelled'), failing };
 }
 
