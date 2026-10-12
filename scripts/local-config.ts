@@ -11,7 +11,7 @@
  *
  * `node scripts/local-config.ts` prints the resolved values and the files they came from.
  */
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_PRIORITIES_MAX } from './lib/status-page/priorities.ts';
@@ -48,6 +48,11 @@ function skillRoots(): string[] {
   }))];
 }
 
+/** True when `dir` belongs to the current user and no one else can write it. */
+function ownedAndPrivate(dir: string): boolean {
+  try { const st = statSync(dir); return st.uid === process.getuid?.() && (st.mode & 0o022) === 0; } catch { return false; }
+}
+
 /** Candidate config.md paths for an overlay named `<skill>` or `<plugin>:<skill>`. */
 function overlayCandidates(overlay: string): string[] {
   const [plugin, skill = ''] = overlay.includes(':') ? overlay.split(/:(.*)/s) : [null, overlay];
@@ -63,7 +68,8 @@ function overlayCandidates(overlay: string): string[] {
   }
   for (const root of skillRoots()) out.push(join(root, '..', skill, 'config.md'));
   // A checkout reached by its real path (no symlink in ~/.claude/skills) still sits under a container whose .claude/skills holds the overlay.
-  for (const root of skillRoots()) for (let dir = dirname(root); dirname(dir) !== dir; dir = dirname(dir)) out.push(join(dir, '.claude', 'skills', skill, 'config.md'));
+  // The overlay can name commands, so only directories you own and others cannot write are searched.
+  for (const root of skillRoots()) for (let dir = dirname(root); dirname(dir) !== dir; dir = dirname(dir)) if (ownedAndPrivate(dir)) out.push(join(dir, '.claude', 'skills', skill, 'config.md'));
   out.push(join(homedir(), '.claude', 'skills', skill, 'config.md'));
   return out;
 }
