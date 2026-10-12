@@ -1,7 +1,7 @@
 // Run: node --test scripts/status-watch-type.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tick } from './event-loop.ts';
@@ -90,6 +90,44 @@ test('a discuss line fires one DISCUSS event with its topic, survives a regenera
   assert.deepEqual(events(dir), ['DISCUSS ask cd34 (decision: Which option?) (no topic given)']);
 });
 
+/** A check at `ageSec` seconds after the page was last written, as the loop makes it (with a clock). */
+const checkAfter = (dir: string, ageSec: number) => {
+  const saved = Date.now() / 1000 - 3600;
+  utimesSync(join(dir, 'The-Podium.md'), saved, saved);
+  return statusWatch.check(dir, { now: (saved + ageSec) * 1000 });
+};
+
+test('an answer saved 5 s before a check is held back, then reported once the page has been quiet for 20 s', () => {
+  const dir = setup();
+  events(dir);
+  answer(dir, 'ab12', 'yes but');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 5)), [], 'half-typed: not reported');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 19)), []);
+  const settled = statusWatch.diff(null, checkAfter(dir, 21)).map((e) => e.summary);
+  assert.deepEqual(settled, ['ask ab12 (decision: Merge it now?) answered: yes but']);
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 60)), [], 'and only once');
+});
+
+test('the words finished during the settle window are the ones reported, not the half sentence', () => {
+  const dir = setup();
+  events(dir);
+  answer(dir, 'ab12', 'yes but');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 5)), []);
+  userEdits(dir, 'answer: yes but', 'answer: yes but only after CI');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 30)).map((e) => e.summary), ['ask ab12 (decision: Merge it now?) answered: yes but only after CI']);
+});
+
+test('a page the generator just wrote is quiet at any age, and a fresh page with no edit does not hold the baseline', () => {
+  const dir = setup();
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 1)), []);
+  regenerate(dir);
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 1)), []);
+});
+
+test('the type checks every 30 s', () => {
+  assert.equal(statusWatch.interval, 30);
+});
+
 test('regenerating before the watcher looks keeps the answer, and it still fires exactly once', () => {
   const dir = setup();
   events(dir);
@@ -155,14 +193,15 @@ test('the type is registered, refuses a target that is not a directory, and runs
   assert.equal(BUILTIN_TYPES['status-watch'], statusWatch);
   assert.throws(() => statusWatch.validate('/definitely/not/a/dir'), /status directory/);
   const status = setup();
+  const t0 = Date.now();
   const reg = mkdtempSync(join(tmpdir(), 'sw-events-'));
   addWatch(reg, { id: 'sw', type: 'status-watch', target: status });
-  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 }).events, []);
+  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: t0 }).events, []);
   answer(status, 'ab12', 'via loop');
-  const r = tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 + 120_000 });
+  const r = tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: t0 + 120_000 });
   assert.deepEqual(r.events.map((e) => [e.watch, e.type, e.actionable, e.summary]), [['sw', 'status-watch', true, 'ask ab12 (decision: Merge it now?) answered: via loop']]);
   regenerate(status);
-  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 + 240_000 }).events, []);
+  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: t0 + 240_000 }).events, []);
 });
 
 test('an edit saved while the generator is writing is not overwritten: it reads the page again and carries the edit', () => {
