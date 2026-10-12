@@ -274,7 +274,7 @@ export class PodiumApp extends HTMLElement {
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
       if (this.#live) this.#startLive(s.data.seq);   // sample data has no server to follow
-      void projectsLoad().then((p) => {
+      void projectsLoad(this.#live).then((p) => {
         if (!this.isConnected || this.#projects.state === 'ok') return;   // a live update got there first
         this.#projects = p;
         // Typing an answer holds the redraw; the next render (any tab switch or live update) shows the rows.
@@ -309,7 +309,7 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
-        const [s, c, e, lr, p] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad()]);
+        const [s, c, e, lr, p] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true)]);
         return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
       },
       seqOf: (f) => f.state.seq,
@@ -689,9 +689,9 @@ function showCue(asks: number): void {
   if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
 }
 
-/** The projects payload as Home's load state: a failure is shown in the sections that need it, never thrown. */
-function projectsLoad(): Promise<ProjectsLoad> {
-  return loadProjects().then((p): ProjectsLoad => ({ state: 'ok', data: p.data }), (e: unknown): ProjectsLoad => ({ state: 'error', message: e instanceof Error ? e.message : 'unknown error' }));
+/** The projects payload as Home's load state: a failure is shown in the sections that need it, never thrown, and on a live page never replaced by sample data. */
+function projectsLoad(live: boolean): Promise<ProjectsLoad> {
+  return loadProjects(live).then((p): ProjectsLoad => ({ state: 'ok', data: p.data }), (e: unknown): ProjectsLoad => ({ state: 'error', message: e instanceof Error ? e.message : 'unknown error' }));
 }
 
 /** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed there. */

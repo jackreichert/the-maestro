@@ -47,8 +47,16 @@ export const loadState = (): Promise<Loaded<PodiumState>> => loadWithFallback('/
   return got && { data: got.state, dropped: got.dropped };
 });
 
-/** Home's status rows, links and weekly counts; the bundled sample stands in only when no server answers, like the board's own data. */
-export const loadProjects = (): Promise<Loaded<ProjectsData>> => loadWithFallback('/api/projects', '/fixtures/projects.json', sanitizeProjects);
+/**
+ * Home's status rows, links and weekly counts. On a live page (`live`) a failed or unusable answer throws, so Home shows its
+ * "could not be loaded" state: the sample projects would pass for real ones. The bundled sample stands in only when no server answers.
+ */
+export async function loadProjects(live: boolean): Promise<Loaded<ProjectsData>> {
+  if (!live) return loadWithFallback('/api/projects', '/fixtures/projects.json', sanitizeProjects);
+  const got = sanitizeProjects(await getJson('/api/projects'));
+  if (!got) throw new Error('/api/projects does not match the contract');
+  return { ...got, source: 'server' };
+}
 
 export const loadCharts = (): Promise<Loaded<ChartsData>> => loadWithFallback('/api/charts?days=14', '/fixtures/charts.json', (x) => {
   return sanitizeCharts(x);
