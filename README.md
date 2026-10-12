@@ -273,6 +273,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [status-page.ts](#status-pagets) | The Podium, the always-current status page, with today's priorities and inline answers |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
 | [session-start.ts](#session-startts) | First command of a session: registers the status watches, reports the page age and whether a loop is running |
+| [stale-wip-triage.ts](#stale-wip-triagets) | One-time triage of open in-progress rows: evidence per row, hard-evidence closes proposed |
 | [weekly-retro.ts](#weekly-retrots) | Ten-minute weekly retro draft: stale, blocked, dropped, last experiment |
 | [flow-report.ts](#flow-reportts) | Cycle time, throughput, WIP and open-item age from the ledger |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
@@ -741,6 +742,10 @@ With `--stale [--code-root <dir>]` the generated line also carries STALE for a p
 ### library-brief.ts
 
 `library-brief.ts --repo <repo> "<task words>" [--tickets-vault <vault>] [--json]` prints a `Library pages for this task` block for a dispatch brief: up to three absolute page paths with their read-when lines, and a warning on a stale page. It ranks like `find` (it asks `ledger-index.ts find`). With no match it still prints the block, saying none were found; a failed lookup exits 2 so the block is never silently missing. `journal.ts brief` runs it for the item's repo and refuses to write a brief when it fails.
+
+### stale-wip-triage.ts
+
+Lists every open in-progress row with its evidence: `stale-wip-triage.ts [--json] [--today YYYY-MM-DD] [--tickets-vault <notes vault>] [--vault <ledger root>] [--project <name>]`. Per row it prints the age, the last row that touched it, its ticket and that ticket's note status (with `--tickets-vault`), its children (rows filed with `log --parent <id>`) and any `owner/repo#N` references in its text. A row whose ticket is closed, or whose children are all closed, is proposed as `CLOSE` with that evidence; the rest are `ASK`, for one batch question with a recommendation per row. It writes nothing; closing is `done`/`drop` after the evidence or an answer. A cheap runner follows [playbooks/stale-wip-triage.md](playbooks/stale-wip-triage.md). New stale rows are then caught by `stale_wip_days` instead of piling up.
 
 ### weekly-retro.ts
 
