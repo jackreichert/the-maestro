@@ -78,7 +78,7 @@ export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from
 export const hitMarker = (m: UserMessage): string => `[msg ${m.ts} ${createHash('sha1').update(m.text).digest('hex').slice(0, 6)}]`;
 
 /** Ends every decision-scan ask: the way to answer it. `log --kind decision` leaves the decision in the ledger only; `decide` also writes it where it will be found. */
-export const DECIDE_HINT = ' -- answer each real decision with journal.ts decide "<decision>" --why "<reason>" (not log --kind decision), then resolve this ask';
+export const DECIDE_HINT = ' -- answer each real decision with journal.ts decide "<decision>" --why "<reason>" --msg "<its [msg ...] marker>" (not log --kind decision; --msg stops it being raised again), skip any already recorded with decide, then resolve this ask';
 
 /** Decisions per ask row: a run raises every unhandled hit, in rows of this many, so a long session costs a few journal calls and never leaves a remainder to lose. */
 export const DECISIONS_PER_ASK = 20;

@@ -104,9 +104,9 @@ test('a missing --why, a secret shape, a missing --model and an unwritable file 
     assert.equal(existsSync(decisionsPath()), false);
 });
 
-test('a reversal prints the closest earlier decision', () => {
+test('a reversal needs --new and then prints the closest earlier decision', () => {
     run(['decide', 'Set autocompact to 50 percent for long sessions', '--why', 'earlier compaction', ...MARK]);
-    const r = run(['decide', 'Set autocompact to 70 percent for long sessions', '--why', 'too many handoffs', ...MARK]);
+    const r = run(['decide', 'Set autocompact to 70 percent for long sessions', '--why', 'too many handoffs', '--new', ...MARK]);
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /Closest earlier decision \(.*\): .*50 percent/);
 });
@@ -122,4 +122,25 @@ test('decide --repo names the DECISIONS.md project while the row goes to the --p
     assert.deepEqual(rows[0]?.refs, [target]);
     const bad = run(['decide', 'Escape', '--why', 'because', '--repo', '../x', ...MARK]);
     assert.equal(bad.code, 1);
+});
+
+test('a reworded decision on a recorded topic is refused before anything is written, unless --new', () => {
+    run(['decide', 'Open release pull requests as drafts only', '--why', 'Jack undrafts', ...MARK]);
+    const before = readFileSync(decisionsPath(), 'utf8');
+    const reworded = run(['decide', 'Release pull requests are opened as drafts only', '--why', 'a different reason', ...MARK]);
+    assert.equal(reworded.code, 1);
+    assert.match(reworded.err, /already recorded.*--new/s);
+    assert.equal(readFileSync(decisionsPath(), 'utf8'), before, 'no second entry');
+    assert.equal(ledger().filter((x) => x.kind === 'decision').length, 1, 'no second row');
+    const forced = run(['decide', 'Release pull requests are opened as drafts only', '--why', 'a different reason', '--new', ...MARK]);
+    assert.equal(forced.code, 0, forced.err);
+    assert.equal((readFileSync(decisionsPath(), 'utf8').match(/^## /gm) ?? []).length, 2);
+});
+
+test('decide --msg puts the scan marker on the row so the decision scan skips that message', () => {
+    const marker = '[msg 2026-10-11T10:00:00.000Z 1a2b3c]';
+    const r = run(['decide', 'Ship the Podium on Fridays', '--why', 'reviews land Thursday', '--msg', marker, ...MARK]);
+    assert.equal(r.code, 0, r.err);
+    assert.ok(ledger().some((x) => x.kind === 'decision' && x.text?.includes(marker)));
+    assert.equal(run(['decide', 'Ship it', '--why', 'because', '--msg', 'nonsense', ...MARK]).code, 1);
 });

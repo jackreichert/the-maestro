@@ -188,6 +188,15 @@ test('every pending decision is raised in one run, oldest first, 20 per ask row'
   assert.equal(unledgeredDecisions(msgs, asRows(out.raise)).count, 0, 'a second run raises nothing');
 });
 
+test('a message recorded with decide --msg is not raised again, and the hint asks for the marker', () => {
+  const msgs = [msg(0), msg(1)];
+  const decided = { kind: 'decision', ts: at(2), text: `Rule zero recorded ${hitMarker(msgs[0])}`, refs: ['/v/Projects/p/DECISIONS.md'] };
+  const out = unledgeredDecisions(msgs, [decided]);
+  assert.equal(out.count, 1);
+  assert.ok(!out.raise[0].includes(hitMarker(msgs[0])) && out.raise[0].includes(hitMarker(msgs[1])));
+  assert.ok(DECIDE_HINT.includes('--msg') && DECIDE_HINT.includes('already recorded'));
+});
+
 test('another session compacting first cannot hide this transcript: there is no time cutoff, only the per-message marker', () => {
   const mine = [{ ts: at(0), text: 'from now on session B decides this' }];
   const otherSessionMark = { kind: 'note', ts: at(5), text: 'precompact: handoff written, 0 file(s) snapshotted from 0 worktree(s), 0 unledgered decision(s) raised (trigger auto, session aaaa1111)' };
