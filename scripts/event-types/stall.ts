@@ -13,6 +13,7 @@
  * the subagent. The agent writes no ledger rows of its own until it hands back. Commits alone miss an agent that edits for an hour before its
  * first commit, so edited files count too. Ignored files (node_modules, build output, caches) are not read: a test run's churn does not hide a
  * stall, and a quiet test run is covered by the threshold, not by a signal.
+ * An agent whose report file is newer than the dispatch and then goes quiet is reported as `finished`, not `stalled`: re-briefing it would overwrite the report.
  *
  * Fires once per stall: state.announced[id] holds the progress time a stall was reported at. The same stall never repeats on later ticks;
  * the item is reported again only if the agent makes progress and then stalls again (or is re-dispatched and stalls). Closed or no longer
@@ -27,7 +28,7 @@ import type { LedgerRow } from '../lib/ledger-core.ts';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, STALL_MINUTES, VAULT_ROOT } from '../local-config.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
-export interface Finding { id: string; repo: string; worktree: string; idleMs: number; lastAt: number; last: string }
+export interface Finding { id: string; repo: string; worktree: string; idleMs: number; lastAt: number; last: string; /** Set when the agent wrote its report after the dispatch and then went quiet: finished, not stuck. */ report?: string }
 export interface StallState { announced: Record<string, number>; fresh: Finding[] }
 
 export const interval = 300;
@@ -56,6 +57,8 @@ export interface StallIo {
   worktrees(repo: string): WorktreeRef[] | null;
   /** The newest sign of work in a worktree, or null when it cannot be read. */
   activity(dir: string): { at: number; what: string } | null;
+  /** The report file's mtime, 0 when it does not exist. */
+  reportAt(report: string): number;
 }
 
 const ledgerPath = (): string => join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONFIGURED_PROJECT || CONTAINER_PROJECT, 'Journal', 'ledger.jsonl');
@@ -80,6 +83,7 @@ export function realIo(target: string, run: Run): StallIo {
         return path ? [{ path, branch }] : [];
       });
     },
+    reportAt: (report) => mtime(report),
     activity: (dir) => {
       const gitDir = git(dir, 'rev-parse', '--absolute-git-dir')?.trim();
       const status = git(dir, 'status', '--porcelain', '--untracked-files=all');
@@ -96,7 +100,7 @@ export function realIo(target: string, run: Run): StallIo {
 
 const ms = (ts: unknown): number => { const t = typeof ts === 'string' ? Date.parse(ts) : NaN; return Number.isFinite(t) ? t : 0; };
 
-interface Candidate { id: string; repo: string; scope: string; branch: string; dispatchedAt: number }
+interface Candidate { id: string; repo: string; scope: string; branch: string; dispatchedAt: number; report: string }
 
 /** In-flight items with a live writer claim from `journal.ts brief`, and when each was dispatched. */
 function candidates(rows: LedgerRow[]): Candidate[] {
@@ -111,7 +115,8 @@ function candidates(rows: LedgerRow[]): Candidate[] {
     if (released || (!scope && !branch)) return [];
     const briefs = rows.filter((r) => r.kind === 'brief' && r.briefs === id).map((r) => ms(r.ts));
     const dispatchedAt = Math.max(ms(item.ts), ms(item.stateTs), ms(last.r.ts), ...briefs);
-    return [{ id, repo, scope: scope ?? '', branch: branch ?? '', dispatchedAt }];
+    const report = rows.filter((r) => r.kind === 'brief' && r.briefs === id && typeof r.report === 'string').at(-1)?.report as string | undefined;
+    return [{ id, repo, scope: scope ?? '', branch: branch ?? '', dispatchedAt, report: report ?? '' }];
   });
 }
 
@@ -136,7 +141,8 @@ export function check(_target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 
     if (ctx.now - lastAt < limit) { delete announced[c.id]; continue; }
     if (announced[c.id] === lastAt) continue;
     announced[c.id] = lastAt;
-    fresh.push({ id: c.id, repo: c.repo, worktree: basename(wt.path), idleMs: ctx.now - lastAt, lastAt, last });
+    const finished = c.report && use.reportAt(c.report) > c.dispatchedAt ? c.report : undefined;
+    fresh.push({ id: c.id, repo: c.repo, worktree: basename(wt.path), idleMs: ctx.now - lastAt, lastAt, last, ...(finished ? { report: finished } : {}) });
   }
   return { announced, fresh };
 }
@@ -146,6 +152,8 @@ const duration = (msec: number): string => { const m = Math.round(msec / 60_000)
 /** One actionable event per stall newly found by this check. Evidence: how long, the newest signal and when, the worktree. */
 export const diff = (_prev: StallState | null, next: StallState): WatchEvent[] =>
   next.fresh.map((f) => ({
-    summary: `stalled ${f.id} (${f.repo}, worktree ${f.worktree}): no progress for ${duration(f.idleMs)}; newest sign ${f.last} at ${new Date(f.lastAt).toISOString().slice(0, 16)}Z. Run the stall-reset playbook.`,
+    summary: f.report
+      ? `finished ${f.id} (${f.repo}, worktree ${f.worktree}): report ${f.report} was written and nothing has moved for ${duration(f.idleMs)}, but no hand-back arrived. Read the report first; do not re-brief this item, a new brief writes to the same path and overwrites it.`
+      : `stalled ${f.id} (${f.repo}, worktree ${f.worktree}): no progress for ${duration(f.idleMs)}; newest sign ${f.last} at ${new Date(f.lastAt).toISOString().slice(0, 16)}Z. Run the stall-reset playbook.`,
     actionable: true,
   }));

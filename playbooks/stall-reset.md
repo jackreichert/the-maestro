@@ -4,7 +4,7 @@ A `stalled <id> ...` event means the agent on that item has shown no progress (n
 
 ## 1. Check it is a real stall
 
-Read the event's evidence, then look once before you act: `git -C <worktree> status --short` and `git -C <worktree> log -3 --format='%h %cr %s'`. If the agent is plainly in the middle of something slow (a test run you can see in `ps`, a build), leave it, and say so in one line. Otherwise continue. A wrongly reset agent loses its context; a wrongly spared one only costs another tick.
+Read the event's evidence, then look once before you act: `git -C <worktree> status --short` and `git -C <worktree> log -3 --format='%h %cr %s'`. Then check the report file: the path `brief` printed (the `report` field of the item's `brief` row). If it exists and is newer than the dispatch, the agent finished and never handed back: read it, take it as the result, and do not re-brief, because the new brief hands out the same path and the fresh agent would overwrite the only copy. The loop says `finished <id>` instead of `stalled <id>` in that case. If the agent is plainly in the middle of something slow (a test run you can see in `ps`, a build), leave it, and say so in one line. Otherwise continue. A wrongly reset agent loses its context; a wrongly spared one only costs another tick.
 
 ## 2. Stop the agent
 

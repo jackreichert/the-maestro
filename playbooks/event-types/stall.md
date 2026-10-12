@@ -19,6 +19,7 @@ It speaks once per stall. The same stall is not repeated on later ticks. It spea
 | Digest line | Actionable | What to report |
 |---|---|---|
 | `stalled <id> (<repo>, worktree <name>): no progress for 1h42; newest sign edited a.ts at 2026-10-11T22:00Z. Run the stall-reset playbook.` | yes | The line as it is. |
+| `finished <id> (<repo>, worktree <name>): report <path> was written and nothing has moved for 1h42, but no hand-back arrived. Read the report first; do not re-brief this item ...` | yes | The line as it is, then read the report. Not a stall: do not reset. |
 
 ## What you do
 

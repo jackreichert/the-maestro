@@ -25,18 +25,20 @@ function rig(stallMinutes = 90) {
   let activityAt = T0;
   let activityWhat = 'edited a.ts';
   let wts: WorktreeRef[] | null = [{ path: '/c/.worktrees/maestro-111', branch: 'feat/MAESTRO-315-stall' }];
-  const io: StallIo = { stallMinutes, rows: () => rows, worktrees: () => wts, activity: () => ({ at: activityAt, what: activityWhat }) };
+  const reportTimes: Record<string, number> = {};
+  const io: StallIo = { stallMinutes, rows: () => rows, worktrees: () => wts, activity: () => ({ at: activityAt, what: activityWhat }), reportAt: (p) => reportTimes[p] ?? 0 };
   const append = (row: Record<string, unknown>): LedgerRow => { const r = { id: `r${++n}`, ts: new Date(now).toISOString(), date: '2026-10-11', ...row } as LedgerRow; rows.push(r); return r; };
   const dispatch = (id = 'aaaa', scope = 'maestro-111') => {
     append({ id, kind: 'wip', text: `build ${id}`, repo: 'the-maestro' });
     append({ kind: 'claim', repo: 'the-maestro', scope, branch: 'feat/MAESTRO-315-stall', text: `claim the-maestro@${scope} for desk: brief ${id}` });
-    append({ kind: 'brief', briefs: id, repo: 'the-maestro', text: `brief ${id}` });
+    append({ kind: 'brief', briefs: id, repo: 'the-maestro', brief: `/s/brief-${id}.md`, report: `/s/report-${id}.md`, text: `brief ${id}` });
   };
   const r = {
     rows, events, append, dispatch, at: () => now,
     state: () => state as StallState,
     work: (what = 'edited a.ts') => { activityAt = now; activityWhat = what; },
     gone: () => { wts = null; },
+    writeReport: (id = 'aaaa') => { reportTimes[`/s/report-${id}.md`] = now; },
     step: (minutes: number) => { now += minutes * MIN; const next = stall.check('/c', { now, prev: state, run: defaultRun }, io); events.push(...stall.diff(state, next)); state = next; return next; },
     run: (minutes: number, every = 5) => { for (let m = 0; m < minutes; m += every) r.step(every); },
   };
@@ -166,4 +168,31 @@ test('real git: a dirty file counts as progress, an untouched worktree stalls', 
   const busy = io.activity(wt);
   assert.ok(busy && busy.at > old.getTime() + MIN && busy.what === 'edited new.txt', `edit is progress, got ${JSON.stringify(busy)}`);
   assert.equal(io.worktrees('missing'), null);
+});
+
+test('an agent that wrote its report and went quiet is reported as finished, not stalled', () => {
+  const r = rig();
+  r.dispatch('fini');
+  r.work();
+  r.run(10);
+  r.writeReport('fini');
+  r.run(95);
+  assert.equal(r.events.length, 1);
+  const summary = r.events[0]?.summary ?? '';
+  assert.match(summary, /^finished fini \(the-maestro, worktree maestro-111\): report \/s\/report-fini\.md was written/);
+  assert.match(summary, /Read the report first; do not re-brief/);
+  assert.doesNotMatch(summary, /stalled|stall-reset/);
+  r.run(300);
+  assert.equal(r.events.length, 1, 'still once');
+});
+
+test('a report older than the latest dispatch is not a finish: a re-briefed agent that goes quiet is stalled', () => {
+  const r = rig();
+  r.dispatch('redo');
+  r.writeReport('redo');
+  r.step(20);
+  r.append({ kind: 'brief', briefs: 'redo', repo: 'the-maestro', brief: '/s/brief-redo.md', report: '/s/report-redo.md', text: 'brief redo' });
+  r.run(100);
+  assert.equal(r.events.length, 1);
+  assert.match(r.events[0]?.summary ?? '', /^stalled redo /);
 });
