@@ -2517,6 +2517,15 @@ test('a project write that fails makes priorities set exit 1 after the other pro
     rmSync(root, { recursive: true, force: true });
 });
 
+test('priorities set for a past day does not rewrite that day\'s project file', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro');
+    const set = runIn('priorities', 'set', 'Old | Maestro', '--date', '2020-01-01');
+    assert.equal(set.code, 1);
+    assert.match(set.err, /project the-maestro: refusing to write 2020-01-01: it is before today/);
+    assert.equal(fileOf('the-maestro', '2020-01-01'), '', 'history is not rewritten');
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
     seedRegistry();
     const sd = join(vault, 'Status');
