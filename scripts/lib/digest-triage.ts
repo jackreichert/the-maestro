@@ -43,6 +43,9 @@ export interface TriageRow {
   summary: string;
 }
 
+/** The most time one tick spends in the seam. A call that starts inside it may still run to its own timeout, so a tick ends within this plus one call. */
+export const TRIAGE_BUDGET_MS = 90_000;
+
 export const triagePath = (eventDir: string): string => join(eventDir, 'triage.jsonl');
 
 /** pr-watch tags lines for a self-review repo with this prefix; the rules read the line without it. */
@@ -100,11 +103,13 @@ function ask(triage: Triage, input: TriageInput): TriageAnswer {
 }
 
 /**
- * Triage for the actionable lines of a tick. Each is classified by the rules and the decision logged with its reason. An ambiguous line goes to
+ * Triage for the actionable lines of a tick (the seam gets `budgetMs` of it in total). Each is classified by the rules and the decision logged with its reason. An ambiguous line goes to
  * the seam: noise (with a reason) turns the event into an info line that does not wake; anything else keeps it actionable. Returns the same events.
  */
-export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: string; triage?: Triage; quiet?: QuietDeps }): T[] {
+export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: string; triage?: Triage; quiet?: QuietDeps; budgetMs?: number; now?: () => number }): T[] {
   const triage = opts.triage ?? rulesOnlyTriage;
+  const { budgetMs = TRIAGE_BUDGET_MS, now = Date.now } = opts;
+  const started = now();
   for (const e of events) {
     if (!e.actionable) continue;
     const kind = toInboxEvent({ ...e })?.kind ?? 'other';
@@ -114,7 +119,8 @@ export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: st
     const base = { at: e.at, watch: e.watch, type: e.type, kind, summary: e.summary };
     const r = classifyLine(e);
     if (r.verdict === 'wake') { logRow(opts.dir, { ...base, decision: 'wake', rule: r.rule, reason: r.reason }); continue; }
-    const a = ask(triage, { watch: e.watch, type: e.type, kind, summary: e.summary });
+    // The seam is synchronous, so a slow one would stall the whole tick: past the budget a line wakes as unsure without a call.
+    const a = now() - started >= budgetMs ? { verdict: 'unsure' as const, reason: 'triage budget for this tick ran out' } : ask(triage, { watch: e.watch, type: e.type, kind, summary: e.summary });
     if (a.verdict === 'noise') {
       e.actionable = false;
       e.report = '';

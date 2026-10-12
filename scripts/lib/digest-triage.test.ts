@@ -196,3 +196,18 @@ test('a check-failing line from a real tick stays actionable under a noise triag
   assert.deepEqual(out.map((e) => e.actionable), [true]);
   assert.equal(suppressedSince(dir).length, 0);
 });
+
+test('a tick has a total triage budget: lines after it are not sent to the seam, wake as unsure, and the tick ends within budget plus one call', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-'));
+  let clock = 0;
+  let calls = 0;
+  const slow: Triage = () => { calls += 1; clock += 60_000; return { verdict: 'noise', reason: 'bot chatter' }; };
+  const events = Array.from({ length: 10 }, (_, i) => ev(`COMMENT org/repo#${i} by alice: ${U}`));
+  triageEvents(events, { dir, triage: slow, budgetMs: 90_000, now: () => clock });
+  assert.equal(calls, 2, 'a call starts only while budget remains');
+  assert.ok(clock <= 90_000 + 60_000, 'ends within the budget plus one call');
+  assert.deepEqual(events.map((e) => e.actionable), [false, false, ...Array(8).fill(true)], 'lines past the budget wake');
+  const late = rows(dir).slice(2);
+  assert.equal(late.length, 8);
+  assert.ok(late.every((r) => r.decision === 'wake' && /budget/.test(r.reason)), 'each says the budget ran out');
+});
