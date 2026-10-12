@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWebServer } from './server.ts';
 import { parseEdit } from './priorities-write.ts';
+import { carryPriorities, prioritiesDir, readProjectFile } from '../status-page/project-priorities.ts';
 import { sanitizeState } from '../../web/client/src/contract.ts';
 
 const NOW = new Date('2026-10-07T15:00:00Z');
@@ -21,7 +22,7 @@ writeFileSync(join(client, 'index.html'), '<p>home</p>');
 
 interface Rig { server: Server; port: number; vault: string; statusDir: string; file: string; ledger: string; logged: string[] }
 const rigs: Rig[] = [];
-async function rig(name: string, o: { max?: number; initial?: string } = {}): Promise<Rig> {
+async function rig(name: string, o: { max?: number; initial?: string; vaultRoot?: string } = {}): Promise<Rig> {
   const vault = join(root, name);
   const statusDir = join(vault, 'Status');
   mkdirSync(statusDir, { recursive: true });
@@ -29,7 +30,7 @@ async function rig(name: string, o: { max?: number; initial?: string } = {}): Pr
   if (o.initial !== undefined) writeFileSync(file, o.initial);
   const logged: string[] = [];
   const server = createWebServer({
-    web: { vault, project: 'p', statusDir, prioritiesMax: o.max ?? 5, page: { streams: ['Alpha', 'Beta'], repoStreams: {}, vaultName: '', trackerUrlBase: '', ticketNotePath: '', trackerKeyPattern: 'FAKE-\\d+', tz: 'UTC' } },
+    web: { vault, project: 'p', statusDir, prioritiesMax: o.max ?? 5, ...(o.vaultRoot ? { vaultRoot: o.vaultRoot } : {}), page: { streams: ['Alpha', 'Beta'], repoStreams: o.vaultRoot ? { 'alpha-app': 'Alpha', 'beta-app': 'Beta' } : {}, vaultName: '', trackerUrlBase: '', ticketNotePath: '', trackerKeyPattern: 'FAKE-\\d+', tz: 'UTC' } },
     clientDir: client, now: () => NOW, log: (m) => logged.push(m), token: TOKEN,
   });
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
@@ -219,6 +220,68 @@ test('a ledger that cannot be written does not fail the edit: the file is the so
   assert.equal(res.status, 200);
   assert.match(read(r), /- four/);
   assert.ok(r.logged.some((m) => /could not record the priorities edit/.test(m)), r.logged.join('|'));
+});
+
+/** A notes vault with one folder per project, apart from the ledger vault, as `vault_root` is. */
+function notesVault(name: string): string {
+  const v = join(root, name);
+  for (const p of ['p', 'alpha-app', 'beta-app']) mkdirSync(join(v, 'Projects', p), { recursive: true });
+  return v;
+}
+const todayOf = (v: string, project: string, day = '2026-10-07'): string[] => (readProjectFile(join(prioritiesDir(v, project), `${day}.md`))?.today ?? []).map((i) => `${i.text}|${i.stream ?? ''}`);
+
+test('reorder, add and delete on the Podium rewrite each project file for the day, and the next roll does not bring a deleted item back', async () => {
+  const v = notesVault('notes-sync');
+  const r = await rig('sync', { initial: 'date: 2026-10-07\n- a1 | Alpha\n- b1 | Beta\n- loose\n- a2 | Alpha\n', vaultRoot: v });
+  assert.equal((await post(r, 'move', { from: 3, to: 0, text: 'a2' })).status, 200);
+  assert.deepEqual(todayOf(v, 'alpha-app'), ['a2|Alpha', 'a1|Alpha'], 'reorder keeps the container order inside the project');
+  assert.equal((await post(r, 'add', { text: 'b2', stream: 'Beta' })).status, 200);
+  assert.deepEqual(todayOf(v, 'beta-app'), ['b1|Beta', 'b2|Beta']);
+  assert.deepEqual(todayOf(v, 'p'), ['loose|']);
+  assert.equal((await post(r, 'delete', { index: 1, text: 'a1' })).status, 200);
+  assert.deepEqual(todayOf(v, 'alpha-app'), ['a2|Alpha']);
+  // Deleting a project's last item clears its Today instead of leaving the old list there.
+  assert.equal((await post(r, 'delete', { index: 0, text: 'a2' })).status, 200);
+  assert.deepEqual(todayOf(v, 'alpha-app'), []);
+  const list = readFileSync(r.file, 'utf8');
+  assert.match(list, /b1 \| Beta/);
+  assert.deepEqual(r.logged, []);
+  // Tomorrow's roll carries from the project files and the container list: neither names a deleted item.
+  const container = { date: '2026-10-07', items: [{ text: 'b1', stream: 'Beta' }, { text: 'loose' }, { text: 'b2', stream: 'Beta' }] };
+  const out = carryPriorities({ vault: v, today: '2026-10-08', rows: [], registry: null, homes: { found: false, streams: {}, warnings: [] }, repoStreams: { 'alpha-app': 'Alpha', 'beta-app': 'Beta' }, containerProject: 'p', container });
+  assert.deepEqual(out.problems, []);
+  const carried = (project: string): string[] => (readProjectFile(join(prioritiesDir(v, project), '2026-10-08.md'))?.carried ?? []).map((c) => c.item.text);
+  assert.deepEqual(carried('beta-app'), ['b1', 'b2']);
+  assert.deepEqual(carried('alpha-app'), [], 'a1 and a2 were deleted and stay deleted');
+});
+
+test('a Podium edit keeps the carried section roll wrote, and an unmapped stream goes to the container project', async () => {
+  const v = notesVault('notes-carry');
+  const dir = prioritiesDir(v, 'alpha-app');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '2026-10-07.md'), ['---', 'type: priorities', 'project: alpha-app', 'date: 2026-10-07', 'carried-from: 2026-10-06', 'written-by: roll-maintenance', '---', '', '## Today', '', '- not set yet', '', '## Carried from 2026-10-06', '', '- old thing | Alpha · 1 done, 0 in flight, 0 queued, 0 blocked', '', '## Next', '', '- none', ''].join('\n'));
+  const r = await rig('sync-carry', { initial: 'date: 2026-10-07\n- x | Alpha\n- y | Gamma\n', vaultRoot: v });
+  assert.equal((await post(r, 'add', { text: 'z', stream: 'Alpha' })).status, 200);
+  const file = readProjectFile(join(dir, '2026-10-07.md'));
+  assert.deepEqual(file?.today.map((i) => i.text), ['x', 'z']);
+  assert.deepEqual(file?.carried.map((c) => c.item.text), ['old thing']);
+  assert.equal(file?.writtenBy, 'priorities set');
+  assert.deepEqual(todayOf(v, 'p'), ['y|Gamma']);
+  assert.equal(existsSync(join(v, 'Projects', 'Gamma')), false, 'no project folder is created from the Podium');
+});
+
+test('with no vault_root the Podium writes only priorities.md; a project file that cannot be written is logged and the edit stands', async () => {
+  const none = await rig('sync-off', { initial: LIST });
+  assert.equal((await post(none, 'add', { text: 'four' })).status, 200);
+  assert.deepEqual(none.logged, []);
+  const v = notesVault('notes-broken');
+  mkdirSync(join(v, 'Projects', 'beta-app', 'Status'), { recursive: true });
+  writeFileSync(join(v, 'Projects', 'beta-app', 'Status', 'priorities'), 'blocker');
+  const r = await rig('sync-broken', { initial: 'date: 2026-10-07\n- a | Alpha\n', vaultRoot: v });
+  assert.equal((await post(r, 'add', { text: 'b', stream: 'Beta' })).status, 200);
+  assert.match(read(r), /- b \| Beta/);
+  assert.deepEqual(todayOf(v, 'alpha-app'), ['a|Alpha'], 'the other project is still written');
+  assert.ok(r.logged.some((m) => /could not update a project priorities file: project beta-app/.test(m)), r.logged.join('|'));
 });
 
 test('parseEdit accepts exactly the three shapes', () => {

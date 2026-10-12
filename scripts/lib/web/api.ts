@@ -33,6 +33,8 @@ export interface WebConfig {
   vault: string; project: string; statusDir: string; page: PageConfig; warn?: (message: string) => void;
   /** The notes vault the stream home base reads tickets from (`vault_root`); absent means no tickets are read. */
   vaultRoot?: string;
+  /** The project that takes a priority with no stream when the project files are written (default: `project`). */
+  containerProject?: string;
   /** `priorities_max`: the cap the page shows and the write path enforces. Default 5. */
   prioritiesMax?: number;
   /** `container_root`: the folder whose repos the local review queue reads; absent means the queue says it is not configured. */
