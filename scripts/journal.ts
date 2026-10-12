@@ -73,6 +73,8 @@
  *   journal.ts misses [--json]               the open misses grouped by topic, for the composer
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
+ *   journal.ts shared <path-or-url> --project <p> --title "<t>" [--why "<one line>"] --model ... --used ...
+ *                                             records a document the user handed over so its project tab lists it; only the title and place are stored, a path must sit under the vault or container root, secret-shaped names and links are refused (`shared --help`)
  *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json] [--no-miss]
  *                                             library pages, best first: path, kind, read-when line, verified-at age, stale flag; --neighbors adds the pages one link away.
  *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed.
@@ -186,6 +188,7 @@ import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import { missingRetros, noRetroRefusals, parseAgentRetro, pendingRetros, retroGate, reviewRefusals, seenRetro } from './lib/journal/agent-retro.ts';
+import { parseShared, alreadyShared, SHARED_USAGE } from './lib/journal/shared.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
@@ -262,7 +265,7 @@ import { toolCommand } from './lib/tool-bin.ts';
 import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'miss', 'curated', 'rework'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'miss', 'curated', 'rework', 'shared'];
 // `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
 if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
@@ -642,6 +645,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
     if (kind === 'curated') die('A curated row is written only by `library-write.ts curate`, which holds the composer lease and checks the page.');
+    if (kind === 'shared') die('A shared row is written only by `journal.ts shared`, which checks the path or link and scans for secrets.');
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
     if (kind === 'miss') die('A miss row is written only by `journal.ts miss`, which scans the question and keeps one row per question per day.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
@@ -903,6 +907,25 @@ function cmdDecide(): void {
     render(true);
     if (related) console.log(`Closest earlier decision (${related.source}): ${related.text}\n  If this reverses it, the new entry should say so.`);
     console.log(`decide  ${written.kind}  ${written.path}`);
+}
+
+/** `shared <path-or-url> --project p --title "t"`: record a document the user handed over. A path must be an existing file under the notes vault or the container root; a link must pass the link policy. Idempotent: an exact repeat is reported, not written. */
+function cmdShared(): void {
+    if (has('help')) { SHARED_USAGE.forEach((l) => console.log(l)); return; }
+    const target = positional[0] ?? '';
+    const parsed = parseShared(
+        { target, title: arg('title') || null, why: arg('why') || null, by: arg('by') || null, project },
+        { vault: VAULT_ROOT || undefined, container: CONTAINER_ROOT || undefined },
+    );
+    if (!parsed.fields) die(`shared: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\n(journal.ts shared --help)`);
+    const { fields } = parsed;
+    const entries = readLedger();
+    const seen = alreadyShared(entries, fields);
+    if (seen) { console.log(`shared  ${seen}  ${fields.text}  (already recorded)`); return; }
+    const entry = { id: newId(entries), ts: now(), date: arg('date', today()), kind: 'shared', ...fields, repo: arg('repo') || undefined, stream: streamOrNone(arg('stream')), ...usageFromArgs() };
+    append(entry);
+    if (!dryRun) render(true);
+    console.log(`shared  ${entry.id}  ${entry.text}`);
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -2946,6 +2969,7 @@ switch (cmd) {
     case 'agent-retro': cmdAgentRetro(); break;
     case 'agent-retros': cmdAgentRetros(); break;
     case 'retro-reviewed': cmdRetroReviewed(); break;
+    case 'shared': cmdShared(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;

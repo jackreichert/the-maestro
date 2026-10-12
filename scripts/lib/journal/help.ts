@@ -1,6 +1,7 @@
 /** Help for journal.ts: one table of commands (name, arguments, summary, flags) that both `--help` forms are printed from. Pure: it reads only what it is given. */
 import { ASK_USAGE, CLASSES, DOORS } from './ask-fields.ts';
 import { CONFIDENCES, LEARNED_KINDS, LEARNED_USAGE } from './learned.ts';
+import { SHARED_USAGE } from './shared.ts';
 import { MISS_SOURCES } from './miss.ts';
 import { LESSON_MAX, LESSONS_MAX, RETRO_SOURCES } from './agent-retro.ts';
 import { QUERY_STATUSES } from './query.ts';
@@ -59,6 +60,8 @@ export const COMMANDS: CommandHelp[] = [
     { name: 'learned', args: '"<claim>"', summary: 'Record one fact someone established, with evidence.', flags: [
         [`--kind ${oneOf(LEARNED_KINDS)}`, 'required'], ['--applies-to <repo:component[:env]>', 'required'], ['--evidence "<text>"', 'required'], ['--verified-at "<sha | date how>"', 'required'],
         [`--confidence ${oneOf(CONFIDENCES)}`, 'required'], ['--supersedes <id|path>', 'an earlier learned id or page path'], ...MARK], notes: LEARNED_USAGE },
+    { name: 'shared', args: '<path-or-url>', summary: 'Record a document the user handed over, so its project tab lists it.', flags: [
+        ['--project <name>', 'required: the project whose tab lists it'], ['--title "<what it is>"', 'required'], ['--why "<one line>"', 'why it was shared'], ['--by <name>', 'who handed it over'], ['--repo <name>', 'repo'], ['--stream <name>', 'workstream'], DATE, ...MARK], notes: SHARED_USAGE },
     { name: 'miss', args: '"<question>"', summary: 'Record a question the library could not answer, for the composer.', flags: [[`--source ${oneOf(MISS_SOURCES)}`, 'where the question came from (required)'], ['--repo <name>', 'repo'], ...MARK] },
     { name: 'misses', args: '', summary: 'List the open misses grouped by topic.', flags: [JSON_OUT] },
     { name: 'agent-retro', args: '<item id>', summary: 'Record what an agent learned on one item, before it is closed.', flags: [

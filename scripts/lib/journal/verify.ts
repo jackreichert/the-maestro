@@ -5,6 +5,7 @@ import { askFieldProblems } from './ask-fields.ts';
 import { learnedProblems } from './learned.ts';
 import { missProblems } from './miss.ts';
 import { agentRetroProblems, retroReviewedProblems } from './agent-retro.ts';
+import { sharedProblems } from './shared.ts';
 import { curatedProblems } from '../library/composer.ts';
 
 /** What verify and the backup commit read from the run. The sets are the values `--approval` accepts and the kinds an approval can point at. */
@@ -58,6 +59,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         if (row.kind === 'learned') for (const p of learnedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `learned: ${p}` });
         if (row.kind === 'agent-retro') for (const p of agentRetroProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `agent-retro: ${p}` });
         if (row.kind === 'retro-reviewed') for (const p of retroReviewedProblems(row)) problems.push({ line, id: row.id, problem: `retro-reviewed: ${p}` });
+        if (row.kind === 'shared') for (const p of sharedProblems(row)) problems.push({ line, id: row.id, problem: `shared: ${p}` });
         for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes', 'briefs', 'nexts', 'of', 'retros', 'reviews']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
