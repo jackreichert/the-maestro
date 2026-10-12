@@ -27,6 +27,7 @@ function rig() {
     rows, events, at: () => now,
     learned: (repo = 'dev-env') => append({ kind: 'learned', text: `fact ${n}`, repo }),
     curate: (closes: string) => append({ kind: 'curated', closes, text: `curated ${closes}`, rejected: 'not durable' }),
+    miss: (topic = 'index orchard rebuild') => append({ kind: 'miss', text: `question ${n}`, source: 'find', topic }),
     rolled: () => append({ kind: 'rolled', text: 'archived 0 item(s)' }),
     begin: () => acquireLease(lease, COMPOSER_ITEM, { ttlMinutes: 30, text: 'composer pass' }),
     end: () => releaseLease(lease, COMPOSER_ITEM, false),
@@ -164,4 +165,27 @@ test('registered as a built-in with a playbook and the declared schedule', async
   assert.equal(t.notifies, undefined);
   const { existsSync } = await import('node:fs');
   assert.ok(existsSync(new URL('../playbooks/event-types/library-due.md', import.meta.url)));
+});
+
+test('misses alone make the library due, counted apart from learned rows and grouped by topic', () => {
+  const r = rig();
+  r.run(120);
+  r.miss(); r.miss(); r.miss('harvest export schedule');
+  r.run(9 * 60);
+  assert.equal(r.events.length, 0, 'not before ten minutes of quiet');
+  r.run(2 * 60);
+  assert.equal(r.events.length, 1);
+  assert.match(r.events[0]?.summary ?? '', /^library-due: 0 learned to compose, 3 misses to answer \(2 topics\), oldest \d+m$/);
+});
+
+test('learned rows and misses are reported side by side, and a curated row closing a miss clears it', () => {
+  const r = rig();
+  r.run(120);
+  r.learned('dev-env'); const m = r.miss();
+  r.run(11 * 60);
+  assert.match(r.events[0]?.summary ?? '', /^library-due: 1 learned to compose \(dev-env 1\), 1 miss to answer \(1 topic\)/);
+  r.curate(m.id as string);
+  const s = r.step(60);
+  assert.equal(s.misses, 0);
+  assert.equal(s.pending, 1);
 });
