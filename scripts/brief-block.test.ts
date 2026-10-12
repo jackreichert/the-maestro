@@ -172,3 +172,9 @@ test('the shipped block carries the necessity rule, and the re-review brief asks
     assert.match(prs, /nearest existing mechanism: X, not enough because Y/);
     assert.match(readFileSync(BRIEF, 'utf8'), /\*\*Before a build brief:\*\* name the nearest existing mechanism/);
 });
+
+test('the shipped block tells a worker to record rework when output was edited before use', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    assert.match(block, /^- Rework: run `journal\.ts log <id> --kind rework` when the output had to be edited before use\.$/m);
+    assert.deepEqual(fillBlock(block, { '<user git emails>': 'a@b.c', '<tracker key example>': 'K-1' }).problems, []);
+});

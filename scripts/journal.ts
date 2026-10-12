@@ -27,6 +27,7 @@
  *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
+ *                                             add --how-do-i when the question is a how-do-I the library could not answer: it is also logged as a `miss` (source ask)
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
  *   journal.ts ask "<question>" [--recommend "<what you would do>"] [--door one-way|two-way] [--default "<what happens if silent>"] [--decide-by 2026-10-09|2d|6h] [--class expedite|fixed-date|standard|intangible]
  *                                             a decision made cheap to answer. No --door means one-way; a one-way ask is refused a --default; no --recommend warns. `ask --help` prints this
@@ -42,6 +43,11 @@
  *                                             add: --trigger --action --who and (--check <name> | --every-hours N). done: runs the row's check and refuses if it fails; a row with no check needs --evidence. check exits 1 when any row needs attention
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
+ *   journal.ts decide "<decision>" --why "<rationale>" [--rejected "<alt>"] [--consequence "<text>"] [--scope project|working-rule] [--topic <slug>] [--repo <project>] [--msg "[msg ...]"] [--new] --model ... --used ...
+ *                                             write a decision down on the turn it is said: --scope project (default) adds a dated entry to Projects/<repo, else project>/DECISIONS.md under --tickets-vault (else $VAULT_ROOT), while the row goes to --project's ledger; working-rule writes a memory file and its MEMORY.md line under memory_dir (the same --topic updates, never duplicates). Also records one decision row naming the file. Refuses with nothing written when --why is missing, a field looks like a secret, or the file cannot be written; refuses (nothing written) when an earlier decision on the topic exists unless --new; --msg takes the decision-scan marker so that message is not raised again
+ *   journal.ts answer <ask id> --text "<answer>" [--source page|chat] --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts discuss <ask id> [--text "<topic>"] --model "<name>" --used "skill:x,tool:y"
+ *                                             record what the user said about an open ask (an answer, or "talk it through first"); the ask stays open for `resolve`, the page shows the answer under it, and the same text twice is one row
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
  *   journal.ts stamp <id> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
@@ -60,11 +66,15 @@
  *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
  *                                             current directory (or --container) is outside it; --dry-run only reports. --fast skips the sweep and the scratch review.
  *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
+ *   journal.ts miss "<question>" --source find|ask|eval [--repo R] [--model ... --used ...]
+ *                                             a question the library could not answer, for the composer; scanned for secrets, one row per question per repo per day
+ *   journal.ts misses [--json]               the open misses grouped by topic, for the composer
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
- *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
+ *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json] [--no-miss]
  *                                             library pages, best first: path, kind, read-when line, verified-at age, stale flag; --neighbors adds the pages one link away.
- *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed
+ *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed.
+ *                                             A lookup that finds no page logs a `miss` row (source find; --no-miss skips it) and still exits 0
  *   journal.ts verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.ts render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.ts tag <id> --stream <name>      file an existing item under a workstream
@@ -86,7 +96,9 @@
  *   journal.ts query [--stream S] [--id X] [--status open|inflight|queued|blocked|done|dropped|resolved|closed|all] [--date D | --since D --until D] [--model M] [--limit N] [--json]   read-only, capped (default 50, max 200) filters over every item, newest first
  *   journal.ts ready-to-push [--repo R] [--json]        my local branches with commits on no remote (held back from push), per repo of the container; read-only git
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
- *   journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
+ *   journal.ts next <id> "<step>" [--worktree w] [--branch b]   record what an open item does next (and, optionally, where its work lives); `recover` reads it
+ *   journal.ts recover <id>                       print a re-dispatch prompt for an open item: its brief path, the worktree's git status and last commits (or that the worktree is missing), the ticket, the library pages, the recorded next step
+ *   journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.ts backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
  *   journal.ts maintain --today YYYY-MM-DD [--container <dir>] [--budget N]   the model-free half of roll for an unattended caller: archive each of the last 7 days before --today that still owes one, then the same worktree sweep as roll (records branch-sweep), under a lock; ends with one maintain-result JSON line, exit 1 if a step failed. Triage, reports and asks stay in roll
@@ -98,6 +110,7 @@
  *   journal.ts web [--port <n>] [--status-dir <dir>]   serve the Podium as a read-only page on 127.0.0.1 (GET only; prints the URL; build the page first with `npm run build:web`)
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts start-here [--stream <name>] [--json] [--status-dir <dir>]   the first page a fresh reader needs, as text with no server: this week's goals, priorities, the top five asks with their stakes, conditions, in flight, yesterday, answers from the last 2 days and where each stream's notes live (80 lines at most; --stream shows one stream's)
+ *   journal.ts settings [--all] | settings --check [path...]   the settings in effect with the file or environment variable each came from (`--all` adds unset ones; command and secret-like values print as `(set)`); `--check` flags a known setting given a literal value in a note (default: each vault project's CONTEXT.md) instead of linking to the user config file, exit 1 when any
  *   journal.ts notes-check [--since 30d|YYYY-MM-DD|--all] [--json]   durable notes (Plans, Research, Reviews, Runbooks, one subfolder deep) in the projects of every active stream that no stream tab lists: attributed to no ticket in a claimed tree, no `stream:` field, not pinned. Prints each with its reason and fix. Exit 0 none, 1 some, 2 when no vault root is set or the vault could not be read. Only notes dated within `notes_check_since` (default 7d; a note's date is its frontmatter date, else its file's last write) are checked unless `--all` or `--since` is given. The roll prints it and the `notes-reachable` standing row fails while any exist in that window; it blocks neither a roll nor a PR
  *   journal.ts week set "<goal>" ["<goal> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write this week's goals to <status dir>/week.md (dated by the week's Monday; a ` | Stream` suffix maps one to a stream)
  *   journal.ts week show [--status-dir <dir>] [--json]   read them back; a missing or out-of-week file prints the not-set line
@@ -136,7 +149,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS } from './local-config.ts';
+import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -144,12 +157,15 @@ import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
+import { helpFor, isCommand, wantsHelp, listText } from './lib/journal/help.ts';
 import { openStore } from './lib/journal/store.ts';
+import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
-import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
-import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
+import { parseAskFields } from './lib/journal/ask-fields.ts';
+import { parseLearned, relearn } from './lib/journal/learned.ts';
+import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import type { Groups } from './lib/journal/board.ts';
@@ -157,7 +173,9 @@ import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, 
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { briefPaths, briefText, agentPrompt, libraryBlock } from './lib/journal/brief.ts';
+import { recoveryFromFlags, recoverPrompt } from './lib/journal/recover.ts';
 import { scriptsDir } from './brief-block.ts';
+import { guidanceLines, writeGuidance, readGuidance } from './lib/journal/guidance.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
@@ -173,13 +191,16 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
+import { RULE_SCOPES, isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
+import type { RuleScope } from './lib/journal/scope.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { gitBranches, queueFooter as hygieneFooter, queueHygiene } from './lib/queue-hygiene.ts';
-import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, staleSuffix } from './lib/review-queue.ts';
-import { fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
+import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, footerQueue, staleSuffix } from './lib/review-queue.ts';
+import type { Run } from './lib/types.ts';
+import { currentPath, fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { withhold } from './lib/withhold.ts';
@@ -190,8 +211,8 @@ import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
 import { pageConfig } from './status-page.ts';
 import type { Priority, PrioritiesState } from './lib/status-page/priorities.ts';
-import { droppedProjects, fanOut, nextItems, prioritiesDir, projectsFor, readProjectFile, writeProjectPriorities } from './lib/status-page/project-priorities.ts';
-import { readHomes } from './lib/home/config.ts';
+import { prioritiesDir, readProjectFile } from './lib/status-page/project-priorities.ts';
+import { syncProjectPriorities } from './lib/status-page/project-priorities-sync.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
@@ -199,9 +220,12 @@ import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, recordRan, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
+import { runSettings } from './lib/settings.ts';
 import { readLibrary } from './lib/library/pages.ts';
 import { checkStaleness, realGit, summarize } from './lib/library/stale.ts';
 import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
+import { decideProblems, relatedDecision, renderEntry, topicSlug, writeProjectDecision, writeWorkingRule } from './lib/journal/decide.ts';
+import type { Scope, Written } from './lib/journal/decide.ts';
 import { createReader } from './lib/vault/reader.ts';
 import { TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from './lib/vault/tickets.ts';
 import { DOC_DIR_SCOPES, DOC_FILE_SCOPES } from './lib/home/docs.ts';
@@ -211,9 +235,11 @@ import { listWatches, lockHolder } from './lib/watch-registry.ts';
 import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
+import { toolCommand } from './lib/tool-bin.ts';
+import { printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'curated', 'rework'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'miss', 'curated', 'rework'];
 // `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
 if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
@@ -231,6 +257,18 @@ const cmd = argv[0];
 
 const { arg, has, positional } = parseArgs(argv);
 
+// Help is answered first, before any command is dispatched or anything is read or written: `roll --help` must never run a roll.
+if (wantsHelp(argv)) {
+    const { text, code } = helpFor(argv);
+    (code === 0 ? console.log : console.error)(text);
+    process.exit(code);
+}
+// An unknown command gets the list and a failing exit before a ledger is even located.
+if (cmd !== undefined && !isCommand(cmd)) {
+    console.error(`Unknown command: ${cmd}\n\n${listText()}`);
+    process.exit(1);
+}
+
 // `autopull on|off` writes the user config file and needs no ledger, so it runs before the ledger root is required.
 if (cmd === 'autopull') {
     try {
@@ -244,11 +282,8 @@ if (cmd === 'autopull') {
     process.exit(0);
 }
 
-// `ask --help` prints its usage and needs no ledger.
-if (cmd === 'ask' && has('help')) {
-    ASK_USAGE.forEach((l) => console.log(l));
-    process.exit(0);
-}
+// `settings` reads the resolved configuration and needs no ledger.
+if (cmd === 'settings') process.exit(runSettings({ all: has('all'), check: has('check'), paths: positional }));
 
 const dryRun = has('dry-run');
 const asJson = has('json');
@@ -275,9 +310,9 @@ const now = (): string => new Date().toISOString();
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
-const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
+const triageCtx = () => ({ readLedger, fold, today, resolveRefFile, window: windowId });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
-const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe });
+const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe, rules: () => ruleLines(readLedger(), windowId) });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
 const verifyLedger = () => verifyLedgerIn(verifyCtx());
 const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
@@ -403,16 +438,30 @@ function usageFromArgs(): Usage {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
-const refsFromArgs = () => (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean);
+/** Every `--ref` on the line, each also split on commas: `--ref a --ref b` and `--ref a,b` both give [a, b]. */
+const refsFromArgs = () => refFlagValues().flatMap((v) => v.split(',')).map((s) => s.trim()).filter(Boolean);
 
 /**
  * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
  * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
  */
+/**
+ * `--scope window|global` on a rule or note: who the row binds (lib/journal/scope.ts). With --approval, --scope keeps its older meaning
+ * (the approval's own scope text), so no ruleScope is set. A bad value or a kind that cannot carry it exits 1 before anything is written.
+ */
+function ruleScopeFor(kind: string): { ruleScope?: RuleScope } {
+    if (!has('scope') || has('approval')) return {};
+    const parsed = parseRuleScope(arg('scope'), kind);
+    if ('error' in parsed) return die(parsed.error);
+    // An unstable id (the per-shell pid) changes on every call, so a window rule written under it could never be matched by its own window again.
+    if (parsed.scope === 'window' && !resolvedWindow.stable) die(`--scope window needs a stable window id, and ${windowNotice(resolvedWindow)}`);
+    return { ruleScope: parsed.scope };
+}
+
 function parseApproval(): { approval?: string; scope?: string } {
     const approval = arg('approval');
     if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
-    if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
+    if (!approval) return has('scope') && !isRuleScope(arg('scope')) ? die('--scope only goes with --approval (or is window|global on a decision or note).') : {};
     if (!APPROVALS.has(approval)) die(`--approval must be one of: ${[...APPROVALS].join(', ')} (got "${approval}")`);
     return { approval, scope: arg('scope') || undefined };
 }
@@ -520,6 +569,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
     if (kind === 'curated') die('A curated row is written only by `library-write.ts curate`, which holds the composer lease and checks the page.');
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
+    if (kind === 'miss') die('A miss row is written only by `journal.ts miss`, which scans the question and keeps one row per question per day.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
@@ -538,6 +588,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         reworks: reworked,
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
+        ...(kind === 'wip' ? recoveryFlags() : {}),
         stream: streamOrNone(arg('stream')),
         refs,
         pending: ask && kind === 'decision' ? true : undefined,
@@ -549,12 +600,18 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         gate,
         transitioned: transitionedFlag(),
         ...askFields,
+        ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
     };
     append(entry);
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
+    // `ask --how-do-i`: the question is a how-do-I the library could not answer, so it is also a miss for the composer.
+    if (ask && has('how-do-i')) {
+        const missed = recordMiss(text, 'ask', entry.repo, usageFromArgs());
+        console.error('line' in missed ? `(also logged as a library miss: ${missed.line.split('  ')[1]})` : `(not logged as a library miss: ${missed.errors.join(' ')})`);
+    }
     return entry;
 }
 
@@ -568,7 +625,6 @@ function knownRepos(): Set<string> | undefined {
 
 /** `learned "<claim>" --kind ... --applies-to ...`: one fact, written only when every rule in learned.ts passes. Idempotent: the same fact, location, evidence, `--verified-at` and confidence is reported, not written twice; the same fact with a new `--verified-at` or confidence is written as a row that supersedes the earlier one. */
 function cmdLearned(): void {
-    if (has('help')) { LEARNED_USAGE.forEach((l) => console.log(l)); return; }
     const flag = (name: string): string | null => arg(name) || null;
     const entries = readLedger();
     const learnedIds = new Set(entries.filter((e) => e.kind === 'learned' && e.id).map((e) => e.id as string));
@@ -590,6 +646,86 @@ function cmdLearned(): void {
     append(entry);
     if (!dryRun) render(true);
     console.log(`learned  ${entry.id}  ${entry.text}${seen.kind === 'refresh' ? `  (re-checked: supersedes ${seen.id})` : ''}`);
+}
+
+/** Writes one miss row, or says why not. The same question for the same repo on the same day is reported, not written twice. Returns the printed line, or null when refused (the reasons are in `errors`). */
+function recordMiss(question: string, source: string, repo: string | undefined, usage: Usage): { line: string } | { errors: string[] } {
+    const parsed = parseMiss(question, source);
+    if (!parsed.fields) return { errors: parsed.errors };
+    const { fields } = parsed;
+    const entries = readLedger();
+    const date = arg('date', today());
+    const seen = seenMiss(entries, fields, repo, date);
+    if (seen.kind === 'same') return { line: `miss  ${seen.id}  ${fields.text}  (already recorded today)` };
+    const entry = { id: newId(entries), ts: now(), date, kind: 'miss', ...fields, repo, stream: streamOrNone(arg('stream')), ...usage };
+    append(entry);
+    if (!dryRun) render(true);
+    return { line: `miss  ${entry.id}  ${entry.text}` };
+}
+
+/** `miss "<question>" --source find|ask|eval [--repo R]`: a question the library could not answer, for the composer. The question is scanned before it is written. */
+function cmdMiss(): void {
+    const question = arg('text') || positional.join(' ');
+    const source = arg('source') || null;
+    const parsed = parseMiss(question, source);
+    if (!parsed.fields) die(`miss: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\nUsage: journal.ts miss "<question>" --source ${MISS_SOURCES.join('|')} [--repo R]`);
+    const r = recordMiss(question, source as string, arg('repo') || undefined, usageFromArgs());
+    console.log('line' in r ? r.line : '');
+}
+
+/** `misses [--json]`: the open misses (no `curated` row has closed them) grouped by topic, largest group first, for the composer. */
+function cmdMisses(): void {
+    const rows = readLedger();
+    const open = new Map(pendingMisses(rows).map((r) => [r.id as string, r]));
+    const groups = missGroups(rows).map((g) => ({ topic: g.topic, misses: g.ids.map((id) => { const r = open.get(id) as LedgerRow; return { id, date: r.date, source: r.source, repo: r.repo, text: r.text }; }) }));
+    if (asJson) { printJson({ open: open.size, topics: groups }); return; }
+    console.log(`${open.size} open miss${open.size === 1 ? '' : 'es'} in ${groups.length} topic${groups.length === 1 ? '' : 's'}`);
+    for (const g of groups) {
+        console.log(`  ${g.topic}  (${g.misses.length})`);
+        g.misses.forEach((m) => console.log(`    ${m.id}  ${m.date}  [${m.source}]${m.repo ? `  ${m.repo}` : ''}  ${clip(String(m.text), 90)}`));
+    }
+}
+
+/** `decide "<decision>" --why ...`: the file first (DECISIONS.md or a memory file), then the ledger row that names it; if the row cannot be written the file is put back. Idempotent: an entry already on disk writes nothing. */
+function cmdDecide(): void {
+    const scope = arg('scope', 'project') as Scope;
+    const input = { decision: arg('text') || positional.join(' '), why: arg('why') || '', rejected: arg('rejected') || undefined, consequence: arg('consequence') || undefined, scope, date: arg('date', today()), topic: arg('topic') || undefined };
+    const problems = decideProblems(input);
+    const decisionsProject = arg('repo') || project;   // the file belongs to the project the decision is about; the row stays in --project's ledger
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(decisionsProject) || decisionsProject.includes('..')) problems.push('--repo must be a plain project name (letters, digits, . _ -), since it names the DECISIONS.md folder.');
+    const marker = arg('msg') || '';   // the scan's [msg <ts> <hash>] marker: on the row text, it tells the decision scan this message is answered
+    if (marker && !/^\[msg \S+ [0-9a-f]{6}\]$/.test(marker)) problems.push('--msg must be the scan marker exactly as printed, like "[msg 2026-10-11T10:00:00.000Z 1a2b3c]".');
+    // --binds says who the decision binds (lib/journal/scope.ts). `window` is a rule for this window only, so it is a ledger row and no file.
+    const binds = has('binds') ? arg('binds') : null;
+    if (has('binds') && !isRuleScope(binds)) problems.push(`--binds must be ${RULE_SCOPES.join(' or ')} (got "${binds ?? ''}").`);
+    if (binds === 'window' && has('scope')) problems.push('--binds window writes no file (a window rule is for this window only), so it takes no --scope.');
+    if (binds === 'window' && !resolvedWindow.stable) problems.push(`--binds window needs a stable window id. ${windowNotice(resolvedWindow)}`);
+    if (scope === 'working-rule' && binds !== 'window' && !MEMORY_DIR) problems.push('--scope working-rule needs memory_dir (env MAESTRO_MEMORY_DIR) set to the directory that holds the memory files.');
+    if (problems.length) die(`decide: refused, nothing written.\n${problems.map((p) => `  - ${p}`).join('\n')}`);
+    const usage = usageFromArgs();   // before any write: a missing --model exits here, not after the file is written
+    if (binds === 'window') {
+        const row: LedgerRow = { id: newId(readLedger()), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, why: input.why, ruleScope: 'window', repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), ...usage };
+        if (dryRun) { console.log('decide  (dry run)  window rule, no file'); return; }
+        append(row);
+        render(true);
+        console.log(`decide  window-rule  ${row.id}`);
+        return;
+    }
+    const decisionsPath = join(ticketsBase(), 'Projects', decisionsProject, 'DECISIONS.md');
+    const entries = readLedger();
+    const related = relatedDecision(input.decision, existsSync(decisionsPath) ? readFileSync(decisionsPath, 'utf8') : null, entries);
+    const already = scope === 'project' ? (existsSync(decisionsPath) && readFileSync(decisionsPath, 'utf8').includes(renderEntry(input).trimEnd())) : existsSync(join(MEMORY_DIR, `${topicSlug(input)}.md`));   // the same entry, or a working rule's own topic, is a repeat or an update, not a duplicate
+    if (related && !already && !has('new')) die(`decide: refused, nothing written. An earlier decision on this topic is already recorded (${related.source}): ${related.text}\n  Rewording it would write a second entry. If this is a different decision, or a reversal that says what it reverses, run it again with --new.`);
+    if (dryRun) { console.log(`decide  (dry run)  ${scope === 'project' ? decisionsPath : MEMORY_DIR}`); return; }
+    let written: Written;
+    try { written = scope === 'project' ? writeProjectDecision(decisionsPath, input) : writeWorkingRule(MEMORY_DIR, input); } catch (e) { die(`decide: could not write the file, nothing recorded (${e instanceof Error ? e.message : String(e)}).`); }
+    if (written.kind === 'unchanged') { console.log(`decide  already recorded  ${written.path}`); return; }
+    try {
+        append({ id: newId(entries), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), refs: [written.path], ...(binds ? { ruleScope: binds } : {}), ...usage });
+    } catch (e) { written.undo(); die(`decide: the ledger row could not be written, the file was put back (${e instanceof Error ? e.message : String(e)}).`); }
+    render(true);
+    if (related) console.log(`Closest earlier decision (${related.source}): ${related.text}\n  If this reverses it, the new entry should say so.`);
+    console.log(`decide  ${written.kind}  ${written.path}`);
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -628,12 +764,59 @@ function cmdStart(): void {
     const target = itemNamedByArg(fold(entries).items);
     if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
-    // The lease comes first: a window that does not get it writes nothing.
+    // A refused --branch/--worktree must exit before the lease is written: die() does not roll it back, and a --steal would take it from its owner.
+    const where = recoveryFlags();
+    // The lease comes next: a window that does not get it writes nothing.
     takeLease(target.id as string);
-    if (!isQueued(target)) { console.log(`wip  ${target.id}  ${target.text}  (already in flight)`); return; }
-    append({ id: newId(entries), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() });
-    if (!dryRun) render(true);
+    if (!isQueued(target)) {
+        if (Object.keys(where).length) writeNext(target, where, entries);
+        console.log(`wip  ${target.id}  ${target.text}  (already in flight)`);
+        return;
+    }
+    const ids = [...entries];
+    const rows = [{ id: newId(ids), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() }];
+    appendMany(rows);
+    if (Object.keys(where).length) writeNext(target, where, [...entries, ...rows]);
+    else if (!dryRun) render(true);
     console.log(`wip  ${target.id}  ${target.text}  (promoted from queued)`);
+}
+
+/** The worktree, branch and next step the flags carry (`--worktree`, `--branch`, `--next`); a worktree alone names its checked-out branch. Empty when none is given. */
+const recoveryFlags = () => recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: arg('next') });
+
+/** `recoveryFromFlags`, with a refused value (a bad branch name, control characters in a path) reported as a usage error before anything is written. */
+function recoveryOrDie(flags: Parameters<typeof recoveryFromFlags>[0]): ReturnType<typeof recoveryFromFlags> {
+    try { return recoveryFromFlags(flags); } catch (e) { return die((e as Error).message); }
+}
+
+/** Append a `next` row recording where an item's work lives and what it does next, and refresh the board. */
+function writeNext(item: LedgerItem, where: ReturnType<typeof recoveryFlags>, entries: LedgerRow[]): void {
+    append({ id: newId(entries), ts: now(), date: today(), kind: 'next', nexts: item.id, ...where, text: `next ${item.id}${where.nextStep ? `: ${where.nextStep}` : ''}`, ...usageFromArgs() });
+    if (!dryRun) render(true);
+}
+
+/** `next <id> "<step>" [--worktree w] [--branch b]`: record the next step of an open item so a cold session can recover it. */
+function cmdNext(): void {
+    const entries = readLedger();
+    const target = fold(entries).items.find((i) => i.id === positional[0]);
+    const step = arg('text') || positional.slice(1).join(' ');
+    if (!target || !step) die('Usage: journal.ts next <id> "<step>" [--worktree w] [--branch b]   (an open item id)');
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open item has a next step.`);
+    refuseIfLeasedByOther(target.id as string, entries);
+    const where = recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: step });
+    writeNext(target, where, entries);
+    console.log(`next  ${target.id}  ${where.nextStep}`);
+}
+
+/** `recover <id>`: print the prompt that re-dispatches an open item whose session died. Read-only. */
+function cmdRecover(): void {
+    const entries = readLedger();
+    const target = fold(entries).items.find((i) => i.id === positional[0]);
+    if (!target) die('Usage: journal.ts recover <id>   (an open item id)');
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; there is nothing to recover.`);
+    const briefRow = [...entries].reverse().find((r) => r.kind === 'brief' && r.briefs === target.id);
+    const ticketPath = target.ticket && target.repo && VAULT_ROOT ? join(VAULT_ROOT, 'Projects', target.repo, 'Tickets', `${target.ticket}.md`) : undefined;
+    console.log(withhold(recoverPrompt({ item: target, briefRow, ticketPath: ticketPath && existsSync(ticketPath) ? ticketPath : undefined, library: libraryFor(target.repo, target.text || '', scriptsDir(process.argv[1])) })));
 }
 
 const leaseCtx = () => ({ readLedger, append: (row: LedgerRow) => append(row), window: windowId, now, dryRun });
@@ -760,7 +943,8 @@ function cmdApproveTag() {
 /** Every `--ref <file>` on the command line, in order. `arg('ref')` keeps only the first. */
 function refFlagValues(): string[] {
     const out: string[] = [];
-    for (let i = 0; i < argv.length; i++) {
+    const stop = argv.indexOf('--');
+    for (let i = 0; i < (stop === -1 ? argv.length : stop); i++) {
         if (argv[i] !== '--ref') continue;
         const value = argv[i + 1];
         if (value && !value.startsWith('--')) out.push(value);
@@ -818,7 +1002,7 @@ function cmdApprovals() {
     const window = approvalsWindow({ arg, has, die, today });
     const g = collectApprovals(readLedger(), window);
     const week = isoWeek(window.until);
-    if (asJson) { console.log(JSON.stringify({ ...window, week, ...g }, null, 2)); return; }
+    if (asJson) { printJson({ ...window, week, ...g }); return; }
     const body = approvalsText(g, window, week, today);
     if (dryRun) { console.log(body); return; }
     const path = arg('out') || join(ticketsBase(), 'Projects', project, 'Reviews', `approvals-${week}.md`);
@@ -835,6 +1019,15 @@ const configuredStatusPageUri = (): string => statusPageUri({
 
 /** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
 const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS);
+
+/**
+ * The day queue ages are counted to. Rows are stamped with the UTC day (`today()`), so the age must be measured to the UTC day too: the local
+ * day (`d`) is a day behind from UTC midnight until local midnight and under-counted every age by one. MAESTRO_NOW (an ISO time) pins the clock for tests.
+ */
+function queueClockDay(): string {
+    const pinned = process.env.MAESTRO_NOW ? new Date(process.env.MAESTRO_NOW) : null;
+    return pinned && !Number.isNaN(pinned.getTime()) ? pinned.toISOString().slice(0, 10) : today();
+}
 
 /** The queue-hygiene footer line: oldest queued age and rows that already have a built branch. Branch names come from the row's repo under the container root (the-maestro's own checkout for a row with no repo); each repo is listed once. */
 function boardQueueHygiene(g: Groups, today: string): string {
@@ -895,12 +1088,12 @@ function cmdStatus() {
     const done = view.all;
 
     if (asJson) {
-        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g)), null, 2));
+        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g)));
         return;
     }
 
     const live = { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)) };
-    const queueFooter = boardReviewQueue()?.footer;
+    const queueFooter = has('footer') ? footerReviewQueue() ?? undefined : boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
         const sessionId = footerSessionId();
@@ -909,7 +1102,7 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[boardQueueHygiene(g, d)].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, queueClockDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
@@ -920,6 +1113,7 @@ function cmdStatus() {
     };
     windowWarning().forEach((l) => console.log(l));
     console.log(`Ledger — ${d}`);
+    ruleLines(readLedger(), windowId).forEach((l) => console.log(l));
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
@@ -957,10 +1151,41 @@ function cmdReviewQueue() {
     const capArg = arg('cap');
     if (has('cap') && !(capArg !== null && /^\d+$/.test(capArg) && Number(capArg) > 0)) { console.error('--cap must be a positive whole number.'); process.exit(2); }
     const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(freshestSnapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg), new Date(), SELF_REVIEW_REPOS);
-    if (asJson) console.log(JSON.stringify(reading, null, 2)); else queueText(reading).forEach((l) => console.log(l));
+    if (asJson) printJson(reading); else queueText(reading).forEach((l) => console.log(l));
     // Not process.exit: it drops output a pipe has not yet taken, so a slow reader would see a cut answer.
     process.exitCode = queueExitCode(reading);
 }
+
+/** The footer must never wait on a slow gh: the whole live read gets this long before the line falls back to `unknown`. */
+const FOOTER_LIVE_TIMEOUT_MS = 8_000;
+
+/** A gh runner that shares one deadline across every page of a read; a timeout or a failure comes back as a non-zero status. */
+function deadlineRun(totalMs: number): Run {
+    const end = Date.now() + totalMs;
+    return (cmd, args) => {
+        const left = end - Date.now();
+        if (left <= 0) return { status: null, stdout: '', stderr: 'timed out' };
+        const [bin, binArgs] = toolCommand(cmd, args);
+        const r = spawnSync(bin, binArgs, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
+        return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
+    };
+}
+
+/** A bounded live read, saved to the loop's current-board file so the next footer inside the refresh window reuses it. A failed read saves nothing. */
+function footerLiveRead(): ReturnType<typeof fetchLive> {
+    const snap = fetchLive(deadlineRun(FOOTER_LIVE_TIMEOUT_MS));
+    try {
+        const path = currentPath(vault);
+        mkdirSync(dirname(path), { recursive: true });
+        const tmp = `${path}.${process.pid}.tmp`;
+        writeFileSync(tmp, `${JSON.stringify(snap, null, 2)}\n`);
+        renameSync(tmp, path);
+    } catch { /* the count is still good; only the reuse is lost */ }
+    return snap;
+}
+
+/** The footer's review queue line: the stored snapshot when it is under 30 minutes old, else a bounded live read (saved), else `unknown` (never an old number). */
+const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, footerLiveRead);
 
 function cmdStandup() {
     console.log(standupText(arg('date', today())));
@@ -1054,6 +1279,8 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
 function cmdRoll() {
     const d = arg('date', today());
     triageBeforeRoll(d);
+    // Before the archive, so the ledger autocommit takes GUIDANCE.md in the same commit.
+    writeRollGuidance(d);
     rollArchive(d);
     printEpicBriefs(d);
     printNotesReachability();
@@ -1162,9 +1389,19 @@ function sinceDay(raw: string | undefined): string | undefined {
 function cmdNotesCheck() {
     const r = notesCheck(has('all') ? undefined : arg('since') ? sinceDay(arg('since') || undefined) : notesWindow());
     if (!r) { console.error(`notes-check: ${NO_VAULT_DETAIL}`); process.exit(2); }
-    if (asJson) console.log(JSON.stringify(r, null, 2)); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
+    if (asJson) printJson(r); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
     // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
     process.exitCode = r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0;
+}
+
+/** The roll's guidance for the next session: derived from the ledger (no model call), saved as GUIDANCE.md beside it, and printed. `prime` shows it. */
+function writeRollGuidance(d: string): void {
+    const g = groups();
+    const sd = statusDir();
+    const today = sd && existsSync(sd) ? readPriorities(sd, priorityDay()) : null;
+    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now(), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [], gates: new Map(gateReport().map((r) => [String(r.item.id), r.state])) }).map(withhold);
+    if (!dryRun) { ensureDir(); writeGuidance(dir, lines, d); }
+    (lines.length ? lines : [`Guidance from the ${d} roll:`, '  Nothing stalled, nothing costly, nothing open.']).forEach((l) => console.log(l));
 }
 
 /**
@@ -1239,11 +1476,11 @@ function cmdTriage() {
         });
         appendMany(rows);
         if (!dryRun && rows.length) render(true);
-        if (asJson) console.log(JSON.stringify({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs?.[0] })), report: { ...t, items: undefined, byBox: undefined } }, null, 2));
+        if (asJson) printJson({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs?.[0] })), report: { ...t, items: undefined, byBox: undefined } });
         else console.log(`triage --apply: closed ${rows.length} recorded item(s)${dryRun ? ' (dry-run)' : ''}; ${t.items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).length} still need a ref file.`);
         return;
     }
-    if (asJson) { console.log(JSON.stringify(t, null, 2)); return; }
+    if (asJson) { printJson(t); return; }
     triageLines(t).forEach((l) => console.log(l));
 }
 
@@ -1266,7 +1503,7 @@ function triageBeforeRoll(d: string): void {
 
 function cmdVerify() {
     const { rows, problems } = verifyLedger();
-    if (asJson) console.log(JSON.stringify({ ledger: ledgerPath, rows, problems }, null, 2));
+    if (asJson) printJson({ ledger: ledgerPath, rows, problems });
     else {
         console.log(`verify: ${rows} row(s), ${problems.length} problem(s)  (${ledgerPath})`);
         problems.slice(0, 50).forEach((p) => console.log(`  line ${p.line}${p.id ? ` [${p.id}]` : ''}: ${p.problem}`));
@@ -1336,7 +1573,7 @@ function cmdUsage() {
     }
     const sorted = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
     if (asJson) {
-        console.log(JSON.stringify({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) }, null, 2));
+        printJson({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) });
         return;
     }
     console.log(`Usage marks — ${pool.length} item(s)${has('open') ? ' open' : ''}`);
@@ -1380,7 +1617,7 @@ function cmdStreams() {
             aliases: reg?.streams[name]?.aliases || [],
             ...tally(items.filter((i) => i.stream === name)),
         }));
-        if (asJson) { console.log(JSON.stringify({ registry: reg ? registryPath : null, streams: rows }, null, 2)); return; }
+        if (asJson) { printJson({ registry: reg ? registryPath : null, streams: rows }); return; }
         console.log(reg ? `Registry: ${registryPath}` : `No registry at ${registryPath} (streams are free text).`);
         for (const r of rows) {
             console.log(`  ${r.stream}  [${r.status}]  open ${r.open} · done ${r.done} · dropped ${r.dropped} · total ${r.total}${r.aliases.length ? `  aliases: ${r.aliases.join(', ')}` : ''}`);
@@ -1425,7 +1662,7 @@ function cmdStreams() {
         }
         const rowsWithOldSpelling = entries.filter((e) => e.stream && mapStream(e.stream) !== e.stream).length;
         const total = [...changes.values()].reduce((a, b) => a + b, 0);
-        if (asJson) { console.log(JSON.stringify({ items: total, rows: rowsWithOldSpelling, changes: Object.fromEntries(changes) }, null, 2)); return; }
+        if (asJson) { printJson({ items: total, rows: rowsWithOldSpelling, changes: Object.fromEntries(changes) }); return; }
         console.log(`${total} item(s) would change display stream (${rowsWithOldSpelling} ledger row(s) carry a non-canonical spelling); nothing appended.`);
         for (const [k, n] of changes) console.log(`  ${String(n).padStart(4)}  ${k}`);
         return;
@@ -1489,7 +1726,7 @@ function cmdModels() {
             aliases: meta?.aliases || [],
             rows: [...rowCounts].filter(([raw]) => canonicalModel(reg, raw) === id).reduce((a, [, n]) => a + n, 0),
         }));
-        if (asJson) { console.log(JSON.stringify({ registry: reg?.models ? registryPath : null, models: rows }, null, 2)); return; }
+        if (asJson) { printJson({ registry: reg?.models ? registryPath : null, models: rows }); return; }
         console.log(reg?.models ? `Model registry: ${registryPath}` : `No models section in ${registryPath} (model names are free text).`);
         for (const r of rows) console.log(`  ${r.model}  rows ${r.rows}${r.aliases.length ? `  aliases: ${r.aliases.join(', ')}` : ''}`);
         return;
@@ -1520,7 +1757,7 @@ function cmdModels() {
             return { model: raw, rows: n, canonical: canon, status };
         });
         const would = rows.filter((r) => r.status === 'alias');
-        if (asJson) { console.log(JSON.stringify({ rows: would.reduce((a, r) => a + r.rows, 0), models: rows }, null, 2)); return; }
+        if (asJson) { printJson({ rows: would.reduce((a, r) => a + r.rows, 0), models: rows }); return; }
         console.log(`${would.reduce((a, r) => a + r.rows, 0)} row(s) would show under a different model name; nothing appended.`);
         for (const r of rows) console.log(`  ${String(r.rows).padStart(5)}  ${r.model}  [${r.status}]${r.status === 'alias' ? ` -> ${r.canonical}` : ''}`);
         return;
@@ -1684,7 +1921,7 @@ function cmdQuery() {
     const problem = filterProblem(filter, rawLimit);
     if (problem) die(`${problem}\nUsage: journal.ts query [--stream S] [--id X] [--status ${QUERY_STATUSES.join('|')}] [--date D | --since D --until D] [--model M] [--limit N] [--json]`);
     const result = queryItems(fold(readLedger()).items, filter);
-    if (asJson) console.log(JSON.stringify(result, null, 2)); else queryLines(result).forEach((l) => console.log(l));
+    if (asJson) printJson(result); else queryLines(result).forEach((l) => console.log(l));
 }
 
 /** `ready-to-push`: held branches across the container's repos (or `--repo`). Reads git only; never fetches, never pushes. */
@@ -1694,7 +1931,7 @@ function cmdReadyToPush() {
     const only = arg('repo') ?? undefined;
     if (only) validRepo(only);
     const held = containerRepos(CONTAINER_ROOT, only).flatMap(([name, dir]) => heldBranches(dir, name, { emails: GIT_EMAILS, protectedNames: PROTECTED_BRANCHES, keyPattern: TRACKER_KEY_PATTERN }));
-    if (asJson) console.log(JSON.stringify({ held }, null, 2)); else heldLines(held).forEach((l) => console.log(l));
+    if (asJson) printJson({ held }); else heldLines(held).forEach((l) => console.log(l));
 }
 
 function cmdClaims() {
@@ -1707,7 +1944,7 @@ function cmdClaims() {
         const st = claimStaleness(c, hours);
         return { repo, scope: scope ?? null, key, desk: c?.desk ?? null, pid: c?.pid ?? null, host: c?.host ?? null, time: c?.time ?? null, branch: c?.branch ?? null, ageHours: Number.isFinite(st.ageHours) ? Math.round(st.ageHours * 10) / 10 : null, stale: st.stale, reason: st.reason };
     });
-    if (asJson) { console.log(JSON.stringify({ staleHours: hours, claims: rows }, null, 2)); return; }
+    if (asJson) { printJson({ staleHours: hours, claims: rows }); return; }
     if (!rows.length) { console.log('No claims.'); return; }
     for (const r of rows) console.log(`  ${r.key}  desk ${r.desk ?? '?'}  pid ${r.pid ?? 'unknown'}  ${r.host ?? '?'}  ${r.ageHours ?? '?'}h${r.branch ? `  ${r.branch}` : ''}${r.stale ? `  STALE (${r.reason})` : ''}`);
 }
@@ -1720,8 +1957,21 @@ function cmdClaims() {
  */
 const LIBRARY_LOOKUP_TIMEOUT_MS = 10000;
 
+/** The "Library pages for this task" block for a repo and task words; a lookup that cannot run says why instead of failing. */
+function libraryFor(repo: string | undefined, words: string, scripts: string): string {
+    const libraryScript = join(scripts, 'library-brief.ts');
+    const libraryArgs = ['--repo', repo || '', '--vault', vault, '--project', project, ...(VAULT_ROOT ? ['--tickets-vault', VAULT_ROOT] : []), words];
+    return libraryBlock(
+        !repo ? null : existsSync(libraryScript) ? () => {
+            const r = spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8', timeout: LIBRARY_LOOKUP_TIMEOUT_MS });
+            return r.error ? { status: null, stdout: '', stderr: `lookup did not finish within ${LIBRARY_LOOKUP_TIMEOUT_MS} ms (${errorMessage(r.error)})` } : r;
+        } : null,
+        !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
+    );
+}
+
 function cmdBrief(): void {
-    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--as holder] [--pid n] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
+    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--as holder] [--pid n] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
     if (!target) die(`No item with that id.\n${BRIEF_USAGE}`);
@@ -1738,16 +1988,7 @@ function cmdBrief(): void {
     const block = spawnSync(process.execPath, [join(scripts, 'brief-block.ts')], { encoding: 'utf8' });
     if (block.status !== 0 || !block.stdout.trim()) die(`The standing block could not be built, so no brief was written:\n${(block.stderr || 'brief-block.ts printed nothing').trim()}`);
 
-    const libraryScript = join(scripts, 'library-brief.ts');
-    const words = target.text || '';
-    const libraryArgs = ['--repo', repo || '', '--vault', vault, '--project', project, ...(VAULT_ROOT ? ['--tickets-vault', VAULT_ROOT] : []), words];
-    const library = libraryBlock(
-        !repo ? null : existsSync(libraryScript) ? () => {
-            const r = spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8', timeout: LIBRARY_LOOKUP_TIMEOUT_MS });
-            return r.error ? { status: null, stdout: '', stderr: `lookup did not finish within ${LIBRARY_LOOKUP_TIMEOUT_MS} ms (${errorMessage(r.error)})` } : r;
-        } : null,
-        !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
-    );
+    const library = libraryFor(repo, target.text || '', scripts);
 
     let details: string | undefined;
     const detailsFile = arg('details-file');
@@ -1761,6 +2002,8 @@ function cmdBrief(): void {
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
+    // A refused --branch/--worktree must fail before the lease, grant, claim or brief file exist: die() does not roll them back.
+    const where = recoveryFlags();
     const scope = claimScope(arg('worktree') || arg('branch'));
     const claim = writer && repo && desk ? { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why } : undefined;
 
@@ -1846,7 +2089,8 @@ function cmdBrief(): void {
     const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
     // A claim row counts only if no release of the repo came after it: a re-brief after `release` takes a new claim and needs its own row.
     const lastIndex = (pred: (r: LedgerRow) => boolean): number => ledgerNow.reduce((at, r, i) => (pred(r) ? i : at), -1);
-    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
+    // Kept desk claims need the row too: the stall detector finds the dispatch's repo, scope and branch from it.
+    const claimRowMissing = Boolean(claim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
     if (briefed && existsSync(paths.brief) && !tookClaim && !tookItem && !claimRowMissing) {
         console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
         console.log(`report ${paths.report}`);
@@ -1868,7 +2112,7 @@ function cmdBrief(): void {
         const batch = [
             ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, scope, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claimKey(claim.repo, scope)} for ${claim.desk}: ${why}`, ...usage })] : []),
             ...(!briefed && isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
-            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
+            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, ...where, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
         ];
         try { appendMany(batch); } catch (e) { rollBack(); die(`The ledger rows could not be written (${errorMessage(e)}); nothing is held, run it again.`); }
     }
@@ -1935,7 +2179,7 @@ function cmdBackfill() {
         writeFileSync(outPath, ['---', 'type: backfill-report', `generated: ${today()}`, '---', '', '# Backfill dry run', '', ...table, ''].join('\n'));
     }
     if (asJson) {
-        console.log(JSON.stringify({ untagged, proposed: proposed.length, noProposal, byConfidence: perConf, byStream: perStream }, null, 2));
+        printJson({ untagged, proposed: proposed.length, noProposal, byConfidence: perConf, byStream: perStream });
         return;
     }
     console.log(`Backfill dry run: ${untagged} untagged item(s); ${proposed.length} with a proposal, ${noProposal} with none. Nothing appended.`);
@@ -2003,7 +2247,8 @@ function cmdHandoff() {
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
 const tryRun: TryRun = (cmdName, args) => {
-    const r = spawnSync(cmdName, args, { encoding: 'utf8' });
+    const [bin, binArgs] = toolCommand(cmdName, args);
+    const r = spawnSync(bin, binArgs, { encoding: 'utf8' });
     return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 
@@ -2073,6 +2318,23 @@ function cmdDefer() {
 }
 
 /**
+ * `answer <ask> --text "..." [--source page|chat]` and `discuss <ask> [--text "topic"]`: write down what the user said about an
+ * open ask (lib/journal/answers.ts). The ask stays open for `resolve`; the page shows the answer under it. Writing the same text
+ * again is a no-op, and a closed or unknown ask is refused.
+ */
+function cmdAnswerOrDiscuss(kind: 'answer' | 'discuss') {
+    const ask = positional[0];
+    const text = arg('text') || positional.slice(1).join(' ');
+    if (!ask || (kind === 'answer' && !text)) die(kind === 'answer' ? 'Usage: journal.ts answer <ask id> --text "<answer>" [--source page|chat]' : 'Usage: journal.ts discuss <ask id> [--text "<topic>"]');
+    const source = arg('source') || 'chat';
+    if (!['page', 'chat'].includes(source)) die('--source must be page or chat.');
+    const outcome = recordAnswer(store, { kind, ask, text, source, usage: usageFromArgs(), now, today });
+    if (outcome === 'no-ask') die(`No open ask with id "${ask}". Only an open question or pending decision takes an ${kind}.`);
+    if (outcome === 'written' && !dryRun) render(true);
+    console.log(`${outcome === 'same' ? 'already recorded' : kind}  ${ask}  ${text}`.trimEnd());
+}
+
+/**
  * A deferral ends on a date but the generated pages are only written by ledger writes, so on the first read of a
  * new day, when any defer row exists, regenerate CURRENT.md and the stream pages. Derived files only; the ledger is untouched.
  */
@@ -2095,6 +2357,12 @@ function updateNotices(): string[] {
 /** The status directory: --status-dir, else the configured one, else <vault_root>/Projects/<project>/Status. Empty when none can be named. */
 const statusDir = (): string => arg('status-dir') || statusDirFor(project);
 const priorityDay = (): string => localDate(new Date(), WATCH_TZ);
+/** Today's priorities for the top of CURRENT.md: the texts, or none when no status dir exists or the list is not today's. */
+boardCtx.priorities = () => {
+    const dirPath = statusDir();
+    const state = dirPath && existsSync(dirPath) ? readPriorities(dirPath, priorityDay()) : null;
+    return state?.state === 'ok' ? state.items.map((p) => (p.stream ? `${p.text} [${p.stream}]` : p.text)) : [];
+};
 
 /** The not-set line for `prime`, only once a status directory exists (an install that never made a status page is not nagged). */
 function prioritiesNotice(): string[] {
@@ -2124,6 +2392,8 @@ function cmdPrime() {
     // Everything `prime` prints goes through `withhold`: a secret-shaped stream name or id in the ledger must not reach session context from here either.
     continuity.forEach((l) => { console.log(withhold(l)); console.error(withhold(l)); });
     primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...windowWarning(), ...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(withhold(l)));
+    // The last roll's guidance, outside the board's cap like the checklist below it.
+    readGuidance(dir, today()).forEach((l) => console.log(withhold(l)));
     // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
     compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(withhold(l)));
 }
@@ -2161,31 +2431,20 @@ function cmdPriorities() {
         const items = words.map(parsePriority);
         try { console.log(`wrote ${writePriorities(dirPath, day, items, PRIORITIES_MAX)}`); } catch (e) { die(errorMessage(e)); }
         writeProjectFiles(dirPath, day, items);
+        render(true);
     } else if (sub === 'show') {
         const target = arg('repo');
         const state = target ? readProjectState(target, day) : readPriorities(dirPath, day);
-        if (asJson) console.log(JSON.stringify(state, null, 2)); else showLines(state).forEach((l) => console.log(l));
+        if (asJson) printJson(state); else showLines(state).forEach((l) => console.log(l));
     } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show [--repo <repo>]');
 }
 
 /** `priorities set` also writes each project's own file for `day`, for the projects its items' streams map to. A problem is reported, sets the exit code to 1 once the other projects are written, and never undoes the container-wide write. */
 function writeProjectFiles(dirPath: string, day: string, items: Priority[]) {
     if (!VAULT_ROOT) return;
-    const registry = loadRegistry();
-    const homes = readHomes(dirPath, Object.keys(registry?.streams ?? {}));
-    const route = (s: string | undefined): string[] => projectsFor(s, homes, STATUS_REPO_STREAMS, CONTAINER_PROJECT);
-    const rows = readLedger();
-    const fanned = fanOut(items, route);
-    // A project with Today items for this day, whoever wrote them, and this list no longer names is cleared, so a dropped item is neither shown nor carried.
-    const dropped = droppedProjects(VAULT_ROOT, day, fanned.keys());
-    for (const [name, mine] of [...fanned, ...dropped.map((name): [string, Priority[]] => [name, []])]) {
-        try {
-            const streams = [...new Set(mine.map((p) => p.stream).filter((s): s is string => Boolean(s)))];
-            const kept = readProjectFile(join(prioritiesDir(VAULT_ROOT, name), `${day}.md`));
-            const result = writeProjectPriorities(VAULT_ROOT, name, priorityDay(), { project: name, date: day, carriedFrom: kept?.carriedFrom ?? '', writtenBy: 'priorities set', today: mine, carried: kept?.carried ?? [], next: nextItems(rows, registry, streams) });
-            console.log(result === 'written' ? `wrote ${join(prioritiesDir(VAULT_ROOT, name), `${day}.md`)}` : `skipped ${name}: no vault folder Projects/${name}`);
-        } catch (e) { console.error(`project ${name}: ${errorMessage(e).split('\n')[0].slice(0, 100)}`); process.exitCode = 1; }
-    }
+    const { lines, problems } = syncProjectPriorities({ vaultRoot: VAULT_ROOT, statusDir: dirPath, day, today: priorityDay(), items, rows: readLedger(), registry: loadRegistry(), repoStreams: STATUS_REPO_STREAMS, containerProject: CONTAINER_PROJECT });
+    lines.forEach((l) => console.log(l));
+    for (const p of problems) { console.error(p); process.exitCode = 1; }
 }
 
 /** The project file for `day` as the same state `priorities show` prints for the container list. */
@@ -2229,7 +2488,7 @@ function cmdStartHere() {
     const priorities = dirPath ? readPriorities(dirPath, local) : { state: 'missing' as const };
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
     const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), now: nowAt });
-    if (asJson) console.log(JSON.stringify(s, null, 2));
+    if (asJson) printJson(s);
     else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(withhold(l)));
 }
 
@@ -2244,7 +2503,7 @@ function cmdWeek() {
         try { console.log(`wrote ${writeWeek(dirPath, day, words.map(parsePriority))}`); } catch (e) { die(errorMessage(e)); }
     } else if (sub === 'show') {
         const state = readWeek(dirPath, day);
-        if (asJson) console.log(JSON.stringify(state, null, 2)); else weekLines(state).forEach((l) => console.log(l));
+        if (asJson) printJson(state); else weekLines(state).forEach((l) => console.log(l));
     } else die('Usage: journal.ts week set "<goal>" ["<goal> | <Stream>" ...] | week show');
 }
 
@@ -2299,7 +2558,7 @@ function cmdStanding() {
     if (sub === 'list' || sub === 'check') {
         const states = standingStates();
         const attention = states.filter((s) => s.status !== 'ok');
-        if (asJson) console.log(JSON.stringify({ rows: states, attention: attention.length }, null, 2));
+        if (asJson) printJson({ rows: states, attention: attention.length });
         else (sub === 'list' ? states : attention).forEach((s) => console.log(rowLine(s)));
         if (!asJson && sub === 'check' && !attention.length) console.log('All standing pickups are current.');
         if (sub === 'check' && attention.length) process.exitCode = 1;
@@ -2337,7 +2596,7 @@ function cmdTickets() {
     const since = arg('since', defaultPendingSince());
     if (!isDate(since)) die('--since must be YYYY-MM-DD.');
     const rows = pendingTransitions(since);
-    if (asJson) { console.log(JSON.stringify({ since, pending: rows }, null, 2)); return; }
+    if (asJson) { printJson({ since, pending: rows }); return; }
     console.log(rows.length ? `Done items whose tracker transition is not recorded (since ${since}):` : `No pending tracker transitions since ${since}.`);
     rows.forEach((r) => console.log(`  ${r.key}  ${r.id}  done ${r.doneOn}  ${clip(r.text, 90)}`));
     if (rows.length) console.log('Move each ticket, then: journal.ts log "moved <KEY> to <status>" --transitioned <KEY> ...');
@@ -2345,17 +2604,27 @@ function cmdTickets() {
 
 // ── library lookup ──────────────────────────────────────────────────────────
 
+/** A `find` that matched nothing, written as a miss. Marks default to unrecorded (a lookup has no model to name); a refusal (a secret-shaped query) is said on stderr and never fails the lookup. */
+function logFindMiss(query: string): void {
+    const r = recordMiss(query, 'find', arg('repo') || undefined, { model: normaliseModel(arg('model')) || 'unrecorded', used: parseList('used') ?? ['unrecorded'], ...(arg('agent') ? { agent: arg('agent') as string } : {}) });
+    if ('errors' in r) console.error(`(not logged as a library miss: ${r.errors.join(' ')})`);
+    else console.error(`(logged as a library miss: ${r.line.split('  ')[1]})`);
+}
+
 /** `find "<words>"`: hands the lookup to ledger-index.ts (the one place the library index is built and read) and relays its output and exit code. */
 function cmdFind() {
     const query = positional.join(' ').trim();
     if (!query) die('Usage: journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]');
     const values = ['repo', 'kind', 'component', 'limit'].flatMap((k) => (arg(k) ? [`--${k}`, arg(k) as string] : []));
     const flags = ['neighbors', 'include-superseded', 'json'].filter(has).map((k) => `--${k}`);
+    const logMisses = !has('no-miss');
     // The child writes straight to our stdout and stderr: no buffer to cap or to lose when this process exits, so a large result arrives whole.
     const r = spawnSync(process.execPath, [
-        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags,
+        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags, ...(logMisses ? ['--exit-miss'] : []),
         '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
     ], { stdio: 'inherit' });
+    // Exit 4 is "no page matched": the question becomes a miss row for the composer, and the lookup itself still succeeds.
+    if (logMisses && r.status === 4) { logFindMiss(query); process.exitCode = 0; return; }
     process.exitCode = r.status ?? 1;
 }
 
@@ -2367,7 +2636,10 @@ switch (cmd) {
     case 'queue': cmdQueue(); break;
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
+    case 'decide': cmdDecide(); break;
     case 'learned': cmdLearned(); break;
+    case 'miss': cmdMiss(); break;
+    case 'misses': cmdMisses(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
@@ -2402,9 +2674,12 @@ switch (cmd) {
     case 'query': cmdQuery(); break;
     case 'ready-to-push': cmdReadyToPush(); break;
     case 'brief': cmdBrief(); break;
+    case 'next': cmdNext(); break;
+    case 'recover': cmdRecover(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
     case 'defer': cmdDefer(); break;
+    case 'answer': case 'discuss': cmdAnswerOrDiscuss(cmd); break;
     case 'prime': cmdPrime(); break;
     case 'tickets': cmdTickets(); break;
     case 'handoff': cmdHandoff(); break;
@@ -2418,7 +2693,7 @@ switch (cmd) {
     case 'status-page': cmdStatusPage(); break;
     case 'web': cmdWeb(); break;
     default:
-        console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('/**')[1]
-            .split('\n').map((l) => l.replace(/^ \* ?/, '')).join('\n').trim());
-        process.exit(cmd ? 1 : 0);
+        // No command given: the list (an unknown command was already refused above).
+        console.log(listText());
+        process.exit(0);
 }

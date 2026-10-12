@@ -11,6 +11,7 @@ import { ESCALATE_MS, GRACE_MS } from './lib/copilot-follow.ts';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
 import type { GhStubConfig } from './lib/gh-stub.ts';
 import type { Run } from './lib/types.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 const T0 = Date.parse('2026-10-09T12:00:00Z');
 const BOT = 'copilot-pull-request-reviewer';
@@ -23,7 +24,7 @@ function rig(orgs: string[] = ORGS) {
   const config: GhStubConfig = { pages: [[]], editLog };
   const env = installGhStub(config);
   const run: Run = (cmd, args) => {
-    const r = spawnSync(cmd, args, { encoding: 'utf8', env });
+    const r = spawnSync(...toolCommand(cmd, args, env), { encoding: 'utf8', env });
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
   let prev: prWatch.PrWatchState | undefined;

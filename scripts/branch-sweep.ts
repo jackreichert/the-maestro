@@ -40,6 +40,8 @@ import {
 } from './local-config.ts';
 import { isEnvFile, isStoreLink, projectFromBranch } from './lib/env-store.ts';
 import { plistPath } from './lib/supervisor-state.ts';
+import { toolCommand } from './lib/tool-bin.ts';
+import { printJson } from './lib/json-out.ts';
 
 export { isEnvFile };
 
@@ -92,7 +94,8 @@ interface Rule<A extends unknown[], V, RA extends unknown[] = A> { name: string;
 const errorOf = (e: unknown): Failure => (e instanceof Error ? e : new Error(String(e)));
 
 const run = (cmd: string, args: string[], opts: Record<string, unknown> = {}): CmdResult => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
+  const [bin, binArgs] = toolCommand(cmd, args);
+  const r = spawnSync(bin, binArgs, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
   return { ok: r.status === 0, status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 // --no-optional-locks: a scan must not refresh the index, or it would reset the idle clock it reads.
@@ -842,7 +845,7 @@ function main(): void {
   const review = scans.flatMap((s) => s.review);
   const excluded = scans.flatMap((s) => s.excluded);
   const notes = scans.flatMap((s) => s.notes.map((n) => `${s.repo}: ${n}`));
-  if (argv.includes('--json')) { console.log(JSON.stringify({ container, items, review, excluded, notes }, null, 2)); return; }
+  if (argv.includes('--json')) { printJson({ container, items, review, excluded, notes }); return; }
   console.log(items.length ? table(items) : 'Nothing to sweep.');
   if (review.length) console.log(`\nReview (patch-equivalent only; --apply refuses these):\n${table(review)}`);
   for (const e of excluded) console.log(`kept  ${e.id}  ${e.name}: ${e.reason}`);

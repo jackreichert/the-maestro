@@ -18,7 +18,7 @@ export interface ContinuityDeps {
   /** The newest whole-ledger (`--all`) handoff file as `newestHandoff(dir, true)` reads it; null when there is none. */
   newestHandoff: () => { name: string; at: string } | null;
   /** Copies the snapshot until `deadline` (epoch ms); null when no scripts shelf is configured. */
-  snapshot: (date: string, deadline: number) => { worktrees: number; copied: number; current: number; skipped: number; partial: boolean; capped: boolean } | null;
+  snapshot: (date: string, deadline: number) => { worktrees: number; copied: number; current: number; skipped: number; partial: boolean; capped: boolean; scanned?: number } | null;
 }
 
 export type SnapshotResult = NonNullable<ReturnType<ContinuityDeps['snapshot']>>;
@@ -33,6 +33,8 @@ export interface ContinuityInput {
   date: string;
   deadlineMs: number;
   handoffBudgetMs: number;
+  /** True for the tick: a snapshot cut off by its deadline after reading some worktrees is not a failure, since the next run resumes after them. */
+  resumable?: boolean;
 }
 
 export interface ContinuityResult {
@@ -85,7 +87,8 @@ export function ensureContinuity(input: ContinuityInput, deps: ContinuityDeps): 
   const snapshot = step('snapshot', () => {
     const r = deps.snapshot(input.date, input.deadlineMs);
     if (!r) throw new Error('scripts_dir is not set');
-    if (r.partial) throw new Error(`time budget reached after ${r.worktrees} worktree(s)`);
+    // The tick resumes where it stopped, so a partial run that read some worktrees is progress; the hook runs once and needs every one.
+    if (r.partial && (!input.resumable || !r.scanned)) throw new Error(`time budget reached after ${r.scanned ?? r.worktrees} worktree(s)`);
     if (r.capped) throw new Error(`file or size cap reached after ${r.copied} file(s); later source was not copied`);
     return r;
   });

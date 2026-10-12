@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { stubEnv, writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { diffAnchor, expandTokens, parseAnchor, tokenPaths, tokenProblems } from './pr-links.ts';
@@ -28,8 +29,8 @@ test('expandTokens links known paths, shows a line as text, and leaves unknown p
 });
 
 test('diffAnchor matches a known answer from a real private-repo PR link', () => {
-    // sha256('packages/teamselect-api/src/utils/partner-api.ts'), the hex in a real .../pull/<n>/changes#diff-<hex>R25-R31 link.
-    assert.equal(diffAnchor('packages/teamselect-api/src/utils/partner-api.ts'), 'diff-60c3f13bafde03a49d9d9bae1b582d31f14a82a779a918ddf90d3bd2e29455ea');
+    // sha256('packages/avonlea-api/src/sync.ts'), the hex in a real .../pull/<n>/changes#diff-<hex>R25-R31 link.
+    assert.equal(diffAnchor('packages/avonlea-api/src/sync.ts'), 'diff-b1afaaa04ed098bb89d115cee7378fd32ae56addc7637c19e38748937d9572c0');
 });
 
 test('expandTokens writes the verified line anchors: R25, R25-R31 and L10-L12', () => {
@@ -86,10 +87,8 @@ function fixture() {
     const edited = join(dir, 'edited.md');
     const view = join(dir, 'view.json');
     writeFileSync(view, JSON.stringify({ url: PR, body: 'See {{file:src/widgets/alpha.ts}}.', files: [{ path: 'src/widgets/alpha.ts' }] }));
-    const gh = join(dir, 'gh.sh');
-    writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase "$1 $2" in\n"pr create") echo '${PR}' ;;\n"pr view") cat '${view}' ;;\n"pr edit") cp "$5" '${edited}' ;;\nesac\n`);
-    chmodSync(gh, 0o755);
-    return { repo, dir, log, edited, view, gh, env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh } };
+    const gh = writeStub(join(dir, 'gh.sh'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase "$1 $2" in\n"pr create") echo '${PR}' ;;\n"pr view") cat '${view}' ;;\n"pr edit") cp "$5" '${edited}' ;;\nesac\n`);
+    return { repo, dir, log, edited, view, gh, env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', ...stubEnv('MAESTRO_GH_BIN', gh) } };
 }
 
 const BODY = (guide: string): string => ['## Context', 'Why.', '## Reviewer guide', guide, '## Risk and blast radius', 'Risk: low - tool.', '## Rollback / flag', 'Plain revert.', '## How to verify locally', '```', 'npm test', '```', ''].join('\n');

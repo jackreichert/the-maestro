@@ -21,7 +21,9 @@ export interface Item { id: string; date: string; ts?: string; stateTs?: string;
   /** An ask's decision fields as the ledger stores them; unchecked here, `askBits` reads each one defensively. */
   recommend?: unknown; default?: unknown; door?: unknown; by?: unknown; class?: unknown;
   /** A paste ask's block file: set only on `status.paste` rows. */
-  paste?: unknown }
+  paste?: unknown;
+  /** The latest answer recorded for an open ask (an `answer` row), and its discuss topic; the page puts the answer in the ask's stub. */
+  answer?: string; discussing?: string }
 export interface Pr {
   number: number; title: string; url: string; isDraft: boolean; baseRefName: string; headRefName: string;
   mergeable: string; mergeStateStatus: string; reviewDecision: string | null;
@@ -55,6 +57,8 @@ export interface PageConfig {
   reviewQueueCap?: number;
   /** `self_review_repos`: PRs in these repos are not counted in the review queue. Absent: none. */
   selfReviewRepos?: string[];
+  /** Owners whose repos may appear in the PR list (the configured `gh_org`). Absent or empty means none: the PR list is withheld, never unscoped. */
+  prOwners?: string[];
 }
 
 /** Where the PR list came from: when GitHub was last read (null when never), and why the read just now failed, if it did. */
@@ -153,8 +157,14 @@ const mdLink = (r: Ref): string => {
   return r.nowrap ? `<span style="white-space:nowrap">${text}</span>` : text;
 };
 export const trackerRef = (cfg: PageConfig, key: string): Ref => (cfg.trackerUrlBase ? { label: key, url: `${cfg.trackerUrlBase}${key}`, nowrap: true } : { label: key, nowrap: true });
+/** A closed ticket moves to `Archive/` beside its folder; link there when the live path is gone and the archived note exists. */
+const liveOrArchived = (cfg: PageConfig, path: string): string => {
+  if (!cfg.noteExists || cfg.noteExists(`${path}.md`)) return path;
+  const archived = path.replace(/\/([^/]+)$/, '/Archive/$1');
+  return archived !== path && cfg.noteExists(`${archived}.md`) ? archived : path;
+};
 export const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
-  (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, ticketNotePath(cfg.ticketNotePath, id)), nowrap: true } : { label: id, nowrap: true });
+  (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, liveOrArchived(cfg, ticketNotePath(cfg.ticketNotePath, id))), nowrap: true } : { label: id, nowrap: true });
 
 /** The lookup `linkNotePaths` needs for `item`: a bare note path belongs to the project of its ticket (the id minus its number, as `ticketNotePath` reads it), else its stream's repo, else the page's project. */
 function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | undefined {
@@ -354,7 +364,7 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
       const bold = linkNotePaths(needed, env, escBold);
       const text = [boldSafe(needed) ? `**${bold}**` : '', linkNotePaths(plain(context), env, escLinkChars)].filter(Boolean).join(' ');
       const fields = askBits(a).map((b) => boldSafe(dropLinks(b).replace(/\bwww\.\S*/gi, ''))).join(' · ');
-      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, '  > answer: ');
+      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, `  > answer: ${a.answer ?? ''}`, ...(a.discussing === undefined ? [] : [`  > discuss: ${a.discussing}`.trimEnd()]));
     }
     out.push('');
   }

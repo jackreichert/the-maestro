@@ -1,0 +1,192 @@
+/**
+ * Avoidable-spend report: each bucket replays what the transcripts did under one change and prices the difference.
+ * Pure functions over the turns `scanFile` returns, so no transcript text is ever in reach: a turn carries token counts,
+ * tool names, a read-only flag, file basenames and result sizes only. Prices come from `model_prices`; none are built in.
+ * A figure is a counterfactual on the same tokens, not a billed amount: it ignores any difference in how many tokens
+ * another setup would have needed or how good its work would have been.
+ */
+import type { ModelPrice } from '../local-config.ts';
+import type { Turn } from '../token-metrics.ts';
+import { kindsOf, dollars, priceKey } from './pricing.ts';
+import { family } from './model-family.ts';
+import { isExpiryRewrite } from './expiry.ts';
+
+/** One transcript's turns: the orchestrator's, or a subagent's with the agent type from its `.meta.json`. */
+export interface Transcripts { orch: Turn[][]; subs: { type: string; turns: Turn[] }[] }
+export type Prices = Record<string, ModelPrice>;
+/** One ranked bucket: dollars avoidable, what it was, one line per notable item, and the change that avoids it. */
+export interface Leak { bucket: string; usd: number; detail: string[]; fix: string }
+
+/** The price row for a model family, or undefined when none applies (an `other` model with no `other` row). */
+const rowFor = (prices: Prices, fam: string): ModelPrice | undefined => prices[priceKey(fam)];
+/** Dollars for a turn's tokens at family `fam`'s prices (or `at`'s when given); 0 when that family has no price row. */
+const turnUsd = (prices: Prices, t: Turn, at: string = family(t.model)): number => {
+    const p = rowFor(prices, at);
+    return p ? dollars(kindsOf(t), p).total : 0;
+};
+const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
+const usd = (n: number): string => `$${n.toFixed(2)}`;
+const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+/** The most expensive items first, as detail lines: `label: note, $x`. */
+function topLines(items: Map<string, { n: number; usd: number }>, unit: string, limit = 5): string[] {
+    return [...items].sort((a, b) => b[1].usd - a[1].usd).slice(0, limit).map(([k, v]) => `${k}: ${plural(v.n, unit)}, ${usd(v.usd)}`);
+}
+
+/**
+ * Subagent runs that only read (every tool call they made was a read-only one; a run with no tool calls is left out), priced
+ * as they ran and again with the same tokens at Haiku. The saving is the difference, grouped by agent type.
+ */
+export function readOnlySubagents(t: Transcripts, prices: Prices): Leak | null {
+    const haiku = prices.haiku;
+    if (!haiku) return null;
+    const byType = new Map<string, { n: number; usd: number }>();
+    for (const sub of t.subs) {
+        const calls = sub.turns.flatMap((x) => x.tools || []);
+        if (!calls.length || !calls.every((c) => c.readOnly)) continue;
+        const saving = sum(sub.turns.filter((x) => family(x.model) !== 'haiku').map((x) => turnUsd(prices, x) - turnUsd(prices, x, 'haiku')));
+        if (saving <= 0) continue;
+        const cur = byType.get(sub.type) || { n: 0, usd: 0 };
+        byType.set(sub.type, { n: cur.n + 1, usd: cur.usd + saving });
+    }
+    const total = sum([...byType.values()].map((v) => v.usd));
+    if (total <= 0) return null;
+    return {
+        bucket: 'Read-only subagents on a dearer model, repriced at Haiku',
+        usd: total,
+        detail: topLines(byType, 'run'),
+        fix: 'set `model: haiku` in these agent definitions, or pass model haiku when dispatching them',
+    };
+}
+
+/** A 1h cache entry outlives a gap up to this long (seconds); past it the context is rewritten whatever the TTL. */
+const CACHE_1H_SEC = 3600;
+
+/**
+ * Subagent cache writes replayed with a 1h TTL instead of 5m. A cache-expiry rewrite after a gap of at most an hour would have been a cache read; every other 5m write would cost the
+ * 1h write price instead (a turn that becomes a read pays no premium). The figure is the net: rewrites avoided minus the premium on the writes that still happen; a TTL that costs more than it saves is not reported. Writes usage already marks as 1h are unchanged.
+ */
+export function subagentCacheTtl(t: Transcripts, prices: Prices): Leak | null {
+    let extra = 0;
+    let avoided = 0;
+    let rewrites = 0;
+    for (const x of t.subs.flatMap((s) => s.turns)) {
+        const p = rowFor(prices, family(x.model));
+        if (!p) continue;
+        const w5 = kindsOf(x).w5;
+        if (isExpiryRewrite(x) && (x.gapSec as number) <= CACHE_1H_SEC) { avoided += (w5 * (p.cache_write_5m - p.cache_read)) / 1e6; rewrites += 1; } else extra += (w5 * (p.cache_write_1h - p.cache_write_5m)) / 1e6;
+    }
+    const net = avoided - extra;
+    if (net <= 0) return null;
+    return {
+        bucket: 'Subagent prompt cache on a 1h TTL instead of 5m',
+        usd: net,
+        detail: [`${plural(rewrites, 'expiry rewrite')} within the hour avoided, ${usd(avoided)}; every write that still happens costs ${usd(extra)} more at the 1h price`],
+        fix: 'set `subagentPromptCacheTtl` to `1h` in settings (decision and trade-off in cost/budget.md)',
+    };
+}
+
+/** The context a session starts from after a compaction or a roll, about 50 to 60k tokens (see lib/autocompact.ts). */
+export const POST_ROLL_TOKENS = 55_000;
+export interface LeakOptions { rollTokens?: number; floorTokens?: number }
+
+/**
+ * Orchestrator sessions replayed with a compaction at `rollTokens` of context. Each time a turn's context passes the threshold it is
+ * replaced by `floorTokens`, the carried tokens are no longer read, and the new base is written once at the 5m write price. The figure
+ * is the cache-read dollars avoided minus those writes; a threshold that does not pay for its rewrites reports nothing. Real compactions
+ * (a turn with since 1) reset the replay as they reset the session.
+ */
+export function rollReplay(t: Transcripts, prices: Prices, rollTokens: number, floorTokens: number = POST_ROLL_TOKENS): Leak | null {
+    let saved = 0;
+    let rewrite = 0;
+    let rolls = 0;
+    let sessions = 0;
+    let dropped = 0;
+    for (const turns of t.orch) {
+        let base = 0;
+        let rolled = false;
+        for (const x of turns) {
+            const p = rowFor(prices, family(x.model));
+            if (!p) continue;
+            if (x.since === 1) base = 0;
+            const ctx = x.fresh + x.write + x.read;
+            if (ctx - base > rollTokens) { base = ctx - floorTokens; rolls += 1; rolled = true; rewrite += (floorTokens * p.cache_write_5m) / 1e6; }
+            const cut = Math.min(x.read, base);
+            dropped += cut;
+            saved += (cut * p.cache_read) / 1e6;
+        }
+        if (rolled) sessions += 1;
+    }
+    const net = saved - rewrite;
+    if (net <= 0) return null;
+    return {
+        bucket: `Compaction replayed at the roll threshold (${Math.round(rollTokens / 1000)}k tokens)`,
+        usd: net,
+        detail: [`${plural(sessions, 'session')} ran past it (${plural(rolls, 'roll')} replayed); ${Math.round(dropped / 1e6)}M cache-read tokens avoided, ${usd(saved)}, less ${usd(rewrite)} to write the new bases`],
+        fix: 'roll at the threshold instead of running on: handoff and /clear (see cost/budget.md, Compaction is the roll)',
+    };
+}
+
+/**
+ * A tool result of at least this many tokens (estimated from its size) is huge: it rides in the context of every later turn. Set at 2k, not
+ * higher, because the harness cuts Bash output at about 30k characters (7.5k tokens): a threshold of 8k could never see Bash, which carries
+ * the most dollars of any tool in the local transcripts.
+ */
+export const HUGE_RESULT_TOKENS = 2000;
+
+/** The fix for the tool whose results carry the most; one line per tool, so the advice matches what actually dominates. */
+function hugeFix(tool: string): string {
+    if (tool === 'Read') return 'read a range (offset and limit) or grep instead of a whole file';
+    if (tool === 'Bash') return 'pipe command output through head or tail or grep, and send big output to a file';
+    return 'ask this tool for less per call (a narrower query, a field list, a page), and keep big output out of the context';
+}
+
+/**
+ * Huge tool results priced as carried: each result of HUGE_RESULT_TOKENS or more, times the cache-read price of every later turn of its
+ * transcript until the next compaction. Grouped by tool and file basename; the result text is never read, only its size.
+ */
+export function hugeResults(t: Transcripts, prices: Prices): Leak | null {
+    const byTool = new Map<string, { n: number; usd: number; tokens: number }>();
+    for (const turns of [...t.orch, ...t.subs.map((s) => s.turns)]) {
+        let later = 0; // read dollars per token over the turns after this one, in the same compaction segment
+        const carry: number[] = [];
+        for (let i = turns.length - 1; i >= 0; i -= 1) {
+            carry[i] = later;
+            const p = rowFor(prices, family(turns[i].model));
+            later = turns[i].since === 1 ? 0 : later + (p ? p.cache_read / 1e6 : 0);
+        }
+        turns.forEach((x, i) => {
+            for (const r of x.results || []) {
+                if (r.tokens < HUGE_RESULT_TOKENS) continue;
+                const key = r.file ? `${r.tool} ${r.file}` : r.tool;
+                const cur = byTool.get(key) || { n: 0, usd: 0, tokens: 0 };
+                byTool.set(key, { n: cur.n + 1, usd: cur.usd + r.tokens * carry[i], tokens: cur.tokens + r.tokens });
+            }
+        });
+    }
+    const total = sum([...byTool.values()].map((v) => v.usd));
+    if (total <= 0) return null;
+    const perTool = new Map<string, number>();
+    for (const [k, v] of byTool) perTool.set(k.split(' ')[0], (perTool.get(k.split(' ')[0]) || 0) + v.usd);
+    const top = [...perTool].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    const lines = [...byTool].sort((a, b) => b[1].usd - a[1].usd).slice(0, 5).map(([k, v]) => `${k}: ${plural(v.n, 'result')}, avg ${Math.round(v.tokens / v.n / 1000)}k tokens, carried ${usd(v.usd)}`);
+    return {
+        bucket: `Huge tool results (${Math.round(HUGE_RESULT_TOKENS / 1000)}k tokens or more) carried across later turns`,
+        usd: total,
+        detail: lines,
+        fix: hugeFix(top),
+    };
+}
+
+/** Every bucket with something to report, most dollars first. */
+export function leaks(t: Transcripts, prices: Prices, opts: LeakOptions = {}): Leak[] {
+    const roll = opts.rollTokens === undefined ? null : rollReplay(t, prices, opts.rollTokens, opts.floorTokens);
+    return [readOnlySubagents(t, prices), subagentCacheTtl(t, prices), roll, hugeResults(t, prices)].filter((l): l is Leak => l !== null).sort((a, b) => b.usd - a.usd);
+}
+
+/** The ranked report as text; says so when nothing avoidable was found. */
+export function formatLeaks(list: Leak[]): string {
+    const head = 'Avoidable spend, priced from model_prices (counterfactuals on the same tokens, not billed amounts)';
+    if (!list.length) return `${head}\nnothing found`;
+    return [head, ...list.flatMap((l, i) => [`${i + 1}. ${usd(l.usd)}  ${l.bucket}`, ...l.detail.map((d) => `     ${d}`), `   fix: ${l.fix}`])].join('\n');
+}

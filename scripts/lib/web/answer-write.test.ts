@@ -17,7 +17,8 @@ import { ANSWER_PATH, SKIP_TEXT, parseAnswer } from './answer-write.ts';
 import { generate } from '../status-page/generate.ts';
 import { extractFields } from '../status-page/inline.ts';
 import { PODIUM_FILE, readSeenPage } from '../status-page/seen.ts';
-import { check } from '../../event-types/status-watch.ts';
+import { check, diff, recordEdits } from '../../event-types/status-watch.ts';
+import { openStore } from '../journal/store.ts';
 
 const NOW = new Date('2026-10-07T15:00:00Z');
 const TOKEN = 'test-token-0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab';
@@ -80,6 +81,12 @@ function writePage(r: Rig): string {
   const out = generate({ statusDir: r.statusDir, dryRun: false, snapshot: false, command: 'journal.ts status-page', config: PAGE_CONFIG, cachedPrsOnly: true }, deps);
   check(r.statusDir);
   return out.page;
+}
+/** Regenerates the page without the watcher looking afterwards, as a rebuild between an answer and the next check does. */
+function writePageOnly(r: Rig): string {
+  const { inputs } = readBoard(r.web, NOW);
+  const deps = { journal: (sub: 'status' | 'triage') => (sub === 'status' ? inputs.status : inputs.triage), fetchPrs: () => [], sleep: () => {}, now: () => NOW };
+  return generate({ statusDir: r.statusDir, dryRun: false, snapshot: false, command: 'journal.ts status-page', config: PAGE_CONFIG, cachedPrsOnly: true }, deps).page;
 }
 
 test('a typed answer closes the ask with the same row `journal.ts resolve --answer` writes', async () => {
@@ -179,25 +186,72 @@ test('parseAnswer accepts exactly the three shapes', () => {
   for (const bad of [null, 'x', [], {}, { id: 'ab', mode: 'skip' }, { id: 'ab12', mode: 'text' }, { id: 'ab12', mode: 'skip', answer: 'x' }, { id: 'ab12', mode: 'text', answer: 'x', y: 1 }]) assert.equal(parseAnswer(bad), null);
 });
 
-test('round trip: the note\'s stub is filled, the watcher reports nothing, and the next rebuild drops the ask', async () => {
+/** The watcher's check with the ledger known, as in production: the recorder for this rig's ledger. */
+const watch = (r: Rig, nowMs?: number) => check(r.statusDir, nowMs === undefined ? undefined : { now: nowMs }, () => {
+  const store = openStore({ vault: r.vault, project: 'p', dryRun: false, warn: () => {} });
+  return (edits, at) => recordEdits(store, edits, at);
+});
+const lines = (r: Rig): string[] => diff(null, watch(r)).map((e) => e.summary);
+
+test('round trip: the answer reaches the watcher as one event, never two, and the next rebuild drops the ask', async () => {
   const r = await rig('trip');
   const page = writePage(r);
   assert.match(page, /`aa11`[^\n]*\n  > answer: \n/, 'the generator wrote an empty stub');
-  assert.equal(check(r.statusDir).fresh.length, 0);
+  assert.deepEqual(lines(r), []);
 
   const res = await answer(r, { id: 'aa11', mode: 'text', answer: 'Merge it, then tag it' });
   assert.equal(res.status, 200);
   const note = readFileSync(join(r.statusDir, PODIUM_FILE), 'utf8');
   assert.deepEqual(extractFields(note).answers, { aa11: 'Merge it, then tag it' }, 'the note shows the answer where a typed one would be');
-  assert.equal(extractFields(readSeenPage(r.statusDir) ?? '').answers.aa11, 'Merge it, then tag it', 'the watcher\'s baseline agrees');
-  assert.deepEqual(check(r.statusDir).fresh, [], 'no second event for an answer already recorded');
+  assert.equal(extractFields(readSeenPage(r.statusDir) ?? '').answers.aa11, undefined, 'the baseline is left alone, so the answer is an unreported edit');
   assert.equal(closers(r).length, 1);
+
+  assert.deepEqual(lines(r), ['ask aa11 (decision: Merge it?) answered on the page, already recorded and closed: Merge it, then tag it']);
+  assert.deepEqual(lines(r), [], 'the second check is quiet');
+  assert.equal(closers(r).length, 1, 'reporting writes no second closing row');
+  assert.equal(rows(r).filter((x) => x.kind === 'answer').length, 0, 'and no answer row for an ask that is already closed');
 
   const next = writePage(r);
   assert.ok(!next.includes('`aa11`'), 'the answered ask leaves the page');
   assert.ok(next.includes('`bb22`') && next.includes('`cc33`'), 'the others stay');
-  assert.deepEqual(check(r.statusDir).fresh, []);
+  assert.deepEqual(lines(r), []);
   assert.deepEqual(r.logged, []);
+});
+
+test('each of the three buttons wakes the watcher once, with the words that were recorded', async () => {
+  const r = await rig('buttons', [...ASKS.slice(0, 2), { ...ASKS[2], door: 'two-way' }]);
+  writePage(r);
+  assert.equal((await answer(r, { id: 'aa11', mode: 'recommend' })).status, 200);
+  assert.equal((await answer(r, { id: 'bb22', mode: 'text', answer: 'Call it Orion' })).status, 200);
+  assert.equal((await answer(r, { id: 'cc33', mode: 'skip' })).status, 200);
+  const got = lines(r);
+  assert.equal(got.length, 3);
+  assert.ok(got[0]?.endsWith('answered on the page, already recorded and closed: Take the recommendation: Merge it today'));
+  assert.ok(got[1]?.endsWith('already recorded and closed: Call it Orion'));
+  assert.ok(got[2]?.endsWith(`already recorded and closed: ${SKIP_TEXT}`));
+  assert.deepEqual(lines(r), []);
+});
+
+test('a rebuild before the watcher looks keeps the answer under Unprocessed answers, and it is still reported once', async () => {
+  const r = await rig('rebuild');
+  writePage(r);
+  assert.equal((await answer(r, { id: 'aa11', mode: 'text', answer: 'Do it' })).status, 200);
+  const rebuilt = writePageOnly(r);
+  assert.match(rebuilt, /## Unprocessed answers\n\n- \[ \] `aa11` \(no longer on the board\)\n {2}> answer: Do it/);
+  assert.deepEqual(lines(r).map((l) => l.replace(/ \(decision.*?\)/, '')), ['ask aa11 answered on the page, already recorded and closed: Do it']);
+  assert.deepEqual(lines(r), []);
+  writePageOnly(r);
+  assert.deepEqual(lines(r), [], 'the next rebuild drops it and stays quiet');
+});
+
+test('an answer the session records itself with resolve never wakes the watcher', async () => {
+  const r = await rig('session');
+  writePage(r);
+  const out = spawnSync(process.execPath, [JOURNAL, 'resolve', 'aa11', '--answer', 'Done in chat', '--allow-unmarked', '--vault', r.vault, '--project', 'p'], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '' } });
+  assert.equal(closers(r).length, 1, `resolve wrote its row: ${out.stderr}`);
+  assert.deepEqual(lines(r), []);
+  writePageOnly(r);
+  assert.deepEqual(lines(r), []);
 });
 
 test('an answer typed in the note and not yet reported is not overwritten or doubled: the web route refuses it', async () => {
@@ -211,7 +265,7 @@ test('an answer typed in the note and not yet reported is not overwritten or dou
   assert.equal(closers(r).length, 0);
   assert.match(readFileSync(path, 'utf8'), /> answer: typed by hand/);
   assert.equal((await answer(r, { id: 'cc33', mode: 'text', answer: 'other asks still work' })).status, 200);
-  assert.equal(check(r.statusDir).fresh.length, 1, 'the typed answer is still reported once, as before');
+  assert.equal(check(r.statusDir).fresh.length, 2, 'the typed answer is still reported once, as before, and the web answer beside it');
 });
 
 test('with no note yet the answer is still recorded in the ledger', async () => {

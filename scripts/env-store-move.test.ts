@@ -141,12 +141,12 @@ test('--dry-run reports and changes nothing', () => {
 
 test('projectFromBranch picks an existing project named in the branch, never shared, else undefined', () => {
   const s = setup();
-  for (const p of ['teamselect', 'bayada', 'shared']) mkdirSync(join(s.store, 'proj', p), { recursive: true });
-  assert.equal(projectFromBranch(s.store, 'proj', 'feat/PROJ-12-teamselect-writeback'), 'teamselect');
-  assert.equal(projectFromBranch(s.store, 'proj', 'fix/PROJ-3-Bayada_sync'), 'bayada');
+  for (const p of ['orchard', 'bakery', 'shared']) mkdirSync(join(s.store, 'proj', p), { recursive: true });
+  assert.equal(projectFromBranch(s.store, 'proj', 'feat/PROJ-12-orchard-pressing'), 'orchard');
+  assert.equal(projectFromBranch(s.store, 'proj', 'fix/PROJ-3-Bakery_sync'), 'bakery');
   assert.equal(projectFromBranch(s.store, 'proj', 'feat/PROJ-1-shared-thing'), undefined);
   assert.equal(projectFromBranch(s.store, 'proj', 'feat/PROJ-1-other'), undefined);
-  assert.equal(projectFromBranch(s.store, 'nope', 'feat/teamselect'), undefined);
+  assert.equal(projectFromBranch(s.store, 'nope', 'feat/orchard'), undefined);
   assert.equal(projectFromBranch(s.store, 'proj', undefined), undefined);
 });
 

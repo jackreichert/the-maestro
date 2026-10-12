@@ -5,7 +5,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, write
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_ROWS, STANDING_FILE, appendEvent, conditionLines, conditionStates, isRoutine, readEvents, recordRan, standingBlock, standingState, validRow } from './lib/standing.ts';
+import { DEFAULT_ROWS, STANDING_FILE, appendEvent, conditionLines, conditionStates, dueText, isRoutine, readEvents, recordRan, standingBlock, standingState, validRow } from './lib/standing.ts';
 import type { CheckContext, StandingEvent } from './lib/standing.ts';
 import { commitmentLines } from './lib/journal/handoff.ts';
 import { addWatch } from './lib/watch-registry.ts';
@@ -259,6 +259,31 @@ test('commitmentLines: open decisions by id and kind, with a date only from a st
   assert.match(out, /- `k2y8` \[open\] kind: decision, due when decided/);
   assert.match(out, /- `\[id withheld\]` \[open\] kind: decision/);
   assert.doesNotMatch(out, /Mithril|hunter2|Hunter2|wifi/i);
+});
+
+test('inherited object names are not checks: refused by validRow and standing add, and a stored bad row never crashes standing list', () => {
+  const ok = { id: 'x', trigger: 't', action: 'a', who: 'w' };
+  const inherited = ['constructor', 'toString', '__proto__', 'hasOwnProperty'];
+  for (const name of inherited) assert.match(validRow({ ...ok, check: name }) ?? '', /unknown check/, name);
+  for (const name of inherited) {
+    const state = standingState([{ op: 'add', ...ok, check: name, at: new Date(NOON).toISOString() }], healthy()).find((r) => r.row.id === 'x');
+    assert.ok(state, name);
+    assert.equal(state.status, 'failing', name);
+    assert.match(dueText(state), /unknown check/, name);
+  }
+  const { vault, events } = setup();
+  for (const name of inherited) {
+    const r = cli(vault, events, 'standing', 'add', 'x', '--trigger', 't', '--action', 'a', '--who', 'w', '--check', name);
+    assert.equal(r.code, 1, name);
+    assert.match(r.err, /unknown check/, name);
+  }
+  mkdirSync(join(vault, '..'), { recursive: true });
+  const file = standingFile(vault);
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(file, `${JSON.stringify({ op: 'add', id: 'bad', trigger: 't', action: 'a', who: 'w', check: 'constructor', at: new Date(NOON).toISOString() })}\n`);
+  const list = cli(vault, events, 'standing', 'list');
+  assert.equal(list.code, 0, list.err);
+  assert.doesNotMatch(list.err, /TypeError/);
 });
 
 test('cli: standing add refuses an id with digits or punctuation, and accepts lowercase words', () => {

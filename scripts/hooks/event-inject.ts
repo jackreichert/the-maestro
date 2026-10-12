@@ -17,8 +17,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { claimFor } from '../event-loop.ts';
 import { EVENT_DIR } from '../local-config.ts';
-import { lockHolder } from '../lib/watch-registry.ts';
+import { listWatches, lockHolder } from '../lib/watch-registry.ts';
 import { hasLiveWaiter, rearmLine } from '../lib/waiters.ts';
+import { readAdopt } from '../lib/adopt.ts';
+import { adoptionBlock } from '../lib/session-adopt.ts';
 import type { InboxEntry } from '../lib/event-inbox.ts';
 import { liveLoopHealth } from '../lib/loop-health-live.ts';
 import type { LoopHealth } from '../lib/loop-health.ts';
@@ -31,9 +33,11 @@ export interface InjectDeps {
   health: () => LoopHealth;
   /** The re-arm line when a loop is running and `window` has no live waiter, else ''. Left out, the hook says nothing about waiters. */
   waiter?: (window: string | undefined) => string;
+  /** SessionStart only: the adopted queue, wake schedule and cron mirror; '' when none. Absent in older callers. */
+  adoption?: (loop: LoopHealth) => string;
 }
 
-/** `thread arya-scraper#542 (human)`, or `3 new texts from Jack (read with claude-inbox --new)` for the inbox type. Fields only. */
+/** `thread avonlea-api#542 (human)`, or `3 new texts from Jack (read with claude-inbox --new)` for the inbox type. Fields only. */
 export function headline(e: InboxEntry): string {
   const { repo, number, who, count } = e.fields;
   if (e.kind === 'message') return `${count ?? 'new'} new text${count === 1 ? '' : 's'} from Jack (read with claude-inbox --new)`;
@@ -44,6 +48,11 @@ export function headline(e: InboxEntry): string {
 /** A healthy or unused loop is not worth a line on every prompt; a SessionStart always shows a non-empty one. */
 const worthShowing = (h: LoopHealth, start: boolean): boolean => h.line !== '' && (start || !['ok', 'quiet', 'absent'].includes(h.state));
 
+/** The adoption block; a throw yields none, so a broken record cannot hide the events above it. */
+function safeAdoption(deps: InjectDeps, health: LoopHealth): string {
+  try { return deps.adoption?.(health) ?? ''; } catch { return ''; }
+}
+
 /** The text for one hook call; '' when there is nothing to say. Never throws. */
 export function inject(event: string | undefined, window: string | undefined, deps: InjectDeps): string {
   try {
@@ -52,8 +61,9 @@ export function inject(event: string | undefined, window: string | undefined, de
     const lines = events.map((e) => `- ${headline(e)}`);
     const showLoop = worthShowing(health, event === 'SessionStart') || (events.length > 0 && health.line !== '');
     const waiter = deps.waiter?.(window) ?? '';
-    if (!lines.length && !showLoop && !waiter) return '';
-    return [lines.length ? `Unseen events (${lines.length}; act, then \`event-loop.ts events ack <id>\`):` : '', ...lines, showLoop ? health.line : '', waiter].filter(Boolean).join('\n');
+    const adoption = event === 'SessionStart' ? safeAdoption(deps, health) : '';
+    if (!lines.length && !showLoop && !waiter && !adoption) return '';
+    return [lines.length ? `Unseen events (${lines.length}; act, then \`event-loop.ts events ack <id>\`):` : '', ...lines, showLoop ? health.line : '', waiter, adoption].filter(Boolean).join('\n');
   } catch {
     return '';
   }
@@ -69,7 +79,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const input = JSON.parse(readFileSync(0, 'utf8') || '{}') as { session_id?: unknown; hook_event_name?: unknown };
     const window = resolveWindowId({ session: typeof input.session_id === 'string' ? input.session_id : undefined, ...windowEnv() });
-    const text = inject(typeof input.hook_event_name === 'string' ? input.hook_event_name : undefined, window, { claim: (w, n) => claimFor(EVENT_DIR, w, () => {}, n), health: () => liveLoopHealth(), waiter: (w) => waiterLine(w) });
+    const text = inject(typeof input.hook_event_name === 'string' ? input.hook_event_name : undefined, window, { claim: (w, n) => claimFor(EVENT_DIR, w, () => {}, n), health: () => liveLoopHealth(), waiter: (w) => waiterLine(w), adoption: (h) => { const now = Date.now(); return adoptionBlock({ adopt: readAdopt(EVENT_DIR, now), watches: listWatches(EVENT_DIR), loop: h.state, now }); } });
     if (text) console.log(text);
   } catch { /* fail open: print nothing */ }
   process.exit(0);

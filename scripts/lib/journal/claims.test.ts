@@ -61,7 +61,7 @@ test('claimStaleness judges a dead pid on this host, then age, and describeClaim
 });
 
 test('claim keys: scope is a safe slug, the key splits back, and only two different scopes coexist', () => {
-    assert.equal(claimScope('fix/MAESTRO-260-x'), 'fix-MAESTRO-260-x');
+    assert.equal(claimScope('fix/AV-260-x'), 'fix-AV-260-x');
     assert.equal(claimScope('///'), undefined);
     assert.equal(claimScope(undefined), undefined);
     assert.equal(claimKey('r', 'a'), 'r@a');

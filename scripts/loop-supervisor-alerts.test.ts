@@ -7,7 +7,7 @@ import { supervise, waitWithAlerts } from './loop-supervisor.ts';
 import { readHeartbeat, writeHeartbeat } from './lib/heartbeat.ts';
 import type { HeartbeatMode } from './lib/heartbeat.ts';
 import { loopHealth } from './lib/loop-health.ts';
-import { DEFAULT_ALERT_QUIET_HOURS, HEALTH_AFTER_MS, RESTART_LIMIT, noteRestart, runAlerts } from './lib/alert-policy.ts';
+import { DEFAULT_ALERT_QUIET_HOURS, HEALTH_AFTER_MS, noteRestart, runAlerts } from './lib/alert-policy.ts';
 
 const SUPERVISOR = 4242;
 const DEAD_CHILD = 999_999;
@@ -58,7 +58,7 @@ test('the alert tick runs after the supervisor wrote its own heartbeat, never ag
   } finally { rmSync(sim.dir, { recursive: true, force: true }); }
 });
 
-test('a supervisor that stops beating after a healthy stretch is still texted as DOWN once 15 minutes have passed', async () => {
+test('a supervisor that stops beating after a healthy stretch is not texted, even after 15 minutes', async () => {
   const healthy = simulate({ launches: 3, code: 0 });
   try {
     await healthy.run();
@@ -70,7 +70,7 @@ test('a supervisor that stops beating after a healthy stretch is still texted as
     const down = () => loopHealth({ now, heartbeat: readHeartbeat(dir), lockPid: null, supervisor: { state: 'running', pid: SUPERVISOR }, required: false, alive: (pid) => pid === SUPERVISOR, tz: 'UTC' });
     const sent: string[] = [];
     for (let i = 0; i < 4; i += 1, now += 6 * 60_000) runAlerts({ eventDir: dir, command: ['notify'], now, entries: [], health: down(), config: CFG, run: (_c, a) => { sent.push(a.join(' ')); return { status: 0 }; } });
-    assert.deepEqual(sent, ['maestro: loop DOWN']);
+    assert.deepEqual(sent, []);
   } finally { rmSync(healthy.dir, { recursive: true, force: true }); }
 });
 
@@ -83,7 +83,7 @@ test('a throwing alert tick is logged and does not stop the wait', async () => {
   assert.match(logs[0] ?? '', /^alert tick failed: nope/);
 });
 
-test('a loop that stays down is texted DOWN once, and once as recovered when the supervisor beats again', async () => {
+test('a loop that stays down, then recovers, sends no text', async () => {
   const healthy = simulate({ launches: 1, code: 0 });
   try {
     await healthy.run();
@@ -93,21 +93,20 @@ test('a loop that stays down is texted DOWN once, and once as recovered when the
     const tick = (health: ReturnType<typeof loopHealth>): void => { runAlerts({ eventDir: dir, command: ['notify'], now, entries: [], health, config: CFG, run: (_c, a) => { sent.push(a.join(' ')); return { status: 0 }; } }); };
     const downHealth = () => loopHealth({ now, heartbeat: { pid: DEAD_CHILD, at: iso(now - 20 * 60_000), tick: 1, watchesLive: 1, sleepingUntil: iso(now - 20 * 60_000), mode: 'run', lastError: '' }, lockPid: null, supervisor: { state: 'running', pid: SUPERVISOR }, required: false, alive: (pid) => pid === SUPERVISOR, tz: 'UTC' });
     for (let i = 0; i < 6; i += 1, now += 6 * 60_000) tick(downHealth());
-    assert.deepEqual(sent, ['maestro: loop DOWN']);
+    assert.deepEqual(sent, []);
     writeHeartbeat(dir, { pid: SUPERVISOR, at: iso(now), tick: 0, watchesLive: 0, sleepingUntil: iso(now + 300_000), mode: 'idle', lastError: '' });
     const okHealth = () => loopHealth({ now, heartbeat: readHeartbeat(dir), lockPid: null, supervisor: { state: 'running', pid: SUPERVISOR }, required: false, alive: (pid) => pid === SUPERVISOR, tz: 'UTC' });
     for (let i = 0; i < 4; i += 1, now += 6 * 60_000) { writeHeartbeat(dir, { pid: SUPERVISOR, at: iso(now), tick: 0, watchesLive: 0, sleepingUntil: iso(now + 300_000), mode: 'idle', lastError: '' }); tick(okHealth()); }
-    assert.deepEqual(sent, ['maestro: loop DOWN', 'maestro: loop recovered']);
+    assert.deepEqual(sent, []);
   } finally { rmSync(healthy.dir, { recursive: true, force: true }); }
 });
 
-test('a supervisor that restarts the loop on crashes texts once when RESTART_LIMIT land in the window, and nothing for exit 10 relaunches', async () => {
+test('a supervisor that restarts the loop on crashes does not text the burst, and exit 10 relaunches text nothing either', async () => {
   const crashing = simulate({ launches: 12, code: 1 });
   const digests = simulate({ launches: 12, code: 10 });
   try {
     await crashing.run();
-    assert.equal(crashing.texts.length, 1, crashing.texts.join(' | '));
-    assert.match(crashing.texts[0] ?? '', new RegExp(`^maestro: loop restarted ${RESTART_LIMIT} times in an hour$`));
+    assert.deepEqual(crashing.texts, []);
     await digests.run();
     assert.deepEqual(digests.texts, []);
   } finally { rmSync(crashing.dir, { recursive: true, force: true }); rmSync(digests.dir, { recursive: true, force: true }); }

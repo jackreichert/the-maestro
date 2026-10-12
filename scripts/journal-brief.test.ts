@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentPrompt, briefPaths, briefText, libraryBlock } from './lib/journal/brief.ts';
@@ -125,8 +125,28 @@ test('a desk that claimed the repo itself, as desks.md says, can brief its own i
     const r = run(['brief', id, '--out-dir', outDir, ...MARK]);
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /the desk's own claim, kept/);
-    assert.equal(rows().filter((x) => x.kind === 'claim').length, 1, 'no second claim row');
     assert.equal(existsSync(briefPaths(outDir, id).brief), true);
+});
+
+test('a kept desk claim still gets a brief claim row naming the scope and branch, so the stall detector watches it', async () => {
+    const id = start('job', '--repo', 'repo-c', '--stream', 'Cee');
+    assert.equal(run(['claim', 'repo-c', '--desk', 'Cee', '--worktree', 'repo-c-wt', ...MARK]).code, 0);
+    const r = run(['brief', id, '--desk', 'Cee', '--worktree', 'repo-c-wt', '--branch', 'feat/x', '--out-dir', outDir, ...MARK]);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /the desk's own claim, kept/);
+    const row = rows().find((x) => x.kind === 'claim' && String(x.text).endsWith(`: brief ${id}`));
+    assert.ok(row, 'a claim row ending ": brief <id>" exists');
+    assert.equal(row.repo, 'repo-c');
+    assert.equal(row.scope, 'repo-c-wt');
+    assert.equal(row.branch, 'feat/x');
+    const before = rows().length;
+    assert.equal(run(['brief', id, '--desk', 'Cee', '--worktree', 'repo-c-wt', '--branch', 'feat/x', '--out-dir', outDir, ...MARK]).code, 0);
+    assert.equal(rows().length, before, 'a rerun adds nothing');
+    const stall = await import('./event-types/stall.ts');
+    const T = Date.now() + 10 * 3600_000;
+    const io = { stallMinutes: 90, rows: () => rows() as never, worktrees: () => [{ path: '/c/repo-c-wt', branch: 'feat/x' }], activity: () => ({ at: Date.now(), what: 'edited a.ts' }), reportAt: () => 0, dispatchFiles: () => null, live: () => null };
+    const next = stall.check('/c', { now: T, prev: null, run: (() => ({ status: 1, stdout: '', stderr: '' })) as never }, io);
+    assert.deepEqual(next.fresh.map((f) => f.id), [id], 'the claim-first dispatch is watched');
 });
 
 test('another desk is still refused a repo the first desk claimed by hand', () => {
@@ -482,3 +502,21 @@ test('a brief that takes the repo while a release is mid-way does not lose its g
     assert.equal(third.code, 1, third.err);
     assert.match(third.err, /(already has a writer brief for item|already claimed by)/);
 });
+
+for (const [flag, value] of [['--branch', 'bad..name'], ['--worktree', '/tmp/x\ny']] as const) {
+    test(`brief refuses an invalid ${flag} before it writes a claim, a grant or a brief file`, () => {
+        const id = start('fix the widget', '--repo', 'repo-a', '--stream', 'Alpha');
+        const before = rows().length;
+        const r = run(['brief', id, '--out-dir', outDir, flag, value, ...MARK]);
+        assert.notEqual(r.code, 0, 'the bad flag is refused');
+        assert.ok(r.err.length > 0, 'the refusal says why');
+        const claims = join(vault, 'Projects', 'test-proj', 'Claims');
+        const left = existsSync(claims) ? readdirSync(claims, { recursive: true }).map(String) : [];
+        assert.deepEqual(left.filter((f) => f.endsWith('.lock')), [], 'no repo claim and no item grant is left behind');
+        assert.equal(existsSync(briefPaths(outDir, id).brief), false, 'no brief file');
+        assert.equal(rows().length, before, 'no rows written');
+        // The repo is free: another desk can brief a different item in it, and a retry with valid input works.
+        const other = start('other job', '--repo', 'repo-a', '--stream', 'Beta');
+        assert.equal(run(['brief', other, '--out-dir', outDir, ...MARK]).code, 0);
+    });
+}

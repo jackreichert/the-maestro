@@ -13,6 +13,7 @@ import type { GhStubConfig } from './lib/gh-stub.ts';
 import type { CadenceConfig } from './lib/cadence.ts';
 import type { CheckContext, Run, Watch, WatchEvent } from './lib/types.ts';
 import { cleanEnv } from './lib/test-env.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 const NOON = Date.parse('2026-10-01T12:00:00Z');
 const DAY: CadenceConfig = { quietHours: 'off' };
@@ -23,7 +24,7 @@ const watchNamed = (id: string): Watch => ({ op: 'add', id, type: 'pr-watch', ta
 function world(config: GhStubConfig) {
   const env = installGhStub(config);
   const run: Run = (cmd, args) => {
-    const r = spawnSync(cmd, args, { encoding: 'utf8', env });
+    const r = spawnSync(...toolCommand(cmd, args, env), { encoding: 'utf8', env });
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
   return {

@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { stubEnv, writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildState, parseRef } from './pr-state.ts';
@@ -26,15 +27,14 @@ const state = (over: Record<string, unknown>) => buildState({ repo: 'o/r', numbe
 function run(fixtures: Record<number, unknown>, ...args: string[]) {
   const dir = mkdtempSync(join(tmpdir(), 'pr-state-'));
   writeFileSync(join(dir, 'fixtures.json'), JSON.stringify(fixtures));
-  writeFileSync(join(dir, 'gh'), `#!${process.execPath}
+  const stub = writeStub(join(dir, 'gh.cjs'), `#!${process.execPath}
 const f = JSON.parse(require('node:fs').readFileSync(${JSON.stringify(join(dir, 'fixtures.json'))}, 'utf8'));
 const a = process.argv.slice(2);
 const n = a.find((x) => x.startsWith('number=')).slice(7);
 if (!f[n]) { console.error('GraphQL: Could not resolve to a PullRequest'); process.exit(1); }
 console.log(JSON.stringify({ data: { repository: { pullRequest: f[n] } } }));
 `);
-  chmodSync(join(dir, 'gh'), 0o755);
-  return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } });
+  return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env: { ...process.env, ...stubEnv('MAESTRO_GH_BIN', stub) } });
 }
 
 test('parseRef takes owner/repo#N and PR URLs, rejects the rest', () => {
@@ -44,13 +44,13 @@ test('parseRef takes owner/repo#N and PR URLs, rejects the rest', () => {
 });
 
 test('an approval dismissed by a later push reads DISMISSED, not "nothing to lose"', () => {
-  const s = state({ reviews: { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z', OLD), review('acehand', 'DISMISSED', '2026-10-01T10:00:00Z', OLD)] } });
+  const s = state({ reviews: { pageInfo: {}, nodes: [review('rosie-cotton', 'APPROVED', '2026-10-01T10:00:00Z', OLD), review('rosie-cotton', 'DISMISSED', '2026-10-01T10:00:00Z', OLD)] } });
   assert.equal(s.reviewers[0]!.verdict, 'DISMISSED');
   assert.deepEqual(s.pushWarning, []);
 });
 
 test('an approval on an older commit is APPROVED-stale and raises no push warning', () => {
-  const s = state({ reviews: { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z', OLD)] } });
+  const s = state({ reviews: { pageInfo: {}, nodes: [review('rosie-cotton', 'APPROVED', '2026-10-01T10:00:00Z', OLD)] } });
   assert.equal(s.reviewers[0]!.verdict, 'APPROVED-stale');
   assert.deepEqual(s.pushWarning, []);
 });
@@ -67,7 +67,7 @@ test('a reviewer who only commented is COMMENTED-only', () => {
 
 test('threads split human vs bot; resolved ones are ignored; text is cut to 200 chars', () => {
   const s = state({ reviewThreads: { pageInfo: {}, nodes: [
-    thread('copilot-pull-request-reviewer', 'Bot', 'a.ts', 3, 'x'.repeat(500)), thread('acehand', 'User', 'b.ts', 9, 'please rename'), thread('acehand', 'User', 'c.ts', 1, 'done', true),
+    thread('copilot-pull-request-reviewer', 'Bot', 'a.ts', 3, 'x'.repeat(500)), thread('rosie-cotton', 'User', 'b.ts', 9, 'please rename'), thread('rosie-cotton', 'User', 'c.ts', 1, 'done', true),
   ] } });
   assert.equal(s.botThreads.length, 1);
   assert.equal(s.botThreads[0]!.text.length, 200);
@@ -76,7 +76,7 @@ test('threads split human vs bot; resolved ones are ignored; text is cut to 200 
 });
 
 const CHECK = (over: Record<string, unknown>) => ({ commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { pageInfo: {}, nodes: [{ __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS', ...over }] } } } }] } });
-const APPROVED = { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z')] };
+const APPROVED = { pageInfo: {}, nodes: [review('rosie-cotton', 'APPROVED', '2026-10-01T10:00:00Z')] };
 
 test('a closed PR with an approval and CLEAN is not ready for review or to merge', () => {
   const s = state({ state: 'CLOSED', reviews: APPROVED });
@@ -104,7 +104,7 @@ test('approved on head and CLEAN is ready to merge and ready for review', () => 
 });
 
 test('dismissed approval, REVIEW_REQUIRED and BLOCKED (the 601 case) is ready for review but not to merge', () => {
-  const s = state({ reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'BLOCKED', reviews: { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z', OLD), review('acehand', 'DISMISSED', '2026-10-01T10:00:00Z', OLD)] } });
+  const s = state({ reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'BLOCKED', reviews: { pageInfo: {}, nodes: [review('rosie-cotton', 'APPROVED', '2026-10-01T10:00:00Z', OLD), review('rosie-cotton', 'DISMISSED', '2026-10-01T10:00:00Z', OLD)] } });
   assert.equal(s.readyForReview, true);
   assert.equal(s.readyToMerge, false);
   assert.match(s.mergeReasons.join(), /approval dismissed by a push/);
@@ -112,10 +112,10 @@ test('dismissed approval, REVIEW_REQUIRED and BLOCKED (the 601 case) is ready fo
 });
 
 test('a standing CHANGES_REQUESTED is not ready to merge even with threads resolved', () => {
-  const s = state({ reviewDecision: 'CHANGES_REQUESTED', reviews: { pageInfo: {}, nodes: [review('acehand', 'CHANGES_REQUESTED', '2026-10-01T10:00:00Z')] } });
+  const s = state({ reviewDecision: 'CHANGES_REQUESTED', reviews: { pageInfo: {}, nodes: [review('rosie-cotton', 'CHANGES_REQUESTED', '2026-10-01T10:00:00Z')] } });
   assert.equal(s.readyForReview, true);
   assert.equal(s.readyToMerge, false);
-  assert.match(s.mergeReasons.join(), /changes requested by acehand/);
+  assert.match(s.mergeReasons.join(), /changes requested by rosie-cotton/);
 });
 
 test('a changes request beats another reviewer\'s approval', () => {
@@ -137,7 +137,7 @@ test('failing checks block both verdicts', () => {
 });
 
 test('an approval on an older commit and BLOCKED is not ready to merge', () => {
-  const s = state({ mergeStateStatus: 'BLOCKED', reviews: { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z', OLD)] } });
+  const s = state({ mergeStateStatus: 'BLOCKED', reviews: { pageInfo: {}, nodes: [review('rosie-cotton', 'APPROVED', '2026-10-01T10:00:00Z', OLD)] } });
   assert.equal(s.readyForReview, true);
   assert.equal(s.readyToMerge, false);
   assert.match(s.mergeReasons.join(), /older commit/);
@@ -178,13 +178,13 @@ test('more than one page of threads fails closed', () => {
 
 test('CLI prints the loud lines for several PRs, one unreadable', () => {
   const fx = {
-    1: pr({ reviews: { pageInfo: {}, nodes: [review('acehand', 'APPROVED', '2026-10-01T10:00:00Z')] } }),
-    2: pr({ number: 2, mergeStateStatus: 'BLOCKED', reviews: { pageInfo: {}, nodes: [review('acehand', 'DISMISSED', '2026-10-01T10:00:00Z', OLD)] }, reviewThreads: { pageInfo: {}, nodes: [thread('copilot-pull-request-reviewer', 'Bot', 'a.ts', 3, 'nit')] } }),
+    1: pr({ reviews: { pageInfo: {}, nodes: [review('rosie-cotton', 'APPROVED', '2026-10-01T10:00:00Z')] } }),
+    2: pr({ number: 2, mergeStateStatus: 'BLOCKED', reviews: { pageInfo: {}, nodes: [review('rosie-cotton', 'DISMISSED', '2026-10-01T10:00:00Z', OLD)] }, reviewThreads: { pageInfo: {}, nodes: [thread('copilot-pull-request-reviewer', 'Bot', 'a.ts', 3, 'nit')] } }),
   };
   const r = run(fx, 'o/r#1', 'https://github.com/o/r/pull/2', 'o/r#3');
   assert.equal(r.status, 2);
-  assert.match(r.stdout, /PUSH WARNING: a push will dismiss 1 approval\(s\): acehand/);
-  assert.match(r.stdout, /reviewer acehand: DISMISSED on oldsha0000/);
+  assert.match(r.stdout, /PUSH WARNING: a push will dismiss 1 approval\(s\): rosie-cotton/);
+  assert.match(r.stdout, /reviewer rosie-cotton: DISMISSED on oldsha0000/);
   assert.match(r.stdout, /unresolved bot threads: 1/);
   assert.match(r.stdout, /^STATE: open\n/);
   assert.match(r.stdout, /READY-FOR-REVIEW: yes\nREADY-TO-MERGE: yes/);

@@ -12,7 +12,7 @@ const PAGE = [
 const edit = (page: string, from: string, to: string): string => { assert.ok(page.includes(from), from); return page.replace(from, to); };
 
 test('extractFields finds answers, ticks and priorities, and ignores empty stubs and the counts', () => {
-  assert.deepEqual(extractFields(PAGE), { answers: {}, ticks: { ab12: false, cd34: false }, priorities: ['Ship it | Alpha', 'Second'] });
+  assert.deepEqual(extractFields(PAGE), { answers: {}, discuss: {}, ticks: { ab12: false, cd34: false }, priorities: ['Ship it | Alpha', 'Second'] });
   const edited = edit(edit(PAGE, '`ab12` [#1](https://example.test/1)\n  > answer: ', '`ab12` [#1](https://example.test/1)\n  > answer: yes,\n  > and soon'), '- [ ] `cd34`', '- [x] `cd34`');
   const f = extractFields(edited);
   assert.deepEqual(f.answers, { ab12: 'yes, and soon' }, 'a quoted continuation joins the answer');
@@ -35,7 +35,7 @@ test('unprocessed reports new or changed answers, new ticks and changed prioriti
   const base = extractFields(PAGE);
   const cur = extractFields(edit(edit(PAGE, '2. Second', '2. Changed'), '`cd34`\n  > answer: ', '`cd34`\n  > answer: pick b'));
   const u = unprocessed(cur, base, base.priorities);
-  assert.deepEqual(u, { answers: { cd34: 'pick b' }, ticks: [], priorities: ['Ship it | Alpha', 'Changed'] });
+  assert.deepEqual(u, { answers: { cd34: 'pick b' }, discuss: {}, ticks: [], priorities: ['Ship it | Alpha', 'Changed'] });
   assert.deepEqual(unprocessed(cur, base, ['Ship it | Alpha', 'Changed']).priorities, null, 'the list the generator last rendered is not an edit');
   assert.equal(countUnprocessed(unprocessed(base, base, base.priorities)), 0);
   assert.equal(unprocessed(cur, null, undefined).priorities, null, 'with no record of what was shown, no priorities edit is claimed');
@@ -64,7 +64,7 @@ test('an answer for an ask that left the board is kept under Unprocessed answers
 });
 
 test('carryInline with nothing to carry returns the page unchanged', () => {
-  assert.equal(carryInline(PAGE, { answers: {}, ticks: [], priorities: null }, PAGE), PAGE);
+  assert.equal(carryInline(PAGE, { answers: {}, discuss: {}, ticks: [], priorities: null }, PAGE), PAGE);
 });
 
 test('a reordered priorities list keeps each stream mapping, so it can be set again unchanged', () => {
@@ -81,4 +81,42 @@ test('fillStub writes an answer into the ask\'s empty stub, adds one when the st
   assert.deepEqual(extractFields(bare ?? '').answers, { cd34: 'x y' });
   assert.equal(fillStub(filled, 'cd34', 'other'), null, 'an existing answer stays');
   assert.equal(fillStub(PAGE, 'zz99', 'x'), null, 'an ask that is not on the page');
+});
+
+test('a discuss mark is found with or without a topic, under an ask or naming it, and does not swallow or join an answer', () => {
+  const both = edit(PAGE, '`ab12` [#1](https://example.test/1)\n  > answer: ', '`ab12` [#1](https://example.test/1)\n  > answer: yes but\n  > discuss: the rollout order');
+  assert.deepEqual(extractFields(both).answers, { ab12: 'yes but' });
+  assert.deepEqual(extractFields(both).discuss, { ab12: 'the rollout order' });
+  const bare = edit(PAGE, '- [ ] `cd34`\n  > answer: ', '- [ ] `cd34`\n  > answer: \n  > discuss:');
+  assert.deepEqual(extractFields(bare).discuss, { cd34: '' }, 'a bare marker counts, with an empty topic');
+  assert.deepEqual(extractFields(bare).answers, {});
+  const named = edit(PAGE, '## PR board', '> discuss `ab12`: named\n\n## PR board');
+  assert.deepEqual(extractFields(named).discuss, { ab12: 'named' });
+  assert.deepEqual(extractFields(PAGE).discuss, {});
+});
+
+test('a new or changed discuss mark is unprocessed once, and carry puts it under the answer stub of the regenerated page', () => {
+  const edited = edit(PAGE, '- [ ] `cd34`\n  > answer: ', '- [ ] `cd34`\n  > answer: \n  > discuss: which option');
+  const u = unprocessed(extractFields(edited), extractFields(PAGE), undefined);
+  assert.deepEqual(u.discuss, { cd34: 'which option' });
+  assert.equal(countUnprocessed(u), 1);
+  assert.equal(countUnprocessed(unprocessed(extractFields(edited), extractFields(edited), undefined)), 0);
+  const carried = carryInline(PAGE, u, edited);
+  assert.match(carried, /- \[ \] `cd34`\n {2}> answer: \n {2}> discuss: which option\n/);
+  assert.deepEqual(extractFields(carried).discuss, { cd34: 'which option' });
+  assert.equal(carryInline(carried, u, edited), carried, 'carrying twice changes nothing');
+});
+
+test('carry replaces an answer the generator rendered from the ledger with the user\'s newer one, rather than adding a second line', () => {
+  const rendered = edit(PAGE, '- [ ] `cd34`\n  > answer: ', '- [ ] `cd34`\n  > answer: old words');
+  const edited = edit(PAGE, '- [ ] `cd34`\n  > answer: ', '- [ ] `cd34`\n  > answer: new words');
+  const u = unprocessed(extractFields(edited), extractFields(rendered), undefined);
+  const carried = carryInline(rendered, u, edited);
+  assert.equal(carried.split('answer: ').length, edited.split('answer: ').length);
+  assert.deepEqual(extractFields(carried).answers, { cd34: 'new words' });
+});
+
+test('a discuss mark for an ask that left the board is kept under Unprocessed answers', () => {
+  const u = { answers: {}, discuss: { zz99: 'later' }, ticks: [], priorities: null };
+  assert.match(carryInline(PAGE, u, PAGE), /## Unprocessed answers\n\n- \[ \] `zz99` \(no longer on the board\)\n {2}> answer: \n {2}> discuss: later\n$/);
 });

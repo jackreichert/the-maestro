@@ -20,7 +20,7 @@ The scripts read one small file. It is markdown, so it can sit inside an overlay
 ````markdown
 ```maestro-config
 overlay: <skill>            # or <plugin>:<skill>; omit for no overlay
-gh_org: <github-org>        # PR board scope; omit for no org filter
+gh_org: <github-org>        # PR board scope; the Podium PR list shows only repos owned by this org, and is empty with a warning when unset
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
@@ -74,6 +74,7 @@ tracker_key_pattern: \bABC-\d+\b  # regex for tracker keys in a PR title or bran
 local_key_prefixes: MAESTRO,MITHRIL  # key prefixes no tracker holds (local keys of personal repos); never counted as pending transitions; `none` clears; default MAESTRO,MITHRIL
 sweep_budget_seconds: 300     # the worktree sweep stops at the next repo boundary once over this many seconds, and names what it skipped; default 300
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.ts offers it; default 60
+stall_minutes: 90              # the stall event type reports a dispatched agent with no progress this long; default 90
 sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a worktree as a live skill; ~/.claude/skills and <container>/.claude/skills always count
 sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
 env_store_root: ~/dev-env/.env-store  # where environment files live outside worktrees, as <root>/<repo>/<project>/; a worktree whose env files are symlinks into it is safe for the sweep to remove; default shown
@@ -94,6 +95,7 @@ status_streams: Alpha, Beta # stream order on the Podium
 status_repo_streams: api=Alpha, web=Beta # repo (short name) to stream for the PR tables; last resort after ledger evidence and stream-overrides.json
 tracker_url_base: https://tracker.example.com/browse/ # tracker key links; omit for plain text
 scripts_dir: /path/to/scripts # shared scripts shelf: README.md index, scratch/, helpers/; a leading ~/ is expanded; omit to turn the shelf protocol off
+memory_dir: /path/to/memory # where `decide --scope working-rule` writes memory files and MEMORY.md; a leading ~/ is expanded; omit to refuse working rules
 ```
 ````
 
@@ -113,7 +115,9 @@ The user file is the first of:
 The overlay's `config.md` is found from the overlay name (set in the user file or `MAESTRO_OVERLAY`), first hit wins:
 
 3. **Plugin skill** (`<plugin>:<skill>`): Claude Code records installed plugins in `~/.claude/plugins/installed_plugins.json`, an object `plugins` keyed `<plugin>@<marketplace>`, each entry a list whose items carry an `installPath`. The skill is at `<installPath>/skills/<skill>/config.md`.
-4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repoills/<skill>/config.md`.
+4. **Sibling skill**: `../<skill>/config.md`, relative to this skill's directory. This is looked up both by the path the script was started through (so it works when this skill is a symlink into a repo) and by its real path.
+5. **Ancestor container**: `<dir>/.claude/skills/<skill>/config.md` for each directory above this checkout, so a checkout or worktree reached by its real path still finds its container's overlay. The overlay can name commands (`notify_command`), so a config found this way is used only after its symlinks are resolved and its real directory and every ancestor up to `/` are owned by you (or root) and not group- or world-writable; otherwise it is skipped.
+6. `~/.claude/skills/<skill>/config.md`.
 
 The environment variables that override single settings are `MAESTRO_OVERLAY`, `MAESTRO_GH_ORG`, `MAESTRO_GH_LOGIN`, `MAESTRO_PROJECT`, `MAESTRO_PROJECTS_DIR`, `LEDGER_ROOT`, `VAULT_ROOT`, and `MAESTRO_PR_TEST_GLOBS` / `MAESTRO_PR_CONFIG_GLOBS` / `MAESTRO_PR_DOCS_GLOBS` / `MAESTRO_PR_MECHANICAL_GLOBS`, `MAESTRO_TWIN_FLOW_REPOS`, `MAESTRO_GIT_EMAILS`, `MAESTRO_PROTECTED_BRANCHES`, `MAESTRO_SWEEP_MERGE_TARGETS`, `MAESTRO_SWEEP_IDLE_MINUTES`, `MAESTRO_SWEEP_PROTECT_SYMLINK_DIRS`, `MAESTRO_SWEEP_DISPOSABLE_IGNORED`, `MAESTRO_ENV_STORE_ROOT`, `MAESTRO_APPROVALS_REVIEW_DAY`, and the watcher overrides `MAESTRO_WATCH_MIN_INTERVAL`, `MAESTRO_WATCH_MAX_INTERVAL`, `MAESTRO_WATCH_QUIET_HOURS`, `MAESTRO_WATCH_QUIET_HOURS_MODE`, `MAESTRO_WATCH_QUIET_WEEKENDS`, `MAESTRO_WATCH_TZ`, and the event loop overrides `MAESTRO_EVENT_DIR`, `MAESTRO_NOTIFY_COMMAND`, `MAESTRO_WAKE_LAUNCH_COMMAND`, `MAESTRO_INBOX_COMMAND`, `MAESTRO_WATCH_NETWORK_FLOOR`, `MAESTRO_WATCH_LOCAL_FLOOR`, `MAESTRO_WATCH_TYPE_INTERVALS`, the scripts shelf override `MAESTRO_SCRIPTS_DIR`, and the Podium overrides `MAESTRO_STATUS_DIR`, `MAESTRO_PRIORITIES_MAX`, `MAESTRO_STATUS_PAGE_URI`, `MAESTRO_OBSIDIAN_VAULT`, `MAESTRO_STATUS_STREAMS`, `MAESTRO_STATUS_REPO_STREAMS`, `MAESTRO_TRACKER_URL_BASE` and `MAESTRO_TICKET_NOTE_PATH`. A variable that is set to the empty string counts as set.
 

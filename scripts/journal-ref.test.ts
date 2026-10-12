@@ -131,3 +131,18 @@ test('ref refuses when any --ref file does not exist and writes nothing', () => 
     assert.match(oneBad.err, /also-gone\.md is not an existing file/);
     assert.equal(ledgerText(), before);
 });
+
+test('rule keeps every --ref, not only the first, and accepts comma lists too', () => {
+    const a = memo('a.md');
+    const b = memo('b.md');
+    const c = memo('c.md');
+    const r = run('rule', 'always branch from staging', '--ref', a, '--ref', b, '--ref', `${c}`, ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(ledger().at(-1)?.refs, [a, b, c]);
+    const joined = run('rule', 'comma form still works', '--ref', `${a},${b}`, ...MARK);
+    assert.equal(joined.code, 0, joined.err);
+    assert.deepEqual(ledger().at(-1)?.refs, [a, b]);
+    const missing = run('rule', 'second ref is checked too', '--ref', a, '--ref', join(files, 'nope.md'), ...MARK);
+    assert.equal(missing.code, 1);
+    assert.match(missing.err, /nope\.md is not an existing file/);
+});

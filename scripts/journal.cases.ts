@@ -4,6 +4,7 @@ import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync, renameSync } from 'node:fs';
+import { stubEnv, writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
@@ -442,9 +443,9 @@ test('archived items are hidden by default and shown with --include-archived; un
     assert.equal(parse(shown).done.length, 1);
     assert.match(run('standup', '--include-archived').out, /ship the widget/);
     const current = () => readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
-    assert.doesNotMatch(current(), /ship the widget/);
+    assert.doesNotMatch(current(), /\[\[Streams\/Launch\]\]: /, 'the archived stream has no counts on CURRENT');
     run('render', '--include-archived');
-    assert.match(current(), /ship the widget/);
+    assert.match(current(), /\[\[Streams\/Launch\]\]: 1 done/, 'its finished work counts again; done rows are not inlined on the slim CURRENT');
 
     assert.equal(run('unarchive', 'Launch', ...MARK).code, 0);
     assert.equal(registry().streams.Launch.status, 'active');
@@ -658,7 +659,9 @@ test('roll keeps queued items open, archives only finished work, and says how ma
     assert.deepEqual(parse<Doc>(run('status', '--json').out).queued.map((i) => i.id).sort(), [later, parked].sort());
     const archive = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', `${new Date().toISOString().slice(0, 10)}.md`), 'utf8');
     assert.match(archive, /## Queued[^]*later job/, 'the dated note shows what was queued');
-    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
+    const curNow = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
+    assert.match(curNow, /2 queued/, 'CURRENT counts the queue; the rows are on the page');
+    assert.match(readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Launch.md'), 'utf8'), /## Queued\n\n- `\w+` later job/);
     assert.equal(run('roll').code, 0, 'a second roll changes nothing about the queue');
     assert.equal(parse<Doc>(run('status', '--json').out).queued.length, 2);
 });
@@ -1165,7 +1168,7 @@ test('roll commits the changed ledger files when ledger_git_autocommit is on, by
     assert.equal(git(vault, 'log', '-1', '--format=%s').stdout.trim(), `chore(ledger): roll ${day}`);
     const files = git(vault, 'show', '--name-only', '--format=', 'HEAD').stdout.trim().split('\n').sort();
     assert.deepEqual(files, [
-        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/ledger.jsonl',
+        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/GUIDANCE.md', 'Projects/test-proj/Journal/Streams/Other.md', 'Projects/test-proj/Journal/ledger.jsonl',
     ].sort());
     assert.equal(git(vault, 'status', '--porcelain').stdout.trim(), '');
     assert.match(runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll').out, /committed \d+ path\(s\)/);   // a re-roll appends a row, so it commits again
@@ -1211,7 +1214,7 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     run('start', 'loose', ...MARK);
     const r = run('render');
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /3 stream page\(s\)/);
+    assert.match(r.out, /4 stream page\(s\)/);   // Launch, Maestro, Quiet, and Other for the item with no stream
 
     const launch = readFileSync(streamPage('Launch'), 'utf8');
     assert.match(launch, /^stream: Launch$/m);
@@ -1224,13 +1227,15 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     assert.match(section2(readFileSync(streamPage('Maestro'), 'utf8'), 'Awaiting you'), /maestro question\?/);
     assert.match(readFileSync(streamPage('Quiet'), 'utf8'), /## In flight\n\n_none_/);
 
-    const cur = currentMd();   // still the whole board, grouped by stream, with links
-    assert.match(cur, /# Launch\n\nStream page: \[\[Streams\/Launch\]\]/);
-    assert.match(cur, /# Maestro\n\nStream page: \[\[Streams\/Maestro\]\]/);
+    const cur = currentMd();   // slim: open rows plus a link and counts per stream page
+    assert.match(cur, /- \[\[Streams\/Launch\]\]: 2 in flight, 1 blocked, 1 done/);
+    assert.match(cur, /- \[\[Streams\/Maestro\]\]: 1 awaiting/);
     assert.match(cur, /launch work/);
+    assert.doesNotMatch(cur, /launch blocker|finished thing/, 'blocked and done rows are on the stream page only');
     assert.match(cur, /maestro question\?/);
     assert.match(cur, /loose/);
-    assert.equal(existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'Streams', 'Other.md')), false);
+    assert.match(cur, /- \[\[Streams\/Other\]\]: 1 item\(s\) with no stream/);
+    assert.match(readFileSync(streamPage('Other'), 'utf8'), /loose/, 'items with no stream stay reachable on the Other page');
 });
 const section2 = (text: string, title: string) => text.split(new RegExp(`^## ${title}.*$`, 'm'))[1].split(/^## /m)[0];
 
@@ -1743,10 +1748,10 @@ test('handoff lists the worktrees a sweep would keep under Cleanup candidates, a
     assert.deepEqual([existsSync(w.clean), existsSync(w.dirty)], [true, true]);
 });
 
-// ── rules, pending decisions and the status header (MAESTRO-13) ─────────────
+// ── rules, pending decisions and the status header ─────────────
 
 test('a decision is a record: log --kind decision never shows as awaiting', () => {
-    assert.equal(run('log', 'Jack rule: always squash', '--kind', 'decision', ...MARK).code, 0);
+    assert.equal(run('log', 'Samwise rule: always squash', '--kind', 'decision', ...MARK).code, 0);
     assert.deepEqual(statusJson().awaiting, []);
     assert.doesNotMatch(run('status').out, /Awaiting you/);
     assert.deepEqual(run('status', '--footer').out.split('\n')[0], '**Ledger:** 0 done today · 0 in flight · 0 awaiting you');
@@ -1769,7 +1774,7 @@ test('ask takes only question or decision', () => {
     assert.throws(() => ledger());
 });
 
-// ── ask fields: recommend, default, door, decide-by, class (the-maestro-094, 098) ──
+// ── ask fields: recommend, default, door, decide-by, class ──
 
 test('ask stores its decision fields on the row and the fold exposes them', () => {
     const r = run('ask', 'use the nightly window?', '--recommend', 'Yes, 01:00 to 03:00', '--door', 'two-way', '--default', 'apply the window', '--decide-by', '2d', '--class', 'intangible', ...MARK);
@@ -1920,7 +1925,7 @@ test('rule resolves a relative ref against the cwd, and the digest leaves pendin
     assert.deepEqual(untagged, ['relative ref rule']);
 });
 
-// ── boxes, triage, roll --strict, ask --paste (MAESTRO-14) ──────────────────
+// ── boxes, triage, roll --strict, ask --paste ──────────────────
 
 const blockFile = (name = 'block.sh') => { const f = join(tv, name); writeFileSync(f, 'echo hi\n'); return f; };
 const triageJson = (...a: string[]) => parse(run('triage', '--json', ...a).out);
@@ -1928,8 +1933,8 @@ const boxIds = (t: Doc, box: number) => (t.byBox[box] || []).map((i) => i.text);
 
 function triageWorld() {
     const memo = blockFile('memory.md');
-    run('rule', 'Jack rule: branch from staging', '--ref', memo, ...MARK);
-    run('log', 'Jack rule: no merge on red', '--kind', 'decision', ...MARK);
+    run('rule', 'Samwise rule: branch from staging', '--ref', memo, ...MARK);
+    run('log', 'Samwise rule: no merge on red', '--kind', 'decision', ...MARK);
     run('log', 'may delete merged branches', '--kind', 'decision', '--approval', 'standing', ...MARK);
     run('log', 'close one PR', '--kind', 'decision', '--approval', 'one-off', '--ref', memo, ...MARK);
     run('ask', 'Ship Friday or Monday, which one?', ...MARK);
@@ -1937,7 +1942,7 @@ function triageWorld() {
     run('start', 'building the thing', ...MARK);
     run('log', 'waiting on a deploy', '--kind', 'blocked', ...MARK);
     run('log', 'follow-up: fix the cwd default next session', ...MARK);
-    run('log', 'follow-up: tracked in the-maestro-016', ...MARK);
+    run('log', 'follow-up: tracked in avonlea-api-016', ...MARK);
     run('log', 'learned that the cause was the cwd', ...MARK);
     run('log', 'posted reply', ...MARK);
     return { memo };
@@ -1946,7 +1951,7 @@ function triageWorld() {
 test('triage boxes every item by kind, text and approval, and says what it would do', () => {
     triageWorld();
     const t = triageJson();
-    assert.deepEqual(boxIds(t, 1), ['Jack rule: branch from staging', 'Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 1), ['Samwise rule: branch from staging', 'Samwise rule: no merge on red']);
     assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
     assert.deepEqual(boxIds(t, 3), ['close one PR']);
     assert.deepEqual(boxIds(t, 4), ['Ship Friday or Monday, which one?']);
@@ -1954,7 +1959,7 @@ test('triage boxes every item by kind, text and approval, and says what it would
     assert.deepEqual([boxIds(t, 6), boxIds(t, 7)], [['waiting on a deploy'], ['building the thing']]);
     assert.deepEqual(boxIds(t, 8), ['follow-up: fix the cwd default next session']);
     assert.deepEqual(boxIds(t, 9), ['learned that the cause was the cwd']);
-    assert.deepEqual(boxIds(t, 11), ['follow-up: tracked in the-maestro-016', 'posted reply']);
+    assert.deepEqual(boxIds(t, 11), ['follow-up: tracked in avonlea-api-016', 'posted reply']);
     const text = run('triage').out;
     assert.match(text, /Box 4 Needs Jack \(1\)/);
     assert.match(text, /Box 1 Decisions \/ rules \(2\)[^]*NO REF/);
@@ -1986,7 +1991,7 @@ test('triage --apply closes only the rules and approvals whose ref is an existin
     assert.ok(added.every((e) => e.kind === 'resolved' && e.text === `recorded → ${memo}` && e.refs?.[0] === memo));
     assert.deepEqual(before, ledger().slice(0, before.length), 'append-only: existing rows untouched');
     const t = triageJson();
-    assert.deepEqual(boxIds(t, 1), ['Jack rule: no merge on red']);
+    assert.deepEqual(boxIds(t, 1), ['Samwise rule: no merge on red']);
     assert.deepEqual(boxIds(t, 3), []);
     assert.deepEqual(boxIds(t, 2), ['may delete merged branches']);
 });
@@ -2027,7 +2032,7 @@ test('roll --strict refuses before changing anything; plain roll warns and carri
 
 test('roll --strict passes once the blockers are fixed', () => {
     const memo = blockFile('memory.md');
-    run('rule', 'Jack rule: x', '--ref', memo, ...MARK);
+    run('rule', 'Samwise rule: x', '--ref', memo, ...MARK);
     const id = idOf(run('start', 'finished work', ...MARK).out);
     run('done', id, ...MARK);
     assert.equal(run('roll', '--strict').code, 0);
@@ -2054,7 +2059,7 @@ test('paste asks show apart from the questions in status, the footer and CURRENT
     const j = statusJson();
     assert.deepEqual([j.awaiting.length, j.paste.length, j.paste[0].paste], [1, 1, f]);
     const cur = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'CURRENT.md'), 'utf8');
-    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);
+    assert.match(cur, /## Paste blocks for you\n\n- `\w+` run the count/);   // asks stay on CURRENT
 });
 
 test('handoff section 4 is generated from the Needs-Jack and paste boxes, text plus options and the block file', () => {
@@ -2071,8 +2076,8 @@ test('handoff section 4 is generated from the Needs-Jack and paste boxes, text p
 
 test('triage --apply never closes a question on its wording, even with a ref file', () => {
     const memo = blockFile('plan.md');
-    const id = idOf(run('ask', 'Jack: which branch ships first, A or B', '--ref', memo, ...MARK).out);
-    assert.deepEqual(boxIds(triageJson(), 4), ['Jack: which branch ships first, A or B']);
+    const id = idOf(run('ask', 'Samwise: which branch ships first, A or B', '--ref', memo, ...MARK).out);
+    assert.deepEqual(boxIds(triageJson(), 4), ['Samwise: which branch ships first, A or B']);
     assert.match(run('triage', '--apply').out, /closed 0 recorded/);
     assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
 });
@@ -2085,21 +2090,21 @@ test('triage --apply only closes decisions dated on --date, whatever --since say
 });
 
 test('handoff section 4 keeps every open question: one boxed as a rule by its approval still appears under Needs Jack', () => {
-    const id = idOf(run('ask', 'Jack: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
+    const id = idOf(run('ask', 'Samwise: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
     run('approve-tag', id, '--approval', 'one-off');
     const sec = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
     assert.match(sec, /\*\*Needs Jack\*\*[^]*pick a stream name/);
 });
 
-// ── prime, gates, defer (MAESTRO-15) ────────────────────────────────────────
+// ── prime, gates, defer ────────────────────────────────────────
 
 const inDays = (n: number): string => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 
-/** A fake `gh` on PATH answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
-function ghStubDir() {
+/** A fake `gh` behind MAESTRO_GH_BIN answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
+function ghStubEnv(): Record<string, string> {
     const dir = mkdtempSync(join(tmpdir(), 'journal-gh-'));
-    writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`, { mode: 0o755 });
-    return dir;
+    const stub = writeStub(join(dir, 'gh.cjs'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`);
+    return stubEnv('MAESTRO_GH_BIN', stub);
 }
 
 test('--gate is validated before anything is written, and only goes on blocked rows', () => {
@@ -2111,11 +2116,11 @@ test('--gate is validated before anything is written, and only goes on blocked r
     assert.equal(run('log', 'waiting', '--kind', 'note', '--gate', 'date:2099-01-01', ...MARK).code, 1);
     assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ...MARK).code, 1);
     assert.throws(() => ledger(), 'nothing was written');
-    for (const ok of ['gh:pr:owner/repo#12', 'gh:pr:repo#3', 'date:2099-01-01', 'ticket:the-maestro-013']) {
+    for (const ok of ['gh:pr:owner/repo#12', 'gh:pr:repo#3', 'date:2099-01-01', 'ticket:avonlea-api-013']) {
         assert.equal(run('log', 'waiting', '--kind', 'blocked', '--gate', ok, ...MARK).code, 0, ok);
     }
     assert.equal(ledger().length, 4);
-    assert.match(run('status').out, /waiting .*gate: ticket:the-maestro-013/);
+    assert.match(run('status').out, /waiting .*gate: ticket:avonlea-api-013/);
 });
 
 test('resume reports date gates as waiting or cleared, and never writes', () => {
@@ -2133,8 +2138,8 @@ test('resume reports date gates as waiting or cleared, and never writes', () => 
 
 test('resume checks gh pr gates through gh pr view: merged clears, open waits, closed or failing is unknown', () => {
     const id = idOf(run('log', 'hold for the PR', '--kind', 'blocked', '--gate', 'gh:pr:owner/repo#42', ...MARK).out);
-    const dir = ghStubDir();
-    const env = (state: string) => ({ MAESTRO_RESUME_GH: 'on', PATH: `${dir}:${process.env.PATH}`, STUB_STATE: state });
+    const ghEnv = ghStubEnv();
+    const env = (state: string) => ({ MAESTRO_RESUME_GH: 'on', ...ghEnv, STUB_STATE: state });
     assert.match(runEnv(env('MERGED'), 'resume').out, new RegExp(`CLEARED\\s+${id} .*owner/repo#42 merged`));
     assert.match(runEnv(env('OPEN'), 'resume').out, new RegExp(`waiting\\s+${id} .*owner/repo#42 is open`));
     assert.match(runEnv(env('CLOSED'), 'resume').out, new RegExp(`UNKNOWN\\s+${id} .*closed without merging`));
@@ -2364,7 +2369,7 @@ test('prime and triage flag pending transitions when there are some, and say not
     assert.doesNotMatch(run('prime').out, /Pending tracker transitions/);
 });
 
-// ── --project from the local config (MAESTRO-3) ─────────────────────────────
+// ── --project from the local config ─────────────────────────────
 
 test('--project defaults to the configured project; an explicit one wins; with neither it refuses', () => {
     const cfgHome = mkdtempSync(join(tmpdir(), 'journal-cfg-'));
@@ -2445,6 +2450,7 @@ test('priorities set and show round-trip through the status dir, with a stream s
     const shown = parse<{ state: string; items: { text: string; stream?: string }[] }>(run('priorities', 'show', '--json', '--status-dir', sd).out);
     assert.equal(shown.state, 'ok');
     assert.deepEqual(shown.items, [{ text: 'Ship the widget', stream: 'Alpha' }, { text: 'Second thing' }]);
+    assert.match(currentMd(), /## Priorities\n\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/, 'priorities set re-renders CURRENT.md with the list on top');
     assert.equal(run('priorities', 'set', '--status-dir', sd).code, 1, 'no priorities is refused');
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
@@ -2622,7 +2628,7 @@ test('prime prints the not-set line when a status dir exists and today\'s priori
     assert.doesNotMatch(run('prime', '--status-dir', sd).out, /Priorities not set/);
 });
 
-// ── review queue gate (MAESTRO-90) ──────────────────────────────────────────
+// ── review queue gate ──────────────────────────────────────────
 
 test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed read falls back to the snapshot or exits 2', () => {
     const gh = (nodes: unknown[]) => installGhStub({ pages: [nodes] });
@@ -2659,7 +2665,7 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
 });
 
-test('review-queue: answers by setting the exit code, never process.exit, so piped output is not cut (MAESTRO-162)', () => {
+test('review-queue: answers by setting the exit code, never process.exit, so piped output is not cut', () => {
     // process.exit drops what a pipe has not yet taken (a reader behind `| head` or a busy one); the fix is to let the process drain. A preload records any process.exit call.
     const spy = join(mkdtempSync(join(tmpdir(), 'exit-spy-')), 'spy.mjs');
     const log = `${spy}.log`;
@@ -2759,6 +2765,52 @@ test('status and status --footer show the review queue from the stored snapshot,
     assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '6' }), /review queue: 4 of 6\n/);
     snapshot('2020-01-01T00:00:00Z', false);
     assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
+});
+
+/** A gh stub already run once: the first run of a new executable can be slow on some machines, which would eat the footer's live-read budget. */
+const warmedGhStub = (config: Parameters<typeof installGhStub>[0]): NodeJS.ProcessEnv => {
+    const env = installGhStub(config);
+    spawnSync('gh', ['api', 'user'], { env, encoding: 'utf8' });
+    return env;
+};
+
+test('status --footer refreshes a stale review-queue snapshot from a live read, and says unknown when it cannot', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const old = new Date(Date.now() - 11 * 36e5).toISOString();
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: old, prs: [0, 1, 2, 3].map(() => ({ isDraft: false })) }));
+    const footer = (env: NodeJS.ProcessEnv) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+    }).stdout;
+    const live = warmedGhStub({ pages: [[1, 2, 3, 4, 5, 6].map((n) => prNode(n, { isDraft: false }))] });
+    assert.match(footer(live), /^\*\*Review queue:\*\* 6 of 4 \(full, 2 over the cap\)$/m, 'the live count, not the 11h-old 4');
+    rmSync(join(journalDir, 'prs-current.json'), { force: true }); // the live read above was saved; drop it so the failing read is the one under test
+    const broken = warmedGhStub({ pages: [[]], failOnPage: 0 });
+    assert.match(footer(broken), /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
+});
+
+test('status --footer bounds a slow live read, then reuses a successful one', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const old = new Date(Date.now() - 11 * 36e5).toISOString();
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: old, prs: [0, 1, 2, 3].map(() => ({ isDraft: false })) }));
+    const footer = (env: NodeJS.ProcessEnv) => {
+        const t0 = Date.now();
+        const out = spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        }).stdout;
+        return { out, ms: Date.now() - t0 };
+    };
+    const slow = footer(warmedGhStub({ pages: [[prNode(1)]], delayMs: 60_000 }));
+    assert.match(slow.out, /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
+    assert.ok(slow.ms < 25_000, `a hung gh must not hold the footer (took ${slow.ms} ms)`);
+    assert.equal(existsSync(join(journalDir, 'prs-current.json')), false, 'a failed read saves nothing');
+
+    const callLog = join(vault, 'gh-calls.log');
+    const quick = warmedGhStub({ pages: [[1, 2, 3].map((n) => prNode(n))], delayMs: 50, callLog });
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m);
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m, 'the second footer reuses the saved read');
+    assert.equal(readFileSync(callLog, 'utf8').trim().split('\n').length, 1, 'only one gh call across two footers');
 });
 
 // ── window id ───────────────────────────────────────────────────────────────
@@ -2978,7 +3030,7 @@ test('prime fails loudly after a compaction whose handoff is missing or older th
     assert.match(run('prime').out.split('\n')[0], /^!! precompact incomplete: handoff: boom/);
 });
 
-test('prime and start-here withhold a secret-shaped stream name or id instead of printing it (MAESTRO-168)', () => {
+test('prime and start-here withhold a secret-shaped stream name or id instead of printing it', () => {
     const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
     const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
     const now = new Date().toISOString();
@@ -2997,6 +3049,28 @@ test('prime and start-here withhold a secret-shaped stream name or id instead of
         assert.ok(!all.includes(token), `${cmd[0]} printed the token-shaped stream`);
         assert.ok(!all.includes(key), `${cmd[0]} printed the key-shaped id`);
         assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} still shows ordinary work`);
+        assert.match(r.out, /\[withheld: secret shape\]/);
+    }
+});
+
+test('start-here --json and status --json withhold a secret-shaped stream name or id and still parse', () => {
+    const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
+    const key = `AKIA${'IOSFODNN7EXAMPLE'}`;
+    const now = new Date().toISOString();
+    const rows = [
+        { id: 'sec1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: token, text: 'work in an odd stream', model: 'x', used: ['x'] },
+        { id: key, ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'work with an odd id', model: 'x', used: ['x'] },
+        { id: 'ok1', ts: now, date: now.slice(0, 10), kind: 'wip', stream: 'Alpha', text: 'ordinary work', model: 'x', used: ['x'] },
+    ];
+    mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    for (const cmd of [['start-here', '--json'], ['status', '--json']]) {
+        const r = run(...cmd);
+        assert.equal(r.code, 0, r.err);
+        assert.ok(!r.out.includes(token), `${cmd[0]} --json printed the token-shaped stream`);
+        assert.ok(!r.out.includes(key), `${cmd[0]} --json printed the key-shaped id`);
+        assert.doesNotThrow(() => JSON.parse(r.out), `${cmd[0]} --json no longer parses`);
+        assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} --json still shows ordinary work`);
         assert.match(r.out, /\[withheld: secret shape\]/);
     }
 });
@@ -3032,9 +3106,9 @@ test('ready-to-push lists my branches that no remote holds, and refuses without 
     const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 'me@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 'me@example.com', GIT_CONFIG_GLOBAL: '/dev/null' };
     const git = (...a: string[]) => assert.equal(spawnSync('git', a, { cwd: repo, env }).status, 0, a.join(' '));
     git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a'), 'a'); git('add', 'a'); git('commit', '-q', '-m', 'base');
-    git('switch', '-q', '-c', 'feat/MAESTRO-9-held'); writeFileSync(join(repo, 'b'), 'b'); git('add', 'b'); git('commit', '-q', '-m', 'held work');
+    git('switch', '-q', '-c', 'feat/AV-9-held'); writeFileSync(join(repo, 'b'), 'b'); git('add', 'b'); git('commit', '-q', '-m', 'held work');
     const out = runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push', '--json');
-    assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/MAESTRO-9-held']);
-    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('MAESTRO-9'), false, 'not my commits');
+    assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/AV-9-held']);
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('AV-9'), false, 'not my commits');
     assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: '', MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push').code, 1);
 });

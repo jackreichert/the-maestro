@@ -16,7 +16,7 @@ const DAY_MS = 86_400_000;
 
 /** `ids` are the folded items finished that day, so a bar can open them; they sum to `total`. */
 export interface ThroughputDay { date: string; total: number; byStream: Record<string, number>; ids: string[] }
-/** One finished item for the Dashboard's done list. `finishedAt` is the closing time; `ticket` is the vault note name when the item has one. */
+/** One finished item for the Home tab's done list. `finishedAt` is the closing time; `ticket` is the vault note name when the item has one. */
 export interface DoneRef { id: string; stream: string; text: string; finishedAt: string; ticket?: string }
 /** A pull request as a chart mark links to it. `createdAt` is absent when the PR cache predates the field. */
 export interface PrRef { repo: string; number: number; title: string; url: string; stream: string; createdAt?: string }

@@ -8,7 +8,7 @@ The library is the distilled layer above the ledger: one canonical page per fact
 |---|---|
 | `Projects/<repo>/Knowledge/<topic>.md` | How it works, gotchas, decision pointers, tool notes. One page per topic or component. |
 | `Projects/<repo>/Runbooks/<task>.md` | How to do a recurring thing, step by step, linking the helper that does it. |
-| `Projects/<repo>/Knowledge/flows/<flow>.md` | A flow that crosses repos. Lives under the project that owns the flow (`dev-env` for cross-repo flows). |
+| `Projects/<repo>/Knowledge/flows/<flow>.md` | A flow that crosses repos. Lives under the project that owns the flow (the container project for cross-repo flows). |
 | `Projects/<repo>/INDEX.md` | The repo's component list (frontmatter `components`) and a line per page. |
 
 `notes-check` and the stream tab read `Knowledge/` as well as Plans, Research, Reviews and Runbooks, one subfolder deep, so a page with a `stream:` field is listed on that stream's tab with no further step.
@@ -33,6 +33,7 @@ sources: []                 # optional: learned ids behind the page
 depends-on: []              # optional: pages this one relies on
 supersedes: []              # optional: pages this one replaces
 superseded-by:              # optional, required when status is superseded
+covers: [setup, run-local]  # optional: required page kinds this page satisfies (see Coverage)
 ---
 ```
 
@@ -46,7 +47,11 @@ superseded-by:              # optional, required when status is superseded
 | `stream` | a stream name (the stream whose tab should list the page) |
 | `components` | only values in the `components` list of `Projects/<repo>/INDEX.md` |
 
-Adding a component is a deliberate edit to that list, so `interim-db`, `interimdb` and `cubhub` cannot all appear. A `decision` page is a pointer to DECISIONS.md and never restates the decision.
+Adding a component is a deliberate edit to that list, so `orchard-db`, `orcharddb` and `appleshed` cannot all appear. A `decision` page is a pointer to DECISIONS.md and never restates the decision.
+
+## Coverage
+
+Every project library must cover six page kinds, listed once in `scripts/lib/library/coverage.ts`: `setup` (setup from scratch), `run-local`, `test-staging`, `verify-prod` (read-only checks), `deploy`, and `how-it-works` (end to end). A page says which it satisfies in the optional `covers` list; library-check rejects a value outside that list. This is separate from `kind`, which says what sort of page it is. Superseded pages do not count. `node scripts/library-check.ts --coverage [--repo R] [--json]` lists what each project lacks.
 
 The component list is the `components` array in the frontmatter of `Projects/<repo>/INDEX.md`:
 

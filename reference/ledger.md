@@ -205,7 +205,7 @@ node $J unarchive Launch "${M[@]}"
 **Session:** 86 turns · ctx 142k of ~200k (71%) · 129k read/turn · roll soon
 ```
 
-One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· 12 in flight (7 stale, 3d+ with no lease)` marks in-flight rows at least three days old that hold no live lease: the count is rows, and these are the ones nothing is known to be working on, so confirm each alive or `drop` it. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. After them, when a PR snapshot exists, comes `**Review queue:** N of 4` (open non-draft PRs against `review_queue_cap`; `(full)` at the cap, and a note when the snapshot is over an hour old), then the Session line. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
+One line per active stream (a stream with an open or done-today item), named as the registry spells it, then `Ledger (other)` for items with no stream. `· 12 in flight (7 stale, 3d+ with no lease)` marks in-flight rows at least three days old that hold no live lease: the count is rows, and these are the ones nothing is known to be working on, so confirm each alive or `drop` it. `· N blocked` appears only when something is blocked, and `· N queued` (straight after in flight, e.g. `1 in flight · 3 queued · 0 awaiting you`) only when something is queued. With no streams at all it is the single `**Ledger:**` line. After them, when a PR snapshot exists, comes `**Review queue:** N of 4` (open non-draft PRs against `review_queue_cap`; `(full)` at the cap, and a note when the snapshot is over ten minutes old; a snapshot over 30 minutes old is not shown: the footer reads GitHub live instead, and prints `unknown (snapshot 11h old; live refresh failed)` when that read fails; a count above the cap says by how much), then the Session line. After a compaction the Session line reads `N turns since compact (M before)`: N, the context and read/turn count from the last compact, M is the turns before it, and the roll percent uses the context, not a turn count. Archived streams are left out; `--include-archived` and `--date` work as they do for `status`.
 
 `status --footer --line` prints the same facts on one line, summed across streams (the review queue, loop and session follow when they apply):
 
@@ -405,7 +405,7 @@ reads. This step brings the tracker up to date before the day's context is gone.
    user approves it. Comments are visible to the team and cannot really be taken back. Post only
    what they approve, then `log` one line that lists the keys commented on and the keys moved.
 
-Precedent, 2026-09-23: dated comments on four issues and four moved to *In Progress*, logged as
+Precedent: dated comments on four issues and four moved to *In Progress*, logged as
 two ledger lines.
 
 ### Commitments sweep

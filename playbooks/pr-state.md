@@ -6,7 +6,7 @@ You are the runner. You run one script, then copy its lines into your report. Yo
 
 - Before any push to a PR branch.
 - Before saying a PR is ready.
-- Before telling Jack a merge order.
+- Before telling the user a merge order.
 
 An empty `reviewDecision` is not proof that no approval exists: a push can dismiss an approval and leave the field empty. Never answer these questions from `gh pr view` alone.
 
