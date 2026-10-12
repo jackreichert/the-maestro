@@ -125,9 +125,7 @@ whenever you relay an agent's result.
   in one line.
 - **`roll now`:** run the roll yourself, without being asked: `journal.ts triage`, then `roll`,
   then `handoff --all --delta` (with `--learn`, `--next`, `--update-context` on the first one), and
-  the worktree and branch sweep the roll already does. From then on open EVERY reply with a
-  one-line reminder for the user to compact (`/compact` or a fresh session) until the Session line is
-  back under the warn level. Log the request once with `journal.ts log` so it survives a compaction.
+  the worktree and branch sweep the roll already does. Do not ask them to compact. The Session line already says `roll now`.
 
 **The roll is layerable.** The user may not compact until well past `roll now`, so a roll can be run
 again and again, each costing less than the last:
