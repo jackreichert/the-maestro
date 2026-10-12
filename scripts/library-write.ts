@@ -5,6 +5,7 @@
  *   library-write.ts begin                                       take the composer lock (a ledger lease), print the holder id
  *   library-write.ts write <page> --from <staged> [--accept-hand-edit] --holder <id>  replace one page after every check passes
  *   library-write.ts curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model M --used a,b
+ *   library-write.ts seed --holder <id>                          one time: record the sha of pages composed before the write record existed
  *   library-write.ts end --holder <id>                           free the lock
  *
  * <page> is vault-relative: Projects/<repo>/(Knowledge|Runbooks)/<name>.md. Options: --vault <root> (pages), --ledger-root <root>,
@@ -19,10 +20,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { openStore } from './lib/journal/store.ts';
-import { begin, curate, end, fileLastWrites, writePage } from './lib/library/write.ts';
+import { begin, curate, seedLastWrites, end, fileLastWrites, writePage } from './lib/library/write.ts';
 import type { Marks, Outcome, WriteEnv } from './lib/library/write.ts';
 
-const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> [--accept-hand-edit] --holder <id> | curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model <m> --used <a,b> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
+const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> [--accept-hand-edit] --holder <id> | curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model <m> --used <a,b> | seed --holder <id> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
 
 interface Args { cmd: string; positional: string[]; flags: Map<string, string> }
 
@@ -31,7 +32,7 @@ const BOOL_FLAGS = new Set(['allow-unmarked', 'refresh', 'accept-hand-edit']);
 
 export function parseArgs(argv: string[]): Args | string {
   const [cmd, ...rest] = argv;
-  if (!cmd || !['begin', 'write', 'curate', 'end'].includes(cmd)) return 'first argument must be begin, write, curate or end';
+  if (!cmd || !['begin', 'write', 'curate', 'end', 'seed'].includes(cmd)) return 'first argument must be begin, write, curate, end or seed';
   const flags = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < rest.length; i += 1) {
@@ -75,6 +76,7 @@ export function run(argv: string[], io: { out: (s: string) => void; err: (s: str
   store.ensureDir();
   switch (a.cmd) {
     case 'begin': return finish(begin(env), (r) => `holder ${r.holder} (lock until ${r.until.slice(11, 16)}Z)`);
+    case 'seed': return finish(seedLastWrites(env, holder), (r) => `seeded ${r.seeded.length} page(s)${r.skipped.length ? `; left unrecorded (disk differs from the latest curated sha, or the page is gone): ${r.skipped.join(', ')}` : ''}`);
     case 'end': return holder ? finish(end(env, holder), (r) => (r.freed ? 'composer lock freed' : 'no live composer lock (already ended)')) : (io.err('library-write: end needs --holder'), 2);
     case 'write': {
       const [page, extra] = a.positional;

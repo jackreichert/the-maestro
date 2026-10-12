@@ -172,6 +172,26 @@ export function writePage(env: WriteEnv, holder: string | undefined, page: strin
   return { ok: true, sha, changed: true };
 }
 
+/**
+ * One-time seed for pages composed before the write record existed: for each page whose latest `curated` row carries a pageSha that
+ * equals the disk, and that has no record yet, record that sha. A page with a record is never touched (so running it again changes nothing),
+ * and a page whose disk differs from its latest curated sha is left unrecorded, because that disk is a hand edit.
+ */
+export function seedLastWrites(env: WriteEnv, holder: string | undefined): Outcome<{ seeded: string[]; skipped: string[] }> {
+  const lock = requireHolder(env, holder);
+  if (!lock.ok) return lock;
+  const latest = new Map<string, string>();
+  for (const r of env.readLedger()) if (r.kind === 'curated' && typeof r.page === 'string' && typeof r.pageSha === 'string') latest.set(r.page, r.pageSha);
+  const seeded: string[] = [];
+  const skipped: string[] = [];
+  for (const [page, sha] of latest) {
+    if (env.lastWrites.get(page) !== undefined) continue;
+    const onDisk = !pagePathProblem(page) && stayInsideVault(env.vault, page) && existsSync(join(env.vault, page)) && sha256(readFileSync(join(env.vault, page))) === sha;
+    if (onDisk) { env.lastWrites.set(page, sha); seeded.push(page); } else skipped.push(page);
+  }
+  return { ok: true, seeded, skipped };
+}
+
 /** The usage marks a curated row carries, as `journal.ts` rows do. */
 export interface Marks { model?: string; used?: string[]; tokens?: string }
 

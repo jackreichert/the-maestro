@@ -418,3 +418,32 @@ test('curate through the core refuses when called with both page and reject', ()
   const r = curate(env, b.ok ? b.holder : undefined, 'lrn1', { page: PAGE, reject: 'x' }, { model: 'm', used: ['u'] });
   assert.equal(r.ok, false);
 });
+
+test('seed records the latest curated sha of a pre-record page only where it matches the disk, and is idempotent', () => {
+  const f = fixture();
+  const other = `Projects/${REPO}/Knowledge/harvest-export.md`;
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  f.env().append(learnedRow('lrn2'));
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  assert.equal(f.cli('write', other, '--from', f.stage(GOOD.replace('orchard-sync', 'harvest-export')), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn2', '--page', other, '--holder', holder, ...MARKS).code, 0);
+  rmSync(join(dirname(f.ledgerPath), 'library-writes.json'));
+  writeFileSync(join(f.root, other), readFileSync(join(f.root, other), 'utf8').replace('runs nightly', 'runs hourly'));
+  const lw = f.env().lastWrites;
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS).code, 1, 'no record, so refused before the seed');
+
+  const first = f.cli('seed', '--holder', holder);
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /seeded 1 page/);
+  assert.equal(lw.get(PAGE), createHash('sha256').update(readFileSync(join(f.root, PAGE))).digest('hex'));
+  assert.equal(lw.get(other), undefined, 'the hand-edited page is not seeded');
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS).code, 0, 'the seeded page can be refreshed');
+
+  const second = f.cli('seed', '--holder', holder);
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /seeded 0 page/);
+  assert.equal(lw.get(other), undefined);
+  assert.equal(f.cli('seed').code, 3, 'seed needs the composer lock like the other writers');
+});
