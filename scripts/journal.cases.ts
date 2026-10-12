@@ -2247,6 +2247,22 @@ test('an old row that was started or re-tagged inside stale_wip_days is not stal
     assert.match(run('roll', '--fast').out, /Stale in flight: 1 row/);
 });
 
+test('"still going" (lease <id>) keeps a row out of stale for stale_wip_days after the lease lapses, then it goes stale again (MAESTRO-319)', () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000 - 3_600_000).toISOString();
+    const base = { kind: 'wip', date: '2020-01-01', ts: '2020-01-01T00:00:00.000Z', model: 'x', used: ['x'] };
+    const lease = (id: string, item: string, ts: string) => ({ id, kind: 'lease', leases: item, window: 'gone', ttl: 60, date: ts.slice(0, 10), ts, text: `lease ${item}` });
+    const rows = [
+        { ...base, id: 'keep1', text: 'kept going, lease lapsed 2 days ago' }, lease('ls01', 'keep1', daysAgo(2)),
+        { ...base, id: 'keep2', text: 'lease lapsed 10 days ago' }, lease('ls02', 'keep2', daysAgo(10)),
+    ];
+    mkdirSync(dirname(ledgerFile()), { recursive: true });
+    writeFileSync(ledgerFile(), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    const j = statusJson();
+    assert.deepEqual(j.inflight.map((i) => i.id), ['keep1'], 'a lapsed lease still counts as a touch inside stale_wip_days');
+    assert.deepEqual(j.stale?.map((i) => i.id), ['keep2'], 'ten days on, with no lease and no touch, it is stale again');
+    assert.match(run('roll', '--fast').out, /Stale in flight: 1 row/);
+});
+
 test('closing the last open child prompts for its parent, a sibling still open does not, and --parent refuses an unknown or closed item (MAESTRO-319)', () => {
     const parent = idOf(run('log', 'the epic', '--kind', 'wip', ...MARK).out);
     const a = idOf(run('log', 'first child', '--kind', 'wip', '--parent', parent, ...MARK).out);
