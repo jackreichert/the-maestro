@@ -1167,7 +1167,7 @@ test('roll commits the changed ledger files when ledger_git_autocommit is on, by
     assert.equal(git(vault, 'log', '-1', '--format=%s').stdout.trim(), `chore(ledger): roll ${day}`);
     const files = git(vault, 'show', '--name-only', '--format=', 'HEAD').stdout.trim().split('\n').sort();
     assert.deepEqual(files, [
-        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/Streams/Other.md', 'Projects/test-proj/Journal/ledger.jsonl',
+        '.gitignore', `Projects/test-proj/Journal/${day}.md`, 'Projects/test-proj/Journal/CURRENT.md', 'Projects/test-proj/Journal/GUIDANCE.md', 'Projects/test-proj/Journal/Streams/Other.md', 'Projects/test-proj/Journal/ledger.jsonl',
     ].sort());
     assert.equal(git(vault, 'status', '--porcelain').stdout.trim(), '');
     assert.match(runEnv({ ...gitEnv, MAESTRO_LEDGER_GIT_AUTOCOMMIT: 'on' }, 'roll').out, /committed \d+ path\(s\)/);   // a re-roll appends a row, so it commits again

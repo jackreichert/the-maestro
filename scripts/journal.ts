@@ -163,6 +163,7 @@ import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn 
 import { briefPaths, briefText, agentPrompt, libraryBlock } from './lib/journal/brief.ts';
 import { recoveryFromFlags, recoverPrompt } from './lib/journal/recover.ts';
 import { scriptsDir } from './brief-block.ts';
+import { guidanceLines, writeGuidance, readGuidance } from './lib/journal/guidance.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
@@ -1179,6 +1180,8 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
 function cmdRoll() {
     const d = arg('date', today());
     triageBeforeRoll(d);
+    // Before the archive, so the ledger autocommit takes GUIDANCE.md in the same commit.
+    writeRollGuidance(d);
     rollArchive(d);
     printEpicBriefs(d);
     printNotesReachability();
@@ -1290,6 +1293,16 @@ function cmdNotesCheck() {
     if (asJson) printJson(r); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
     // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
     process.exitCode = r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0;
+}
+
+/** The roll's guidance for the next session: derived from the ledger (no model call), saved as GUIDANCE.md beside it, and printed. `prime` shows it. */
+function writeRollGuidance(d: string): void {
+    const g = groups();
+    const sd = statusDir();
+    const today = sd && existsSync(sd) ? readPriorities(sd, priorityDay()) : null;
+    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now(), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [], gates: new Map(gateReport().map((r) => [String(r.item.id), r.state])) }).map(withhold);
+    if (!dryRun) { ensureDir(); writeGuidance(dir, lines, d); }
+    (lines.length ? lines : [`Guidance from the ${d} roll:`, '  Nothing stalled, nothing costly, nothing open.']).forEach((l) => console.log(l));
 }
 
 /**
@@ -2261,6 +2274,8 @@ function cmdPrime() {
     // Everything `prime` prints goes through `withhold`: a secret-shaped stream name or id in the ledger must not reach session context from here either.
     continuity.forEach((l) => { console.log(withhold(l)); console.error(withhold(l)); });
     primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...windowWarning(), ...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(withhold(l)));
+    // The last roll's guidance, outside the board's cap like the checklist below it.
+    readGuidance(dir, today()).forEach((l) => console.log(withhold(l)));
     // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
     compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(withhold(l)));
 }
