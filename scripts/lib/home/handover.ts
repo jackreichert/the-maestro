@@ -5,6 +5,7 @@
  * A section that cannot be filled says so (`state: 'missing'`) with the one-line fix; nothing is hidden and nothing is guessed.
  * Links are `obsidian://open` links the server builds, or http(s) PR links. No Markdown and no absolute path reaches the response.
  */
+import type { Scope } from '../vault/reader.ts';
 import { buildForest } from '../vault/tickets.ts';
 import type { Forest, Ticket } from '../vault/tickets.ts';
 import { obsidianUri } from '../status-page/links.ts';
@@ -15,6 +16,10 @@ import { isHttpUrl } from './config.ts';
 import type { Doc } from './docs.ts';
 import type { LedgerFact } from './build.ts';
 import type { Ref } from './types.ts';
+
+/** The two project notes the handover reads whole: `CONTEXT.md` and the generated `INDEX.md`. `DOC_FILE_SCOPES` already admits the first; the second is added here so no other reader gains it. */
+export const NOTE_FILE_SCOPES: readonly Scope[] = [{ name: 'project index', pattern: /^Projects\/[^/]+\/INDEX\.md$/ }];
+export const NOTE_MAX_BYTES = 256 * 1024;
 
 export const RUN_KINDS = ['setup', 'run', 'test', 'deploy'] as const;
 export type RunKind = (typeof RUN_KINDS)[number];
