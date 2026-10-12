@@ -6,16 +6,22 @@
  * this server can carry) and the body's shape. An accepted edit goes to `editPriorities`, which re-reads `priorities.md`, applies
  * the one operation and writes it back atomically; the result and the cap come back so the page can show the real list. Every
  * error body is a code and a message built here (never a path, a stack or the request's own text).
+ * An edit re-dates the list to today, which would drop every item only that list named before the day's carry could read it; so an edit
+ * on a list still dated an earlier day first runs the same carry the roll does, and only then rewrites the file.
  * A successful edit also leaves a one-line, already-closed note in the ledger, so the day's history shows it, and (when `vault_root` is set)
  * rewrites each project's own file for the day through the same function `journal.ts priorities set` uses, so the two lists do not drift.
  */
 import { timingSafeEqual } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { openStore } from '../journal/store.ts';
 import { EditRefused, MAX_STREAM, MAX_TEXT, editPriorities } from '../status-page/priorities-edit.ts';
 import type { Edit } from '../status-page/priorities-edit.ts';
-import { localDate, readPriorities } from '../status-page/priorities.ts';
+import { readHomes } from '../home/config.ts';
+import { PRIORITIES_FILE, localDate, parsePriorities, readPriorities } from '../status-page/priorities.ts';
 import type { Priority } from '../status-page/priorities.ts';
+import { carryPriorities } from '../status-page/project-priorities.ts';
 import { syncProjectPriorities } from '../status-page/project-priorities-sync.ts';
 import { MAX_BODY_BYTES } from './guard.ts';
 import { sendError, sendJson } from './guard.ts';
@@ -109,6 +115,29 @@ function syncProjects(o: WriteOptions, day: string, today: string, items: Priori
   }
 }
 
+/**
+ * Carries yesterday's list into the project files before an edit re-dates `priorities.md`. Does nothing when the list is already today's
+ * (or later), missing, or `vault_root` is not set. A failure is logged, not raised: the roll's own carry reports the same problems.
+ */
+function carryBeforeEdit(o: WriteOptions, today: string): void {
+  const vaultRoot = o.web.vaultRoot;
+  const path = join(o.web.statusDir, PRIORITIES_FILE);
+  if (!vaultRoot || !existsSync(path)) return;
+  try {
+    const container = parsePriorities(readFileSync(path, 'utf8'));
+    if (!container.date || container.date >= today) return;
+    const store = openStore({ vault: o.web.vault, project: o.web.project, dryRun: false, warn: () => {} });
+    const registry = store.loadRegistry();
+    const { problems } = carryPriorities({
+      vault: vaultRoot, today, rows: store.readLedger(), registry, homes: readHomes(o.web.statusDir, Object.keys(registry?.streams ?? {})),
+      repoStreams: o.web.page.repoStreams, containerProject: o.web.containerProject ?? o.web.project, container,
+    });
+    problems.forEach((p) => o.log(`could not carry the earlier list before the edit: ${p}`));
+  } catch (e) {
+    o.log(`could not carry the earlier list before the edit: ${e instanceof Error ? e.message.split('\n')[0] : 'error'}`);
+  }
+}
+
 /** The state both success and refusal answer with, so the page shows what is really in the file. */
 function snapshot(o: WriteOptions): { priorities: ReturnType<typeof readPriorities>; max: number } {
   return { priorities: readPriorities(o.web.statusDir, localDate(o.now(), o.web.page.tz)), max: o.max };
@@ -127,6 +156,7 @@ export async function handleWrite(o: WriteOptions, path: string, req: IncomingMe
   if (!edit) return sendError(res, 400);
   try {
     const today = localDate(o.now(), o.web.page.tz);
+    carryBeforeEdit(o, today);
     const result = editPriorities(o.web.statusDir, today, edit, { max: o.max });
     syncProjects(o, result.date, today, result.items);
     recordEdit(o, result.summary);

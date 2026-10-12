@@ -309,3 +309,30 @@ test('parseEdit accepts exactly the three shapes', () => {
   assert.equal(parseEdit('add', { text: 'x', op: 'delete' }), null, 'a body cannot pick its own operation');
   assert.equal(parseEdit('add', JSON.parse('{"text":"x","__proto__":{"op":"delete"}}')), null, 'an own __proto__ key is an unknown key');
 });
+
+test('an edit made on a list still dated yesterday carries the container-only items into the project files first', async () => {
+  const notes = join(root, 'notes-carry-first');
+  for (const p of ['alpha-app', 'beta-app']) mkdirSync(join(notes, 'Projects', p), { recursive: true });
+  const vault = join(root, 'carry');
+  const statusDir = join(vault, 'Status');
+  mkdirSync(statusDir, { recursive: true });
+  writeFileSync(join(statusDir, 'priorities.md'), 'date: 2026-10-06\n- c1 | Alpha\n- c2 | Beta\n');
+  const logged: string[] = [];
+  const server = createWebServer({
+    web: { vault, project: 'p', statusDir, prioritiesMax: 5, vaultRoot: notes, page: { streams: ['Alpha', 'Beta'], repoStreams: { 'alpha-app': 'Alpha', 'beta-app': 'Beta' }, vaultName: '', trackerUrlBase: '', ticketNotePath: '', trackerKeyPattern: 'FAKE-\\d+', tz: 'UTC' } },
+    clientDir: client, now: () => NOW, log: (m) => logged.push(m), token: TOKEN,
+  });
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+  const r = { server, port: (server.address() as AddressInfo).port } as Rig;
+  rigs.push(r);
+  const res = await post(r, 'add', { text: 'a-new', stream: 'Alpha' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.priorities.items, [{ text: 'a-new', stream: 'Alpha' }], 'the re-dated list holds only what was added');
+  const carried = (project: string): string[] => {
+    const text = readFileSync(join(notes, 'Projects', project, 'Status', 'priorities', '2026-10-07.md'), 'utf8');
+    return text.split('\n').filter((l) => l.startsWith('- ') && text.indexOf(l) > text.indexOf('## Carried')).map((l) => l.slice(2).split(' · ')[0] ?? '');
+  };
+  assert.deepEqual(carried('alpha-app'), ['c1 | Alpha']);
+  assert.deepEqual(carried('beta-app'), ['c2 | Beta']);
+  assert.deepEqual(logged, []);
+});
