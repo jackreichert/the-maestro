@@ -30,6 +30,20 @@ export interface WriteEnv {
   append: (row: LedgerRow) => unknown;
   newId: (existing: { id?: string }[]) => string;
   now: () => string;
+  /** The sha256 each page had when the last composer `write` left it; `--refresh` compares the disk against this. */
+  lastWrites: LastWrites;
+}
+
+/** Where `write` remembers the sha it left on each page, so a later `curate --refresh` can tell a composer page from a hand edit. */
+export interface LastWrites { get: (page: string) => string | undefined; set: (page: string, sha: string) => void }
+
+/** A `LastWrites` kept in one JSON file (page to sha256), replaced by rename so a crash never leaves half a file. An unreadable file reads as empty, which makes `--refresh` refuse. */
+export function fileLastWrites(path: string): LastWrites {
+  const read = (): Record<string, string> => { try { const j: unknown = JSON.parse(readFileSync(path, 'utf8')); return j && typeof j === 'object' && !Array.isArray(j) ? (j as Record<string, string>) : {}; } catch { return {}; } };
+  return {
+    get: (page) => { const v = read()[page]; return typeof v === 'string' ? v : undefined; },
+    set: (page, sha) => { mkdirSync(dirname(path), { recursive: true }); const tmp = `${path}.tmp-${process.pid}`; writeFileSync(tmp, JSON.stringify({ ...read(), [page]: sha }, null, 2) + '\n'); renameSync(tmp, path); },
+  };
 }
 
 /** A refusal carries the exit code the CLI uses: 1 a check refused the work, 3 the lock is not this pass's. */
@@ -124,9 +138,9 @@ const sha256 = (s: string | Buffer): string => createHash('sha256').update(s).di
 
 /**
  * Replace one page from a staged file. The real page is untouched unless every check passes; the new text goes to a temp file beside
- * it and is renamed over it (the rename is the commit), and identical bytes write nothing. Returns the sha256 of the bytes on disk.
+ * it and is renamed over it (the rename is the commit), and identical bytes write nothing (and are recorded only when the record already matches the disk, or with `acceptHandEdit`). Returns the sha256 of the bytes on disk.
  */
-export function writePage(env: WriteEnv, holder: string | undefined, page: string, stagedPath: string): Outcome<{ sha: string; changed: boolean }> {
+export function writePage(env: WriteEnv, holder: string | undefined, page: string, stagedPath: string, opts: { acceptHandEdit?: boolean } = {}): Outcome<{ sha: string; changed: boolean }> {
   const lock = requireHolder(env, holder);
   if (!lock.ok) return lock;
   const bad = pagePathProblem(page);
@@ -144,13 +158,39 @@ export function writePage(env: WriteEnv, holder: string | undefined, page: strin
   if (problems.length) return refuse(1, ...problems, 'nothing was written');
   const target = join(env.vault, page);
   const sha = sha256(text);
-  if (existsSync(target) && sha256(readFileSync(target)) === sha) return { ok: true, sha, changed: false };
+  if (existsSync(target) && sha256(readFileSync(target)) === sha) {
+    // Identical bytes change nothing on disk, so they must not change what the record says is composer output: only a disk the record already matches is re-recorded.
+    if (!opts.acceptHandEdit && env.lastWrites.get(page) !== sha) return refuse(1, 'the page on disk is not what the last composer `write` left (a hand edit, or no write recorded): writing its own bytes back would record them as composer output. Pass --accept-hand-edit to record the disk as it is; nothing written');
+    env.lastWrites.set(page, sha);
+    return { ok: true, sha, changed: false };
+  }
   mkdirSync(dirname(target), { recursive: true });
   const tmp = `${target}.tmp-${holder}`;
   try { writeFileSync(tmp, text, { flag: 'w' }); renameSync(tmp, target); } catch (e) { rmSync(tmp, { force: true }); throw e; }
+  env.lastWrites.set(page, sha);
   // `write` appends no ledger row, so renew the lease here (a no-op while more than half the time is left).
   acquireLease(leaseCtx(env, holder as string), COMPOSER_ITEM, { ttlMinutes: COMPOSER_TTL_MINUTES, text: 'composer pass' });
   return { ok: true, sha, changed: true };
+}
+
+/**
+ * One-time seed for pages composed before the write record existed: for each page whose latest `curated` row carries a pageSha that
+ * equals the disk, and that has no record yet, record that sha. A page with a record is never touched (so running it again changes nothing),
+ * and a page whose disk differs from its latest curated sha is left unrecorded, because that disk is a hand edit.
+ */
+export function seedLastWrites(env: WriteEnv, holder: string | undefined): Outcome<{ seeded: string[]; skipped: string[] }> {
+  const lock = requireHolder(env, holder);
+  if (!lock.ok) return lock;
+  const latest = new Map<string, string>();
+  for (const r of env.readLedger()) if (r.kind === 'curated' && typeof r.page === 'string' && typeof r.pageSha === 'string') latest.set(r.page, r.pageSha);
+  const seeded: string[] = [];
+  const skipped: string[] = [];
+  for (const [page, sha] of latest) {
+    if (env.lastWrites.get(page) !== undefined) continue;
+    const onDisk = !pagePathProblem(page) && stayInsideVault(env.vault, page) && existsSync(join(env.vault, page)) && sha256(readFileSync(join(env.vault, page))) === sha;
+    if (onDisk) { env.lastWrites.set(page, sha); seeded.push(page); } else skipped.push(page);
+  }
+  return { ok: true, seeded, skipped };
 }
 
 /** The usage marks a curated row carries, as `journal.ts` rows do. */
@@ -160,7 +200,7 @@ export interface Marks { model?: string; used?: string[]; tokens?: string }
  * Close one pending learned or miss row: with `page` (the page exists and passes the same checks now; its sha256 is recorded) or with `reject`
  * (a scanned, one-line reason). The row is checked with the same function `verify` runs, so the writer cannot append what `verify` flags.
  */
-export function curate(env: WriteEnv, holder: string | undefined, learnedId: string, how: { page?: string; reject?: string; refresh?: boolean }, marks: Marks = {}): Outcome<{ id: string }> {
+export function curate(env: WriteEnv, holder: string | undefined, learnedId: string, how: { page?: string; reject?: string; refresh?: boolean; acceptHandEdit?: boolean }, marks: Marks = {}): Outcome<{ id: string }> {
   const lock = requireHolder(env, holder);
   if (!lock.ok) return lock;
   if ((how.page === undefined) === (how.reject === undefined)) return refuse(1, 'give exactly one of --page and --reject');
@@ -186,8 +226,11 @@ export function curate(env: WriteEnv, holder: string | undefined, learnedId: str
     const bytes = readFileSync(join(env.vault, page));
     const problems = pageProblems(env.vault, page, bytes.toString('utf8'));
     if (problems.length) return refuse(1, ...problems, 'the page on disk fails the checks; nothing written');
+    const sha = sha256(bytes);
+    // Any `--page` curate (first close or refresh) blesses the disk as composer output, so it only does that for bytes a composer `write` left. Anything else is a hand edit (or an unrecorded page) and needs the explicit override.
+    if (!how.acceptHandEdit && env.lastWrites.get(page) !== sha) return refuse(1, 'the page on disk is not what the last composer `write` left (a hand edit, or no write recorded): curate --page would record it as composer output. Do not bless it: close the learned row with --reject, or raise a needs-you note. --accept-hand-edit records the disk as it is, and is for someone who has decided that on purpose; nothing written');
     row.page = page;
-    row.pageSha = sha256(bytes);
+    row.pageSha = sha;
   }
   const closableIds = new Set(rows.filter((r) => (r.kind === 'learned' || r.kind === 'miss') && typeof r.id === 'string').map((r) => r.id as string));
   const own = curatedProblems(row, closableIds);

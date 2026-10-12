@@ -4,12 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { run } from './library-write.ts';
 import { openStore } from './lib/journal/store.ts';
-import { begin, curate, writePage } from './lib/library/write.ts';
+import { begin, curate, fileLastWrites, writePage } from './lib/library/write.ts';
 import type { WriteEnv } from './lib/library/write.ts';
 import { pendingLearned } from './lib/library/composer.ts';
 import { verifyLedger } from './lib/journal/verify.ts';
@@ -42,7 +42,7 @@ Read when: you change how orchards are synced.
 
 const learnedRow = (id: string): LedgerRow => ({ id, ts: '2026-10-10T10:00:00.000Z', date: '2026-10-10', kind: 'learned', text: 'The orchard sync runs nightly.', learnedKind: 'how-it-works', appliesTo: `${REPO}:orchard-sync`, evidence: 'src/sync.ts:40', verifiedAt: '342b177', confidence: 'observed' });
 
-function fixture(): { root: string; stage: (text: string, name?: string) => string; ledger: () => LedgerRow[]; env: (now?: () => string) => WriteEnv; cli: (...a: string[]) => { code: number; out: string; err: string } } {
+function fixture(): { root: string; ledgerPath: string; stage: (text: string, name?: string) => string; ledger: () => LedgerRow[]; env: (now?: () => string) => WriteEnv; cli: (...a: string[]) => { code: number; out: string; err: string } } {
   const root = mkdtempSync(join(tmpdir(), 'library-write-'));
   mkdirSync(join(root, 'Projects', REPO), { recursive: true });
   writeFileSync(join(root, 'Projects', REPO, 'INDEX.md'), `---\ntype: library-index\nrepo: ${REPO}\ncomponents: [orchard-sync, harvest-export]\n---\n`);
@@ -51,9 +51,10 @@ function fixture(): { root: string; stage: (text: string, name?: string) => stri
   const stageDir = mkdtempSync(join(tmpdir(), 'library-stage-'));
   return {
     root,
+    ledgerPath: store.ledgerPath,
     stage: (text, name = 'staged.md') => { const p = join(stageDir, name); writeFileSync(p, text); return p; },
     ledger: store.readLedger,
-    env: (now = () => new Date().toISOString()) => ({ vault: root, readLedger: store.readLedger, append: store.append, newId: store.newId, now }),
+    env: (now = () => new Date().toISOString()) => ({ vault: root, readLedger: store.readLedger, append: store.append, newId: store.newId, now, lastWrites: fileLastWrites(join(store.dir, 'library-writes.json')) }),
     cli: (...a) => { const out: string[] = []; const err: string[] = []; const code = run([...a, '--vault', root, '--project', PROJECT], { out: (s) => out.push(s), err: (s) => err.push(s) }); return { code, out: out.join('\n'), err: err.join('\n') }; },
   };
 }
@@ -259,6 +260,102 @@ test('curate --refresh re-records the page sha after a refresh write, twice in a
   assert.deepEqual(problems, []);
 });
 
+test('curate --refresh refuses to record a hand edit as composer output, and --accept-hand-edit is the explicit way past it', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  const latest = (): string => String([...f.ledger()].reverse().find((r) => r.kind === 'curated' && r.page === PAGE)?.pageSha);
+  const onDisk = (): string => createHash('sha256').update(readFileSync(join(f.root, PAGE))).digest('hex');
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  const composed = latest();
+  const rows = (): number => f.ledger().length;
+
+  writeFileSync(join(f.root, PAGE), readFileSync(join(f.root, PAGE), 'utf8').replace('runs nightly', 'runs hourly'));
+  const before = rows();
+  const refused = f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /--accept-hand-edit/);
+  assert.equal(rows(), before, 'a refused refresh writes no row');
+  assert.equal(latest(), composed, 'the hand edit is still the difference step 6 sees');
+
+  const accepted = f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--accept-hand-edit', '--holder', holder, ...MARKS);
+  assert.equal(accepted.code, 0, accepted.err);
+  assert.equal(latest(), onDisk(), 'the override records the disk as it is');
+});
+
+test('a plain curate --page refuses a hand edit made after the last write, passes with --accept-hand-edit, and passes after an identical-bytes write', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  f.env().append(learnedRow('lrn2'));
+  f.env().append(learnedRow('lrn3'));
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  writeFileSync(join(f.root, PAGE), readFileSync(join(f.root, PAGE), 'utf8').replace('runs nightly', 'runs hourly'));
+  const before = f.ledger().length;
+  const refused = f.cli('curate', 'lrn2', '--page', PAGE, '--holder', holder, ...MARKS);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /--accept-hand-edit/);
+  assert.equal(f.ledger().length, before, 'a refused curate writes no row');
+  const accepted = f.cli('curate', 'lrn2', '--page', PAGE, '--accept-hand-edit', '--holder', holder, ...MARKS);
+  assert.equal(accepted.code, 0, accepted.err);
+  const edited = readFileSync(join(f.root, PAGE), 'utf8');
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(edited), '--holder', holder, '--accept-hand-edit').code, 0);
+  assert.equal(f.cli('curate', 'lrn3', '--page', PAGE, '--holder', holder, ...MARKS).code, 0, 'an identical-bytes write with --accept-hand-edit records the sha');
+});
+
+test('an identical-bytes write of a hand-edited page does not record it as composer output, so the next curate is still refused', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  f.env().append(learnedRow('lrn2'));
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  writeFileSync(join(f.root, PAGE), readFileSync(join(f.root, PAGE), 'utf8').replace('runs nightly', 'runs hourly'));
+  const edited = readFileSync(join(f.root, PAGE), 'utf8');
+  const before = f.ledger().length;
+  const write = f.cli('write', PAGE, '--from', f.stage(edited), '--holder', holder);
+  assert.equal(write.code, 1, 'staging the disk copy and writing it back must not bless it');
+  assert.match(write.err, /--accept-hand-edit/);
+  const curate = f.cli('curate', 'lrn2', '--page', PAGE, '--holder', holder, ...MARKS);
+  assert.equal(curate.code, 1);
+  assert.equal(f.ledger().length, before, 'neither refusal writes a row');
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(edited), '--holder', holder, '--accept-hand-edit').code, 0, 'the explicit override still works');
+  assert.equal(f.cli('curate', 'lrn2', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+});
+
+test('an identical-bytes write of an unchanged composer page still records and is a no-op', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  const again = f.cli('write', PAGE, '--from', f.stage(readFileSync(join(f.root, PAGE), 'utf8')), '--holder', holder);
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /unchanged/);
+});
+
+test('curate --refresh is allowed straight after a write, and refused again once the page is hand-edited after that write', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD.replace('runs nightly at 02:00', 'runs nightly at 02:00 (rechecked)')), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS).code, 0);
+  writeFileSync(join(f.root, PAGE), readFileSync(join(f.root, PAGE), 'utf8').replace('runs nightly', 'runs hourly'));
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS).code, 1);
+});
+
+test('curate --refresh refuses a page no composer write has been recorded for', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  rmSync(join(dirname(f.ledgerPath), 'library-writes.json'));
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS).code, 1);
+});
+
 test('curate --reject records a one-line reason; a secret shape in it, or a missing page, is refused and writes nothing', () => {
   const f = fixture();
   const holder = holderOf(f.cli('begin').out);
@@ -320,4 +417,33 @@ test('curate through the core refuses when called with both page and reject', ()
   env.append(learnedRow('lrn1'));
   const r = curate(env, b.ok ? b.holder : undefined, 'lrn1', { page: PAGE, reject: 'x' }, { model: 'm', used: ['u'] });
   assert.equal(r.ok, false);
+});
+
+test('seed records the latest curated sha of a pre-record page only where it matches the disk, and is idempotent', () => {
+  const f = fixture();
+  const other = `Projects/${REPO}/Knowledge/harvest-export.md`;
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  f.env().append(learnedRow('lrn2'));
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  assert.equal(f.cli('write', other, '--from', f.stage(GOOD.replace('orchard-sync', 'harvest-export')), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn2', '--page', other, '--holder', holder, ...MARKS).code, 0);
+  rmSync(join(dirname(f.ledgerPath), 'library-writes.json'));
+  writeFileSync(join(f.root, other), readFileSync(join(f.root, other), 'utf8').replace('runs nightly', 'runs hourly'));
+  const lw = f.env().lastWrites;
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS).code, 1, 'no record, so refused before the seed');
+
+  const first = f.cli('seed', '--holder', holder);
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /seeded 1 page/);
+  assert.equal(lw.get(PAGE), createHash('sha256').update(readFileSync(join(f.root, PAGE))).digest('hex'));
+  assert.equal(lw.get(other), undefined, 'the hand-edited page is not seeded');
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--refresh', '--holder', holder, ...MARKS).code, 0, 'the seeded page can be refreshed');
+
+  const second = f.cli('seed', '--holder', holder);
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /seeded 0 page/);
+  assert.equal(lw.get(other), undefined);
+  assert.equal(f.cli('seed').code, 3, 'seed needs the composer lock like the other writers');
 });
