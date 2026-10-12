@@ -1,15 +1,25 @@
 /* Podium design tokens. Custom properties inherit into every shadow root, so components reference these names only.
    Colours are hex so test/theme-contrast.test.ts can check every text and control pair for WCAG AA in both modes.
    Neutrals are tinted toward the accent hue (petrol). Series colours are the validated dataviz categorical order
-   (slots 1-8), selected per mode, and are identity colours only: status uses --critical, --success and --warning. */
+   (slots 1-8), selected per mode, and are identity colours only: status uses --critical, --success and --warning.
+   docs/design.md explains the principles and how to use each group. */
+
+/* Type faces, self-hosted (SIL OFL, licences in fonts/). Relative URLs only: the page makes no call off its own origin. */
+@font-face { font-family: "Geist"; src: url("fonts/geist.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("fonts/geist-mono.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Instrument Serif"; src: url("fonts/instrument-serif.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Instrument Serif"; src: url("fonts/instrument-serif-italic.woff2") format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
+
 :root {
   color-scheme: light dark;
 
-  /* Type */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  /* The score's voice: musical words (tempo, rests, Fine) in the system serif italic. Never labels, buttons or counts. */
-  --font-serif: ui-serif, "New York", Georgia, serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  /* Type. Display: the wordmark, the headline count line and large numerals; one weight, so never bolded. Text: everything
+     else. Mono: ids, shas, paths and keys. The system stacks behind each name are the fallback while a face loads. */
+  --font-display: "Instrument Serif", ui-serif, "New York", Georgia, serif;
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  /* The score's voice: musical words (tempo, rests, Fine) in the display italic. Never labels, buttons or counts. */
+  --font-serif: var(--font-display);
   --text-xs: 0.75rem;
   --leading-xs: 1rem;
   --text-sm: 0.8125rem;
@@ -22,6 +32,13 @@
   --leading-xl: 1.75rem;
   --text-2xl: 1.75rem;
   --leading-2xl: 2.25rem;
+  --text-3xl: 2.25rem;
+  --leading-3xl: 2.5rem;
+  --text-display: 3rem;
+  --leading-display: 3.25rem;
+  --tracking-display: -0.01em;
+  --tracking-tight: -0.011em;
+  --tracking-caps: 0.06em;
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
@@ -37,7 +54,20 @@
   --space-7: 48px;
   --space-8: 64px;
 
+  /* Grid: 12 columns inside a centred frame. Gutter and page margin step up at 640 and 1100 px (media queries below),
+     the shell's existing breakpoints, so the frame keeps its measure. */
+  --grid-columns: 12;
+  --grid-max: 1360px;
+  --gutter: var(--space-4);
+  --page-pad: var(--space-4);
+
+  /* Hairlines: the only rule weight. Strong is for control outlines that must meet 3:1. */
+  --hairline-width: 1px;
+  --hairline: var(--hairline-width) solid var(--border);
+  --hairline-strong: var(--hairline-width) solid var(--border-strong);
+
   /* Radii */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -50,6 +80,7 @@
   --dur-slow: 320ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-breathe: 1.6s;   /* skeleton loading, the one looping motion; off under reduced motion */
 
   /* Colour roles: light */
   --surface-page: #f4f6f6;
@@ -71,10 +102,27 @@
   --success-soft: #e4f2ea;
   --warning: #875200;
   --warning-soft: #f9efd9;
-  /* Chart baselines: the hairline at half strength, so it follows both modes. */
-  --grid-line: color-mix(in srgb, var(--border) 50%, transparent);
+  /* Status marks: every status colour travels with one of these symbols or a word, never alone. */
+  --glyph-attention: "●";
+  --glyph-critical: "⊘";
+  --glyph-success: "✓";
+  --glyph-warning: "▲";
 
-  /* Elevation */
+  /* Charts: gridlines recede, the axis is a hairline, labels are muted and tabular, marks are flat with a small radius. */
+  --chart-grid: color-mix(in srgb, var(--border) 50%, transparent);
+  --chart-axis: var(--border-strong);
+  --chart-label: var(--text-muted);
+  --chart-label-size: var(--text-xs);
+  --chart-stroke: 2px;
+  --chart-dot: 4px;
+  --chart-mark-radius: 2px;
+  --chart-mark-gap: 2px;
+  --chart-highlight: var(--accent);
+
+  /* Elevation: a hairline ring plus a soft drop. 1 for resting cards, 2 for anything over content. The sticky bar is
+     translucent material instead of a shadow. */
+  --material-bar: color-mix(in srgb, var(--surface-page) 84%, transparent);
+  --material-blur: saturate(1.6) blur(16px);
   --shadow-1: 0 0 0 1px rgb(18 42 46 / 0.07), 0 1px 2px rgb(18 42 46 / 0.06);
   --shadow-2: 0 0 0 1px rgb(18 42 46 / 0.09), 0 8px 24px -10px rgb(18 42 46 / 0.22);
 
@@ -91,10 +139,14 @@
   --series-other: #8a8883;
 
   /* Older names kept as aliases */
+  --grid-line: var(--chart-grid);
   --bad: var(--critical);
   --good: var(--success);
   --warn: var(--warning);
 }
+
+@media (min-width: 640px) { :root { --gutter: var(--space-5); --page-pad: var(--space-5); } }
+@media (min-width: 1100px) { :root { --gutter: var(--space-6); --page-pad: var(--space-7); } }
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -142,6 +194,7 @@
     --dur-fast: 0ms;
     --dur-base: 0ms;
     --dur-slow: 0ms;
+    --dur-breathe: 0ms;
   }
 }
 
@@ -160,6 +213,10 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-md);
   line-height: var(--leading-md);
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  font-synthesis: style;   /* never a faked bold: the display face has one weight, and emphasis there is size or ink */
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

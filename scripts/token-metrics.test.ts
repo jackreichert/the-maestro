@@ -283,7 +283,17 @@ test('sessionLine measures the turns since the last compact, and a compaction re
     const dir = mkdtempSync(join(tmpdir(), 'tm-compact-'));
     const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
     writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
-    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns since compact (3 before) · ctx 300k of ~1000k (30%) · 200k read/turn');
+});
+
+test('sessionLine says it counts since the last compact and how many turns came before, so a compaction does not silently reset it (MAESTRO-135)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-compact-say-'));
+    const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
+    writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns since compact (3 before) · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.deepEqual(sessionStatus(dir, 1_000_000), { available: true, session: 's', turns: 2, turnsBefore: 3, ctxK: 300, triggerK: 1000, pct: 30, readK: 200, advice: '' });
+    writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 100000), boundary, turnAt('b', 100000), boundary, turnAt('c', 100000)].join('\n')}\n`);
+    assert.match(sessionLine(dir, 1_000_000), /1 turns since compact \(2 before\)/, 'every earlier compaction counts');
 });
 
 test('sessionLine grades the advice on the last turn\'s context: roll soon from the warn percent, roll now from the roll percent', () => {

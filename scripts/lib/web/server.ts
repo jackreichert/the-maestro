@@ -111,7 +111,7 @@ export function createWebServer(o: WebServerOptions): Server {
         (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
         return;
       }
-      if (url.pathname === TOKEN_PATH) return sendJson(res, 200, { token, max: writes.max });
+      if (url.pathname === TOKEN_PATH) return sendJson(res, 200, { token, max: writes.max }, false);
       if (url.pathname === EVENTS_PATH) return serveEvents(req, res, hub);
       const route = routes.find((r) => r.pattern.test(url.pathname));
       if (route) {
