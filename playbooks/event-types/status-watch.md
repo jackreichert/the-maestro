@@ -18,6 +18,7 @@ Register: `node scripts/event-loop.ts add --id status-watch --type status-watch 
 | Digest line | Actionable? | What to do |
 |---|---|---|
 | `ask <id> (decision: <ask text>) answered: <text>` | yes | Treat the text as the user's answer to ask `<id>`: act on it, then `journal.ts resolve <id> --answer "<text>"` |
+| `ask <id> (decision: <ask text>) answered on the page, already recorded and closed: <text>` | yes | The user answered with the page's buttons (Send answer, Take recommendation or Skip). The ask is already closed in the ledger with this text, so do **not** run `resolve` again: act on the answer (a Skip means nothing is wanted: say so and move on), then note what you did in the ask's stream with `journal.ts` (a `done` row or the next step's row). It is raised once, by the watcher, never for an answer you recorded yourself with `resolve` |
 | `DISCUSS ask <id> (decision: ...): <topic>` (or `(no topic given)`) | yes | Open your next reply with the topic and the ask's context, and do not act on that ask until the chat settles. Then `journal.ts resolve <id> --answer "<what was decided>"`. It never sends a text: the edit is the user's own |
 | `ask <id> (decision: ...) ticked` | yes | The user closed or approved it without words; read the ask, do what a tick means for it, then resolve it |
 | `priorities edited inline: 1) ...; 2) ...` | yes | Run `journal.ts priorities set "<p1>" "<p2>"` with those lines (a `| Stream` suffix is kept; pass it through) so `priorities.md` matches, then regenerate the page |
