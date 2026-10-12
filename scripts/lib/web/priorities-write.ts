@@ -6,7 +6,8 @@
  * this server can carry) and the body's shape. An accepted edit goes to `editPriorities`, which re-reads `priorities.md`, applies
  * the one operation and writes it back atomically; the result and the cap come back so the page can show the real list. Every
  * error body is a code and a message built here (never a path, a stack or the request's own text).
- * A successful edit also leaves a one-line, already-closed note in the ledger, so the day's history shows it.
+ * A successful edit also leaves a one-line, already-closed note in the ledger, so the day's history shows it, and (when `vault_root` is set)
+ * rewrites each project's own file for the day through the same function `journal.ts priorities set` uses, so the two lists do not drift.
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -14,6 +15,8 @@ import { openStore } from '../journal/store.ts';
 import { EditRefused, MAX_STREAM, MAX_TEXT, editPriorities } from '../status-page/priorities-edit.ts';
 import type { Edit } from '../status-page/priorities-edit.ts';
 import { localDate, readPriorities } from '../status-page/priorities.ts';
+import type { Priority } from '../status-page/priorities.ts';
+import { syncProjectPriorities } from '../status-page/project-priorities-sync.ts';
 import { MAX_BODY_BYTES } from './guard.ts';
 import { sendError, sendJson } from './guard.ts';
 import type { WebConfig } from './api.ts';
@@ -93,6 +96,19 @@ function recordEdit(o: WriteOptions, summary: string): void {
   }
 }
 
+/** Brings each project's file for `day` in line with the list just written. A failure is logged, not raised: priorities.md is the source of truth and is already written. */
+function syncProjects(o: WriteOptions, day: string, today: string, items: Priority[]): void {
+  const vaultRoot = o.web.vaultRoot;
+  if (!vaultRoot) return;
+  try {
+    const store = openStore({ vault: o.web.vault, project: o.web.project, dryRun: false, warn: () => {} });
+    const { problems } = syncProjectPriorities({ vaultRoot, statusDir: o.web.statusDir, day, today, items, rows: store.readLedger(), registry: store.loadRegistry(), repoStreams: o.web.page.repoStreams, containerProject: o.web.containerProject ?? o.web.project });
+    problems.forEach((p) => o.log(`could not update a project priorities file: ${p}`));
+  } catch (e) {
+    o.log(`could not update the project priorities files: ${e instanceof Error ? e.message.split('\n')[0] : 'error'}`);
+  }
+}
+
 /** The state both success and refusal answer with, so the page shows what is really in the file. */
 function snapshot(o: WriteOptions): { priorities: ReturnType<typeof readPriorities>; max: number } {
   return { priorities: readPriorities(o.web.statusDir, localDate(o.now(), o.web.page.tz)), max: o.max };
@@ -110,7 +126,9 @@ export async function handleWrite(o: WriteOptions, path: string, req: IncomingMe
   const edit = parseEdit(op, parsed);
   if (!edit) return sendError(res, 400);
   try {
-    const result = editPriorities(o.web.statusDir, localDate(o.now(), o.web.page.tz), edit, { max: o.max });
+    const today = localDate(o.now(), o.web.page.tz);
+    const result = editPriorities(o.web.statusDir, today, edit, { max: o.max });
+    syncProjects(o, result.date, today, result.items);
     recordEdit(o, result.summary);
     sendJson(res, 200, snapshot(o));
   } catch (e) {

@@ -97,6 +97,16 @@ test('matchTarget prefers an exact id over text and ignores closed items for tex
     assert.deepEqual(matchTarget(items, 'gadget'), { kind: 'not-found' });
 });
 
+test('closeItem refuses a miss row, whatever the closing kind, and appends nothing', () => {
+    for (const kind of ['done', 'dropped', 'resolved']) {
+        const { ctx, rows } = ctxFor([...seed(), { id: 'mis1', kind: 'miss', ts: `${DAY}T09:03:00Z`, date: DAY, text: 'A fake miss.' }]);
+        const result = closeItem(ctx, { kind, needle: 'mis1' });
+        assert.equal(result.kind, 'not-closable', kind);
+        assert.match(result.kind === 'not-closable' ? result.reason : '', /miss row: it is closed only by a composer pass/);
+        assert.equal(rows.length, 4, kind);
+    }
+});
+
 test('closeItem refuses a learned row, whatever the closing kind, and appends nothing', () => {
     for (const kind of ['done', 'dropped', 'resolved']) {
         const { ctx, rows } = ctxFor([...seed(), { id: 'lrn1', kind: 'learned', ts: `${DAY}T09:03:00Z`, date: DAY, text: 'A fake fact.' }]);

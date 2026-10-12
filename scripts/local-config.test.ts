@@ -2,10 +2,10 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
+import { parseConfig, trustedConfigFile, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
 
 const SCRIPT = new URL('./local-config.ts', import.meta.url).pathname;
 const block = (body: string): string => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
@@ -88,6 +88,64 @@ test('MAESTRO_OVERLAY beats overlay: in the file; sibling of the skill dir is fo
         encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH, HOME: home, MAESTRO_OVERLAY: 'sib-skill' },
     });
     assert.equal(viaModule.stdout.trim(), 'sibling-org', viaModule.stderr);
+});
+
+test('overlay is found in an ancestor container .claude/skills when the checkout is reached by its real path', () => {
+    const container = mkdtempSync(join(tmpdir(), 'lc-container-'));
+    mkdirSync(join(container, 'skills', 'the-maestro', 'scripts'), { recursive: true });
+    write(join(container, '.claude', 'skills', 'anc-skill', 'config.md'), block('gh_org: ancestor-org'));
+    const run = (argv1: string): string => spawnSync(process.execPath, ['-e', `
+        process.argv[1] = ${JSON.stringify(argv1)};
+        const m = await import(${JSON.stringify(SCRIPT)});
+        console.log(m.GH_ORG);`, '--input-type=module'], {
+        encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH, HOME: home, MAESTRO_OVERLAY: 'anc-skill' },
+    }).stdout.trim();
+    assert.equal(run(join(container, 'skills', 'the-maestro', 'scripts', 'x.mjs')), 'ancestor-org');
+    mkdirSync(join(container, '.worktrees', 'wt', 'scripts'), { recursive: true });
+    assert.equal(run(join(container, '.worktrees', 'wt', 'scripts', 'x.mjs')), 'ancestor-org', 'a worktree under the container finds it too');
+    assert.equal(run(join(home, 'elsewhere', 'scripts', 'x.mjs')), '', 'no ancestor container, no overlay');
+});
+
+/** GH_ORG as the overlay `trust-skill` resolves it, for a script started from `argv1`. */
+const orgFrom = (argv1: string): string => spawnSync(process.execPath, ['-e', `
+    process.argv[1] = ${JSON.stringify(argv1)};
+    const m = await import(${JSON.stringify(SCRIPT)});
+    console.log(m.GH_ORG);`, '--input-type=module'], {
+    encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH, HOME: home, MAESTRO_OVERLAY: 'trust-skill' },
+}).stdout.trim();
+
+test('an overlay config under a group- or world-writable ancestor is not used, and a private chain is', () => {
+    const container = realpathSync(mkdtempSync(join(tmpdir(), 'lc-trust-')));
+    const cfg = join(container, 'mid', '.claude', 'skills', 'trust-skill', 'config.md');
+    write(cfg, block('gh_org: trusted-org'));
+    mkdirSync(join(container, 'mid', 'wt', 'scripts'), { recursive: true });
+    const argv1 = join(container, 'mid', 'wt', 'scripts', 'x.mjs');
+    assert.equal(trustedConfigFile(cfg), true);
+    assert.equal(orgFrom(argv1), 'trusted-org');
+    chmodSync(container, 0o777);
+    assert.equal(trustedConfigFile(cfg), false, 'a world-writable ancestor above the config');
+    assert.equal(orgFrom(argv1), '', 'the config is skipped, not read');
+    chmodSync(container, 0o775);
+    assert.equal(trustedConfigFile(cfg), false, 'group-writable counts too');
+    chmodSync(container, 0o755);
+    chmodSync(join(container, 'mid', '.claude'), 0o777);
+    assert.equal(trustedConfigFile(cfg), false, 'the directory holding the config is checked as well');
+    assert.equal(trustedConfigFile(join(container, 'absent', 'config.md')), false);
+});
+
+test('a symlinked overlay config is judged by where it really lives', () => {
+    const container = realpathSync(mkdtempSync(join(tmpdir(), 'lc-link-')));
+    const open = join(container, 'open');
+    write(join(open, 'config.md'), block('gh_org: planted-org'));
+    chmodSync(open, 0o777);
+    const link = join(container, '.claude', 'skills', 'trust-skill');
+    mkdirSync(join(link, '..'), { recursive: true });
+    symlinkSync(open, link);
+    mkdirSync(join(container, 'wt', 'scripts'), { recursive: true });
+    assert.equal(trustedConfigFile(join(link, 'config.md')), false, 'the private-looking path leads into a world-writable directory');
+    assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), '');
+    chmodSync(open, 0o755);
+    assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), 'planted-org', 'the same link is fine once its target is private');
 });
 
 test('plugin-qualified overlay resolves through installed_plugins.json', () => {
@@ -512,4 +570,29 @@ test('notes_check_since defaults to 7d and reads the file and the env', () => {
     write(join(home, '.config', 'the-maestro', 'config.md'), block('notes_check_since: 2026-09-01'));
     assert.equal(show().NOTES_CHECK_SINCE, '2026-09-01');
     assert.equal(show({ MAESTRO_NOTES_CHECK_SINCE: 'all' }).NOTES_CHECK_SINCE, 'all');
+});
+
+/** Resolves `resolvedSettings()` in a child process with a throwaway HOME and the given config text and environment. */
+function resolved(config: string, env: Record<string, string> = {}): Record<string, { envName: string; value: string; source: string }> {
+    const file = join(home, 'config.md');
+    write(file, config);
+    const code = `import('${new URL('./local-config.ts', import.meta.url).href}').then((m) => console.log(JSON.stringify(m.resolvedSettings())))`;
+    const r = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH ?? '', HOME: home, MAESTRO_LOCAL_CONFIG: file, ...env } });
+    assert.equal(r.status, 0, r.stderr);
+    const list = JSON.parse(r.stdout) as { key: string; envName: string; value: string; source: string }[];
+    return Object.fromEntries(list.map((s) => [s.key, s]));
+}
+
+test('resolvedSettings names the source of each value: environment, user file or default', () => {
+    const s = resolved(block('gh_org: file-org\ngh_login: file-login'), { MAESTRO_GH_LOGIN: 'env-login' });
+    assert.deepEqual(s.gh_org, { key: 'gh_org', envName: 'MAESTRO_GH_ORG', value: 'file-org', source: join(home, 'config.md') });
+    assert.equal(s.gh_login?.value, 'env-login');
+    assert.equal(s.gh_login?.source, 'env MAESTRO_GH_LOGIN');
+    assert.equal(s.lease_ttl_minutes?.source, 'default');
+});
+
+test('resolvedSettings lists user-file-only gate settings with no environment name', () => {
+    const s = resolved(block('pr_body_check_voice: off'), { MAESTRO_PR_BODY_CHECK_VOICE: 'on' });
+    assert.equal(s.pr_body_check_voice?.value, 'off');
+    assert.equal(s.pr_body_check_voice?.envName, '');
 });

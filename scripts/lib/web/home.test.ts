@@ -90,3 +90,12 @@ test('GET /api/epics lists each stream\'s open epics with their counts, and touc
   assert.ok(!r.body.includes(fx.root) && !r.body.includes(ledgerRoot), 'no absolute path in the response');
   assert.deepEqual(roots.map(snapshot), before, 'vault, ledger and status dir are byte-identical');
 });
+
+test('GET /api/projects answers with a row per stream and no secret or absolute path', async () => {
+  const r = await hit('/api/projects');
+  assert.equal(r.status, 200);
+  const data = JSON.parse(r.body);
+  assert.deepEqual(data.rows.map((x: { stream: string }) => x.stream), ['Avonlea', 'Green Gables']);
+  assertNoCanary(r.body);
+  assert.ok(!r.body.includes(fx.root) && !r.body.includes(ledgerRoot), 'no absolute path in the response');
+});

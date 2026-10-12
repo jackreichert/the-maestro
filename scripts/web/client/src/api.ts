@@ -1,6 +1,6 @@
-import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
-import type { ChartsData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
+import type { ChartsData, EpicsData, LocalReview, OpenPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -47,6 +47,17 @@ export const loadState = (): Promise<Loaded<PodiumState>> => loadWithFallback('/
   return got && { data: got.state, dropped: got.dropped };
 });
 
+/**
+ * Home's status rows, links and weekly counts. On a live page (`live`) a failed or unusable answer throws, so Home shows its
+ * "could not be loaded" state: the sample projects would pass for real ones. The bundled sample stands in only when no server answers.
+ */
+export async function loadProjects(live: boolean): Promise<Loaded<ProjectsData>> {
+  if (!live) return loadWithFallback('/api/projects', '/fixtures/projects.json', sanitizeProjects);
+  const got = sanitizeProjects(await getJson('/api/projects'));
+  if (!got) throw new Error('/api/projects does not match the contract');
+  return { ...got, source: 'server' };
+}
+
 export const loadCharts = (): Promise<Loaded<ChartsData>> => loadWithFallback('/api/charts?days=14', '/fixtures/charts.json', (x) => {
   return sanitizeCharts(x);
 });
@@ -77,6 +88,24 @@ export async function loadEpics(): Promise<EpicsData | null> {
 export async function loadLocalReview(): Promise<LocalReview | null> {
   try {
     return sanitizeLocalReview(await getJson('/api/local-review'))?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Every open PR grouped by repo, or null when the server has none to give (sample data, an old server, an unusable body). No fixture stands in. */
+export async function loadOpenPrs(): Promise<OpenPrsData | null> {
+  try {
+    return sanitizeOpenPrs(await getJson('/api/prs'))?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the PR refresh stands, or null when the server cannot say. */
+export async function loadRefreshStatus(): Promise<PrsRefreshStatus | null> {
+  try {
+    return sanitizeRefreshStatus(await getJson('/api/prs/refresh-state'));
   } catch {
     return null;
   }

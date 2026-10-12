@@ -1,37 +1,32 @@
 import './stream-board.ts';
 import './podium-chart.ts';
 import './priority-list.ts';
-import './epic-lines.ts';
 import './local-review.ts';
-import './md-fragment.ts';
-import { h, s, shadow, streamTag } from './dom.ts';
-import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadState } from './api.ts';
-import { fragmentFor } from './contract.ts';
+import './open-prs.ts';
+import { h, s, shadow } from './dom.ts';
+import { BOARD_CSS, section } from './stream-board.ts';
+import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
 import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
 import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
-import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, OVERVIEW, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
-import { DASHBOARD_CSS, dashboardView } from './dashboard-view.ts';
+import { DASHBOARD, OPEN_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { OpenPrsStore } from './open-prs-store.ts';
+import { createPoster } from './write-token.ts';
+import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
+import type { ProjectsLoad } from './home-tab.ts';
 import { filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
-import type { ChartKind } from './podium-chart.ts';
-import type { ChartData } from './chart-math.ts';
 import type { AskBusyDetail, ChartsData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
 
-interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; local: LocalReview | null; dropped: number }
+interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number }
 
-const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
-  :host { --pad: var(--space-4); }
-  @media (min-width: 640px) { :host { --pad: var(--space-5); } }
-  @media (min-width: 1100px) { :host { --pad: var(--space-7); } }
-  .wrap { max-width: 1360px; margin: 0 auto; padding-inline: var(--pad); }
+const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
+  .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
 
   /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
   .skip { position: fixed; inset-block-start: -100px; inset-inline-start: var(--space-3); z-index: 10; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-weight: var(--weight-semibold); text-decoration: none; }
@@ -40,7 +35,8 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   header { padding-block: var(--space-5) var(--space-4); }
   .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
   .brand { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
-  h1 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-bold); letter-spacing: -0.01em; white-space: nowrap; }
+  /* The wordmark is the one display-face word in the frame; it sits in the text line box, so the header keeps its height. */
+  h1 { margin: 0; font-family: var(--font-display); font-size: var(--text-xl); line-height: var(--leading-md); font-weight: var(--weight-regular); letter-spacing: var(--tracking-display); white-space: nowrap; }
   /* The baton wordmark: the stick is ink, and its tip takes the accent only while something needs you. */
   .baton { width: 20px; height: 20px; margin-right: 6px; vertical-align: -4px; color: var(--text-primary); overflow: visible; }
   .baton .stick { transform-box: view-box; transform-origin: 9.4px 22.6px; }
@@ -75,7 +71,7 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .scope span { vertical-align: baseline; }
   button.tempo {
     font: italic var(--text-sm) / var(--leading-sm) var(--font-serif); letter-spacing: 0.01em; color: var(--text-secondary);
-    background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 4px; cursor: pointer;
+    background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: var(--radius-xs); cursor: pointer;
     text-decoration: underline dotted var(--border-strong); text-underline-offset: 0.25em;
     transition: color var(--dur-fast) var(--ease-out);
   }
@@ -88,7 +84,9 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .blk { color: var(--critical); font-size: var(--text-sm); }
   .source { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
 
-  .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-size: var(--text-2xl); line-height: var(--leading-2xl); letter-spacing: -0.02em; }
+  /* The headline count line is set in the display face: large numerals read first, words recede. One weight, so the
+     count is marked by ink, not bold. A display size on the text line height keeps the header's measured height. */
+  .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-family: var(--font-display); font-size: var(--text-3xl); line-height: var(--leading-2xl); letter-spacing: var(--tracking-display); }
   .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
   button.tile {
     font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer;
@@ -99,14 +97,16 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   @media (hover: hover) { button.tile:hover { background: var(--accent-soft); } }
   button.tile[aria-pressed=true] { background: var(--accent-soft); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.2em; }
   .filter-bar { margin: 0 0 var(--space-4); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
-  .cue .n { font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  .cue .n { font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; color: var(--text-primary); }
   .cue .zero, .cue .zero .n { color: var(--text-muted); font-weight: var(--weight-regular); }
   .cue .tone-accent:not(.zero) .n { color: var(--accent); }
   .cue .tone-critical:not(.zero) .n { color: var(--critical); }
   .cue .tone-success:not(.zero) .n { color: var(--success); }
-  @media (max-width: 640px) { .cue { font-size: var(--text-xl); line-height: var(--leading-xl); gap: var(--space-1) var(--space-4); } }
+  @media (max-width: 640px) { .cue { font-size: var(--text-2xl); line-height: var(--leading-xl); gap: var(--space-1) var(--space-4); } }
 
-  .tabbar { position: sticky; top: 0; z-index: 2; background: var(--surface-page); border-bottom: 1px solid var(--border); }
+  /* The sticky bar is a translucent material over the content scrolling beneath it; opaque where blur is unsupported. */
+  .tabbar { position: sticky; top: 0; z-index: 2; background: var(--material-bar); -webkit-backdrop-filter: var(--material-blur); backdrop-filter: var(--material-blur); border-bottom: var(--hairline); }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .tabbar { background: var(--surface-page); } }
   [role=tablist] { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; padding-top: var(--space-2); }
   [role=tablist]::-webkit-scrollbar { display: none; }
   .more-end [role=tablist] { mask-image: linear-gradient(to right, black calc(100% - 56px), transparent); }
@@ -140,8 +140,8 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .table-wrap { overflow-x: auto; }
   .table-wrap:focus-visible { outline-offset: 4px; }
   table.counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); line-height: var(--leading-sm); font-variant-numeric: tabular-nums; }
-  table.counts th, table.counts td { padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
-  table.counts thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: 1px solid var(--border); white-space: normal; vertical-align: bottom; }
+  table.counts th, table.counts td { padding: var(--space-2) var(--space-1); border-bottom: var(--hairline); text-align: right; white-space: nowrap; }
+  table.counts thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: var(--hairline); white-space: normal; vertical-align: bottom; }
   table.counts th:first-child, table.counts td:first-child { text-align: left; padding-left: 0; }
   table.counts th:last-child, table.counts td:last-child { padding-right: 0; }
   table.counts tbody th { font-weight: var(--weight-medium); }
@@ -161,18 +161,18 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   @keyframes grow { from { transform: scaleX(0.4); opacity: 0; } }
 
   /* Placeholder blocks breathe in opacity (composited, no repaint per frame), not a moving gradient. */
-  .sk { display: block; border-radius: var(--radius-sm); background: var(--surface-2); animation: breathe 1.6s var(--ease-in-out) infinite; }
+  .sk { display: block; border-radius: var(--radius-sm); background: var(--surface-2); animation: breathe var(--dur-breathe) var(--ease-in-out) infinite; }
   @keyframes breathe { 50% { opacity: 0.5; } }
   @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
   /* Offsets match the header's real metrics at rest (brand row, scope line, cue line, tab bar), so nothing jumps on load. */
   .sk-head { padding-block: 43px 0; }
   .sk-scope { display: block; margin-top: 47px; }
   .sk-scope + .staff { margin-top: 14px; }
-  .sk-tabs { margin-top: 29px; border-bottom: 1px solid var(--border); padding-block: 15px; }
+  .sk-tabs { margin-top: 29px; border-bottom: var(--hairline); padding-block: 15px; }
   .sk-tabs .wrap { display: flex; gap: var(--space-6); }
   .sk-panel { padding-block: var(--space-6); }
-  .sk-rows { display: block; border-top: 1px solid var(--border); }
-  .sk-row { display: flex; align-items: center; gap: var(--space-3); height: 41px; border-bottom: 1px solid var(--border); }
+  .sk-rows { display: block; border-top: var(--hairline); }
+  .sk-row { display: flex; align-items: center; gap: var(--space-3); height: 41px; border-bottom: var(--hairline); }
   .sk-hint { display: block; margin-top: -4px; }
   .sk-hint .sk-line { height: 8px; max-width: 90%; }
   .sk-id { width: 36px; height: 16px; flex: none; }
@@ -184,7 +184,7 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .staff-line:nth-child(3) { top: 12px; }
   .staff-line:nth-child(4) { top: 18px; }
   .staff-line:nth-child(5) { top: 24px; }
-  .glide { position: absolute; inset: 0; animation: glide 1.6s var(--ease-in-out) infinite alternate; }
+  .glide { position: absolute; inset: 0; animation: glide var(--dur-breathe) var(--ease-in-out) infinite alternate; }
   .note { position: absolute; left: 0; top: 12.5px; width: 9px; height: 6px; border-radius: 50%; background: var(--text-muted); transform: rotate(-20deg); }
   @keyframes glide { to { transform: translateX(calc(100% - 9px)); } }
   @media (prefers-reduced-motion: reduce) { .glide { animation: none; } }
@@ -193,18 +193,12 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
 
   .problem { max-width: 60ch; margin: var(--space-8) auto; padding: var(--space-6); background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
   .problem h2 { margin: 0 0 var(--space-2); font-size: var(--text-lg); line-height: var(--leading-lg); }
-  .problem h2::before { content: '⊘'; color: var(--critical); margin-right: var(--space-2); }
+  .problem h2::before { content: var(--glyph-critical); color: var(--critical); margin-right: var(--space-2); }
   .problem p { margin: 0 0 var(--space-4); color: var(--text-secondary); }
   .problem .detail { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-primary); background: var(--surface-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 `;
 
-/** How many asks the Overview lists before "Show all N": the oldest few, so Blocked and Shipped today stay above the fold. */
-export const ASK_PREVIEW = 4;
-/** On a phone each ask row takes two lines, so the preview is one shorter there. */
-const ASK_PREVIEW_PHONE = 3;
-const askPreview = (): number => (window.matchMedia('(max-width: 640px)').matches ? ASK_PREVIEW_PHONE : ASK_PREVIEW);
-
-/** <podium-app>: header with the cue line, stream tabs plus Overview. The active tab lives in the URL fragment. */
+/** <podium-app>: header with the cue line, Home, then one tab per stream. The active tab lives in the URL fragment. */
 export class PodiumApp extends HTMLElement {
   #root: ShadowRoot;
   #state: PodiumState | null = null;
@@ -216,8 +210,8 @@ export class PodiumApp extends HTMLElement {
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
   #dropped = 0;
   #active = DASHBOARD;
-  // The day whose finished items the Dashboard has open, if any. Lives here so a live redraw keeps it.
-  #day: string | null = null;
+  // Home's project rows load after the board, so the page answers at once and the rows fill in.
+  #projects: ProjectsLoad = { state: 'loading' };
   // The summary tile pressed, if any: the board shows only that bucket. It lives in the fragment beside the tab.
   #filter: CueKey | null = null;
   #tick: number | undefined;
@@ -225,6 +219,14 @@ export class PodiumApp extends HTMLElement {
   #tempoOpen = false;
   // The last home base each stream tab got, so a redraw shows it at once while the fresh one loads.
   readonly #homes = new Map<string, StreamHome>();
+  // The Open PRs tab's table and refresh state live here, not in its element, so a live redraw does not lose a refresh in flight.
+  readonly #poster = createPoster((u, i) => fetch(u, i));
+  readonly #prs = new OpenPrsStore({
+    load: loadOpenPrs,
+    status: loadRefreshStatus,
+    post: async () => (await this.#poster.post('/api/prs/refresh', {}))?.status ?? null,
+    delay: (ms) => new Promise((ok) => { setTimeout(ok, ms); }),
+  });
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -271,6 +273,16 @@ export class PodiumApp extends HTMLElement {
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
       if (this.#live) this.#startLive(s.data.seq);   // sample data has no server to follow
+      void projectsLoad(this.#live).then((p) => {
+        if (!this.isConnected || this.#projects.state === 'ok') return;   // a live update got there first
+        this.#projects = p;
+        // Typing an answer holds the redraw; the next render (any tab switch or live update) shows the rows.
+        if (this.#active === DASHBOARD && !this.#filter && !typingAnAnswer()) {
+          const folds = foldStates(this.#root);
+          keepAcross(this.#root, () => this.#safeRender());
+          restoreFolds(this.#root, folds);
+        }
+      });
     }).catch((e: unknown) => {
       this.#root.replaceChildren(problem(`Can't reach the Podium server`, e, 'Start it with node scripts/journal.ts web (or npm run web:static for sample data), then reload.'));
     });
@@ -296,8 +308,8 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
-        const [s, c, e, lr] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview()]);
-        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, local: lr, dropped: s.dropped + c.dropped } : null;
+        const [s, c, e, lr, p] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true)]);
+        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
       },
       seqOf: (f) => f.state.seq,
       apply: (f) => this.#adopt(f),
@@ -320,6 +332,7 @@ export class PodiumApp extends HTMLElement {
     this.#charts = f.charts;
     this.#epics = f.epics;
     this.#local = f.local;
+    this.#projects = f.projects;
     this.#dropped = f.dropped;
     askState.prune(f.state.asks.map((a) => a.id));
     if (!this.#ids().includes(this.#active)) this.#active = DASHBOARD;   // the stream behind the open tab is gone
@@ -403,12 +416,12 @@ export class PodiumApp extends HTMLElement {
     const count = <T extends { stream: string }>(xs: T[], id: string): number => (isAllStreams(id) ? xs.length : xs.filter((x) => x.stream === tabStream(id)).length);
     const tabs = ids.map((id) => {
       const on = id === this.#active;
-      const n = id === DASHBOARD ? 0 : count(st.asks, id);   // the badge rides on the Board, so the two all-streams tabs do not repeat it
-      const blocked = id === DASHBOARD ? 0 : count(st.blocked, id);
+      const n = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.asks, id);   // Home and Open PRs have no ask badge
+      const blocked = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.blocked, id);
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === DASHBOARD ? 'Dashboard' : id === OVERVIEW ? 'Board' : tabStream(id),
+      }, id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : tabStream(id),
       n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
       blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
       tab.addEventListener('click', () => this.#select(id, true));
@@ -422,7 +435,7 @@ export class PodiumApp extends HTMLElement {
       return tab;
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#dashboard(st) : this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
@@ -574,16 +587,22 @@ export class PodiumApp extends HTMLElement {
     });
   }
 
-  /** The landing tab. Read-only: every mark and row links to where the thing is answered or opened. */
-  #dashboard(st: PodiumState): Node {
-    return dashboardView(st, this.#charts, {
-      day: this.#day,
-      setDay: (day) => keepAcross(this.#root, () => { this.#day = day; this.#release({ busy: false }); this.#safeRender(); }),   // the column that was pressed is redrawn; keep focus on its twin
+  /** The Open PRs tab. Its data comes from the page's own store; a live update redraws the table in place and never starts a refresh. */
+  #openPrs(st: PodiumState): Node {
+    const el = h('open-prs');
+    el.tz = st.tz;
+    el.model = this.#prs.model;
+    el.onRefresh = () => { void this.#prs.refresh(); };
+    const unsubscribe = this.#prs.subscribe(() => {
+      if (!el.isConnected) { unsubscribe(); return; }
+      el.model = this.#prs.model;
     });
+    if (this.#sources.state === 'server') void this.#prs.load();   // each draw asks again, so the tab never shows older data than the cache holds
+    return el;
   }
 
-  #overview(st: PodiumState): Node {
-    const ctx = { now: st.generatedAt, tz: st.tz, showStream: true, prs: st.prs };
+  /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
+  #home(st: PodiumState): Node {
     const pri = st.priorities;
     const editable = this.#sources.state === 'server';
     const stale = pri.state === 'stale' && pri.date !== st.today;
@@ -592,56 +611,12 @@ export class PodiumApp extends HTMLElement {
       : 'No priorities set for today.';
     const priorities = h('priority-list');
     priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note, epics: this.#epics ? Object.fromEntries(this.#epics.streams.map((g) => [g.stream, g.epics])) : {} };
-    const unfiled = this.#epics?.unfiled ?? [];
-    const unfiledList = unfiled.length ? h('epic-lines') : null;
-    if (unfiledList) unfiledList.epics = unfiled;
     const localList = h('local-review');
     localList.review = this.#local;
-    const asks = askCards(st.asks, this.#sources.state === 'server', true, askPreview());
-    const frag = fragmentFor(st.fragments, OVERVIEW);
-    const md = frag ? h('md-fragment') : null;
-    if (md && frag) md.markdown = frag;
-    return h('div', {},
-      h('div', { class: 'board' },
-        h('div', { class: 'col' },
-          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', rest: RESTS.asks, hint: askHint(this.#sources.state === 'server'), action: asks?.more }, asks?.list ?? null),
-          section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(st.blocked, ctx)),
-          section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped }, itemRows(st.done, ctx))),
-        h('div', { class: 'col' },
-          section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: note, quiet: true }, priorities),
-          unfiledList ? section({ title: 'Unfiled epics', n: unfiled.length, tone: 'neutral', empty: '', quiet: true }, unfiledList) : null,
-          section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: '', quiet: true }, localList),
-          section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(st.working, ctx)),
-          st.stale.length ? section({ title: 'Stale', n: st.stale.length, tone: 'neutral', empty: '', quiet: true }, itemRows(st.stale, ctx)) : null,
-          section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
-      h('div', { class: 'wide' },
-        section({ title: 'Trends', n: 0, tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),
-        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null));
-  }
-
-  #counts(st: PodiumState): Node | null {
-    if (st.footer.length === 0) return null;
-    const cell = (n: number): HTMLElement => h('td', { class: n === 0 ? 'z' : undefined }, String(n));
-    // The table scrolls sideways on a narrow screen, so its wrapper is a focusable, named region: arrow keys can scroll it.
-    return h('div', { class: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': 'Counts per stream' }, h('table', { class: 'counts' }, h('caption', { class: 'vh' }, 'Counts per stream'),
-      h('thead', {}, h('tr', {}, ...['Stream', 'Need you', 'Working', 'Queued', 'Blocked', 'Done'].map((t) => h('th', { scope: 'col' }, t)))),
-      h('tbody', {}, ...st.footer.map((f) => h('tr', {}, h('th', { scope: 'row' }, streamTag(f.stream)),
-        ...[f.asks, f.working, f.queued, f.blocked, f.done].map(cell))))));
-  }
-
-  #chartGrid(): Node | null {
-    const c = this.#charts;
-    if (!c) return null;
-    const mk = (kind: ChartKind, title: string, data: ChartData): HTMLElement => {
-      const el = h('podium-chart', { kind, label: title });
-      el.data = data;
-      return el;
-    };
-    return h('div', { class: 'charts' },
-      mk('stacked', 'Done per day, by stream', throughputChart(c)),
-      mk('bar', 'Open asks by age', ageChart(c)),
-      mk('bar', 'Pull requests by CI state', prMixChart(c)),
-      mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
+    return h('div', { class: 'home-plus' },
+      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects }),
+      section({ title: "Today's priorities", n: 0, tone: 'neutral', empty: note, quiet: true }, priorities),
+      section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
 }
 
@@ -677,6 +652,11 @@ function showCue(asks: number): void {
   const icon = document.querySelector<HTMLLinkElement>('link[rel=icon]');
   const href = asks > 0 ? '/favicon-cue.svg' : '/favicon.svg';
   if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
+}
+
+/** The projects payload as Home's load state: a failure is shown in the sections that need it, never thrown, and on a live page never replaced by sample data. */
+function projectsLoad(live: boolean): Promise<ProjectsLoad> {
+  return loadProjects(live).then((p): ProjectsLoad => ({ state: 'ok', data: p.data }), (e: unknown): ProjectsLoad => ({ state: 'error', message: e instanceof Error ? e.message : 'unknown error' }));
 }
 
 /** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed there. */

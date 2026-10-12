@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { AUTOCOMPACT_FLOOR } from '../local-config.ts';
 import { describeSetting, floorWarnings, readAutocompact, subagentNote, triggerTokens } from '../lib/autocompact.ts';
 import { eventHooksSnippet } from './install-hooks.ts';
+import { printJson } from '../lib/json-out.ts';
 
 const HOOKS = dirname(fileURLToPath(import.meta.url));
 const shq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
@@ -56,7 +57,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       process.exit(2);
     }
   }
-  console.log(JSON.stringify(snippet(extra, wanted), null, 2));
+  printJson(snippet(extra, wanted));
   console.error('note: when pasting, remove any separate plain `prime` SessionStart entry you added earlier; this one prints the board for every start reason, so prime would print twice.');
   console.error('Printed only: merge the "hooks" (and "env", if printed) entries into your settings file yourself. Nothing was edited.');
 }

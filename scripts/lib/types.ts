@@ -70,6 +70,8 @@ export interface EventType<State = unknown> {
   /** True for a standing type: a watch added without --ttl-hours is marked `renew`, and the loop pushes its expiry out by the type's default TTL once less than half is left, instead of retiring it. */
   renews?: boolean;
   slowInQuiet?: boolean;
+  /** True for a type whose watches run through quiet hours at their normal pace: a result that lands overnight must be reported, not expire unseen. */
+  quietExempt?: boolean;
   /** A minimum interval above the network or local one. */
   floor?: number;
   /** False skips the idle back-off. */

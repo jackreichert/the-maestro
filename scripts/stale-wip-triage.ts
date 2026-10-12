@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { fold } from './lib/ledger-core.ts';
 import { openStore } from './lib/journal/store.ts';
+import { printJson } from './lib/json-out.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { renderEvidence, staleEvidence } from './lib/stale-triage.ts';
 
@@ -31,7 +32,7 @@ export function main(argv: string[]): number {
     const entries = store.readLedger();
     const { items, hidden } = fold(entries, store.loadRegistry());
     const rows = staleEvidence(entries, items.filter((i) => !hidden.has(String(i.id))), today, arg('tickets-vault') || undefined);
-    if (has('json')) console.log(JSON.stringify({ date: today, count: rows.length, rows }, null, 2));
+    if (has('json')) printJson({ date: today, count: rows.length, rows });
     else renderEvidence(rows, today).forEach((l) => console.log(l));
     return 0;
 }

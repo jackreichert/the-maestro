@@ -1,30 +1,32 @@
 /** Tab state in the URL fragment, and arrow-key movement. Pure and DOM-free. */
 
-/** The landing tab: read-only charts and lists across every stream. */
+/** The landing tab. Its id stays `dashboard`, so old `#tab=dashboard` links keep working. */
 export const DASHBOARD = 'dashboard';
-/** The Board tab. Its id stays `overview` so old `#tab=overview` links keep working; only its label changed. */
+/** The retired Board tab. Old `#tab=overview` links open Home; the id stays reserved so a stream cannot take it. */
 export const OVERVIEW = 'overview';
+/** The Open PRs tab: every open PR grouped by repo. All-streams, so no stream may take its id either. */
+export const OPEN_PRS = 'open-prs';
 /** Tab ids a stream may not take. A stream with one of these names gets a prefixed id instead (`flow` is reserved for the Flow tab). */
-const RESERVED = [DASHBOARD, OVERVIEW, 'flow'];
+const RESERVED = [DASHBOARD, OVERVIEW, OPEN_PRS, 'flow'];
 const STREAM_PREFIX = 'stream:';
 
-/** Both all-streams tabs: the header scopes them to every stream. */
-export const isAllStreams = (id: string): boolean => id === DASHBOARD || id === OVERVIEW;
+/** Home and Open PRs are not stream tabs. The header scopes them to every stream. */
+export const isAllStreams = (id: string): boolean => id === DASHBOARD || id === OPEN_PRS;
 
 /** The tab id for a stream: its name, unless the name is reserved. */
 export function streamTabId(stream: string): string {
   return RESERVED.includes(stream) ? `${STREAM_PREFIX}${stream}` : stream;
 }
 
-/** The stream a tab id shows, or null for an all-streams tab. The inverse of `streamTabId`. */
+/** The stream a tab id shows, or null for Home. The inverse of `streamTabId`. */
 export function tabStream(id: string): string | null {
   if (isAllStreams(id)) return null;
   return id.startsWith(STREAM_PREFIX) ? id.slice(STREAM_PREFIX.length) : id;
 }
 
-/** The tab ids for a state: Dashboard, Board, then each stream. */
+/** The tab ids for a state: Home, Open PRs, then each stream. The old Board tab is not one of them. */
 export function tabIds(streams: string[]): string[] {
-  return [DASHBOARD, OVERVIEW, ...streams.map(streamTabId)];
+  return [DASHBOARD, OPEN_PRS, ...streams.map(streamTabId)];
 }
 
 /** The summary tiles that filter the board: asks (need you), blocked, done (shipped today), working (in flight). */
@@ -43,11 +45,12 @@ export function parseFilter(hash: string): CueKey | null {
   return CUE_KEYS.find((k) => k === value) ?? null;
 }
 
-/** Read the active tab from a `location.hash` value; anything unknown falls back to the dashboard. A `&show=...` part is ignored here. */
+/** Read the active tab from a `location.hash` value. The retired Board id opens Home. Anything else unknown falls back to Home. */
 export function parseFragment(hash: string, ids: string[]): string {
   let raw = hash.replace(/^#/, '').split('&')[0];
   if (raw.startsWith('tab=')) raw = raw.slice(4);
   try { raw = decodeURIComponent(raw); } catch { return DASHBOARD; }
+  if (raw === OVERVIEW) return DASHBOARD;
   return ids.includes(raw) ? raw : DASHBOARD;
 }
 

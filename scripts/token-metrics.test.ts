@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { sessionFileById, pick, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf } from './token-metrics.ts';
+import { sessionFileById, pick, scanFile, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf, collect, expiryUsd, isExpiryRewrite } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
 import type { Comparison } from './token-metrics.ts';
 
@@ -76,6 +76,43 @@ test('pick reads the 5m/1h cache-write split as two numbers and nothing else of 
     assert.deepEqual(pick(line).usage, { fresh: 1, write: 100, write5m: 0, write1h: 0, read: 3, out: 4 });
 });
 
+test('pick keeps tool names, read-only flags, file basenames and result sizes, never the input or the text', () => {
+    const call = { type: 'assistant', timestamp: 't', message: { id: 'm1', role: 'assistant', model: 'claude-haiku-5', content: [
+        { type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: `/some/dir/${SENTINEL}-dir/notes.txt`.replace(SENTINEL, 'x') } },
+        { type: 'tool_use', id: 'tu2', name: 'Bash', input: { command: `rm -rf ${SENTINEL}` } },
+        { type: 'tool_use', id: 'tu3', name: 'Bash', input: { command: `grep -n ${SENTINEL} f` } },
+    ] } };
+    const rec = pick(call);
+    assert.deepEqual(rec.tools, [
+        { id: 'tu1', name: 'Read', readOnly: true, file: 'notes.txt' },
+        { id: 'tu2', name: 'Bash', readOnly: false, file: '' },
+        { id: 'tu3', name: 'Bash', readOnly: true, file: '' },
+    ]);
+    const res = pick({ type: 'user', timestamp: 't', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'tu1', content: SENTINEL },
+        { type: 'tool_result', tool_use_id: 'tu2', content: [{ type: 'text', text: 'abcd' }, { type: 'text', text: 'ef' }] },
+    ] } });
+    assert.deepEqual(res.results, [{ id: 'tu1', chars: SENTINEL.length }, { id: 'tu2', chars: 6 }]);
+    assert.doesNotMatch(JSON.stringify([rec, res]), /SENTINEL/);
+});
+
+test('scanFile attaches tool calls to their turn (across the lines of one response) and results to the next turn; compaction drops pending results', () => {
+    const toolLine = (id: string, tu: string, name: string, file: string) => ({ type: 'assistant', timestamp: '2026-09-25T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_read_input_tokens: 1 }, content: [{ type: 'tool_use', id: tu, name, input: { file_path: file } }] } });
+    const result = (tu: string, chars: number) => ({ type: 'user', timestamp: '2026-09-25T10:00:01Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tu, content: 'x'.repeat(chars) }] } });
+    const path = join(projects, 'scan.jsonl');
+    writeFileSync(path, jsonl([
+        toolLine('a', 'tu1', 'Read', '/p/big.log'), toolLine('a', 'tu2', 'Grep', '/p/other.ts'),
+        result('tu1', 40_000), result('tu2', 400),
+        ...assistant('b', '2026-09-25T10:00:02Z', [1, 0, 1, 1]),
+        result('tu1', 4_000), { type: 'system', subtype: 'compact_boundary' },
+        ...assistant('c', '2026-09-25T10:00:03Z', [1, 0, 1, 1]),
+    ]));
+    const { turns } = scanFile(path);
+    assert.deepEqual(turns[0].tools?.map((t) => t.name), ['Read', 'Grep']);
+    assert.deepEqual(turns[1].results, [{ tool: 'Read', file: 'big.log', tokens: 10_000 }, { tool: 'Grep', file: 'other.ts', tokens: 100 }]);
+    assert.deepEqual(turns[2].results, [], 'a result pending at a compaction is not carried into the next context');
+});
+
 test('pick reads compaction as two metadata flags and never the summary text', () => {
     const boundary = pick({ type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'auto', summary: SENTINEL }, content: SENTINEL });
     const summary = pick({ type: 'user', isCompactSummary: true, message: { role: 'user', content: SENTINEL } });
@@ -85,7 +122,7 @@ test('pick reads compaction as two metadata flags and never the summary text', (
     assert.equal(pick({ type: 'user', isCompactSummary: SENTINEL }).compact, false, 'only a boolean true counts');
     assert.doesNotMatch(JSON.stringify([boundary, summary]), /SENTINEL/);
     // The allowlist is the whole output shape: a new field here is a new thing the script reads.
-    assert.deepEqual(Object.keys(boundary).sort(), ['compact', 'handback', 'id', 'model', 'originKind', 'role', 'subtype', 'ts', 'type', 'usage']);
+    assert.deepEqual(Object.keys(boundary).sort(), ['compact', 'handback', 'id', 'model', 'originKind', 'results', 'role', 'subtype', 'tools', 'ts', 'type', 'usage']);
 });
 
 test('model mix covers orchestrator and subagent turns by family; tokens are kept by price kind per side', () => {
@@ -180,13 +217,13 @@ test('no content reaches any output', () => {
 
 test('write is idempotent: rerunning a day replaces its row and keeps the rest', () => {
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Research'), { recursive: true });
-    writeFileSync(tablePath(), '# kept heading\n\nnotes Jack wrote\n\n| Date | x |\n|---|---|\n| 2026-09-20 | 1 | 2 | 3 | 4 | 5 (1/4) | 1k | 1k | 1M | 0 | 100k | 1 | 1 | - | 1k | 1k |\n');
+    writeFileSync(tablePath(), '# kept heading\n\nnotes Samwise wrote\n\n| Date | x |\n|---|---|\n| 2026-09-20 | 1 | 2 | 3 | 4 | 5 (1/4) | 1k | 1k | 1M | 0 | 100k | 1 | 1 | - | 1k | 1k |\n');
     run('--date', '2026-09-25', '--write');
     run('--date', '2026-09-25', '--write');
     const text = readFileSync(tablePath(), 'utf8');
     assert.equal(text.match(/^\| 2026-09-25 \|/gm)?.length, 1);
     assert.match(text, /^\| 2026-09-20 \|/m);
-    assert.match(text, /notes Jack wrote/);
+    assert.match(text, /notes Samwise wrote/);
     assert.match(text, /\| 2026-09-25 \| 1 \| 3 \| 1 \| 2 \(1\/1\) \|/);
 });
 
@@ -283,7 +320,17 @@ test('sessionLine measures the turns since the last compact, and a compaction re
     const dir = mkdtempSync(join(tmpdir(), 'tm-compact-'));
     const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
     writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
-    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns since compact (3 before) · ctx 300k of ~1000k (30%) · 200k read/turn');
+});
+
+test('sessionLine says it counts since the last compact and how many turns came before, so a compaction does not silently reset it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-compact-say-'));
+    const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
+    writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);
+    assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns since compact (3 before) · ctx 300k of ~1000k (30%) · 200k read/turn');
+    assert.deepEqual(sessionStatus(dir, 1_000_000), { available: true, session: 's', turns: 2, turnsBefore: 3, ctxK: 300, triggerK: 1000, pct: 30, readK: 200, advice: '' });
+    writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 100000), boundary, turnAt('b', 100000), boundary, turnAt('c', 100000)].join('\n')}\n`);
+    assert.match(sessionLine(dir, 1_000_000), /1 turns since compact \(2 before\)/, 'every earlier compaction counts');
 });
 
 test('sessionLine grades the advice on the last turn\'s context: roll soon from the warn percent, roll now from the roll percent', () => {
@@ -524,4 +571,82 @@ test('sessionStatus with a session id reads that transcript, not the newest, and
     assert.equal(sessionFileById(dir, '../x'), null);
     writeFileSync(join(dir, 'aaaa1111-twin.jsonl'), `${line('d', 1)}\n`);
     assert.equal(sessionFileById(dir, 'aaaa1111'), null, 'an ambiguous prefix names nothing');
+});
+
+// --- cache-expiry rewrites ---------------------------------------------------------
+const NOON = '2026-09-26T12:';
+/** A transcript dir: an orchestrator session and one subagent, written for the expiry rules (idle gap, large 5m write, compaction, 1h writes). */
+function expiryProjects(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'tm-expiry-'));
+    const oneHour = (id: string, ts: string): Line => ({ type: 'assistant', timestamp: ts, message: { id, role: 'assistant', model: 'claude-opus-5-5', content: [], usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 140_000, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 140_000 } } } });
+    writeFileSync(join(dir, 'sess0001.jsonl'), jsonl([
+        ...assistant('a1', `${NOON}00:00Z`, [1, 100_000, 0, 10]),
+        ...assistant('a2', `${NOON}02:00Z`, [1, 50_000, 100_000, 10]),
+        ...assistant('a3', `${NOON}20:00Z`, [1, 140_000, 0, 10]),
+        ...assistant('a4', `${NOON}40:00Z`, [1, 10_000, 150_000, 10]),
+        { type: 'system', subtype: 'compact_boundary', timestamp: `${NOON}50:00Z` },
+        ...assistant('a5', `${NOON}59:00Z`, [1, 140_000, 0, 10]),
+        oneHour('a6', '2026-09-26T13:30:00Z'),
+    ]));
+    mkdirSync(join(dir, 'sess0001', 'subagents'), { recursive: true });
+    writeFileSync(join(dir, 'sess0001', 'subagents', 'agent-s.jsonl'), jsonl([
+        ...assistant('s1', `${NOON}00:00Z`, [1, 20_000, 0, 10], 'claude-sonnet-5'),
+        ...assistant('s2', `${NOON}10:00Z`, [1, 60_000, 0, 10], 'claude-sonnet-5'),
+        ...assistant('s3', `${NOON}12:00Z`, [1, 90_000, 0, 10], 'claude-sonnet-5'),
+    ]));
+    return dir;
+}
+/** The days of `dir` read in UTC: the transcript spans 90 minutes, which a far-east time zone could split across two local days. */
+function allDays(dir: string) {
+    const saved = process.env.TZ;
+    process.env.TZ = 'UTC';
+    try { return [...collect(dir).days.values()]; } finally { if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved; }
+}
+
+test('cache expiry: only an idle gap over 5 minutes with a large 5m write counts, in orchestrator and subagent transcripts', () => {
+    const [day, ...others] = allDays(expiryProjects());
+    assert.ok(day);
+    assert.equal(others.length, 0, 'every turn fell on one local day');
+    // a3 (18 min, 140k) and s2 (10 min, 60k). Not: first turns, a 2-minute gap, a small write, the turn after a compaction, a 1h write, a 2-minute subagent gap.
+    assert.equal(day.expiryTurns, 2);
+    assert.equal(day.expiryByFamily.opus?.w5, 140_000);
+    assert.equal(day.expiryByFamily.sonnet?.w5, 60_000);
+    assert.equal(day.expiryGapSec, 18 * 60 + 10 * 60);
+    near(expiryUsd(day.expiryByFamily, PRICES), (140_000 * 5 + 60_000 * 2.5) / 1e6);
+    assert.ok(Number.isNaN(expiryUsd(day.expiryByFamily, null)));
+});
+
+test('cache expiry: the gap and size thresholds are strict, and a turn with no previous turn is never one', () => {
+    const turn = { date: 'd', model: 'm', since: 2, fresh: 0, write: 30_000, write5m: 0, write1h: 0, read: 0, out: 0 };
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 301 }), true);
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 300 }), false);
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 301, write: 29_999 }), false);
+    assert.equal(isExpiryRewrite({ ...turn, since: 1 }), false);
+    assert.equal(isExpiryRewrite({ ...turn, gapSec: 3600, write: 0, write5m: 0, write1h: 90_000 }), false, 'a 1h write cannot have expired');
+});
+
+test('cache expiry: the table row carries the count and tokens, and compare prices them; a row from before the column is not scored', () => {
+    const [day] = allDays(expiryProjects());
+    const row = toRow(day as Parameters<typeof toRow>[0]);
+    assert.equal(row[22], '2');
+    assert.equal(row[23], 'opus 0/140000/0/0/0 · sonnet 0/60000/0/0/0');
+    const old = costRow('2026-09-25');
+    const rows = new Map([['2026-09-25', old], ['2026-09-26', row]]);
+    const c = compare('2026-09-26', rows, '2026-09-24', { prices: PRICES });
+    near(metric(c, 'Est. $ cache expiry').today, 0.85);
+    assert.ok(Number.isNaN(metric(c, 'Est. $ cache expiry').median7), 'the old row has no expiry column');
+    assert.equal(metric(c, 'Expiry rewrites').today, 2);
+    assert.ok(!byName(compare('2026-09-26', rows, '2026-09-24', { prices: null }), 'Est. $ cache expiry'));
+});
+
+test('CLI: the day summary and --expiry report the rewrites with dollars when prices are set, tokens when not', () => {
+    const dir = expiryProjects();
+    const go = (prices: string, ...a: string[]) => spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-26', ...a, '--projects-dir', dir, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', TZ: 'UTC', MAESTRO_MODEL_PRICES: prices } });
+    const priced = go(PRICES_TEXT);
+    assert.match(priced.stdout, /cache-expiry rewrites +2 turns, avg gap 14\.0 min, \$0\.85 \(opus \$0\.70 · sonnet \$0\.15\)/);
+    const perDay = go(PRICES_TEXT, '--expiry');
+    assert.match(perDay.stdout, /2026-09-26  2 turns, avg gap 14\.0 min, \$0\.85/);
+    const bare = go('', '--expiry');
+    assert.match(bare.stdout, /2026-09-26  2 turns, avg gap 14\.0 min, 200\.0k tokens rewritten \(prices unset\)/);
+    assert.match(bare.stdout, /Model prices are unset/);
 });

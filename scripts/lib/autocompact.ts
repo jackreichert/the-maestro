@@ -14,10 +14,10 @@ export const DEFAULT_TRIGGER_FRACTION = 0.967;
 const PCT_KEY = 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE';
 const WINDOW_KEY = 'CLAUDE_CODE_AUTO_COMPACT_WINDOW';
 
-/** An integer percent in 1..100, else null. */
+/** A percent above 0 and at most 100, whole or decimal (`17.5`), else null. */
 const parsePct = (v: unknown): number | null => {
-  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
-  return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 && n <= 100 ? n : null;
 };
 /** An integer window of at least 100k tokens, else null. */
 const parseWindow = (v: unknown): number | null => {

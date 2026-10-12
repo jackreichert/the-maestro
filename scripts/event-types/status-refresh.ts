@@ -33,6 +33,7 @@ import { LEGACY_FILE, PODIUM_FILE, readPodium, readSeenMeta, sha, writeAtomic } 
 import { currentPath, fetchLive, freshestSnapshotAt } from '../prs-snapshot.ts';
 import { regenerate } from '../status-page.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
+import { toolCommand } from '../lib/tool-bin.ts';
 
 export interface StatusRefreshState {
   sig: string; firstChange: number; lastChange: number; lastRun: number; markerSeen: number; prDirty: boolean; retryAt: number; error: string;
@@ -125,11 +126,10 @@ export const realIo: RefreshIo = {
   },
 };
 
-/** `gh` is looked up on PATH, or is the file in MAESTRO_GH_BIN (tests point it at a fake so a refresh can never reach GitHub). */
-const ghBinary = (cmd: string): string => (cmd === 'gh' && process.env.MAESTRO_GH_BIN) || cmd;
-
+/** `gh` is looked up on PATH, or is MAESTRO_GH_BIN (with MAESTRO_GH_BIN_ARGS; tests point it at a fake so a refresh can never reach GitHub). */
 const ghRun: Run = (cmd, args) => {
-  const r = spawnSync(ghBinary(cmd), args, { encoding: 'utf8', timeout: SNAPSHOT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
+  const [bin, binArgs] = toolCommand(cmd, args);
+  const r = spawnSync(bin, binArgs, { encoding: 'utf8', timeout: SNAPSHOT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
 };
 

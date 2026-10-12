@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-10-06T14:05:00Z",
+  "today": "2026-10-06",
+  "rows": [
+    {
+      "stream": "acme-widgets", "projects": ["acme-widgets"],
+      "status": { "text": "Widget exporter in review; the cutover rehearsal is next", "from": "context" },
+      "rank": 1, "asks": 2, "inflight": 1, "blocked": 1, "prs": 2, "oldestOpenDays": 5,
+      "lastShipped": "2026-10-06", "shippedWeek": 6, "state": "waiting on you"
+    },
+    {
+      "stream": "ops", "projects": [],
+      "status": { "text": "Rotate the sample runbook", "from": "priority" },
+      "rank": 2, "asks": 1, "inflight": 1, "blocked": 0, "prs": 1, "oldestOpenDays": 0,
+      "lastShipped": "2026-10-06", "shippedWeek": 3, "state": "waiting on you"
+    }
+  ],
+  "links": [
+    { "label": "Release dashboard", "kind": "pin", "stream": "acme-widgets", "url": "https://dash.example.com/d/fake_id_123" },
+    { "label": "acme-widgets context", "kind": "context", "stream": "acme-widgets", "url": "obsidian://open?vault=Sample&file=Projects%2Facme-widgets%2FCONTEXT" },
+    { "label": "acme-widgets library", "kind": "library", "stream": "acme-widgets", "url": "obsidian://open?vault=Sample&file=Projects%2Facme-widgets%2FINDEX" }
+  ],
+  "weeks": [
+    { "start": "2026-08-12", "total": 3, "byStream": { "acme-widgets": 2, "ops": 1 } },
+    { "start": "2026-08-19", "total": 5, "byStream": { "acme-widgets": 3, "ops": 2 } },
+    { "start": "2026-08-26", "total": 2, "byStream": { "acme-widgets": 2 } },
+    { "start": "2026-09-02", "total": 6, "byStream": { "acme-widgets": 4, "ops": 1, "other": 1 } },
+    { "start": "2026-09-09", "total": 4, "byStream": { "acme-widgets": 2, "ops": 2 } },
+    { "start": "2026-09-16", "total": 7, "byStream": { "acme-widgets": 5, "ops": 2 } },
+    { "start": "2026-09-23", "total": 5, "byStream": { "acme-widgets": 3, "ops": 1, "other": 1 } },
+    { "start": "2026-09-30", "total": 10, "byStream": { "acme-widgets": 6, "ops": 3, "other": 1 } }
+  ]
+}

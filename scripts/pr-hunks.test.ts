@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { stubEnv, writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { changedRanges, hunkTokens } from './pr-hunks.ts';
@@ -95,10 +96,8 @@ test('pr-guide-links --hunks prints the tokens from gh pr diff, writes nothing, 
   const diffFile = join(dir, 'd.diff');
   const log = join(dir, 'gh.log');
   writeFileSync(diffFile, DIFF);
-  const gh = join(dir, 'gh.sh');
-  writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n[ "$1 $2" = "pr diff" ] && cat '${diffFile}'\n`);
-  chmodSync(gh, 0o755);
-  const env = { PATH: process.env.PATH, MAESTRO_GH_BIN: gh };
+  const gh = writeStub(join(dir, 'gh.sh'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n[ "$1 $2" = "pr diff" ] && cat '${diffFile}'\n`);
+  const env = { PATH: process.env.PATH, ...stubEnv('MAESTRO_GH_BIN', gh) };
   const run = (...a: string[]) => spawnSync(process.execPath, [LINKS, ...a], { encoding: 'utf8', env });
   const ok = run('--hunks', dir, '7', 'src/widgets/beta.ts');
   assert.equal(ok.status, 0, ok.stderr);

@@ -70,7 +70,7 @@ test('long adversarial input scans in well under a second', () => {
 
 test('clean claims about systems, ids and counts pass', () => {
     for (const ok of [
-        'The staging interim DB is reached through the staging Cloud SQL proxy on localhost:5439',
+        'The staging orchard DB is reached through the staging Cloud SQL proxy on localhost:5999',
         'ClinicianPage.count is the page length, not the total (OpenAPI spec, 3 pages)',
         'Credentials are located with env-where <NAME>; the env store is canonical',
         'verified at 342b177c3f1d2a9e8b7c6d5e4f3a2b1c0d9e8f7a',

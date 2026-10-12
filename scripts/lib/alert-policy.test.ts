@@ -61,21 +61,29 @@ test('quiet hours hold everything, and the first line after is one batch', () =>
   assert.match(go(entries, { now: Date.parse('2026-10-10T07:00:00Z') }).text ?? '', /^maestro: 2 PR events:/);
 });
 
-test('health: DOWN texts only after 15 minutes, once per stretch, and never in quiet hours', () => {
+test('health: a down loop is never texted, including after 15 minutes, on recovery, and in quiet hours', () => {
   const down = { state: 'down' as const, line: '**Loop:** DOWN' };
+  const stalled = { state: 'stalled' as const, line: '**Loop:** STALLED' };
   const first = go([], { health: down });
   assert.equal(first.text, null);
   assert.equal(first.state.badSince, NOON);
   const later = go([], { health: down, state: first.state, now: NOON + HEALTH_AFTER_MS });
-  assert.equal(later.text, 'maestro: loop DOWN');
-  assert.equal(go([], { health: down, state: later.state, now: NOON + HEALTH_AFTER_MS + RATE_MS }).text, null, 'once per stretch');
-  assert.equal(go([], { health: ok, state: later.state, now: NOON + 60 * 60_000 }).text, 'maestro: loop recovered', 'recovery is its own text');
+  assert.equal(later.text, null);
+  assert.equal(go([], { health: stalled, state: later.state, now: NOON + HEALTH_AFTER_MS + RATE_MS }).text, null);
+  assert.equal(go([], { health: ok, state: later.state, now: NOON + 60 * 60_000 }).text, null);
   const night = Date.parse('2026-10-09T23:30:00Z');
   assert.equal(go([], { health: down, state: { ...started, badSince: night - HEALTH_AFTER_MS * 2 }, now: night }).text, null);
 });
 
-test('health: a check that keeps failing texts as a count, without its name', () => {
-  assert.equal(go([ev({ kind: 'check-failing', watch: 'secretwatch', fields: {} })]).text, 'maestro: 1 loop check failing');
+test('health: a check that keeps failing is not a text, and its watch name never reaches the phone', () => {
+  assert.equal(go([ev({ kind: 'check-failing', watch: 'secretwatch', fields: {} })]).text, null);
+});
+
+test('a PR event still texts while the loop is down, and the phone line does not mention the loop', () => {
+  const down = { state: 'down' as const, line: '**Loop:** DOWN' };
+  const d = go([ev()], { health: down, state: { ...started, badSince: NOON - HEALTH_AFTER_MS * 2 } });
+  assert.equal(d.text, 'maestro: scraper#542 conflict');
+  assert.doesNotMatch(d.text ?? '', /DOWN|STALLED|recovered|check failing/i);
 });
 
 test('a normal start texts nothing, however healthy the loop reads and however many times it is seen', () => {
@@ -84,36 +92,22 @@ test('a normal start texts nothing, however healthy the loop reads and however m
     assert.equal(d.text, null, state);
     assert.deepEqual(d.state, emptyState());
   }
-  assert.equal(go([], { state: emptyState(), health: { state: 'down', line: 'DOWN' } }).text, null, 'not while down, before the 15 minutes');
+  assert.equal(go([], { state: emptyState(), health: { state: 'down', line: 'DOWN' } }).text, null, 'down is never a text');
 });
 
-test('recovery: one text when the loop is healthy again after a DOWN text, none before, and none for a stretch that was never texted', () => {
+test('recovery is not a text, including when an older alerts.json still says a DOWN text is owed', () => {
   const down = { state: 'down' as const, line: 'DOWN' };
   const first = go([], { health: down });
-  const texted = go([], { health: down, state: first.state, now: NOON + HEALTH_AFTER_MS });
-  assert.equal(texted.text, 'maestro: loop DOWN');
-  assert.equal(texted.state.badAlerted, true);
-  const later = NOON + HEALTH_AFTER_MS + RATE_MS;
-  assert.equal(go([], { health: down, state: texted.state, now: later }).text, null, 'still down: no second DOWN and no recovery');
-  const back = go([], { health: ok, state: texted.state, now: later });
-  assert.equal(back.text, 'maestro: loop recovered');
-  assert.equal(back.state.badAlerted, false);
-  assert.equal(go([], { health: ok, state: back.state, now: later + RATE_MS }).text, null, 'recovery texts once');
-  // A blip shorter than 15 minutes was never texted as DOWN, so it is not texted as recovered either.
+  const later = go([], { health: down, state: first.state, now: NOON + HEALTH_AFTER_MS });
+  assert.equal(later.text, null);
+  assert.equal(later.state.badAlerted, false);
+  const owed = { ...later.state, badAlerted: true };
+  assert.equal(go([], { health: ok, state: owed, now: NOON + HEALTH_AFTER_MS + RATE_MS }).text, null);
   const blip = go([], { health: down });
   assert.equal(go([], { health: ok, state: blip.state, now: NOON + 60_000 }).text, null);
 });
 
-test('recovery text held by quiet hours or the rate limit stays pending and goes out later', () => {
-  const night = Date.parse('2026-10-09T23:30:00Z');
-  const state = { ...emptyState(), badAlerted: true, lastSentAt: night - RATE_MS * 2 };
-  const held = go([], { health: ok, state, now: night });
-  assert.equal(held.text, null);
-  assert.equal(held.state.badAlerted, true, 'still owed');
-  assert.equal(go([], { health: ok, state: held.state, now: Date.parse('2026-10-10T07:00:00Z') }).text, 'maestro: loop recovered');
-});
-
-test('restarts: one text when RESTART_LIMIT restarts land inside the window, none for fewer or for old ones, and one per burst', () => {
+test('restarts are recorded and pruned, and a burst is not a text', () => {
   const at = (n: number) => Array.from({ length: n }, (_, i) => NOON - i * 60_000);
   assert.equal(go([], { state: { ...emptyState(), restarts: at(RESTART_LIMIT - 1) } }).text, null);
   const old = Array.from({ length: RESTART_LIMIT }, (_, i) => NOON - RESTART_WINDOW_MS - (i + 1) * 60_000);
@@ -121,15 +115,14 @@ test('restarts: one text when RESTART_LIMIT restarts land inside the window, non
   assert.equal(none.text, null);
   assert.deepEqual(none.state.restarts, [], 'old restarts are pruned');
   const burst = go([], { state: { ...emptyState(), restarts: at(RESTART_LIMIT) } });
-  assert.equal(burst.text, `maestro: loop restarted ${RESTART_LIMIT} times in an hour`);
-  assert.equal(burst.state.restartAlerted, true);
-  const more = go([], { state: { ...burst.state, restarts: [...burst.state.restarts, NOON + RATE_MS] }, now: NOON + RATE_MS });
-  assert.equal(more.text, null, 'the same burst does not text twice');
-  const calm = go([], { state: burst.state, now: NOON + RESTART_WINDOW_MS + RATE_MS });
-  assert.equal(calm.state.restartAlerted, false, 'the burst ends when the count falls back under the limit');
+  assert.equal(burst.text, null);
+  assert.equal(burst.state.restartAlerted, false);
+  const calm = go([], { state: { ...burst.state, restartAlerted: true }, now: NOON + RESTART_WINDOW_MS + RATE_MS });
+  assert.equal(calm.text, null);
+  assert.equal(calm.state.restartAlerted, false, 'the burst flag clears when the count falls back under the limit');
 });
 
-test('noteRestart records restarts in alerts.json, and runAlerts texts the burst once', () => {
+test('noteRestart records restarts in alerts.json, and runAlerts does not text the burst', () => {
   const dir = mkdtempSync(join(tmpdir(), 'alerts-'));
   try {
     for (let i = 0; i < RESTART_LIMIT; i += 1) noteRestart(dir, NOON - (RESTART_LIMIT - i) * 1000);
@@ -137,9 +130,9 @@ test('noteRestart records restarts in alerts.json, and runAlerts texts the burst
     const sent: string[] = [];
     const run = (_c: string, a: string[]) => { sent.push(a.join(' ')); return { status: 0 }; };
     const tick = (now: number) => runAlerts({ eventDir: dir, command: ['say-it'], now, entries: [], health: ok, config: CFG, run });
-    assert.match(tick(NOON) ?? '', /restarted 5 times/);
+    assert.equal(tick(NOON), null);
     assert.equal(tick(NOON + RATE_MS), null);
-    assert.equal(sent.length, 1);
+    assert.equal(sent.length, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -186,20 +179,17 @@ test('a failed send stamps the attempt: a notifier that delivers then exits non-
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a failed DOWN send is retried on the backoff, not marked alerted', () => {
+test('a down loop never calls the notifier, even after the old 15 minute wait', () => {
   const dir = mkdtempSync(join(tmpdir(), 'alerts-'));
   try {
     const down = { state: 'down' as const, line: 'DOWN' };
     let attempts = 0;
-    const tick = (now: number, status: number) => runAlerts({ eventDir: dir, command: ['say-it'], now, entries: [], health: down, config: CFG, run: () => { attempts += 1; return { status }; } });
-    tick(NOON, 0);
-    // Ticks until the DOWN is due, then it fails.
-    const due = NOON + HEALTH_AFTER_MS;
-    assert.equal(tick(due, 1), null);
-    assert.equal(attempts, 1);
-    assert.equal(readAlertState(dir).badAlerted, false, 'a failed send must not mark the outage alerted');
-    assert.match(tick(due + 40 * 60_000, 0) ?? '', /DOWN/, 'retried after the first backoff');
-    assert.equal(readAlertState(dir).badAlerted, true);
+    const tick = (now: number) => runAlerts({ eventDir: dir, command: ['say-it'], now, entries: [], health: down, config: CFG, run: () => { attempts += 1; return { status: 0 }; } });
+    assert.equal(tick(NOON), null);
+    assert.equal(tick(NOON + HEALTH_AFTER_MS), null);
+    assert.equal(tick(NOON + HEALTH_AFTER_MS + RATE_MS), null);
+    assert.equal(attempts, 0);
+    assert.equal(readAlertState(dir).badAlerted, false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

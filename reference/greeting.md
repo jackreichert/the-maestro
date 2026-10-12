@@ -63,7 +63,7 @@ What to include after the greeting, in this order:
    [reference/prs.md#mid-day-updates](../reference/prs.md#mid-day-updates). It writes the snapshot
    silently; nothing from it belongs in the greeting itself.
    Then register the PR watch with the event loop, so new reviews and comments surface within
-   minutes instead of waiting for the next board (the user's standing request, 2026-09-27):
+   minutes instead of waiting for the next board (a standing request):
    `node scripts/event-loop.ts add --id prs --type pr-watch --target open-prs:baseline --report "<report>"`,
    unless `event-loop.ts list` already shows a `pr-watch` or `pr-review` watch (the same type under its old name; `add` refuses a second). The watch lives 72 hours; re-register it when it expires. The loop's `run`
    (see [playbooks/event-loop.md](../playbooks/event-loop.md)) costs no tokens between changes and exits when
@@ -86,7 +86,7 @@ clear and name the obvious next thing to pick up.
 
 ## Priorities for the day
 
-End every morning greeting (after the board, before the poem and status footer) by **proposing the day's priorities and asking the user for theirs.** Added at the user's request, 2026-09-26.
+End every morning greeting (after the board, before the status footer) by **proposing the day's priorities and asking the user for theirs.**
 
 - Propose **two to four** priorities, most important first. Draw them from the board: go-live or other deadlines, blocked items you could unblock, decisions awaiting the user that hold up work, open PRs close to merging, and anything the previous day's handoff flagged. One line each, with the reason and the first concrete step.
 - Then ask directly: *"Any priorities of your own for today, or changes to these?"* Ask only this; don't start work on the proposals until the user answers or tells you to go.

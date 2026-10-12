@@ -16,6 +16,7 @@ import { openStore } from '../journal/store.ts';
 import { boardContextFor } from '../journal/board-context.ts';
 import { footerDone, groups } from '../journal/board.ts';
 import type { Groups } from '../journal/board.ts';
+import { withholdJson } from '../json-out.ts';
 import { statusJson } from '../journal/status-json.ts';
 import { foldLeases, summarizeLeases } from '../journal/leases.ts';
 import { triageItems } from '../journal/triage.ts';
@@ -26,14 +27,17 @@ import { DEFAULT_PRIORITIES_MAX, localDate } from '../status-page/priorities.ts'
 import type { GatheredInputs } from '../status-page/generate.ts';
 import { buildCharts as reduceCharts } from './charts.ts';
 import { buildState as reduceState } from './state.ts';
+import { buildOpenPrs as reduceOpenPrs } from './open-prs.ts';
 import type { PodiumState as ReducedState, WorkItem as ReducedWork } from './state.ts';
-import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, PodiumState, WorkItem } from '../../web/client/src/types.ts';
+import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, OpenPrsData, PodiumState, WorkItem } from '../../web/client/src/types.ts';
 
 /** Where the data lives and how to read it: the ledger root and project, the status directory, and the page settings. */
 export interface WebConfig {
   vault: string; project: string; statusDir: string; page: PageConfig; warn?: (message: string) => void;
   /** The notes vault the stream home base reads tickets from (`vault_root`); absent means no tickets are read. */
   vaultRoot?: string;
+  /** The project that takes a priority with no stream when the project files are written (default: `project`). */
+  containerProject?: string;
   /** `priorities_max`: the cap the page shows and the write path enforces. Default 5. */
   prioritiesMax?: number;
   /** `stale_wip_days`: days an in-flight row may have no live lease before it is listed as stale instead of working. Default 3. */
@@ -97,10 +101,10 @@ function toWire(cfg: WebConfig, s: ReducedState): PodiumState {
   const blocked: BlockedItem[] = s.blocked.map((b) => ({ ...work(b), ...(b.gate ? { gate: b.gate } : {}) }));
   const done: DoneItem[] = s.done.map((d) => ({ ...work(d), closedAt: d.closedAt ?? '' }));
   const deferred: DeferredItem[] = s.deferred.map((d) => ({ ...work(d), until: d.until }));
-  const { generatedAt, ...body } = {
+  const { generatedAt, ...body } = withholdJson({   // withheld before the hash, so `seq` names the bytes the client receives
     ...s, footer, asks, prs: s.prs.map((p) => ({ ...p, review: p.review ?? '' })), blocked, done, deferred, working: s.working.map(work), stale: s.stale.map(work), queued: s.queued.map(work),
     fragments: readFragments(cfg.statusDir, ['overview', ...s.streams]),
-  };
+  }) as Omit<PodiumState, 'generatedAt' | 'prioritiesMax' | 'seq'> & { generatedAt: string };
   return { generatedAt, ...body, prioritiesMax: cfg.prioritiesMax ?? DEFAULT_PRIORITIES_MAX, seq: createHash('sha1').update(JSON.stringify(body)).digest('hex').slice(0, 12) };
 }
 
@@ -128,4 +132,9 @@ export function buildCharts(cfg: WebConfig, days: number, now: Date = new Date()
     return note ? { ...d, ticket: toRef(ticketNoteRef(cfg.page, note)) } : d;
   });
   return { ...c, doneItems };
+}
+
+/** Every open PR in the PR cache, by repo, with how old the PR data is. Reads the cache only; the refresh button's route is what asks for newer data. */
+export function buildOpenPrs(cfg: WebConfig, now: Date = new Date()): OpenPrsData {
+  return reduceOpenPrs(reduceState(readBoard(cfg, now).inputs), cfg.page, now);
 }

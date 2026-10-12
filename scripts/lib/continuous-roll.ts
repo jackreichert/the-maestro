@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, statSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, statSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -71,11 +71,14 @@ export function liveTranscripts(dir: string, nowMs: number, windowMs: number = L
 
 const isCliUserRow = (line: string): boolean => { try { const r = JSON.parse(line) as { type?: string; entrypoint?: string }; return r.type === 'user' && r.entrypoint === 'cli'; } catch { return false; } };
 
-/** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to Jack, not a fact. */
+/** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to the user, not a fact. */
 export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from now on|standing|always|never|ok(?:ay)? to|you may|let'?s go with|instead of|stop doing|do not|don'?t|yes,? (?:do|merge|push|open))\b/i;
 
 /** The message's own marker: its timestamp plus a short hash of its text, so two messages in the same millisecond never share one. It is the only memory of what was raised. */
 export const hitMarker = (m: UserMessage): string => `[msg ${m.ts} ${createHash('sha1').update(m.text).digest('hex').slice(0, 6)}]`;
+
+/** Ends every decision-scan ask: the way to answer it. `log --kind decision` leaves the decision in the ledger only; `decide` also writes it where it will be found. */
+export const DECIDE_HINT = ' -- answer each real decision with journal.ts decide "<decision>" --why "<reason>" --msg "<its [msg ...] marker>" (not log --kind decision; --msg stops it being raised again), skip any already recorded with decide, then resolve this ask';
 
 /** Decisions per ask row: a run raises every unhandled hit, in rows of this many, so a long session costs a few journal calls and never leaves a remainder to lose. */
 export const DECISIONS_PER_ASK = 20;
@@ -99,7 +102,7 @@ export function unledgeredDecisions(messages: UserMessage[], rows: LedgerRow[]):
     const raise: string[] = [];
     for (let i = 0; i < hits.length; i += DECISIONS_PER_ASK) {
         const batch = hits.slice(i, i + DECISIONS_PER_ASK);
-        raise.push(`unledgered decision? (${batch.length}) ${batch.map(line).join(' || ')}`);
+        raise.push(`unledgered decision? (${batch.length}) ${batch.map(line).join(' || ')}${DECIDE_HINT}`);
     }
     return { raise, count: hits.length };
 }
@@ -135,7 +138,7 @@ const SOURCE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py',
 const SOURCE_NAMES = new Set(['package.json', 'tsconfig.json', 'Makefile', 'Dockerfile', 'pyproject.toml']);
 export const isSnapshotSource = (path: string): boolean => SOURCE_EXT.has(extname(path).toLowerCase()) || SOURCE_NAMES.has(basename(path));
 
-export interface SnapshotResult { worktrees: number; /** Files copied this run; same as `copied`, kept for older callers. */ files: number; /** Files copied this run because today's and yesterday's snapshots lacked identical bytes. */ copied: number; /** Files already held, byte for byte, in today's or yesterday's snapshot: not copied, not counted against the caps. */ current: number; skipped: number; dest: string; /** True when the deadline stopped the scan before every worktree was read. */ partial: boolean; /** True when the file-count or total-size cap left source uncopied. */ capped: boolean }
+export interface SnapshotResult { worktrees: number; /** Files copied this run; same as `copied`, kept for older callers. */ files: number; /** Files copied this run because today's and yesterday's snapshots lacked identical bytes. */ copied: number; /** Files already held, byte for byte, in today's or yesterday's snapshot: not copied, not counted against the caps. */ current: number; skipped: number; dest: string; /** Worktrees whose `git status` was read this run, active or not; a run that hits the deadline resumes after the last of them next time. */ scanned: number; /** True when the deadline stopped the scan before every worktree was read. */ partial: boolean; /** True when the file-count or total-size cap left source uncopied. */ capped: boolean }
 
 /** The sibling of a `<date>`-named snapshot dir for the previous UTC date, or null when `dest` is not named by a date. */
 function previousDayDir(dest: string): string | null {
@@ -161,15 +164,24 @@ function sameBytes(path: string, bytes: Buffer): boolean {
  * Stops at 300 files or 20 MB (`capped` is then true) or at `deadline` (epoch ms; `partial` is then true). `dest`'s parent gets a `.gitignore` of `*`,
  * so a snapshots folder inside a repo can never be committed. Never throws for one bad worktree.
  */
-export function snapshotDirty(container: string, dest: string, now: number = Date.now(), deadline: number = Infinity): SnapshotResult {
+export function snapshotDirty(container: string, dest: string, now: number = Date.now(), deadline: number = Infinity, clock: () => number = Date.now): SnapshotResult {
     const root = join(container, '.worktrees');
-    const result: SnapshotResult = { worktrees: 0, files: 0, copied: 0, current: 0, skipped: 0, dest, partial: false, capped: false };
+    const result: SnapshotResult = { worktrees: 0, files: 0, copied: 0, current: 0, skipped: 0, dest, scanned: 0, partial: false, capped: false };
     let total = 0;
     const previous = previousDayDir(dest);
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(join(dirname(dest), '.gitignore'), '*\n');
-    for (const name of existsSync(root) ? readdirSync(root).sort() : []) {
-        if (Date.now() > deadline) { result.partial = true; break; }
+    // With hundreds of worktrees one `git status` each does not fit a short budget, so the walk resumes after the last worktree it read
+    // (the cursor sits beside the dated folders): every run makes progress and a slow one never starves the worktrees at the end of the list.
+    const cursorFile = join(dirname(dest), '.snapshot-cursor');
+    const names = existsSync(root) ? readdirSync(root).sort() : [];
+    const after = existsSync(cursorFile) ? readFileSync(cursorFile, 'utf8').trim() : '';
+    const start = names.findIndex((n) => n > after);
+    const order = start <= 0 ? names : [...names.slice(start), ...names.slice(0, start)];
+    for (const name of order) {
+        if (clock() > deadline) { result.partial = true; break; }
+        result.scanned++;
+        writeFileSync(cursorFile, name);
         const wt = join(root, name);
         const git = spawnSync('git', ['-C', wt, 'status', '--porcelain=v1', '-z', '-uall'], { encoding: 'utf8', timeout: 20_000, maxBuffer: 64_000_000 });
         if (git.status !== 0) { if (git.error) result.skipped++; continue; }
@@ -197,6 +209,7 @@ export function snapshotDirty(container: string, dest: string, now: number = Dat
             total += size;
         }
     }
+    if (!result.partial) rmSync(cursorFile, { force: true });
     return result;
 }
 

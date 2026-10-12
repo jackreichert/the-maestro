@@ -20,6 +20,8 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { toolCommand } from './lib/tool-bin.ts';
+import { printJson } from './lib/json-out.ts';
 
 export type Verdict = 'APPROVED-on-head' | 'APPROVED-stale' | 'DISMISSED' | 'CHANGES_REQUESTED' | 'COMMENTED-only';
 export interface Ref { repo: string; number: number }
@@ -150,7 +152,7 @@ export function render(s: PrState): string {
 /** Reads one PR through `gh api graphql`; throws with gh's first stderr line on failure. */
 export function fetchPr(ref: Ref): any {
   const [owner, name] = ref.repo.split('/');
-  const r = spawnSync('gh', ['api', 'graphql', '-f', `query=${QUERY}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${ref.number}`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const r = spawnSync(...toolCommand('gh', ['api', 'graphql', '-f', `query=${QUERY}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${ref.number}`]), { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   if (r.status !== 0) throw new Error((r.stderr || r.error?.message || 'gh failed').trim().split('\n')[0]);
   const pr = JSON.parse(r.stdout)?.data?.repository?.pullRequest;
   if (!pr) throw new Error('pull request not found');
@@ -179,7 +181,7 @@ function main(): void {
       text.push(`${a}\n  could not read: ${msg}\nREADY-FOR-REVIEW: no (could not read the PR)\nREADY-TO-MERGE: no (could not read the PR)`);
     }
   }
-  console.log(json ? JSON.stringify(out, null, 2) : text.join('\n\n'));
+  if (json) printJson(out); else console.log(text.join('\n\n'));
   process.exitCode = failed ? 2 : 0;
 }
 

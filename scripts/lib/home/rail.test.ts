@@ -96,6 +96,6 @@ test('a PR with a non-http URL never becomes a link on a ticket row', () => {
 });
 
 test('an id that is the tail of another project id does not match that project\'s PR', () => {
-  assert.deepEqual(prsNaming([pr(1, 'feat/arya-x-5-thing', 'y')], ['x-5']), { shown: [], more: 0 });
+  assert.deepEqual(prsNaming([pr(1, 'feat/avonlea-x-5-thing', 'y')], ['x-5']), { shown: [], more: 0 });
   assert.equal(prsNaming([pr(2, 'feat/x-5-thing', 'y')], ['x-5']).shown.length, 1);
 });
