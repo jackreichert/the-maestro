@@ -73,7 +73,9 @@ test('tsc is run from the worktree: a type error fails the job, a clean tree pas
   const bare = fixture(files);
   for (const dir of [clean, bad]) symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
   const run = async (dir: string) => (await settled(startJob(dir, { tests: '*.test.ts', base }).id, base)).results;
-  assert.equal((await run(clean))?.pass, true);
+  const cleanResults = await run(clean);
+  assert.equal(cleanResults?.pass, true);
+  assert.equal(cleanResults?.typecheck, 'tsc --noEmit');
   const failed = await run(bad);
   assert.equal(failed?.pass, false);
   assert.notEqual(failed?.tsc.exit, 0);
@@ -149,4 +151,21 @@ test('--cmd replaces node --test: the command exit code decides, and zero parsed
   const cli = spawnSync(process.execPath, [SCRIPT, 'start', repo, '--cmd', 'true', '--skip-tsc', '--json'], { encoding: 'utf8', env: { ...process.env, MAESTRO_SUITE_DIR: base, MAESTRO_LOCAL_CONFIG: '' } });
   assert.equal(cli.status, 0, cli.stderr);
   assert.equal((await settled((JSON.parse(cli.stdout) as { job: string }).job, base)).results?.pass, true);
+});
+
+test('a package.json typecheck script is what runs (and is recorded); without one it is tsc --noEmit; --skip-tsc records skipped', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const pkg = (typecheck: string) => JSON.stringify({ name: 'fx', private: true, scripts: { typecheck } });
+  const run = async (files: Record<string, string>, skipTsc = false) => (await settled(startJob(fixture({ 'a.test.ts': PASSING, ...files }), { tests: '*.test.ts', skipTsc, base }).id, base)).results;
+  const failing = await run({ 'package.json': pkg('node -e "process.exit(7)"') });
+  assert.equal(failing?.typecheck, 'npm run typecheck');
+  assert.equal(failing?.tsc.exit, 7);
+  assert.equal(failing?.pass, false);
+  const passing = await run({ 'package.json': pkg('node -e "process.exit(0)"') });
+  assert.equal(passing?.typecheck, 'npm run typecheck');
+  assert.equal(passing?.pass, true, 'no node_modules/.bin/tsc is needed when the repo has its own script');
+  const noScript = await run({ 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'x' } }) });
+  assert.equal(noScript?.typecheck, 'tsc --noEmit');
+  assert.equal(noScript?.tsc.exit, 127);
+  assert.equal((await run({ 'package.json': pkg('exit 7') }, true))?.typecheck, 'skipped');
 });

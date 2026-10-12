@@ -12,7 +12,7 @@ import type { Results } from './suite-run.ts';
 
 const RESULTS: Results = {
   job: 'job-1', worktree: '/w', head: 'abcdef1234567890', dirty: false, startedAt: '2026-10-12T01:00:00Z', endedAt: '2026-10-12T01:04:00Z', pass: false,
-  tsc: { exit: 0 }, tests: { exit: 1, pass: 9, fail: 1, cancelled: 0, failing: ['the broken one'] }, concurrency: 2,
+  tsc: { exit: 0 }, typecheck: 'tsc --noEmit', tests: { exit: 1, pass: 9, fail: 1, cancelled: 0, failing: ['the broken one'] }, concurrency: 2,
 };
 
 /** A suites dir with job `id`: a spec naming a dead worker, plus results when given. */

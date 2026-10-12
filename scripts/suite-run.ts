@@ -62,6 +62,8 @@ export interface Results {
   endedAt: string;
   pass: boolean;
   tsc: StepResult;
+  /** Which type check ran: `npm run typecheck` when the worktree's package.json defines that script, else `tsc --noEmit`, or `skipped`. */
+  typecheck: string;
   tests: StepResult & { pass: number; fail: number; cancelled: number; failing: string[]; cmd?: string; empty?: boolean };
   concurrency: number;
 }
@@ -143,12 +145,16 @@ export function suiteEnv(home: string, base: NodeJS.ProcessEnv = process.env): N
   };
 }
 
-function runTsc(spec: JobSpec, env: NodeJS.ProcessEnv): StepResult {
-  if (spec.skipTsc) return { exit: null, skipped: true };
+/** The worktree's own `typecheck` script (the repo knows what its check is: several tsconfigs, a client project), else plain tsc. */
+const hasTypecheckScript = (worktree: string): boolean => typeof readJson<{ scripts?: Record<string, unknown> }>(join(worktree, 'package.json'))?.scripts?.typecheck === 'string';
+
+function runTsc(spec: JobSpec, env: NodeJS.ProcessEnv): { step: StepResult; typecheck: string } {
+  if (spec.skipTsc) return { step: { exit: null, skipped: true }, typecheck: 'skipped' };
+  const opts = { cwd: spec.worktree, env, stdio: ['ignore', 'inherit', 'inherit'] as ['ignore', 'inherit', 'inherit'] };
+  if (hasTypecheckScript(spec.worktree)) return { step: { exit: spawnSync('npm', ['run', 'typecheck'], opts).status ?? 1 }, typecheck: 'npm run typecheck' };
   const tsc = join(spec.worktree, 'node_modules', '.bin', 'tsc');
-  if (!existsSync(tsc)) return { exit: 127, note: `no ${tsc}; install dependencies or pass --skip-tsc` };
-  const r = spawnSync(tsc, ['--noEmit'], { cwd: spec.worktree, env, stdio: ['ignore', 'inherit', 'inherit'] });
-  return { exit: r.status ?? 1 };
+  if (!existsSync(tsc)) return { step: { exit: 127, note: `no ${tsc}; install dependencies or pass --skip-tsc` }, typecheck: 'tsc --noEmit' };
+  return { step: { exit: spawnSync(tsc, ['--noEmit'], opts).status ?? 1 }, typecheck: 'tsc --noEmit' };
 }
 
 function runTests(spec: JobSpec, env: NodeJS.ProcessEnv, dir: string): Results['tests'] {
@@ -173,10 +179,10 @@ export function runWorker(dir: string): Results {
   const home = mkdtempSync(join(tmpdir(), 'suite-run-home-'));
   const env = suiteEnv(home);
   try {
-    const tsc = runTsc(spec, env);
+    const { step: tsc, typecheck } = runTsc(spec, env);
     const tests = runTests(spec, env, dir);
     const pass = (tsc.exit === 0 || tsc.skipped === true) && tests.exit === 0 && tests.fail === 0 && tests.cancelled === 0 && !tests.empty;
-    const results: Results = { job: spec.id, worktree: spec.worktree, head: spec.head, dirty: spec.dirty, startedAt: spec.startedAt, endedAt: new Date().toISOString(), pass, tsc, tests, concurrency: TEST_CONCURRENCY };
+    const results: Results = { job: spec.id, worktree: spec.worktree, head: spec.head, dirty: spec.dirty, startedAt: spec.startedAt, endedAt: new Date().toISOString(), pass, tsc, typecheck, tests, concurrency: TEST_CONCURRENCY };
     writeAtomic(join(dir, 'results.json'), results);
     return results;
   } finally { rmSync(home, { recursive: true, force: true }); }
