@@ -44,6 +44,9 @@
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.ts decide "<decision>" --why "<rationale>" [--rejected "<alt>"] [--consequence "<text>"] [--scope project|working-rule] [--topic <slug>] [--repo <project>] [--msg "[msg ...]"] [--new] --model ... --used ...
  *                                             write a decision down on the turn it is said: --scope project (default) adds a dated entry to Projects/<repo, else project>/DECISIONS.md under --tickets-vault (else $VAULT_ROOT), while the row goes to --project's ledger; working-rule writes a memory file and its MEMORY.md line under memory_dir (the same --topic updates, never duplicates). Also records one decision row naming the file. Refuses with nothing written when --why is missing, a field looks like a secret, or the file cannot be written; refuses (nothing written) when an earlier decision on the topic exists unless --new; --msg takes the decision-scan marker so that message is not raised again
+ *   journal.ts answer <ask id> --text "<answer>" [--source page|chat] --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts discuss <ask id> [--text "<topic>"] --model "<name>" --used "skill:x,tool:y"
+ *                                             record what the user said about an open ask (an answer, or "talk it through first"); the ask stays open for `resolve`, the page shows the answer under it, and the same text twice is one row
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
  *   journal.ts stamp <id> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
@@ -150,6 +153,7 @@ import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
+import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
@@ -2223,6 +2227,23 @@ function cmdDefer() {
 }
 
 /**
+ * `answer <ask> --text "..." [--source page|chat]` and `discuss <ask> [--text "topic"]`: write down what the user said about an
+ * open ask (lib/journal/answers.ts). The ask stays open for `resolve`; the page shows the answer under it. Writing the same text
+ * again is a no-op, and a closed or unknown ask is refused.
+ */
+function cmdAnswerOrDiscuss(kind: 'answer' | 'discuss') {
+    const ask = positional[0];
+    const text = arg('text') || positional.slice(1).join(' ');
+    if (!ask || (kind === 'answer' && !text)) die(kind === 'answer' ? 'Usage: journal.ts answer <ask id> --text "<answer>" [--source page|chat]' : 'Usage: journal.ts discuss <ask id> [--text "<topic>"]');
+    const source = arg('source') || 'chat';
+    if (!['page', 'chat'].includes(source)) die('--source must be page or chat.');
+    const outcome = recordAnswer(store, { kind, ask, text, source, usage: usageFromArgs(), now, today });
+    if (outcome === 'no-ask') die(`No open ask with id "${ask}". Only an open question or pending decision takes an ${kind}.`);
+    if (outcome === 'written' && !dryRun) render(true);
+    console.log(`${outcome === 'same' ? 'already recorded' : kind}  ${ask}  ${text}`.trimEnd());
+}
+
+/**
  * A deferral ends on a date but the generated pages are only written by ledger writes, so on the first read of a
  * new day, when any defer row exists, regenerate CURRENT.md and the stream pages. Derived files only; the ledger is untouched.
  */
@@ -2555,6 +2576,7 @@ switch (cmd) {
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
     case 'defer': cmdDefer(); break;
+    case 'answer': case 'discuss': cmdAnswerOrDiscuss(cmd); break;
     case 'prime': cmdPrime(); break;
     case 'tickets': cmdTickets(); break;
     case 'handoff': cmdHandoff(); break;
