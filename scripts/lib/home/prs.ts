@@ -1,4 +1,4 @@
-/** Which open PRs name a ticket? A ticket id or tracker key in the head branch name or the title, at a token boundary (so `x-05` never matches `x-051`, and `x-5` never matches `arya-x-5`). */
+/** Which open PRs name a ticket? A ticket id or tracker key in the head branch name or the title, at a token boundary (so `x-05` never matches `x-051`, and `x-5` never matches `avonlea-x-5`). */
 import type { Pr } from '../status-page/render.ts';
 import { isHttpUrl } from './config.ts';
 import type { Ref } from './types.ts';

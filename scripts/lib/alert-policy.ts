@@ -1,11 +1,11 @@
 /**
- * When the loop texts Jack (decision D4 of the resilient-event-loop plan). `decide` is pure: it takes the inbox, the loop's health and the
+ * When the loop texts the user (decision D4 of the resilient-event-loop plan). `decide` is pure: it takes the inbox, the loop's health and the
  * saved alert state, and returns the one line to send (or none) and the state to save. `runAlerts` is the thin shell that reads and writes those.
  *
  * Policy:
  *   - away: an actionable event counts only when no session has seen it for AWAY_MS (10 min), and it is not handled;
  *   - kind allowlist: changes-requested, conflict, approved-unmerged, reminder, notion-changed, and a human thread or reply. Never a bot thread,
- *     never an info event, never a text from Jack;
+ *     never an info event, never a text from the user;
  *   - health: loop DOWN or STALLED for HEALTH_AFTER_MS (15 min) in waking hours (one text per outage), one "recovered" text when the loop is healthy again after such a text,
  *     RESTART_LIMIT restarts within RESTART_WINDOW_MS (one text per burst), and a check that keeps failing. A normal start texts nothing;
  *   - rate limit: at most one text per RATE_MS (20 min); everything pending goes out as one batched line;
@@ -68,7 +68,7 @@ export interface Decision { text: string | null; state: AlertState; ids: string[
 
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
-/** `arya-scraper#542 conflict`: kind and repo and number only, each re-checked here. null when the kind is not texted. */
+/** `avonlea-api#542 conflict`: kind and repo and number only, each re-checked here. null when the kind is not texted. */
 function describe(e: InboxEntry): string | null {
   const f = cleanFields(e.fields);
   const allowed = ALWAYS_KINDS.has(e.kind) || (HUMAN_KINDS.has(e.kind) && f.who === 'human');

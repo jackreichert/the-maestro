@@ -71,7 +71,7 @@ export function liveTranscripts(dir: string, nowMs: number, windowMs: number = L
 
 const isCliUserRow = (line: string): boolean => { try { const r = JSON.parse(line) as { type?: string; entrypoint?: string }; return r.type === 'user' && r.entrypoint === 'cli'; } catch { return false; } };
 
-/** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to Jack, not a fact. */
+/** Words that mark a message as a decision, an approval or a standing rule. Deliberately broad: a hit is a question to the user, not a fact. */
 export const DECISION_RE = /\b(approved?|go ahead|go for it|ship it|decided|from now on|standing|always|never|ok(?:ay)? to|you may|let'?s go with|instead of|stop doing|do not|don'?t|yes,? (?:do|merge|push|open))\b/i;
 
 /** The message's own marker: its timestamp plus a short hash of its text, so two messages in the same millisecond never share one. It is the only memory of what was raised. */

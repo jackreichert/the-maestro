@@ -181,7 +181,7 @@ A scout that takes ten minutes has failed at being a scout.
 and report what you found plus what's left." A scout that hits the cap reports; it doesn't push on.
 If the leftover really matters, dispatch a second, narrower scout, or move to stage 2. Every tool
 call re-reads the agent's whole context, so an uncapped scout is the expensive failure mode (one
-ran to 99 calls on 2026-09-25).
+ran to 99 calls).
 
 **Ask the scout to recommend the stage-2 shape explicitly.** It has just read the code; it knows
 better than you do whether this is a haiku rename or an opus architecture call.

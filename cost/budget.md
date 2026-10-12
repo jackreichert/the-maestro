@@ -8,7 +8,7 @@ changing how often the PR watcher polls.
 
 Match the agent to the job; match the model to the difficulty.
 
-Division of labour (the user, 2026-09-25): **Haiku gathers what can be checked; Sonnet or Opus decides
+Division of labour: **Haiku gathers what can be checked; Sonnet or Opus decides
 or writes code; the orchestrator (Opus) analyses, plans, and picks each worker's model by
 difficulty.** The three tiers:
 
@@ -37,7 +37,7 @@ older version, flag it.
 | Implementation with subtle correctness risk (cross-repo parity, concurrency, data migration, conflict-heavy rebases) | `general-purpose` | opus |
 | System design, tradeoffs | `architect` (or the local equivalent) | sonnet |
 | Hard architectural calls | `architect` | opus |
-| Post-change review, plain prompt | `general-purpose` | sonnet (caught Blockers mithril missed on 2026-09-25) |
+| Post-change review, plain prompt | `general-purpose` | sonnet (has caught Blockers a structured pass missed) |
 | Structured review pass | `mithril-review` | default; never the only gate on risky diffs |
 | Duplication / dead code sweep | `refactor-check` | haiku |
 | Stress-test a plan before committing | `skeptic` | sonnet |
@@ -55,21 +55,19 @@ Notes:
 - Any other type starts **fresh** — it sees only the brief.
 - Launch independent agents in a **single message with multiple tool calls** so they run
   concurrently.
-- **Batch bot-thread rounds per repo** (lesson, 2026-09-27): when a repo has several open bot
-  threads (Copilot, Aikido) across one or more PRs, dispatch one agent to work through all of them
-  in a single pass, not a fresh agent per thread or per wake-up. See
-  [loop.md#worked-example-2026-09-27](loop.md#worked-example-2026-09-27) for the measurement behind
-  this.
+- **Batch bot-thread rounds per repo**: when a repo has several open bot
+  threads (review bots such as Copilot) across one or more PRs, dispatch one agent to work through all of them
+  in a single pass, not a fresh agent per thread or per wake-up.
 
 ## The standing brief's cost habits
 
 The [standing brief block](../reference/brief.md#standing-brief-block--paste-once-into-every-brief)
 carries several rules whose purpose is specifically cost, not correctness or safety. Why each one
-is in the block (measured 2026-09-25, `scripts/token-metrics.ts`):
+is in the block (measured with `scripts/token-metrics.ts`):
 
 - **Foreground waits.** Every background completion inside an agent can wake the orchestrator for a
   full-context turn — about 400k cache-read tokens each at today's context size. One rehearsal
-  woke it about 15 times; 2026-09-25 logged 33 task-notification wake-ups against a prior median in
+  woke it about 15 times; one busy day logged 33 task-notification wake-ups against a prior median in
   single digits. A blocking loop costs the agent one tool call and the orchestrator nothing.
 - **Capped reports.** A report stays in orchestrator context for the rest of the session and is
   re-read on every later turn. A 100-line report read 300 more times costs far more than it did to
@@ -108,7 +106,7 @@ summarise it.
 ## Session hygiene
 
 Every orchestrator turn re-reads the whole session, so per-turn cost climbs with session length.
-Measured across all sessions to 2026-09-25 (`token-metrics.ts --curve`): average cache-read per
+Measured across many sessions (`token-metrics.ts --curve`): average cache-read per
 turn is about 160k in a session's first 100 turns, 350k in turns 100–199, and 500k+ from turn 200.
 
 **Roll to a fresh session** at end of day, or earlier once the Session line says so. `token-metrics.ts`
@@ -118,9 +116,9 @@ levels fire before the compaction. The old `roll_turns` and `roll_read_per_turn`
 the trigger at 200k a session compacts at about 80 to 110 turns, so 180 turns never fired. Reaching a
 percentage of the trigger trips the level: **`roll soon` at `roll_warn_pct` (default 60)**
 and **`roll now` at `roll_at_pct` (default 90)**. You cannot start the fresh session yourself;
-only Jack can compact or open one.
+only the user can compact or open one.
 
-**What each level means (added at the user's request, 2026-10-05).** Check the Session line
+**What each level means.** Check the Session line
 whenever you relay an agent's result.
 
 - **`roll soon`:** finish the relays already in flight, begin no new long dispatch chains, and say so
@@ -128,10 +126,10 @@ whenever you relay an agent's result.
 - **`roll now`:** run the roll yourself, without being asked: `journal.ts triage`, then `roll`,
   then `handoff --all --delta` (with `--learn`, `--next`, `--update-context` on the first one), and
   the worktree and branch sweep the roll already does. From then on open EVERY reply with a
-  one-line reminder for Jack to compact (`/compact` or a fresh session) until the Session line is
+  one-line reminder for the user to compact (`/compact` or a fresh session) until the Session line is
   back under the warn level. Log the request once with `journal.ts log` so it survives a compaction.
 
-**The roll is layerable.** Jack may not compact until well past `roll now`, so a roll can be run
+**The roll is layerable.** The user may not compact until well past `roll now`, so a roll can be run
 again and again, each costing less than the last:
 
 1. `roll` is idempotent: it regenerates the day's archive from the ledger and appends one `rolled`
@@ -148,20 +146,19 @@ The handoff is what the fresh session reads, and it has five fixed headings, the
 `journal.ts handoff --stream <name>` scaffolds: **Tasks with status**; **Learnings, including what
 was ruled out** (what was tried, too); **Artifacts**, as paths or `file:line`, never code blocks;
 **Decisions awaiting** the user; **Next concrete action**. Anything decision-relevant that lives
-only in chat goes under one of them before the roll: the 2026-09-25 experiment showed a fresh
+only in chat goes under one of them before the roll: an experiment showed a fresh
 session burns ~10x the tokens hunting for a fact nobody wrote down, and still misses it.
 
 **Resume by reconciling, not trusting.** The fresh session checks `CURRENT.md` against `git`, `gh`
 and `ListAgents` before acting (`journal.ts resume` runs the parts a script can), then treats the
 reconciled note as authoritative instead of redoing its work.
 
-Lesson, 2026-09-27: a session ran to 316 turns without being rolled, and read/turn rose 13% for the
-day as a result — see [loop.md#worked-example-2026-09-27](loop.md#worked-example-2026-09-27). The
-threshold above already covers this; the miss was not rolling on time, not a wrong number.
+Lesson: a session that runs to hundreds of turns without a roll is the usual cause of a rising
+read/turn. The threshold above already covers this; the miss is not rolling on time, not a wrong number.
 
 ## Hand-back discipline
 
-Every agent's final message is re-read by the orchestrator on every later turn, so its length is paid for many times over. Measured on one orchestrator session on 2026-10-08, only 4 of 46 hand-backs stayed under 150 words (median 241, longest 1,010), and only 24 of 46 briefs carried the cap line at all; each agent also costs about 900 tokens of fixed harness text (launch ack, task notification, hand-back wrapper) that no brief rule can shrink.
+Every agent's final message is re-read by the orchestrator on every later turn, so its length is paid for many times over. Measured on one orchestrator session, only 4 of 46 hand-backs stayed under 150 words (median 241, longest 1,010), and only 24 of 46 briefs carried the cap line at all; each agent also costs about 900 tokens of fixed harness text (launch ack, task notification, hand-back wrapper) that no brief rule can shrink.
 
 - **Every brief ends with the standing block**, whose Report line says: full report to a file, a few lines back, plus the file path ([reference/brief.md](../reference/brief.md)). `brief-block.ts` prints it, and `journal.ts brief <id>` writes the whole brief as a file with the block already in it ([reference/brief.md](../reference/brief.md#the-brief-file--journaltsbrief-id)), so the cap is in every brief built that way. Nothing forces a brief through either command: a brief typed by hand can still leave the line out.
 - **Long standing rules become files.** A brief names the path of a rule file instead of retyping a policy.
@@ -190,7 +187,7 @@ Claude Code has no way to start a fresh interactive session on its own, so for t
 The `pr-watch` event type costs no tokens between ticks — it runs inside the event loop, a background
 poll, not a subagent — but every tick that finds something still wakes the orchestrator for a
 full-context turn, so polling too often is a real cost even though each individual poll is free. The
-cadence is automatic (replacing the manual 2026-09-27 policy of picking `--interval` by hand),
+cadence is automatic (replacing picking `--interval` by hand),
 implemented by `scripts/lib/cadence.ts`:
 
 - **Base: 600s** (the type's `interval`). The loop only stretches it; busy periods keep that pace, they do not pull it in.
@@ -207,9 +204,8 @@ implemented by `scripts/lib/cadence.ts`:
 Unlike the standalone watcher it replaced, a push or a draft flip no longer tightens the pace: only events the
 loop reports count as activity.
 
-Lesson, 2026-09-27: a watcher polling every 2 minutes raised the day's wake-ups 16% against trend,
-for no benefit the user acted on any faster than a 10-minute poll would have — see
-[loop.md#worked-example-2026-09-27](loop.md#worked-example-2026-09-27). That measurement is what
+Lesson: a watcher polling every 2 minutes raised a day's wake-ups 16% against trend,
+for no benefit the user acted on any faster than a 10-minute poll would have. That measurement is what
 moved the floor from 120s to 300s, and set the quiet-day baseline at 600–900s.
 
 ## One event loop instead of N watchers

@@ -12,10 +12,9 @@ previous working day if that day's standup has a cost line. This is the only `cc
 day — don't repeat it per reply, and don't add it to the per-reply status footer (that would cut
 against the batching habit in [loop.md](loop.md), for a marginal visibility gain over once/day).
 
-Worked example, 2026-09-27: the day closed at **$171.01**, against **~$236** the day before. That
-comparison is the whole point of running the line daily rather than trusting a gut feel — the drop
-tracks the day's actual work volume, not a habit change, and the loop below is what checks whether
-any of that change is a regression worth explaining.
+That comparison is the whole point of running the line daily rather than trusting a gut feel: a
+change tracks the day's actual work volume or a habit change, and the loop below is what checks
+whether it is a regression worth explaining.
 
 ## `token-metrics.ts`
 
@@ -37,8 +36,8 @@ node scripts/token-metrics.ts --json                              # machine-read
   replaces its row, so it's safe to call more than once). `--all --write` backfills every day still
   on disk, which matters because Claude Code prunes old transcripts and the vault table is the only
   durable history past that point.
-- `--compare` prints today against the 7-day median and the pre-habits baseline (median of
-  2026-09-17 through 2026-09-24) for nine core metrics (turns, wake-ups, output, cache read, read/turn,
+- `--compare` prints today against the 7-day median and the pre-habits baseline (median up to
+  `--baseline-until`, default 2026-09-24) for nine core metrics (turns, wake-ups, output, cache read, read/turn,
   read/prompt, read/subagent, avg report, sub growth) plus the cost metrics below. Any metric that moved more than ~20% against
   the 7-day median is flagged `REGRESSION >20%` — the trigger for [loop.md](loop.md) step 2.
 - The day summary and `--compare` also score the cost metrics (model mix, wake-ups per prompt, read per

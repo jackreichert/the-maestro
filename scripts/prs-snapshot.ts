@@ -7,7 +7,7 @@
  * the last snapshot: a new human review (APPROVED / CHANGES_REQUESTED /
  * COMMENTED by a non-bot), a `reviewDecision` flip, a new unresolved thread
  * opened by a human, a PR that merged or closed, or a draft promoted to ready.
- * Bot activity (Copilot, Aikido, anything `login[bot]`) is summarised as one
+ * Bot activity (Copilot and other review bots, anything `login[bot]`) is summarised as one
  * count line, never itemised — see reference/prs.md#mid-day-updates.
  *
  * Storage is fixed at $LEDGER_ROOT/Projects/<CONTAINER_PROJECT>/Journal/prs-snapshot.json

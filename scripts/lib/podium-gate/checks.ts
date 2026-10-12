@@ -1,5 +1,5 @@
 /**
- * The Podium v1 gate: one check per piece of Jack's bar (useful and beautiful; each project tab a full new-engineer handover; Home with
+ * The Podium v1 gate: one check per piece of the bar (useful and beautiful; each project tab a full new-engineer handover; Home with
  * charts, every project's status, links, needs-you and done). A check reads a running Podium through a `Probe` (HTTP-shaped, so it works on a
  * live server, a temp one or canned payloads) and says `pass`, `fail` (built, but short of the bar) or `not-built` (the piece is not on
  * this build yet). A check never throws: an unreadable answer is a `fail` with the reason, so a half-built Podium still gets a full report.

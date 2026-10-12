@@ -31,10 +31,10 @@ const median = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - 
 const fmtHours = (h: number): string => (h >= 48 ? `${Math.round(h / 24)}d` : `${Math.round(h)}h`);
 const fmtTokens = (n: number): string => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
-/** Items parked on purpose, or waiting on Jack: the next session cannot act on them. */
+/** Items parked on purpose, or waiting on the user: the next session cannot act on them. */
 const PARKED = /\b(on hold|hold for now|parked|paused|frozen|deferred|waiting (on|for) (jack|him|a decision)|awaiting (jack|a decision)|needs[- ]you)\b/i;
 
-/** What `guidanceLines` may also know: asks waiting on Jack (their ids are never "do first"), where each gated item's gate stands (a gate not reported as cleared counts as waiting) and today's priorities (preferred when any item matches). */
+/** What `guidanceLines` may also know: asks waiting on the user (their ids are never "do first"), where each gated item's gate stands (a gate not reported as cleared counts as waiting) and today's priorities (preferred when any item matches). */
 export interface GuidanceContext { awaiting?: LedgerItem[]; priorities?: Priority[]; gates?: Map<string, 'cleared' | 'waiting' | 'unknown'> }
 
 const escapeRe = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
