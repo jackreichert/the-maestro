@@ -484,11 +484,11 @@ test('status --footer ends with the Session line for the newest session, and say
         encoding: 'utf8', env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent', ...extra },
     }).stdout.trim().split('\n').pop();
     const pct = (n: string, extra = {}) => line({ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: n, ...extra });
-    assert.equal(pct('20'), '**Session:** 4 turns · ctx 100k of ~200k (50%) · 100k read/turn');
-    assert.equal(pct('15'), '**Session:** 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', '66% is past the 60% default');
-    assert.equal(pct('10'), '**Session:** 4 turns · ctx 100k of ~100k (100%) · 100k read/turn · roll now');
-    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 60/90 defaults apply');
-    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** 4 turns · ctx 100k of ~150k (66%) · 100k read/turn', 'configured percents are honoured by the footer');
+    assert.equal(pct('20'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~200k (50%) · 100k read/turn');
+    assert.equal(pct('15'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', '66% is past the 60% default');
+    assert.equal(pct('10'), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~100k (100%) · 100k read/turn · roll now');
+    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '95', MAESTRO_ROLL_AT_PCT: '90' }), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn · roll soon', 'warn >= roll is rejected, so the 60/90 defaults apply');
+    assert.equal(pct('15', { MAESTRO_ROLL_WARN_PCT: '88', MAESTRO_ROLL_AT_PCT: '95' }), '**Session:** bbbbbbbb · 4 turns · ctx 100k of ~150k (66%) · 100k read/turn', 'configured percents are honoured by the footer');
 });
 
 test('status --footer --line is one line; --session pins a transcript and --stdin reads its id, while the default stays multi-line', () => {
@@ -500,11 +500,11 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     const status = (args: string[], input?: string) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', input, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', MAESTRO_CLAUDE_SETTINGS: '/nonexistent' },
     }).stdout.trim().split('\n').map((l) => l.replace(/Loop: [^|]*\| /, ''));
-    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
+    assert.deepEqual(status(['--line']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'newest transcript by default: no window is named, the transcript may be another window\'s');
     // The item above was started (and so leased) by `testwin`, a different window from the session pinned below, so the pinned footers count that lease as another window's.
-    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns · 100k/200k (50%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: 2 turns · 100k/200k (50%) · 100k/turn']);
-    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'bad stdin falls back to the newest, still without a window');
+    assert.deepEqual(status(['--line', '--session', 'aaaaaaaa-mine']), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], JSON.stringify({ session_id: 'aaaaaaaa-mine' })), ['Ledger: 0 done · 1 in flight · 0 awaiting | Window: aaaaaaaa-min | Leases: 0 mine, 1 other | Session: aaaaaaaa · 2 turns · 100k/200k (50%) · 100k/turn']);
+    assert.deepEqual(status(['--line', '--stdin'], 'not json'), ['Ledger: 0 done · 1 in flight · 0 awaiting | Leases: 1 mine, 0 other | Session: bbbbbbbb · 1 turns · 150k/200k (75%) · 150k/turn · roll soon'], 'bad stdin falls back to the newest, still without a window');
     assert.match(status(['--line', '--session', 'nope'])[0], /Session: unavailable \(no session "nope" in /);
     assert.match(status(['--line', '--session', ''])[0], /Session: unavailable \(no session "" in /, 'an empty id is no session, not the newest');
     assert.match(status(['--line', '--session', '--stdin'])[0], /Session: unavailable \(no session "" in /, 'a flag-like value is no session');
@@ -517,8 +517,8 @@ test('status --footer --line is one line; --session pins a transcript and --stdi
     assert.equal(multi.find((l) => l.startsWith('**Window:**')), '**Window:** aaaaaaaa-min', 'the footer names the window of the session it measures');
     const unpinned = status([]);
     assert.equal(unpinned.find((l) => l.startsWith('**Window:**')), undefined, 'without a pinned session the newest transcript is not shown under MAESTRO_WINDOW\'s name');
-    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
-    assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
+    assert.equal(unpinned.find((l) => l.startsWith('**Session:**')), '**Session:** bbbbbbbb · 1 turns · ctx 150k of ~200k (75%) · 150k read/turn · roll soon', 'the numbers still show');
+    assert.equal(multi.find((l) => l.startsWith('**Session:**')), '**Session:** aaaaaaaa · 2 turns · ctx 100k of ~200k (50%) · 100k read/turn', '--session applies to the multi-line footer too');
 });
 
 test('status --json carries the footer numbers, and they match what status --footer prints', () => {
@@ -868,7 +868,7 @@ test('handoff fills Session metrics from the newest session, and says so when th
     assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /unavailable \(no sessions in /);
     const turn = (id: string) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 1 } } });
     writeFileSync(join(projects, 'cccccccc-now.jsonl'), `${[1, 2, 3].map((n) => turn(`t${n}`)).join('\n')}\n`);
-    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* 3 turns · ctx 100k of ~200k \(50%\) · 100k read\/turn/);
+    assert.match(section2(run('handoff', '--all', '--dry-run').out, 'Session metrics'), /\*\*Session:\*\* cccccccc · 3 turns · ctx 100k of ~200k \(50%\) · 100k read\/turn/);
 });
 
 test('handoff --update-context points CONTEXT.md at the new handoff once, replacing an old link, and touches nothing else', () => {
@@ -1045,9 +1045,9 @@ test('release is for the holding desk only; --force overrides; both leave a ledg
     assert.equal(other.code, 1);
     assert.match(other.err, /held by desk alpha/);
     assert.equal(run('release', 'repo-y', ...MARK).code, 1);   // no desk, no force
-    assert.ok(existsSync(lockFile('repo-y')));
+    assert.ok(existsSync(lockFile('repo-y@feat-x')));
     assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 0);
-    assert.equal(existsSync(lockFile('repo-y')), false);
+    assert.equal(existsSync(lockFile('repo-y@feat-x')), false);
     assert.equal(run('release', 'repo-y', '--desk', 'alpha', ...MARK).code, 1);   // not claimed any more
     assert.equal(run('claim', 'repo-y', '--desk', 'beta', ...MARK).code, 0);
     assert.equal(run('release', 'repo-y', '--force', ...MARK).code, 0);
@@ -1055,6 +1055,31 @@ test('release is for the holding desk only; --force overrides; both leave a ledg
         [['claim', 'alpha'], ['released', 'alpha'], ['claim', 'beta'], ['released', 'beta']]);
     assert.equal(run('claim', '../evil', '--desk', 'alpha', ...MARK).code, 1);
     assert.equal(run('claim', 'repo-z', ...MARK).code, 1);   // needs --desk
+});
+
+test('two worktrees of one repo can each be claimed; a whole-repo claim and the same worktree are refused; release is per worktree', () => {
+    assert.equal(run('claim', 'repo-w', '--desk', 'alpha', '--worktree', 'wt-a', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-w', '--desk', 'beta', '--branch', 'fix/b', ...MARK).code, 0);
+    assert.ok(existsSync(lockFile('repo-w@wt-a')) && existsSync(lockFile('repo-w@fix-b')));
+    assert.equal(run('claim', 'repo-w', '--desk', 'gamma', '--worktree', 'wt-a', ...MARK).code, 1, 'same worktree');
+    const whole = run('claim', 'repo-w', '--desk', 'gamma', ...MARK);
+    assert.equal(whole.code, 1, 'a whole-repo claim conflicts with scoped ones');
+    assert.match(whole.err, /conflicts/);
+    const listed = parse(run('claims', '--json').out).claims.filter((c) => c.repo === 'repo-w');
+    assert.deepEqual(listed.map((c) => c.scope).sort(), ['fix-b', 'wt-a']);
+    assert.equal(run('claim', 'repo-w', '--desk', 'beta', '--worktree', 'wt-c', ...MARK).code, 0);
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', ...MARK).code, 1, 'two scoped claims by the desk: the scope must be named');
+    assert.equal(run('release', 'repo-w@wt-a', '--desk', 'alpha', ...MARK).code, 0);
+    assert.ok(existsSync(lockFile('repo-w@fix-b')), 'the other worktree keeps its claim');
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', '--worktree', 'wt-c', ...MARK).code, 0);
+    assert.equal(run('release', 'repo-w', '--desk', 'beta', ...MARK).code, 0, 'one scoped claim left: it is the one meant');
+});
+
+test('an old whole-repo lock is still honoured against a scoped claim, and released by repo name', () => {
+    assert.equal(run('claim', 'repo-o', '--desk', 'alpha', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-o', '--desk', 'beta', '--worktree', 'wt-b', ...MARK).code, 1);
+    assert.equal(run('release', 'repo-o', '--desk', 'alpha', ...MARK).code, 0);
+    assert.equal(run('claim', 'repo-o', '--desk', 'beta', '--worktree', 'wt-b', ...MARK).code, 0);
 });
 
 test('claims lists claims and flags a dead pid and an old claim as stale; claim rows are not items', () => {
@@ -2974,4 +2999,42 @@ test('prime and start-here withhold a secret-shaped stream name or id instead of
         assert.match(r.out, /ordinary work|ok1/, `${cmd[0]} still shows ordinary work`);
         assert.match(r.out, /\[withheld: secret shape\]/);
     }
+});
+
+test('web needs no --project when the config names none: it falls back to the container project, as web.ts does', () => {
+    const r = spawnSync(process.execPath, [SCRIPT, 'web', '--port', '0', '--vault', vault, '--status-dir', join(vault, 'status')], {
+        encoding: 'utf8', cwd: emptyCwd, timeout: 4000,
+        env: { ...process.env, VAULT_ROOT: '', MAESTRO_LOCAL_CONFIG: '', MAESTRO_PROJECT: '', MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off' },
+    });
+    assert.doesNotMatch(r.stderr, /Pass --project/);
+    assert.match(r.stdout, /Podium web: http:\/\/127\.0\.0\.1:\d+\//);
+});
+
+test('query filters read-only and capped: by stream, status and id, refuses bad filters, writes no row', () => {
+    const a = idOf(run('start', 'alpha job', '--stream', 'Alpha', ...MARK).out);
+    const b = idOf(run('start', 'beta job', '--stream', 'Beta', ...MARK).out);
+    run('done', b, ...MARK);
+    const before = ledger().length;
+    type Q = { total: number; shown: number; rows: { id: string }[] };
+    assert.deepEqual(parse<Q>(run('query', '--stream', 'Alpha', '--json').out).rows.map((r) => r.id), [a]);
+    assert.deepEqual(parse<Q>(run('query', '--status', 'done', '--json').out).rows.map((r) => r.id), [b]);
+    assert.equal(parse<Q>(run('query', '--id', a, '--json').out).total, 1);
+    assert.equal(parse<Q>(run('query', '--limit', '1', '--json').out).shown, 1);
+    assert.match(run('query').out, /alpha job/);
+    for (const bad of [['--limit', '0'], ['--limit', '9999'], ['--status', 'nope'], ['--date', 'today']]) assert.equal(run('query', ...bad).code, 1, bad.join(' '));
+    assert.equal(ledger().length, before, 'a query writes nothing');
+});
+
+test('ready-to-push lists my branches that no remote holds, and refuses without a container root or emails', () => {
+    const container = mkdtempSync(join(tmpdir(), 'rtp-'));
+    const repo = join(container, 'proj');
+    mkdirSync(repo);
+    const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 'me@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 'me@example.com', GIT_CONFIG_GLOBAL: '/dev/null' };
+    const git = (...a: string[]) => assert.equal(spawnSync('git', a, { cwd: repo, env }).status, 0, a.join(' '));
+    git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a'), 'a'); git('add', 'a'); git('commit', '-q', '-m', 'base');
+    git('switch', '-q', '-c', 'feat/MAESTRO-9-held'); writeFileSync(join(repo, 'b'), 'b'); git('add', 'b'); git('commit', '-q', '-m', 'held work');
+    const out = runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push', '--json');
+    assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/MAESTRO-9-held']);
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('MAESTRO-9'), false, 'not my commits');
+    assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: '', MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push').code, 1);
 });

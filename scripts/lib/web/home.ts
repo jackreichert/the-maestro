@@ -6,9 +6,13 @@ import { createReader } from '../vault/reader.ts';
 import { DOC_DIR_SCOPES, DOC_FILE_SCOPES, loadDocs } from '../home/docs.ts';
 import { loadTickets, TICKET_DIR_SCOPES, TICKET_FILE_SCOPES } from '../vault/tickets.ts';
 import { readHomes } from '../home/config.ts';
-import { buildStreamHome } from '../home/build.ts';
+import { buildStreamHome, unfiledEpics } from '../home/build.ts';
+import { epicsData } from '../home/epics.ts';
+import type { EpicsData } from '../home/epics.ts';
 import { BRIEF_DIR_SCOPES, BRIEF_FILE_SCOPES, readBriefNote } from '../home/brief.ts';
 import type { LedgerFact } from '../home/build.ts';
+import type { BriefRead } from '../home/brief.ts';
+import type { Ticket } from '../vault/tickets.ts';
 import type { StreamHome } from '../home/types.ts';
 import { readBoard } from './api.ts';
 import { buildState as reduceState } from './state.ts';
@@ -38,22 +42,34 @@ function factsOf(items: LedgerItem[], ticketMap: Record<string, string[]>): Ledg
   });
 }
 
-/** The home base of `name`, or null when `name` is not one of the board's streams. Nothing about the request reaches a path. */
-export function buildHome(cfg: WebConfig, name: string, now: Date = new Date()): StreamHome | null {
-  if (name.length > MAX_NAME) return null;
+/** The inputs `buildStreamHome` reads, gathered once; `docs` false skips the documents and briefs a cross-stream list does not show. */
+function homeInputs(cfg: WebConfig, now: Date, docs: boolean) {
   const { inputs, g } = readBoard(cfg, now);
   const streams = reduceState(inputs).streams.filter((s) => s !== 'other');
-  const canon = streams.find((s) => s === name);
-  if (!canon) return null;
   const root = cfg.vaultRoot;
   const reader = root ? createReader({ root, dirScopes: [...TICKET_DIR_SCOPES, ...DOC_DIR_SCOPES, ...BRIEF_DIR_SCOPES], fileScopes: [...TICKET_FILE_SCOPES, ...DOC_FILE_SCOPES, ...BRIEF_FILE_SCOPES] }) : null;
   const vault = root && reader ? loadTickets(reader, root) : null;
-  return buildStreamHome({
-    stream: canon, streams, now, vault, homes: readHomes(cfg.statusDir, streams), ledger: factsOf(g.items, inputs.ticketMap),
-    readDocs: (project) => (reader ? loadDocs(reader, project) : { docs: [], notes: [] }),
-    readBrief: (epic) => (reader ? readBriefNote(reader, epic.project, epic.id) : { ok: false, reason: 'missing' }),
+  const base = {
+    streams, now, vault, homes: readHomes(cfg.statusDir, streams), ledger: factsOf(g.items, inputs.ticketMap),
     prs: inputs.prs, prData: { fetchedAt: inputs.prData.fetchedAt }, page: cfg.page,
-  });
+    readDocs: (project: string) => (docs && reader ? loadDocs(reader, project) : { docs: [], notes: [] }),
+    readBrief: (epic: Ticket): BriefRead => (docs && reader ? readBriefNote(reader, epic.project, epic.id) : { ok: false, reason: 'missing' }),
+  };
+  return base;
+}
+
+/** The home base of `name`, or null when `name` is not one of the board's streams. Nothing about the request reaches a path. */
+export function buildHome(cfg: WebConfig, name: string, now: Date = new Date()): StreamHome | null {
+  if (name.length > MAX_NAME) return null;
+  const base = homeInputs(cfg, now, true);
+  const canon = base.streams.find((s) => s === name);
+  return canon ? buildStreamHome({ ...base, stream: canon }) : null;
+}
+
+/** Every stream's open epics and the unfiled ones, for `GET /api/epics`. Counted by the same code as each stream's home base. */
+export function buildEpics(cfg: WebConfig, now: Date = new Date()): EpicsData {
+  const base = homeInputs(cfg, now, false);
+  return epicsData(now.toISOString(), base.streams.map((stream) => buildStreamHome({ ...base, stream })), unfiledEpics(base));
 }
 
 /**

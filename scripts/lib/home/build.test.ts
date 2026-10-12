@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import { assertNoCanary, buildFixture } from '../vault/fixture.ts';
 import type { PageConfig } from '../status-page/render.ts';
 import { validateHomes } from './config.ts';
-import { buildStreamHome } from './build.ts';
+import { buildStreamHome, unfiledEpics } from './build.ts';
+import type { Pr } from '../status-page/render.ts';
 import { DOC_DIR_SCOPES, DOC_FILE_SCOPES, loadDocs } from './docs.ts';
 import type { HomeInput, LedgerFact } from './build.ts';
 
@@ -159,4 +160,22 @@ test('a configured epic that is not in the vault is named, and a differently cas
   fx.write('Projects/avonlea-api/Tickets/avonlea-api-042.md', fs.readFileSync(`${fx.root}/Projects/avonlea-api/Tickets/avonlea-api-042.md`, 'utf8').replace('## What done looks like', '## What Done Looks Like'));
   const again = buildStreamHome(input({ vault: loadTickets(READER, fx.root) }));
   assert.equal(again.doneMeans.length, 1);
+});
+
+const pr = (number: number, head: string, title: string): Pr => ({
+  number, title, url: `https://github.test/acme/avonlea-api/pull/${number}`, isDraft: false, baseRefName: 'develop', headRefName: head, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null,
+  repo: 'acme/avonlea-api', short: 'avonlea-api', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Avonlea',
+});
+
+test('an epic names the open PRs that carry the id of one of its open tickets, by branch or by tracker key in the title', () => {
+  const prs = [pr(412, 'feat/avonlea-api-045-backfill', 'Backfill'), pr(413, 'x', 'Fix AV-1202 retry'), pr(414, 'feat/avonlea-api-043-loader', 'Loader'), pr(500, 'chore/unrelated', 'Tidy')];
+  const e = buildStreamHome(input({ prs })).epics.find((x) => x.id === 'avonlea-api-042');
+  assert.deepEqual(e?.prs.map((r) => r.label), ['avonlea-api#412', 'avonlea-api#413'], '043 is closed, so its PR is not counted against the open work');
+});
+
+test('unfiledEpics returns the epics no stream claims, counted like a stream\'s own, and leaves childless tickets out', () => {
+  const ids = unfiledEpics(input({ config: {} })).map((e) => e.id);
+  assert.deepEqual(ids, ['avonlea-api-042', 'loop-lab-002'], 'with no config the Avonlea epic has no owner; green-gables-001 is claimed by its label; a childless ticket is no epic');
+  const [first] = unfiledEpics(input({ config: {} }));
+  assert.equal(first?.total, 10);
 });

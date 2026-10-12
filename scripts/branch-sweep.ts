@@ -54,7 +54,7 @@ export interface PrInfo {
 }
 /** Runs `gh <args>` in a repo and returns parsed JSON, or null on any failure. Tests inject their own. */
 export type GhJson = (repo: string, args: string[]) => unknown;
-/** A claim file under Claims/<repo>.lock. */
+/** A claim file under Claims/<repo>.lock or Claims/<repo>@<scope>.lock. */
 export interface Claim { time?: string; pid?: number; host?: string; desk?: string }
 /** Everything a scan reads besides the repo itself: settings, claims, the gh runner, and caches. */
 export interface SweepContext {
@@ -116,7 +116,12 @@ export function liveClaims(dir: string | undefined): Map<string, Claim> {
     const age = c.time ? (Date.now() - Date.parse(c.time)) / 36e5 : Infinity;
     let dead = false;
     if (c.pid && c.host === hostname()) { try { process.kill(c.pid, 0); } catch (e) { dead = (e as NodeJS.ErrnoException).code !== 'EPERM'; } }
-    if (!dead && age <= 12) out.set(n.slice(0, -5), c);
+    if (dead || age > 12) continue;
+    const key = n.slice(0, -5);
+    out.set(key, c);
+    // A scoped claim (`<repo>@<scope>.lock`, one worktree's writer) still means the repo is in use: the sweep does not tell worktrees apart.
+    const repo = key.split('@')[0] as string;
+    if (repo !== key && !out.has(repo)) out.set(repo, c);
   }
   return out;
 }

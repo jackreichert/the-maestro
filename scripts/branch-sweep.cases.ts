@@ -10,6 +10,7 @@ import { join } from 'node:path';
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.MAESTRO_LAUNCH_AGENTS_DIR = mkdtempSync(join(tmpdir(), 'agents-')); // and never the real launchd plist
 const SCRIPT = new URL('./branch-sweep.ts', import.meta.url).pathname;
+import { liveClaims } from './branch-sweep.ts';
 import type { CmdResult, ExcludedItem, Git, GhJson, ListedItem, PrInfo, SweepContext } from './branch-sweep.ts';
 const { scanRepo, apply, deleteRemoteBranch, defaultContext, explain, branchGlob, sweepWorktrees, removeWorktree, worktreeSweepLines, keptCounts, isEnvFile } = await import('./branch-sweep.ts');
 
@@ -1001,4 +1002,12 @@ test('sweepWorktrees keeps a worktree whose root is exactly the supervisor Worki
         assert.match(keptReason(r, wt), /^in use/, 'the exact root is in use');
         assert.deepEqual(r.removed.map((x) => x.path), [sibling], 'a sibling whose path is a bare string prefix of the in-use root is not it');
     } finally { rmSync(plist, { force: true }); }
+});
+
+test('liveClaims counts a scoped claim file (<repo>@<scope>.lock) as a claim on the repo', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claims-'));
+    writeFileSync(join(dir, 'proj@wt-a.lock'), JSON.stringify({ desk: 'Launch', time: new Date().toISOString() }));
+    const claims = liveClaims(dir);
+    assert.equal(claims.get('proj')?.desk, 'Launch');
+    assert.equal(claims.get('proj@wt-a')?.desk, 'Launch');
 });
