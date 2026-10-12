@@ -34,7 +34,9 @@ async function streamNames(p: Probe): Promise<{ names: string[] } | { why: strin
   return names.length ? { names } : { why: 'the board has no streams, so there is no project to check' };
 }
 
-const TOKEN_MARKERS = ['--font-display', '--font-sans', '--font-mono', '--grid-columns', '--hairline', '--chart-grid', '--glyph-critical', '--dur-breathe'];
+/** The display, grid, hairline, chart and status tokens arrived with the token work; the system font roles were already there, so they alone do not mean it is built. */
+const NEW_TOKENS = ['--font-display', '--grid-columns', '--hairline', '--chart-grid', '--glyph-critical', '--dur-breathe'];
+const TOKEN_MARKERS = [...NEW_TOKENS, '--font-sans', '--font-mono'];
 const FONT_FILES = ['/fonts/geist.woff2', '/fonts/geist-mono.woff2', '/fonts/instrument-serif.woff2'];
 
 const tokens: Check = {
@@ -43,7 +45,7 @@ const tokens: Check = {
     const css = await p.get('/theme.css');
     if (css.status !== 200) return out('fail', `theme.css is not served (status ${css.status})`);
     const missing = TOKEN_MARKERS.filter((m) => !css.text.includes(`${m}:`));
-    if (missing.length === TOKEN_MARKERS.length) return out('not-built', 'theme.css has none of the type, grid, hairline, chart or status tokens yet');
+    if (NEW_TOKENS.every((m) => missing.includes(m))) return out('not-built', 'theme.css has none of the type, grid, hairline, chart or status tokens yet');
     if (missing.length) return out('fail', `tokens missing from theme.css: ${missing.join(', ')}`);
     const fonts = await Promise.all(FONT_FILES.map(async (f) => [f, (await p.get(f)).status] as const));
     const gone = fonts.filter(([, s]) => s !== 200).map(([f, s]) => `${f} (${s})`);

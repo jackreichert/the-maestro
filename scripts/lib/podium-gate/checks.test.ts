@@ -34,7 +34,7 @@ test('a Podium with every piece built passes every criterion and exits 0', async
 });
 
 test('a bare main build reports each missing piece as not built, never crashes, and exits 1', async () => {
-  const bare: Probe = { get: async (path) => (path === '/api/state' ? ok({ streams: ['Avonlea'], asks: [], done: [] }) : path === '/api/streams/Avonlea/home' ? ok({ links: [] }) : path === '/api/charts' ? ok({ throughput: [] }) : path === '/theme.css' ? ok('body{}') : NONE), plainLanguageRule: async () => 'absent' };
+  const bare: Probe = { get: async (path) => (path === '/api/state' ? ok({ streams: ['Avonlea'], asks: [], done: [] }) : path === '/api/streams/Avonlea/home' ? ok({ links: [] }) : path === '/api/charts' ? ok({ throughput: [] }) : path === '/theme.css' ? ok('--font-sans: x;') : NONE), plainLanguageRule: async () => 'absent' };
   const r = await runGate(bare);
   assert.deepEqual(r.map((x) => x.verdict), ['not-built', 'not-built', 'not-built', 'not-built', 'not-built']);
   const { text, code } = render(r);
@@ -57,6 +57,8 @@ test('a check that throws is a failure and the rest still run', async () => {
 });
 
 test('tokens: a partial token set fails and names what is missing; a font off the origin fails', async () => {
+  const old = await runGate(podium({ '/theme.css': ok('--font-sans: x;\n--font-mono: x;') }));
+  assert.equal(old[0]?.verdict, 'not-built');
   const half = await runGate(podium({ '/theme.css': ok('--font-display: x;') }));
   assert.equal(half[0]?.verdict, 'fail');
   assert.match(half[0]?.detail ?? '', /--grid-columns/);
