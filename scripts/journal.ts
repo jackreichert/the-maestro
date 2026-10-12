@@ -64,9 +64,10 @@
  *                                             a question the library could not answer, for the composer; scanned for secrets, one row per question per repo per day
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
- *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
+ *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json] [--no-miss]
  *                                             library pages, best first: path, kind, read-when line, verified-at age, stale flag; --neighbors adds the pages one link away.
- *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed
+ *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed.
+ *                                             A lookup that finds no page logs a `miss` row (source find; --no-miss skips it) and still exits 0
  *   journal.ts verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.ts render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.ts tag <id> --stream <name>      file an existing item under a workstream
@@ -596,20 +597,29 @@ function cmdLearned(): void {
     console.log(`learned  ${entry.id}  ${entry.text}${seen.kind === 'refresh' ? `  (re-checked: supersedes ${seen.id})` : ''}`);
 }
 
-/** `miss "<question>" --source find|ask|eval [--repo R]`: a question the library could not answer, for the composer. The question is scanned before it is written; the same question for the same repo on the same day is reported, not written twice. */
-function cmdMiss(): void {
-    const parsed = parseMiss(arg('text') || positional.join(' '), arg('source') || null);
-    if (!parsed.fields) die(`miss: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\nUsage: journal.ts miss "<question>" --source ${MISS_SOURCES.join('|')} [--repo R]`);
+/** Writes one miss row, or says why not. The same question for the same repo on the same day is reported, not written twice. Returns the printed line, or null when refused (the reasons are in `errors`). */
+function recordMiss(question: string, source: string, repo: string | undefined, usage: Usage): { line: string } | { errors: string[] } {
+    const parsed = parseMiss(question, source);
+    if (!parsed.fields) return { errors: parsed.errors };
     const { fields } = parsed;
     const entries = readLedger();
     const date = arg('date', today());
-    const repo = arg('repo') || undefined;
     const seen = seenMiss(entries, fields, repo, date);
-    if (seen.kind === 'same') { console.log(`miss  ${seen.id}  ${fields.text}  (already recorded today)`); return; }
-    const entry = { id: newId(entries), ts: now(), date, kind: 'miss', ...fields, repo, stream: streamOrNone(arg('stream')), ...usageFromArgs() };
+    if (seen.kind === 'same') return { line: `miss  ${seen.id}  ${fields.text}  (already recorded today)` };
+    const entry = { id: newId(entries), ts: now(), date, kind: 'miss', ...fields, repo, stream: streamOrNone(arg('stream')), ...usage };
     append(entry);
     if (!dryRun) render(true);
-    console.log(`miss  ${entry.id}  ${entry.text}`);
+    return { line: `miss  ${entry.id}  ${entry.text}` };
+}
+
+/** `miss "<question>" --source find|ask|eval [--repo R]`: a question the library could not answer, for the composer. The question is scanned before it is written. */
+function cmdMiss(): void {
+    const question = arg('text') || positional.join(' ');
+    const source = arg('source') || null;
+    const parsed = parseMiss(question, source);
+    if (!parsed.fields) die(`miss: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\nUsage: journal.ts miss "<question>" --source ${MISS_SOURCES.join('|')} [--repo R]`);
+    const r = recordMiss(question, source as string, arg('repo') || undefined, usageFromArgs());
+    console.log('line' in r ? r.line : '');
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -2365,17 +2375,27 @@ function cmdTickets() {
 
 // ── library lookup ──────────────────────────────────────────────────────────
 
+/** A `find` that matched nothing, written as a miss. Marks default to unrecorded (a lookup has no model to name); a refusal (a secret-shaped query) is said on stderr and never fails the lookup. */
+function logFindMiss(query: string): void {
+    const r = recordMiss(query, 'find', arg('repo') || undefined, { model: normaliseModel(arg('model')) || 'unrecorded', used: parseList('used') ?? ['unrecorded'], ...(arg('agent') ? { agent: arg('agent') as string } : {}) });
+    if ('errors' in r) console.error(`(not logged as a library miss: ${r.errors.join(' ')})`);
+    else console.error(`(logged as a library miss: ${r.line.split('  ')[1]})`);
+}
+
 /** `find "<words>"`: hands the lookup to ledger-index.ts (the one place the library index is built and read) and relays its output and exit code. */
 function cmdFind() {
     const query = positional.join(' ').trim();
     if (!query) die('Usage: journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]');
     const values = ['repo', 'kind', 'component', 'limit'].flatMap((k) => (arg(k) ? [`--${k}`, arg(k) as string] : []));
     const flags = ['neighbors', 'include-superseded', 'json'].filter(has).map((k) => `--${k}`);
+    const logMisses = !has('no-miss');
     // The child writes straight to our stdout and stderr: no buffer to cap or to lose when this process exits, so a large result arrives whole.
     const r = spawnSync(process.execPath, [
-        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags,
+        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags, ...(logMisses ? ['--exit-miss'] : []),
         '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
     ], { stdio: 'inherit' });
+    // Exit 4 is "no page matched": the question becomes a miss row for the composer, and the lookup itself still succeeds.
+    if (logMisses && r.status === 4) { logFindMiss(query); process.exitCode = 0; return; }
     process.exitCode = r.status ?? 1;
 }
 

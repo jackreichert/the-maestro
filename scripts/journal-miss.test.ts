@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -56,4 +56,62 @@ test('log --kind miss is refused, and verify passes a ledger with a miss', () =>
   f.run('miss', 'orchard index?', '--source', 'eval', ...MARKS);
   const v = f.run('verify');
   assert.equal(v.status, 0, v.stdout + v.stderr);
+});
+
+function withLibrary() {
+  const f = fixture();
+  const lib = mkdtempSync(join(tmpdir(), 'journal-miss-lib-'));
+  mkdirSync(join(lib, 'Projects', 'test-proj', 'Knowledge'), { recursive: true });
+  writeFileSync(join(lib, 'Projects', 'test-proj', 'Knowledge', 'orchard-sync.md'), `---
+type: library
+kind: how-it-works
+repo: test-proj
+stream: Avonlea
+components: [orchard-sync]
+status: current
+verified-at: 2026-10-01
+verify-how: "read the page it names"
+composed-by: composer
+---
+
+# Orchard sync
+
+Read when: you change how orchards are synced.
+
+## Facts
+
+- The sync runs nightly (verified 2026-10-01, README.md:1)
+`);
+  const find = (...a: string[]) => f.run('find', ...a, '--tickets-vault', lib);
+  return { ...f, find };
+}
+
+test('find with no match writes one miss row, exits 0, and a repeat the same day adds none', () => {
+  const f = withLibrary();
+  const first = f.find('zzzzqqqq harvest');
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /no library pages match/);
+  assert.match(first.stderr, /logged as a library miss/);
+  const [row] = f.rows();
+  assert.equal(row?.kind, 'miss');
+  assert.equal(row?.source, 'find');
+  assert.equal(row?.text, 'zzzzqqqq harvest');
+  f.find('ZZZZQQQQ  harvest');
+  assert.equal(f.rows().length, 1);
+});
+
+test('find with a hit, or with --no-miss, writes nothing', () => {
+  const f = withLibrary();
+  assert.match(f.find('orchard sync').stdout, /orchard-sync\.md/);
+  assert.equal(f.find('zzzzqqqq', '--no-miss').status, 0);
+  assert.throws(() => f.rows());
+});
+
+test('a secret-shaped query is not logged and the lookup still succeeds', () => {
+  const f = withLibrary();
+  const r = f.find(FAKE_KEY);
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /not logged as a library miss/);
+  assert.ok(!r.stderr.includes(FAKE_KEY));
+  assert.throws(() => f.rows());
 });
