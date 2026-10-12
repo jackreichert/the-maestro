@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +32,9 @@ test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and k
     const bin = join(tmp, 'bin');
     mkdirSync(bin);
     const pidfile = join(tmp, 'git.pid');
-    writeFileSync(join(bin, 'git'), `#!/bin/sh\necho $$ > '${pidfile}'\nexec sleep 300\n`, { mode: 0o755 });
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\n[ "$1" = warm ] && exit 0\necho $$ > '${pidfile}'\nexec sleep 300\n`, { mode: 0o755 });
+    // Run it once here, where a first-run stall (a macOS provenance scan, minutes under load) costs only time: the smoke's own start of it is then a warm one.
+    spawnSync(join(bin, 'git'), ['warm'], { timeout: 300_000 });
     const scratch = join(tmp, 'tmpdir');
     mkdirSync(scratch);
     const child = spawn(process.execPath, [fileURLToPath(new URL('./fresh-install-smoke.ts', import.meta.url))], {
