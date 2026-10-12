@@ -120,9 +120,9 @@ export const defaultRun: Run = (cmd, args): RunResult => {
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
 
-/** In quiet hours a watch still runs if it is `notify_overnight`, or its type is `slowInQuiet` and quiet_hours_mode is `slow` (then at SLOW_QUIET_SECONDS or slower). */
+/** In quiet hours a watch still runs if it is `notify_overnight`, its type is `quietExempt`, or its type is `slowInQuiet` and quiet_hours_mode is `slow` (then at SLOW_QUIET_SECONDS or slower). */
 const slowOnly = (watch: Watch, types: TypeRegistry, config: CadenceConfig): boolean => !watch.notify_overnight && config.quietMode === 'slow' && types[watch.type]?.slowInQuiet === true;
-const runsInQuiet = (watch: Watch, types: TypeRegistry, config: CadenceConfig): boolean => watch.notify_overnight || slowOnly(watch, types, config);
+const runsInQuiet = (watch: Watch, types: TypeRegistry, config: CadenceConfig): boolean => watch.notify_overnight || types[watch.type]?.quietExempt === true || slowOnly(watch, types, config);
 
 const newest = (times: number[]): number => (times.length ? Math.max(...times) : 0);
 const trimEvents = (times: number[], now: number): number[] => times.filter((t) => t === newest(times) || now - t < EVENT_HISTORY_MS);

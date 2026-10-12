@@ -2,7 +2,7 @@
  * The event types index. A type is `scripts/event-types/<type>.ts` exporting
  * { check(target, ctx) -> state, diff(prev, next) -> events[], done?(state, watch) -> boolean, retired?(watch, ctx),
  * validate?(target, { now, ttlMs }) (throws to refuse a watch at `add`), defaultTtlMs?(target, now) },
- * and optionally `interval` (default seconds between checks), `network` (false for a check that never leaves the machine), `singleton` (true: `add` refuses a second watch of this type), `slowInQuiet` (true: runs at 1800s in quiet hours when quiet_hours_mode is slow), `floor` (a minimum interval above the network/local one),
+ * and optionally `interval` (default seconds between checks), `network` (false for a check that never leaves the machine), `singleton` (true: `add` refuses a second watch of this type), `slowInQuiet` (true: runs at 1800s in quiet hours when quiet_hours_mode is slow), `quietExempt` (true: runs through quiet hours at its normal pace, for a result that must not expire unseen overnight), `floor` (a minimum interval above the network/local one),
  * `backoff` (false to skip the idle back-off), `notifies` ('default' or 'never'; unset means opt-in with --notify),
  * plus a playbook at `playbooks/event-types/<type>.md`. Registering a built-in one is that pair of files and one line here.
  * diff(null, next) is the first check: report only what is already worth waking for. An event is { summary, actionable? }.
@@ -28,6 +28,7 @@ import * as rollMaintenance from './roll-maintenance.ts';
 import * as stall from './stall.ts';
 import * as statusRefresh from './status-refresh.ts';
 import * as statusWatch from './status-watch.ts';
+import * as suiteDone from './suite-done.ts';
 import * as wake from './wake.ts';
 import type { EventType } from '../lib/types.ts';
 
@@ -37,7 +38,7 @@ export type TypeRegistry = Record<string, EventType>;
 /** Old type names that still resolve, so watches registered under them keep working. pr-review became pr-watch. */
 export const ALIASES: Record<string, string> = { 'pr-review': 'pr-watch' };
 
-const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'roll-maintenance': rollMaintenance, continuity, 'library-due': libraryDue, 'status-refresh': statusRefresh, 'status-watch': statusWatch, 'notion-watch': notionWatch, wake, stall };
+const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'roll-maintenance': rollMaintenance, continuity, 'library-due': libraryDue, 'status-refresh': statusRefresh, 'status-watch': statusWatch, 'notion-watch': notionWatch, wake, stall, 'suite-done': suiteDone };
 export const BUILTIN_TYPES: TypeRegistry = { ...TYPES, ...Object.fromEntries(Object.entries(ALIASES).flatMap(([old, current]) => (TYPES[current] ? [[old, TYPES[current]]] : []))) };
 
 const OPTIONAL_HOOKS = ['done', 'retired', 'validate', 'defaultTtlMs'];

@@ -29,6 +29,7 @@ node scripts/token-metrics.ts                                    # today, printe
 node scripts/token-metrics.ts --date 2026-09-25                  # a specific day
 node scripts/token-metrics.ts --all --write                      # backfill every day still on disk
 node scripts/token-metrics.ts --curve                            # cache-read per turn, by turn-index bucket
+node scripts/token-metrics.ts --expiry                            # cache-expiry rewrites per day: count, average gap, dollars
 node scripts/token-metrics.ts --json                              # machine-readable day + sessions
 ```
 
@@ -46,6 +47,11 @@ node scripts/token-metrics.ts --json                              # machine-read
   subagents, by model and by category), the model mix by price, and a what-if line pricing the orchestrator's
   tokens at Sonnet rates (informational: it ignores quality). Keys, targets and the default prices are in the
   README. Rework rate and corrections are ledger notes, not transcript metrics.
+- Cache-expiry rewrites: a turn more than 5 minutes after the previous turn in the same transcript that
+  writes at least 30k tokens to the 5-minute cache, so the prompt cache had lapsed and the whole context
+  was written again. The day summary prints the count, average gap and dollars by model; `--expiry`
+  lists every day; `--compare` carries "Est. $ cache expiry" and "Expiry rewrites". Subagent
+  transcripts count. The fix is to never wait on a suite: see [budget.md](budget.md).
 - Read the printed summary, not the table file — the table is for history and for the script's own
   `--compare`, not for a human to scan by eye.
 - Tests: `scripts/token-metrics.test.ts`. A planted-sentinel test asserts message content never

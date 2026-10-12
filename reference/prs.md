@@ -207,7 +207,7 @@ slicing — is [reference/git.md](git.md); don't restate it here.
 
 The agent that fixed a bot's threads also judges its own fix, and a per-PR fix cannot see a break at the seam between two PRs of a stack. So a fix is not trusted until a second, fresh agent has looked.
 
-After a thread-fixing agent pushes and resolves bot threads, dispatch a read-only reviewer that has not worked on the PR. It re-reviews only the fix commits and the stack seams they touch, runs the tests (and a merge simulation where PRs stack), and reports **SHIP IT** or **NEEDS WORK**. Record the verdict for the head commit it reviewed:
+After a thread-fixing agent pushes and resolves bot threads, dispatch a read-only reviewer that has not worked on the PR. It re-reviews only the fix commits and the stack seams they touch, runs the targeted tests and tsc (and a merge simulation where PRs stack), and reports **SHIP IT** or **NEEDS WORK**. It never waits on the full suite: that runs as a detached [`suite-run.ts`](../README.md#suite-runts) job, and the reviewer starts once its `results.json` exists (the `suite-done` event wakes the orchestrator, which starts the reviewer with the diff and the results). Opus does the first review of a change; every re-review round after it goes to Sonnet. Record the verdict for the head commit it reviewed:
 
 ```bash
 node <scripts dir>/review-verdict.ts record --pr <owner/repo#N> --head <sha> --verdict "SHIP IT" --reviewer <reviewer id> --fixer <fixer id>
@@ -222,7 +222,7 @@ node <scripts dir>/review-verdict.ts record --pr <owner/repo#N> --head <sha> --v
 Lessons from 2026-10-08, each a rule for the loop:
 
 - **After any fix, a fresh agent re-reviews.** Not only after bot-thread fixes: a fix to a reviewer's finding, a conflict resolution and a "small" follow-up all count.
-- **Verify a claimed fix by running it.** Reading the diff is not enough: a focus-loss bug was caught only by driving the page in a real browser. The re-reviewer runs the tests and, for behaviour a test does not cover, the thing itself.
+- **Verify a claimed fix by running it.** Reading the diff is not enough: a focus-loss bug was caught only by driving the page in a real browser. The re-reviewer runs the targeted tests and, for behaviour a test does not cover, the thing itself; the whole-suite result comes from the job's `results.json`.
 - **A builder does not push before its local review.** The branch is built, tested and reviewed locally first ([review queue cap](dispatch.md#review-queue-cap) holds it as ready to push when the queue is full); the push comes after.
 - **Read PR state live.** `gh` at the moment of the check, never a remembered or cached state, and never the stored snapshot for a go/no-go on merge or readiness.
 - **Stacked PRs: confirm the fix reached the base.** After a stack merges, a fix pushed to an upper PR can be left behind. Compare ancestry (`git merge-base --is-ancestor <fix sha> origin/<base>`) instead of trusting "merged".
