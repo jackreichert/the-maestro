@@ -914,7 +914,8 @@ function cmdApproveTag() {
 /** Every `--ref <file>` on the command line, in order. `arg('ref')` keeps only the first. */
 function refFlagValues(): string[] {
     const out: string[] = [];
-    for (let i = 0; i < argv.length; i++) {
+    const stop = argv.indexOf('--');
+    for (let i = 0; i < (stop === -1 ? argv.length : stop); i++) {
         if (argv[i] !== '--ref') continue;
         const value = argv[i + 1];
         if (value && !value.startsWith('--')) out.push(value);

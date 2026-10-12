@@ -34,8 +34,9 @@ function snapshot(dir: string): string[] {
     }).sort();
 }
 
-function run(s: Sandbox, args: string[]): { code: number | null; out: string; err: string } {
-    const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', s.vault, '--project', 'test-proj'], {
+/** `after` goes behind the global flags, which is where a `--` terminator and its literal words belong. */
+function run(s: Sandbox, args: string[], after: string[] = []): { code: number | null; out: string; err: string } {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', s.vault, '--project', 'test-proj', ...after], {
         encoding: 'utf8',
         cwd: s.cwd,
         timeout: 20_000,
@@ -117,5 +118,33 @@ test('an unknown command prints the list and exits non-zero without writing', ()
     assert.match(r.err, /Unknown command: frobnicate/);
     for (const c of COMMANDS) assert.ok(r.err.includes(`  ${c.name} `), `lists ${c.name}`);
     assert.notEqual(run(s, ['frobnicate', '--help']).code, 0);
+    assert.deepEqual(snapshot(s.root), before);
+}));
+
+const MARKS = ['--model', 'Test Model', '--used', 'skill:x'];
+const ledgerRows = (s: Sandbox): { kind?: string; text?: string }[] => readFileSync(join(s.vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+test('after a -- terminator, --help and -h are text: log -- --help writes the literal words', () => inSandbox((s) => {
+    for (const word of ['--help', '-h']) {
+        const before = ledgerRows(s).length;
+        const r = run(s, ['log', ...MARKS], ['--', word]);
+        assert.equal(r.code, 0, r.err);
+        assert.doesNotMatch(r.out, /journal\.ts log /, 'it must not print usage');
+        const rows = ledgerRows(s);
+        assert.equal(rows.length, before + 1, 'a row was written');
+        assert.equal(rows.at(-1)?.text, word);
+    }
+    const flagged = run(s, ['log', '--help']);
+    assert.match(flagged.out, /journal\.ts log /, 'before the terminator it is still help');
+}));
+
+test('a flag first still names the command: -h roll and --help roll print roll usage', () => inSandbox((s) => {
+    const before = snapshot(s.root);
+    for (const flag of ['-h', '--help']) {
+        const r = run(s, [flag, 'roll']);
+        assert.equal(r.code, 0, r.err);
+        assert.match(r.out, /journal\.ts roll /);
+        assert.doesNotMatch(r.out, /journal\.ts standup /);
+    }
     assert.deepEqual(snapshot(s.root), before);
 }));

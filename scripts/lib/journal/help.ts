@@ -120,14 +120,19 @@ const BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
 /** True when `name` is a command in the table. */
 export const isCommand = (name: string | undefined): boolean => name !== undefined && BY_NAME.has(name);
 
-/** True when argv asks for help: `help`, `--help` or `-h` anywhere. Checked before anything runs. */
+/** The arguments before a `--` terminator; after it everything is literal text, so `log -- --help` is not a help request. */
+const beforeTerminator = (argv: string[]): string[] => (argv.includes('--') ? argv.slice(0, argv.indexOf('--')) : argv);
+
+/** True when argv asks for help: `help` first, or `--help` or `-h` before any `--`. Checked before anything runs. */
 export function wantsHelp(argv: string[]): boolean {
-    return argv[0] === 'help' || argv.includes('--help') || argv.includes('-h');
+    const flags = beforeTerminator(argv);
+    return flags[0] === 'help' || flags.includes('--help') || flags.includes('-h');
 }
 
-/** The command help is about: the word after `help`, or the first word when it is not a flag. Undefined means the whole list. */
+/** The command help is about: the word after `help`, the first word, or the word after a leading flag (`-h roll`). Undefined means the whole list. */
 export function helpTarget(argv: string[]): string | undefined {
-    const word = argv[0] === 'help' ? argv[1] : argv[0];
+    const flags = beforeTerminator(argv);
+    const word = flags[0] === 'help' ? flags[1] : flags[0]?.startsWith('-') ? (BY_NAME.has(flags[1] ?? '') ? flags[1] : undefined) : flags[0];
     return word === undefined || word.startsWith('-') ? undefined : word;
 }
 
