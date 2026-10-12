@@ -39,6 +39,8 @@ export interface EpicSummary {
   docs: EpicDocs;
   brief: EpicBrief;
   next?: TicketRow; awaiting: number; unknowns: number; quietDays: number | null;
+  /** Open PRs whose branch or title names the epic or one of its open tickets: at most three, `prsMore` counts the rest. */
+  prs: Ref[]; prsMore?: number;
 }
 export interface RailLink { label: string; kind: 'note' | 'tracker' | 'pr' | 'web'; url: string; meta?: string }
 export interface LinkGroup { group: 'pinned' | 'epics' | 'docs' | 'prs' | 'runbooks'; items: RailLink[]; more: number }

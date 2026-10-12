@@ -7,6 +7,7 @@ import type { Store } from './store.ts';
 import { fmt, slug } from './format.ts';
 import { askSummary, asksNote } from './ask-fields.ts';
 import { localDate } from '../status-page/priorities.ts';
+import { daysBetween } from '../boxes.ts';
 
 /** What the board reads from the run: the store, the fold, the clock, the stream mapping and the flags. */
 export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | 'loadRegistry' | 'ensureDir' | 'dir'> {
@@ -104,6 +105,8 @@ export interface FooterRow {
     name: string | null; done: number; inflight: number; queued: number; awaiting: number; paste: number; blocked: number;
     /** Finished after the last roll that day. Present only when a roll happened, so a roll cannot replace the done-today count. */
     sinceRoll?: number;
+    /** Of the in-flight rows, how many are at least `FOOTER_STALE_DAYS` old with no live lease: rows nothing is known to be working on. Present only when the caller supplied the leases and some row qualifies. */
+    stale?: number;
     /** Of the awaiting asks that carry decision fields, how many are one-way doors; absent when none carry them. */
     oneWay?: number;
     /** The soonest decide-by among them, as stored; absent when none names one. */
@@ -131,12 +134,18 @@ export function footerDone(g: Groups, d: string, opts?: { tz?: string }): DayDon
  * The counts behind the reply-footer Ledger lines: one row per active stream (canonical registry names), then `other` for
  * items with no stream. With no streams at all it is the single plain row. The footer text and the status page both read this.
  */
-export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[]): FooterRow[] {
+export const FOOTER_STALE_DAYS = 3;
+
+/** What the footer needs to tell a live in-flight row from a forgotten one: the day it is read on, and the ids that hold a live lease. */
+export interface FooterLiveness { today: string; leased: ReadonlySet<string> }
+
+export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): FooterRow[] {
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     const row = (name: string | null, pick: (i: LedgerItem) => boolean): FooterRow => {
         const n = (arr: LedgerItem[]): number => arr.filter(pick).length;
         const asks = askSummary(g.awaiting.filter(pick));
-        return { name, done: n(done), inflight: n(g.inflight), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(sinceRoll ? { sinceRoll: n(sinceRoll) } : {}), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
+        const stale = live ? g.inflight.filter((i) => pick(i) && !live.leased.has(i.id ?? '') && daysBetween(i.date, live.today) >= FOOTER_STALE_DAYS).length : 0;
+        return { name, done: n(done), inflight: n(g.inflight), ...(stale ? { stale } : {}), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(sinceRoll ? { sinceRoll: n(sinceRoll) } : {}), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
     };
     if (!streams.length) return [row(null, () => true)];
     const rows = streams.map((s) => row(s, (i) => i.stream === s));
@@ -146,10 +155,10 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
 }
 
 const footerLine = (r: FooterRow): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` (${r.stale} stale, ${FOOTER_STALE_DAYS}d+ with no lease)` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
 
 /** The reply-footer Ledger lines, one per `footerRows` row. `sinceRoll` is shown only when the caller passes that day's post-roll slice. */
-export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[]): string[] => footerRows(g, done, sinceRoll).map(footerLine);
+export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): string[] => footerRows(g, done, sinceRoll, live).map(footerLine);
 
 export function standupText(ctx: BoardContext, d: string): string {
     const { has } = ctx;

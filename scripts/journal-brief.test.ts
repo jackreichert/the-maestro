@@ -95,6 +95,19 @@ test('a second item for a claimed repo is refused, naming the holder, and writes
     assert.equal(JSON.parse(readFileSync(lock('repo-a'), 'utf8')).desk, 'Alpha');
 });
 
+test('two items for one repo can be briefed from different worktrees; the same worktree and a whole-repo brief are refused', () => {
+    const a = start('first job', '--repo', 'repo-a', '--stream', 'Alpha');
+    const b = start('second job', '--repo', 'repo-a', '--stream', 'Beta');
+    const c = start('third job', '--repo', 'repo-a', '--stream', 'Cee');
+    assert.equal(run(['brief', a, '--worktree', 'wt-a', '--out-dir', outDir, ...MARK]).code, 0);
+    assert.equal(run(['brief', b, '--worktree', 'wt-b', '--out-dir', outDir, ...MARK]).code, 0, 'a different worktree is a different writer');
+    assert.ok(existsSync(lock('repo-a@wt-a')) && existsSync(lock('repo-a@wt-b')));
+    assert.equal(run(['brief', c, '--worktree', 'wt-a', '--out-dir', outDir, ...MARK]).code, 1, 'same worktree');
+    const whole = run(['brief', c, '--out-dir', outDir, ...MARK]);
+    assert.equal(whole.code, 1, 'a whole-repo brief conflicts with scoped claims');
+    assert.equal(existsSync(briefPaths(outDir, c).brief), false);
+});
+
 test('briefing the same item again as the same holder is a rerun: same file, no new rows', () => {
     const id = start('job', '--repo', 'repo-a', '--stream', 'Alpha');
     assert.equal(run(['brief', id, '--out-dir', outDir, ...MARK]).code, 0);
@@ -217,6 +230,22 @@ test('briefText states the cap and the report path once each, and the repo role'
     const t = briefText({ id: 'ab12', text: 'obj', repo: 'r', library: 'lib', standing: 'rules', writer: true, reportPath: '/tmp/report-ab12.md' });
     assert.equal(t.split('/tmp/report-ab12.md').length - 1, 1);
     assert.match(t, /You hold the repo claim/);
+});
+
+test('briefText sets the done criteria up front, falls back to asking the agent to write them, and lists the handoff contract once', () => {
+    const base = { id: 'ab12', text: 'obj', repo: 'r', library: 'lib', standing: 'rules', writer: true, reportPath: '/tmp/report-ab12.md' };
+    const given = briefText({ ...base, doneWhen: 'the widget test passes' });
+    assert.match(given, /## Done when\n\nthe widget test passes/);
+    assert.ok(given.indexOf('## Done when') < given.indexOf('## Library'), 'criteria come before the work');
+    assert.match(briefText(base), /gave no criteria\. Before you start, write the criteria/);
+    for (const part of ['confidence and what it was measured on', 'what you tried that failed', 'who owns the work if you stop']) assert.equal(given.split(part).length - 1, 1, part);
+});
+
+test('--done-when lands in the brief file', () => {
+    const id = start('fix the widget', '--repo', 'repo-a', '--stream', 'Alpha');
+    const r = run(['brief', id, '--out-dir', outDir, '--done-when', 'the widget builds', ...MARK], config);
+    assert.equal(r.code, 0, r.err);
+    assert.match(readFileSync(briefPaths(outDir, id).brief, 'utf8'), /## Done when\n\nthe widget builds/);
 });
 
 test('the library block comes from library-brief.ts when it is installed, asked for the item\'s repo and words', () => {

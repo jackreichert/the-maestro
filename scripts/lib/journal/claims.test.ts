@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireClaimLock, claimPath, claimStaleness, describeClaim, pidAlive, readClaim, validRepo } from './claims.ts';
+import { acquireRepoClaim, claimKey, claimScope, scopesConflict, splitClaimKey, acquireClaimLock, claimPath, claimStaleness, describeClaim, pidAlive, readClaim, validRepo } from './claims.ts';
 
 const dir = () => join(mkdtempSync(join(tmpdir(), 'claims-')), 'Claims');
 
@@ -58,4 +58,57 @@ test('claimStaleness judges a dead pid on this host, then age, and describeClaim
     assert.equal(claimStaleness(null, 12).stale, true, 'no claim reads as infinitely old');
     assert.equal(describeClaim(null), 'an unreadable claim');
     assert.equal(describeClaim({ desk: 'Alpha', host: 'h', time: 't' }), 'desk Alpha, pid unknown, host h, since t');
+});
+
+test('claim keys: scope is a safe slug, the key splits back, and only two different scopes coexist', () => {
+    assert.equal(claimScope('fix/MAESTRO-260-x'), 'fix-MAESTRO-260-x');
+    assert.equal(claimScope('///'), undefined);
+    assert.equal(claimScope(undefined), undefined);
+    assert.equal(claimKey('r', 'a'), 'r@a');
+    assert.equal(claimKey('r'), 'r');
+    assert.deepEqual(splitClaimKey('r@a'), { repo: 'r', scope: 'a' });
+    assert.deepEqual(splitClaimKey('r'), { repo: 'r' });
+    assert.equal(scopesConflict('a', 'b'), false);
+    assert.equal(scopesConflict('a', 'a'), true);
+    assert.equal(scopesConflict(undefined, 'a'), true);
+    assert.equal(scopesConflict(undefined, undefined), true);
+});
+
+test('acquireRepoClaim: two worktrees of one repo coexist, the same worktree and a whole-repo claim (old lock file included) are refused', () => {
+    const claimsDir = mkdtempSync(join(tmpdir(), 'claims-'));
+    const claim = { repo: 'proj', desk: 'Alpha', time: new Date().toISOString() };
+    assert.deepEqual(acquireRepoClaim(claimsDir, 'proj', 'wt-a', claim), { status: 'taken' });
+    assert.deepEqual(acquireRepoClaim(claimsDir, 'proj', 'wt-b', { ...claim, desk: 'Beta' }), { status: 'taken' });
+    const same = acquireRepoClaim(claimsDir, 'proj', 'wt-a', { ...claim, desk: 'Gamma' });
+    assert.equal(same.status, 'exists');
+    const whole = acquireRepoClaim(claimsDir, 'proj', undefined, { ...claim, desk: 'Gamma' });
+    assert.equal(whole.status, 'conflict');
+    assert.equal(existsSync(claimPath(claimsDir, 'proj')), false, 'the refused whole-repo claim leaves no lock');
+    assert.equal(acquireRepoClaim(claimsDir, 'other', 'wt-a', claim).status, 'taken', 'another repo is unaffected');
+});
+
+test('an old whole-repo lock still blocks scoped claims, and a scoped claim blocks a whole-repo one', () => {
+    const claimsDir = mkdtempSync(join(tmpdir(), 'claims-'));
+    const old = { repo: 'proj', desk: 'Old', time: new Date().toISOString() };
+    acquireClaimLock(claimsDir, 'proj', old);
+    const scoped = acquireRepoClaim(claimsDir, 'proj', 'wt-a', { ...old, desk: 'New' });
+    assert.equal(scoped.status, 'conflict');
+    assert.equal(scoped.status === 'conflict' && scoped.held?.desk, 'Old');
+    const dir2 = mkdtempSync(join(tmpdir(), 'claims-'));
+    acquireRepoClaim(dir2, 'proj', 'wt-a', old);
+    assert.equal(acquireRepoClaim(dir2, 'proj', undefined, { ...old, desk: 'New' }).status, 'conflict');
+});
+
+test('acquireRepoClaim backs its own claim out when a conflicting claim lands between the pre-check and the link', () => {
+    const claimsDir = dir();
+    const claim = { repo: 'proj', desk: 'Alpha', pid: process.pid, host: hostname(), time: new Date().toISOString() };
+    const rival = { ...claim, desk: 'Beta' };
+    const racing: typeof acquireClaimLock = (d, key, c) => {
+        assert.equal(acquireClaimLock(d, claimKey('proj', 'wt-a'), rival), null, 'the scoped rival lands first');
+        return acquireClaimLock(d, key, c);
+    };
+    const out = acquireRepoClaim(claimsDir, 'proj', undefined, claim, racing);
+    assert.equal(out.status, 'conflict');
+    assert.equal(existsSync(claimPath(claimsDir, claimKey('proj', undefined))), false, 'the whole-repo claim was unlinked');
+    assert.equal(readClaim(claimsDir, claimKey('proj', 'wt-a'))?.desk, 'Beta', 'the rival still stands');
 });

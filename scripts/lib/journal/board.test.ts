@@ -184,3 +184,20 @@ test('archive and unarchive rows for the reserved none stream are skipped, not k
     const real = ctxFor({ readLedger: () => [...withNone, { id: 'jjjj', kind: 'archive', ts: `${TODAY}T14:00:00Z`, date: TODAY, text: 'archived stream Beta', stream: 'Beta', ids: ['cccc'], retro: '/x/Beta-retro.md' }] });
     assert.deepEqual([...archivedRetros(real)], [['Beta', '/x/Beta-retro.md']]);
 });
+
+test('the footer splits in-flight rows 3 days old or more with no lease out as stale; a leased old row and a fresh row stay live', () => {
+    const rows: LedgerRow[] = [
+        { id: 'old1', kind: 'wip', ts: '2026-10-05T10:00:00Z', date: '2026-10-05', text: 'forgotten', stream: 'Alpha' },
+        { id: 'old2', kind: 'wip', ts: '2026-10-05T10:00:00Z', date: '2026-10-05', text: 'leased and old', stream: 'Alpha' },
+        { id: 'new1', kind: 'wip', ts: '2026-10-10T10:00:00Z', date: '2026-10-10', text: 'fresh', stream: 'Alpha' },
+    ];
+    const g = groups(ctxFor({ readLedger: () => rows }));
+    const today = '2026-10-11';
+    assert.equal(footerRows(g, [])[0]?.stale, undefined, 'without liveness the count is not claimed');
+    const live = { today, leased: new Set(['old2']) };
+    const row = footerRows(g, [], undefined, live)[0];
+    assert.equal(row?.inflight, 3);
+    assert.equal(row?.stale, 1);
+    assert.match(footerLines(g, [], undefined, live).join('\n'), /3 in flight \(1 stale, 3d\+ with no lease\)/);
+    assert.equal(footerRows(g, [], undefined, { today, leased: new Set(['old1', 'old2']) })[0]?.stale, undefined);
+});

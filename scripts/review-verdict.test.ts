@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.MAESTRO_LOCAL_CONFIG = '';
-const { loadVerdicts, recordVerdict, verdictFor, verdictsPath } = await import('./review-verdict.ts');
+const { loadVerdicts, localUnitId, recordVerdict, verdictFor, verdictsPath } = await import('./review-verdict.ts');
 
 const SCRIPT = new URL('./review-verdict.ts', import.meta.url).pathname;
 const SHA = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -68,4 +68,14 @@ test('the CLI records, shows and refuses', () => {
   assert.equal(self.status, 1);
   assert.match(self.stderr, /fresh agent/);
   assert.equal(run('bogus').status, 2);
+});
+
+test('a local unit (a branch with no PR) records and is found like a PR; a malformed id is refused', () => {
+  const r = root();
+  const unit = localUnitId('the-maestro', 'feat/MAESTRO-9-thing');
+  assert.equal(unit, 'local:the-maestro#feat/MAESTRO-9-thing');
+  recordVerdict(r, { ...base, pr: unit });
+  assert.equal(verdictFor(loadVerdicts(r), unit, SHA)?.verdict, 'SHIP IT');
+  assert.equal(verdictFor(loadVerdicts(r), 'local:other#feat/MAESTRO-9-thing', SHA), undefined, 'another repo');
+  for (const bad of ['local:#x', 'local:repo#', 'local:a/b#c', 'local:repo', 'org/repo']) assert.throws(() => recordVerdict(r, { ...base, pr: bad }), /--pr must look like/, bad);
 });
