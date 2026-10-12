@@ -3038,3 +3038,22 @@ test('ready-to-push lists my branches that no remote holds, and refuses without 
     assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('MAESTRO-9'), false, 'not my commits');
     assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: '', MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push').code, 1);
 });
+
+test('note --settles closes the named items, is idempotent, and a bad id writes nothing (MAESTRO-313)', () => {
+    const a = idOf(run('start', 'verify widget', ...MARK).out);
+    const b = idOf(run('start', 'verify gadget', ...MARK).out);
+    const before = ledger().length;
+    const bad = run('note', 'verified', '--settles', `${a},zzzz`, ...MARK);
+    assert.equal(bad.code, 1);
+    assert.equal(ledger().length, before, 'an unknown id writes neither the note nor a close');
+    const ok = run('note', 'verified both', '--settles', `${a},${b}`, ...MARK);
+    assert.equal(ok.code, 0);
+    assert.match(ok.out, new RegExp(`settled  ${a}`));
+    type S = { inflight: { id: string }[] };
+    assert.deepEqual(parse<S>(run('status', '--json').out).inflight.map((i) => i.id), [], 'both items left the board');
+    const rows = ledger().length;
+    const again = run('note', 'verified again', '--settles', a, ...MARK);
+    assert.match(again.out, /not open/);
+    assert.equal(ledger().length, rows + 1, 'only the note is written the second time');
+    assert.equal(run('ask', 'q?', '--settles', a, ...MARK).code, 1, 'only a plain note settles');
+});

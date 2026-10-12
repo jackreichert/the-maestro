@@ -148,6 +148,7 @@ import { openStore } from './lib/journal/store.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
@@ -528,6 +529,13 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const gate = gateFlag(kind);
     const askFields = askFieldsFromArgs(ask, Boolean(paste));
 
+    // --settles closes the named items once the note is written; check the ids first so a typo writes nothing.
+    const settles = parseList('settles');
+    if (settles && (ask || queued || lease || !['note', 'decision'].includes(kind))) die('--settles goes on a plain note: `journal.ts note "what settled it" --settles <id>[,<id>]`.');
+    const settleCtx = { readLedger, append, newId, fold, today, now };
+    const settlePlan = settles ? planSettle(settleCtx, settles) : undefined;
+    if (settlePlan?.unknown.length) die(`--settles names no item: ${settlePlan.unknown.join(', ')}. Nothing was written.`);
+
     const entries = readLedger();
     const entry = {
         id: newId(entries),
@@ -553,8 +561,12 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         ...usageFromArgs(),
     };
     append(entry);
+    const settled = settlePlan ? settleItems(settleCtx, entry.id, settlePlan, usageFromArgs) : undefined;
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
+    settled?.closed.forEach((i) => console.log(`      settled  ${i.id}  ${i.text}`));
+    settlePlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
+    settled?.refused.forEach((r) => console.error(`      not closed  ${r.item.id}: ${r.reason}`));
     return entry;
 }
 
