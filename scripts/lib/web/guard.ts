@@ -12,7 +12,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /** Sent on every response, errors included: no inline script or style, nothing cross-origin, no framing, no referrer. */
 export const SECURITY_HEADERS: Record<string, string> = {
-  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   'x-frame-options': 'DENY',
   'cross-origin-resource-policy': 'same-origin',
   'referrer-policy': 'no-referrer',
