@@ -46,6 +46,12 @@ export interface EpicSummary {
 export interface RailLink { label: string; kind: 'note' | 'tracker' | 'pr' | 'web'; url: string; meta?: string }
 export interface LinkGroup { group: 'pinned' | 'epics' | 'docs' | 'prs' | 'runbooks'; items: RailLink[]; more: number }
 
+/**
+ * One document the user shared for a project. `url` is built by the server (http(s) for a link, `obsidian://open` for a vault
+ * file) and absent for a file under the container root; `path` is relative to the vault or container, never absolute.
+ */
+export interface SharedItem { title: string; kind: 'web' | 'note' | 'file'; url?: string; path?: string; why?: string; by: string; project: string; date: string }
+
 export interface StreamHome {
   stream: string; generatedAt: string; seq: string;
   mapping: { source: 'config' | 'auto' | 'mixed'; configFound: boolean };
@@ -56,6 +62,8 @@ export interface StreamHome {
   links: LinkGroup[];
   /** One handover per project the stream covers, sorted by project; each section is filled or says what is missing. */
   projects: ProjectHandover[];
+  /** Documents shared for the stream's projects, newest first, at most `SHARED_CAP`; `sharedMore` counts the rest. */
+  shared: SharedItem[]; sharedMore: number;
   history: null;
   unknowns: Unknown[];
   freshness: { tickets: string; prs: { fetchedAt: string | null; stale: boolean }; tracker: string | null };

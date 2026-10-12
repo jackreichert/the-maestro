@@ -22,7 +22,8 @@ import { briefUnknown, forestBasis, judgeBrief, noteIndex } from './brief.ts';
 import type { BriefRead } from './brief.ts';
 import type { Doc, Docs } from './docs.ts';
 import { buildHandover } from './handover.ts';
-import type { EpicSummary, Ref, StreamHome, TicketRow, Unknown } from './types.ts';
+import type { EpicSummary, Ref, SharedItem, StreamHome, TicketRow, Unknown } from './types.ts';
+import type { SharedDoc } from '../journal/shared.ts';
 
 /** A ledger item that names a ticket, reduced to what the home base reads. */
 export interface LedgerFact { id: string; stream?: string; ticket: string; state: 'inflight' | 'queued' | 'blocked' | 'ask' | 'done' | 'other' }
@@ -45,6 +46,8 @@ export interface HomeInput {
   readBrief: (epic: Ticket) => BriefRead;
   /** The text of a project note (`CONTEXT.md`, `INDEX.md`) through the guarded reader, or null. Absent: those handover sections say they could not be read. */
   readNote?: (path: string) => string | null;
+  /** The documents shared for one project (`journal.ts shared`), newest first; absent means none are read. */
+  readShared?: (project: string) => SharedDoc[];
 }
 
 const ROW_CAP = 200;
@@ -85,7 +88,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   const cfg = inp.homes.streams[stream];
   const base = (over: Partial<StreamHome>): StreamHome => finish({
     stream, generatedAt: now.toISOString(), seq: '', mapping: { source: 'auto', configFound: Boolean(cfg) }, epics: [], loose: [], left: { inProgress: [], blocked: [], notStarted: [], truncated: 0 },
-    doneMeans: [], links: [], projects: [], history: null, unknowns, freshness: { tickets: '', prs: prState(inp), tracker: null }, ...over,
+    doneMeans: [], links: [], projects: [], shared: [], sharedMore: 0, history: null, unknowns, freshness: { tickets: '', prs: prState(inp), tracker: null }, ...over,
   });
   if (!inp.vault) {
     unknowns.push({ kind: 'no-vault', text: 'No vault root is configured, so no tickets are read. Set vault_root (VAULT_ROOT) and restart the web server.' });
@@ -155,7 +158,7 @@ export function buildStreamHome(inp: HomeInput): StreamHome {
   return base({
     mapping: { source, configFound: Boolean(cfg) }, epics,
     loose: looseIds.map((id) => forest.byId.get(id) as Ticket).filter(isOpen).slice(0, ROW_CAP).map((t) => row(ctx, t)), left,
-    links: rail,
+    links: rail, ...sharedItems(inp, projects),
     projects: projects.map((project) => buildHandover({ project, tickets: inp.vault?.tickets.filter((t) => t.project === project) ?? [], docs: docs.get(project) ?? [], ledger: inp.ledger, prs: inp.prs, page, ...(inp.readNote ? { readNote: inp.readNote } : {}) })),
     doneMeans: epicIds.flatMap((id) => { const t = forest.byId.get(id) as Ticket; const text = section(t.body, /^## What done looks like\s*$/i); return text?.trim() ? [{ epic: id, text: clip(text, DONE_MEANS_MAX) }] : []; }),
     unknowns: unknowns.length > UNKNOWN_CAP ? [...unknowns.slice(0, UNKNOWN_CAP), { kind: 'config-invalid' as const, text: `${unknowns.length - UNKNOWN_CAP} more unknowns are not shown.` }] : unknowns,
@@ -188,6 +191,20 @@ function finish(h: StreamHome): StreamHome {
   const { generatedAt, seq, ...body } = h;
   void seq;
   return { ...h, generatedAt, seq: createHash('sha1').update(JSON.stringify(body)).digest('hex').slice(0, 12) };
+}
+
+export const SHARED_CAP = 50;
+
+/** The shared documents of a stream's projects, newest first, as the Podium shows them: links built here, no absolute path. */
+function sharedItems(inp: HomeInput, projects: string[]): { shared: SharedItem[]; sharedMore: number } {
+  const all = projects.flatMap((p) => inp.readShared?.(p) ?? []).sort((a, b) => b.date.localeCompare(a.date) || a.title.localeCompare(b.title));
+  const items = all.slice(0, SHARED_CAP).map((d): SharedItem => {
+    const common = { title: d.title, ...(d.why ? { why: d.why } : {}), by: d.by, project: d.project, date: d.date };
+    if (d.kind === 'url') return { ...common, kind: d.target.startsWith('obsidian:') ? 'note' : 'web', url: d.target };
+    const url = d.root === 'vault' && inp.page.vaultName ? obsidianUri(inp.page.vaultName, d.target.replace(/\.md$/, '')) : undefined;
+    return { ...common, kind: d.root === 'vault' ? 'note' : 'file', path: d.target, ...(url ? { url } : {}) };
+  });
+  return { shared: items, sharedMore: Math.max(0, all.length - items.length) };
 }
 
 const noteRef = (page: PageConfig, t: Ticket): Ref => (page.vaultName ? { label: t.id, url: obsidianUri(page.vaultName, t.path.replace(/\.md$/, '')) } : { label: t.id });

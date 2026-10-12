@@ -146,6 +146,9 @@ export interface HomeUnknown { kind: string; text: string; ref?: Ref; epic?: str
 export interface RailLink { label: string; kind: 'note' | 'tracker' | 'pr' | 'web'; url: string; meta?: string }
 export interface RailGroup { group: 'pinned' | 'epics' | 'docs' | 'prs' | 'runbooks'; items: RailLink[]; more: number }
 
+/** A document the user shared for a project. `url` (http, https or `obsidian://open`) is re-checked by the client before it becomes an href; `path` is relative, never absolute. */
+export interface SharedDoc { title: string; kind: 'web' | 'note' | 'file'; url?: string; path?: string; why?: string; by: string; project: string; date: string }
+
 /** The part of `GET /api/streams/:name/home` this client draws; fields it does not read are left out here and ignored on arrival. */
 export interface StreamHome {
   stream: string;
@@ -154,6 +157,7 @@ export interface StreamHome {
   left: { inProgress: HomeTicket[]; blocked: HomeTicket[]; notStarted: HomeTicket[]; truncated: number };
   doneMeans: { epic: string; text: string }[];
   links: RailGroup[];
+  shared: SharedDoc[]; sharedMore: number;
   unknowns: HomeUnknown[];
   freshness: { prs: { fetchedAt: string | null; stale: boolean } };
 }

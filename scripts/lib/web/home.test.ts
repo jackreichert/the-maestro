@@ -27,6 +27,13 @@ const store = openStore({ vault: ledgerRoot, project: 'p', dryRun: false });
 store.append({ id: 'ask1', kind: 'question', text: 'Approve the backfill window?', stream: 'Avonlea', ts: '2026-10-07T12:00:00Z', date: '2026-10-07' });
 store.append({ id: 'ps01', kind: 'question', text: 'Run the block: it checks something', stream: 'Avonlea', box: 'paste', paste: '/tmp/fake-block.sh', ts: '2026-10-07T12:00:00Z', date: '2026-10-07' });
 store.append({ id: 'gg01', kind: 'wip', text: 'pilot work', stream: 'Green Gables', ts: '2026-10-07T12:00:00Z', date: '2026-10-07' });
+const shared = openStore({ vault: ledgerRoot, project: 'avonlea-api', dryRun: false });
+const share = (id: string, date: string, over: Record<string, unknown>): void => { shared.append({ id, kind: 'shared', ts: `${date}T10:00:00Z`, date, by: 'user', sharedProject: 'avonlea-api', ...over }); };
+share('sh01', '2026-10-01', { text: 'Partner API spec', sharedKind: 'path', root: 'vault', target: 'Projects/avonlea-api/Research/partner-spec.pdf', why: 'the contract we build against' });
+share('sh02', '2026-10-05', { text: 'UAT checklist', sharedKind: 'url', target: 'https://example.com/uat' });
+share('sh03', '2026-10-03', { text: 'Local runbook', sharedKind: 'path', root: 'container', target: 'avonlea-api/docs/run.md' });
+share('sh04', '2026-10-06', { text: 'Edited by hand', sharedKind: 'url', target: 'javascript:alert(1)' });
+share('sh05', '2026-10-06', { text: 'Other project', sharedKind: 'url', target: 'https://example.com/other', sharedProject: 'elsewhere' });
 const page = { streams: ['Avonlea', 'Green Gables'], repoStreams: {}, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/', ticketNotePath: '', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'UTC' };
 const server = createWebServer({ web: { vault: ledgerRoot, project: 'p', statusDir, page, vaultRoot: fx.root }, clientDir, now: () => NOW, log: () => {} });
 let port = 0;
@@ -56,6 +63,19 @@ test('GET /api/streams/:name/home returns the epic, what is left and the unknown
   assertNoCanary(r.body);
   assert.ok(!r.body.includes(fx.root) && !r.body.includes(fx.outside) && !r.body.includes(ledgerRoot), 'no absolute path in the response');
   assert.deepEqual(roots.map(snapshot), before, 'vault, ledger and status dir are byte-identical');
+});
+
+test('the home base lists the documents shared for its projects, newest first, with server-built links and no absolute path', async () => {
+  const h = JSON.parse((await hit('/api/streams/Avonlea/home')).body);
+  assert.deepEqual(h.shared.map((d: { title: string }) => d.title), ['UAT checklist', 'Local runbook', 'Partner API spec'], 'a row that fails the rules and another project\'s row are left out');
+  assert.deepEqual(h.shared.map((d: { kind: string }) => d.kind), ['web', 'file', 'note']);
+  assert.equal(h.shared[0].url, 'https://example.com/uat');
+  assert.equal(h.shared[1].url, undefined, 'a container file has no link');
+  assert.equal(h.shared[1].path, 'avonlea-api/docs/run.md');
+  assert.equal(h.shared[2].url, 'obsidian://open?vault=Vault&file=Projects%2Favonlea-api%2FResearch%2Fpartner-spec.pdf');
+  assert.equal(h.shared[2].why, 'the contract we build against');
+  assert.equal(h.sharedMore, 0);
+  assert.deepEqual(JSON.parse((await hit('/api/streams/Green%20Gables/home')).body).shared, []);
 });
 
 test('a stream with no epics still answers, and an unknown, traversal or over-long name is a 404', async () => {
