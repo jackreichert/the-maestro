@@ -35,6 +35,7 @@ import { PROTECTED_BRANCHES, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
 import { smellsProblems } from './pr-smells.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
@@ -150,8 +151,9 @@ function main(): void {
   const args = waivedSlug ? [...ghArgs(o), '--repo', `github.com/${waivedSlug}`] : ghArgs(o);
   const ghEnv = waivedSlug ? { ...process.env, GH_REPO: '' } : process.env;
   if (o.dryRun) { console.log(`${gh} ${args.join(' ')}`); return; }
-  if (!hasLooseToken(body)) process.exit(spawnSync(gh, args, { cwd: o.repo, stdio: 'inherit', env: ghEnv }).status ?? 2);
-  const r = spawnSync(gh, args, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8', env: ghEnv });
+  const [ghCmd, ghArgv] = toolCommand('gh', args);
+  if (!hasLooseToken(body)) process.exit(spawnSync(ghCmd, ghArgv, { cwd: o.repo, stdio: 'inherit', env: ghEnv }).status ?? 2);
+  const r = spawnSync(ghCmd, ghArgv, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8', env: ghEnv });
   process.stdout.write(r.stdout || '');
   if (r.status !== 0) process.exit(r.status ?? 2);
   const pr = /\/pull\/(\d+)/.exec(r.stdout || '')?.[1];

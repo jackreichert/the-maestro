@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,20 +29,17 @@ test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and k
   const tmp = mkdtempSync(join(tmpdir(), 'smoke-signal-'));
   try {
     // A `git` that records its pid and hangs holds the Quick start's clone step open, whatever the machine or checkout looks like.
-    const bin = join(tmp, 'bin');
-    mkdirSync(bin);
+    // It is a shell function sourced through SMOKE_BASH_ENV, which the smoke hands to its steps as BASH_ENV (the step runs `bash -c`), so no executable is written for the machine to scan.
     const pidfile = join(tmp, 'git.pid');
-    writeFileSync(join(bin, 'git'), `#!/bin/sh\n[ "$1" = warm ] && exit 0\necho $$ > '${pidfile}'\nexec sleep 300\n`, { mode: 0o755 });
-    // Run it once here, where a first-run stall (a macOS provenance scan, minutes under load) costs only time: the smoke's own start of it is then a warm one.
-    spawnSync(join(bin, 'git'), ['warm'], { timeout: 300_000 });
+    const hangingGit = join(tmp, 'hanging-git.sh');
+    writeFileSync(hangingGit, `git() { echo $$ > '${pidfile}'; exec sleep 300; }\n`);
     const scratch = join(tmp, 'tmpdir');
     mkdirSync(scratch);
     const child = spawn(process.execPath, [fileURLToPath(new URL('./fresh-install-smoke.ts', import.meta.url))], {
-      env: { PATH: `${bin}:${process.env.PATH}`, HOME: tmp, TMPDIR: scratch, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
+      env: { PATH: process.env.PATH, SMOKE_BASH_ENV: hangingGit, HOME: tmp, TMPDIR: scratch, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
     });
     const closed = new Promise<number | null>((res) => child.on('close', (code) => res(code)));
-    // Up to 60 s, returning as soon as the fake git has run: the first run of a freshly written executable can take far longer than 10 s under load (a macOS provenance scan).
-    for (let i = 0; i < 1200 && !existsSync(pidfile); i++) await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 200 && !existsSync(pidfile); i++) await new Promise((r) => setTimeout(r, 50));
     assert.ok(existsSync(pidfile), 'the clone step started');
     const stepPid = Number(readFileSync(pidfile, 'utf8').trim());
     assert.equal(readdirSync(scratch).filter((d) => d.startsWith('maestro-smoke-')).length, 1, 'the smoke created its temp dir');

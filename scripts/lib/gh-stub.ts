@@ -1,16 +1,16 @@
 /**
- * Test support: a fake `gh` on PATH so the PR scripts run offline.
+ * Test support: a fake `gh` behind MAESTRO_GH_BIN so the PR scripts run offline, with no executable written.
  *
- * `installGhStub(config)` writes an executable `gh` into a temp dir and returns the env to run a
- * script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
+ * `installGhStub(config)` writes the fake's script into a temp dir and returns the env (MAESTRO_GH_BIN and
+ * MAESTRO_GH_BIN_ARGS point at it through node) to run a script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
  * for the cursor `p<i>` the stub itself hands out as endCursor, so a script that ignores
  * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
  * `delayMs: n` makes `api graphql` sleep n ms before answering; `callLog: path` records each `api graphql` call. `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
-import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { stubEnv, writeStub } from './stub-bin.ts';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 export interface GhStubConfig { pages: unknown[][]; prState?: 'OPEN' | 'MERGED' | 'CLOSED'; failOnPage?: number; editLog?: string; delayMs?: number; callLog?: string }
 
@@ -37,30 +37,13 @@ else if (argv[0] === 'api' && cfg.delayMs) {
 else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPEN');
 `;
 
-/**
- * The one stub executable for this machine, at a path named by its content. A freshly written executable can stall for minutes on its first run
- * under load (a macOS provenance scan), so each call writing its own copy made every call a first run; sharing one pays that once and later runs
- * (and later test files) find it already scanned. Written by rename, so a concurrent writer never leaves a half-written file.
- */
-function stubBinary(): string {
-  const dir = join(tmpdir(), `maestro-gh-stub-${createHash('sha256').update(STUB).digest('hex').slice(0, 12)}`);
-  const bin = join(dir, 'gh');
-  if (!existsSync(bin)) {
-    mkdirSync(dir, { recursive: true });
-    const part = join(dir, `gh.${process.pid}.part`);
-    writeFileSync(part, STUB);
-    chmodSync(part, 0o755);
-    renameSync(part, bin);
-  }
-  return bin;
-}
-
-/** Writes the config and returns an env (PATH + config) for spawning a script against the shared stub. */
+/** Writes the stub and returns an env (the gh seam + config) for spawning a script against it. */
 export function installGhStub(config: GhStubConfig): NodeJS.ProcessEnv {
-  const bin = stubBinary();
-  const configPath = join(mkdtempSync(join(tmpdir(), 'gh-stub-')), 'config.json');
+  const dir = mkdtempSync(join(tmpdir(), 'gh-stub-'));
+  const stub = writeStub(join(dir, 'gh.cjs'), STUB);
+  const configPath = join(dir, 'config.json');
   writeFileSync(configPath, JSON.stringify(config));
-  return { ...process.env, PATH: `${dirname(bin)}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
+  return { ...process.env, ...stubEnv('MAESTRO_GH_BIN', stub), GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };
 }
 
 /** A search node carrying every field the pr-watch event type and prs-snapshot.ts read. */
@@ -90,21 +73,3 @@ export function prNode(number: number, overrides: Record<string, unknown> = {}) 
 /** Splits nodes into pages of `size`, the way the search API serves them. */
 export const paged = <T>(nodes: T[], size = 50): T[][] =>
   Array.from({ length: Math.ceil(nodes.length / size) }, (_, i) => nodes.slice(i * size, (i + 1) * size));
-
-/**
- * The same answers as the stub script, in-process: a `Run` for code that takes an injected gh caller.
- * No child process, so it cannot stall when the machine is loaded.
- */
-export function ghStubRun(config: GhStubConfig): (cmd: string, args: string[]) => { status: number | null; stdout: string; stderr: string } {
-  return (_cmd, args) => {
-    const cursor = args.find((a) => a.startsWith('after='));
-    const page = cursor ? Number(cursor.slice('after=p'.length)) : 0;
-    if (args[0] === 'api' && args[1] === 'user') return { status: 0, stdout: 'me\n', stderr: '' };
-    if (args[0] === 'api' && config.failOnPage === page) return { status: 1, stdout: '', stderr: 'HTTP 502: bad gateway\n' };
-    if (args[0] === 'api') {
-      const body = { data: { search: { pageInfo: { hasNextPage: page < config.pages.length - 1, endCursor: `p${page + 1}` }, nodes: config.pages[page] } } };
-      return { status: 0, stdout: `${JSON.stringify(body)}\n`, stderr: '' };
-    }
-    return { status: 0, stdout: '', stderr: '' };
-  };
-}

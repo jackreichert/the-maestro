@@ -1,29 +1,30 @@
 // Run: node --test scripts/status-refresh-snapshot.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { ghStubRun, prNode } from './lib/gh-stub.ts';
+import { installGhStub, prNode } from './lib/gh-stub.ts';
 
 // local-config reads these at import, so set them before the dynamic imports.
 const ledger = mkdtempSync(join(tmpdir(), 'sr-snap-ledger-'));
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.LEDGER_ROOT = ledger;
-// The search is answered in-process (ghStubRun), and PATH holds a `gh` that records a call and fails: any refresh that
-// reaches for the real gh (a 60 s network call under load) trips the marker and fails the suite instead of timing out.
-const realGhCalled = join(mkdtempSync(join(tmpdir(), 'sr-snap-realgh-')), 'called');
-const poisonDir = mkdtempSync(join(tmpdir(), 'sr-snap-poison-'));
-writeFileSync(join(poisonDir, 'gh'), `#!/bin/sh\ntouch '${realGhCalled}'\nexit 1\n`);
-chmodSync(join(poisonDir, 'gh'), 0o755);
-process.env.PATH = `${poisonDir}:${process.env.PATH}`;
-const { realIo, refreshSnapshotWith } = await import('./event-types/status-refresh.ts');
+// The fake is reached through MAESTRO_GH_BIN, never by PATH lookup, and PATH holds no gh at all: any refresh that reaches for the real gh
+// (a 60 s network call under load) fails on ENOENT instead of timing out. No file this test writes is ever executed.
+process.env.PATH = mkdtempSync(join(tmpdir(), 'sr-snap-emptybin-'));
+const withStub = (config: Parameters<typeof installGhStub>[0]): void => {
+  const env = installGhStub(config);
+  for (const name of ['GH_STUB_CONFIG', 'MAESTRO_GH_BIN', 'MAESTRO_GH_BIN_ARGS']) process.env[name] = env[name];
+};
+const { realIo } = await import('./event-types/status-refresh.ts');
 const { currentPath, snapshotPath } = await import('./prs-snapshot.ts');
 
 test('the real refresh writes the current-state file from one search and makes the same file the next throttle reads', () => {
   const path = currentPath(ledger);
   assert.equal(realIo.snapshotAt(), 0, 'no snapshot yet');
-  assert.equal(refreshSnapshotWith(ghStubRun({ pages: [[prNode(1), prNode(2, { isDraft: true })]] })), undefined);
+  withStub({ pages: [[prNode(1), prNode(2, { isDraft: true })]] });
+  assert.equal(realIo.refreshSnapshot(), undefined);
   assert.equal(existsSync(snapshotPath(ledger)), false, 'the --diff baseline file is never written by the refresh');
   const snap = JSON.parse(readFileSync(path, 'utf8')) as { takenAt: string; prs: { key: string }[] };
   assert.deepEqual(snap.prs.map((p) => p.key), ['org/repo#1', 'org/repo#2']);
@@ -34,12 +35,15 @@ test('the real refresh writes the current-state file from one search and makes t
 test('a failed gh search returns the reason, leaves the current-state file as it was and does not throw', () => {
   const path = currentPath(ledger);
   const before = readFileSync(path, 'utf8');
-  const why = refreshSnapshotWith(ghStubRun({ pages: [[prNode(9)]], failOnPage: 0 }));
+  withStub({ pages: [[prNode(9)]], failOnPage: 0 });
+  const why = realIo.refreshSnapshot();
   assert.match(why ?? '', /gh api graphql failed: HTTP 502/);
   assert.equal(readFileSync(path, 'utf8'), before);
   assert.ok(existsSync(path));
 });
 
-test('the refresh never runs the gh found on PATH', () => {
-  assert.equal(existsSync(realGhCalled), false, 'the PATH gh was called');
+test('the refresh finds its gh only through MAESTRO_GH_BIN, with no gh on PATH', () => {
+  withStub({ pages: [[prNode(3)]] });
+  assert.deepEqual(readdirSync(String(process.env.PATH)), []);
+  assert.equal(realIo.refreshSnapshot(), undefined);
 });
