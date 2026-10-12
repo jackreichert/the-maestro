@@ -18,6 +18,13 @@ export function parseRuleScope(value: string | null, kind: string): { scope: Rul
 /** True when `row` binds the window `window`: a row scoped to one window binds only that window, and every other row (global, or written before scopes existed) binds all. */
 export const bindsHere = (row: LedgerRow, window: string): boolean => row.ruleScope !== 'window' || row.window === window;
 
+/**
+ * Whether a row belongs in `window`'s views (board notes, standup, triage). Another window's window-scoped rule or note does not, so it
+ * can be neither shown nor closed from here. A pending ask stays visible whatever its scope: it is a question for the user, not a rule.
+ * With no window (a reader that is not a window, such as the web app) everything is visible.
+ */
+export const visibleTo = (row: LedgerRow, window: string | undefined): boolean => !window || row.pending === true || bindsHere(row, window);
+
 /** The rules a window is bound by, and how many other windows' rules it must not treat as binding. */
 export interface RulesInForce { here: LedgerRow[]; elsewhere: number }
 

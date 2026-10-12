@@ -23,5 +23,6 @@ export function boardContextFor(store: Store, run: BoardRun): BoardContext {
         today: run.today,
         has: run.has,
         dryRun: run.dryRun,
+        window: store.window,
     };
 }

@@ -158,3 +158,33 @@ test('--scope global and an unscoped note still write when the window id is unst
     assert.equal(runUnstable('note', 'plain', ...MARK).code, 0);
     assert.equal(ledger().length, 2);
 });
+
+function seedScopedNoteAndRule(): void {
+    assert.equal(runAs('winA', 'note', 'NOTE-A only for window A', '--scope', 'window', ...MARK).code, 0);
+    assert.equal(runAs('winA', 'rule', 'RULE-A only for window A', '--ref', memo(), '--scope', 'window', ...MARK).code, 0);
+    assert.equal(runAs('winA', 'note', 'NOTE-G for everyone', '--scope', 'global', ...MARK).code, 0);
+}
+
+test('triage in another window neither lists nor closes a window-scoped rule, and --apply writes nothing for it', () => {
+    seedScopedNoteAndRule();
+    const before = ledger().length;
+    const b = runAs('winB', 'triage');
+    assert.doesNotMatch(b.out, /RULE-A|NOTE-A/);
+    const applied = runAs('winB', 'triage', '--apply', ...MARK);
+    assert.equal(applied.code, 0, applied.err);
+    assert.equal(ledger().length, before, 'window B must not close window A\'s rule');
+    assert.match(runAs('winA', 'triage').out, /RULE-A/, 'the window that gave the rule still sees it');
+});
+
+test('standup in another window does not print a window-scoped note, but does print a global one', () => {
+    seedScopedNoteAndRule();
+    const b = runAs('winB', 'standup').out;
+    assert.doesNotMatch(b, /NOTE-A/);
+    assert.match(b, /NOTE-G/);
+    assert.match(runAs('winA', 'standup').out, /NOTE-A/);
+});
+
+test('status --full in another window does not list a window-scoped note', () => {
+    seedScopedNoteAndRule();
+    assert.doesNotMatch(runAs('winB', 'status', '--full').out, /NOTE-A/);
+});
