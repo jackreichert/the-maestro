@@ -103,7 +103,7 @@ A decision the user states while the loop runs is recorded in the ledger in the 
 - **A tool-call budget in every brief** ([cost/budget.md:48-49](../cost/budget.md)).
 - **Headline-only relays**, batched ([reference/dispatch.md:406-421](../reference/dispatch.md)).
 - **Reads of the ledger and the board go to a Haiku agent** that returns a headline, not into the main thread.
-- **Roll early.** `roll soon` is at 60 percent of the limit: finish relays in flight and start no new long dispatch chains. `roll now` is at 90: run the roll, then open every reply asking the user to compact ([cost/budget.md:91-107](../cost/budget.md)). A long Bolero is exactly the session that runs past its limit, so check the Session line on every relay.
+- **Roll early.** `roll soon` is at 60 percent of the limit: finish relays in flight and start no new long dispatch chains. `roll now` is at 90: run the roll yourself. Do not ask them to compact; the Session line already says so ([cost/budget.md#session-hygiene](../cost/budget.md#session-hygiene)). A long Bolero is exactly the session that runs past its limit, so check the Session line on every relay.
 - **No new PRs over the review cap** ([reference/dispatch.md:111-126](../reference/dispatch.md)).
 
 ## The composer hook (planned)
