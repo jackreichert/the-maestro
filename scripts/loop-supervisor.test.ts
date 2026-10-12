@@ -390,9 +390,9 @@ function serveSupervisor(seed: (events: string) => void) {
   return { ...startSupervisor(env), env, events };
 }
 
-test('while a serve loop stays up, the supervisor still texts a recovery and a PR event once each', async () => {
+test('while a serve loop stays up, the supervisor texts a PR event and not a recovery', async () => {
   const { p, closed, env } = serveSupervisor((events) => {
-    // A DOWN text went out an hour ago and was never followed by a recovered one; a conflict has sat unseen for 20 minutes.
+    // An older alerts.json still says a DOWN text is owed; a conflict has sat unseen for 20 minutes.
     writeFileSync(join(events, 'alerts.json'), JSON.stringify({ lastSentAt: Date.now() - 3600_000, alerted: [], badSince: Date.now() - 3600_000, badAlerted: true, restarts: [], restartAlerted: false, failures: 0 }));
     appendEvents(events, [{ watch: 'pr-watch', type: 'pr-watch', at: new Date(Date.now() - 20 * 60_000).toISOString(), summary: 'CONFLICT Fake-Org/fake-repo#12 needs a rebase', actionable: true, report: '' }]);
   });
@@ -401,7 +401,7 @@ test('while a serve loop stays up, the supervisor still texts a recovery and a P
     await new Promise((r) => setTimeout(r, 1500));
     const calls = notifyCalls(env);
     assert.equal(calls.length, 1, calls.join(' | '));
-    assert.match(calls[0] ?? '', /loop recovered/);
+    assert.doesNotMatch(calls[0] ?? '', /loop recovered|loop DOWN|loop STALLED/);
     assert.match(calls[0] ?? '', /fake-repo#12/);
   } finally { p.kill('SIGTERM'); await closed; killTree(p); }
 });
