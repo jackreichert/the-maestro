@@ -60,6 +60,8 @@
  *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
  *                                             current directory (or --container) is outside it; --dry-run only reports. --fast skips the sweep and the scratch review.
  *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
+ *   journal.ts miss "<question>" --source find|ask|eval [--repo R] [--model ... --used ...]
+ *                                             a question the library could not answer, for the composer; scanned for secrets, one row per question per repo per day
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
  *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
@@ -150,6 +152,7 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
+import { parseMiss, seenMiss, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import type { Groups } from './lib/journal/board.ts';
@@ -213,7 +216,7 @@ import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'curated', 'rework'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'miss', 'curated', 'rework'];
 // `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
 if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
@@ -520,6 +523,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
     if (kind === 'curated') die('A curated row is written only by `library-write.ts curate`, which holds the composer lease and checks the page.');
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
+    if (kind === 'miss') die('A miss row is written only by `journal.ts miss`, which scans the question and keeps one row per question per day.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
@@ -590,6 +594,22 @@ function cmdLearned(): void {
     append(entry);
     if (!dryRun) render(true);
     console.log(`learned  ${entry.id}  ${entry.text}${seen.kind === 'refresh' ? `  (re-checked: supersedes ${seen.id})` : ''}`);
+}
+
+/** `miss "<question>" --source find|ask|eval [--repo R]`: a question the library could not answer, for the composer. The question is scanned before it is written; the same question for the same repo on the same day is reported, not written twice. */
+function cmdMiss(): void {
+    const parsed = parseMiss(arg('text') || positional.join(' '), arg('source') || null);
+    if (!parsed.fields) die(`miss: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\nUsage: journal.ts miss "<question>" --source ${MISS_SOURCES.join('|')} [--repo R]`);
+    const { fields } = parsed;
+    const entries = readLedger();
+    const date = arg('date', today());
+    const repo = arg('repo') || undefined;
+    const seen = seenMiss(entries, fields, repo, date);
+    if (seen.kind === 'same') { console.log(`miss  ${seen.id}  ${fields.text}  (already recorded today)`); return; }
+    const entry = { id: newId(entries), ts: now(), date, kind: 'miss', ...fields, repo, stream: streamOrNone(arg('stream')), ...usageFromArgs() };
+    append(entry);
+    if (!dryRun) render(true);
+    console.log(`miss  ${entry.id}  ${entry.text}`);
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -2368,6 +2388,7 @@ switch (cmd) {
     case 'ask': cmdLog('question', { ask: true }); break;
     case 'rule': cmdLog('decision', { rule: true }); break;
     case 'learned': cmdLearned(); break;
+    case 'miss': cmdMiss(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;

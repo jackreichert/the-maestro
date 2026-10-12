@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { ledgerLines, type LedgerRow } from '../ledger-core.ts';
 import { askFieldProblems } from './ask-fields.ts';
 import { learnedProblems } from './learned.ts';
+import { missProblems } from './miss.ts';
 import { curatedProblems } from '../library/composer.ts';
 
 /** What verify and the backup commit read from the run. The sets are the values `--approval` accepts and the kinds an approval can point at. */
@@ -49,7 +50,8 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         if (row.kind === 'question' || row.kind === 'decision') for (const p of askFieldProblems(row)) problems.push({ line, id: row.id, problem: `ask field: ${p}` });
         const closed = typeof row.closes === 'string' ? rows.find((r) => r.row.id === row.closes)?.row : undefined;
         // Only a `curated` row (written by library-write, which holds the composer lease) may close a learned row.
-        if (closed?.kind === 'learned' && row.kind !== 'curated') problems.push({ line, id: row.id, problem: `closes ${row.closes}, a learned row; only a composer pass handles a learned row` });
+        if ((closed?.kind === 'learned' || closed?.kind === 'miss') && row.kind !== 'curated') problems.push({ line, id: row.id, problem: `closes ${row.closes}, a ${closed.kind} row; only a composer pass handles a ${closed.kind} row` });
+        if (row.kind === 'miss') for (const p of missProblems(row)) problems.push({ line, id: row.id, problem: `miss: ${p}` });
         if (row.kind === 'curated') for (const p of curatedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `curated: ${p}` });
         if (row.kind === 'learned') for (const p of learnedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `learned: ${p}` });
         for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes', 'briefs']) missing(line, row, field, row[field]);
