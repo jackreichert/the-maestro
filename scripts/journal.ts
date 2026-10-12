@@ -1055,8 +1055,9 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
 function cmdRoll() {
     const d = arg('date', today());
     triageBeforeRoll(d);
-    rollArchive(d);
+    // Before the archive, so the ledger autocommit takes GUIDANCE.md in the same commit.
     writeRollGuidance(d);
+    rollArchive(d);
     printEpicBriefs(d);
     printNotesReachability();
     if (!has('fast')) sweepWorktreesForRoll();
