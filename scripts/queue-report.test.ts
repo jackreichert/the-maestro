@@ -21,8 +21,6 @@ function ledgerWith(rows: object[]): { vault: string; ledger: string } {
 function fakeGh(): string {
     const f = join(mkdtempSync(join(tmpdir(), 'qr-gh-')), 'gh');
     writeStub(f, `#!/bin/sh\ncase "$3" in 483) echo MERGED;; *) echo OPEN;; esac\n`);
-    // The first run of a freshly written executable can stall for seconds under load (a security scan), past the report's per-lookup timeout; warm it here.
-    spawnSync(f, ['pr', 'view', '0'], { timeout: 60_000 });
     return f;
 }
 
