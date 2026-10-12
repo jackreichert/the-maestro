@@ -14,6 +14,7 @@
  *   node token-metrics.ts --compare            day vs 7-day median vs baseline
  *   node token-metrics.ts --expiry             cache-expiry rewrites per day: count, average gap, dollars
  *   node token-metrics.ts --curve              cache-read per turn by turn-index bucket
+ *   node token-metrics.ts --leaks              avoidable spend by bucket, ranked, with the fix for each
  *   node token-metrics.ts --json               machine-readable day + sessions
  *
  * Flags: --projects-dir <dir> (default CLAUDE_PROJECTS_DIR in local-config.ts)
@@ -57,6 +58,8 @@ import type { ModelPrice } from './local-config.ts';
 import { family } from './lib/model-family.ts';
 import { readAutocompact, triggerTokens } from './lib/autocompact.ts';
 import { sessionText } from './lib/session-text.ts';
+import { leaks, formatLeaks } from './lib/leaks.ts';
+import type { Transcripts } from './lib/leaks.ts';
 import { toolReadOnly } from './lib/tool-class.ts';
 import { FAMILIES, kindsOf, dollars, priceKey } from './lib/pricing.ts';
 import type { Usage, Kinds, Dollars } from './lib/pricing.ts';
@@ -176,6 +179,7 @@ function main(argv: string[]): void {
 
     const warning = emptyDirWarning(projectsDir);
     if (warning) console.error(warning);
+    if (flag('leaks')) { printLeaks(projectsDir); return; }
     const { days, sessions, curve } = collect(projectsDir);
 
     if (flag('curve')) { printCurve(curve); return; }
@@ -204,6 +208,25 @@ function main(argv: string[]): void {
     if (days.has(date)) rows = new Map(rows).set(date, toRow(days.get(date) as DayStats));
     if (flag('compare')) printCompare(date, rows, baselineUntil);
     else if (!flag('json') && days.has(date)) printCost(date, rows, baselineUntil);
+}
+
+/** Every transcript's turns: the orchestrator's, and each subagent's with its agent type. */
+export function collectTranscripts(projectsDir: string): Transcripts {
+    const out: Transcripts = { orch: [], subs: [] };
+    for (const f of sessionFiles(projectsDir)) {
+        out.orch.push(scanFile(join(projectsDir, f)).turns);
+        const subDir = join(projectsDir, basename(f, '.jsonl'), 'subagents');
+        if (!existsSync(subDir)) continue;
+        for (const n of readdirSync(subDir).filter((x) => x.endsWith('.jsonl'))) {
+            out.subs.push({ type: agentType(join(subDir, n.replace(/\.jsonl$/, '.meta.json'))), turns: scanFile(join(subDir, n)).turns });
+        }
+    }
+    return out;
+}
+
+function printLeaks(projectsDir: string): void {
+    if (!MODEL_PRICES) { console.log('Model prices are unset, so there are no dollars to rank. Set model_prices (or MAESTRO_MODEL_PRICES).'); return; }
+    console.log(formatLeaks(leaks(collectTranscripts(projectsDir), MODEL_PRICES)));
 }
 
 // --- collection ----------------------------------------------------------------
