@@ -389,6 +389,13 @@ test('event loop settings: argv lists parse from JSON, junk is ignored, the dir 
     assert.equal(show({ MAESTRO_EVENT_DIR: '/elsewhere' }).EVENT_DIR, '/elsewhere');
 });
 
+test('wake_launch_command is off by default, reads a JSON argv, and the environment wins', () => {
+    assert.equal(show().WAKE_LAUNCH_COMMAND, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('wake_launch_command: ["node", "wake-terminal.ts"]'));
+    assert.equal(show().WAKE_LAUNCH_COMMAND, '(set)');
+    assert.equal(show({ MAESTRO_WAKE_LAUNCH_COMMAND: 'not json' }).WAKE_LAUNCH_COMMAND, '(unset)');
+});
+
 test('scripts_dir is unset by default, reads the file, expands ~/, and the environment wins', () => {
     assert.equal(show().SCRIPTS_DIR, '(unset)');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('scripts_dir: /shelf'));
