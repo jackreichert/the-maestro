@@ -7,7 +7,7 @@
  * same repo and scope) names the repo and the worktree or branch the agent works in. Items with no claim (read-only briefs, work done in the
  * orchestrator itself) have no place to look for evidence, so they are never judged: a stall is only reported when it can be shown.
  *
- * Progress is the newest of: the dispatch itself (the item's latest brief or claim row, so a fresh dispatch starts a new clock), the newest report or scratch file the dispatch wrote (files beside the report path whose name holds the item id), a live process that started after the dispatch and has its working directory in the worktree (`lsof -a -d cwd`; when lsof is missing this signal is simply absent; it extends the clock by at most one `stall_minutes` past the newest other sign), the worktree's
+ * Progress is the newest of: the dispatch itself (the item's latest brief or claim row, so a fresh dispatch starts a new clock), the newest report or scratch file the dispatch wrote (files beside the report path whose name holds the item id as a whole token, so `report-<id>.md` and `<id>-run.log` count but `review-x<id>y.md` does not), a live process that started after the dispatch and has its working directory in the worktree (`lsof -a -d cwd`; when lsof is missing this signal is simply absent; it extends the clock by at most one `stall_minutes` past the newest other sign), the worktree's
  * HEAD, reflog and index files (a commit, checkout or `git add`), and the mtimes of the files `git status` lists as changed or untracked (an edit).
  * Why these and not the lease: a lease belongs to the orchestrator window and any row that window writes renews it, so it says nothing about
  * the subagent. The agent writes no ledger rows of its own until it hands back. Commits alone miss an agent that edits for an hour before its
@@ -100,7 +100,9 @@ export function realIo(target: string, run: Run): StallIo {
     dispatchFiles: (report, id) => {
       let names: string[];
       try { names = readdirSync(dirname(report)); } catch { return null; }
-      const stamps = names.filter((n) => n.includes(id) && !n.startsWith('brief-')).map((n) => ({ at: mtime(join(dirname(report), n)), what: `wrote ${n}` }));
+      // The id as a whole token: the scratch folder holds free-form names, and a four-letter id like `view` is a substring of unrelated ones.
+      const token = new RegExp(`(^|[^0-9a-z])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^0-9a-z]|$)`, 'i');
+      const stamps = names.filter((n) => token.test(n) && !n.startsWith('brief-')).map((n) => ({ at: mtime(join(dirname(report), n)), what: `wrote ${n}` }));
       return stamps.length ? stamps.reduce((a, b) => (b.at > a.at ? b : a)) : null;
     },
     live: (dir, since) => {

@@ -284,4 +284,12 @@ test('real io: live() sees a process whose cwd is in the worktree, and dispatchF
   const got = io.dispatchFiles(join(dir, 'report-ab12.md'), 'ab12');
   assert.equal(got?.what, 'wrote details-ab12.txt', 'the fresh scratch file wins; the brief and another item are ignored');
   assert.equal(io.dispatchFiles(join(dir, 'report-nope.md'), 'nope'), null);
+  const other = join(home, 'other');
+  mkdirSync(other);
+  writeFileSync(join(other, 'review-xab12y-other-item.md'), 'x');
+  writeFileSync(join(other, 'report-ab123.md'), 'x');
+  assert.equal(io.dispatchFiles(join(other, 'report-ab12.md'), 'ab12'), null, 'the id inside a longer word is another name, not this item\'s file');
+  writeFileSync(join(other, 'suite-ab12.log'), 'x');
+  assert.equal(io.dispatchFiles(join(other, 'report-ab12.md'), 'ab12')?.what, 'wrote suite-ab12.log', 'the id as its own token counts');
+
 });
