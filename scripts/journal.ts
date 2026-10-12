@@ -153,6 +153,7 @@ import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
+import { splitInflight } from './lib/journal/stale-wip.ts';
 import type { Groups } from './lib/journal/board.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
@@ -925,6 +926,8 @@ function cmdStatus() {
         return;
     }
 
+    const { live: running, stale } = splitInflight(g.inflight, live);
+    const staleLabel = `Stale (${STALE_WIP_DAYS}d+, no lease)`;
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
         console.log(`\n${label}`);
@@ -932,10 +935,11 @@ function cmdStatus() {
     };
     windowWarning().forEach((l) => console.log(l));
     console.log(`Ledger — ${d}`);
-    const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
+    const streams = activeStreams(running, stale, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
-        line('In flight', inStream(g.inflight, s));
+        line('In flight', inStream(running, s));
+        line(staleLabel, inStream(stale, s));
         line('Queued', inStream(g.queued, s));
         line('Blocked', inStream(g.blocked, s));
         line('Awaiting you', inStream(g.awaiting, s));
@@ -943,8 +947,9 @@ function cmdStatus() {
         line(`Done ${d}`, inStream(done, s));
     }
     // Without this heading the unstreamed sections read as part of the last stream.
-    if (streams.length && [g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
-    line('In flight', noStream(g.inflight));
+    if (streams.length && [running, stale, g.queued, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
+    line('In flight', noStream(running));
+    line(staleLabel, noStream(stale));
     line('Queued', noStream(g.queued));
     line('Blocked', noStream(g.blocked));
     line('Awaiting you', noStream(g.awaiting));
@@ -952,12 +957,12 @@ function cmdStatus() {
     line(`Done ${d}`, noStream(done));
     if (view.sinceRoll) console.log(`\n  (${done.length - view.sinceRoll.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
-    if (!g.inflight.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
+    if (!running.length && !stale.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
     }
     const leased = leaseSummary(g).held;
     if (leased.length) { console.log('\nLeases'); leased.forEach((l) => console.log(`  ${l.item}  leased by ${l.holder}${l.holder === windowId ? ' (this window)' : ''} until ${l.until.slice(0, 16)}Z`)); }
-    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
+    console.log(`\n  ${done.length} done · ${running.length} in flight${stale.length ? ` · ${stale.length} stale` : ''}${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
     const queue = boardReviewQueue();
     if (queue) console.log(`  ${queue.text}`);
     const self = boardSelfReview();

@@ -105,7 +105,7 @@ export interface FooterRow {
     name: string | null; done: number; inflight: number; queued: number; awaiting: number; paste: number; blocked: number;
     /** Finished after the last roll that day. Present only when a roll happened, so a roll cannot replace the done-today count. */
     sinceRoll?: number;
-    /** Of the in-flight rows, how many are at least `FOOTER_STALE_DAYS` old with no live lease: rows nothing is known to be working on. Present only when the caller supplied the leases and some row qualifies. */
+    /** Rows at least `stale_wip_days` old with no live lease: nothing is known to be working on them. Counted apart from `inflight`, never inside it. Present only when the caller supplied the leases and some row qualifies. */
     stale?: number;
     /** Of the awaiting asks that carry decision fields, how many are one-way doors; absent when none carry them. */
     oneWay?: number;
@@ -149,7 +149,7 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
         const n = (arr: LedgerItem[]): number => arr.filter(pick).length;
         const asks = askSummary(g.awaiting.filter(pick));
         const stale = live ? staleInflight(g.inflight.filter(pick), live).length : 0;
-        return { name, done: n(done), inflight: n(g.inflight), ...(stale ? { stale } : {}), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(sinceRoll ? { sinceRoll: n(sinceRoll) } : {}), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
+        return { name, done: n(done), inflight: n(g.inflight) - stale, ...(stale ? { stale } : {}), queued: n(g.queued), awaiting: n(g.awaiting), paste: n(g.paste), blocked: n(g.blocked), ...(sinceRoll ? { sinceRoll: n(sinceRoll) } : {}), ...(asks.oneWay ? { oneWay: asks.oneWay } : {}), ...(asks.nextBy ? { nextBy: asks.nextBy } : {}) };
     };
     if (!streams.length) return [row(null, () => true)];
     const rows = streams.map((s) => row(s, (i) => i.stream === s));
@@ -159,7 +159,7 @@ export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | '
 }
 
 const footerLine = (r: FooterRow, staleDays = FOOTER_STALE_DAYS): string =>
-    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` (${r.stale} stale, ${staleDays}d+ with no lease)` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
+    `**Ledger${r.name ? ` (${r.name})` : ''}:** ${r.done} done today${r.sinceRoll !== undefined ? ` · ${r.sinceRoll} since last roll` : ''} · ${r.inflight} in flight${r.stale ? ` · ${r.stale} stale (${staleDays}d+, no lease)` : ''}${r.queued ? ` · ${r.queued} queued` : ''} · ${r.awaiting} awaiting you${asksNote(r)}${r.paste ? ` · ${r.paste} to run` : ''}${r.blocked ? ` · ${r.blocked} blocked` : ''}`;
 
 /** The reply-footer Ledger lines, one per `footerRows` row. `sinceRoll` is shown only when the caller passes that day's post-roll slice. */
 export const footerLines = (g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): string[] => footerRows(g, done, sinceRoll, live).map((r) => footerLine(r, live?.staleDays));

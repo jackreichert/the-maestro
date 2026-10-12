@@ -30,7 +30,10 @@ interface Out {
 interface Doc {
     inflight: Out[]; queued: Out[]; blocked: Out[]; awaiting: Out[]; paste: Out[]; done: Out[]; streams: Out[]; claims: Out[]; models: Out[];
     standing: Out[]; oneOff: Out[]; untagged: Out[]; byStream: Out[]; pending: Out[]; blockers: Out[]; pendingTransitions: Out[];
-    byBox: Record<string, Out[] | undefined>; problems: Out[]; model: Record<string, number>; [field: string]: unknown;
+    byBox: Record<string, Out[] | undefined>; problems: Out[]; model: Record<string, number>;
+    /** `status --json`: the rows with no live lease past stale_wip_days, and the footer counts. */
+    stale?: Out[]; footer: { ledger: { inflight: number; stale?: number }[] };
+    [field: string]: unknown;
 }
 const parse = <T = Doc>(text: string): T => JSON.parse(text);
 const emptyCwd = mkdtempSync(join(tmpdir(), 'journal-cwd-'));
@@ -2194,6 +2197,23 @@ test('a deferral that has reached its date no longer hides the item, and a later
     assert.equal(run('verify').code, 0);
 });
 
+test('an in-flight row older than stale_wip_days is stale: out of the in-flight list, count and board, listed under stale (MAESTRO-319)', () => {
+    const fresh = idOf(run('start', 'working now', ...MARK).out);
+    // `start` leases the row to its window; a plain wip row with an old date has no lease, which is what makes it stale.
+    const old = idOf(run('log', 'forgotten long ago', '--kind', 'wip', '--date', '2020-01-01', ...MARK).out);
+    const j = statusJson();
+    assert.deepEqual(j.inflight.map((i) => i.id), [fresh]);
+    assert.deepEqual(j.stale?.map((i) => i.id), [old]);
+    assert.equal(j.footer.ledger[0]?.inflight, 1);
+    assert.equal(j.footer.ledger[0]?.stale, 1);
+    assert.match(run('status', '--footer').out, /1 in flight · 1 stale \(3d\+, no lease\)/);
+    const board = run('status').out;
+    assert.match(board, /Stale \(3d\+, no lease\)\n\s+.*forgotten long ago/);
+    assert.match(board, /1 in flight · 1 stale/);
+    run('done', old, ...MARK);
+    assert.equal(statusJson().stale?.length, 0, 'closing the row clears it');
+});
+
 test('prime is at most 40 lines however much is open, shares lines between boxes, and writes nothing', () => {
     const f = blockFile();
     run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
@@ -2778,7 +2798,7 @@ test('every row written carries the window id: --window, then --session, then MA
 
 test('rows written before windows were recorded still fold, and the footer names the window it is run in', () => {
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
-    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), '{"id":"old1","ts":"2026-10-01T00:00:00Z","date":"2026-10-01","kind":"wip","text":"before windows"}\n');
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${JSON.stringify({ id: 'old1', ts: new Date().toISOString(), date: new Date().toISOString().slice(0, 10), kind: 'wip', text: 'before windows' })}\n`);
     assert.equal(parse(run('status', '--json').out).inflight.length, 1);
     assert.equal(run('done', 'old1', ...MARK).code, 0);
     assert.equal(ledger().find((r) => r.kind === 'done')?.window, 'testwin');

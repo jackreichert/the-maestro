@@ -8,7 +8,7 @@ import type { FooterRow, Groups } from './board.ts';
 export interface StatusJson {
     date: string;
     inflight: LedgerItem[];
-    /** In-flight items at least `stale_wip_days` old with no live lease: rows nothing is known to be working on. Still in `inflight`; listed here so they can be closed, dropped or refreshed. Present only when `statusJson` is given leases. */
+    /** Rows at least `stale_wip_days` old with no live lease: nothing is known to be working on them. Not in `inflight` or its footer count; listed here so they can be closed, dropped or refreshed. Present only when `statusJson` is given leases. */
     stale?: LedgerItem[];
     queued: LedgerItem[];
     blocked: LedgerItem[];
@@ -28,11 +28,12 @@ export interface StatusJson {
 export function statusJson(g: Groups, d: string, session: SessionStatus, done?: LedgerItem[], sinceRoll?: LedgerItem[], leases?: LeaseSummary, staleDays?: number): StatusJson {
     const view = done === undefined ? footerDone(g, d) : { all: done, sinceRoll };
     const live = leases ? { today: d, leased: new Set(leases.held.map((h) => h.item)), staleDays } : undefined;
+    const stale = live ? staleInflight(g.inflight, live) : undefined;
     return {
         date: d,
-        inflight: g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done: view.all,
+        inflight: stale ? g.inflight.filter((i) => !stale.includes(i)) : g.inflight, queued: g.queued, blocked: g.blocked, awaiting: g.awaiting, paste: g.paste, done: view.all,
         footer: { ledger: footerRows(g, view.all, view.sinceRoll, live), session },
-        ...(live ? { stale: staleInflight(g.inflight, live) } : {}),
+        ...(stale ? { stale } : {}),
         ...(leases ? { leases } : {}),
     };
 }
