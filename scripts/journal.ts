@@ -190,8 +190,8 @@ import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
 import { pageConfig } from './status-page.ts';
 import type { Priority, PrioritiesState } from './lib/status-page/priorities.ts';
-import { droppedProjects, fanOut, nextItems, prioritiesDir, projectsFor, readProjectFile, writeProjectPriorities } from './lib/status-page/project-priorities.ts';
-import { readHomes } from './lib/home/config.ts';
+import { prioritiesDir, readProjectFile } from './lib/status-page/project-priorities.ts';
+import { syncProjectPriorities } from './lib/status-page/project-priorities-sync.ts';
 import { PRIORITIES_UNSET_LINE, localDate, parsePriority, readPriorities, showLines, writePriorities } from './lib/status-page/priorities.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween, parseGate, gateStatus } from './lib/boxes.ts';
 import { activeDeferrals, isOpen, isQueued, isNoStream, NON_ITEM_KINDS, mergeMark, readRegistry, canonicalOf, canonicalModel, mapModelWith } from './lib/ledger-core.ts';
@@ -2171,21 +2171,9 @@ function cmdPriorities() {
 /** `priorities set` also writes each project's own file for `day`, for the projects its items' streams map to. A problem is reported, sets the exit code to 1 once the other projects are written, and never undoes the container-wide write. */
 function writeProjectFiles(dirPath: string, day: string, items: Priority[]) {
     if (!VAULT_ROOT) return;
-    const registry = loadRegistry();
-    const homes = readHomes(dirPath, Object.keys(registry?.streams ?? {}));
-    const route = (s: string | undefined): string[] => projectsFor(s, homes, STATUS_REPO_STREAMS, CONTAINER_PROJECT);
-    const rows = readLedger();
-    const fanned = fanOut(items, route);
-    // A project with Today items for this day, whoever wrote them, and this list no longer names is cleared, so a dropped item is neither shown nor carried.
-    const dropped = droppedProjects(VAULT_ROOT, day, fanned.keys());
-    for (const [name, mine] of [...fanned, ...dropped.map((name): [string, Priority[]] => [name, []])]) {
-        try {
-            const streams = [...new Set(mine.map((p) => p.stream).filter((s): s is string => Boolean(s)))];
-            const kept = readProjectFile(join(prioritiesDir(VAULT_ROOT, name), `${day}.md`));
-            const result = writeProjectPriorities(VAULT_ROOT, name, priorityDay(), { project: name, date: day, carriedFrom: kept?.carriedFrom ?? '', writtenBy: 'priorities set', today: mine, carried: kept?.carried ?? [], next: nextItems(rows, registry, streams) });
-            console.log(result === 'written' ? `wrote ${join(prioritiesDir(VAULT_ROOT, name), `${day}.md`)}` : `skipped ${name}: no vault folder Projects/${name}`);
-        } catch (e) { console.error(`project ${name}: ${errorMessage(e).split('\n')[0].slice(0, 100)}`); process.exitCode = 1; }
-    }
+    const { lines, problems } = syncProjectPriorities({ vaultRoot: VAULT_ROOT, statusDir: dirPath, day, today: priorityDay(), items, rows: readLedger(), registry: loadRegistry(), repoStreams: STATUS_REPO_STREAMS, containerProject: CONTAINER_PROJECT });
+    lines.forEach((l) => console.log(l));
+    for (const p of problems) { console.error(p); process.exitCode = 1; }
 }
 
 /** The project file for `day` as the same state `priorities show` prints for the container list. */
