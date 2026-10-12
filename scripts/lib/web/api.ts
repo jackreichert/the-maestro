@@ -26,8 +26,9 @@ import { DEFAULT_PRIORITIES_MAX, localDate } from '../status-page/priorities.ts'
 import type { GatheredInputs } from '../status-page/generate.ts';
 import { buildCharts as reduceCharts } from './charts.ts';
 import { buildState as reduceState } from './state.ts';
+import { buildOpenPrs as reduceOpenPrs } from './open-prs.ts';
 import type { PodiumState as ReducedState, WorkItem as ReducedWork } from './state.ts';
-import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, PodiumState, WorkItem } from '../../web/client/src/types.ts';
+import type { AskCard, BlockedItem, ChartsData, DeferredItem, DoneItem, FooterRow, OpenPrsData, PodiumState, WorkItem } from '../../web/client/src/types.ts';
 
 /** Where the data lives and how to read it: the ledger root and project, the status directory, and the page settings. */
 export interface WebConfig {
@@ -122,4 +123,9 @@ export function buildCharts(cfg: WebConfig, days: number, now: Date = new Date()
     return note ? { ...d, ticket: toRef(ticketNoteRef(cfg.page, note)) } : d;
   });
   return { ...c, doneItems };
+}
+
+/** Every open PR in the PR cache, by repo, with how old the PR data is. Reads the cache only; the refresh button's route is what asks for newer data. */
+export function buildOpenPrs(cfg: WebConfig, now: Date = new Date()): OpenPrsData {
+  return reduceOpenPrs(reduceState(readBoard(cfg, now).inputs), cfg.page, now);
 }

@@ -16,7 +16,7 @@ import { boardFiles, createChangeHub, serveEvents } from './events.ts';
 import { vaultWatch } from './vault-watch.ts';
 import type { ChangeHub } from './events.ts';
 import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
-import { buildCharts, buildState, buildStream } from './api.ts';
+import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { buildEpics, buildHome } from './home.ts';
 import { buildProjects } from './projects.ts';
@@ -82,6 +82,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/state$/, handler: () => buildState(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
+    { method: 'GET', pattern: /^\/api\/prs$/, handler: () => buildOpenPrs(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/projects$/, handler: () => buildProjects(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/local-review$/, handler: () => containerRoot
