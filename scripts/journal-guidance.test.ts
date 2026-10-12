@@ -84,6 +84,16 @@ test('do first skips items on hold and items waiting on Jack, and prefers today\
     assert.match(guidanceLines(all, [], [run], [hold, ask, real], '2026-10-12', NOW, { awaiting: [ask], priorities: [{ text: 'unrelated thing' }] }).join('\n'), /Do first: r1/);
 });
 
+test('do first obeys the structured gate: a waiting gate is skipped, a cleared one goes first', () => {
+    const waiting = item({ id: 'g1', text: 'release window', kind: 'blocked', gate: 'date:2026-12-01', ts: '2026-10-12T09:00:00Z' });
+    const clear = item({ id: 'g2', text: 'ready now', kind: 'blocked', gate: 'date:2026-10-01', ts: '2026-10-12T09:00:00Z' });
+    const run = item({ id: 'f1', text: 'ship docs', ts: '2026-10-12T09:00:00Z' });
+    const gates = new Map<string, 'cleared' | 'waiting' | 'unknown'>([['g1', 'waiting'], ['g2', 'cleared']]);
+    assert.match(guidanceLines([waiting, run], [], [run], [waiting], '2026-10-12', NOW, { gates }).join('\n'), /Do first: f1 ship docs$/m);
+    assert.match(guidanceLines([waiting, clear, run], [], [run], [waiting, clear], '2026-10-12', NOW, { gates, priorities: [{ text: 'ship docs' }] }).join('\n'), /Do first: g2 ready now \(blocked/);
+    assert.doesNotMatch(guidanceLines([waiting], [], [], [waiting], '2026-10-12', NOW, {}).join('\n'), /Do first/);
+});
+
 test('the note stays within a header and four lines', () => {
     const a = item({ id: 'a1', text: 'x', tokens: '1k', ts: '2026-10-01T00:00:00Z' });
     assert.ok(guidanceLines([a], [], [a], [], '2026-10-12', NOW).length <= 5);

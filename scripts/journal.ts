@@ -1175,7 +1175,7 @@ function writeRollGuidance(d: string): void {
     const g = groups();
     const sd = statusDir();
     const today = sd && existsSync(sd) ? readPriorities(sd, priorityDay()) : null;
-    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now(), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [] }).map(withhold);
+    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now(), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [], gates: new Map(gateReport().map((r) => [String(r.item.id), r.state])) }).map(withhold);
     if (!dryRun) { ensureDir(); writeGuidance(dir, lines, d); }
     (lines.length ? lines : [`Guidance from the ${d} roll:`, '  Nothing stalled, nothing costly, nothing open.']).forEach((l) => console.log(l));
 }

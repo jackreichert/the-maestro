@@ -34,8 +34,8 @@ const fmtTokens = (n: number): string => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` 
 /** Items parked on purpose, or waiting on Jack: the next session cannot act on them. */
 const PARKED = /\b(on hold|hold for now|parked|paused|frozen|deferred|waiting (on|for) (jack|him|a decision)|awaiting (jack|a decision)|needs[- ]you)\b/i;
 
-/** What `guidanceLines` may also know: asks waiting on Jack (their ids are never "do first") and today's priorities (preferred when any item matches). */
-export interface GuidanceContext { awaiting?: LedgerItem[]; priorities?: Priority[] }
+/** What `guidanceLines` may also know: asks waiting on Jack (their ids are never "do first"), where each gated item's gate stands (a gate not reported as cleared counts as waiting) and today's priorities (preferred when any item matches). */
+export interface GuidanceContext { awaiting?: LedgerItem[]; priorities?: Priority[]; gates?: Map<string, 'cleared' | 'waiting' | 'unknown'> }
 
 /** Whether an item answers a priority: it names the item's id, shares its stream, or its text appears in the item's. */
 const matchesPriority = (i: LedgerItem, ps: Priority[]): boolean => ps.some((p) => p.text.toLowerCase().includes(String(i.id).toLowerCase()) || (!!p.stream && !!i.stream && p.stream.toLowerCase() === i.stream.toLowerCase()) || (p.text.length > 3 && i.text?.toLowerCase().includes(p.text.toLowerCase())));
@@ -51,7 +51,7 @@ export function stallThresholdHours(items: LedgerItem[], nowMs: number): number 
 /**
  * The guidance for the next session, derived from ledger data alone: what stalled (in flight far longer than finished items
  * usually take), what was reworked today (any item with a `rework` row dated today, finished or open), what cost most (the biggest `--tokens` item and stream among items started or finished today
- * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (an item that answers one of today's priorities, else the first blocked item, else the first in flight, in board order; never an item parked on purpose or waiting on Jack).
+ * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (an item whose gate has cleared, else one that answers one of today's priorities, else the first blocked item, else the first in flight, in board order; never an item whose gate is still waiting, parked on purpose or waiting on Jack).
  * Empty when there is nothing to say; never a model call.
  */
 export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], inflight: LedgerItem[], blocked: LedgerItem[], d: string, nowMs: number, ctx: GuidanceContext = {}): string[] {
@@ -80,10 +80,12 @@ export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], infligh
     const costLine = topItem && topStream ? `Cost most: ${label(topItem.i)} (${fmtTokens(topItem.n)} tokens); stream ${topStream[0]} ${fmtTokens(topStream[1])} in all` : null;
 
     const waiting = new Set((ctx.awaiting ?? []).map((i) => i.id));
-    const actionable = (i: LedgerItem): boolean => !waiting.has(i.id) && !PARKED.test(i.text ?? '');
+    // The structured gate decides when the item has one; the text pattern is only the fallback for items with none.
+    const cleared = (i: LedgerItem): boolean => !!i.gate && ctx.gates?.get(String(i.id)) === 'cleared';
+    const actionable = (i: LedgerItem): boolean => !waiting.has(i.id) && (i.gate ? cleared(i) : !PARKED.test(i.text ?? ''));
     const pool = [...blocked, ...inflight].filter(actionable);
     const ps = ctx.priorities ?? [];
-    const first = (ps.length ? pool.find((i) => matchesPriority(i, ps)) : undefined) ?? pool[0];
+    const first = pool.find(cleared) ?? (ps.length ? pool.find((i) => matchesPriority(i, ps)) : undefined) ?? pool[0];
     const firstLine = first ? `Do first: ${label(first)}${blocked.includes(first) ? ' (blocked: clear the block)' : ''}` : null;
 
     const lines = [stalledLine, reworkLine, costLine, firstLine].filter((l): l is string => l !== null);
