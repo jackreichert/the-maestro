@@ -344,11 +344,22 @@ test('review_queue_orgs: default is gh_org, else none; set, it scopes PR_SEARCH 
     assert.equal(show().PR_SEARCH, 'is:pr is:open author:@me');
     assert.equal(show({ MAESTRO_GH_ORG: 'my-org' }).REVIEW_QUEUE_ORGS, 'my-org');
     assert.equal(show({ MAESTRO_GH_ORG: 'my-org' }).PR_SEARCH, 'is:pr is:open author:@me org:my-org', 'gh_org alone keeps its old search');
-    write(join(home, '.config', 'the-maestro', 'config.md'), block('review_queue_orgs: my-org, *, other-org/x\nself_review_repos: example-owner/tool'));
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('review_queue_orgs: My-Org,  other-org/x\nself_review_repos: example-owner/tool'));
     const v = show();
-    assert.equal(v.REVIEW_QUEUE_ORGS, 'my-org, other-org');
-    assert.equal(v.PR_SEARCH, 'is:pr is:open author:@me user:my-org user:other-org user:example-owner');
+    assert.equal(v.REVIEW_QUEUE_ORGS, 'My-Org, other-org');
+    assert.equal(v.PR_SEARCH, 'is:pr is:open author:@me user:My-Org user:other-org user:example-owner');
     assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: 'solo' }).PR_SEARCH, 'is:pr is:open author:@me user:solo user:example-owner');
+});
+
+test('review_queue_orgs: malformed entries fail loudly instead of widening the filter', () => {
+    for (const bad of ['Example-Org other-user', '!other-user', '*', 'my-org, *', 'my_org']) {
+        const r = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH ?? '', HOME: home, MAESTRO_REVIEW_QUEUE_ORGS: bad } });
+        assert.notEqual(r.status, 0, `"${bad}" must be rejected`);
+        assert.match(r.stderr, /review_queue_orgs: invalid entry/);
+    }
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: 'Example-Org,other-user' }).REVIEW_QUEUE_ORGS, 'Example-Org, other-user');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: ' solo ' }).REVIEW_QUEUE_ORGS, 'solo');
+    assert.equal(show({ MAESTRO_REVIEW_QUEUE_ORGS: '' }).REVIEW_QUEUE_ORGS, '(unset)');
 });
 
 test('PR body settings: defaults on, file values, a check switch env var is ignored', () => {

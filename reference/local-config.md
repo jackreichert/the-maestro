@@ -67,7 +67,7 @@ one_pr_exempt_heads: release/*  # head-branch globs (comma-separated) the one-PR
 review_pool_owners: example-org # GitHub owners (or owner/name globs, comma-separated) whose PRs other people review; every repo outside the pool counts as self-review, so personal repos never fill review_queue_cap; default none
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
 teammate_review_minutes: 15   # minutes a teammate's ready PR may wait with no human review before pr-watch reports REVIEW-WAIT (the teammate review playbook); scope is gh_org plus the owners in review_pool_owners; default 0, off
-review_queue_orgs: example-org # comma-separated GitHub owners the review queue counts; any other owner's PRs never count and are not searched; default gh_org, else no owner filter
+review_queue_orgs: example-org # comma-separated GitHub owner logins (letters, digits, hyphens; no spaces inside an entry, no ! or *; a bad entry is an error) the review queue counts; any other owner's PRs never count and are not searched; default gh_org, else no owner filter
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
 stack_max_depth: 3           # most PRs in one stack; the PR board flags a deeper stack; default 3

@@ -614,11 +614,19 @@ export const TICKET_NOTE_PATH = pick('MAESTRO_TICKET_NOTE_PATH', 'ticket_note_pa
 /** The bare owner of a config entry (`owner` or `owner/name`); empty for a wildcard owner, which can never be an allowlist or a search scope. */
 const ownerOf = (entry: string): string => { const o = entry.replace(/^!/, '').split('/')[0]!.trim(); return o.includes('*') ? '' : o; };
 
-/** Owners whose PRs the review queue cap counts (`review_queue_orgs`, comma-separated GitHub owners). Default: `gh_org`, else none (no owner filter, the old behaviour). */
-export const REVIEW_QUEUE_ORGS = ((l: string[]) => (l.length ? l : GH_ORG ? [GH_ORG] : []))(globList('MAESTRO_REVIEW_QUEUE_ORGS', 'review_queue_orgs').map(ownerOf).filter(Boolean));
+/** A `review_queue_orgs` entry's owner. Anything that is not a plain GitHub login (letters, digits, hyphens; an optional `/name` suffix is ignored) throws: a space-joined pair, a `!` negation or a `*` wildcard must never be read as a different, wider or empty filter. */
+const queueOwner = (entry: string): string => {
+  const owner = entry.split('/')[0]!;
+  if (!/^[A-Za-z0-9-]+$/.test(owner) || /\s/.test(entry)) throw new Error(`review_queue_orgs: invalid entry "${entry}" (expected comma-separated GitHub owner logins: letters, digits, hyphens)`);
+  return owner;
+};
+const QUEUE_ORGS_LISTED = globList('MAESTRO_REVIEW_QUEUE_ORGS', 'review_queue_orgs').map(queueOwner);
+
+/** Owners whose PRs the review queue cap counts (`review_queue_orgs`, comma-separated GitHub owner logins; a malformed entry throws). Default: `gh_org`, else none (no owner filter, the old behaviour). */
+export const REVIEW_QUEUE_ORGS = QUEUE_ORGS_LISTED.length ? QUEUE_ORGS_LISTED : GH_ORG ? [GH_ORG] : [];
 
 /** True when `review_queue_orgs` itself is set (not just inherited from `gh_org`): the PR searches are then scoped to the queue owners plus the self-review and pool owners. */
-const QUEUE_ORGS_SET = globList('MAESTRO_REVIEW_QUEUE_ORGS', 'review_queue_orgs').some((e) => ownerOf(e));
+const QUEUE_ORGS_SET = QUEUE_ORGS_LISTED.length > 0;
 
 /** Owners the shared PR search covers: the queue owners plus every self-review and pool owner, so the self-review list keeps working and no other owner is searched. */
 const SEARCH_OWNERS = [...new Set([GH_ORG, ...REVIEW_QUEUE_ORGS, ...SELF_REVIEW_REPOS.map(ownerOf)].filter(Boolean))];
