@@ -577,6 +577,7 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 | `add --id <id> --type <type> --target <t>` | Register a watch. `--done-when <rule>`, `--report <text>`, `--ttl-hours N` (default 24; 72 for `pr-watch`), `--interval S` (override the type's default cadence), `--notify` / `--no-notify` (opt this watch in or out of notifications), `--notify-overnight` |
 | `list [--json]` | The live watches |
 | `remove <id>` | Retire a watch (its type may clean up its own files) |
+| `adopt <queue-file> [--until ISO]` | Write the adopt record (`adopt.json` in the event dir): the queue file a fresh session should read and work. Expires after 24 hours unless `--until` says otherwise, so tomorrow's session is not taken over by an old queue. Only the path is stored; a secret-shaped path is refused. `adopt` alone shows it, `adopt --clear` removes it |
 | `digest [--peek]` | Print and consume the pending events; `--peek` leaves them |
 | `run [--once \| --serve] [--interval N]` | Check, sleep, repeat (exit codes in the table below). `--once` is one pass. Exit 10 with the digest on an actionable event, 0 when nothing is actionable or no watch is registered, 3 for quiet hours, 2 for a usage error. `--serve` is daemon mode: it never exits on an event (see [the event inbox](#the-event-inbox)).
 | `events [list] [--unseen \| --all] [--json]` | Show the inbox's unhandled events (`--unseen`: not yet seen by this window; `--all`: every one). Every window sees every unhandled event here; `--json` adds `owner` and `seenWindows` |
@@ -1112,6 +1113,8 @@ Tests that spawn the supervisor or the event loop build their environment with `
 ### Event hooks
 
 `scripts/hooks/event-inject.ts` is a SessionStart and UserPromptSubmit hook that shows the orchestrator the actionable events no session has seen yet. It reads only local files, fails open (any error prints nothing and exits 0), prints at most 8 headlines built from each event's allowlisted `kind` and `fields` (never a summary), then one `Loop:` health line when it says something worth seeing, and marks those events `seen`, not `handled`. `node scripts/hooks/install-hooks.ts` only prints the `hooks` entries; you merge them into your own settings file, and there is no Stop hook.
+
+On SessionStart only, the hook also prints the adoption block after the events and the loop line: `Adopted queue: <path> (until <time>). Read it and work it now.` when a live adopt record exists, the live wake schedule (one line per unexpired `wake` watch: id, target, prompt), and, only when the loop is not running, one `CronCreate` call per wake so a session can mirror the schedule until the loop is back. Prompts and paths are secret-scanned and withheld when they match. A broken record or registry prints nothing extra and never blocks the start.
 
 ### Rolling continuously
 
