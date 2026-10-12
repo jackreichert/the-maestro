@@ -183,6 +183,8 @@ export interface BriefInput {
   link: LinkEnv;
   /** The brief note's own link, when the vault name is known. */
   ref: { label: string; url?: string };
+  /** Today as YYYY-MM-DD (UTC, as xenophon stamps it); a date after it is not a change yet. Defaults to now. */
+  today?: string;
 }
 
 /** The brief of one epic: its state, why it is stale when it is, and the blocks to show. */
@@ -196,7 +198,9 @@ export function judgeBrief(inp: BriefInput): EpicBrief {
   if (!fm.basis) why.push('the brief has no basis line to compare with');
   else if (fm.basis !== nowBasis) why.push(`the epic changed since it was written (then: ${fm.basis}; now: ${nowBasis})`);
   if (updated) {
-    const later = (dates: (string | undefined)[]): number => dates.filter((d) => d && DATE.test(d) && d.slice(0, 10) > updated).length;
+    // A date after today (an event date, say) is not a change yet, and --refresh could never clear it: xenophon ignores it too.
+    const now = inp.today ?? new Date().toISOString().slice(0, 10);
+    const later = (dates: (string | undefined)[]): number => dates.filter((d) => d && DATE.test(d) && d.slice(0, 10) > updated && d.slice(0, 10) <= now).length;
     const t = later(inp.ticketDates);
     const d = later(inp.docDates);
     if (t) why.push(`${t} ticket${t === 1 ? '' : 's'} updated after ${updated}`);
