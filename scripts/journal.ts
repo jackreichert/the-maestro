@@ -832,6 +832,15 @@ const configuredStatusPageUri = (): string => statusPageUri({
 /** The review queue from the stored PR snapshot (no network on a status read); null when none has been taken. */
 const boardReviewQueue = () => boardQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS);
 
+/**
+ * The day queue ages are counted to. Rows are stamped with the UTC day (`today()`), so the age must be measured to the UTC day too: the local
+ * day (`d`) is a day behind from UTC midnight until local midnight and under-counted every age by one. MAESTRO_NOW (an ISO time) pins the clock for tests.
+ */
+function queueClockDay(): string {
+    const pinned = process.env.MAESTRO_NOW ? new Date(process.env.MAESTRO_NOW) : null;
+    return pinned && !Number.isNaN(pinned.getTime()) ? pinned.toISOString().slice(0, 10) : today();
+}
+
 /** The queue-hygiene footer line: oldest queued age and rows that already have a built branch. Branch names come from the row's repo under the container root (the-maestro's own checkout for a row with no repo); each repo is listed once. */
 function boardQueueHygiene(g: Groups, today: string): string {
     const lists = new Map<string, string[]>();
@@ -905,7 +914,7 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[boardQueueHygiene(g, d)].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll, live), ...[boardQueueHygiene(g, queueClockDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
