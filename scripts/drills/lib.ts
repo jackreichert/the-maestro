@@ -30,6 +30,8 @@ export interface Scratch {
   ledgerPath: string;
   today: string;
   yesterday: string;
+  /** The project whose ledger the hook reads; the fictional one when unset. */
+  project?: string;
   facts: Fact[];
   /** Yesterday's priority lines, as written to the project file. The cold-start page points at the file and counts them; it does not print them. */
   priorityText: Fact[];
@@ -104,11 +106,12 @@ export function buildScratch(opts: { now?: Date; reduce?: boolean } = {}): Scrat
 
 /** Runs the SessionStart hook as the harness does (JSON with `source` on stdin) against the scratch state, and returns what it printed. */
 export function runHook(s: Scratch, source: Source): { code: number | null; out: string; err: string } {
-  const r = spawnSync(process.execPath, [HOOK, '--vault', s.ledgerRoot, '--project', PROJECT], {
+  const project = s.project ?? PROJECT;
+  const r = spawnSync(process.execPath, [HOOK, '--vault', s.ledgerRoot, '--project', project], {
     input: JSON.stringify({ source }), encoding: 'utf8', timeout: 90_000,
     env: {
       ...process.env,
-      MAESTRO_LOCAL_CONFIG: '', MAESTRO_OVERLAY: '', MAESTRO_PROJECT: PROJECT, VAULT_ROOT: s.vault, LEDGER_ROOT: s.ledgerRoot, MAESTRO_STATUS_DIR: s.statusDir,
+      MAESTRO_LOCAL_CONFIG: '', MAESTRO_OVERLAY: '', MAESTRO_PROJECT: project, HOME: join(s.root, 'home'), MAESTRO_NOTIFY_COMMAND: '/usr/bin/true', VAULT_ROOT: s.vault, LEDGER_ROOT: s.ledgerRoot, MAESTRO_STATUS_DIR: s.statusDir,
       MAESTRO_WATCH_TZ: 'UTC', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CLAUDE_SETTINGS: join(s.root, 'no-settings.json'), MAESTRO_EVENT_DIR: join(s.root, 'events'),
       MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: join(s.root, 'claude-projects'), MAESTRO_WINDOW: 'drill', CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '20', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
     },
