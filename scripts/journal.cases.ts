@@ -3144,3 +3144,15 @@ test('note --settles closes the named items, is idempotent, and a bad id writes 
     assert.equal(ledger().length, rows + 1, 'only the note is written the second time');
     assert.equal(run('ask', 'q?', '--settles', a, ...MARK).code, 1, 'only a plain note settles');
 });
+
+test('note --settles gives the last-child parent prompt, and only after the last open child (MAESTRO-319)', () => {
+    const parent = idOf(run('log', 'the epic', '--kind', 'wip', ...MARK).out);
+    const a = idOf(run('log', 'first child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    const b = idOf(run('log', 'second child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    const first = run('note', 'verified the first', '--settles', a, ...MARK);
+    assert.equal(first.code, 0, first.err);
+    assert.doesNotMatch(first.out, /has no other open child/);
+    const last = run('note', 'verified the last', '--settles', b, ...MARK);
+    assert.match(last.out, new RegExp(`parent ${parent} has no other open child: close it\\?`));
+    assert.equal(statusJson().inflight.map((i) => i.id).join(), parent, 'the prompt did not close the parent');
+});

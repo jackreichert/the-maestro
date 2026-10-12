@@ -52,6 +52,6 @@ test('settling twice writes nothing the second time: a closed item and a learned
     const again = planSettle(ctx, ['aaa1', 'ddd4']);
     assert.deepEqual(again.open, []);
     assert.deepEqual(again.notOpen.map((i) => i.id), ['aaa1', 'ddd4']);
-    assert.deepEqual(settleItems(ctx, 'note9', again), { closed: [], refused: [] });
+    assert.deepEqual(settleItems(ctx, 'note9', again), { closed: [], refused: [], parents: [] });
     assert.equal(rows.length, before);
 });

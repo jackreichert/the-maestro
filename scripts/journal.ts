@@ -574,6 +574,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
     settled?.closed.forEach((i) => console.log(`      settled  ${i.id}  ${i.text}`));
+    settled?.parents.forEach((p) => console.log(`      ${parentPromptLine(p)}`));
     settlePlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
     settled?.refused.forEach((r) => console.error(`      not closed  ${r.item.id}: ${r.reason}`));
     return entry;
