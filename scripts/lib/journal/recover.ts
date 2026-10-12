@@ -9,11 +9,27 @@ import type { LedgerRow } from '../ledger-core.ts';
 
 export interface Recovery { worktree?: string; branch?: string; nextStep?: string }
 
-/** The recovery fields the flags carry. A relative worktree becomes absolute, and a worktree with no `--branch` names the branch it has checked out (nothing, when git cannot say). */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+/** One line of text: every run of whitespace and control characters (newlines included) becomes a single space, so a value can never start a line of its own in the prompt. */
+export function oneLine(s: unknown): string {
+    return String(s ?? '').replace(/[\s\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
+}
+
+/** True when git accepts the name as a branch (`git check-ref-format --branch`); control characters never pass. */
+export function validBranch(name: string): boolean {
+    if (CONTROL.test(name)) return false;
+    return spawnSync('git', ['check-ref-format', '--branch', name], { encoding: 'utf8' }).status === 0;
+}
+
+/** The recovery fields the flags carry. A relative worktree becomes absolute, and a worktree with no `--branch` names the branch it has checked out (nothing, when git cannot say). The next step is collapsed to one line; a branch git would reject, or a worktree path with control characters, throws. */
 export function recoveryFromFlags(flags: { worktree?: string | null; branch?: string | null; next?: string | null }, probe: (dir: string) => string | undefined = currentBranch): Recovery {
+    if (flags.worktree && CONTROL.test(flags.worktree)) throw new Error('--worktree must not contain newlines or control characters');
+    if (flags.branch && !validBranch(flags.branch)) throw new Error(`--branch ${JSON.stringify(flags.branch)} is not a valid branch name`);
     const worktree = flags.worktree ? resolve(flags.worktree) : undefined;
     const branch = flags.branch || (worktree ? probe(worktree) : undefined);
-    return { ...(worktree ? { worktree } : {}), ...(branch ? { branch } : {}), ...(flags.next ? { nextStep: flags.next } : {}) };
+    const nextStep = oneLine(flags.next);
+    return { ...(worktree ? { worktree } : {}), ...(branch ? { branch } : {}), ...(nextStep ? { nextStep } : {}) };
 }
 
 /** The branch checked out in a directory, or undefined when it is not a git worktree, is detached, or git fails. */
@@ -44,14 +60,21 @@ export interface RecoverInput {
     state?: (dir: string) => { status: string; log: string };
 }
 
+/** The row with every free-text field a prompt line prints folded to one line, so a row written before the write-time check cannot forge a line either. */
+function oneLineRow(row: LedgerRow): LedgerRow {
+    const out: LedgerRow = { ...row };
+    for (const k of ['text', 'stream', 'repo', 'ticket', 'worktree', 'branch', 'nextStep'] as const) if (typeof out[k] === 'string') out[k] = oneLine(out[k]);
+    return out;
+}
+
 /** The re-dispatch prompt: everything a fresh agent needs to pick the item up, and what it must verify first. A row with none of the recovery fields says so instead of guessing. */
 export function recoverPrompt(r: RecoverInput): string {
-    const { item } = r;
+    const item = oneLineRow(r.item);
     const id = item.id as string;
     const out: string[] = [`Re-dispatch of ledger item ${id}: ${item.text ?? ''}`];
-    out.push([item.stream ? `Stream: ${item.stream}.` : '', item.repo ? `Repo: ${item.repo}.` : '', item.ticket ? `Ticket: ${item.ticket}${r.ticketPath ? ` (${r.ticketPath})` : ''}.` : ''].filter(Boolean).join(' ') || 'No stream, repo or ticket on the row.');
-    out.push(r.briefRow?.brief ? `Original brief: ${r.briefRow.brief} (read it first; the report goes to ${r.briefRow.report ?? 'the path in the brief'}).` : 'No brief file is recorded for this item; work from the text above and the ticket.');
-    out.push(`Next step recorded: ${item.nextStep ?? 'none recorded (the row has no next step; read the work below and decide it)'}`);
+    out.push([item.stream ? `Stream: ${item.stream}.` : '', item.repo ? `Repo: ${item.repo}.` : '', item.ticket ? `Ticket: ${item.ticket}${r.ticketPath ? ` (${oneLine(r.ticketPath)})` : ''}.` : ''].filter(Boolean).join(' ') || 'No stream, repo or ticket on the row.');
+    out.push(r.briefRow?.brief ? `Original brief: ${oneLine(r.briefRow.brief)} (read it first; the report goes to ${oneLine(r.briefRow.report) || 'the path in the brief'}).` : 'No brief file is recorded for this item; work from the text above and the ticket.');
+    out.push(`Next step recorded: ${item.nextStep || 'none recorded (the row has no next step; read the work below and decide it)'}`);
     if (!item.worktree && !item.branch) {
         out.push('Worktree and branch: not recorded (an older row). Find the work with `git worktree list` in the repo and `git branch --list` for the ticket key before starting anything new.');
     } else {

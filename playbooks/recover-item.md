@@ -18,7 +18,7 @@ It exits 0 and prints the prompt. Exit 1 means the row is closed or unknown: rep
 
 ## 3. Read the three warnings
 
-Look in the output for these lines and note which apply:
+Look for these as lines of their own (a line that starts with the phrase; recorded text is folded onto one line, so the phrase inside a longer line does not count) and note which apply:
 
 - `The worktree is missing` means the directory is gone. The prompt already says to check the branch locally and on origin. Do not create the worktree yourself.
 - `not recorded (an older row)` means the row predates recovery fields. The new agent must look for the work itself.

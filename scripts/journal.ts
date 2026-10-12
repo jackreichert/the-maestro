@@ -649,7 +649,12 @@ function cmdStart(): void {
 }
 
 /** The worktree, branch and next step the flags carry (`--worktree`, `--branch`, `--next`); a worktree alone names its checked-out branch. Empty when none is given. */
-const recoveryFlags = () => recoveryFromFlags({ worktree: arg('worktree'), branch: arg('branch'), next: arg('next') });
+const recoveryFlags = () => recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: arg('next') });
+
+/** `recoveryFromFlags`, with a refused value (a bad branch name, control characters in a path) reported as a usage error before anything is written. */
+function recoveryOrDie(flags: Parameters<typeof recoveryFromFlags>[0]): ReturnType<typeof recoveryFromFlags> {
+    try { return recoveryFromFlags(flags); } catch (e) { return die((e as Error).message); }
+}
 
 /** Append a `next` row recording where an item's work lives and what it does next, and refresh the board. */
 function writeNext(item: LedgerItem, where: ReturnType<typeof recoveryFlags>, entries: LedgerRow[]): void {
@@ -665,9 +670,9 @@ function cmdNext(): void {
     if (!target || !step) die('Usage: journal.ts next <id> "<step>" [--worktree w] [--branch b]   (an open item id)');
     if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open item has a next step.`);
     refuseIfLeasedByOther(target.id as string, entries);
-    const where = recoveryFromFlags({ worktree: arg('worktree'), branch: arg('branch'), next: step });
+    const where = recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: step });
     writeNext(target, where, entries);
-    console.log(`next  ${target.id}  ${step}`);
+    console.log(`next  ${target.id}  ${where.nextStep}`);
 }
 
 /** `recover <id>`: print the prompt that re-dispatches an open item whose session died. Read-only. */
@@ -678,7 +683,7 @@ function cmdRecover(): void {
     if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; there is nothing to recover.`);
     const briefRow = [...entries].reverse().find((r) => r.kind === 'brief' && r.briefs === target.id);
     const ticketPath = target.ticket && target.repo && VAULT_ROOT ? join(VAULT_ROOT, 'Projects', target.repo, 'Tickets', `${target.ticket}.md`) : undefined;
-    console.log(recoverPrompt({ item: target, briefRow, ticketPath: ticketPath && existsSync(ticketPath) ? ticketPath : undefined, library: libraryFor(target.repo, target.text || '', scriptsDir(process.argv[1])) }));
+    console.log(withhold(recoverPrompt({ item: target, briefRow, ticketPath: ticketPath && existsSync(ticketPath) ? ticketPath : undefined, library: libraryFor(target.repo, target.text || '', scriptsDir(process.argv[1])) })));
 }
 
 const leaseCtx = () => ({ readLedger, append: (row: LedgerRow) => append(row), window: windowId, now, dryRun });
