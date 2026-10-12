@@ -464,6 +464,9 @@ export const ENV_STORE_ROOT = ((v: string) => (v.startsWith('~/') ? join(homedir
 /** A shared scripts shelf (`<dir>/README.md` index, `<dir>/scratch/`, `<dir>/helpers/`). Unset means the feature is off. A leading `~/` is expanded. */
 export const SCRIPTS_SHELF_DIR = ((v: string) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_SCRIPTS_DIR', 'scripts_dir').trim());
 
+/** Where `journal.ts decide --scope working-rule` writes a memory file and its `MEMORY.md` index line. Unset means working rules are refused (a project decision needs no memory directory). A leading `~/` is expanded. */
+export const MEMORY_DIR = ((v: string) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v))(pick('MAESTRO_MEMORY_DIR', 'memory_dir').trim());
+
 /** The container root the roll's worktree sweep is allowed to scan. Unset means the sweep refuses. A leading `~/` is expanded. */
 /** Repo paths the agent manages itself (comma-separated, a leading ~/ expanded). The protected-branch stop does not apply there: agents may commit straight to the default branch. Empty means none. */
 export const AGENT_OWNED_REPOS = globList('MAESTRO_AGENT_OWNED_REPOS', 'agent_owned_repos').map((v) => (v.startsWith('~/') ? join(homedir(), v.slice(2)) : v));

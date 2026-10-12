@@ -4,7 +4,7 @@
  *
  *   library-write.ts begin                                       take the composer lock (a ledger lease), print the holder id
  *   library-write.ts write <page> --from <staged> --holder <id>  replace one page after every check passes
- *   library-write.ts curate <learned id> (--page <page> | --reject "<why>") --holder <id> --model M --used a,b
+ *   library-write.ts curate <learned id> (--page <page> [--refresh] | --reject "<why>") --holder <id> --model M --used a,b
  *   library-write.ts end --holder <id>                           free the lock
  *
  * <page> is vault-relative: Projects/<repo>/(Knowledge|Runbooks)/<name>.md. Options: --vault <root> (pages), --ledger-root <root>,
@@ -19,12 +19,12 @@ import { openStore } from './lib/journal/store.ts';
 import { begin, curate, end, writePage } from './lib/library/write.ts';
 import type { Marks, Outcome, WriteEnv } from './lib/library/write.ts';
 
-const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> --holder <id> | curate <learned id> (--page <page> | --reject "<why>") --holder <id> --model <m> --used <a,b> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
+const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> --holder <id> | curate <learned id> (--page <page> [--refresh] | --reject "<why>") --holder <id> --model <m> --used <a,b> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
 
 interface Args { cmd: string; positional: string[]; flags: Map<string, string> }
 
 const VALUE_FLAGS = new Set(['vault', 'ledger-root', 'project', 'holder', 'from', 'page', 'reject', 'model', 'used', 'tokens']);
-const BOOL_FLAGS = new Set(['allow-unmarked']);
+const BOOL_FLAGS = new Set(['allow-unmarked', 'refresh']);
 
 export function parseArgs(argv: string[]): Args | string {
   const [cmd, ...rest] = argv;
@@ -86,7 +86,7 @@ export function run(argv: string[], io: { out: (s: string) => void; err: (s: str
       if (typeof m === 'string') { io.err(`library-write: ${m}`); return 2; }
       const page = a.flags.get('page');
       const reject = a.flags.get('reject');
-      return finish(curate(env, holder, id, { ...(page !== undefined ? { page } : {}), ...(reject !== undefined ? { reject } : {}) }, m), (r) => `curated ${id} (row ${r.id})`);
+      return finish(curate(env, holder, id, { ...(page !== undefined ? { page } : {}), ...(reject !== undefined ? { reject } : {}), ...(a.flags.has('refresh') ? { refresh: true } : {}) }, m), (r) => `${a.flags.has('refresh') ? 'refreshed' : 'curated'} ${id} (row ${r.id})`);
     }
   }
 }

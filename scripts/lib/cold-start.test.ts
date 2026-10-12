@@ -293,3 +293,20 @@ test('check fails for an active stream with no carry-over or no how-to, passes o
   assert.equal(page([entry('2026-10-08')], [LIB[0] as LibraryEntry], '2026-10-09').ok, true, 'on a Friday, Thursday counts');
   assert.equal(coldStartCheck({ rows, registry: null, library: [], now: NOW }).ok, true, 'without projects the stream checks are skipped');
 });
+
+test('decisions recorded since the previous working day are listed with their file links; pending, unfiled and older ones are not', () => {
+  const rows = [
+    ...ROWS,
+    row({ id: 'rec1', kind: 'decision', text: 'ship the Podium on Fridays', refs: ['/vault/Projects/alpha/DECISIONS.md'], ts: '2026-10-10T13:00:00.000Z' }),
+    row({ id: 'rec2', kind: 'decision', text: 'old decision from last month', refs: ['/vault/Projects/alpha/DECISIONS.md'], date: '2026-09-01', ts: '2026-09-01T13:00:00.000Z' }),
+    row({ id: 'rec3', kind: 'decision', text: 'a decision with no file', ts: '2026-10-10T13:30:00.000Z' }),
+    row({ id: 'rec4', kind: 'decision', pending: true, text: 'still pending', refs: ['/vault/x.md'] }),
+  ];
+  const { text } = coldStart({ ...input, rows });
+  const section = text.slice(text.indexOf('## Decisions recorded'), text.indexOf('## How to work'));
+  assert.match(section, /ship the Podium on Fridays · \/vault\/Projects\/alpha\/DECISIONS\.md/);
+  for (const absent of ['old decision', 'no file', 'still pending']) assert.ok(!section.includes(absent), absent);
+  assert.ok(!currentWorkStatement(text).includes('Decisions recorded'), 'the work statement stops before the section');
+  assert.ok(!coldStart(input).text.includes('## Decisions recorded'), 'no section when nothing was recorded');
+  assert.equal(coldStartCheck({ ...input, rows }).ok, true);
+});

@@ -13,6 +13,9 @@ import { SECURITY_HEADERS } from '../lib/web/guard.ts';
 const dir = mkdtempSync(join(tmpdir(), 'serve-static-'));
 mkdirSync(join(dir, 'dist'));
 mkdirSync(join(dir, 'fixtures'));
+mkdirSync(join(dir, 'fonts'));
+writeFileSync(join(dir, 'fonts', 'face.woff2'), 'wOF2');
+writeFileSync(join(dir, 'fonts', 'OFL-face.txt'), 'licence');
 writeFileSync(join(dir, 'index.html'), '<p>home</p>');
 writeFileSync(join(dir, 'theme.css'), 'body{}');
 writeFileSync(join(dir, 'dist', 'app.js'), 'export {}');
@@ -51,11 +54,12 @@ test('serves the index at / and /index.html, the theme, built files and fixtures
   assert.equal((await get('/theme.css')).type, 'text/css; charset=utf-8');
   assert.equal((await get('/dist/app.js')).type, 'text/javascript; charset=utf-8');
   assert.equal((await get('/fixtures/state.json')).body, '{}');
+  assert.deepEqual([(await get('/fonts/face.woff2')).status, (await get('/fonts/face.woff2')).type], [200, 'font/woff2']);
   for (const icon of ['/favicon.svg', '/favicon-cue.svg']) assert.deepEqual([(await get(icon)).status, (await get(icon)).type], [200, 'image/svg+xml'], icon);
 });
 
 test('does not serve unlisted files, other extensions, traversal or prototype names', async () => {
-  for (const p of ['/secret.json', '/stray.svg', '/dist/notes.txt', '/dist/../secret.json', '/%2e%2e/secret.json', '/../secret.json', '/__proto__', '/constructor', '/api/state']) {
+  for (const p of ['/secret.json', '/stray.svg', '/dist/notes.txt', '/fonts/OFL-face.txt', '/dist/../secret.json', '/%2e%2e/secret.json', '/../secret.json', '/__proto__', '/constructor', '/api/state']) {
     assert.equal((await get(p)).status, 404, p);
   }
 });

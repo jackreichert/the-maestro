@@ -34,6 +34,11 @@ export interface LedgerRow {
     briefs?: string;
     brief?: string;
     report?: string;
+    /** Where an item's work lives, and what it does next: set on a `wip` row, a `brief` row or a `next` row (which names its item in `nexts`); the fold keeps the latest of each on the item. */
+    worktree?: string;
+    branch?: string;
+    nextStep?: string;
+    nexts?: string;
     /** On a `rework` row: the id of the item whose output had to be edited before use. */
     reworks?: string;
     /** On a `wip` row: written as queued (a to-do not yet started). On a folded item: true only while it is queued, absent when it is in flight. */
@@ -92,7 +97,7 @@ export const OPEN_KINDS = ['wip', 'blocked', 'question'];
 export const isPendingDecision = (i: LedgerRow): boolean => i.kind === 'decision' && i.pending === true;
 export const isOpen = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => !i.closedBy && ((i.kind !== undefined && OPEN_KINDS.includes(i.kind)) || isPendingDecision(i));
 // Rows that are events about items, not items themselves.
-export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote', 'brief', 'rework', 'lease', 'unlease'];
+export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote', 'brief', 'rework', 'lease', 'unlease', 'next'];
 
 /** An open `wip` item that is queued (a to-do not yet started), as opposed to in flight. The fold sets `queued`. */
 export const isQueued = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => i.kind === 'wip' && i.queued === true && isOpen(i);
@@ -224,7 +229,14 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
     const streams = new Map<string, string | undefined>();
     const archivedBy = new Map<string, string[]>();
     const moves = new Map<string, { queued: boolean; ts: string | undefined }>();
+    const where = new Map<string, Pick<LedgerRow, 'worktree' | 'branch' | 'nextStep'>>();
     for (const e of entries) {
+        const target = e.kind === 'next' ? e.nexts : e.kind === 'brief' ? e.briefs : undefined;
+        if (target) {
+            const merged = { ...where.get(target) };
+            for (const k of ['worktree', 'branch', 'nextStep'] as const) if (typeof e[k] === 'string' && e[k]) merged[k] = e[k];
+            where.set(target, merged);
+        }
         if (e.kind === 'queue' && e.queues) moves.set(e.queues, { queued: true, ts: e.ts });
         if (e.kind === 'promote' && e.promotes) moves.set(e.promotes, { queued: false, ts: e.ts });
         if (e.closes) closed.set(e.closes, mapModel(withStamp(e, stamped)));
@@ -244,6 +256,7 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
         const move = moves.get(e.id);
         const queued = move ? move.queued : base.queued === true;
         const item: LedgerItem = { ...base, stream, closedBy: close, state: close ? close.kind : base.kind };
+        Object.assign(item, where.get(e.id));
         if (queued) item.queued = true; else delete item.queued;
         if (move?.ts) item.stateTs = move.ts;
         items.push(item);
