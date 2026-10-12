@@ -10,6 +10,8 @@ import type { DigestEvent } from './types.ts';
 import { tick } from '../event-loop.ts';
 import type { EventType } from './types.ts';
 import { addWatch, readDigest } from './watch-registry.ts';
+import { steeringEvent } from '../event-types/pr-watch.ts';
+import type { Board, BoardPr } from '../event-types/pr-watch.ts';
 
 const AT = '2026-10-11T12:00:00.000Z';
 const U = 'https://github.com/org/repo/pull/7';
@@ -136,4 +138,41 @@ test('a tick with a noise triage writes an info event, not an actionable one', (
   const out = readDigest(dir);
   assert.deepEqual(out.map((e) => e.actionable), [false]);
   assert.equal(suppressedSince(dir).length, 1);
+});
+
+/** The line pr-watch really emits for a failing check, built by its own emitter (with and without the self-review tag). */
+const steerLine = (selfReview: boolean): string => {
+  const pr: BoardPr = { url: U, repo: 'org/repo', number: 7, isDraft: false, head: 'sha', headRef: 'feat/x', base: 'develop', mergeable: 'MERGEABLE', needsCopilot: false,
+    decision: 'REVIEW_REQUIRED', threads: [], replies: [], comments: [], reviews: [], failingChecks: ['FAILURE'], selfReview };
+  const out = steeringEvent({}, { 'org/repo#7': pr } as Board);
+  assert.equal(out.length, 1);
+  return out[0].summary;
+};
+const noise: Triage = () => ({ verdict: 'noise', reason: 'looks like noise' });
+
+test('the failing-check line pr-watch emits wakes by rule, tagged or not', () => {
+  assert.match(steerLine(false), /^STEER pr 7 failing check FAILURE$/);
+  assert.equal(line(steerLine(false)).rule, 'failed-check');
+  assert.equal(line(steerLine(true)).rule, 'failed-check');
+});
+
+test('a noise answer cannot suppress the failing-check line (triageEvents)', () => {
+  for (const sr of [false, true]) {
+    const dir = tmp();
+    let asked = 0;
+    const [e] = triageEvents([ev(steerLine(sr))], { dir, triage: () => { asked += 1; return noise({} as never); } });
+    assert.deepEqual([asked, e.actionable, rows(dir)[0].rule], [0, true, 'failed-check']);
+  }
+});
+
+test('a noise answer cannot suppress the failing-check line (tick)', () => {
+  const dir = tmp();
+  let n = 0;
+  const type: EventType<{ n: number }> = { check: () => ({ n: n++ }), diff: (prev) => (prev ? [{ summary: steerLine(false) }] : []) };
+  addWatch(dir, { id: 'w', type: 'pr-watch', target: 't', ttlMs: 86400000 }, Date.parse(AT));
+  const base = { dir, types: { 'pr-watch': type }, config: { quietHours: 'off', tz: 'UTC' } as const, triage: noise };
+  tick({ ...base, now: Date.parse(AT) });
+  tick({ ...base, now: Date.parse(AT) + 3600000 });
+  assert.deepEqual(readDigest(dir).map((e) => e.actionable), [true]);
+  assert.equal(suppressedSince(dir).length, 0);
 });

@@ -28,6 +28,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH, SELF_REVIEW_REPOS } from '../local-config.ts';
 import { isSelfReview } from '../lib/self-review.ts';
+import { FAILING_CHECK_PHRASE, STEER_PREFIX } from '../lib/steer-line.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from '../lib/draft-promotion.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { markPrsDirty } from '../lib/status-page/dirty.ts';
@@ -369,7 +370,7 @@ function nextFix(board: Board): NextFix | null {
     const tag = label(pr);
     if (pr.mergeable === 'CONFLICTING') found.push({ kind: 'conflict', number: pr.number, label: tag, phrase: 'conflict with base', sig: `conflict:${key}`, rank: 0, key });
     const failed = [...(pr.failingChecks ?? [])].map((name) => name.trim()).filter(Boolean).sort();
-    if (failed[0]) found.push({ kind: 'failing-check', number: pr.number, label: tag, phrase: `failing check ${failed[0]}`, sig: `check:${key}:${failed.join(',')}`, rank: 1, key });
+    if (failed[0]) found.push({ kind: 'failing-check', number: pr.number, label: tag, phrase: `${FAILING_CHECK_PHRASE} ${failed[0]}`, sig: `check:${key}:${failed.join(',')}`, rank: 1, key });
     const open = pr.threads?.[0];
     if (open) found.push({ kind: 'thread', number: pr.number, label: tag, phrase: `open review thread ${open.url || open.id}`, sig: `thread:${key}:${open.id}`, rank: 2, key });
   }
@@ -384,7 +385,7 @@ function nextFix(board: Board): NextFix | null {
 export function steeringEvent(before: Board, next: Board): WatchEvent[] {
   const fix = nextFix(next);
   if (!fix || nextFix(before)?.sig === fix.sig) return [];
-  return [{ summary: `${fix.label}STEER pr ${fix.number} ${fix.phrase}` }];
+  return [{ summary: `${fix.label}${STEER_PREFIX} ${fix.number} ${fix.phrase}` }];
 }
 
 /** True when `line` names this PR number after a hash, and not a longer number. */

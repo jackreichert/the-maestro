@@ -15,6 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { toInboxEvent } from './event-inbox.ts';
 import { oneLine } from './notify.ts';
+import { STEER_FAILING_CHECK } from './steer-line.ts';
 import type { DigestEvent } from './types.ts';
 
 /** Watch types whose lines this triage reads. Every other type is passed through untouched and unlogged. */
@@ -49,7 +50,7 @@ const WAKE_RULES: Rule[] = [
   { name: 'changes-requested', reason: 'a review requested changes', applies: (l, k) => k === 'changes-requested' || /^REVIEW \S+ by \S+ \(CHANGES_REQUESTED\)/.test(l) },
   { name: 'new-conflict', reason: 'the PR newly conflicts with its base', applies: (_l, k) => k === 'conflict' },
   { name: 'human-thread', reason: 'a person opened a new unresolved review thread', applies: (_l, k, who) => k === 'thread' && who === 'human' },
-  { name: 'failed-check', reason: 'a check failed', applies: (l) => /^CHECKS-FAILING\b/.test(l) || /^CI failing\b/.test(l) },
+  { name: 'failed-check', reason: 'a check failed', applies: (l) => /^CHECKS-FAILING\b/.test(l) || /^CI failing\b/.test(l) || STEER_FAILING_CHECK.test(l) },
 ];
 
 /**
