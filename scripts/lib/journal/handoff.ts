@@ -88,7 +88,7 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
     // Every open question is listed: paste blocks apart, everything else (whatever box triage gives it) under Needs Jack.
     const asks = items.filter((i) => isOpen(i) && (i.kind === 'question' || i.kind === 'decision'));
     const pasteBlocks = asks.filter((i) => boxOf(i) === BOX.PASTE);
-    const needsJack = asks.filter((i) => boxOf(i) !== BOX.PASTE);
+    const needsUser = asks.filter((i) => boxOf(i) !== BOX.PASTE);
     const learnings = items.filter((i) => recent(i) && (i.kind === 'learned' || LEARNING.test(itemText(i))));
     const touched = items.filter((i) => isOpen(i) || recent(i));
     const arts = artifactsOf(touched);
@@ -118,8 +118,8 @@ export function handoffText(ctx: HandoffContext, stream: string | null, since: s
             ...(one('path').length ? [`- Paths: ${one('path').join(', ')}`] : []),
         ] : ['_none_']), '',
         '## 4. Decisions awaiting', '',
-        ...(needsJack.length || pasteBlocks.length ? [
-            ...(needsJack.length ? ['**Needs Jack**', '', ...needsJack.map((i) => `${line(i, i.kind)}${isStale(BOX.NEEDS_JACK, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`), ''] : []),
+        ...(needsUser.length || pasteBlocks.length ? [
+            ...(needsUser.length ? ['**Needs Jack**', '', ...needsUser.map((i) => `${line(i, i.kind)}${isStale(BOX.NEEDS_USER, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`), ''] : []),
             ...(pasteBlocks.length ? ['**Paste blocks for Jack**', '', ...pasteBlocks.map((i) => `${line(i, 'paste')} — ${i.paste ? `block: ${i.paste}` : 'no block file'}${isStale(BOX.PASTE, i, d) ? ` (stale: ${daysBetween(i.date, d)}d)` : ''}`)] : []),
         ] : ['_none_']), '',
         '## 5. Next concrete action', '',
