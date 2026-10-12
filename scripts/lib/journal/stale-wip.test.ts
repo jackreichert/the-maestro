@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LedgerItem } from '../ledger-core.ts';
-import { splitInflight } from './stale-wip.ts';
+import { splitInflight, staleRollLines } from './stale-wip.ts';
 
 const item = (id: string, date: string): LedgerItem => ({ id, kind: 'wip', date, text: id, closedBy: null, state: undefined });
 
@@ -17,4 +17,14 @@ test('splitInflight uses the three-day default when no limit is given, and a lon
     const rows = [item('a', '2026-10-09')];
     assert.equal(splitInflight(rows, { today: '2026-10-12', leased: new Set() }).stale.length, 1);
     assert.equal(splitInflight(rows, { today: '2026-10-12', leased: new Set(), staleDays: 4 }).stale.length, 0);
+});
+
+test('staleRollLines names each stale row oldest first with its age and the three ways to settle it, and says nothing when none is stale', () => {
+    const rows = [item('b', '2026-10-09'), item('a', '2026-10-01')];
+    const lines = staleRollLines(rows, '2026-10-12', 3);
+    assert.match(lines[0], /^Stale in flight: 2 row\(s\) with no lease for 3d or more/);
+    assert.match(lines[1], /^ {2}a {2}11d {2}a$/);
+    assert.match(lines[2], /^ {2}b {2}3d {2}b$/);
+    assert.match(lines[3], /done <id>.*drop <id>.*lease <id>/);
+    assert.deepEqual(staleRollLines([], '2026-10-12', 3), []);
 });

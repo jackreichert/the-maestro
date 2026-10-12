@@ -2214,6 +2214,22 @@ test('an in-flight row older than stale_wip_days is stale: out of the in-flight 
     assert.equal(statusJson().stale?.length, 0, 'closing the row clears it');
 });
 
+test('roll and maintain list a stale in-flight row for close, drop or refresh, never close it, and stay quiet when nothing is stale (MAESTRO-319)', () => {
+    const quiet = run('roll', '--fast');
+    assert.equal(quiet.code, 0, quiet.err);
+    assert.doesNotMatch(quiet.out, /Stale in flight/);
+    const old = idOf(run('log', 'forgotten long ago', '--kind', 'wip', '--date', '2020-01-01', ...MARK).out);
+    const roll = run('roll', '--fast');
+    assert.equal(roll.code, 0, roll.err);
+    assert.match(roll.out, /Stale in flight: 1 row\(s\) with no lease for 3d or more/);
+    assert.match(roll.out, new RegExp(`${old} +\\d+d +forgotten long ago`));
+    assert.match(roll.out, /journal\.ts done <id>.*drop <id>.*lease <id>/);
+    assert.match(run('maintain', '--today', new Date().toISOString().slice(0, 10), '--container', emptyCwd).out, /Stale in flight: 1 row\(s\)/);
+    assert.equal(statusJson().stale?.map((i) => i.id).join(), old, 'listing it did not close it');
+    run('lease', old, ...MARK);
+    assert.doesNotMatch(run('roll', '--fast').out, /Stale in flight/, 'a lease refreshes it');
+});
+
 test('prime is at most 40 lines however much is open, shares lines between boxes, and writes nothing', () => {
     const f = blockFile();
     run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);

@@ -153,7 +153,7 @@ import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
-import { splitInflight } from './lib/journal/stale-wip.ts';
+import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
 import type { Groups } from './lib/journal/board.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
@@ -1073,9 +1073,17 @@ function cmdRoll() {
     triageBeforeRoll(d);
     rollArchive(d);
     printEpicBriefs(d);
+    printStaleRows(d);
     printNotesReachability();
     if (!has('fast')) sweepWorktreesForRoll();
 }
+
+/** The in-flight rows no lease covers past `stale_wip_days`, for roll to ask about. Printed only; closing is a decision. */
+function staleRows(d: string): LedgerItem[] {
+    const g = groups();
+    return splitInflight(g.inflight, { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS }).stale;
+}
+function printStaleRows(d: string): void { staleRollLines(staleRows(d), d, STALE_WIP_DAYS).forEach((l) => console.log(l)); }
 
 /**
  * `maintain --today D [--container <dir>] [--budget N]`: the model-free half of roll, for a caller that runs unattended (the
@@ -1106,6 +1114,8 @@ function maintain(today: string): MaintainResult {
         if (!rollArchive(d)) problems.push(`ledger commit failed after archiving ${d}`);
         archivedDays.push(d);
     }
+    const stale = staleRows(today);
+    if (stale.length) console.log(`Stale in flight: ${stale.length} row(s) with no lease for ${STALE_WIP_DAYS}d or more; \`roll\` lists them.`);
     const out = worktreeSweepOutcome(dryRun);
     if (out.why) problems.push(out.why);
     const result = out.result;
