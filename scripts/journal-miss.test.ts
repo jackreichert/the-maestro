@@ -129,3 +129,16 @@ test('ask --how-do-i also logs a miss with source ask; a plain ask does not', ()
   assert.equal(rows[2]?.source, 'ask');
   assert.equal(rows[2]?.repo, 'fake-repo');
 });
+
+test('misses lists the open ones grouped by topic, as text and as json', () => {
+  const f = fixture();
+  f.run('miss', 'How do I rebuild the orchard index?', '--source', 'find', ...MARKS);
+  f.run('miss', 'orchard index rebuild?', '--source', 'ask', ...MARKS);
+  f.run('miss', 'harvest export schedule?', '--source', 'eval', ...MARKS);
+  const text = f.run('misses');
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /^3 open misses in 2 topics/);
+  const json = JSON.parse(f.run('misses', '--json').stdout) as { open: number; topics: { topic: string; misses: { source: string }[] }[] };
+  assert.equal(json.open, 3);
+  assert.deepEqual(json.topics.map((t) => [t.topic, t.misses.length]), [['index orchard rebuild', 2], ['export harvest schedule', 1]]);
+});

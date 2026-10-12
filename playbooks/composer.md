@@ -4,7 +4,7 @@ You are the composer. You turn facts that have been established into library pag
 
 ## Inputs
 
-- The facts to compose: `learned` rows, or (until those exist) the list your brief gives you, each with its claim, evidence and where it applies.
+- The facts to compose: `learned` rows and open `miss` rows (see Misses below), or (until those exist) the list your brief gives you, each with its claim, evidence and where it applies.
 - The vault root, and the repo and stream the pages belong to.
 
 ## 1. Route
@@ -42,6 +42,18 @@ node scripts/journal.ts notes-check --all
 ## 5. Report
 
 At most 12 lines: pages written or changed with their paths, facts rejected with a reason, questions you could not settle, and the two exit codes.
+
+## Misses: questions the library could not answer
+
+A `miss` row is a question someone asked and the library had no page for (a `journal.ts find` with no result, a `journal.ts ask --how-do-i`, or an eval partial logged with `journal.ts miss --source eval`). List the open ones with `node scripts/journal.ts misses` (add `--json` to parse it); a miss is open until a `curated` row closes it. Rows with the same `topic` are one question asked more than once: answer the group with one page.
+
+For each topic, in the same pass and under the same lock as the facts:
+
+1. Find the page that should answer it (section 1) and verify the answer from code, a spec or a vault note (section 2). A miss is a question, not a claim: write only what you verified.
+2. Write or extend the page (section 3), then close every miss of the topic: `library-write.ts curate <miss id> --page <page> --holder <id> --model <m> --used <a,b>`. A closed miss names the page that answers it.
+3. A question you cannot answer from evidence, or one that is not about the project (the weather, a one-off), is closed with `--reject "<why>"`, one plain line. Do not write a page to make a miss go away, and never close a miss without one of the two.
+
+Report the misses answered (ids and page paths) and the ones closed out of scope with their reasons beside the facts.
 
 ## Hard rules
 

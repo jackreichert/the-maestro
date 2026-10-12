@@ -63,6 +63,7 @@
  *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
  *   journal.ts miss "<question>" --source find|ask|eval [--repo R] [--model ... --used ...]
  *                                             a question the library could not answer, for the composer; scanned for secrets, one row per question per repo per day
+ *   journal.ts misses [--json]               the open misses grouped by topic, for the composer
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
  *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json] [--no-miss]
@@ -154,7 +155,7 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
-import { parseMiss, seenMiss, MISS_SOURCES } from './lib/journal/miss.ts';
+import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import type { Groups } from './lib/journal/board.ts';
@@ -626,6 +627,19 @@ function cmdMiss(): void {
     if (!parsed.fields) die(`miss: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\nUsage: journal.ts miss "<question>" --source ${MISS_SOURCES.join('|')} [--repo R]`);
     const r = recordMiss(question, source as string, arg('repo') || undefined, usageFromArgs());
     console.log('line' in r ? r.line : '');
+}
+
+/** `misses [--json]`: the open misses (no `curated` row has closed them) grouped by topic, largest group first, for the composer. */
+function cmdMisses(): void {
+    const rows = readLedger();
+    const open = new Map(pendingMisses(rows).map((r) => [r.id as string, r]));
+    const groups = missGroups(rows).map((g) => ({ topic: g.topic, misses: g.ids.map((id) => { const r = open.get(id) as LedgerRow; return { id, date: r.date, source: r.source, repo: r.repo, text: r.text }; }) }));
+    if (asJson) { console.log(JSON.stringify({ open: open.size, topics: groups }, null, 2)); return; }
+    console.log(`${open.size} open miss${open.size === 1 ? '' : 'es'} in ${groups.length} topic${groups.length === 1 ? '' : 's'}`);
+    for (const g of groups) {
+        console.log(`  ${g.topic}  (${g.misses.length})`);
+        g.misses.forEach((m) => console.log(`    ${m.id}  ${m.date}  [${m.source}]${m.repo ? `  ${m.repo}` : ''}  ${clip(String(m.text), 90)}`));
+    }
 }
 
 /** The one id an argument names: a single bare token (no --text) that is the id of an existing item, else undefined. */
@@ -2415,6 +2429,7 @@ switch (cmd) {
     case 'rule': cmdLog('decision', { rule: true }); break;
     case 'learned': cmdLearned(); break;
     case 'miss': cmdMiss(); break;
+    case 'misses': cmdMisses(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
