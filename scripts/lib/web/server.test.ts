@@ -2,6 +2,7 @@
 process.env.MAESTRO_LOCAL_CONFIG ??= '';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import type { IncomingHttpHeaders, Server } from 'node:http';
 import { connect } from 'node:net';
@@ -84,6 +85,31 @@ test('GET /api/state returns JSON that the client contract accepts with no dropp
   assert.equal(got.state.asks[0]?.needed, 'Ship it?');
   assert.equal(got.state.generatedAt, NOW.toISOString());
   hasSecurityHeaders(r);
+});
+
+test('GET /api/state withholds secret-shaped ledger values, keeps seq on the served body, and leaves the token reply verbatim', async () => {
+  const tok = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;   // fake, assembled so no literal secret sits in the file
+  const aws = `AK${'IAIOSFODNN7EXAMPLE'}`;
+  const dir = mkdtempSync(join(tmpdir(), 'web-server-taint-'));
+  const store = openStore({ vault: dir, project: 'p', dryRun: false });
+  store.append({ id: 'aa01', kind: 'wip', stream: tok, text: 'token stream', ts: '2026-10-06T12:00:00Z', date: '2026-10-06' });
+  store.append({ id: 'aa02', kind: 'question', stream: 'widgets', text: `Ship it? key ${aws} here`, ts: '2026-10-06T12:00:00Z', date: '2026-10-06' });
+  const tainted = createWebServer({ ...options, web: { ...options.web, vault: dir, statusDir: join(dir, 'Status') }, token: tok });   // a token that is itself secret-shaped
+  await new Promise<void>((ok) => tainted.listen(0, '127.0.0.1', ok));
+  try {
+    const state = await hit('/api/state', {}, tainted);
+    assert.equal(state.status, 200);
+    for (const secret of [tok, aws]) assert.ok(!state.body.includes(secret), 'a secret-shaped value reached the web response');
+    assert.ok(state.body.includes('[withheld'));
+    const parsed = JSON.parse(state.body) as { seq: string };
+    const again = JSON.parse((await hit('/api/state', {}, tainted)).body) as { seq: string };
+    assert.equal(parsed.seq, again.seq);
+    const { seq, generatedAt, prioritiesMax, ...rest } = JSON.parse(state.body) as Record<string, unknown>;
+    void generatedAt; void prioritiesMax;
+    assert.equal(seq, createHash('sha1').update(JSON.stringify(rest)).digest('hex').slice(0, 12), 'seq is the hash of the body as served');
+    const token = JSON.parse((await hit('/api/edit-token', {}, tainted)).body) as { token: string };
+    assert.equal(token.token, tok);
+  } finally { tainted.close(); }
 });
 
 test('GET /api/charts honours and clamps days, and the payload passes the client contract', async () => {

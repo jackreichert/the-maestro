@@ -159,13 +159,17 @@ export interface Marks { model?: string; used?: string[]; tokens?: string }
  * Close one pending learned row: with `page` (the page exists and passes the same checks now; its sha256 is recorded) or with `reject`
  * (a scanned, one-line reason). The row is checked with the same function `verify` runs, so the writer cannot append what `verify` flags.
  */
-export function curate(env: WriteEnv, holder: string | undefined, learnedId: string, how: { page?: string; reject?: string }, marks: Marks = {}): Outcome<{ id: string }> {
+export function curate(env: WriteEnv, holder: string | undefined, learnedId: string, how: { page?: string; reject?: string; refresh?: boolean }, marks: Marks = {}): Outcome<{ id: string }> {
   const lock = requireHolder(env, holder);
   if (!lock.ok) return lock;
   if ((how.page === undefined) === (how.reject === undefined)) return refuse(1, 'give exactly one of --page and --reject');
   const rows = env.readLedger();
-  if (!pendingLearned(rows).some((r) => r.id === learnedId)) return refuse(1, 'that id is not a pending learned row (unknown, or already curated)');
-  const row: LedgerRow = { id: env.newId(rows), ts: env.now(), date: env.now().slice(0, 10), kind: 'curated', closes: learnedId, text: `curated ${learnedId}`, window: holder as string, ...marks };
+  if (how.refresh) {
+    // A refresh re-records the sha of a page already composed from this learned row, so the next pass compares against the refresh, not the first curate.
+    if (how.page === undefined || how.reject !== undefined) return refuse(1, '--refresh needs --page and no --reject');
+    if (!rows.some((r) => r.kind === 'curated' && r.closes === learnedId && r.page === how.page)) return refuse(1, 'that id has no curated row for that page: a refresh re-records a page this learned row already composed');
+  } else if (!pendingLearned(rows).some((r) => r.id === learnedId)) return refuse(1, 'that id is not a pending learned row (unknown, or already curated)');
+  const row: LedgerRow = { id: env.newId(rows), ts: env.now(), date: env.now().slice(0, 10), kind: 'curated', closes: learnedId, text: `${how.refresh ? 'refreshed' : 'curated'} ${learnedId}`, window: holder as string, ...marks };
   if (how.reject !== undefined) {
     const reason = how.reject.replace(/\s+/g, ' ').trim();
     if (!reason) return refuse(1, '--reject needs a reason');
