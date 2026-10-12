@@ -51,6 +51,17 @@ test('twin PRs on one head branch sit side by side and name each other; a stagin
   const rows = out.groups[0]?.repos[0]?.prs ?? [];
   assert.deepEqual(rows.map((r) => r.number), [10, 40, 30, 31]);
   assert.deepEqual(rows.map((r) => r.twins), [[40], [10], [31], [30]]);
+  assert.deepEqual(rows.map((r) => [r.sides?.develop?.number, r.sides?.staging?.number]), [[10, 40], [10, 40], [30, 31], [30, 31]]);
+});
+
+test('a develop PR with no staging twin names the gap, and a PR into main is not a pair', () => {
+  const out = buildOpenPrs(state([
+    card('org/a', 2, { base: 'develop' }),
+    card('org/a', 3, { base: 'main', head: 'feat/other' }),
+  ]), PAGE, NOW);
+  const rows = out.groups[0]?.repos[0]?.prs ?? [];
+  assert.deepEqual(rows.find((r) => r.number === 2)?.sides, { develop: { number: 2, url: 'https://example.test/org/a/pull/2' } });
+  assert.equal(rows.find((r) => r.number === 3)?.sides, undefined);
 });
 
 test('the PR data age and a failed read are passed through; a missing or unreadable createdAt gives no age', () => {

@@ -28,6 +28,16 @@ test('a repo block with a malformed row is dropped whole and counted, never show
   assert.equal(got.data.total, 1);
 });
 
+test('a develop/staging pair survives, and a pair with a bad side drops the repo', () => {
+  const side = { number: 2, url: 'https://github.com/a/b/pull/2' };
+  const good = sanitizeOpenPrs(body([{ repo: 'a/b', count: 1, prs: [row({ sides: { develop: side } })] }]));
+  assert.equal(good?.dropped, 0);
+  assert.equal((good?.data.groups[0].repos[0].prs[0] as { sides?: { develop?: { number: number } } }).sides?.develop?.number, 2);
+  const bad = sanitizeOpenPrs(body([{ repo: 'a/b', count: 1, prs: [row({ sides: { develop: { number: '2' } } })] }]));
+  assert.equal(bad?.dropped, 1);
+  assert.equal(bad?.data.total, 0);
+});
+
 test('a body with no usable shape is refused', () => {
   for (const x of [null, [], 'x', {}, { generatedAt: 'x', groups: [] }, { generatedAt: 'x', prData: { fetchedAt: 3, stale: true }, groups: [] }]) assert.equal(sanitizeOpenPrs(x), null);
 });
