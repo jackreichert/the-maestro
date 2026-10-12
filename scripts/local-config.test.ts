@@ -2,10 +2,10 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
+import { parseConfig, trustedConfigFile, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
 
 const SCRIPT = new URL('./local-config.ts', import.meta.url).pathname;
 const block = (body: string): string => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
@@ -104,6 +104,48 @@ test('overlay is found in an ancestor container .claude/skills when the checkout
     mkdirSync(join(container, '.worktrees', 'wt', 'scripts'), { recursive: true });
     assert.equal(run(join(container, '.worktrees', 'wt', 'scripts', 'x.mjs')), 'ancestor-org', 'a worktree under the container finds it too');
     assert.equal(run(join(home, 'elsewhere', 'scripts', 'x.mjs')), '', 'no ancestor container, no overlay');
+});
+
+/** GH_ORG as the overlay `trust-skill` resolves it, for a script started from `argv1`. */
+const orgFrom = (argv1: string): string => spawnSync(process.execPath, ['-e', `
+    process.argv[1] = ${JSON.stringify(argv1)};
+    const m = await import(${JSON.stringify(SCRIPT)});
+    console.log(m.GH_ORG);`, '--input-type=module'], {
+    encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH, HOME: home, MAESTRO_OVERLAY: 'trust-skill' },
+}).stdout.trim();
+
+test('an overlay config under a group- or world-writable ancestor is not used, and a private chain is', () => {
+    const container = realpathSync(mkdtempSync(join(tmpdir(), 'lc-trust-')));
+    const cfg = join(container, 'mid', '.claude', 'skills', 'trust-skill', 'config.md');
+    write(cfg, block('gh_org: trusted-org'));
+    mkdirSync(join(container, 'mid', 'wt', 'scripts'), { recursive: true });
+    const argv1 = join(container, 'mid', 'wt', 'scripts', 'x.mjs');
+    assert.equal(trustedConfigFile(cfg), true);
+    assert.equal(orgFrom(argv1), 'trusted-org');
+    chmodSync(container, 0o777);
+    assert.equal(trustedConfigFile(cfg), false, 'a world-writable ancestor above the config');
+    assert.equal(orgFrom(argv1), '', 'the config is skipped, not read');
+    chmodSync(container, 0o775);
+    assert.equal(trustedConfigFile(cfg), false, 'group-writable counts too');
+    chmodSync(container, 0o755);
+    chmodSync(join(container, 'mid', '.claude'), 0o777);
+    assert.equal(trustedConfigFile(cfg), false, 'the directory holding the config is checked as well');
+    assert.equal(trustedConfigFile(join(container, 'absent', 'config.md')), false);
+});
+
+test('a symlinked overlay config is judged by where it really lives', () => {
+    const container = realpathSync(mkdtempSync(join(tmpdir(), 'lc-link-')));
+    const open = join(container, 'open');
+    write(join(open, 'config.md'), block('gh_org: planted-org'));
+    chmodSync(open, 0o777);
+    const link = join(container, '.claude', 'skills', 'trust-skill');
+    mkdirSync(join(link, '..'), { recursive: true });
+    symlinkSync(open, link);
+    mkdirSync(join(container, 'wt', 'scripts'), { recursive: true });
+    assert.equal(trustedConfigFile(join(link, 'config.md')), false, 'the private-looking path leads into a world-writable directory');
+    assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), '');
+    chmodSync(open, 0o755);
+    assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), 'planted-org', 'the same link is fine once its target is private');
 });
 
 test('plugin-qualified overlay resolves through installed_plugins.json', () => {

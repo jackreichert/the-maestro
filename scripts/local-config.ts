@@ -48,9 +48,22 @@ function skillRoots(): string[] {
   }))];
 }
 
-/** True when `dir` belongs to the current user and no one else can write it. */
+/** True when `dir` belongs to the current user (or root) and neither its group nor others can write it. */
 function ownedAndPrivate(dir: string): boolean {
-  try { const st = statSync(dir); return st.uid === process.getuid?.() && (st.mode & 0o022) === 0; } catch { return false; }
+  try { const st = statSync(dir); return (st.uid === process.getuid?.() || st.uid === 0) && (st.mode & 0o022) === 0; } catch { return false; }
+}
+
+/**
+ * True when `file` can be trusted to name commands: its real path (symlinks resolved) sits in a directory, and under ancestors
+ * all the way to the root, that the current user (or root) owns and neither group nor others can write.
+ */
+export function trustedConfigFile(file: string): boolean {
+  let real: string;
+  try { real = realpathSync(file); } catch { return false; }
+  for (let dir = dirname(real); ; dir = dirname(dir)) {
+    if (!ownedAndPrivate(dir)) return false;
+    if (dirname(dir) === dir) return true;
+  }
 }
 
 /** Candidate config.md paths for an overlay named `<skill>` or `<plugin>:<skill>`. */
@@ -68,8 +81,11 @@ function overlayCandidates(overlay: string): string[] {
   }
   for (const root of skillRoots()) out.push(join(root, '..', skill, 'config.md'));
   // A checkout reached by its real path (no symlink in ~/.claude/skills) still sits under a container whose .claude/skills holds the overlay.
-  // The overlay can name commands, so only directories you own and others cannot write are searched.
-  for (const root of skillRoots()) for (let dir = dirname(root); dirname(dir) !== dir; dir = dirname(dir)) if (ownedAndPrivate(dir)) out.push(join(dir, '.claude', 'skills', skill, 'config.md'));
+  // The overlay can name commands, so a config found this way is used only when trustedConfigFile accepts where it really lives.
+  for (const root of skillRoots()) for (let dir = dirname(root); dirname(dir) !== dir; dir = dirname(dir)) {
+    const candidate = join(dir, '.claude', 'skills', skill, 'config.md');
+    if (trustedConfigFile(candidate)) out.push(candidate);
+  }
   out.push(join(homedir(), '.claude', 'skills', skill, 'config.md'));
   return out;
 }
