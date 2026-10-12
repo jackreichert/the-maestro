@@ -1004,7 +1004,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `status_streams` | `MAESTRO_STATUS_STREAMS` | none | Comma-separated stream names in the order the page lists them; streams found in the ledger and the repo map are added after, `other` last |
 | `status_repo_streams` | `MAESTRO_STATUS_REPO_STREAMS` | none | `repo=Stream, other-repo=Stream`: the stream of a PR in that repo (short name) |
 | `tracker_url_base` | `MAESTRO_TRACKER_URL_BASE` | none (keys are plain text) | Browse URL prefix for tracker keys, ending in `/` |
-| `ticket_note_path` | `MAESTRO_TICKET_NOTE_PATH` | `Projects/{prefix}/Tickets/{id}` | Vault-relative note path of a ticket, with `{id}` and `{prefix}` (the id minus its trailing number) |
+| `ticket_note_path` | `MAESTRO_TICKET_NOTE_PATH` | `Projects/{prefix}/Tickets/{id}` | Vault-relative note path of a ticket, with `{id}` and `{prefix}` (the id minus its trailing number); the Podium links the note under `Archive/` beside it when only that copy exists |
 | `scripts_dir` | `MAESTRO_SCRIPTS_DIR` | none (shelf off) | The shared scripts shelf; a leading `~/` is expanded |
 | `memory_dir` | `MAESTRO_MEMORY_DIR` | none (working rules refused) | The directory of memory files and their `MEMORY.md` index, for `decide --scope working-rule`; a leading `~/` is expanded |
 
