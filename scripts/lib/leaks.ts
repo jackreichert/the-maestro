@@ -127,8 +127,19 @@ export function rollReplay(t: Transcripts, prices: Prices, rollTokens: number, f
     };
 }
 
-/** A tool result of at least this many tokens (estimated from its size) is huge: it rides in the context of every later turn. */
-export const HUGE_RESULT_TOKENS = 8000;
+/**
+ * A tool result of at least this many tokens (estimated from its size) is huge: it rides in the context of every later turn. Set at 2k, not
+ * higher, because the harness cuts Bash output at about 30k characters (7.5k tokens): a threshold of 8k could never see Bash, which carries
+ * the most dollars of any tool in the local transcripts.
+ */
+export const HUGE_RESULT_TOKENS = 2000;
+
+/** The fix for the tool whose results carry the most; one line per tool, so the advice matches what actually dominates. */
+function hugeFix(tool: string): string {
+    if (tool === 'Read') return 'read a range (offset and limit) or grep instead of a whole file';
+    if (tool === 'Bash') return 'pipe command output through head or tail or grep, and send big output to a file';
+    return 'ask this tool for less per call (a narrower query, a field list, a page), and keep big output out of the context';
+}
 
 /**
  * Huge tool results priced as carried: each result of HUGE_RESULT_TOKENS or more, times the cache-read price of every later turn of its
@@ -155,12 +166,15 @@ export function hugeResults(t: Transcripts, prices: Prices): Leak | null {
     }
     const total = sum([...byTool.values()].map((v) => v.usd));
     if (total <= 0) return null;
+    const perTool = new Map<string, number>();
+    for (const [k, v] of byTool) perTool.set(k.split(' ')[0], (perTool.get(k.split(' ')[0]) || 0) + v.usd);
+    const top = [...perTool].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
     const lines = [...byTool].sort((a, b) => b[1].usd - a[1].usd).slice(0, 5).map(([k, v]) => `${k}: ${plural(v.n, 'result')}, avg ${Math.round(v.tokens / v.n / 1000)}k tokens, carried ${usd(v.usd)}`);
     return {
         bucket: `Huge tool results (${Math.round(HUGE_RESULT_TOKENS / 1000)}k tokens or more) carried across later turns`,
         usd: total,
         detail: lines,
-        fix: 'read a range (offset and limit) or grep instead of a whole file, and pipe command output through head or tail; send big output to a file',
+        fix: hugeFix(top),
     };
 }
 

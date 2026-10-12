@@ -52,7 +52,7 @@
  * - `--leaks` (lib/leaks.ts): four avoidable-spend buckets, each a replay of the transcripts under one change, priced from `model_prices`
  *   on the same tokens: read-only subagents (every tool call read-only) repriced at Haiku; subagent cache writes on a 1h TTL instead of
  *   5m (net of the dearer write); orchestrator compaction at the roll threshold (net of writing the new base); and tool results of about
- *   8k tokens or more (estimated from characters) priced over every later turn until a compaction. Ranked by dollars, each with a fix.
+ *   2k tokens or more (estimated from characters) priced over every later turn until a compaction. Ranked by dollars, each with a fix.
  * - Targets (`cost_targets`) turn the cost metrics into PASS/MISS in the day summary and --compare.
  * - Fresh = input_tokens (uncached). Context = fresh + cache write + cache read.
  */

@@ -115,7 +115,7 @@ test('huge results: tool and file basename, priced over every later turn until a
     const orch = [
         t1, toolResult(s1, 80_000),
         turn(at(2), 'claude-opus-5', use(0, 0, M, 0)), // the result's first turn: written, not yet carried
-        t3, toolResult(s3, 8_000), // 2k tokens: small
+        t3, toolResult(s3, 4_000), // 1k tokens: small
         turn(at(4), 'claude-haiku-5', use(0, 0, M, 0)), // carried at haiku's read price, 0.1
         turn(at(5), 'claude-opus-5', use(0, 0, M, 0)), // and opus's, 0.2, as t3 (sonnet) did
         { type: 'system', subtype: 'compact_boundary' },
@@ -126,10 +126,20 @@ test('huge results: tool and file basename, priced over every later turn until a
     // Read big.log: 20k tokens x (sonnet 0.2 + haiku 0.1 + opus 0.2 per MTok: the result first appears in turn 2, turns 3 to 5 carry it, turn 6 follows a compaction)
     // Grep: 25k tokens x one later sonnet turn at 0.2
     const l = report(fixture({ orch, subs })).find((x) => x.bucket.startsWith('Huge')) as Leak;
-    assert.match(l.bucket, /^Huge tool results \(8k tokens or more\)/);
+    assert.match(l.bucket, /^Huge tool results \(2k tokens or more\)/);
     assert.ok(Math.abs(l.usd - (20_000 * 0.5 + 25_000 * 0.2) / 1e6) < 1e-12, String(l.usd));
     assert.deepEqual(l.detail, ['Read big.log: 1 result, avg 20k tokens, carried $0.01', 'Grep: 1 result, avg 25k tokens, carried $0.01']);
     assert.doesNotMatch(formatLeaks([l]), /SENTINEL/);
+    assert.match(l.fix, /offset and limit/); // Read dominates here
+});
+
+test('huge results: a Bash result near the harness cap counts, and the fix names the tool that dominates', () => {
+    const [b1, sb] = [turn('2026-09-26T10:01:00Z', 'claude-opus-5', use(0, 0, M, 0), [{ name: 'Bash', input: { command: 'npm test' } }]), seq];
+    const orch = [b1, toolResult(sb, 30_000), turn('2026-09-26T10:02:00Z', 'claude-opus-5', use(0, 0, M, 0)), turn('2026-09-26T10:03:00Z', 'claude-opus-5', use(0, 0, M, 0))];
+    const l = report(fixture({ orch, subs: [] })).find((x) => x.bucket.startsWith('Huge')) as Leak; // 7.5k tokens, under the harness 30k-char cap
+    assert.deepEqual(l.detail, ['Bash: 1 result, avg 8k tokens, carried $0.00']);
+    assert.match(l.fix, /head or tail/);
+    assert.doesNotMatch(l.fix, /offset and limit/);
 });
 
 test('--leaks CLI prints the ranked report and no content; without prices it says so', () => {

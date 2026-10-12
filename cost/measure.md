@@ -63,7 +63,7 @@ node scripts/token-metrics.ts --json                              # machine-read
     a gap of at most an hour turned into a cache read. Reported as the net.
   - **Compaction at the roll threshold**: orchestrator sessions replayed with the context dropping to about 55k
     each time it passes the roll-now percent of the autocompact trigger, net of writing the new base.
-  - **Huge tool results**: a result of about 8k tokens or more (characters / 4) times the cache-read price of every
+  - **Huge tool results**: a result of about 2k tokens or more (characters / 4; the threshold sits under the roughly 7.5k-token cap the harness puts on Bash output, so Bash results count) times the cache-read price of every
     later turn until the next compaction, by tool name and file basename. The result text is never read.
 - Dedupe: a turn is one API response, counted once by `message.id` within a transcript, so the one line per content block
   Claude Code writes does not multiply it. `requestId` is not part of the key: it never differed for one id in the local transcripts.
