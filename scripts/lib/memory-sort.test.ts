@@ -23,6 +23,11 @@ test('a project file naming a repo is a fact with a Knowledge page', () => {
     assert.deepEqual([s.kind, s.repo, s.page], ['project-fact', 'widget-api', 'Projects/widget-api/Knowledge/branch-layout.md']);
 });
 
+test('a project file that records a decision or a dated status is neither fact nor rule', () => {
+    assert.equal(sortMemory(file('week-goals', 'project', 'Week of 2026-10-05 goals for the widget'), HINTS).kind, 'decision-or-status');
+    assert.equal(sortMemory(file('deploy-topology', 'project', 'widget and gadget: verify on develop'), HINTS).repo, 'widget-api');
+});
+
 test('a project file worded as a rule is left to the user', () => {
     assert.equal(sortMemory(file('x', 'project', 'Jack decided not to install it for the-maestro')).kind, 'unsure');
 });

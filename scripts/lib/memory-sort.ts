@@ -3,7 +3,7 @@
  * (stays in memory). Pure functions over file text; nothing here reads or writes the disk.
  */
 
-export type Kind = 'project-fact' | 'behaviour-rule' | 'unsure';
+export type Kind = 'project-fact' | 'behaviour-rule' | 'decision-or-status' | 'unsure';
 
 export interface MemoryFile { name: string; text: string }
 
@@ -26,6 +26,9 @@ export const DEFAULT_HINTS: RepoHint[] = [
     [/mithril/i, 'mithril'],
     [/\.env|env-where|registry|npmrc|iMessage|dev-env/i, 'dev-env'],
 ];
+
+/** A decision, a definition or a dated status: the library holds a pointer to DECISIONS.md for these, never the status itself. */
+const DECISION_WORDS = /vision|definition|defined|week of|\bended\b|handed|frozen|goals|experiment/i;
 
 const BEHAVIOUR_WORDS = /\b(don'?t|never|always|from now on|re-?raise|prefer|standing|permission|approved|decided)\b/i;
 
@@ -51,6 +54,7 @@ export function sortMemory(file: MemoryFile, hints: RepoHint[] = DEFAULT_HINTS):
     const fact = (r: string, why: string): Sorted => ({ name: file.name, kind: 'project-fact', repo: r, page: `Projects/${r}/Knowledge/${file.name}.md`, why });
     const other = (kind: Kind, why: string): Sorted => ({ name: file.name, kind, repo: null, page: null, why });
 
+    if ((type === 'project' || type === 'reference') && DECISION_WORDS.test(`${file.name} ${description}`)) return other('decision-or-status', `typed ${type}, reads as a decision or dated status: a pointer to DECISIONS.md, not a fact page`);
     if (type === 'feedback') return other('behaviour-rule', 'typed feedback: how to work with the user');
     if ((type === 'project' || type === 'reference') && repo && !behaviour) return fact(repo, `typed ${type}, names ${repo}`);
     if ((type === 'project' || type === 'reference') && repo) return other('unsure', `typed ${type} naming ${repo}, but worded as a rule: the user decides`);
