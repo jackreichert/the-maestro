@@ -170,3 +170,34 @@ export interface LocalUnit {
 
 /** `GET /api/local-review`. `available: false` carries the reason, so "not read" never looks like "nothing waiting". */
 export interface LocalReview { generatedAt: string; available: boolean; reason?: string; units: LocalUnit[]; more: number; notes: string[] }
+
+/** What one stream is doing, in a word, from its counts: an ask open, then anything blocked, then work in flight or shipped this week. Never a score. */
+export type ProjectStateWord = 'waiting on you' | 'blocked' | 'moving' | 'quiet';
+
+/**
+ * One status row on Home, per stream (a tab), naming the vault projects it covers. Every count is a count of rows, never a rate.
+ * `status` is the project's CONTEXT `## Now` line, else the stream's first priority today; null when neither says anything.
+ */
+export interface ProjectRow {
+  stream: string; projects: string[];
+  status: { text: string; from: 'context' | 'priority' } | null;
+  /** Today's priority rank (1 is first), or null when no priority today names the stream. */
+  rank: number | null;
+  asks: number; inflight: number; blocked: number; prs: number;
+  /** Whole days since the oldest open ask, in-flight or blocked item began; null with nothing open. */
+  oldestOpenDays: number | null;
+  /** The newest page day in the weekly window on which the stream finished something, or null for none. */
+  lastShipped: string | null;
+  /** Finished in the last seven page days, today included. */
+  shippedWeek: number;
+  state: ProjectStateWord;
+}
+
+/** A link Home lists: a pin from `stream-homes.json`, or a project's CONTEXT or library INDEX note. The URL is built by the server. */
+export interface HomeLink { label: string; kind: 'pin' | 'context' | 'library'; stream: string; url: string }
+
+/** Items finished in one seven-day period, `start` its first page day; the last period ends today. */
+export interface WeekCount { start: string; total: number; byStream: Record<string, number> }
+
+/** `GET /api/projects`: Home's status rows, important links and done-per-week series. No absolute path anywhere. */
+export interface ProjectsData { generatedAt: string; today: string; rows: ProjectRow[]; links: HomeLink[]; weeks: WeekCount[] }
