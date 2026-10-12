@@ -1111,7 +1111,11 @@ Tests that spawn the supervisor or the event loop build their environment with `
 
 ### Event hooks
 
-`scripts/hooks/event-inject.ts` is a SessionStart and UserPromptSubmit hook that shows the orchestrator the actionable events no session has seen yet. It reads only local files, fails open (any error prints nothing and exits 0), prints at most 8 headlines built from each event's allowlisted `kind` and `fields` (never a summary), then one `Loop:` health line when it says something worth seeing, and marks those events `seen`, not `handled`. `node scripts/hooks/install-hooks.ts` only prints the `hooks` entries; you merge them into your own settings file, and there is no Stop hook.
+`scripts/hooks/event-inject.ts` is a SessionStart and UserPromptSubmit hook that shows the orchestrator the actionable events no session has seen yet. It reads only local files, fails open (any error prints nothing and exits 0), prints at most 8 headlines built from each event's allowlisted `kind` and `fields` (never a summary), then one `Loop:` health line when it says something worth seeing, and marks those events `seen`, not `handled`. It also prints a `Waiter:` line when a loop holds the lock but this window has no live waiter (see below). `node scripts/hooks/install-hooks.ts` only prints the `hooks` entries; you merge them into your own settings file, and there is no Stop hook.
+
+#### Waiter registry (is anyone listening?)
+
+A session hears the loop only through a background `events wait` or `digest-wait`, and a roll, a compaction or a closed terminal kills that waiter without a word. While either command waits it writes `<event_dir>/waiters/<pid>.json` (pid, window id, start time; no event text) and removes it on exit or on SIGTERM, SIGINT and SIGHUP. A record whose pid is gone is deleted when read, so a waiter that was killed hard never reads as armed. On SessionStart and every UserPromptSubmit, when a loop holds the lock and the window has no live waiter, the hook prints `Waiter: none armed for this session ...` with the exact command to start with `run_in_background`; once a waiter is armed the line stops. The window id is the one the rest of the ledger uses (`CLAUDE_CODE_SESSION_ID`, then `CLAUDE_PID`), so a window with no stable id would see the line every time. The registry is `lib/waiters.ts`.
 
 ### Rolling continuously
 
