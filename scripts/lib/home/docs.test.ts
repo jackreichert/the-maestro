@@ -53,3 +53,9 @@ test('docHeader reads CRLF frontmatter the same as LF (a note saved on Windows i
   assert.deepEqual(docHeader(crlf, 'a.md', 'Plans').tickets, ['avonlea-api-164']);
   assert.equal(docHeader('---\r\nstatus: x\r\n---\r\n# Only heading\r\n', 'a.md', 'Plans').title, 'Only heading');
 });
+
+test('docHeader reads tags from an inline list or a dash list, lower-cased, and leaves the key out when there are none', () => {
+  assert.deepEqual(docHeader(fm(['tags: [Setup, "run"]']), 'a.md', 'Runbooks').tags, ['setup', 'run']);
+  assert.deepEqual(docHeader(fm(['tags:', '  - Test', '  - deploy']), 'a.md', 'Runbooks').tags, ['test', 'deploy']);
+  assert.equal('tags' in docHeader(fm(['ticket: t-1']), 'a.md', 'Runbooks'), false);
+});
