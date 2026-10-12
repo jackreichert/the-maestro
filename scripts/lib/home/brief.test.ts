@@ -67,6 +67,23 @@ test('a brief is stale on a same-day state change, a later ticket or document, o
   assert.equal(judgeBrief(base({ read: { ok: false, reason: 'too-large' } })).state, 'too-long');
 });
 
+test('a ticket or document dated after today is not a change, as in xenophon, so --refresh can clear it', () => {
+  const future = judgeBrief(base({ read: note(FP, '2026-10-05'), ticketDates: ['2026-10-20'], docDates: ['2026-10-21'], today: '2026-10-07' }));
+  assert.equal(future.state, 'fresh');
+  const mixed = judgeBrief(base({ read: note(FP, '2026-10-05'), ticketDates: ['2026-10-07', '2026-10-20'], today: '2026-10-07' }));
+  assert.deepEqual(mixed.staleBecause, ['1 ticket updated after 2026-10-05'], 'today itself still counts');
+});
+
+test('a brief saved with CRLF or CR line endings parses like an LF one', () => {
+  for (const eol of ['\r\n', '\r']) {
+    const crlf = { ok: true as const, text: note(FP).text.replace(/\n/g, eol) };
+    const b = judgeBrief(base({ read: crlf }));
+    assert.equal(b.state, 'fresh', JSON.stringify(eol));
+    assert.equal(b.updated, '2026-10-07');
+    assert.ok(JSON.stringify(b.blocks).includes('Ship it.'));
+  }
+});
+
 test('the reader serves only Briefs/<id>.md, refuses a symlinked or oversized brief, and a bad id reads nothing', () => {
   const root = mkdtempSync(join(tmpdir(), 'brief-'));
   mkdirSync(join(root, 'Projects/p/Briefs'), { recursive: true });

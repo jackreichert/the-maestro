@@ -9,10 +9,11 @@
  * included, carries the security headers; error text is fixed per status and never names a path or a stack.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { withholdJson } from '../json-out.ts';
 
 /** Sent on every response, errors included: no inline script or style, nothing cross-origin, no framing, no referrer. */
 export const SECURITY_HEADERS: Record<string, string> = {
-  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   'x-frame-options': 'DENY',
   'cross-origin-resource-policy': 'same-origin',
   'referrer-policy': 'no-referrer',
@@ -84,7 +85,11 @@ export function openStream(res: ServerResponse): void {
   res.write('retry: 5000\n\n');
 }
 
-export const sendJson = (res: ServerResponse, status: number, value: unknown): void => send(res, status, JSON.stringify(value), 'application/json; charset=utf-8');
+/**
+ * A JSON reply with secret-shaped strings withheld (the same scan as `printJson`), so the web Podium cannot serve what the CLI would withhold.
+ * Only the edit-token reply passes `scan: false`: the token is a random secret by design and the page needs it verbatim.
+ */
+export const sendJson = (res: ServerResponse, status: number, value: unknown, scan = true): void => send(res, status, JSON.stringify(scan ? withholdJson(value) : value), 'application/json; charset=utf-8');
 
 /** An error response with fixed text for its status: never an exception message, a path or a stack. */
 export function sendError(res: ServerResponse, status: number, extra: Record<string, string> = {}): void {

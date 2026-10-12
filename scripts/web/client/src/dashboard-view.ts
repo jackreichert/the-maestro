@@ -200,7 +200,7 @@ export const DASHBOARD_CSS = `
   .quad .warn { margin: 0 0 var(--space-3); color: var(--warning); font-size: var(--text-sm); line-height: var(--leading-sm); }
   .chart { display: block; width: 100%; height: auto; max-height: 200px; margin-bottom: var(--space-2); font-variant-numeric: tabular-nums; overflow: visible; }
   .chart.flight { max-width: 420px; }   /* as wide as the other charts can draw, so its labels are the same size as theirs */
-  .chart .base { stroke: var(--grid-line); stroke-width: 1; }
+  .chart .base { stroke: var(--chart-grid); stroke-width: var(--hairline-width); }
   .chart .hit { fill: transparent; }
   .chart .bar.accent { fill: var(--accent); }
   .c-1 { fill: var(--series-1); } .c-2 { fill: var(--series-2); } .c-3 { fill: var(--series-3); } .c-4 { fill: var(--series-4); }
@@ -209,7 +209,7 @@ export const DASHBOARD_CSS = `
   .chart .unit.ring { fill: none; stroke: var(--series-1); stroke-width: 2; }
   .chart .unit.undated { stroke: var(--text-primary); stroke-width: 2; stroke-dasharray: 3 2; }
   .chart .unit.undated.ring { fill: none; }
-  .chart .lab { fill: var(--text-muted); font-size: var(--text-xs); }
+  .chart .lab { fill: var(--chart-label); font-size: var(--chart-label-size); }
   .chart .val { fill: var(--text-primary); font-size: var(--text-sm); font-weight: var(--weight-semibold); }
   .chart a.mark { cursor: pointer; text-decoration: none; }
   .chart a.mark text { text-decoration: none; }
