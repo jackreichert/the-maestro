@@ -41,6 +41,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         else seen.set(row.id, line);
     }
     const learnedIds = new Set(rows.filter((r) => r.row.kind === 'learned' && typeof r.row.id === 'string').map((r) => r.row.id as string));
+    const closableIds = new Set(rows.filter((r) => (r.row.kind === 'learned' || r.row.kind === 'miss') && typeof r.row.id === 'string').map((r) => r.row.id as string));
     const missing = (line: number, row: LedgerRow, field: string, id: unknown): void => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
     for (const { row, line } of rows) {
         if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });
@@ -52,7 +53,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         // Only a `curated` row (written by library-write, which holds the composer lease) may close a learned row.
         if ((closed?.kind === 'learned' || closed?.kind === 'miss') && row.kind !== 'curated') problems.push({ line, id: row.id, problem: `closes ${row.closes}, a ${closed.kind} row; only a composer pass handles a ${closed.kind} row` });
         if (row.kind === 'miss') for (const p of missProblems(row)) problems.push({ line, id: row.id, problem: `miss: ${p}` });
-        if (row.kind === 'curated') for (const p of curatedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `curated: ${p}` });
+        if (row.kind === 'curated') for (const p of curatedProblems(row, closableIds)) problems.push({ line, id: row.id, problem: `curated: ${p}` });
         if (row.kind === 'learned') for (const p of learnedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `learned: ${p}` });
         for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes', 'briefs']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
