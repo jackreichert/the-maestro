@@ -435,7 +435,7 @@ flowchart LR
     H --> N
 ```
 
-**Answering from the page.** Only the asks and the priorities are editable; **Working on now** and **Status** are regenerated and nothing typed there is read as an answer. Under an ask you can write `> answer: <text>`, tick its `- [x]` box, or edit the priorities list. Regenerating keeps any such edit that the `status-watch` event type has not reported yet (an answer whose ask left the board moves under `## Unprocessed answers`), and if you save while a regeneration is writing, it reads the page again rather than overwrite you.
+**Answering from the page.** Only the asks and the priorities are editable; **Working on now** and **Status** are regenerated and nothing typed there is read as an answer. Under an ask you can write `> answer: <text>`, a `> discuss: <topic>` line (talk it through in chat first; the topic is optional), tick its `- [x]` box, or edit the priorities list. The watcher reports an edit once the page has been quiet for 20 seconds, so a half-typed answer is not taken for the answer, and writes it to the ledger first as an `answer` or `discuss` row on the ask (`journal.ts answer <id> --text "..."` and `journal.ts discuss <id>` write the same rows by hand). The ask stays open for `resolve`, and the page renders the recorded answer back under it, so an answer survives regeneration and a session that ends before it is acted on. Regenerating also keeps any such edit that the `status-watch` event type has not reported yet (an answer whose ask left the board moves under `## Unprocessed answers`), and if you save while a regeneration is writing, it reads the page again rather than overwrite you.
 
 ```mermaid
 flowchart LR
