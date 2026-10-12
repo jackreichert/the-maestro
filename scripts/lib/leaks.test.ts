@@ -65,23 +65,26 @@ test('read-only subagents: judged by the tools they called, repriced at Haiku, g
     assert.match(l.fix, /model: haiku/);
 });
 
-test('subagent cache TTL: avoided rewrites within the hour minus the extra paid on every 5m write, none reported when it costs more', () => {
+test('subagent cache TTL: avoided rewrites within the hour minus the premium on the writes that still happen, none reported when it costs more', () => {
     const at = (iso: string) => `2026-09-26T${iso}Z`;
     const write = (when: string, tokens: number) => turn(at(when), 'claude-sonnet-5', use(0, tokens, 0, 0));
     // sonnet: 5m write 2.5, 1h write 4, read 0.2 per MTok. Rewrite avoided = 2M x (2.5 - 0.2) = 4.6; extra on a 2M write = 2M x 1.5 = 3.
     const dir = fixture({ subs: [{ type: 'any', recs: [
         write('10:00:00', 0.1 * M),
         write('10:10:00', 2 * M), write('10:20:00', 2 * M), write('10:30:00', 2 * M), write('10:40:00', 2 * M),
-        write('12:40:00', 2 * M), // a 2h gap: a 1h TTL has lapsed too, so no rewrite avoided, but the write costs more
+        write('12:40:00', 2 * M), // a 2h gap: a 1h TTL has lapsed too, so no rewrite avoided and the write still happens, dearer
     ] }], orch: [write('10:00:00', 50 * M)] });
     const [l] = report(dir);
     assert.equal(l.bucket, 'Subagent prompt cache on a 1h TTL instead of 5m');
-    assert.ok(Math.abs(l.usd - (4 * 4.6 - (0.15 + 5 * 3))) < 1e-9, String(l.usd));
-    assert.match(l.detail[0], /4 expiry rewrites within the hour avoided, \$18\.40; every 5m write at the 1h price costs \$15\.15 more/);
+    assert.ok(Math.abs(l.usd - (4 * 4.6 - (0.15 + 3))) < 1e-9, String(l.usd));
+    assert.match(l.detail[0], /4 expiry rewrites within the hour avoided, \$18\.40; every write that still happens costs \$3\.15 more at the 1h price/);
     assert.match(l.fix, /subagentPromptCacheTtl/);
-    // One rewrite avoided (4.6) does not pay for the extra on two big writes (6.0): not a leak.
-    const small = fixture({ subs: [{ type: 'any', recs: [write('10:00:00', 2 * M), write('10:10:00', 2 * M)] }] });
-    assert.deepEqual(report(small), []);
+    // The rewritten turns turn into reads, so they pay no 1h premium: A 2M then a 10 minute gap and 2M again nets 4.6 - 3.0 = 1.6.
+    const pair = fixture({ subs: [{ type: 'any', recs: [write('10:00:00', 2 * M), write('10:10:00', 2 * M)] }] });
+    assert.ok(Math.abs(report(pair)[0].usd - 1.6) < 1e-9);
+    // Two big writes 30 seconds apart: no expiry, so only the premium (6.0) and nothing avoided: not a leak.
+    const close = fixture({ subs: [{ type: 'any', recs: [write('10:00:00', 2 * M), write('10:00:30', 2 * M)] }] });
+    assert.deepEqual(report(close), []);
 });
 
 test('roll replay: past the threshold the context drops to the floor, reads are avoided, the new base is written once; a threshold that does not pay reports nothing', () => {

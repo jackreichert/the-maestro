@@ -63,9 +63,8 @@ export function readOnlySubagents(t: Transcripts, prices: Prices): Leak | null {
 const CACHE_1H_SEC = 3600;
 
 /**
- * Subagent cache writes replayed with a 1h TTL instead of 5m. Every 5m write would cost the 1h write price instead, and a cache-expiry
- * rewrite after a gap of at most an hour would have been a cache read. The figure is the net: rewrites avoided minus the extra paid for
- * every write; a TTL that costs more than it saves is not reported. Writes usage already marks as 1h are unchanged.
+ * Subagent cache writes replayed with a 1h TTL instead of 5m. A cache-expiry rewrite after a gap of at most an hour would have been a cache read; every other 5m write would cost the
+ * 1h write price instead (a turn that becomes a read pays no premium). The figure is the net: rewrites avoided minus the premium on the writes that still happen; a TTL that costs more than it saves is not reported. Writes usage already marks as 1h are unchanged.
  */
 export function subagentCacheTtl(t: Transcripts, prices: Prices): Leak | null {
     let extra = 0;
@@ -75,15 +74,14 @@ export function subagentCacheTtl(t: Transcripts, prices: Prices): Leak | null {
         const p = rowFor(prices, family(x.model));
         if (!p) continue;
         const w5 = kindsOf(x).w5;
-        extra += (w5 * (p.cache_write_1h - p.cache_write_5m)) / 1e6;
-        if (isExpiryRewrite(x) && (x.gapSec as number) <= CACHE_1H_SEC) { avoided += (w5 * (p.cache_write_5m - p.cache_read)) / 1e6; rewrites += 1; }
+        if (isExpiryRewrite(x) && (x.gapSec as number) <= CACHE_1H_SEC) { avoided += (w5 * (p.cache_write_5m - p.cache_read)) / 1e6; rewrites += 1; } else extra += (w5 * (p.cache_write_1h - p.cache_write_5m)) / 1e6;
     }
     const net = avoided - extra;
     if (net <= 0) return null;
     return {
         bucket: 'Subagent prompt cache on a 1h TTL instead of 5m',
         usd: net,
-        detail: [`${plural(rewrites, 'expiry rewrite')} within the hour avoided, ${usd(avoided)}; every 5m write at the 1h price costs ${usd(extra)} more`],
+        detail: [`${plural(rewrites, 'expiry rewrite')} within the hour avoided, ${usd(avoided)}; every write that still happens costs ${usd(extra)} more at the 1h price`],
         fix: 'set `subagentPromptCacheTtl` to `1h` in settings (decision and trade-off in cost/budget.md)',
     };
 }
