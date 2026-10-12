@@ -230,6 +230,8 @@ export async function runWorker(dir: string): Promise<Results> {
   if (!spec) throw new Error(`suite-run: no job.json in ${dir}`);
   const home = mkdtempSync(join(tmpdir(), 'suite-run-home-'));
   const env = suiteEnv(home);
+  // suiteEnv only names these dirs; a suite that stats them (this repo's own suite-run.test.ts does) needs them to exist.
+  for (const key of ['MAESTRO_EVENT_DIR', 'MAESTRO_SUITE_DIR', 'MAESTRO_STATUS_DIR']) mkdirSync(env[key] as string, { recursive: true });
   const run: Run = { child: null, timedOut: false, killed: '' };
   const timer = setTimeout(() => { run.timedOut = true; killGroup(run.child); }, (spec.timeoutMin ?? DEFAULT_TIMEOUT_MIN) * 60_000);
   const onSignal = (signal: NodeJS.Signals): void => { run.killed = signal; killGroup(run.child); };
