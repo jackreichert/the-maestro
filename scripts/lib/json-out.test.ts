@@ -69,9 +69,68 @@ function sources(dir: string): string[] {
   });
 }
 
+const SINK = /(?:console\.(?:log|info)|process\.stdout\.write|writeSync(?=\(\s*(?:1|process\.stdout\.fd)\s*,))\s*\(/g;
+const STRINGIFIED_VAR = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*JSON\.stringify\(/g;   // a statement that ends right after the call, so `const a = JSON.stringify(x) !== y` is not a string
+
+/** The text between a call's parentheses, which may span lines; strings are skipped so a paren inside one does not end the call early. */
+function callArgs(src: string, open: number): string {
+  let depth = 0;
+  let quote = '';
+  for (let i = open; i < src.length; i += 1) {
+    const c = src[i];
+    if (quote) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = '';
+    } else if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '(') depth += 1;
+    else if (c === ')' && (depth -= 1) === 0) return src.slice(open + 1, i);
+  }
+  return src.slice(open + 1);
+}
+
+/** True when a print call, on one line or several, receives JSON.stringify output directly or through a variable the same file filled from it. A wrapper helper in between is not followed. */
+function printsStringified(src: string): boolean {
+  const held = [...src.matchAll(STRINGIFIED_VAR)].filter((m) => /^[ \t]*(?:;|\r?\n|$)/.test(src.slice(m.index + m[0].length + callArgs(src, m.index + m[0].length - 1).length + 1))).map((m) => m[1]);
+  return [...src.matchAll(SINK)].some((m) => {
+    const args = callArgs(src, m.index + m[0].length - 1);
+    return /JSON\.stringify\(/.test(args) || held.some((v) => new RegExp(`(?<![\\w$.])${v.replace(/\$/g, '\\$')}(?![\\w$])`).test(args));
+  });
+}
+
+test('the guard flags each way a file can print JSON.stringify output itself', () => {
+  const caught: Record<string, string> = {
+    'same line': 'console.log(JSON.stringify(x));',
+    'multi-line console.log': 'console.log(\n  JSON.stringify(x, null, 2),\n);',
+    'stringify held in a variable, printed later': 'const out = JSON.stringify(x, null, 2);\nconst n = 1;\nconsole.log(out);',
+    'typed variable': 'const out: string = JSON.stringify(x);\nprocess.stdout.write(out + "\\n");',
+    'dry-run line (stored values can reach it)': "console.log('[dry-run]', JSON.stringify(x));",
+    'writeSync(1, ...)': "writeSync(1, JSON.stringify(x));",
+    'writeSync(process.stdout.fd, ...)': "writeSync(process.stdout.fd, JSON.stringify(x));",
+    'multi-line writeSync': "writeSync(\n  1,\n  JSON.stringify(x),\n);",
+    'ternary': "console.log(json ? JSON.stringify(x) : 'plain');",
+  };
+  for (const [shape, src] of Object.entries(caught)) assert.ok(printsStringified(src), `guard misses: ${shape}`);
+});
+
+test('the guard leaves alone code that stringifies without printing it', () => {
+  const quiet: Record<string, string> = {
+    'stringify written to a file': "writeFileSync(path, JSON.stringify(x));",
+    'stringified variable never printed': "const out = JSON.stringify(x);\nwriteFileSync(p, out);\nconsole.log('saved');",
+    'a longer name that contains the variable': "const out = JSON.stringify(x);\nconsole.log(outline);",
+    'a paren inside a string does not end the call': "console.log(')');\nconst a = JSON.stringify(x);",
+    'writeSync to a file descriptor that is not stdout': 'writeSync(fd, JSON.stringify(row));',
+    'stringify used in a comparison, not printed': "const changed = JSON.stringify(a) !== JSON.stringify(b);\nconsole.log(changed);",
+    'printJson itself': 'printJson(x);',
+  };
+  for (const [shape, src] of Object.entries(quiet)) assert.ok(!printsStringified(src), `guard flags: ${shape}`);
+});
+
+test('known gap: a wrapper helper that prints for the caller is not followed', () => {
+  // the file defines show() around console.log and passes it the stringified value; a source scan cannot see through that, so review has to
+  assert.equal(printsStringified("const show = (s: string): void => console.log(s);\nshow(JSON.stringify(x));"), false);
+});
+
 test('no script prints JSON.stringify output directly: --json output goes through printJson', () => {
-  // any print call with JSON.stringify on the same line, so a `json ? JSON.stringify(x) : text` ternary is caught; a `[dry-run]` line echoes what the caller just typed
-  const direct = /(?:console\.(?:log|info)|process\.stdout\.write)\(.*JSON\.stringify\(/;
-  const offenders = sources(SCRIPTS).map((f) => relative(SCRIPTS, f)).filter((f) => !NOT_PRODUCERS.has(f)).filter((f) => readFileSync(join(SCRIPTS, f), 'utf8').split('\n').some((l) => direct.test(l) && !l.includes("'[dry-run]'")));
+  const offenders = sources(SCRIPTS).map((f) => relative(SCRIPTS, f)).filter((f) => !NOT_PRODUCERS.has(f)).filter((f) => printsStringified(readFileSync(join(SCRIPTS, f), 'utf8')));
   assert.deepEqual(offenders, [], 'print JSON through printJson (lib/json-out.ts) so secret-shaped values are withheld');
 });
