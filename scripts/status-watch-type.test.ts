@@ -13,6 +13,7 @@ import { writePriorities } from './lib/status-page/priorities.ts';
 import type { PageConfig } from './lib/status-page/render.ts';
 import { addWatch } from './lib/watch-registry.ts';
 import { fold, isOpen } from './lib/ledger-core.ts';
+import { recordAnswer } from './lib/journal/answers.ts';
 import type { LedgerRow } from './lib/ledger-core.ts';
 
 const NOW = new Date('2026-10-05T15:00:00Z');
@@ -320,6 +321,27 @@ test('ticking an ask that already has a recorded answer keeps the answer: (ticke
   assert.deepEqual(l.answers(), [['answer', 'ab12', 'yes but only after CI']], 'no (ticked) row replaces the answer');
   l.gen(dir);
   assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: yes but only after CI\n/, 'the answer text survives the regeneration');
+});
+
+test('an answer the generator rendered from the ledger is not re-reported when the page is saved before the watcher looks', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
+  const l = ledger();
+  writePriorities(dir, '2026-10-05', [{ text: 'First' }]);
+  l.gen(dir);
+  settledCheck(dir, l.io);
+  const at = '2026-10-05T14:40:00Z';
+  const store = { readLedger: () => l.rows, append: <E>(e: E): E => { l.rows.push(e as LedgerRow); return e; }, newId: () => `r${l.rows.length}` };
+  recordAnswer(store, { kind: 'answer', ask: 'cd34', text: 'call it sprocket', source: 'chat', usage: {}, now: () => at, today: () => at.slice(0, 10) });
+  l.gen(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`cd34`[^\n]*\n {2}> answer: call it sprocket\n/, 'the chat answer is on the page');
+  const before = l.rows.length;
+  writeFileSync(join(dir, 'The-Podium.md'), `${readFileSync(join(dir, 'The-Podium.md'), 'utf8')}\nscribble\n`);
+  assert.deepEqual(settledCheck(dir, l.io), [], 'the chat answer is not raised again as a page answer');
+  assert.equal(l.rows.length, before, 'and no row is written for it');
+  answer(dir, 'ab12', 'a real page answer');
+  assert.deepEqual(settledCheck(dir, l.io), ['ask ab12 (decision: Merge it now?) answered: a real page answer'], 'a genuine answer next to it still fires');
+  userEdits(dir, 'answer: call it sprocket', 'answer: call it widget');
+  assert.deepEqual(settledCheck(dir, l.io), ['ask cd34 (decision: Which option?) answered: call it widget'], 'and so does a changed one');
 });
 
 test('if the ledger write fails the baseline does not move, so the edit is found again and recorded on the next check', () => {
