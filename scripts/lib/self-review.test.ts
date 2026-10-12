@@ -32,10 +32,10 @@ test('splitSelfReview keeps order and puts unknown repos with the org list', () 
 
 test('a review pool (`!` entries) makes every repo outside it self-review, and an explicit self-review glob still wins inside it', () => {
   const globs = ['!avonlea/*', 'avonlea/internal-*'];
-  assert.equal(isSelfReview('avonlea/arya-rest-api', globs), false);
+  assert.equal(isSelfReview('avonlea/api', globs), false);
   assert.equal(isSelfReview('avonlea/internal-tool', globs), true);
-  assert.equal(isSelfReview('jackreichert/the-maestro', globs), true);
-  assert.equal(isSelfReview('femmebot/google-type', globs), true);
+  assert.equal(isSelfReview('samwise/notes', globs), true);
+  assert.equal(isSelfReview('rosie/garden', globs), true);
   assert.equal(isSelfReview(undefined, globs), false, 'no repo fails closed: counted');
-  assert.equal(isSelfReview('jackreichert/x', []), false, 'no globs: counted');
+  assert.equal(isSelfReview('samwise/x', []), false, 'no globs: counted');
 });

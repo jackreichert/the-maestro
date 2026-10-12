@@ -72,7 +72,7 @@ test('do first prefers a blocked item, then the first in flight; empty ledger sa
     assert.deepEqual(guidanceLines([], [], [], [], '2026-10-12', NOW), []);
 });
 
-test('do first skips items on hold and items waiting on Jack, and prefers today\'s priorities', () => {
+test('do first skips items on hold and items waiting on the user, and prefers today\'s priorities', () => {
     const hold = item({ id: 'h1', text: 'monitor, on hold until spring', kind: 'blocked', ts: '2026-10-12T09:00:00Z' });
     const ask = item({ id: 'k1', text: 'needs a call', kind: 'blocked', ts: '2026-10-12T09:00:00Z' });
     const real = item({ id: 'r1', text: 'fix the build', kind: 'blocked', stream: 'alpha', ts: '2026-10-12T09:00:00Z' });

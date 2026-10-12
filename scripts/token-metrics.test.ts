@@ -180,13 +180,13 @@ test('no content reaches any output', () => {
 
 test('write is idempotent: rerunning a day replaces its row and keeps the rest', () => {
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Research'), { recursive: true });
-    writeFileSync(tablePath(), '# kept heading\n\nnotes Jack wrote\n\n| Date | x |\n|---|---|\n| 2026-09-20 | 1 | 2 | 3 | 4 | 5 (1/4) | 1k | 1k | 1M | 0 | 100k | 1 | 1 | - | 1k | 1k |\n');
+    writeFileSync(tablePath(), '# kept heading\n\nnotes Samwise wrote\n\n| Date | x |\n|---|---|\n| 2026-09-20 | 1 | 2 | 3 | 4 | 5 (1/4) | 1k | 1k | 1M | 0 | 100k | 1 | 1 | - | 1k | 1k |\n');
     run('--date', '2026-09-25', '--write');
     run('--date', '2026-09-25', '--write');
     const text = readFileSync(tablePath(), 'utf8');
     assert.equal(text.match(/^\| 2026-09-25 \|/gm)?.length, 1);
     assert.match(text, /^\| 2026-09-20 \|/m);
-    assert.match(text, /notes Jack wrote/);
+    assert.match(text, /notes Samwise wrote/);
     assert.match(text, /\| 2026-09-25 \| 1 \| 3 \| 1 \| 2 \(1\/1\) \|/);
 });
 
@@ -286,7 +286,7 @@ test('sessionLine measures the turns since the last compact, and a compaction re
     assert.equal(sessionLine(dir, 1_000_000), '**Session:** s · 2 turns since compact (3 before) · ctx 300k of ~1000k (30%) · 200k read/turn');
 });
 
-test('sessionLine says it counts since the last compact and how many turns came before, so a compaction does not silently reset it (MAESTRO-135)', () => {
+test('sessionLine says it counts since the last compact and how many turns came before, so a compaction does not silently reset it', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tm-compact-say-'));
     const boundary = JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: '2026-10-02T10:00:00Z' });
     writeFileSync(join(dir, 's.jsonl'), `${[turnAt('a', 900000), turnAt('b', 900000), turnAt('c', 900000), boundary, turnAt('d', 100000), turnAt('e', 300000)].join('\n')}\n`);

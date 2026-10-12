@@ -24,7 +24,7 @@ function rig(stallMinutes = 90) {
   let state: StallState | null = null;
   let activityAt = T0;
   let activityWhat = 'edited a.ts';
-  let wts: WorktreeRef[] | null = [{ path: '/c/.worktrees/maestro-111', branch: 'feat/MAESTRO-315-stall' }];
+  let wts: WorktreeRef[] | null = [{ path: '/c/.worktrees/maestro-111', branch: 'feat/AV-315-stall' }];
   const reportTimes: Record<string, number> = {};
   let scratchAt = 0;
   let liveNow: boolean | null = false;
@@ -32,7 +32,7 @@ function rig(stallMinutes = 90) {
   const append = (row: Record<string, unknown>): LedgerRow => { const r = { id: `r${++n}`, ts: new Date(now).toISOString(), date: '2026-10-11', ...row } as LedgerRow; rows.push(r); return r; };
   const dispatch = (id = 'aaaa', scope = 'maestro-111') => {
     append({ id, kind: 'wip', text: `build ${id}`, repo: 'the-maestro' });
-    append({ kind: 'claim', repo: 'the-maestro', scope, branch: 'feat/MAESTRO-315-stall', text: `claim the-maestro@${scope} for desk: brief ${id}` });
+    append({ kind: 'claim', repo: 'the-maestro', scope, branch: 'feat/AV-315-stall', text: `claim the-maestro@${scope} for desk: brief ${id}` });
     append({ kind: 'brief', briefs: id, repo: 'the-maestro', brief: `/s/brief-${id}.md`, report: `/s/report-${id}.md`, text: `brief ${id}` });
   };
   const r = {

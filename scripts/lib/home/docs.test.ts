@@ -47,9 +47,9 @@ test('loadDocs reads library pages from Knowledge, and one subfolder under it, a
 });
 
 test('docHeader reads CRLF frontmatter the same as LF (a note saved on Windows is not unattributed)', () => {
-  const lf = '---\ntitle: Importer plan\nstatus: active\nticket: the-maestro-164\nupdated: 2026-10-10\n---\n# Heading\nbody\n';
+  const lf = '---\ntitle: Importer plan\nstatus: active\nticket: avonlea-api-164\nupdated: 2026-10-10\n---\n# Heading\nbody\n';
   const crlf = lf.replace(/\n/g, '\r\n');
   assert.deepEqual(docHeader(crlf, 'a.md', 'Plans'), docHeader(lf, 'a.md', 'Plans'));
-  assert.deepEqual(docHeader(crlf, 'a.md', 'Plans').tickets, ['the-maestro-164']);
+  assert.deepEqual(docHeader(crlf, 'a.md', 'Plans').tickets, ['avonlea-api-164']);
   assert.equal(docHeader('---\r\nstatus: x\r\n---\r\n# Only heading\r\n', 'a.md', 'Plans').title, 'Only heading');
 });

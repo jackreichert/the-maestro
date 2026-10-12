@@ -125,7 +125,7 @@ test('decide --repo names the DECISIONS.md project while the row goes to the --p
 });
 
 test('a reworded decision on a recorded topic is refused before anything is written, unless --new', () => {
-    run(['decide', 'Open release pull requests as drafts only', '--why', 'Jack undrafts', ...MARK]);
+    run(['decide', 'Open release pull requests as drafts only', '--why', 'Samwise undrafts', ...MARK]);
     const before = readFileSync(decisionsPath(), 'utf8');
     const reworded = run(['decide', 'Release pull requests are opened as drafts only', '--why', 'a different reason', ...MARK]);
     assert.equal(reworded.code, 1);
