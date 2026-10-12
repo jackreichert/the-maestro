@@ -157,13 +157,14 @@ import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
+import { helpFor, isCommand, wantsHelp, listText } from './lib/journal/help.ts';
 import { openStore } from './lib/journal/store.ts';
 import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
-import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
-import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
+import { parseAskFields } from './lib/journal/ask-fields.ts';
+import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
@@ -254,6 +255,18 @@ const cmd = argv[0];
 
 const { arg, has, positional } = parseArgs(argv);
 
+// Help is answered first, before any command is dispatched or anything is read or written: `roll --help` must never run a roll.
+if (wantsHelp(argv)) {
+    const { text, code } = helpFor(argv);
+    (code === 0 ? console.log : console.error)(text);
+    process.exit(code);
+}
+// An unknown command gets the list and a failing exit before a ledger is even located.
+if (cmd !== undefined && !isCommand(cmd)) {
+    console.error(`Unknown command: ${cmd}\n\n${listText()}`);
+    process.exit(1);
+}
+
 // `autopull on|off` writes the user config file and needs no ledger, so it runs before the ledger root is required.
 if (cmd === 'autopull') {
     try {
@@ -269,12 +282,6 @@ if (cmd === 'autopull') {
 
 // `settings` reads the resolved configuration and needs no ledger.
 if (cmd === 'settings') process.exit(runSettings({ all: has('all'), check: has('check'), paths: positional }));
-
-// `ask --help` prints its usage and needs no ledger.
-if (cmd === 'ask' && has('help')) {
-    ASK_USAGE.forEach((l) => console.log(l));
-    process.exit(0);
-}
 
 const dryRun = has('dry-run');
 const asJson = has('json');
@@ -601,7 +608,6 @@ function knownRepos(): Set<string> | undefined {
 
 /** `learned "<claim>" --kind ... --applies-to ...`: one fact, written only when every rule in learned.ts passes. Idempotent: the same fact, location, evidence, `--verified-at` and confidence is reported, not written twice; the same fact with a new `--verified-at` or confidence is written as a row that supersedes the earlier one. */
 function cmdLearned(): void {
-    if (has('help')) { LEARNED_USAGE.forEach((l) => console.log(l)); return; }
     const flag = (name: string): string | null => arg(name) || null;
     const entries = readLedger();
     const learnedIds = new Set(entries.filter((e) => e.kind === 'learned' && e.id).map((e) => e.id as string));
@@ -2655,7 +2661,7 @@ switch (cmd) {
     case 'status-page': cmdStatusPage(); break;
     case 'web': cmdWeb(); break;
     default:
-        console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('/**')[1]
-            .split('\n').map((l) => l.replace(/^ \* ?/, '')).join('\n').trim());
-        process.exit(cmd ? 1 : 0);
+        // No command given: the list (an unknown command was already refused above).
+        console.log(listText());
+        process.exit(0);
 }
