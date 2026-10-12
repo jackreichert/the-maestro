@@ -4,12 +4,14 @@
 export const DASHBOARD = 'dashboard';
 /** The retired Board tab. Old `#tab=overview` links open Home; the id stays reserved so a stream cannot take it. */
 export const OVERVIEW = 'overview';
+/** The Open PRs tab: every open PR grouped by repo. All-streams, so no stream may take its id either. */
+export const OPEN_PRS = 'open-prs';
 /** Tab ids a stream may not take. A stream with one of these names gets a prefixed id instead (`flow` is reserved for the Flow tab). */
-const RESERVED = [DASHBOARD, OVERVIEW, 'flow'];
+const RESERVED = [DASHBOARD, OVERVIEW, OPEN_PRS, 'flow'];
 const STREAM_PREFIX = 'stream:';
 
-/** Home is the only all-streams tab. The header scopes it to every stream. */
-export const isAllStreams = (id: string): boolean => id === DASHBOARD;
+/** Home and Open PRs are not stream tabs. The header scopes them to every stream. */
+export const isAllStreams = (id: string): boolean => id === DASHBOARD || id === OPEN_PRS;
 
 /** The tab id for a stream: its name, unless the name is reserved. */
 export function streamTabId(stream: string): string {
@@ -22,9 +24,9 @@ export function tabStream(id: string): string | null {
   return id.startsWith(STREAM_PREFIX) ? id.slice(STREAM_PREFIX.length) : id;
 }
 
-/** The tab ids for a state: Home, then each stream. The old Board tab is not one of them. */
+/** The tab ids for a state: Home, Open PRs, then each stream. The old Board tab is not one of them. */
 export function tabIds(streams: string[]): string[] {
-  return [DASHBOARD, ...streams.map(streamTabId)];
+  return [DASHBOARD, OPEN_PRS, ...streams.map(streamTabId)];
 }
 
 /** The summary tiles that filter the board: asks (need you), blocked, done (shipped today), working (in flight). */

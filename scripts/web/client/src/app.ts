@@ -2,9 +2,10 @@ import './stream-board.ts';
 import './podium-chart.ts';
 import './priority-list.ts';
 import './local-review.ts';
+import './open-prs.ts';
 import { h, s, shadow } from './dom.ts';
 import { BOARD_CSS, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadProjects, loadState } from './api.ts';
+import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
 import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
@@ -12,7 +13,9 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { DASHBOARD, OPEN_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { OpenPrsStore } from './open-prs-store.ts';
+import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import type { ProjectsLoad } from './home-tab.ts';
 import { filteredView } from './filter-view.ts';
@@ -216,6 +219,14 @@ export class PodiumApp extends HTMLElement {
   #tempoOpen = false;
   // The last home base each stream tab got, so a redraw shows it at once while the fresh one loads.
   readonly #homes = new Map<string, StreamHome>();
+  // The Open PRs tab's table and refresh state live here, not in its element, so a live redraw does not lose a refresh in flight.
+  readonly #poster = createPoster((u, i) => fetch(u, i));
+  readonly #prs = new OpenPrsStore({
+    load: loadOpenPrs,
+    status: loadRefreshStatus,
+    post: async () => (await this.#poster.post('/api/prs/refresh', {}))?.status ?? null,
+    delay: (ms) => new Promise((ok) => { setTimeout(ok, ms); }),
+  });
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -405,12 +416,12 @@ export class PodiumApp extends HTMLElement {
     const count = <T extends { stream: string }>(xs: T[], id: string): number => (isAllStreams(id) ? xs.length : xs.filter((x) => x.stream === tabStream(id)).length);
     const tabs = ids.map((id) => {
       const on = id === this.#active;
-      const n = id === DASHBOARD ? 0 : count(st.asks, id);   // Home has no badge; a stream tab shows its ask count
-      const blocked = id === DASHBOARD ? 0 : count(st.blocked, id);
+      const n = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.asks, id);   // Home and Open PRs have no ask badge
+      const blocked = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.blocked, id);
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === DASHBOARD ? 'Home' : tabStream(id),
+      }, id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : tabStream(id),
       n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
       blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
       tab.addEventListener('click', () => this.#select(id, true));
@@ -424,7 +435,7 @@ export class PodiumApp extends HTMLElement {
       return tab;
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
@@ -578,6 +589,20 @@ export class PodiumApp extends HTMLElement {
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
   #home(st: PodiumState): Node {
+  /** The Open PRs tab. Its data comes from the page's own store; a live update redraws the table in place and never starts a refresh. */
+  #openPrs(st: PodiumState): Node {
+    const el = h('open-prs');
+    el.tz = st.tz;
+    el.model = this.#prs.model;
+    el.onRefresh = () => { void this.#prs.refresh(); };
+    const unsubscribe = this.#prs.subscribe(() => {
+      if (!el.isConnected) { unsubscribe(); return; }
+      el.model = this.#prs.model;
+    });
+    if (this.#sources.state === 'server') void this.#prs.load();   // each draw asks again, so the tab never shows older data than the cache holds
+    return el;
+  }
+
     const pri = st.priorities;
     const editable = this.#sources.state === 'server';
     const stale = pri.state === 'stale' && pri.date !== st.today;
