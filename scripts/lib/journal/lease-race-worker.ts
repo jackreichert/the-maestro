@@ -2,6 +2,7 @@
 // Args: <vault> <window> <startAtMs> <items> [steal]; with `steal` it takes each item with `--steal h` (the test seeds window h as the holder first). Prints one JSON line: the items this window was told it holds.
 import { openStore } from './store.ts';
 import { acquireLease } from './leases.ts';
+import { printJson } from '../json-out.ts';
 
 const [vault, window, startAt, items, mode] = process.argv.slice(2) as [string, string, string, string, string | undefined];
 const store = openStore({ vault, project: 'race', dryRun: false, window });
@@ -16,4 +17,4 @@ for (let i = 0; i < Number(items); i++) {
     while (Date.now() < Number(startAt) + i * SLOT) { /* spin */ }
     if (acquireLease(ctx, `it${i}`, { ttlMinutes: 30, steal: mode === 'steal' ? 'h' : false }).ok) won.push(`it${i}`);
 }
-console.log(JSON.stringify({ window, won }));
+printJson({ window, won }, { compact: true });

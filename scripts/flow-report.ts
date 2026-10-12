@@ -20,6 +20,7 @@ import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { fold } from './lib/ledger-core.ts';
 import { flowReport, renderFlow } from './lib/flow.ts';
 import { renderRunQuality, runQuality } from './lib/run-quality.ts';
+import { printJson } from './lib/json-out.ts';
 import { openStore } from './lib/journal/store.ts';
 import { parseArgs } from './lib/journal/args.ts';
 
@@ -45,7 +46,7 @@ export function main(argv: string[]): number {
     const rows = store.readLedger();
     const report = flowReport(fold(rows, store.loadRegistry()).items, now, days);
     const runs = runQuality(rows, now, days, reportSize);
-    console.log(has('json') ? JSON.stringify({ ...report, runs }, null, 2) : [renderFlow(report, oldest), ...renderRunQuality(runs)].join('\n'));
+    if (has('json')) printJson({ ...report, runs }); else console.log([renderFlow(report, oldest), ...renderRunQuality(runs)].join('\n'));
     return 0;
 }
 

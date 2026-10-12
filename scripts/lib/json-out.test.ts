@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { withholdJson } from './json-out.ts';
 import { WITHHELD } from './withhold.ts';
 
@@ -14,4 +17,22 @@ test('withholdJson redacts secret-shaped values and keys in place and leaves the
 test('two secret-shaped keys stay two keys', () => {
   const out = withholdJson({ [token]: 1, [`${token}x`]: 2 }) as Record<string, number>;
   assert.equal(Object.keys(out).length, 2);
+});
+
+const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..');
+const NOT_PRODUCERS = new Set(['lib/json-out.ts', 'lib/gh-stub.ts', 'journal.cases.ts']);   // the helper itself; two fake gh binaries (test input, not producers)
+
+function sources(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    if (e.name === 'node_modules' || e.name.startsWith('.')) return [];
+    const path = join(dir, e.name);
+    return e.isDirectory() ? sources(path) : /\.ts$/.test(e.name) && !/\.test\.ts$/.test(e.name) ? [path] : [];
+  });
+}
+
+test('no script prints JSON.stringify output directly: --json output goes through printJson', () => {
+  // any print call with JSON.stringify on the same line, so a `json ? JSON.stringify(x) : text` ternary is caught; a `[dry-run]` line echoes what the caller just typed
+  const direct = /(?:console\.(?:log|info)|process\.stdout\.write)\(.*JSON\.stringify\(/;
+  const offenders = sources(SCRIPTS).map((f) => relative(SCRIPTS, f)).filter((f) => !NOT_PRODUCERS.has(f)).filter((f) => readFileSync(join(SCRIPTS, f), 'utf8').split('\n').some((l) => direct.test(l) && !l.includes("'[dry-run]'")));
+  assert.deepEqual(offenders, [], 'print JSON through printJson (lib/json-out.ts) so secret-shaped values are withheld');
 });

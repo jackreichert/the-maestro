@@ -29,7 +29,7 @@ function walk(value: unknown): unknown {
   return value;
 }
 
-/** Prints the value as indented JSON on stdout, with secret-shaped strings withheld. */
-export function printJson(value: unknown): void {
-  console.log(JSON.stringify(withholdJson(value), null, 2));
+/** Prints the value as indented JSON on stdout (one line with `compact`), with secret-shaped strings withheld. */
+export function printJson(value: unknown, opts: { compact?: boolean } = {}): void {
+  console.log(JSON.stringify(withholdJson(value), null, opts.compact ? undefined : 2));
 }
