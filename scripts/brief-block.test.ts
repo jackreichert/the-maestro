@@ -165,6 +165,11 @@ test('the shipped block asks for Learned lines in the shape `journal.ts learned`
     assert.deepEqual(problems, []);
 });
 
+test('the shipped block carries the preflight rule, and it degrades when mithril is absent', () => {
+    const block = extractBlock(readFileSync(BRIEF, 'utf8'));
+    assert.match(block, /^- Preflight: if mithril is installed, run its `playbooks\/preflight\.md`.*if it is not installed, skip this\./m);
+});
+
 test('the shipped block carries the necessity rule, and the re-review brief asks the same question', () => {
     const block = extractBlock(readFileSync(BRIEF, 'utf8'));
     assert.match(block, /^- Necessity: .*do we need this\?.*nearest existing mechanism.*stop and say so instead of building\./m);
