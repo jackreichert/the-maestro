@@ -831,9 +831,9 @@ The rules this serves: never wait on a suite (start a job and exit with a findin
 
 ### token-metrics.ts
 
-Token-cost metrics read from Claude Code transcripts: numeric usage fields, model ids, timestamps and message type metadata only. Message content is never read.
+Token-cost metrics read from Claude Code transcripts: numeric usage fields, model ids, timestamps and message type metadata only. Message content is never read; for `--leaks` it also keeps tool names, file basenames and result sizes.
 
-`token-metrics.ts [--date YYYY-MM-DD] [--all] [--write] [--compare] [--curve] [--json] [--projects-dir <dir>] [--vault <path>] [--project <name>] [--baseline-until YYYY-MM-DD]`. With no flags it prints today. `--write` upserts the day's row in `Research/token-metrics.md` (idempotent), `--all --write` backfills every day still on disk, `--compare` sets the day against the 7-day median and a baseline and flags any metric that moved more than about 20%, and `--curve` shows cache read per turn by turn-index bucket, and `--expiry` lists cache-expiry rewrites per day. The method is in [cost/measure.md](cost/measure.md).
+`token-metrics.ts [--date YYYY-MM-DD] [--all] [--write] [--compare] [--curve] [--expiry] [--leaks] [--json] [--projects-dir <dir>] [--vault <path>] [--project <name>] [--baseline-until YYYY-MM-DD]`. With no flags it prints today. `--write` upserts the day's row in `Research/token-metrics.md` (idempotent), `--all --write` backfills every day still on disk, `--compare` sets the day against the 7-day median and a baseline and flags any metric that moved more than about 20%, and `--curve` shows cache read per turn by turn-index bucket, `--expiry` lists cache-expiry rewrites per day, and `--leaks` prints avoidable spend ranked by dollars (read-only subagents repriced at Haiku, subagent cache on a 1h TTL, compaction at the roll threshold, huge tool results carried across later turns), each with a fix line; it needs `model_prices`. The method is in [cost/measure.md](cost/measure.md).
 
 The day summary and `--compare` show each cost metric with today, the 7-day median, the baseline, its target and PASS or MISS:
 

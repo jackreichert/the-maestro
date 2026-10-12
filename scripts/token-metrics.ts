@@ -3,9 +3,10 @@
  * Token-cost metrics for the orchestrator, read from Claude Code transcripts.
  *
  * Reads ONLY numeric usage fields, the model id, timestamps, and message
- * type/role/origin metadata. Message content is never read: every parsed line
- * goes straight through `pick()`, which copies the allowed fields and drops the
- * rest, and nothing else touches the parsed object. A test enforces this.
+ * type/role/origin metadata, plus for `--leaks` the tool names a turn called, the basename of the file a call names, the size
+ * (character count) of each tool result, and one boolean per call: whether it only reads (the Bash command line is matched and
+ * dropped). Message content is never kept: every parsed line goes straight through `pick()`, which copies the allowed fields and
+ * drops the rest, and nothing else touches the parsed object. A test enforces this.
  *
  *   node token-metrics.ts                      today: day summary + sessions
  *   node token-metrics.ts --date 2026-09-25    one day
@@ -48,6 +49,10 @@
  *   gap and are never counted. Orchestrator and subagent transcripts both count. `--expiry` lists it per day.
  * - Turns since compact: the orchestrator turn count since the last compaction marker (compact_boundary or an
  *   isCompactSummary flag); a day keeps its longest run. A small agent finished in under 10 turns.
+ * - `--leaks` (lib/leaks.ts): four avoidable-spend buckets, each a replay of the transcripts under one change, priced from `model_prices`
+ *   on the same tokens: read-only subagents (every tool call read-only) repriced at Haiku; subagent cache writes on a 1h TTL instead of
+ *   5m (net of the dearer write); orchestrator compaction at the roll threshold (net of writing the new base); and tool results of about
+ *   8k tokens or more (estimated from characters) priced over every later turn until a compaction. Ranked by dollars, each with a fix.
  * - Targets (`cost_targets`) turn the cost metrics into PASS/MISS in the day summary and --compare.
  * - Fresh = input_tokens (uncached). Context = fresh + cache write + cache read.
  */

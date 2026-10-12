@@ -185,6 +185,12 @@ Claude Code has no way to start a fresh interactive session on its own, so for t
 
 **The success measure** is two orchestrator windows working in tandem on one ledger with no degradation. That has two parts: *cold-start equivalence* (a fresh window given only the hook's injection answers a fixed task set, including the hard-limit refusals, as well as a long-running window) and *tandem safety* (no duplicate dispatch of one item, no lost or overwritten ledger rows or handoffs, every event handled once by the window that owns it, each window's context under the threshold). Both parts depend on the same habit: log every decision the same turn it is made.
 
+## Subagent prompt cache TTL
+
+Subagent prompt caches default to 5 minutes, so a subagent that pauses longer rewrites its whole context. Claude Code has a setting for a 1h subagent cache, `subagentPromptCacheTtl` (named in the leaks plugin's notes; not checked against the Claude Code docs here, so confirm the name before relying on it). The 1h write costs 1.6x the 5m write at the prices in the README, so it pays only when subagents rewrite often enough to cover that.
+
+**Decision (2026-10-12): leave it unset, and let `token-metrics.ts --leaks` say when to turn it on.** The bucket replays every subagent cache write at the 1h price and every expiry rewrite after a gap of an hour or less as a cache read, and reports the net. On the local transcripts that net was below zero, so the bucket stayed out of the report. Rerun `--leaks` after a stretch of long-running subagents; if the bucket shows up with real dollars, set it in settings `env`/settings JSON and rerun to see it disappear. Waiting inside an agent past 5 minutes is the better fix first: see the foreground-waits rule above.
+
 ## PR watcher cadence
 
 The `pr-watch` event type costs no tokens between ticks — it runs inside the event loop, a background
