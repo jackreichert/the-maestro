@@ -107,7 +107,7 @@ export function writeGuidance(dir: string, lines: string[], d: string): string {
 export function readGuidance(dir: string, today: string, maxAgeDays = 3): string[] {
     const path = join(dir, GUIDANCE_FILE);
     if (!existsSync(path)) return [];
-    const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean).slice(0, GUIDANCE_MAX_LINES + 1);
+    const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean).slice(0, GUIDANCE_MAX_LINES);
     const date = /(\d{4}-\d{2}-\d{2})/.exec(lines[0] ?? '')?.[1];
     if (!date || (Date.parse(today) - Date.parse(date)) / (24 * HOUR) > maxAgeDays) return [];
     return lines;

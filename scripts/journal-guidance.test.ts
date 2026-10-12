@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { guidanceLines, tokenCount, readGuidance, GUIDANCE_FILE } from './lib/journal/guidance.ts';
+import { guidanceLines, tokenCount, readGuidance, GUIDANCE_FILE, GUIDANCE_MAX_LINES } from './lib/journal/guidance.ts';
 import type { LedgerItem, LedgerRow } from './lib/ledger-core.ts';
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
@@ -102,6 +102,12 @@ test('priority text matches whole words: "auth" does not pick the author item', 
     assert.match(out([{ text: 'auth' }]), /Do first: a2 /);
     assert.match(out([{ text: 'look at a2 today' }]), /Do first: a2 /);
     assert.match(out([{ text: 'a22 only' }]), /Do first: a1 /);
+});
+
+test('readGuidance cuts a hand-edited note at the line cap', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'guid-cap-'));
+    writeFileSync(join(dir, GUIDANCE_FILE), ['Guidance from the 2026-10-12 roll:', ...Array.from({ length: 8 }, (_, n) => `  line ${n}`)].join('\n') + '\n');
+    assert.equal(readGuidance(dir, '2026-10-12').length, GUIDANCE_MAX_LINES);
 });
 
 test('the note stays within a header and four lines', () => {
