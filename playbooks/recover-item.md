@@ -35,8 +35,10 @@ Start one agent with the printed prompt unchanged, as its whole brief. Use the r
 ## 6. Record it
 
 ```bash
-journal.ts next <id> "re-dispatched, resuming from the recorded state"
+journal.ts next <id> "re-dispatched, resuming from the recorded state" --model "<your model>" --used "skill:the-maestro,tool:journal.ts"
 ```
+
+Every ledger write needs `--model` and `--used`; without them the command exits 1. Use your own model name. It exits 0 and prints `next  <id>  <step>`.
 
 ## 7. Report
 

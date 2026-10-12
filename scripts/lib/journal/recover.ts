@@ -87,6 +87,6 @@ export function recoverPrompt(r: RecoverInput): string {
         }
     }
     out.push(r.library);
-    out.push(`Rules: keep one writer per worktree, record progress with \`journal.ts next ${id} "<step>"\`, and close the item with \`journal.ts done ${id}\` only when the work is done.`);
+    out.push(`Rules: keep one writer per worktree, record progress with \`journal.ts next ${id} "<step>" --model "<your model>" --used "skill:the-maestro,tool:journal.ts"\`, and close the item with \`journal.ts done ${id} --model "<your model>" --used "skill:the-maestro,tool:journal.ts"\` only when the work is done (every ledger write needs --model and --used).`);
     return out.join('\n\n');
 }

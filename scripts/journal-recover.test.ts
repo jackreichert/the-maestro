@@ -190,3 +190,18 @@ test('recover withholds a secret-shaped next step', () => {
     assert.doesNotMatch(out, /ghp_/);
     assert.match(out, /withheld/);
 });
+
+test('every journal.ts command in the recover playbook runs as written', () => {
+    const wt = liveWorktree('feat/FAKE-1-pb');
+    const id = start('playbook item', '--repo', 'repo-a', '--worktree', wt, '--next', 'x');
+    const md = readFileSync(new URL('./../playbooks/recover-item.md', import.meta.url), 'utf8');
+    const cmds = [...md.matchAll(/^journal\.ts (.+)$|`journal\.ts ([^`]+)`/gm)].map((m) => (m[1] ?? m[2]) as string);
+    assert.ok(cmds.some((c) => c.startsWith('recover')) && cmds.some((c) => c.startsWith('next')) && cmds.some((c) => c.startsWith('claims')), 'the playbook still names recover, claims and next');
+    for (const c of cmds) {
+        const argv = [...c.replaceAll('<id>', id).replaceAll('<your model>', 'Test Model').matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? (m[2] as string));
+        const r = run(argv);
+        assert.equal(r.code, 0, `journal.ts ${c}: ${r.err}`);
+    }
+    assert.match(run(['recover', id]).out, /Next step recorded: re-dispatched, resuming from the recorded state/);
+    assert.match(run(['recover', id]).out, /next .* --model "<your model>" --used/);
+});
