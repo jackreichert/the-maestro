@@ -28,3 +28,10 @@ test('withhold leaves ordinary lines with spaces and zero-width characters alone
   const body = 'two words\nzero​width in prose';
   assert.equal(withhold(body), body);
 });
+
+test('withhold catches a token split by an invisible character outside the Cf category', () => {
+  for (const sep of ['\u034f', '\ufe0f', '\u3164', '\u2800']) {
+    const line = `stream ${token.slice(0, 10)}${sep}${token.slice(10)} end`;
+    assert.equal(withhold(line), WITHHELD, `U+${sep.codePointAt(0)?.toString(16)}`);
+  }
+});

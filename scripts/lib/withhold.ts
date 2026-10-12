@@ -13,21 +13,25 @@ const NOT_ALONE = new Set(['hex-key', 'high-entropy-blob']);
 
 /**
  * True when the text has a secret shape. It is scanned as written and again normalised (`neutralise`: zero-width and control characters
- * dropped), and the shared scanner also reads it with whitespace removed, so a token split by a zero-width character or a space is seen.
+ * dropped, plus every default-ignorable character), and the shared scanner also reads it with whitespace removed, so a token split by a zero-width character or a space is seen.
  * Only a yes or no leaves here; the caller replaces the original text, never a normalised copy.
  */
 export function secretShaped(text: string): boolean {
+  const seen = unseen(text);
   return scanText(text).length > 0
-    || scanText(neutralise(text)).length > 0
-    || scanShared(text).some((f) => f.class === 'secret' && !NOT_ALONE.has(f.rule));
+    || scanText(neutralise(seen)).length > 0
+    || scanShared(seen).some((f) => f.class === 'secret' && !NOT_ALONE.has(f.rule));
 }
+
+/** The text as a reader sees it: default-ignorable characters (U+034F, variation selectors, U+3164, ...) dropped, the braille blank (U+2800) a space. */
+const unseen = (text: string): string => text.replace(/\p{Default_Ignorable_Code_Point}/gu, '').replace(/\u2800/g, ' ');
 
 /**
  * True when a `key: value` pair is a secret by the shared scanner's secret rules alone. The library scanner is left out on purpose: its
  * key/value rule withholds status words such as `tokens: unmeasured`, which text `status` prints unchanged.
  */
 export function secretPair(key: string, value: string): boolean {
-  return scanShared(`${key}: ${value}`).some((f) => f.class === 'secret' && !NOT_ALONE.has(f.rule));
+  return scanShared(unseen(`${key}: ${value}`)).some((f) => f.class === 'secret' && !NOT_ALONE.has(f.rule));
 }
 
 /** The body with every line the secret scan flags replaced by a marker. */
