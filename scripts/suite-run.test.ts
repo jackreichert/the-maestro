@@ -115,6 +115,16 @@ test('status: unknown job, a worker that died without results, and bad ids', () 
   for (const id of ['../x', 'a/b', '', '..', '.']) assert.throws(() => jobDir(id, base), /not a job id/, id);
 });
 
+test('inside a job, the event, suite and status dirs the env points at exist, so a suite that stats them does not hit ENOENT', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const probe = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { existsSync } from 'node:fs';\ntest('job dirs exist', () => { for (const k of ['MAESTRO_EVENT_DIR', 'MAESTRO_SUITE_DIR', 'MAESTRO_STATUS_DIR']) assert.ok(existsSync(process.env[k] as string), `${k} is missing: ${process.env[k]}`); });\n";
+  const repo = fixture({ 'a.test.ts': probe });
+  const spec = startJob(repo, { tests: '*.test.ts', skipTsc: true, base });
+  const done = await settled(spec.id, base);
+  assert.deepEqual(done.results?.tests.failing, []);
+  assert.equal(done.results?.tests.pass, 1);
+});
+
 test('suiteEnv keeps the suite away from real state', () => {
   const env = suiteEnv('/tmp/h', { HOME: '/Users/real', LEDGER_ROOT: '/real/ledger', PATH: '/bin' });
   assert.equal(env.HOME, '/tmp/h');
