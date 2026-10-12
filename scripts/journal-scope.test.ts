@@ -188,3 +188,51 @@ test('status --full in another window does not list a window-scoped note', () =>
     seedScopedNoteAndRule();
     assert.doesNotMatch(runAs('winB', 'status', '--full').out, /NOTE-A/);
 });
+
+const decisionsPath = (): string => join(vault, 'Projects', 'test-proj', 'DECISIONS.md');
+test('decide --binds window records a window-scoped rule: no DECISIONS.md entry, binding here, absent from another window', () => {
+    const r = runAs('winA', 'decide', 'PAUSE-X ignore maestro tickets today', '--why', 'Jack said so in this window', '--binds', 'window', '--tickets-vault', vault, ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(existsSync(decisionsPath()), false, 'a window rule is temporary and must not reach the shared decisions file');
+    const [row] = ledger();
+    assert.deepEqual([row?.kind, row?.ruleScope, row?.window, row?.pending], ['decision', 'window', 'winA', undefined]);
+    assert.match(runAs('winA', 'prime').out, /PAUSE-X/);
+    const b = runAs('winB', 'prime').out;
+    assert.doesNotMatch(b, /PAUSE-X/);
+    assert.match(b, /1 rule scoped to other windows/);
+});
+
+test('decide --binds global writes DECISIONS.md as before and marks the row global', () => {
+    const r = runAs('winA', 'decide', 'GLOBAL-Y branch from staging', '--why', 'one flow', '--binds', 'global', '--tickets-vault', vault, ...MARK);
+    assert.equal(r.code, 0, r.err);
+    assert.match(readFileSync(decisionsPath(), 'utf8'), /GLOBAL-Y/);
+    assert.equal(ledger()[0]?.ruleScope, 'global');
+    assert.match(runAs('winB', 'prime').out, /GLOBAL-Y/);
+});
+
+test('decide without --binds is unchanged: it writes the file and leaves ruleScope off', () => {
+    assert.equal(runAs('winA', 'decide', 'PLAIN-Z one more', '--why', 'because', '--tickets-vault', vault, ...MARK).code, 0);
+    assert.equal(ledger()[0]?.ruleScope, undefined);
+    assert.match(readFileSync(decisionsPath(), 'utf8'), /PLAIN-Z/);
+});
+
+test('decide --binds refuses a bad value, a window rule with a file scope, and an unstable window, writing nothing', () => {
+    const bad = runAs('winA', 'decide', 'x thing', '--why', 'y', '--binds', 'everywhere', '--tickets-vault', vault, ...MARK);
+    assert.equal(bad.code, 1);
+    assert.match(bad.err, /--binds must be window or global/);
+    const clash = runAs('winA', 'decide', 'x thing', '--why', 'y', '--binds', 'window', '--scope', 'project', '--tickets-vault', vault, ...MARK);
+    assert.equal(clash.code, 1);
+    assert.match(clash.err, /writes no file/);
+    const r = runUnstable('decide', 'x thing', '--why', 'y', '--binds', 'window', '--tickets-vault', vault, ...MARK);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /unstable/i);
+    assert.equal(ledger().length, 0);
+    assert.equal(existsSync(decisionsPath()), false);
+});
+
+test('a window-scoped decide rule can be lifted with drop', () => {
+    const made = runAs('winA', 'decide', 'PAUSE-W hold pushes', '--why', 'today only', '--binds', 'window', '--tickets-vault', vault, ...MARK);
+    const id = made.out.trim().split(/\s+/)[2] ?? '';
+    assert.equal(runAs('winA', 'drop', id, 'lifted', ...MARK).code, 0);
+    assert.doesNotMatch(runAs('winA', 'prime').out, /PAUSE-W/);
+});

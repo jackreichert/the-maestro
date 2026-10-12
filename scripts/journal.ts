@@ -191,7 +191,7 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
-import { isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
+import { RULE_SCOPES, isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
 import type { RuleScope } from './lib/journal/scope.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
@@ -695,9 +695,22 @@ function cmdDecide(): void {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(decisionsProject) || decisionsProject.includes('..')) problems.push('--repo must be a plain project name (letters, digits, . _ -), since it names the DECISIONS.md folder.');
     const marker = arg('msg') || '';   // the scan's [msg <ts> <hash>] marker: on the row text, it tells the decision scan this message is answered
     if (marker && !/^\[msg \S+ [0-9a-f]{6}\]$/.test(marker)) problems.push('--msg must be the scan marker exactly as printed, like "[msg 2026-10-11T10:00:00.000Z 1a2b3c]".');
-    if (scope === 'working-rule' && !MEMORY_DIR) problems.push('--scope working-rule needs memory_dir (env MAESTRO_MEMORY_DIR) set to the directory that holds the memory files.');
+    // --binds says who the decision binds (lib/journal/scope.ts). `window` is a rule for this window only, so it is a ledger row and no file.
+    const binds = has('binds') ? arg('binds') : null;
+    if (has('binds') && !isRuleScope(binds)) problems.push(`--binds must be ${RULE_SCOPES.join(' or ')} (got "${binds ?? ''}").`);
+    if (binds === 'window' && has('scope')) problems.push('--binds window writes no file (a window rule is for this window only), so it takes no --scope.');
+    if (binds === 'window' && !resolvedWindow.stable) problems.push(`--binds window needs a stable window id. ${windowNotice(resolvedWindow)}`);
+    if (scope === 'working-rule' && binds !== 'window' && !MEMORY_DIR) problems.push('--scope working-rule needs memory_dir (env MAESTRO_MEMORY_DIR) set to the directory that holds the memory files.');
     if (problems.length) die(`decide: refused, nothing written.\n${problems.map((p) => `  - ${p}`).join('\n')}`);
     const usage = usageFromArgs();   // before any write: a missing --model exits here, not after the file is written
+    if (binds === 'window') {
+        const row: LedgerRow = { id: newId(readLedger()), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, why: input.why, ruleScope: 'window', repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), ...usage };
+        if (dryRun) { console.log('decide  (dry run)  window rule, no file'); return; }
+        append(row);
+        render(true);
+        console.log(`decide  window-rule  ${row.id}`);
+        return;
+    }
     const decisionsPath = join(ticketsBase(), 'Projects', decisionsProject, 'DECISIONS.md');
     const entries = readLedger();
     const related = relatedDecision(input.decision, existsSync(decisionsPath) ? readFileSync(decisionsPath, 'utf8') : null, entries);
@@ -708,7 +721,7 @@ function cmdDecide(): void {
     try { written = scope === 'project' ? writeProjectDecision(decisionsPath, input) : writeWorkingRule(MEMORY_DIR, input); } catch (e) { die(`decide: could not write the file, nothing recorded (${e instanceof Error ? e.message : String(e)}).`); }
     if (written.kind === 'unchanged') { console.log(`decide  already recorded  ${written.path}`); return; }
     try {
-        append({ id: newId(entries), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), refs: [written.path], ...usage });
+        append({ id: newId(entries), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), refs: [written.path], ...(binds ? { ruleScope: binds } : {}), ...usage });
     } catch (e) { written.undo(); die(`decide: the ledger row could not be written, the file was put back (${e instanceof Error ? e.message : String(e)}).`); }
     render(true);
     if (related) console.log(`Closest earlier decision (${related.source}): ${related.text}\n  If this reverses it, the new entry should say so.`);
