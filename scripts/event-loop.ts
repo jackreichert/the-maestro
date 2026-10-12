@@ -41,7 +41,8 @@
  * Exit codes: 0 nothing actionable, 10 actionable events (stdout has the digest), 3 quiet-hours stop, 2 usage.
  */
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -327,7 +328,25 @@ export function claimFor(dir: string, window: string | undefined, beforeMark: ()
   beforeMark();
   mark(dir, 'seen', mine.map((e) => e.id), Date.now(), window);
   const after = new Map(readInbox(dir).map((e) => [e.id, e]));
-  return mine.filter((e) => owners.get(e.id) !== undefined || after.get(e.id)?.seenBy === me);
+  const won = mine.filter((e) => owners.get(e.id) !== undefined || after.get(e.id)?.seenBy === me);
+  return won.filter((e) => takeClaim(dir, me, e.id));
+}
+
+/**
+ * Of several callers that share one window id (the event-inject hook and a background `events wait` in one session), exactly one takes an event: the one that
+ * creates its claim file. The `seen` rows cannot tell them apart, since all carry the same window. `wx` is an exclusive create, so the loser gets EEXIST.
+ * The claim is per window and event; another window's claim never blocks this one.
+ */
+function takeClaim(dir: string, window: string, id: string): boolean {
+  const claims = join(dir, 'claims');
+  mkdirSync(claims, { recursive: true });
+  try {
+    writeFileSync(join(claims, createHash('sha256').update(`${window}\0${id}`).digest('hex').slice(0, 32)), '', { flag: 'wx' });
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
 }
 
 /** Blocks until an event for this window is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). `beforePoll` runs before every look (the `digest-wait` alias moves saved digests in there). */
