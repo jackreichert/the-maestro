@@ -1117,6 +1117,12 @@ Tests that spawn the supervisor or the event loop build their environment with `
 
 A session hears the loop only through a background `events wait` or `digest-wait`, and a roll, a compaction or a closed terminal kills that waiter without a word. While either command waits it writes `<event_dir>/waiters/<pid>.json` (pid, window id, start time; no event text) and removes it on exit or on SIGTERM, SIGINT and SIGHUP. A record whose pid is gone is deleted when read, so a waiter that was killed hard never reads as armed. On SessionStart and every UserPromptSubmit, when a loop holds the lock and the window has no live waiter, the hook prints `Waiter: none armed for this session ...` with the exact command to start with `run_in_background`; once a waiter is armed the line stops. The window id is the one the rest of the ledger uses (`CLAUDE_CODE_SESSION_ID`, then `CLAUDE_PID`), so a window with no stable id would see the line every time. The registry is `lib/waiters.ts`.
 
+#### Session launcher (nobody is listening)
+
+When an actionable event has sat unseen for 3 minutes, no waiter is live, and no interactive transcript in `projects_dir` was written in the last 15 minutes, the loop supervisor can start a session by running `wake_launch_command` (an argv; the fixed prompt `the-maestro wake: run session-start, read the unseen digests, then follow the adopted queue.` is appended as its last argument). Launching is off until an install sets the key. At most 4 launches a day, 30 minutes apart; a failed launch counts. With no launch command but a `notify_command`, one rate-limited text goes out instead; with neither, nothing happens. No event text, watch name or path ever reaches the command, and each decision is a row of time, action and reason in `<event_dir>/wake-launch.jsonl`.
+
+On macOS, `wake_launch_command: ["node", "/path/to/the-maestro/scripts/wake-terminal.ts"]` opens a new Terminal window running `claude "<prompt>"` in the container root. It runs in your normal settings and permission mode, and `wake-terminal.ts` refuses every permission flag and any option it does not know.
+
 ### Rolling continuously
 
 A compaction can happen at any moment, so three hooks make it lossless instead of relying on a manual roll. Neither calls a model, and neither is installed for you: `node scripts/hooks/print-settings-snippet.ts [--project <name>] [--vault <ledger-root>]` only prints the `hooks` entries, and you merge them into your own settings file.
