@@ -1170,11 +1170,6 @@ function cmdNotesCheck() {
     process.exitCode = r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0;
 }
 
-/**
- * Writes the day's finished work to a dated note and drops it out of CURRENT.md, leaving a link. Open items are NOT
- * archived: they stay visible until they are actually closed. Commits the ledger when ledger_git_autocommit is on.
- * Returns false only when that commit failed (the archive itself is written).
- */
 /** The roll's guidance for the next session: derived from the ledger (no model call), saved as GUIDANCE.md beside it, and printed. `prime` shows it. */
 function writeRollGuidance(d: string): void {
     const g = groups();
@@ -1183,6 +1178,11 @@ function writeRollGuidance(d: string): void {
     (lines.length ? lines : [`Guidance from the ${d} roll:`, '  Nothing stalled, nothing costly, nothing open.']).forEach((l) => console.log(l));
 }
 
+/**
+ * Writes the day's finished work to a dated note and drops it out of CURRENT.md, leaving a link. Open items are NOT
+ * archived: they stay visible until they are actually closed. Commits the ledger when ledger_git_autocommit is on.
+ * Returns false only when that commit failed (the archive itself is written).
+ */
 function rollArchive(d: string): boolean {
     const g = groups();
     const done = g.doneOn(d);
