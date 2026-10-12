@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { InboxEntry } from './event-inbox.ts';
 import { registerWaiter } from './waiters.ts';
-import { GRACE_MS, MAX_PER_DAY, MIN_GAP_MS, WAKE_NOTIFY_LINE, WAKE_PROMPT, decideWake, emptyWakeState, readWakeState, runWakeTick, wakeLogPath } from './session-wake.ts';
+import { GRACE_MS, MAX_PER_DAY, MIN_GAP_MS, WAKE_PROMPT, decideWake, emptyWakeState, readWakeState, runWakeTick, wakeLogPath } from './session-wake.ts';
 
 const NOW = Date.parse('2026-10-12T12:00:00Z');
 const entry = (over: Partial<InboxEntry> = {}): InboxEntry => ({
   id: 'abc', watch: 'w', type: 'reminder', kind: 'reminder', at: new Date(NOW - GRACE_MS - 1000).toISOString(),
   actionable: true, fields: {}, seen: false, handled: false, seenWindows: [], ...over,
 });
-const base = { now: NOW, entries: [entry()], waiterLive: false, sessionActive: false, state: emptyWakeState(), hasLaunchCommand: true, hasNotifyCommand: true };
+const base = { now: NOW, entries: [entry()], waiterLive: false, sessionActive: false, state: emptyWakeState(), hasLaunchCommand: true };
 
 test('an old unseen actionable event with nobody listening launches', () => {
   assert.deepEqual(decideWake(base), { action: 'launch', reason: 'launched' });
@@ -26,7 +26,7 @@ test('each guard stops a launch for its own reason', () => {
   assert.equal(decideWake({ ...base, entries: [entry({ at: new Date(NOW - 1000).toISOString() })] }).reason, 'within-grace');
   assert.equal(decideWake({ ...base, waiterLive: true }).reason, 'waiter-live');
   assert.equal(decideWake({ ...base, sessionActive: true }).reason, 'session-active');
-  assert.equal(decideWake({ ...base, hasLaunchCommand: false, hasNotifyCommand: false }).reason, 'no-command');
+  assert.equal(decideWake({ ...base, hasLaunchCommand: false }).reason, 'no-command');
 });
 
 test('launches are spaced MIN_GAP_MS apart and capped per day', () => {
@@ -40,25 +40,19 @@ test('launches are spaced MIN_GAP_MS apart and capped per day', () => {
   assert.equal(decideWake({ ...base, state: yesterday }).action, 'launch');
 });
 
-test('with no launch command it falls back to one rate-limited notification, never a launch', () => {
-  const b = { ...base, hasLaunchCommand: false };
-  assert.deepEqual(decideWake(b), { action: 'notify', reason: 'notified' });
-  assert.equal(decideWake({ ...b, state: { launches: [], notifiedAt: NOW - 1000 } }).reason, 'rate-limited');
-});
-
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'wake-'));
 
 test('a tick runs the launch command with the fixed prompt as its last argument and logs it', () => {
   const dir = tmp();
   try {
     const calls: [string, string[]][] = [];
-    const d = runWakeTick({ eventDir: dir, now: NOW, entries: [entry()], launchCommand: ['open-it', '--flag'], notifyCommand: [], transcriptsDir: '', run: (c, a) => { calls.push([c, a]); return { status: 0 }; } });
+    const d = runWakeTick({ eventDir: dir, now: NOW, entries: [entry()], launchCommand: ['open-it', '--flag'], transcriptsDir: '', run: (c, a) => { calls.push([c, a]); return { status: 0 }; } });
     assert.equal(d.action, 'launch');
     assert.deepEqual(calls, [['open-it', ['--flag', WAKE_PROMPT]]]);
     assert.deepEqual(readWakeState(dir).launches, [NOW]);
     const rows = readFileSync(wakeLogPath(dir), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.deepEqual(rows, [{ at: new Date(NOW).toISOString(), action: 'launch', reason: 'launched', ok: true }]);
-    assert.equal(runWakeTick({ eventDir: dir, now: NOW + 60_000, entries: [entry()], launchCommand: ['open-it'], notifyCommand: [], transcriptsDir: '', run: () => { throw new Error('must not run'); } }).reason, 'rate-limited');
+    assert.equal(runWakeTick({ eventDir: dir, now: NOW + 60_000, entries: [entry()], launchCommand: ['open-it'], transcriptsDir: '', run: () => { throw new Error('must not run'); } }).reason, 'rate-limited');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -67,7 +61,7 @@ test('event text, the watch name and the event id never reach the launch argv or
   try {
     const hostile = entry({ watch: 'SENTINEL-watch', id: 'SENTINEL-id', fields: { repo: 'SENTINEL/repo', number: 7 } });
     const calls: string[][] = [];
-    runWakeTick({ eventDir: dir, now: NOW, entries: [hostile], launchCommand: ['x'], notifyCommand: [], transcriptsDir: '', run: (c, a) => { calls.push([c, ...a]); return { status: 0 }; } });
+    runWakeTick({ eventDir: dir, now: NOW, entries: [hostile], launchCommand: ['x'], transcriptsDir: '', run: (c, a) => { calls.push([c, ...a]); return { status: 0 }; } });
     assert.doesNotMatch(JSON.stringify(calls), /SENTINEL/);
     assert.doesNotMatch(readFileSync(wakeLogPath(dir), 'utf8'), /SENTINEL/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -76,10 +70,10 @@ test('event text, the watch name and the event id never reach the launch argv or
 test('a failed launch still counts against the rate limit, and the tick does not throw', () => {
   const dir = tmp();
   try {
-    runWakeTick({ eventDir: dir, now: NOW, entries: [entry()], launchCommand: ['x'], notifyCommand: [], transcriptsDir: '', run: () => ({ status: 1 }) });
+    runWakeTick({ eventDir: dir, now: NOW, entries: [entry()], launchCommand: ['x'], transcriptsDir: '', run: () => ({ status: 1 }) });
     assert.deepEqual(readWakeState(dir).launches, [NOW]);
     assert.equal(JSON.parse(readFileSync(wakeLogPath(dir), 'utf8')).ok, false);
-    const threw = runWakeTick({ eventDir: dir, now: NOW + MIN_GAP_MS, entries: [entry()], launchCommand: ['x'], notifyCommand: [], transcriptsDir: '', run: () => { throw new Error('boom'); } });
+    const threw = runWakeTick({ eventDir: dir, now: NOW + MIN_GAP_MS, entries: [entry()], launchCommand: ['x'], transcriptsDir: '', run: () => { throw new Error('boom'); } });
     assert.equal(threw.action, 'none');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -89,7 +83,7 @@ test('a live waiter, or a fresh interactive transcript, blocks the tick; a headl
   const projects = join(dir, 'projects');
   try {
     mkdirSync(projects);
-    const deps = { eventDir: dir, now: Date.now(), entries: [entry({ at: new Date(Date.now() - GRACE_MS - 1000).toISOString() })], launchCommand: ['x'], notifyCommand: [], transcriptsDir: projects, run: () => ({ status: 0 }) };
+    const deps = { eventDir: dir, now: Date.now(), entries: [entry({ at: new Date(Date.now() - GRACE_MS - 1000).toISOString() })], launchCommand: ['x'], transcriptsDir: projects, run: () => ({ status: 0 }) };
     writeFileSync(join(projects, 'headless.jsonl'), `${JSON.stringify({ type: 'user', entrypoint: 'sdk-cli', timestamp: 't' })}\n`);
     const off = registerWaiter(dir, 'w1');
     assert.equal(runWakeTick(deps).reason, 'waiter-live');
@@ -101,13 +95,10 @@ test('a live waiter, or a fresh interactive transcript, blocks the tick; a headl
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('with only a notify command the tick sends the fixed line once', () => {
+test('with no launch command the tick does nothing and never texts', () => {
   const dir = tmp();
   try {
-    const sent: string[][] = [];
-    const deps = { eventDir: dir, now: NOW, entries: [entry()], launchCommand: [], notifyCommand: ['say'], transcriptsDir: '', run: (c: string, a: string[]) => { sent.push([c, ...a]); return { status: 0 }; } };
-    runWakeTick(deps);
-    runWakeTick({ ...deps, now: NOW + 1000 });
-    assert.deepEqual(sent, [['say', WAKE_NOTIFY_LINE]]);
+    const d = runWakeTick({ eventDir: dir, now: NOW, entries: [entry()], launchCommand: [], transcriptsDir: '', run: () => { throw new Error('must not run'); } });
+    assert.deepEqual(d, { action: 'none', reason: 'no-command' });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
