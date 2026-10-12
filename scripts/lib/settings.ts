@@ -5,7 +5,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { overlayPath, resolvedSettings, userPath, VAULT_ROOT } from '../local-config.ts';
+import { OVERLAY, overlayPath, resolvedSettings, userPath, VAULT_ROOT } from '../local-config.ts';
 import type { ResolvedSetting } from '../local-config.ts';
 
 /** Settings whose value could be a credential or a command line: shown as `(set)` and never printed. */
@@ -70,6 +70,7 @@ export function runSettings(opts: { all: boolean; check: boolean; paths: string[
   const list = resolvedSettings();
   if (!opts.check) {
     console.log(`user config file: ${userPath || '(disabled)'}`);
+    if (OVERLAY) console.log(`overlay file:     ${overlayPath || '(not found)'}`);
     settingsLines(list, opts.all).forEach((l) => console.log(l));
     return 0;
   }

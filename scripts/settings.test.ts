@@ -69,3 +69,34 @@ test('journal.ts settings --check with nothing to read exits 2', () => {
     const r = run('', '--check');
     assert.equal(r.code, 2);
 });
+
+/** Runs `journal.ts settings` with an overlay named in the user file; `skill` is made a sibling skill with its own config.md when given. */
+function runOverlay(name: string, skill?: string) {
+    const home = mkdtempSync(join(tmpdir(), 'st-ov-'));
+    const file = join(home, 'config.md');
+    writeFileSync(file, `\`\`\`maestro-config\noverlay: ${name}\nlease_ttl_minutes: 45\n\`\`\`\n`);
+    let overlayFile = '';
+    if (skill) {
+        mkdirSync(join(home, '.claude', 'skills', skill), { recursive: true });
+        overlayFile = join(home, '.claude', 'skills', skill, 'config.md');
+        writeFileSync(overlayFile, '```maestro-config\ngh_org: acme\n```\n');
+    }
+    const r = spawnSync(process.execPath, [JOURNAL, 'settings'], { encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH ?? '', HOME: home, MAESTRO_LOCAL_CONFIG: file, MAESTRO_UPDATE_CHECK: 'off' } });
+    return { file, overlayFile, code: r.status, out: r.stdout, err: r.stderr };
+}
+
+test('journal.ts settings lists a resolved overlay with its source and the overlay file path', () => {
+    const r = runOverlay('acme-overlay', 'acme-overlay');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`^overlay\\s+acme-overlay\\s+${r.file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+    assert.ok(r.out.includes(`overlay file:     ${r.overlayFile}`), r.out);
+    assert.match(r.out, /gh_org\s+acme\s+.*config\.md/);
+});
+
+test('journal.ts settings shows a misspelt overlay and says its file was not found', () => {
+    const r = runOverlay('misspelt-overlay');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^overlay\s+misspelt-overlay\s+/m);
+    assert.match(r.out, /overlay file:\s+\(not found\)/);
+    assert.match(r.out, /lease_ttl_minutes\s+45/);
+});

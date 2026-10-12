@@ -89,6 +89,8 @@ const pickUserFile = (key: string, fallback = ''): string => {
 /** One setting as resolved: its config key, environment variable (empty for user-file-only gate settings), raw value and where the value came from. */
 export interface ResolvedSetting { key: string; envName: string; value: string; source: string }
 const picked = new Map<string, ResolvedSetting>();
+/** `overlay` is resolved before `pick` exists and can only come from the environment or the user file (never from the overlay it names), so it is recorded here. */
+picked.set('overlay', { key: 'overlay', envName: 'MAESTRO_OVERLAY', value: OVERLAY, source: process.env.MAESTRO_OVERLAY !== undefined ? 'env MAESTRO_OVERLAY' : user.overlay !== undefined ? userPath : 'default' });
 
 /** Every setting this process resolved, sorted by key, with the file or environment variable each value came from. `default` means no source set it. */
 export const resolvedSettings = (): ResolvedSetting[] => [...picked.values()].sort((a, b) => a.key.localeCompare(b.key));
