@@ -28,7 +28,7 @@ import type { LedgerRow } from '../lib/ledger-core.ts';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, STALL_MINUTES, VAULT_ROOT } from '../local-config.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
-export interface Finding { id: string; repo: string; worktree: string; idleMs: number; lastAt: number; last: string; /** Set when the agent wrote its report after the dispatch and then went quiet: finished, not stuck. */ report?: string }
+export interface Finding { id: string; repo: string; worktree: string; idleMs: number; lastAt: number; last: string; /** Set when the agent wrote its report after the dispatch and then went quiet: finished, not stuck. */ report?: string; /** Set when the live-process cap ended the wait and a process is still running in the worktree: it has outlived the cap and is likely hung. */ hung?: string }
 export interface StallState { announced: Record<string, number>; fresh: Finding[]; /** When a live process was last seen in the item's worktree; a suite that just ended counts as progress at its end. */ liveSeen?: Record<string, number> }
 
 export const interval = 300;
@@ -63,6 +63,8 @@ export interface StallIo {
   dispatchFiles(report: string, id: string): { at: number; what: string } | null;
   /** True when a process (other than this one) that started at or after `since` (epoch ms) has its working directory in the worktree, false when none, null when it cannot be told (no lsof). */
   live(dir: string, since: number): boolean | null;
+  /** A short description (pid and command) of one process that `live` counts, or null when there is none or it cannot be told. */
+  liveProcess?(dir: string, since: number): string | null;
 }
 
 const ledgerPath = (): string => join(LEDGER_ROOT || VAULT_ROOT, 'Projects', CONFIGURED_PROJECT || CONTAINER_PROJECT, 'Journal', 'ledger.jsonl');
@@ -74,6 +76,24 @@ function startedSince(run: Run, pid: string, since: number): boolean {
     const started = r.status === 0 ? Date.parse(r.stdout.trim()) : NaN;
     return !Number.isFinite(started) || started >= since - 1000; // lstart has one-second resolution
   } catch { return true; }
+}
+
+/** The processes (other than this one) that started at or after `since` and have their working directory in the worktree; null when lsof cannot be run. */
+function liveProcesses(run: Run, dir: string, since: number): { pid: string; command: string }[] | null {
+  try {
+    const r = run('lsof', ['-a', '-d', 'cwd', '-F', 'pcn']);
+    if (r.status !== 0 && !r.stdout) return null;
+    const root = realpathSync(dir);
+    const found: { pid: string; command: string }[] = [];
+    let pid = '';
+    let command = '';
+    for (const line of r.stdout.split('\n')) {
+      if (line.startsWith('p')) { pid = line.slice(1); command = ''; }
+      else if (line.startsWith('c')) command = line.slice(1);
+      else if (line.startsWith('n') && pid !== String(process.pid) && (line.slice(1) === root || line.slice(1).startsWith(root + sep)) && startedSince(run, pid, since)) found.push({ pid, command });
+    }
+    return found;
+  } catch { return null; }
 }
 
 export function realIo(target: string, run: Run): StallIo {
@@ -105,19 +125,8 @@ export function realIo(target: string, run: Run): StallIo {
       const stamps = names.filter((n) => token.test(n) && !n.startsWith('brief-')).map((n) => ({ at: mtime(join(dirname(report), n)), what: `wrote ${n}` }));
       return stamps.length ? stamps.reduce((a, b) => (b.at > a.at ? b : a)) : null;
     },
-    live: (dir, since) => {
-      try {
-        const r = run('lsof', ['-a', '-d', 'cwd', '-F', 'pn']);
-        if (r.status !== 0 && !r.stdout) return null;
-        const root = realpathSync(dir);
-        let pid = '';
-        for (const line of r.stdout.split('\n')) {
-          if (line.startsWith('p')) pid = line.slice(1);
-          else if (line.startsWith('n') && pid !== String(process.pid) && (line.slice(1) === root || line.slice(1).startsWith(root + sep)) && startedSince(run, pid, since)) return true;
-        }
-        return false;
-      } catch { return null; }
-    },
+    live: (dir, since) => { const p = liveProcesses(run, dir, since); return p === null ? null : p.length > 0; },
+    liveProcess: (dir, since) => { const p = liveProcesses(run, dir, since)?.[0]; return p ? `pid ${p.pid} (${p.command})` : null; },
     activity: (dir) => {
       const gitDir = git(dir, 'rev-parse', '--absolute-git-dir')?.trim();
       const status = git(dir, 'status', '--porcelain', '--untracked-files=all');
@@ -187,7 +196,9 @@ export function check(_target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 
     if (announced[c.id] === lastAt) continue;
     announced[c.id] = lastAt;
     const finished = c.report && use.reportAt(c.report) > c.dispatchedAt ? c.report : undefined;
-    fresh.push({ id: c.id, repo: c.repo, worktree: basename(wt.path), idleMs: ctx.now - lastAt, lastAt, last, ...(finished ? { report: finished } : {}) });
+    // Fire-once means a process that outlived the cap would never be raised again, so the event says so and names it.
+    const hung = !finished && liveAt === ctx.now ? use.liveProcess?.(wt.path, c.dispatchedAt) ?? 'a process' : undefined;
+    fresh.push({ id: c.id, repo: c.repo, worktree: basename(wt.path), idleMs: ctx.now - lastAt, lastAt, last, ...(finished ? { report: finished } : {}), ...(hung ? { hung } : {}) });
   }
   return { announced, fresh, liveSeen };
 }
@@ -199,6 +210,8 @@ export const diff = (_prev: StallState | null, next: StallState): WatchEvent[] =
   next.fresh.map((f) => ({
     summary: f.report
       ? `finished ${f.id} (${f.repo}, worktree ${f.worktree}): report ${f.report} was written and nothing has moved for ${duration(f.idleMs)}, but no hand-back arrived. Read the report first; do not re-brief this item, a new brief writes to the same path and overwrites it.`
+      : f.hung
+      ? `stalled ${f.id} (${f.repo}, worktree ${f.worktree}): no progress for ${duration(f.idleMs)}, and ${f.hung} has run in the worktree past the ${duration(f.idleMs)} cap on live-process progress, so it is likely hung. Do not spare this agent because of that process; it will not be reported again. Run the stall-reset playbook.`
       : `stalled ${f.id} (${f.repo}, worktree ${f.worktree}): no progress for ${duration(f.idleMs)}; newest sign ${f.last} at ${new Date(f.lastAt).toISOString().slice(0, 16)}Z. Run the stall-reset playbook.`,
     actionable: true,
   }));

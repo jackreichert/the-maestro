@@ -28,7 +28,7 @@ function rig(stallMinutes = 90) {
   const reportTimes: Record<string, number> = {};
   let scratchAt = 0;
   let liveNow: boolean | null = false;
-  const io: StallIo = { stallMinutes, rows: () => rows, worktrees: () => wts, activity: () => ({ at: activityAt, what: activityWhat }), reportAt: (p) => reportTimes[p] ?? 0, dispatchFiles: () => (scratchAt ? { at: scratchAt, what: 'wrote report-aaaa.md' } : null), live: () => liveNow };
+  const io: StallIo = { stallMinutes, rows: () => rows, worktrees: () => wts, activity: () => ({ at: activityAt, what: activityWhat }), reportAt: (p) => reportTimes[p] ?? 0, dispatchFiles: () => (scratchAt ? { at: scratchAt, what: 'wrote report-aaaa.md' } : null), live: () => liveNow, liveProcess: () => (liveNow ? 'pid 4242 (sleep)' : null) };
   const append = (row: Record<string, unknown>): LedgerRow => { const r = { id: `r${++n}`, ts: new Date(now).toISOString(), date: '2026-10-11', ...row } as LedgerRow; rows.push(r); return r; };
   const dispatch = (id = 'aaaa', scope = 'maestro-111') => {
     append({ id, kind: 'wip', text: `build ${id}`, repo: 'the-maestro' });
@@ -244,6 +244,15 @@ test('a process that never ends cannot hide a stall: it is reported once the liv
   r.run(10);
   assert.equal(r.events.length, 1, 'stalled after the cap');
   assert.match((r.events as WatchEvent[])[0]?.summary ?? '', /^stalled aaaa /);
+  assert.match((r.events as WatchEvent[])[0]?.summary ?? '', /pid 4242 \(sleep\).*likely hung.*Do not spare/, 'a capped stall says a process outlived the cap and names it');
+  const g = rig();
+  g.dispatch();
+  g.work();
+  g.live(true);
+  g.run(60);
+  g.live(false);
+  g.run(200);
+  assert.doesNotMatch((g.events as WatchEvent[])[0]?.summary ?? '', /hung/, 'a process that ended is an ordinary stall');
   r.run(4000);
   assert.equal(r.events.length, 1, 'and reported once');
   r.work();
