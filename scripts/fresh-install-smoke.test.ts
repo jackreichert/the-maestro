@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,19 +25,32 @@ test('a Quick start that lost its clone line or placeholder is refused', () => {
   assert.throws(() => quickStartBlock('# no section'), /Quick start/);
 });
 
-test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and leaves no step running', async () => {
+test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and kills the running step', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'smoke-signal-'));
   try {
+    // A `git` that records its pid and hangs holds the Quick start's clone step open, whatever the machine or checkout looks like.
+    const bin = join(tmp, 'bin');
+    mkdirSync(bin);
+    const pidfile = join(tmp, 'git.pid');
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\necho $$ > '${pidfile}'\nexec sleep 300\n`, { mode: 0o755 });
+    const scratch = join(tmp, 'tmpdir');
+    mkdirSync(scratch);
     const child = spawn(process.execPath, [fileURLToPath(new URL('./fresh-install-smoke.ts', import.meta.url))], {
-      env: { PATH: process.env.PATH, HOME: tmp, TMPDIR: tmp, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
+      env: { PATH: `${bin}:${process.env.PATH}`, HOME: tmp, TMPDIR: scratch, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
     });
     const closed = new Promise<number | null>((res) => child.on('close', (code) => res(code)));
-    const smokeDirs = () => readdirSync(tmp).filter((d) => d.startsWith('maestro-smoke-'));
-    for (let i = 0; i < 200 && !smokeDirs().length; i++) await new Promise((r) => setTimeout(r, 50));
-    assert.equal(smokeDirs().length, 1, 'the smoke created its temp dir');
+    for (let i = 0; i < 200 && !existsSync(pidfile); i++) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(existsSync(pidfile), 'the clone step started');
+    const stepPid = Number(readFileSync(pidfile, 'utf8').trim());
+    assert.equal(readdirSync(scratch).filter((d) => d.startsWith('maestro-smoke-')).length, 1, 'the smoke created its temp dir');
     child.kill('SIGTERM');
     assert.equal(await closed, 143);
-    assert.deepEqual(smokeDirs(), [], 'the temp dir is gone after SIGTERM');
+    assert.deepEqual(readdirSync(scratch), [], 'the temp dir is gone after SIGTERM');
+    let alive = true;
+    for (let i = 0; i < 40 && alive; i++) {
+      try { process.kill(stepPid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { alive = false; }
+    }
+    assert.equal(alive, false, 'the running step was killed with the smoke');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
