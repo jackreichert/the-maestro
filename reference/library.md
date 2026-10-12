@@ -33,6 +33,7 @@ sources: []                 # optional: learned ids behind the page
 depends-on: []              # optional: pages this one relies on
 supersedes: []              # optional: pages this one replaces
 superseded-by:              # optional, required when status is superseded
+covers: [setup, run-local]  # optional: required page kinds this page satisfies (see Coverage)
 ---
 ```
 
@@ -47,6 +48,10 @@ superseded-by:              # optional, required when status is superseded
 | `components` | only values in the `components` list of `Projects/<repo>/INDEX.md` |
 
 Adding a component is a deliberate edit to that list, so `interim-db`, `interimdb` and `cubhub` cannot all appear. A `decision` page is a pointer to DECISIONS.md and never restates the decision.
+
+## Coverage
+
+Every project library must cover six page kinds, listed once in `scripts/lib/library/coverage.ts`: `setup` (setup from scratch), `run-local`, `test-staging`, `verify-prod` (read-only checks), `deploy`, and `how-it-works` (end to end). A page says which it satisfies in the optional `covers` list; library-check rejects a value outside that list. This is separate from `kind`, which says what sort of page it is. Superseded pages do not count. `node scripts/library-check.ts --coverage [--repo R] [--json]` lists what each project lacks.
 
 The component list is the `components` array in the frontmatter of `Projects/<repo>/INDEX.md`:
 

@@ -60,7 +60,7 @@ export function check(target: string, ctx: Pick<CheckContext, 'now' | 'prev'>, i
       return ensureContinuity({
         decisions: () => live.reduce((sum, t) => { const r = raiseDecisionsFromText(t.text, io.deps, LOOP_USED); return { raised: sum.raised + r.raised, count: sum.count + r.count }; }, { raised: 0, count: 0 }),
         window: 'live', handoffPath: io.handoffPath(date), date,
-        deadlineMs: ctx.now + SNAPSHOT_BUDGET_MS, handoffBudgetMs: HANDOFF_BUDGET_MS,
+        deadlineMs: ctx.now + SNAPSHOT_BUDGET_MS, handoffBudgetMs: HANDOFF_BUDGET_MS, resumable: true,
       }, io.deps);
     });
     if (!ran.ran) return prev;

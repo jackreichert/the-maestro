@@ -28,10 +28,7 @@ import type { AskBusyDetail, ChartsData, EpicsData, LocalReview, PodiumState, St
 interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; local: LocalReview | null; dropped: number }
 
 const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
-  :host { --pad: var(--space-4); }
-  @media (min-width: 640px) { :host { --pad: var(--space-5); } }
-  @media (min-width: 1100px) { :host { --pad: var(--space-7); } }
-  .wrap { max-width: 1360px; margin: 0 auto; padding-inline: var(--pad); }
+  .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
 
   /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
   .skip { position: fixed; inset-block-start: -100px; inset-inline-start: var(--space-3); z-index: 10; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-weight: var(--weight-semibold); text-decoration: none; }
@@ -40,7 +37,8 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   header { padding-block: var(--space-5) var(--space-4); }
   .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
   .brand { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
-  h1 { margin: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-bold); letter-spacing: -0.01em; white-space: nowrap; }
+  /* The wordmark is the one display-face word in the frame; it sits in the text line box, so the header keeps its height. */
+  h1 { margin: 0; font-family: var(--font-display); font-size: var(--text-xl); line-height: var(--leading-md); font-weight: var(--weight-regular); letter-spacing: var(--tracking-display); white-space: nowrap; }
   /* The baton wordmark: the stick is ink, and its tip takes the accent only while something needs you. */
   .baton { width: 20px; height: 20px; margin-right: 6px; vertical-align: -4px; color: var(--text-primary); overflow: visible; }
   .baton .stick { transform-box: view-box; transform-origin: 9.4px 22.6px; }
@@ -75,7 +73,7 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .scope span { vertical-align: baseline; }
   button.tempo {
     font: italic var(--text-sm) / var(--leading-sm) var(--font-serif); letter-spacing: 0.01em; color: var(--text-secondary);
-    background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 4px; cursor: pointer;
+    background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: var(--radius-xs); cursor: pointer;
     text-decoration: underline dotted var(--border-strong); text-underline-offset: 0.25em;
     transition: color var(--dur-fast) var(--ease-out);
   }
@@ -88,7 +86,9 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .blk { color: var(--critical); font-size: var(--text-sm); }
   .source { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
 
-  .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-size: var(--text-2xl); line-height: var(--leading-2xl); letter-spacing: -0.02em; }
+  /* The headline count line is set in the display face: large numerals read first, words recede. One weight, so the
+     count is marked by ink, not bold. A display size on the text line height keeps the header's measured height. */
+  .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-family: var(--font-display); font-size: var(--text-3xl); line-height: var(--leading-2xl); letter-spacing: var(--tracking-display); }
   .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
   button.tile {
     font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer;
@@ -99,14 +99,16 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   @media (hover: hover) { button.tile:hover { background: var(--accent-soft); } }
   button.tile[aria-pressed=true] { background: var(--accent-soft); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.2em; }
   .filter-bar { margin: 0 0 var(--space-4); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
-  .cue .n { font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  .cue .n { font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; color: var(--text-primary); }
   .cue .zero, .cue .zero .n { color: var(--text-muted); font-weight: var(--weight-regular); }
   .cue .tone-accent:not(.zero) .n { color: var(--accent); }
   .cue .tone-critical:not(.zero) .n { color: var(--critical); }
   .cue .tone-success:not(.zero) .n { color: var(--success); }
-  @media (max-width: 640px) { .cue { font-size: var(--text-xl); line-height: var(--leading-xl); gap: var(--space-1) var(--space-4); } }
+  @media (max-width: 640px) { .cue { font-size: var(--text-2xl); line-height: var(--leading-xl); gap: var(--space-1) var(--space-4); } }
 
-  .tabbar { position: sticky; top: 0; z-index: 2; background: var(--surface-page); border-bottom: 1px solid var(--border); }
+  /* The sticky bar is a translucent material over the content scrolling beneath it; opaque where blur is unsupported. */
+  .tabbar { position: sticky; top: 0; z-index: 2; background: var(--material-bar); -webkit-backdrop-filter: var(--material-blur); backdrop-filter: var(--material-blur); border-bottom: var(--hairline); }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .tabbar { background: var(--surface-page); } }
   [role=tablist] { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; padding-top: var(--space-2); }
   [role=tablist]::-webkit-scrollbar { display: none; }
   .more-end [role=tablist] { mask-image: linear-gradient(to right, black calc(100% - 56px), transparent); }
@@ -140,8 +142,8 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .table-wrap { overflow-x: auto; }
   .table-wrap:focus-visible { outline-offset: 4px; }
   table.counts { width: 100%; border-collapse: collapse; font-size: var(--text-sm); line-height: var(--leading-sm); font-variant-numeric: tabular-nums; }
-  table.counts th, table.counts td { padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
-  table.counts thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: 1px solid var(--border); white-space: normal; vertical-align: bottom; }
+  table.counts th, table.counts td { padding: var(--space-2) var(--space-1); border-bottom: var(--hairline); text-align: right; white-space: nowrap; }
+  table.counts thead th { color: var(--text-muted); font-weight: var(--weight-medium); font-size: var(--text-xs); line-height: var(--leading-xs); border-top: var(--hairline); white-space: normal; vertical-align: bottom; }
   table.counts th:first-child, table.counts td:first-child { text-align: left; padding-left: 0; }
   table.counts th:last-child, table.counts td:last-child { padding-right: 0; }
   table.counts tbody th { font-weight: var(--weight-medium); }
@@ -161,18 +163,18 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   @keyframes grow { from { transform: scaleX(0.4); opacity: 0; } }
 
   /* Placeholder blocks breathe in opacity (composited, no repaint per frame), not a moving gradient. */
-  .sk { display: block; border-radius: var(--radius-sm); background: var(--surface-2); animation: breathe 1.6s var(--ease-in-out) infinite; }
+  .sk { display: block; border-radius: var(--radius-sm); background: var(--surface-2); animation: breathe var(--dur-breathe) var(--ease-in-out) infinite; }
   @keyframes breathe { 50% { opacity: 0.5; } }
   @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
   /* Offsets match the header's real metrics at rest (brand row, scope line, cue line, tab bar), so nothing jumps on load. */
   .sk-head { padding-block: 43px 0; }
   .sk-scope { display: block; margin-top: 47px; }
   .sk-scope + .staff { margin-top: 14px; }
-  .sk-tabs { margin-top: 29px; border-bottom: 1px solid var(--border); padding-block: 15px; }
+  .sk-tabs { margin-top: 29px; border-bottom: var(--hairline); padding-block: 15px; }
   .sk-tabs .wrap { display: flex; gap: var(--space-6); }
   .sk-panel { padding-block: var(--space-6); }
-  .sk-rows { display: block; border-top: 1px solid var(--border); }
-  .sk-row { display: flex; align-items: center; gap: var(--space-3); height: 41px; border-bottom: 1px solid var(--border); }
+  .sk-rows { display: block; border-top: var(--hairline); }
+  .sk-row { display: flex; align-items: center; gap: var(--space-3); height: 41px; border-bottom: var(--hairline); }
   .sk-hint { display: block; margin-top: -4px; }
   .sk-hint .sk-line { height: 8px; max-width: 90%; }
   .sk-id { width: 36px; height: 16px; flex: none; }
@@ -184,7 +186,7 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
   .staff-line:nth-child(3) { top: 12px; }
   .staff-line:nth-child(4) { top: 18px; }
   .staff-line:nth-child(5) { top: 24px; }
-  .glide { position: absolute; inset: 0; animation: glide 1.6s var(--ease-in-out) infinite alternate; }
+  .glide { position: absolute; inset: 0; animation: glide var(--dur-breathe) var(--ease-in-out) infinite alternate; }
   .note { position: absolute; left: 0; top: 12.5px; width: 9px; height: 6px; border-radius: 50%; background: var(--text-muted); transform: rotate(-20deg); }
   @keyframes glide { to { transform: translateX(calc(100% - 9px)); } }
   @media (prefers-reduced-motion: reduce) { .glide { animation: none; } }
@@ -193,7 +195,7 @@ const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
 
   .problem { max-width: 60ch; margin: var(--space-8) auto; padding: var(--space-6); background: var(--surface-1); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); }
   .problem h2 { margin: 0 0 var(--space-2); font-size: var(--text-lg); line-height: var(--leading-lg); }
-  .problem h2::before { content: '⊘'; color: var(--critical); margin-right: var(--space-2); }
+  .problem h2::before { content: var(--glyph-critical); color: var(--critical); margin-right: var(--space-2); }
   .problem p { margin: 0 0 var(--space-4); color: var(--text-secondary); }
   .problem .detail { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-primary); background: var(--surface-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 `;

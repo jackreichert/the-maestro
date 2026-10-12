@@ -20,6 +20,7 @@ import { mergedRows, type PrRef } from './lib/pr-refs.ts';
 import { gitBranches, queueHygiene } from './lib/queue-hygiene.ts';
 import { openStore } from './lib/journal/store.ts';
 import { parseArgs } from './lib/journal/args.ts';
+import { printJson } from './lib/json-out.ts';
 
 const ghBin = (): string => process.env.MAESTRO_GH_BIN || 'gh';
 
@@ -54,7 +55,7 @@ export function main(argv: string[]): number {
         return lists.get(dir) as string[];
     };
     const built = queueHygiene(items.filter(isQueued), new Date().toISOString().slice(0, 10), TRACKER_KEY_PATTERN, branchesOf).built;
-    if (has('json')) { console.log(JSON.stringify({ merged, built }, null, 2)); return 0; }
+    if (has('json')) { printJson({ merged, built }); return 0; }
     console.log(`Open rows naming a merged PR (${merged.length}); nothing was closed:`);
     for (const m of merged) console.log(`  ${m.id}  ${m.text}\n      ${m.prs.map((p) => `${p.ref.repo}#${p.ref.number} ${p.state}`).join(', ')}${m.allMerged ? '' : '  (other PRs on this row are not merged)'}\n      close if you agree: journal.ts done ${m.id}`);
     console.log(`\nQueued rows with a built branch (${built.length}):`);

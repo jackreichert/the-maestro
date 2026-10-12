@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { fold } from './lib/ledger-core.ts';
 import { openStore } from './lib/journal/store.ts';
+import { printJson } from './lib/json-out.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { renderRetro, weeklyRetro } from './lib/weekly-retro.ts';
 
@@ -35,7 +36,7 @@ export function main(argv: string[]): number {
     const entries = store.readLedger();
     const { items, hidden } = fold(entries, store.loadRegistry());
     const retro = weeklyRetro(entries, items.filter((i) => !hidden.has(String(i.id))), now, days, staleDays);
-    console.log(has('json') ? JSON.stringify(retro, null, 2) : renderRetro(retro));
+    if (has('json')) printJson(retro); else console.log(renderRetro(retro));
     return 0;
 }
 

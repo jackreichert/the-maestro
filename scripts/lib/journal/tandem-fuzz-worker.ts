@@ -1,7 +1,9 @@
+
 // Worker for tandem-fuzz.test.ts: one "window" writing handoffs and ledger rows into a shared scratch root as fast as it can.
 // Args: <vault> <window> <startAtMs> <handoffs> <rows>. Prints one JSON line: the handoff names it created.
 import { openStore } from './store.ts';
 import { writeHandoffSeries } from './handoff.ts';
+import { printJson } from '../json-out.ts';
 
 const [vault, window, startAt, handoffs, rows] = process.argv.slice(2) as [string, string, string, string, string];
 const store = openStore({ vault, project: 'fuzz', dryRun: false, window });
@@ -15,4 +17,4 @@ for (let i = 0; i < Math.max(Number(handoffs), Number(rows)); i++) {
         if (got) created.push(got.name);
     }
 }
-console.log(JSON.stringify({ window, created }));
+printJson({ window, created }, { compact: true });
