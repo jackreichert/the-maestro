@@ -201,8 +201,8 @@ export function curate(env: WriteEnv, holder: string | undefined, learnedId: str
     const problems = pageProblems(env.vault, page, bytes.toString('utf8'));
     if (problems.length) return refuse(1, ...problems, 'the page on disk fails the checks; nothing written');
     const sha = sha256(bytes);
-    // A refresh blesses the disk as composer output, so it only does that for bytes a composer `write` left. Anything else is a hand edit (or an unrecorded page) and needs the explicit override.
-    if (how.refresh && !how.acceptHandEdit && env.lastWrites.get(page) !== sha) return refuse(1, 'the page on disk is not what the last composer `write` left (a hand edit, or no write recorded): --refresh would record it as composer output. Run `write` first, or pass --accept-hand-edit to record the disk as it is; nothing written');
+    // Any `--page` curate (first close or refresh) blesses the disk as composer output, so it only does that for bytes a composer `write` left. Anything else is a hand edit (or an unrecorded page) and needs the explicit override.
+    if (!how.acceptHandEdit && env.lastWrites.get(page) !== sha) return refuse(1, 'the page on disk is not what the last composer `write` left (a hand edit, or no write recorded): curate --page would record it as composer output. Run `write` first (an identical-bytes write records the sha), or pass --accept-hand-edit to record the disk as it is; nothing written');
     row.page = page;
     row.pageSha = sha;
   }
