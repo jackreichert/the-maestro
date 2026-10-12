@@ -259,7 +259,7 @@ import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
 import { toolCommand } from './lib/tool-bin.ts';
-import { printJson } from './lib/json-out.ts';
+import { dryRunJson, printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'miss', 'curated', 'rework'];
@@ -2157,7 +2157,7 @@ function cmdClaim() {
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
     const scope = claimScope(arg('worktree') || arg('branch'));
     const claim = { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why: arg('why') || undefined };
-    if (dryRun) { console.log('[dry-run]', JSON.stringify(claim)); return; }
+    if (dryRun) { console.log('[dry-run]', dryRunJson(claim)); return; }
     const taken = acquireRepoClaim(claimsDir, repo, scope, claim);
     if (taken.status !== 'taken') {
         console.error(`${claimKey(repo, scope)} is already claimed by ${describeClaim(taken.held)}${taken.status === 'conflict' ? ` (claim ${taken.key} conflicts: a whole-repo claim, with no --worktree or --branch, conflicts with every claim on the repo)` : ''}.${taken.held && claimStaleness(taken.held, Number(arg('stale-hours', '12'))).stale ? ' It looks stale: `release --force` it if you are sure.' : ''}`);
@@ -2730,7 +2730,7 @@ function cmdPriorities() {
     if (sub === 'set') {
         // A past day is refused before anything is written: the container list is a single file, so writing it would replace today's.
         if (day < priorityDay()) die(`refusing to set priorities for ${day}: it is before today (${priorityDay()})`);
-        if (dryRun) { console.log('[dry-run]', JSON.stringify(words.map(parsePriority))); return; }
+        if (dryRun) { console.log('[dry-run]', dryRunJson(words.map(parsePriority))); return; }
         const items = words.map(parsePriority);
         try { console.log(`wrote ${writePriorities(dirPath, day, items, PRIORITIES_MAX)}`); } catch (e) { die(errorMessage(e)); }
         writeProjectFiles(dirPath, day, items);
@@ -2802,7 +2802,7 @@ function cmdWeek() {
     if (!dirPath) die('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
     const day = arg('date', priorityDay());
     if (sub === 'set') {
-        if (dryRun) { console.log('[dry-run]', JSON.stringify(words.map(parsePriority))); return; }
+        if (dryRun) { console.log('[dry-run]', dryRunJson(words.map(parsePriority))); return; }
         try { console.log(`wrote ${writeWeek(dirPath, day, words.map(parsePriority))}`); } catch (e) { die(errorMessage(e)); }
     } else if (sub === 'show') {
         const state = readWeek(dirPath, day);
@@ -2872,7 +2872,7 @@ function cmdStanding() {
         if (!id) die('standing add needs an id. Usage: journal.ts standing add <id> --trigger "..." --action "..." --who "..." (--check <name> | --every-hours N)');
         if (!SAFE_ID.test(row.id)) die('standing add: the id must be lowercase words joined by hyphens (letters only, up to six words), so it can never carry typed text. Usage: journal.ts standing add <id> --trigger "..." --action "..." --who "..." (--check <name> | --every-hours N)');
         if (problem) die(`standing add: ${problem}. Usage: journal.ts standing add <id> --trigger "..." --action "..." --who "..." (--check <name> | --every-hours N)`);
-        if (dryRun) { console.log('[dry-run]', JSON.stringify(row)); return; }
+        if (dryRun) { console.log('[dry-run]', dryRunJson(row)); return; }
         appendEvent(file, { op: 'add', at, ...row });
         console.log(`standing  ${row.id}  added`);
     } else if (sub === 'done') {
@@ -2881,7 +2881,7 @@ function cmdStanding() {
         if (state.row.check !== undefined && state.status !== 'ok') die(`${state.row.id} is not done: its check says ${state.detail}. Fix that; \`standing done\` will pass once the check does.`);
         const evidence = [state.row.check !== undefined ? state.detail : '', arg('evidence')].filter(Boolean).join('; ');
         if (!evidence) die(`${state.row.id} has no runtime check, so \`done\` needs --evidence "<what you did, with a link or id>".`);
-        if (dryRun) { console.log('[dry-run]', JSON.stringify({ op: 'ran', id, evidence })); return; }
+        if (dryRun) { console.log('[dry-run]', dryRunJson({ op: 'ran', id, evidence })); return; }
         appendEvent(file, { op: 'ran', id: state.row.id, evidence, at });
         console.log(`standing  ${state.row.id}  done  (${evidence})`);
     } else if (sub === 'retire') {

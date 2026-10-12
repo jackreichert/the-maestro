@@ -33,3 +33,8 @@ function walk(value: unknown): unknown {
 export function printJson(value: unknown, opts: { compact?: boolean } = {}): void {
   console.log(JSON.stringify(withholdJson(value), null, opts.compact ? undefined : 2));
 }
+
+/** One compact line of JSON for a `[dry-run]` echo, with secret-shaped strings withheld: stored values can reach these lines, not only what the caller typed. */
+export function dryRunJson(value: unknown): string {
+  return JSON.stringify(withholdJson(value));
+}

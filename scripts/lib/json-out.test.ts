@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { withholdJson } from './json-out.ts';
+import { dryRunJson, withholdJson } from './json-out.ts';
 import { WITHHELD } from './withhold.ts';
 
 const token = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;
@@ -51,6 +51,11 @@ test('withholdJson lets status words under secret-sounding keys through, and sti
   assert.deepEqual(withholdJson(words), words);
   const fake = 'fake_pw_123abc';   // placeholder fixture, not a secret
   assert.deepEqual(withholdJson({ PassWord: fake, api_key: fake }), { PassWord: WITHHELD, api_key: WITHHELD });
+});
+
+test('dryRunJson is one line of JSON with secret-shaped values withheld', () => {
+  const line = dryRunJson({ text: `in ${token}`, n: 1 });
+  assert.equal(line, `{"text":"${WITHHELD}","n":1}`);
 });
 
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..');
