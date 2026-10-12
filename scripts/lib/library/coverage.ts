@@ -24,9 +24,12 @@ export interface ProjectCoverage {
   missing: string[];
 }
 
-/** One row per project that has a library page, sorted by repo. `coversOf` is the `covers` list of a page path. */
-export function coverage(pages: LibraryPage[], coversOf: (path: string) => string[]): ProjectCoverage[] {
-  const byRepo = new Map<string, LibraryPage[]>();
+/**
+ * One row per project, sorted by repo: every project in `projects` (folders that have a CONTEXT.md or INDEX.md) plus any repo that has a page.
+ * A project with no pages gets a `pages: 0` row missing every kind. `coversOf` is the `covers` list of a page path.
+ */
+export function coverage(pages: LibraryPage[], coversOf: (path: string) => string[], projects: string[] = []): ProjectCoverage[] {
+  const byRepo = new Map<string, LibraryPage[]>(projects.map((repo) => [repo, []]));
   for (const p of pages) byRepo.set(p.repo, [...(byRepo.get(p.repo) ?? []), p]);
   return [...byRepo.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([repo, ps]) => {
     const live = ps.filter((p) => p.status !== 'superseded');

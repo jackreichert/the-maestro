@@ -10,7 +10,7 @@
  *
  * With no page arguments it reads every page under Projects/<repo>/Knowledge (all of it) and Projects/<repo>/Runbooks (only files whose
  * frontmatter says `type: library`), one subfolder deep. Named pages (absolute, or relative to the vault) are checked instead.
- * `--coverage` is a separate report too: for each project with a library it lists which required page kinds (lib/library/coverage.ts) no page declares in its `covers` frontmatter list; it always exits 0 (2 on a usage error).
+ * `--coverage` is a separate report too: for each project (a folder with a CONTEXT.md or INDEX.md, or any with library pages; no pages means missing all six) it lists which required page kinds (lib/library/coverage.ts) no page declares in its `covers` frontmatter list; it always exits 0 (2 on a usage error, including a `--repo` folder that does not exist).
  * `--stale` is a separate report, not a rule: for each page it asks git whether a file the facts cite as evidence changed after `verified-at`
  * (lib/library/stale.ts), looking in <code-root>/<repo> (default $MAESTRO_CONTAINER_ROOT). It lists stale pages, then those it could not check and why,
  * and always exits 0 (a stale page never fails a roll); 2 on a usage error.
@@ -169,10 +169,12 @@ function mainStale(o: Options): number {
 }
 
 function mainCoverage(o: Options): number {
+  if (o.repo && !existsSync(join(o.vault, 'Projects', o.repo))) { console.error(`library-check: no project "${o.repo}" under ${join(o.vault, 'Projects')}`); return 2; }
   const pages = readLibrary(o.vault, o.repo);
-  if (!pages.length) { console.error('library-check: no library pages found; nothing was checked'); return 2; }
+  // A project with no library yet is the worst case, so it gets a row (a folder counts as a project when it has a CONTEXT.md or INDEX.md).
+  const projects = (o.repo ? [o.repo] : dirs(join(o.vault, 'Projects'))).filter((p) => ['CONTEXT.md', 'INDEX.md'].some((f) => existsSync(join(o.vault, 'Projects', p, f))));
   const covers = new Map(pages.map((p) => [p.path, list(parsePage(p.path, readFileSync(join(o.vault, p.path), 'utf8')), 'covers')]));
-  const rows = coverage(pages, (path) => covers.get(path) ?? []);
+  const rows = coverage(pages, (path) => covers.get(path) ?? [], projects);
   if (o.json) console.log(JSON.stringify(rows, null, 2)); else renderCoverage(rows).forEach((l) => console.log(l));
   return 0;
 }

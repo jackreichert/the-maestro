@@ -30,15 +30,33 @@ test('the required list is the six documented kinds, once', () => {
   assert.equal(new Set(COVERS).size, REQUIRED_PAGES.length);
 });
 
-test('--json lists missing kinds per project with a library, ignoring superseded pages and library-less projects', () => {
+test('--json lists missing kinds per project with a library, ignoring superseded pages, and lists a library-less project as missing all six', () => {
   const r = run(vault(FILES), '--json');
   assert.equal(r.status, 0, r.stderr);
   const rows = JSON.parse(r.stdout);
-  assert.deepEqual(rows.map((x: { repo: string }) => x.repo), ['alpha', 'beta']);
+  assert.deepEqual(rows.map((x: { repo: string }) => x.repo), ['alpha', 'beta', 'gamma']);
   assert.deepEqual(rows[0].missing, ['test-staging', 'verify-prod', 'deploy']);
   assert.deepEqual(rows[0].covered['setup'], ['Projects/alpha/Runbooks/a.md']);
   assert.equal(rows[0].pages, 2);
   assert.deepEqual(rows[1].missing, COVERS);
+  assert.deepEqual(rows[2], { repo: 'gamma', pages: 0, covered: {}, missing: COVERS });
+});
+
+test('a project with no pages shows as missing 6/6 in text, and stray folders without CONTEXT.md or INDEX.md are skipped', () => {
+  const r = run(vault({ ...FILES, 'Projects/stray/notes.md': 'x', 'Projects/delta/INDEX.md': 'i' }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /gamma {2}missing 6\/6: Setup from scratch/);
+  assert.match(r.stdout, /delta {2}missing 6\/6/);
+  assert.doesNotMatch(r.stdout, /stray/);
+  assert.match(r.stdout, /4 projects, 4 with missing pages/);
+});
+
+test('--repo naming an existing project with no pages returns its row, exit 0', () => {
+  const root = vault(FILES);
+  const r = run(root, '--repo', 'gamma', '--json');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), [{ repo: 'gamma', pages: 0, covered: {}, missing: COVERS }]);
+  assert.match(run(root, '--repo', 'gamma').stdout, /gamma {2}missing 6\/6/);
 });
 
 test('text output names the missing pages and --repo narrows it', () => {
@@ -54,7 +72,8 @@ test('a project that covers everything reports complete', () => {
 });
 
 test('usage errors exit 2', () => {
-  assert.equal(run(vault({ 'Projects/x/CONTEXT.md': 'n' })).status, 2);
+  assert.equal(run(vault({ 'Projects/x/CONTEXT.md': 'n' }), '--repo', 'nope').status, 2);
+  assert.equal(run(vault({ 'Projects/x/CONTEXT.md': 'n' })).status, 0);
   assert.equal(typeof parseOptions(['--coverage', '--stale']), 'string');
   assert.equal(typeof parseOptions(['--coverage', 'page.md']), 'string');
   assert.equal(run(vault(FILES), '--repo', '../x').status, 2);
