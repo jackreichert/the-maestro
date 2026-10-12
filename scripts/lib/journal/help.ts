@@ -36,7 +36,7 @@ export const GLOBAL_FLAGS: Flag[] = [
 const LOG_FLAGS: Flag[] = [
         DATE, ['--kind wip|done|blocked|question|decision|note|rework', 'row kind (default note)'], ['--stream <name>', 'file under a workstream'], ['--repo <name>', 'repo the row is about'], ['--ticket <id>', 'ticket the row is about'],
         ['--gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>', 'with --kind blocked: what the item waits for'], ['--approval standing|one-off', 'with --kind decision: an approval the user granted'],
-        ['--scope "<what it covers>"', 'with --approval'], ['--ref <file-or-url>', 'memory file or URL behind an approval, repeatable'], ['--transitioned KEY[,KEY]', 'tracker tickets that were moved'], ...MARK];
+        ['--scope "<what it covers>"', 'with --approval'], ['--scope window|global', 'on a decision or note without --approval: window binds only this window, global binds all (no flag reads as global)'], ['--ref <file-or-url>', 'memory file or URL behind an approval, repeatable'], ['--transitioned KEY[,KEY]', 'tracker tickets that were moved'], ...MARK];
 
 /** The `--project` line, printed under every command that is not marked `noProject`. */
 const PROJECT_FLAG: Flag = ['--project <name>', 'required unless the `project` setting or MAESTRO_PROJECT names one'];
@@ -50,10 +50,10 @@ export const COMMANDS: CommandHelp[] = [
     { name: 'ask', args: '"<question>"', summary: 'Put a question or a run-this block on the awaiting-you board.', flags: [
         ['--kind question|decision', 'a decision still pending'], ['--stream <name>', 'workstream'], ['--repo <name>', 'repo the ask is about'], ['--ticket <id>', 'ticket'], ['--how-do-i', 'the question is a how-do-I the library could not answer: also logged as a miss'], ['--recommend "<text>"', 'what you would do'], [`--door ${oneOf(DOORS)}`, 'reversibility'],
         ['--default "<text>"', 'what happens if silent (two-way only)'], ['--decide-by <date|2d|6h|1w>', 'deadline (alias --by)'], [`--class ${oneOf(CLASSES)}`, 'urgency class'], ['--paste <file>', 'a run-this ask: the block file'], ...MARK], notes: ASK_USAGE },
-    { name: 'rule', args: '"<text>"', summary: 'Record a decision already made; refuses unless every --ref is an existing file.', flags: [['--ref <file>', 'required: an existing supporting file; repeat it, or comma-separate, for several'], ...MARK] },
+    { name: 'rule', args: '"<text>"', summary: 'Record a decision already made; refuses unless every --ref is an existing file.', flags: [['--ref <file>', 'required: an existing supporting file; repeat it, or comma-separate, for several'], ['--scope window|global', 'window: binds only the window that wrote it (an instruction given in one window); global binds all'], ...MARK] },
     { name: 'decide', args: '"<decision>"', summary: 'Write a decision down the turn it is said.', flags: [
         ['--why "<rationale>"', 'required'], ['--rejected "<alt>"', 'alternative turned down'], ['--consequence "<text>"', 'what follows from it'], ['--scope project|working-rule', 'where it is written (default project)'],
-        ['--topic <slug>', 'topic of a working rule'], ['--repo <project>', 'project whose DECISIONS.md gets it'], ['--msg "[msg <ts> <6 hex>]"', 'the one decision-scan marker, exactly as printed, so that message is not raised again'], ['--new', 'always write a new entry'], ...MARK] },
+        ['--binds window|global', 'window: a rule for this window only, recorded as a ledger row with no file (an instruction such as "pause X here today"); global: written as usual and marked global'], ['--topic <slug>', 'topic of a working rule'], ['--repo <project>', 'project whose DECISIONS.md gets it'], ['--msg "[msg <ts> <6 hex>]"', 'the one decision-scan marker, exactly as printed, so that message is not raised again'], ['--new', 'always write a new entry'], ...MARK] },
     { name: 'learned', args: '"<claim>"', summary: 'Record one fact someone established, with evidence.', flags: [
         [`--kind ${oneOf(LEARNED_KINDS)}`, 'required'], ['--applies-to <repo:component[:env]>', 'required'], ['--evidence "<text>"', 'required'], ['--verified-at "<sha | date how>"', 'required'],
         [`--confidence ${oneOf(CONFIDENCES)}`, 'required'], ['--supersedes <id|path>', 'an earlier learned id or page path'], ...MARK], notes: LEARNED_USAGE },

@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { activeDeferrals, isOpen, isQueued, isInFlight } from '../ledger-core.ts';
 import type { LedgerItem, LedgerRow, fold as foldRows } from '../ledger-core.ts';
+import { visibleTo } from './scope.ts';
 import type { Args } from './args.ts';
 import type { Store } from './store.ts';
 import { fmt, slug } from './format.ts';
@@ -19,6 +20,8 @@ export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | '
     dryRun: boolean;
     /** Today's priorities as plain lines, for the top of CURRENT.md. Absent or empty: no section. */
     priorities?: () => string[];
+    /** The window reading: another window's window-scoped rules and notes are left out (lib/journal/scope.ts). Absent: nothing is left out. */
+    window?: string;
 }
 type Streamed = { stream?: string };
 /** The ledger folded into the lists the board shows; the `*On` functions answer for one day. */
@@ -77,7 +80,7 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
     const idOf = (i: LedgerItem): string => i.id ?? '';
     const entries = readLedger();
     const folded = fold(entries);
-    const items = includeArchived ? folded.items : folded.items.filter((i) => !folded.hidden.has(idOf(i)));
+    const items = (includeArchived ? folded.items : folded.items.filter((i) => !folded.hidden.has(idOf(i)))).filter((i) => visibleTo(i, ctx.window));
     const deferred = activeDeferrals(entries, today());
     const open = items.filter((i) => isOpen(i) && !deferred.has(idOf(i)));
     return {

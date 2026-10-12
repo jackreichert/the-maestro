@@ -191,6 +191,8 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
+import { RULE_SCOPES, isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
+import type { RuleScope } from './lib/journal/scope.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
@@ -308,9 +310,9 @@ const now = (): string => new Date().toISOString();
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
-const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
+const triageCtx = () => ({ readLedger, fold, today, resolveRefFile, window: windowId });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
-const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe });
+const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe, rules: () => ruleLines(readLedger(), windowId) });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
 const verifyLedger = () => verifyLedgerIn(verifyCtx());
 const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
@@ -443,10 +445,23 @@ const refsFromArgs = () => refFlagValues().flatMap((v) => v.split(',')).map((s) 
  * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
  * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
  */
+/**
+ * `--scope window|global` on a rule or note: who the row binds (lib/journal/scope.ts). With --approval, --scope keeps its older meaning
+ * (the approval's own scope text), so no ruleScope is set. A bad value or a kind that cannot carry it exits 1 before anything is written.
+ */
+function ruleScopeFor(kind: string): { ruleScope?: RuleScope } {
+    if (!has('scope') || has('approval')) return {};
+    const parsed = parseRuleScope(arg('scope'), kind);
+    if ('error' in parsed) return die(parsed.error);
+    // An unstable id (the per-shell pid) changes on every call, so a window rule written under it could never be matched by its own window again.
+    if (parsed.scope === 'window' && !resolvedWindow.stable) die(`--scope window needs a stable window id, and ${windowNotice(resolvedWindow)}`);
+    return { ruleScope: parsed.scope };
+}
+
 function parseApproval(): { approval?: string; scope?: string } {
     const approval = arg('approval');
     if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
-    if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
+    if (!approval) return has('scope') && !isRuleScope(arg('scope')) ? die('--scope only goes with --approval (or is window|global on a decision or note).') : {};
     if (!APPROVALS.has(approval)) die(`--approval must be one of: ${[...APPROVALS].join(', ')} (got "${approval}")`);
     return { approval, scope: arg('scope') || undefined };
 }
@@ -585,6 +600,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         gate,
         transitioned: transitionedFlag(),
         ...askFields,
+        ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
     };
@@ -679,9 +695,22 @@ function cmdDecide(): void {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(decisionsProject) || decisionsProject.includes('..')) problems.push('--repo must be a plain project name (letters, digits, . _ -), since it names the DECISIONS.md folder.');
     const marker = arg('msg') || '';   // the scan's [msg <ts> <hash>] marker: on the row text, it tells the decision scan this message is answered
     if (marker && !/^\[msg \S+ [0-9a-f]{6}\]$/.test(marker)) problems.push('--msg must be the scan marker exactly as printed, like "[msg 2026-10-11T10:00:00.000Z 1a2b3c]".');
-    if (scope === 'working-rule' && !MEMORY_DIR) problems.push('--scope working-rule needs memory_dir (env MAESTRO_MEMORY_DIR) set to the directory that holds the memory files.');
+    // --binds says who the decision binds (lib/journal/scope.ts). `window` is a rule for this window only, so it is a ledger row and no file.
+    const binds = has('binds') ? arg('binds') : null;
+    if (has('binds') && !isRuleScope(binds)) problems.push(`--binds must be ${RULE_SCOPES.join(' or ')} (got "${binds ?? ''}").`);
+    if (binds === 'window' && has('scope')) problems.push('--binds window writes no file (a window rule is for this window only), so it takes no --scope.');
+    if (binds === 'window' && !resolvedWindow.stable) problems.push(`--binds window needs a stable window id. ${windowNotice(resolvedWindow)}`);
+    if (scope === 'working-rule' && binds !== 'window' && !MEMORY_DIR) problems.push('--scope working-rule needs memory_dir (env MAESTRO_MEMORY_DIR) set to the directory that holds the memory files.');
     if (problems.length) die(`decide: refused, nothing written.\n${problems.map((p) => `  - ${p}`).join('\n')}`);
     const usage = usageFromArgs();   // before any write: a missing --model exits here, not after the file is written
+    if (binds === 'window') {
+        const row: LedgerRow = { id: newId(readLedger()), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, why: input.why, ruleScope: 'window', repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), ...usage };
+        if (dryRun) { console.log('decide  (dry run)  window rule, no file'); return; }
+        append(row);
+        render(true);
+        console.log(`decide  window-rule  ${row.id}`);
+        return;
+    }
     const decisionsPath = join(ticketsBase(), 'Projects', decisionsProject, 'DECISIONS.md');
     const entries = readLedger();
     const related = relatedDecision(input.decision, existsSync(decisionsPath) ? readFileSync(decisionsPath, 'utf8') : null, entries);
@@ -692,7 +721,7 @@ function cmdDecide(): void {
     try { written = scope === 'project' ? writeProjectDecision(decisionsPath, input) : writeWorkingRule(MEMORY_DIR, input); } catch (e) { die(`decide: could not write the file, nothing recorded (${e instanceof Error ? e.message : String(e)}).`); }
     if (written.kind === 'unchanged') { console.log(`decide  already recorded  ${written.path}`); return; }
     try {
-        append({ id: newId(entries), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), refs: [written.path], ...usage });
+        append({ id: newId(entries), ts: now(), date: input.date, kind: 'decision', text: marker ? `${input.decision} ${marker}` : input.decision, repo: arg('repo') || undefined, ticket: arg('ticket') || undefined, stream: streamOrNone(arg('stream')), refs: [written.path], ...(binds ? { ruleScope: binds } : {}), ...usage });
     } catch (e) { written.undo(); die(`decide: the ledger row could not be written, the file was put back (${e instanceof Error ? e.message : String(e)}).`); }
     render(true);
     if (related) console.log(`Closest earlier decision (${related.source}): ${related.text}\n  If this reverses it, the new entry should say so.`);
@@ -1073,7 +1102,7 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[boardQueueHygiene(g, queueClockDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, queueClockDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
@@ -1084,6 +1113,7 @@ function cmdStatus() {
     };
     windowWarning().forEach((l) => console.log(l));
     console.log(`Ledger — ${d}`);
+    ruleLines(readLedger(), windowId).forEach((l) => console.log(l));
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
