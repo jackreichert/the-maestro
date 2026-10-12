@@ -23,7 +23,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, statusDirFor } from '../local-config.ts';
-import { recordAnswer } from '../lib/journal/answers.ts';
+import { latestRow, recordAnswer } from '../lib/journal/answers.ts';
 import { openStore } from '../lib/journal/store.ts';
 import type { AnswerStore } from '../lib/journal/answers.ts';
 import { extractFields, unprocessed } from '../lib/status-page/inline.ts';
@@ -91,13 +91,18 @@ export type RecorderFor = (target: string) => Recorder | null;
 
 const RECORD_USAGE = { model: 'unrecorded', used: ['tool:status-watch'] };
 
-/** Records each answer, tick (as `(ticked)`, when it came with no words) and discuss mark against its open ask, one idempotent row each. An ask that is no longer open takes nothing: the event still fires. */
+/** Records each answer, tick (as `(ticked)`, when it came with no words and the ask has no answer yet) and discuss mark against its open ask, one idempotent row each. An ask that is no longer open takes nothing: the event still fires. */
 export function recordEdits(store: AnswerStore, edits: Unprocessed, nowMs: number): void {
   const at = new Date(nowMs).toISOString();
   const row = (kind: 'answer' | 'discuss', ask: string, text: string): void => {
     recordAnswer(store, { kind, ask, text, source: 'page', usage: RECORD_USAGE, now: () => at, today: () => at.slice(0, 10) });
   };
-  for (const id of new Set([...Object.keys(edits.answers), ...edits.ticks])) row('answer', id, edits.answers[id] ?? '(ticked)');
+  const entries = store.readLedger();
+  // A bare tick says "as proposed", so it must not replace words already recorded for the ask.
+  for (const id of new Set([...Object.keys(edits.answers), ...edits.ticks])) {
+    const text = edits.answers[id] ?? (latestRow(entries, 'answer', id) ? null : '(ticked)');
+    if (text !== null) row('answer', id, text);
+  }
   for (const [id, topic] of Object.entries(edits.discuss)) row('discuss', id, topic);
 }
 

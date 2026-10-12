@@ -307,6 +307,21 @@ test('a tick alone is recorded as (ticked), a discuss mark with its topic, and a
   assert.deepEqual(l.answers().at(-1), ['answer', 'ab12', '(ticked)']);
 });
 
+test('ticking an ask that already has a recorded answer keeps the answer: (ticked) is only for a tick with no words anywhere', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
+  const l = ledger();
+  writePriorities(dir, '2026-10-05', [{ text: 'First' }]);
+  l.gen(dir);
+  settledCheck(dir, l.io);
+  answer(dir, 'ab12', 'yes but only after CI');
+  settledCheck(dir, l.io);
+  userEdits(dir, '- [ ] `ab12`', '- [x] `ab12`');
+  assert.deepEqual(settledCheck(dir, l.io), ['ask ab12 (decision: Merge it now?) ticked'], 'the tick is still reported');
+  assert.deepEqual(l.answers(), [['answer', 'ab12', 'yes but only after CI']], 'no (ticked) row replaces the answer');
+  l.gen(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: yes but only after CI\n/, 'the answer text survives the regeneration');
+});
+
 test('if the ledger write fails the baseline does not move, so the edit is found again and recorded on the next check', () => {
   const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
   const l = ledger();
