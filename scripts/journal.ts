@@ -45,6 +45,9 @@
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.ts decide "<decision>" --why "<rationale>" [--rejected "<alt>"] [--consequence "<text>"] [--scope project|working-rule] [--topic <slug>] [--repo <project>] [--msg "[msg ...]"] [--new] --model ... --used ...
  *                                             write a decision down on the turn it is said: --scope project (default) adds a dated entry to Projects/<repo, else project>/DECISIONS.md under --tickets-vault (else $VAULT_ROOT), while the row goes to --project's ledger; working-rule writes a memory file and its MEMORY.md line under memory_dir (the same --topic updates, never duplicates). Also records one decision row naming the file. Refuses with nothing written when --why is missing, a field looks like a secret, or the file cannot be written; refuses (nothing written) when an earlier decision on the topic exists unless --new; --msg takes the decision-scan marker so that message is not raised again
+ *   journal.ts answer <ask id> --text "<answer>" [--source page|chat] --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts discuss <ask id> [--text "<topic>"] --model "<name>" --used "skill:x,tool:y"
+ *                                             record what the user said about an open ask (an answer, or "talk it through first"); the ask stays open for `resolve`, the page shows the answer under it, and the same text twice is one row
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
  *   journal.ts stamp <id> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
@@ -107,6 +110,7 @@
  *   journal.ts web [--port <n>] [--status-dir <dir>]   serve the Podium as a read-only page on 127.0.0.1 (GET only; prints the URL; build the page first with `npm run build:web`)
  *   journal.ts priorities set "<text>" ["<text> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write today's priorities to <status dir>/priorities.md (a ` | Stream` suffix maps one to a stream)
  *   journal.ts start-here [--stream <name>] [--json] [--status-dir <dir>]   the first page a fresh reader needs, as text with no server: this week's goals, priorities, the top five asks with their stakes, conditions, in flight, yesterday, answers from the last 2 days and where each stream's notes live (80 lines at most; --stream shows one stream's)
+ *   journal.ts settings [--all] | settings --check [path...]   the settings in effect with the file or environment variable each came from (`--all` adds unset ones; command and secret-like values print as `(set)`); `--check` flags a known setting given a literal value in a note (default: each vault project's CONTEXT.md) instead of linking to the user config file, exit 1 when any
  *   journal.ts notes-check [--since 30d|YYYY-MM-DD|--all] [--json]   durable notes (Plans, Research, Reviews, Runbooks, one subfolder deep) in the projects of every active stream that no stream tab lists: attributed to no ticket in a claimed tree, no `stream:` field, not pinned. Prints each with its reason and fix. Exit 0 none, 1 some, 2 when no vault root is set or the vault could not be read. Only notes dated within `notes_check_since` (default 7d; a note's date is its frontmatter date, else its file's last write) are checked unless `--all` or `--since` is given. The roll prints it and the `notes-reachable` standing row fails while any exist in that window; it blocks neither a roll nor a PR
  *   journal.ts week set "<goal>" ["<goal> | <Stream>" ...] [--date YYYY-MM-DD] [--status-dir <dir>]   write this week's goals to <status dir>/week.md (dated by the week's Monday; a ` | Stream` suffix maps one to a stream)
  *   journal.ts week show [--status-dir <dir>] [--json]   read them back; a missing or out-of-week file prints the not-set line
@@ -154,6 +158,7 @@ import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
+import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
@@ -169,6 +174,7 @@ import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn 
 import { briefPaths, briefText, agentPrompt, libraryBlock } from './lib/journal/brief.ts';
 import { recoveryFromFlags, recoverPrompt } from './lib/journal/recover.ts';
 import { scriptsDir } from './brief-block.ts';
+import { guidanceLines, writeGuidance, readGuidance } from './lib/journal/guidance.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
 import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
@@ -211,6 +217,7 @@ import type { LedgerItem, LedgerRow, Registry } from './lib/ledger-core.ts';
 import type { TryRun } from './lib/journal/prime.ts';
 import { NO_VAULT_DETAIL, STANDING_FILE, appendEvent, readEvents, recordRan, standingBlock, standingState, validRow, rowLine, conditionLines, isRoutine, SAFE_ID } from './lib/standing.ts';
 import type { CheckContext, StandingRow } from './lib/standing.ts';
+import { runSettings } from './lib/settings.ts';
 import { readLibrary } from './lib/library/pages.ts';
 import { checkStaleness, realGit, summarize } from './lib/library/stale.ts';
 import { epicBriefsLines, epicBriefsReport } from './lib/journal/epic-briefs.ts';
@@ -258,6 +265,9 @@ if (cmd === 'autopull') {
     }
     process.exit(0);
 }
+
+// `settings` reads the resolved configuration and needs no ledger.
+if (cmd === 'settings') process.exit(runSettings({ all: has('all'), check: has('check'), paths: positional }));
 
 // `ask --help` prints its usage and needs no ledger.
 if (cmd === 'ask' && has('help')) {
@@ -1229,6 +1239,8 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
 function cmdRoll() {
     const d = arg('date', today());
     triageBeforeRoll(d);
+    // Before the archive, so the ledger autocommit takes GUIDANCE.md in the same commit.
+    writeRollGuidance(d);
     rollArchive(d);
     printEpicBriefs(d);
     printNotesReachability();
@@ -1340,6 +1352,16 @@ function cmdNotesCheck() {
     if (asJson) printJson(r); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
     // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
     process.exitCode = r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0;
+}
+
+/** The roll's guidance for the next session: derived from the ledger (no model call), saved as GUIDANCE.md beside it, and printed. `prime` shows it. */
+function writeRollGuidance(d: string): void {
+    const g = groups();
+    const sd = statusDir();
+    const today = sd && existsSync(sd) ? readPriorities(sd, priorityDay()) : null;
+    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now(), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [], gates: new Map(gateReport().map((r) => [String(r.item.id), r.state])) }).map(withhold);
+    if (!dryRun) { ensureDir(); writeGuidance(dir, lines, d); }
+    (lines.length ? lines : [`Guidance from the ${d} roll:`, '  Nothing stalled, nothing costly, nothing open.']).forEach((l) => console.log(l));
 }
 
 /**
@@ -2027,7 +2049,8 @@ function cmdBrief(): void {
     const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
     // A claim row counts only if no release of the repo came after it: a re-brief after `release` takes a new claim and needs its own row.
     const lastIndex = (pred: (r: LedgerRow) => boolean): number => ledgerNow.reduce((at, r, i) => (pred(r) ? i : at), -1);
-    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
+    // Kept desk claims need the row too: the stall detector finds the dispatch's repo, scope and branch from it.
+    const claimRowMissing = Boolean(claim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
     if (briefed && existsSync(paths.brief) && !tookClaim && !tookItem && !claimRowMissing) {
         console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
         console.log(`report ${paths.report}`);
@@ -2254,6 +2277,23 @@ function cmdDefer() {
 }
 
 /**
+ * `answer <ask> --text "..." [--source page|chat]` and `discuss <ask> [--text "topic"]`: write down what the user said about an
+ * open ask (lib/journal/answers.ts). The ask stays open for `resolve`; the page shows the answer under it. Writing the same text
+ * again is a no-op, and a closed or unknown ask is refused.
+ */
+function cmdAnswerOrDiscuss(kind: 'answer' | 'discuss') {
+    const ask = positional[0];
+    const text = arg('text') || positional.slice(1).join(' ');
+    if (!ask || (kind === 'answer' && !text)) die(kind === 'answer' ? 'Usage: journal.ts answer <ask id> --text "<answer>" [--source page|chat]' : 'Usage: journal.ts discuss <ask id> [--text "<topic>"]');
+    const source = arg('source') || 'chat';
+    if (!['page', 'chat'].includes(source)) die('--source must be page or chat.');
+    const outcome = recordAnswer(store, { kind, ask, text, source, usage: usageFromArgs(), now, today });
+    if (outcome === 'no-ask') die(`No open ask with id "${ask}". Only an open question or pending decision takes an ${kind}.`);
+    if (outcome === 'written' && !dryRun) render(true);
+    console.log(`${outcome === 'same' ? 'already recorded' : kind}  ${ask}  ${text}`.trimEnd());
+}
+
+/**
  * A deferral ends on a date but the generated pages are only written by ledger writes, so on the first read of a
  * new day, when any defer row exists, regenerate CURRENT.md and the stream pages. Derived files only; the ledger is untouched.
  */
@@ -2311,6 +2351,8 @@ function cmdPrime() {
     // Everything `prime` prints goes through `withhold`: a secret-shaped stream name or id in the ledger must not reach session context from here either.
     continuity.forEach((l) => { console.log(withhold(l)); console.error(withhold(l)); });
     primeLinesIn({ ...primeCtx(), start: startPointer, notices: [...windowWarning(), ...updateNotices(), ...loopNotice(), ...supervisorNotice(), ...prioritiesNotice()] }).forEach((l) => console.log(withhold(l)));
+    // The last roll's guidance, outside the board's cap like the checklist below it.
+    readGuidance(dir, today()).forEach((l) => console.log(withhold(l)));
     // After the board, so its 40-line cap is untouched; `--source` is the SessionStart hook's source.
     compactChecklist(arg('source') ?? undefined).forEach((l) => console.log(withhold(l)));
 }
@@ -2596,6 +2638,7 @@ switch (cmd) {
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
     case 'defer': cmdDefer(); break;
+    case 'answer': case 'discuss': cmdAnswerOrDiscuss(cmd); break;
     case 'prime': cmdPrime(); break;
     case 'tickets': cmdTickets(); break;
     case 'handoff': cmdHandoff(); break;

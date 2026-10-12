@@ -230,3 +230,12 @@ test('--stale lists a page whose cited file changed after verified-at, exits 0, 
   assert.match(r.stdout, /1 pages?, 1 stale/);
   assert.equal(typeof parseOptions(['--stale', 'a.md']), 'string');
 });
+
+test('covers must name a required page kind', () => {
+  const root = vault({ [PAGE]: frontmatter({ covers: '[setup, nonsense]' }) + BODY });
+  const f = problems(root);
+  assert.equal(f.length, 1);
+  assert.equal(f[0]?.rule, 'vocabulary');
+  assert.match(f[0]?.message ?? '', /covers "nonsense"/);
+  assert.deepEqual(problems(vault({ [PAGE]: frontmatter({ covers: '[setup, run-local]' }) + BODY })), []);
+});

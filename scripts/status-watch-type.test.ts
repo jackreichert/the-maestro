@@ -1,7 +1,7 @@
 // Run: node --test scripts/status-watch-type.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tick } from './event-loop.ts';
@@ -12,6 +12,9 @@ import type { GenerateDeps } from './lib/status-page/generate.ts';
 import { writePriorities } from './lib/status-page/priorities.ts';
 import type { PageConfig } from './lib/status-page/render.ts';
 import { addWatch } from './lib/watch-registry.ts';
+import { fold, isOpen } from './lib/ledger-core.ts';
+import { recordAnswer } from './lib/journal/answers.ts';
+import type { LedgerRow } from './lib/ledger-core.ts';
 
 const NOW = new Date('2026-10-05T15:00:00Z');
 const CONFIG: PageConfig = { streams: ['Alpha'], repoStreams: {}, vaultName: '', trackerUrlBase: '', ticketNotePath: 'T/{id}', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'UTC' };
@@ -70,6 +73,64 @@ test('a ticked box fires, and answer plus tick on one ask make one event', () =>
   assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: ok, ticked']);
 });
 
+/** Types a `> discuss:` line directly under the ask's answer stub. */
+const discuss = (dir: string, id: string, topic: string): void => {
+  const page = readFileSync(join(dir, 'The-Podium.md'), 'utf8');
+  const re = new RegExp(`(\\\`${id}\\\`[^\\n]*\\n  > answer: [^\\n]*)\\n`);
+  assert.match(page, re, `page has the ${id} stub`);
+  writeFileSync(join(dir, 'The-Podium.md'), page.replace(re, `$1\n  > discuss: ${topic}\n`));
+};
+
+test('a discuss line fires one DISCUSS event with its topic, survives a regeneration until reported, and is not reported twice', () => {
+  const dir = setup();
+  events(dir);
+  discuss(dir, 'ab12', 'rollout order');
+  regenerate(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: \n {2}> discuss: rollout order\n/);
+  assert.deepEqual(events(dir), ['DISCUSS ask ab12 (decision: Merge it now?): rollout order']);
+  assert.deepEqual(events(dir), []);
+  discuss(dir, 'cd34', '');
+  assert.deepEqual(events(dir), ['DISCUSS ask cd34 (decision: Which option?) (no topic given)']);
+});
+
+/** A check at `ageSec` seconds after the page was last written, as the loop makes it (with a clock). */
+const checkAfter = (dir: string, ageSec: number) => {
+  const saved = Date.now() / 1000 - 3600;
+  utimesSync(join(dir, 'The-Podium.md'), saved, saved);
+  return statusWatch.check(dir, { now: (saved + ageSec) * 1000 });
+};
+
+test('an answer saved 5 s before a check is held back, then reported once the page has been quiet for 20 s', () => {
+  const dir = setup();
+  events(dir);
+  answer(dir, 'ab12', 'yes but');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 5)), [], 'half-typed: not reported');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 19)), []);
+  const settled = statusWatch.diff(null, checkAfter(dir, 21)).map((e) => e.summary);
+  assert.deepEqual(settled, ['ask ab12 (decision: Merge it now?) answered: yes but']);
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 60)), [], 'and only once');
+});
+
+test('the words finished during the settle window are the ones reported, not the half sentence', () => {
+  const dir = setup();
+  events(dir);
+  answer(dir, 'ab12', 'yes but');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 5)), []);
+  userEdits(dir, 'answer: yes but', 'answer: yes but only after CI');
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 30)).map((e) => e.summary), ['ask ab12 (decision: Merge it now?) answered: yes but only after CI']);
+});
+
+test('a page the generator just wrote is quiet at any age, and a fresh page with no edit does not hold the baseline', () => {
+  const dir = setup();
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 1)), []);
+  regenerate(dir);
+  assert.deepEqual(statusWatch.diff(null, checkAfter(dir, 1)), []);
+});
+
+test('the type checks every 30 s', () => {
+  assert.equal(statusWatch.interval, 30);
+});
+
 test('regenerating before the watcher looks keeps the answer, and it still fires exactly once', () => {
   const dir = setup();
   events(dir);
@@ -83,7 +144,7 @@ test('regenerating before the watcher looks keeps the answer, and it still fires
   assert.deepEqual(events(dir), []);
 });
 
-test('after the watcher has reported, the next regeneration clears the answer and stays quiet; the same words typed again fire again', () => {
+test('with no ledger known, the next regeneration after a report clears the answer and stays quiet; the same words typed again fire again', () => {
   const dir = setup();
   events(dir);
   answer(dir, 'ab12', 'done');
@@ -135,14 +196,15 @@ test('the type is registered, refuses a target that is not a directory, and runs
   assert.equal(BUILTIN_TYPES['status-watch'], statusWatch);
   assert.throws(() => statusWatch.validate('/definitely/not/a/dir'), /status directory/);
   const status = setup();
+  const t0 = Date.now();
   const reg = mkdtempSync(join(tmpdir(), 'sw-events-'));
   addWatch(reg, { id: 'sw', type: 'status-watch', target: status });
-  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 }).events, []);
+  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: t0 }).events, []);
   answer(status, 'ab12', 'via loop');
-  const r = tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 + 120_000 });
+  const r = tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: t0 + 120_000 });
   assert.deepEqual(r.events.map((e) => [e.watch, e.type, e.actionable, e.summary]), [['sw', 'status-watch', true, 'ask ab12 (decision: Merge it now?) answered: via loop']]);
   regenerate(status);
-  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: 1 + 240_000 }).events, []);
+  assert.deepEqual(tick({ dir: reg, types: BUILTIN_TYPES, config: { quietHours: 'off' }, now: t0 + 240_000 }).events, []);
 });
 
 test('an edit saved while the generator is writing is not overwritten: it reads the page again and carries the edit', () => {
@@ -190,4 +252,111 @@ test('an older table page (no ask lines) still gives the decision from the last 
   events(dir);
   writeFileSync(join(dir, 'The-Podium.md'), old('go'));
   assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it | now?) answered: go']);
+});
+
+// ── answers recorded in the ledger before the baseline moves ──
+
+/** A ledger in memory: two open asks, and a board read from it the way `status --json` reads the real one. */
+const ledger = () => {
+  const rows: LedgerRow[] = [
+    { id: 'ab12', kind: 'question', ts: '2026-10-05T14:00:00Z', date: '2026-10-05', text: 'Merge it now?', stream: 'Alpha' },
+    { id: 'cd34', kind: 'question', ts: '2026-10-05T14:01:00Z', date: '2026-10-05', text: 'Which option?', stream: 'Alpha' },
+  ];
+  const store = { readLedger: () => rows, append: <E>(e: E): E => { rows.push(e as LedgerRow); return e; }, newId: () => `r${rows.length}` };
+  const board = () => fold(rows, null).items.filter((i) => isOpen(i) && i.kind === 'question');
+  const gen = (dir: string): string => generate({ statusDir: dir, dryRun: false, snapshot: false, command: 'status-page', config: CONFIG }, {
+    journal: (sub) => (sub === 'status' ? { inflight: [], queued: [], blocked: [], done: [], awaiting: board() } : { items: [] }), fetchPrs: () => [], sleep: () => {}, now: () => NOW,
+  }).page;
+  const io: statusWatch.RecorderFor = () => (edits, nowMs) => statusWatch.recordEdits(store, edits, nowMs);
+  const answers = (): [string, string, string][] => rows.filter((r) => r.kind === 'answer' || r.kind === 'discuss').map((r) => [String(r.kind), String(r.of), String(r.text)]);
+  return { rows, gen, io, answers };
+};
+const settledCheck = (dir: string, io: statusWatch.RecorderFor) => statusWatch.diff(null, statusWatch.check(dir, { now: Date.now() + 3600_000 }, io)).map((e) => e.summary);
+
+test('an answer survives a regeneration after it has been reported, because it is in the ledger', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
+  const l = ledger();
+  writePriorities(dir, '2026-10-05', [{ text: 'First' }]);
+  l.gen(dir);
+  assert.deepEqual(settledCheck(dir, l.io), []);
+  answer(dir, 'ab12', 'ship it after CI');
+  assert.deepEqual(settledCheck(dir, l.io), ['ask ab12 (decision: Merge it now?) answered: ship it after CI']);
+  assert.deepEqual(l.answers(), [['answer', 'ab12', 'ship it after CI']]);
+  l.gen(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: ship it after CI\n/, 'the answer is still on the page after the report and a regeneration');
+  assert.deepEqual(settledCheck(dir, l.io), [], 'and the regenerated page is not read as a new edit');
+  l.gen(dir);
+  assert.deepEqual(settledCheck(dir, l.io), []);
+  assert.equal(l.answers().length, 1, 'one row, however often the page is regenerated');
+});
+
+test('a tick alone is recorded as (ticked), a discuss mark with its topic, and an ask that has closed takes nothing but still fires', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
+  const l = ledger();
+  writePriorities(dir, '2026-10-05', [{ text: 'First' }]);
+  l.gen(dir);
+  settledCheck(dir, l.io);
+  userEdits(dir, '- [ ] `cd34`', '- [x] `cd34`');
+  discuss(dir, 'ab12', 'rollout order');
+  l.rows.push({ id: 'zz01', kind: 'resolved', closes: 'cd34', ts: '2026-10-05T14:30:00Z', date: '2026-10-05', text: 'done elsewhere' });
+  assert.equal(settledCheck(dir, l.io).length, 2);
+  assert.deepEqual(l.answers(), [['discuss', 'ab12', 'rollout order']]);
+  l.gen(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: \n {2}> discuss: rollout order\n/);
+  userEdits(dir, '- [ ] `ab12`', '- [x] `ab12`');
+  settledCheck(dir, l.io);
+  assert.deepEqual(l.answers().at(-1), ['answer', 'ab12', '(ticked)']);
+});
+
+test('ticking an ask that already has a recorded answer keeps the answer: (ticked) is only for a tick with no words anywhere', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
+  const l = ledger();
+  writePriorities(dir, '2026-10-05', [{ text: 'First' }]);
+  l.gen(dir);
+  settledCheck(dir, l.io);
+  answer(dir, 'ab12', 'yes but only after CI');
+  settledCheck(dir, l.io);
+  userEdits(dir, '- [ ] `ab12`', '- [x] `ab12`');
+  assert.deepEqual(settledCheck(dir, l.io), ['ask ab12 (decision: Merge it now?) ticked'], 'the tick is still reported');
+  assert.deepEqual(l.answers(), [['answer', 'ab12', 'yes but only after CI']], 'no (ticked) row replaces the answer');
+  l.gen(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: yes but only after CI\n/, 'the answer text survives the regeneration');
+});
+
+test('an answer the generator rendered from the ledger is not re-reported when the page is saved before the watcher looks', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
+  const l = ledger();
+  writePriorities(dir, '2026-10-05', [{ text: 'First' }]);
+  l.gen(dir);
+  settledCheck(dir, l.io);
+  const at = '2026-10-05T14:40:00Z';
+  const store = { readLedger: () => l.rows, append: <E>(e: E): E => { l.rows.push(e as LedgerRow); return e; }, newId: () => `r${l.rows.length}` };
+  recordAnswer(store, { kind: 'answer', ask: 'cd34', text: 'call it sprocket', source: 'chat', usage: {}, now: () => at, today: () => at.slice(0, 10) });
+  l.gen(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`cd34`[^\n]*\n {2}> answer: call it sprocket\n/, 'the chat answer is on the page');
+  const before = l.rows.length;
+  writeFileSync(join(dir, 'The-Podium.md'), `${readFileSync(join(dir, 'The-Podium.md'), 'utf8')}\nscribble\n`);
+  assert.deepEqual(settledCheck(dir, l.io), [], 'the chat answer is not raised again as a page answer');
+  assert.equal(l.rows.length, before, 'and no row is written for it');
+  answer(dir, 'ab12', 'a real page answer');
+  assert.deepEqual(settledCheck(dir, l.io), ['ask ab12 (decision: Merge it now?) answered: a real page answer'], 'a genuine answer next to it still fires');
+  userEdits(dir, 'answer: call it sprocket', 'answer: call it widget');
+  assert.deepEqual(settledCheck(dir, l.io), ['ask cd34 (decision: Which option?) answered: call it widget'], 'and so does a changed one');
+});
+
+test('if the ledger write fails the baseline does not move, so the edit is found again and recorded on the next check', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-led-'));
+  const l = ledger();
+  writePriorities(dir, '2026-10-05', [{ text: 'First' }]);
+  l.gen(dir);
+  settledCheck(dir, l.io);
+  answer(dir, 'ab12', 'keep me');
+  const broken: statusWatch.RecorderFor = () => () => { throw new Error('ledger is read-only'); };
+  assert.throws(() => settledCheck(dir, broken), /read-only/);
+  assert.deepEqual(settledCheck(dir, l.io), ['ask ab12 (decision: Merge it now?) answered: keep me']);
+  assert.deepEqual(l.answers(), [['answer', 'ab12', 'keep me']]);
+});
+
+test('with no ledger configured for this directory there is no recorder, so nothing is written and nothing breaks', () => {
+  assert.equal(statusWatch.recorderFor(mkdtempSync(join(tmpdir(), 'sw-none-'))), null);
 });
