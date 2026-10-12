@@ -179,7 +179,8 @@ import { sessionText } from './lib/session-text.ts';
 import { footerOneLine } from './lib/journal/footer-line.ts';
 import { gitBranches, queueFooter as hygieneFooter, queueHygiene } from './lib/queue-hygiene.ts';
 import { readQueue, readSnapshotPrs, queueText, queueExitCode, boardQueue, footerQueue, staleSuffix } from './lib/review-queue.ts';
-import { fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
+import type { Run } from './lib/types.ts';
+import { currentPath, fetchLive, freshestSnapshotPath, selfReviewSummary, type StoredPr } from './prs-snapshot.ts';
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { withhold } from './lib/withhold.ts';
@@ -962,8 +963,35 @@ function cmdReviewQueue() {
     process.exitCode = queueExitCode(reading);
 }
 
-/** The footer's review queue line: the stored snapshot when it is under 30 minutes old, else a live read, else `unknown` (never an old number). */
-const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, fetchLive);
+/** The footer must never wait on a slow gh: the whole live read gets this long before the line falls back to `unknown`. */
+const FOOTER_LIVE_TIMEOUT_MS = 8_000;
+
+/** A gh runner that shares one deadline across every page of a read; a timeout or a failure comes back as a non-zero status. */
+function deadlineRun(totalMs: number): Run {
+    const end = Date.now() + totalMs;
+    return (cmd, args) => {
+        const left = end - Date.now();
+        if (left <= 0) return { status: null, stdout: '', stderr: 'timed out' };
+        const r = spawnSync((cmd === 'gh' && process.env.MAESTRO_GH_BIN) || cmd, args, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
+        return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
+    };
+}
+
+/** A bounded live read, saved to the loop's current-board file so the next footer inside the refresh window reuses it. A failed read saves nothing. */
+function footerLiveRead(): ReturnType<typeof fetchLive> {
+    const snap = fetchLive(deadlineRun(FOOTER_LIVE_TIMEOUT_MS));
+    try {
+        const path = currentPath(vault);
+        mkdirSync(dirname(path), { recursive: true });
+        const tmp = `${path}.${process.pid}.tmp`;
+        writeFileSync(tmp, `${JSON.stringify(snap, null, 2)}\n`);
+        renameSync(tmp, path);
+    } catch { /* the count is still good; only the reuse is lost */ }
+    return snap;
+}
+
+/** The footer's review queue line: the stored snapshot when it is under 30 minutes old, else a bounded live read (saved), else `unknown` (never an old number). */
+const footerReviewQueue = (): string | null => footerQueue(readSnapshotPrs(freshestSnapshotPath(vault)), REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, footerLiveRead);
 
 function cmdStandup() {
     console.log(standupText(arg('date', today())));
