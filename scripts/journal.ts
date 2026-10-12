@@ -27,6 +27,7 @@
  *   journal.ts done <id|text> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts drop <id> --model "<name>" --used "skill:x,tool:y" [--why "..."]
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
+ *                                             add --how-do-i when the question is a how-do-I the library could not answer: it is also logged as a `miss` (source ask)
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
  *   journal.ts ask "<question>" [--recommend "<what you would do>"] [--door one-way|two-way] [--default "<what happens if silent>"] [--decide-by 2026-10-09|2d|6h] [--class expedite|fixed-date|standard|intangible]
  *                                             a decision made cheap to answer. No --door means one-way; a one-way ask is refused a --default; no --recommend warns. `ask --help` prints this
@@ -44,6 +45,9 @@
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.ts decide "<decision>" --why "<rationale>" [--rejected "<alt>"] [--consequence "<text>"] [--scope project|working-rule] [--topic <slug>] [--repo <project>] [--msg "[msg ...]"] [--new] --model ... --used ...
  *                                             write a decision down on the turn it is said: --scope project (default) adds a dated entry to Projects/<repo, else project>/DECISIONS.md under --tickets-vault (else $VAULT_ROOT), while the row goes to --project's ledger; working-rule writes a memory file and its MEMORY.md line under memory_dir (the same --topic updates, never duplicates). Also records one decision row naming the file. Refuses with nothing written when --why is missing, a field looks like a secret, or the file cannot be written; refuses (nothing written) when an earlier decision on the topic exists unless --new; --msg takes the decision-scan marker so that message is not raised again
+ *   journal.ts answer <ask id> --text "<answer>" [--source page|chat] --model "<name>" --used "skill:x,tool:y"
+ *   journal.ts discuss <ask id> [--text "<topic>"] --model "<name>" --used "skill:x,tool:y"
+ *                                             record what the user said about an open ask (an answer, or "talk it through first"); the ask stays open for `resolve`, the page shows the answer under it, and the same text twice is one row
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
  *   journal.ts stamp <id> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
@@ -62,11 +66,15 @@
  *                                             kept with reasons. It scans only the configured container_root, and refuses (the roll goes on) when none is set or when the
  *                                             current directory (or --container) is outside it; --dry-run only reports. --fast skips the sweep and the scratch review.
  *   journal.ts scratch                       with scripts_dir set: list <scripts_dir>/scratch with a promote/keep/delete-candidate proposal (`roll` prints it too; proposes only)
+ *   journal.ts miss "<question>" --source find|ask|eval [--repo R] [--model ... --used ...]
+ *                                             a question the library could not answer, for the composer; scanned for secrets, one row per question per repo per day
+ *   journal.ts misses [--json]               the open misses grouped by topic, for the composer
  *   journal.ts learned "<claim>" --kind K --applies-to repo:component[:env] --evidence "..." --verified-at "<sha | date how>" --confidence observed|told-by-jack|inferred [--supersedes <id|path>] --model ... --used ...
  *                                             one fact someone established; every field is checked before the row is written, and a claim, evidence or location that looks like a secret or PHI is refused (`learned --help`)
- *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]
+ *   journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json] [--no-miss]
  *                                             library pages, best first: path, kind, read-when line, verified-at age, stale flag; --neighbors adds the pages one link away.
- *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed
+ *                                             Reads the library under --tickets-vault (else $VAULT_ROOT) through ledger-index.ts, which rebuilds its index when a page changed.
+ *                                             A lookup that finds no page logs a `miss` row (source find; --no-miss skips it) and still exits 0
  *   journal.ts verify [--json]               check every line parses, ids are unique, every reference exists; exit 1 on problems
  *   journal.ts render                        rebuild CURRENT.md and Journal/Streams/<Stream>.md from the ledger
  *   journal.ts tag <id> --stream <name>      file an existing item under a workstream
@@ -150,11 +158,13 @@ import { fileURLToPath } from 'node:url';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { openStore } from './lib/journal/store.ts';
+import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { parseAskFields, ASK_USAGE } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
+import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import type { Groups } from './lib/journal/board.ts';
@@ -222,10 +232,11 @@ import { listWatches, lockHolder } from './lib/watch-registry.ts';
 import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
+import { toolCommand } from './lib/tool-bin.ts';
 import { printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
-const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'curated', 'rework'];
+const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'miss', 'curated', 'rework'];
 // `ref` is an event about a decision, like `approval-tag`, not an item. fold reads this list at call time.
 if (!NON_ITEM_KINDS.includes('ref')) NON_ITEM_KINDS.push('ref');
 
@@ -535,6 +546,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
     if (kind === 'curated') die('A curated row is written only by `library-write.ts curate`, which holds the composer lease and checks the page.');
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
+    if (kind === 'miss') die('A miss row is written only by `journal.ts miss`, which scans the question and keeps one row per question per day.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
@@ -571,6 +583,11 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     append(entry);
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
+    // `ask --how-do-i`: the question is a how-do-I the library could not answer, so it is also a miss for the composer.
+    if (ask && has('how-do-i')) {
+        const missed = recordMiss(text, 'ask', entry.repo, usageFromArgs());
+        console.error('line' in missed ? `(also logged as a library miss: ${missed.line.split('  ')[1]})` : `(not logged as a library miss: ${missed.errors.join(' ')})`);
+    }
     return entry;
 }
 
@@ -606,6 +623,44 @@ function cmdLearned(): void {
     append(entry);
     if (!dryRun) render(true);
     console.log(`learned  ${entry.id}  ${entry.text}${seen.kind === 'refresh' ? `  (re-checked: supersedes ${seen.id})` : ''}`);
+}
+
+/** Writes one miss row, or says why not. The same question for the same repo on the same day is reported, not written twice. Returns the printed line, or null when refused (the reasons are in `errors`). */
+function recordMiss(question: string, source: string, repo: string | undefined, usage: Usage): { line: string } | { errors: string[] } {
+    const parsed = parseMiss(question, source);
+    if (!parsed.fields) return { errors: parsed.errors };
+    const { fields } = parsed;
+    const entries = readLedger();
+    const date = arg('date', today());
+    const seen = seenMiss(entries, fields, repo, date);
+    if (seen.kind === 'same') return { line: `miss  ${seen.id}  ${fields.text}  (already recorded today)` };
+    const entry = { id: newId(entries), ts: now(), date, kind: 'miss', ...fields, repo, stream: streamOrNone(arg('stream')), ...usage };
+    append(entry);
+    if (!dryRun) render(true);
+    return { line: `miss  ${entry.id}  ${entry.text}` };
+}
+
+/** `miss "<question>" --source find|ask|eval [--repo R]`: a question the library could not answer, for the composer. The question is scanned before it is written. */
+function cmdMiss(): void {
+    const question = arg('text') || positional.join(' ');
+    const source = arg('source') || null;
+    const parsed = parseMiss(question, source);
+    if (!parsed.fields) die(`miss: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\nUsage: journal.ts miss "<question>" --source ${MISS_SOURCES.join('|')} [--repo R]`);
+    const r = recordMiss(question, source as string, arg('repo') || undefined, usageFromArgs());
+    console.log('line' in r ? r.line : '');
+}
+
+/** `misses [--json]`: the open misses (no `curated` row has closed them) grouped by topic, largest group first, for the composer. */
+function cmdMisses(): void {
+    const rows = readLedger();
+    const open = new Map(pendingMisses(rows).map((r) => [r.id as string, r]));
+    const groups = missGroups(rows).map((g) => ({ topic: g.topic, misses: g.ids.map((id) => { const r = open.get(id) as LedgerRow; return { id, date: r.date, source: r.source, repo: r.repo, text: r.text }; }) }));
+    if (asJson) { printJson({ open: open.size, topics: groups }); return; }
+    console.log(`${open.size} open miss${open.size === 1 ? '' : 'es'} in ${groups.length} topic${groups.length === 1 ? '' : 's'}`);
+    for (const g of groups) {
+        console.log(`  ${g.topic}  (${g.misses.length})`);
+        g.misses.forEach((m) => console.log(`    ${m.id}  ${m.date}  [${m.source}]${m.repo ? `  ${m.repo}` : ''}  ${clip(String(m.text), 90)}`));
+    }
 }
 
 /** `decide "<decision>" --why ...`: the file first (DECISIONS.md or a memory file), then the ledger row that names it; if the row cannot be written the file is put back. Idempotent: an entry already on disk writes nothing. */
@@ -1072,7 +1127,8 @@ function deadlineRun(totalMs: number): Run {
     return (cmd, args) => {
         const left = end - Date.now();
         if (left <= 0) return { status: null, stdout: '', stderr: 'timed out' };
-        const r = spawnSync((cmd === 'gh' && process.env.MAESTRO_GH_BIN) || cmd, args, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
+        const [bin, binArgs] = toolCommand(cmd, args);
+        const r = spawnSync(bin, binArgs, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
         return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
     };
 }
@@ -1995,7 +2051,8 @@ function cmdBrief(): void {
     const briefed = ledgerNow.some((r) => r.kind === 'brief' && r.briefs === itemId && r.brief === paths.brief);
     // A claim row counts only if no release of the repo came after it: a re-brief after `release` takes a new claim and needs its own row.
     const lastIndex = (pred: (r: LedgerRow) => boolean): number => ledgerNow.reduce((at, r, i) => (pred(r) ? i : at), -1);
-    const claimRowMissing = Boolean(claim) && (tookClaim || ownedClaim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
+    // Kept desk claims need the row too: the stall detector finds the dispatch's repo, scope and branch from it.
+    const claimRowMissing = Boolean(claim) && lastIndex((r) => r.kind === 'claim' && r.repo === claim?.repo && (r.scope ?? undefined) === scope && typeof r.text === 'string' && r.text.endsWith(`: ${why}`)) <= lastIndex((r) => r.kind === 'released' && r.repo === claim?.repo && (r.scope ?? undefined) === scope);
     if (briefed && existsSync(paths.brief) && !tookClaim && !tookItem && !claimRowMissing) {
         console.log(`brief  ${itemId}  ${paths.brief}  (already written for this holder)`);
         console.log(`report ${paths.report}`);
@@ -2152,7 +2209,8 @@ function cmdHandoff() {
 
 /** Runs a command; { ok, out } where ok is false when it is missing or exits non-zero. */
 const tryRun: TryRun = (cmdName, args) => {
-    const r = spawnSync(cmdName, args, { encoding: 'utf8' });
+    const [bin, binArgs] = toolCommand(cmdName, args);
+    const r = spawnSync(bin, binArgs, { encoding: 'utf8' });
     return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 };
 
@@ -2219,6 +2277,23 @@ function cmdDefer() {
     });
     if (!dryRun) render(true);
     console.log(`defer  ${target.id}  until ${until}  ${target.text}`);
+}
+
+/**
+ * `answer <ask> --text "..." [--source page|chat]` and `discuss <ask> [--text "topic"]`: write down what the user said about an
+ * open ask (lib/journal/answers.ts). The ask stays open for `resolve`; the page shows the answer under it. Writing the same text
+ * again is a no-op, and a closed or unknown ask is refused.
+ */
+function cmdAnswerOrDiscuss(kind: 'answer' | 'discuss') {
+    const ask = positional[0];
+    const text = arg('text') || positional.slice(1).join(' ');
+    if (!ask || (kind === 'answer' && !text)) die(kind === 'answer' ? 'Usage: journal.ts answer <ask id> --text "<answer>" [--source page|chat]' : 'Usage: journal.ts discuss <ask id> [--text "<topic>"]');
+    const source = arg('source') || 'chat';
+    if (!['page', 'chat'].includes(source)) die('--source must be page or chat.');
+    const outcome = recordAnswer(store, { kind, ask, text, source, usage: usageFromArgs(), now, today });
+    if (outcome === 'no-ask') die(`No open ask with id "${ask}". Only an open question or pending decision takes an ${kind}.`);
+    if (outcome === 'written' && !dryRun) render(true);
+    console.log(`${outcome === 'same' ? 'already recorded' : kind}  ${ask}  ${text}`.trimEnd());
 }
 
 /**
@@ -2491,17 +2566,27 @@ function cmdTickets() {
 
 // ── library lookup ──────────────────────────────────────────────────────────
 
+/** A `find` that matched nothing, written as a miss. Marks default to unrecorded (a lookup has no model to name); a refusal (a secret-shaped query) is said on stderr and never fails the lookup. */
+function logFindMiss(query: string): void {
+    const r = recordMiss(query, 'find', arg('repo') || undefined, { model: normaliseModel(arg('model')) || 'unrecorded', used: parseList('used') ?? ['unrecorded'], ...(arg('agent') ? { agent: arg('agent') as string } : {}) });
+    if ('errors' in r) console.error(`(not logged as a library miss: ${r.errors.join(' ')})`);
+    else console.error(`(logged as a library miss: ${r.line.split('  ')[1]})`);
+}
+
 /** `find "<words>"`: hands the lookup to ledger-index.ts (the one place the library index is built and read) and relays its output and exit code. */
 function cmdFind() {
     const query = positional.join(' ').trim();
     if (!query) die('Usage: journal.ts find "<words>" [--repo R] [--kind K] [--component C] [--limit 10] [--neighbors] [--include-superseded] [--json]');
     const values = ['repo', 'kind', 'component', 'limit'].flatMap((k) => (arg(k) ? [`--${k}`, arg(k) as string] : []));
     const flags = ['neighbors', 'include-superseded', 'json'].filter(has).map((k) => `--${k}`);
+    const logMisses = !has('no-miss');
     // The child writes straight to our stdout and stderr: no buffer to cap or to lose when this process exits, so a large result arrives whole.
     const r = spawnSync(process.execPath, [
-        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags,
+        fileURLToPath(new URL('./ledger-index.ts', import.meta.url)), 'find', query, ...values, ...flags, ...(logMisses ? ['--exit-miss'] : []),
         '--vault', vault, '--project', project, '--tickets-vault', ticketsBase(),
     ], { stdio: 'inherit' });
+    // Exit 4 is "no page matched": the question becomes a miss row for the composer, and the lookup itself still succeeds.
+    if (logMisses && r.status === 4) { logFindMiss(query); process.exitCode = 0; return; }
     process.exitCode = r.status ?? 1;
 }
 
@@ -2515,6 +2600,8 @@ switch (cmd) {
     case 'rule': cmdLog('decision', { rule: true }); break;
     case 'decide': cmdDecide(); break;
     case 'learned': cmdLearned(); break;
+    case 'miss': cmdMiss(); break;
+    case 'misses': cmdMisses(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
@@ -2554,6 +2641,7 @@ switch (cmd) {
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
     case 'defer': cmdDefer(); break;
+    case 'answer': case 'discuss': cmdAnswerOrDiscuss(cmd); break;
     case 'prime': cmdPrime(); break;
     case 'tickets': cmdTickets(); break;
     case 'handoff': cmdHandoff(); break;

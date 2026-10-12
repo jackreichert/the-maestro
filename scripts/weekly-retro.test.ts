@@ -36,3 +36,16 @@ test('refuses a missing root and a bad --days', () => {
     assert.equal(run('--project', 'demo').code, 2);
     assert.equal(run('--vault', ledgerWith(rows), '--project', 'demo', '--days', '0').code, 2);
 });
+
+test('lists the library misses logged in the window and how many were answered', () => {
+    const miss = (id: string, ts: string) => ({ id, ts, date: ts.slice(0, 10), kind: 'miss', text: `question ${id}`, source: 'find', topic: 'orchard index' });
+    const vault = ledgerWith([
+        ...rows,
+        miss('m1', '2026-10-06T10:00:00Z'), miss('m2', '2026-10-06T11:00:00Z'), miss('m3', '2026-10-07T10:00:00Z'), miss('m0', '2026-09-01T10:00:00Z'),
+        { id: 'c1', ts: '2026-10-07T12:00:00Z', date: '2026-10-07', kind: 'curated', closes: 'm1', text: 'curated m1', page: 'Projects/demo/Knowledge/orchard.md', pageSha: 'a'.repeat(64) },
+        { id: 'c2', ts: '2026-10-07T12:01:00Z', date: '2026-10-07', kind: 'curated', closes: 'm2', text: 'curated m2', rejected: 'not a project question' },
+    ]);
+    const args = ['--vault', vault, '--project', 'demo', '--now', '2026-10-09T12:00:00Z'];
+    assert.match(run(...args).out, /library misses {3}3 logged, 1 answered with a page, 1 out of scope, 1 open/);
+    assert.deepEqual(JSON.parse(run(...args, '--json').out).misses, { logged: 3, answered: 1, outOfScope: 1, open: 1 });
+});
