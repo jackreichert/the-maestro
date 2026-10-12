@@ -4,27 +4,29 @@
  *
  *   library-write.ts begin                                       take the composer lock (a ledger lease), print the holder id
  *   library-write.ts write <page> --from <staged> --holder <id>  replace one page after every check passes
- *   library-write.ts curate <learned id> (--page <page> [--refresh] | --reject "<why>") --holder <id> --model M --used a,b
+ *   library-write.ts curate <learned id> (--page <page> [--refresh [--accept-hand-edit]] | --reject "<why>") --holder <id> --model M --used a,b
  *   library-write.ts end --holder <id>                           free the lock
  *
  * <page> is vault-relative: Projects/<repo>/(Knowledge|Runbooks)/<name>.md. Options: --vault <root> (pages), --ledger-root <root>,
  * --project <ledger project> (defaults come from the local config), --tokens N, --allow-unmarked (tests).
+ * `curate --refresh` refuses (exit 1) unless the page on disk is what the last `write` left; `--accept-hand-edit` overrides that on purpose.
  * Exit 0 done; 1 a check refused the work (nothing written); 2 usage; 3 the lock is not this pass's (held by another, lapsed, wrong holder).
  * See lib/library/write.ts for what the checks are and lib/library/composer.ts for the lock.
  */
 import { realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { openStore } from './lib/journal/store.ts';
-import { begin, curate, end, writePage } from './lib/library/write.ts';
+import { begin, curate, end, fileLastWrites, writePage } from './lib/library/write.ts';
 import type { Marks, Outcome, WriteEnv } from './lib/library/write.ts';
 
-const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> --holder <id> | curate <learned id> (--page <page> [--refresh] | --reject "<why>") --holder <id> --model <m> --used <a,b> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
+const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> --holder <id> | curate <learned id> (--page <page> [--refresh [--accept-hand-edit]] | --reject "<why>") --holder <id> --model <m> --used <a,b> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
 
 interface Args { cmd: string; positional: string[]; flags: Map<string, string> }
 
 const VALUE_FLAGS = new Set(['vault', 'ledger-root', 'project', 'holder', 'from', 'page', 'reject', 'model', 'used', 'tokens']);
-const BOOL_FLAGS = new Set(['allow-unmarked', 'refresh']);
+const BOOL_FLAGS = new Set(['allow-unmarked', 'refresh', 'accept-hand-edit']);
 
 export function parseArgs(argv: string[]): Args | string {
   const [cmd, ...rest] = argv;
@@ -62,7 +64,7 @@ export function run(argv: string[], io: { out: (s: string) => void; err: (s: str
   const project = a.flags.get('project') ?? defaults.project;
   if (!vault || !ledgerRoot || !project) { io.err('library-write: set the vault and ledger roots and the project (local config), or pass --vault, --ledger-root and --project'); return 2; }
   const store = openStore({ vault: ledgerRoot, project, dryRun: false });
-  const env: WriteEnv = { vault, readLedger: store.readLedger, append: store.append, newId: store.newId, now: () => new Date().toISOString() };
+  const env: WriteEnv = { vault, readLedger: store.readLedger, append: store.append, newId: store.newId, now: () => new Date().toISOString(), lastWrites: fileLastWrites(join(store.dir, 'library-writes.json')) };
   const holder = a.flags.get('holder');
   const finish = <T>(res: Outcome<T>, ok: (r: T) => string): number => {
     if (res.ok) { io.out(ok(res)); return 0; }
@@ -86,7 +88,7 @@ export function run(argv: string[], io: { out: (s: string) => void; err: (s: str
       if (typeof m === 'string') { io.err(`library-write: ${m}`); return 2; }
       const page = a.flags.get('page');
       const reject = a.flags.get('reject');
-      return finish(curate(env, holder, id, { ...(page !== undefined ? { page } : {}), ...(reject !== undefined ? { reject } : {}), ...(a.flags.has('refresh') ? { refresh: true } : {}) }, m), (r) => `${a.flags.has('refresh') ? 'refreshed' : 'curated'} ${id} (row ${r.id})`);
+      return finish(curate(env, holder, id, { ...(page !== undefined ? { page } : {}), ...(reject !== undefined ? { reject } : {}), ...(a.flags.has('refresh') ? { refresh: true } : {}), ...(a.flags.has('accept-hand-edit') ? { acceptHandEdit: true } : {}) }, m), (r) => `${a.flags.has('refresh') ? 'refreshed' : 'curated'} ${id} (row ${r.id})`);
     }
   }
 }
