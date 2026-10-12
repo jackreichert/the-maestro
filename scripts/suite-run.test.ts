@@ -2,14 +2,31 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { jobDir, jobStatus, parseTap, startJob, statusLine, suiteEnv } from './suite-run.ts';
+import { basename, dirname, join, sep } from 'node:path';
+import { EVENT_DIR } from './local-config.ts';
+import { listWatches, paths } from './lib/watch-registry.ts';
+import { SUITE_WATCH_TTL_MS, jobDir, jobStatus, parseTap, registerWatch, startJob, statusLine, suiteEnv, suitesDir } from './suite-run.ts';
 import type { JobStatus } from './suite-run.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SCRIPT = join(ROOT, 'scripts', 'suite-run.ts');
+/** Tests must never touch a live ledger. Run them with a throwaway HOME, MAESTRO_EVENT_DIR and MAESTRO_SUITE_DIR; whatever the code under test resolves by default must then sit under a temp dir, on any machine. */
+const underTemp = (p: string): boolean => { const root = realpathSync(tmpdir()); const real = existsSync(p) ? realpathSync(p) : join(realpathSync(dirname(p)), basename(p)); return real === root || real.startsWith(`${root}${sep}`); };
+test('the default event dir and suite dir resolve under a temp dir, so no registration can reach a live ledger', () => {
+  assert.ok(underTemp(EVENT_DIR), `event dir ${EVENT_DIR} is not under a temp dir; run with MAESTRO_EVENT_DIR set to one`);
+  assert.ok(underTemp(suitesDir()), `suite dir ${suitesDir()} is not under a temp dir; run with MAESTRO_SUITE_DIR set to one`);
+});
+test.after(() => {
+  assert.ok(underTemp(EVENT_DIR), 'the event dir is still under a temp dir');
+  assert.ok(underTemp(paths(EVENT_DIR).watches), 'watches.jsonl lives in the temp event dir');
+  const leaked = existsSync(paths(EVENT_DIR).watches) ? readFileSync(paths(EVENT_DIR).watches, 'utf8').split('\n').filter((l) => l.includes('suite-fixture-')) : [];
+  assert.deepEqual(leaked, [], 'every test registration targets its own temp event dir, none the default one');
+});
+
+/** The CLI's environment for a test: suites, events and the ledger root all in temp dirs. */
+const cliEnv = (base: string, events: string): NodeJS.ProcessEnv => ({ ...process.env, MAESTRO_SUITE_DIR: base, MAESTRO_EVENT_DIR: events, LEDGER_ROOT: '', MAESTRO_LOCAL_CONFIG: '' });
 const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' };
 
 /** A committed fixture repo holding the given { file: text }; hooks are off so no global commit hook judges it. */
@@ -116,10 +133,17 @@ test('parseTap reads counts and names, once each, from node TAP output', () => {
 test('the CLI: start prints a job id and returns; status exits 4 while running or 0/1 when finished; no args is usage', async () => {
   const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
   const repo = fixture({ 'a.test.ts': PASSING });
-  const env = { ...process.env, MAESTRO_SUITE_DIR: base, MAESTRO_LOCAL_CONFIG: '' };
+  const events = mkdtempSync(join(tmpdir(), 'suite-events-'));
+  const env = cliEnv(base, events);
   const started = spawnSync(process.execPath, [SCRIPT, 'start', repo, '--tests', '*.test.ts', '--skip-tsc', '--json'], { encoding: 'utf8', env });
   assert.equal(started.status, 0, started.stderr);
-  const { job } = JSON.parse(started.stdout) as { job: string };
+  const { job, watch } = JSON.parse(started.stdout) as { job: string; watch: string };
+  assert.equal(watch, `suite-${job}`);
+  const [w, ...others] = listWatches(events);
+  assert.equal(others.length, 0);
+  assert.deepEqual([w?.id, w?.type, w?.target, w?.notify], [`suite-${job}`, 'suite-done', job, false]);
+  assert.equal(Date.parse(w?.expires ?? '') - Date.parse(w?.created ?? ''), SUITE_WATCH_TTL_MS);
+  assert.match(w?.report ?? '', /fresh reviewer/);
   await settled(job, base);
   const status = spawnSync(process.execPath, [SCRIPT, 'status', job], { encoding: 'utf8', env });
   assert.equal(status.status, 0, status.stdout + status.stderr);
@@ -150,8 +174,11 @@ test('--cmd replaces node --test: the command exit code decides, and zero parsed
   const bad = await settled(startJob(repo, { cmd: 'exit 3', skipTsc: true, base }).id, base);
   assert.equal(bad.results?.pass, false);
   assert.equal(bad.results?.tests.exit, 3);
-  const cli = spawnSync(process.execPath, [SCRIPT, 'start', repo, '--cmd', 'true', '--skip-tsc', '--json'], { encoding: 'utf8', env: { ...process.env, MAESTRO_SUITE_DIR: base, MAESTRO_LOCAL_CONFIG: '' } });
+  const events = mkdtempSync(join(tmpdir(), 'suite-events-'));
+  const cli = spawnSync(process.execPath, [SCRIPT, 'start', repo, '--cmd', 'true', '--skip-tsc', '--no-watch', '--json'], { encoding: 'utf8', env: cliEnv(base, events) });
   assert.equal(cli.status, 0, cli.stderr);
+  assert.equal((JSON.parse(cli.stdout) as { watch: unknown }).watch, null);
+  assert.deepEqual(listWatches(events), [], '--no-watch registers nothing');
   assert.equal((await settled((JSON.parse(cli.stdout) as { job: string }).job, base)).results?.pass, true);
 });
 
@@ -244,6 +271,15 @@ test('SIGTERM to the worker kills its children, removes the temp HOME and still 
 
 test('--timeout-min is validated on the CLI', () => {
   const repo = fixture({ 'a.test.ts': PASSING });
-  const env = { ...process.env, MAESTRO_SUITE_DIR: mkdtempSync(join(tmpdir(), 'suite-jobs-')), MAESTRO_LOCAL_CONFIG: '' };
+  const env = cliEnv(mkdtempSync(join(tmpdir(), 'suite-jobs-')), mkdtempSync(join(tmpdir(), 'suite-events-')));
   assert.equal(spawnSync(process.execPath, [SCRIPT, 'start', repo, '--timeout-min', '0', '--skip-tsc'], { encoding: 'utf8', env }).status, 2);
+});
+
+test('registerWatch writes a suite-done watch into the given event dir only, and refuses a second one for the same job', () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const events = mkdtempSync(join(tmpdir(), 'suite-events-'));
+  const spec = startJob(fixture({ 'a.test.ts': PASSING }), { tests: '*.test.ts', skipTsc: true, base });
+  assert.equal(registerWatch(spec, events), `suite-${spec.id}`);
+  assert.equal(listWatches(events).length, 1);
+  assert.throws(() => registerWatch(spec, events), /already exists/);
 });

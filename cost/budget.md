@@ -87,7 +87,7 @@ is in the block (measured 2026-09-25, `scripts/token-metrics.ts`):
      job id; `results.json` (counts, failing names, head sha) lands in the job directory when it ends.
      `suite-run.ts status <job>` looks once and never blocks.
   2. The agent that started it exits with a findings note naming the job id. Nothing waits.
-  3. The `suite-done` event type fires when `results.json` appears; the orchestrator, woken by its
+  3. `start` registers the `suite-done` watch itself (`--no-watch` opts out), and that event type fires when `results.json` appears, quiet hours included; the orchestrator, woken by its
      digest, starts a fresh reviewer with the diff and the results (batch several into one wake).
   Each round then pays one cold start instead of repeated rewrites of a context near 140k tokens.
   An agent that must pause for anything else keeps every gap under 4 minutes or writes its note and

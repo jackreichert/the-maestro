@@ -2,7 +2,7 @@
 
 A detached test-suite job finishing. Script: [scripts/event-types/suite-done.ts](../../scripts/event-types/suite-done.ts). The job comes from [scripts/suite-run.ts](../../scripts/suite-run.ts), which runs `tsc --noEmit` and `node --test` in a worktree with no model attached and writes `results.json` last. Target is the job id `suite-run.ts start` printed.
 
-Register: `node scripts/event-loop.ts add --id suite-<job> --type suite-done --target <job id> --report "<what to do with the results>"`. The default time to live is 24 hours, and the type runs through quiet hours (overnight results are reported at their normal pace, not skipped until morning); the watch retires itself on the event.
+Register: `suite-run.ts start` registers this watch itself (id `suite-<job>`), so there is nothing to do; `--no-watch` skips it. By hand, for a job started that way: `node scripts/event-loop.ts add --id suite-<job> --type suite-done --target <job id> --report "<what to do with the results>"`. The default time to live is 24 hours, and the type runs through quiet hours (overnight results are reported at their normal pace, not skipped until morning); the watch retires itself on the event.
 
 ## What the loop reports
 

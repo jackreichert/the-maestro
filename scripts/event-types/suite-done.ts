@@ -6,7 +6,7 @@
  * `add` refuses an id that is not a job id, or a job that does not exist, so a typo fails at once instead of expiring unseen.
  * The event is unowned (no repo): the orchestrator starts a fresh reviewer with the diff and results.json.
  */
-import { jobStatus, statusLine, suitesDir } from '../suite-run.ts';
+import { SUITE_WATCH_TTL_MS, jobStatus, statusLine, suitesDir } from '../suite-run.ts';
 import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
 export interface SuiteDoneState { state: 'running' | 'done' | 'lost'; summary: string }
@@ -17,7 +17,7 @@ export const interval = 30;
 export const network = false;
 export const backoff = false;
 export const quietExempt = true;
-export const defaultTtlMs = (): number => 24 * 3600 * 1000;
+export const defaultTtlMs = (): number => SUITE_WATCH_TTL_MS;
 
 export function validate(target: string): void {
   if (jobStatus(target).state === 'unknown') throw new Error(`suite-done target must be an existing job id from suite-run.ts start, got "${target}" (looked in ${suitesDir()})`);

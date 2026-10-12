@@ -2,7 +2,7 @@
 /**
  * suite-run.ts: run a worktree's type check and test suite as a detached job, so no agent ever waits on one.
  *
- *   suite-run.ts start <worktree> [--tests <glob>] [--cmd "<shell command>"] [--skip-tsc] [--timeout-min <n>] [--json]   spawn the job, print its id, return at once
+ *   suite-run.ts start <worktree> [--tests <glob>] [--cmd "<shell command>"] [--skip-tsc] [--timeout-min <n>] [--no-watch] [--json]   spawn the job, print its id, return at once
  *   suite-run.ts status <job> [--json]                                      look once, never block
  *
  * `start` writes <suites dir>/<job>/job.json, spawns this script detached (`_worker`), and exits. The worker runs
@@ -28,11 +28,16 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { EVENT_DIR } from './local-config.ts';
+import * as suiteDone from './event-types/suite-done.ts';
+import { notifyChoice } from './lib/notify.ts';
+import { addWatch } from './lib/watch-registry.ts';
 import { printJson } from './lib/json-out.ts';
 
 export const DEFAULT_TESTS = 'scripts/**/*.test.ts';
 export const TEST_CONCURRENCY = 2;
 export const DEFAULT_TIMEOUT_MIN = 30;
+/** How long the `suite-done` watch that `start` registers lives: longer than any quiet window, so an overnight result is still reported. */
+export const SUITE_WATCH_TTL_MS = 24 * 3600 * 1000;
 export const EXIT = { passed: 0, failed: 1, usage: 2, running: 4 };
 const JOB_ID = /^[\w.-]+$/;
 
@@ -124,6 +129,18 @@ export function startJob(worktree: string, opts: { tests?: string; cmd?: string;
   } finally { closeSync(log); }
   writeAtomic(join(dir, 'job.json'), spec);
   return spec;
+}
+
+/**
+ * Registers the `suite-done` watch for a job in `eventDir`, through the same pieces `event-loop.ts add` uses (the type's own default TTL and notify choice,
+ * and the registry's addWatch), so the loop reports the result with nobody remembering to ask. Returns the watch id.
+ */
+export function registerWatch(spec: JobSpec, eventDir: string, now: number = Date.now()): string {
+  const w = addWatch(eventDir, {
+    id: `suite-${spec.id}`, type: 'suite-done', target: spec.id, report: `suite results for ${spec.worktree}: start a fresh reviewer with the diff and results.json`,
+    ttlMs: suiteDone.defaultTtlMs(), notify: notifyChoice({ notifies: (suiteDone as { notifies?: 'default' | 'never' }).notifies }),
+  }, now);
+  return w.id;
 }
 
 /** One finished test run's counts and failing names, from node's TAP output. Nested failures count once by name; a `# TODO` or `# SKIP` line is not a failure. */
@@ -267,20 +284,26 @@ export function statusLine(s: JobStatus): string {
   return `suite ${s.job}: ${r.pass ? 'PASS' : 'FAIL'} at ${r.head.slice(0, 12)}${r.dirty ? ' (dirty tree)' : ''}${stop}; ${tsc}; ${testsText}${failing}`;
 }
 
+/** The watch id, or null when registering failed: a missing event dir must not lose a job that is already running. */
+function watchFor(spec: JobSpec): string | null {
+  try { return registerWatch(spec, EVENT_DIR); } catch (e) { console.error(`suite-run: the job runs, but its suite-done watch was not registered: ${(e as Error).message}`); return null; }
+}
+
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   if (cmd === '_worker') { await runWorker(rest[0] as string); return 0; }
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { tests: { type: 'string' }, cmd: { type: 'string' }, 'skip-tsc': { type: 'boolean' }, 'timeout-min': { type: 'string' }, json: { type: 'boolean' } } });
+  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { tests: { type: 'string' }, cmd: { type: 'string' }, 'skip-tsc': { type: 'boolean' }, 'timeout-min': { type: 'string' }, 'no-watch': { type: 'boolean' }, json: { type: 'boolean' } } });
   const target = positionals[0];
   if ((cmd !== 'start' && cmd !== 'status') || !target) {
-    console.error('usage: suite-run.ts start <worktree> [--tests <glob>] [--cmd "<shell command>"] [--skip-tsc] [--timeout-min <n>] [--json] | status <job> [--json]');
+    console.error('usage: suite-run.ts start <worktree> [--tests <glob>] [--cmd "<shell command>"] [--skip-tsc] [--timeout-min <n>] [--no-watch] [--json] | status <job> [--json]');
     return EXIT.usage;
   }
   if (cmd === 'start') {
     const timeoutMin = values['timeout-min'] === undefined ? undefined : Number(values['timeout-min']);
     if (timeoutMin !== undefined && !(timeoutMin > 0)) { console.error('suite-run: --timeout-min needs a positive number of minutes'); return EXIT.usage; }
     const spec = startJob(target, { tests: values.tests, cmd: values.cmd, skipTsc: values['skip-tsc'], timeoutMin });
-    if (values.json) printJson({ job: spec.id, dir: jobDir(spec.id), head: spec.head }); else console.log(`${spec.id}\nresults: ${join(jobDir(spec.id), 'results.json')}`);
+    const watch = values['no-watch'] ? null : watchFor(spec);
+    if (values.json) printJson({ job: spec.id, dir: jobDir(spec.id), head: spec.head, watch }); else console.log(`${spec.id}\nresults: ${join(jobDir(spec.id), 'results.json')}${watch ? `\nwatch: ${watch} (suite-done, registered in ${EVENT_DIR})` : ''}`);
     return 0;
   }
   const s = jobStatus(target);
