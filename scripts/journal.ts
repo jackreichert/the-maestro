@@ -436,7 +436,8 @@ function usageFromArgs(): Usage {
 
 // ── commands ────────────────────────────────────────────────────────────────
 
-const refsFromArgs = () => (arg('ref') || '').split(',').map((s) => s.trim()).filter(Boolean);
+/** Every `--ref` on the line, each also split on commas: `--ref a --ref b` and `--ref a,b` both give [a, b]. */
+const refsFromArgs = () => refFlagValues().flatMap((v) => v.split(',')).map((s) => s.trim()).filter(Boolean);
 
 /**
  * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
