@@ -70,6 +70,26 @@ test('a ticked box fires, and answer plus tick on one ask make one event', () =>
   assert.deepEqual(events(dir), ['ask ab12 (decision: Merge it now?) answered: ok, ticked']);
 });
 
+/** Types a `> discuss:` line directly under the ask's answer stub. */
+const discuss = (dir: string, id: string, topic: string): void => {
+  const page = readFileSync(join(dir, 'The-Podium.md'), 'utf8');
+  const re = new RegExp(`(\\\`${id}\\\`[^\\n]*\\n  > answer: [^\\n]*)\\n`);
+  assert.match(page, re, `page has the ${id} stub`);
+  writeFileSync(join(dir, 'The-Podium.md'), page.replace(re, `$1\n  > discuss: ${topic}\n`));
+};
+
+test('a discuss line fires one DISCUSS event with its topic, survives a regeneration until reported, and is not reported twice', () => {
+  const dir = setup();
+  events(dir);
+  discuss(dir, 'ab12', 'rollout order');
+  regenerate(dir);
+  assert.match(readFileSync(join(dir, 'The-Podium.md'), 'utf8'), /`ab12`[^\n]*\n {2}> answer: \n {2}> discuss: rollout order\n/);
+  assert.deepEqual(events(dir), ['DISCUSS ask ab12 (decision: Merge it now?): rollout order']);
+  assert.deepEqual(events(dir), []);
+  discuss(dir, 'cd34', '');
+  assert.deepEqual(events(dir), ['DISCUSS ask cd34 (decision: Which option?) (no topic given)']);
+});
+
 test('regenerating before the watcher looks keeps the answer, and it still fires exactly once', () => {
   const dir = setup();
   events(dir);

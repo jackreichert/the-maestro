@@ -1,7 +1,7 @@
 /**
  * status-watch: wakes the orchestrator when the user edits the status page by hand. Target is the status directory
  * (the one holding The-Podium.md); see scripts/lib/status-page/inline.ts for what counts as an edit: an `> answer:` line under
- * an ask, a ticked `- [x]` box on an ask, or a changed priorities list.
+ * an ask, a `> discuss:` line under an ask, a ticked `- [x]` box on an ask, or a changed priorities list.
  *
  * Each check compares The-Podium.md with the baseline beside it (`.now-seen.md`) and reports only what is new, one actionable
  * event per ask (answer and tick together) and one for the priorities, then adopts The-Podium.md as the new baseline. A page the
@@ -50,7 +50,7 @@ function decisions(page: string): Map<string, string> {
   return out;
 }
 
-/** One summary per ask that was answered or ticked, then one for the priorities. */
+/** One summary per ask that was answered or ticked, one per discuss mark (starting `DISCUSS`), then one for the priorities. */
 export function describe(u: Unprocessed, page: string): string[] {
   const why = decisions(page);
   const ids = [...new Set([...Object.keys(u.answers), ...u.ticks])].sort();
@@ -61,6 +61,11 @@ export function describe(u: Unprocessed, page: string): string[] {
     const about = why.has(id) ? ` (decision: ${(why.get(id) as string).slice(0, 60)})` : '';
     return `ask ${id}${about} ${what}`;
   });
+  // A discuss mark is its own event, tagged so the orchestrator raises it in chat and holds off acting on that ask.
+  for (const id of Object.keys(u.discuss).sort()) {
+    const about = why.has(id) ? ` (decision: ${(why.get(id) as string).slice(0, 60)})` : '';
+    out.push(`DISCUSS ask ${id}${about}${u.discuss[id] ? `: ${u.discuss[id]}` : ' (no topic given)'}`);
+  }
   if (u.priorities) out.push(`priorities edited inline: ${u.priorities.map((p, i) => `${i + 1}) ${p}`).join('; ') || '(emptied)'}`);
   return out;
 }
