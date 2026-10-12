@@ -320,7 +320,8 @@ function printTriageLog(dir: string, v: { suppressed?: boolean; hours?: string; 
   if (hours !== undefined && !(hours > 0)) return '--hours needs a positive number';
   const since = hours === undefined ? 0 : Date.now() - hours * 3600 * 1000;
   const rows = readTriageLog(dir).filter((r) => r.decision && Date.parse(String(r.at)) >= since && (!v.suppressed || r.decision === 'noise'));
-  console.log(v.json ? JSON.stringify(rows) : rows.map((r) => `${r.at} ${r.decision} ${r.rule} ${r.kind} ${r.watch}: ${r.reason} | ${r.summary}`).join('\n') || 'no triage decisions');
+  if (v.json) printJson(rows, { compact: true });
+  else console.log(rows.map((r) => `${r.at} ${r.decision} ${r.rule} ${r.kind} ${r.watch}: ${r.reason} | ${r.summary}`).join('\n') || 'no triage decisions');
   return EXIT.ok;
 }
 
