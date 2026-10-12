@@ -65,7 +65,7 @@ export function triageChecklist(items: TriageItem[], blockers: Blocker[], pendin
     const n = (box: number): TriageItem[] => items.filter((i) => i.box === box);
     const unpromoted = blockers.filter((b) => RECORD_BOXES.includes(b.box)).length;
     const toClose = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).length;
-    const short = n(BOX.NEEDS_JACK).filter((i) => String(i.text).trim().length < 25).length;
+    const short = n(BOX.NEEDS_USER).filter((i) => String(i.text).trim().length < 25).length;
     const unfiled = n(BOX.PASTE).filter((i) => !i.paste).length;
     const mark = (ok: unknown): string => (ok ? '[x]' : '[ ]');
     return [

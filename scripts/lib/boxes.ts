@@ -25,7 +25,7 @@ export type Gate =
 export interface GateStatus { state: 'waiting' | 'cleared' | 'unknown'; detail: string }
 
 export const BOX = {
-    RULE: 1, STANDING: 2, ONE_OFF: 3, NEEDS_JACK: 4, PASTE: 5, GATED: 6, INFLIGHT: 7, FINDING: 8, LEARNING: 9, DONE: 10, NOISE: 11,
+    RULE: 1, STANDING: 2, ONE_OFF: 3, NEEDS_USER: 4, PASTE: 5, GATED: 6, INFLIGHT: 7, FINDING: 8, LEARNING: 9, DONE: 10, NOISE: 11,
 };
 
 export const BOX_TITLES: Record<number, string> = {
@@ -73,9 +73,9 @@ export function classify(item: BoxItem, approval?: Approval): number {
         if (approval === 'standing') return BOX.STANDING;
         if (approval === 'one-off') return BOX.ONE_OFF;
         if (item.paste || (RUN_THIS.test(text) && !text.includes('?'))) return BOX.PASTE;
-        return BOX.NEEDS_JACK;
+        return BOX.NEEDS_USER;
     case 'decision':
-        if (item.pending) return BOX.NEEDS_JACK;
+        if (item.pending) return BOX.NEEDS_USER;
         if (approval === 'standing') return BOX.STANDING;
         if (approval === 'one-off') return BOX.ONE_OFF;
         return BOX.RULE;
@@ -89,7 +89,7 @@ export function classify(item: BoxItem, approval?: Approval): number {
 }
 
 /** Days after which an open item in a box is flagged stale; absent means the box never goes stale. */
-export const STALE_AFTER_DAYS: Record<number, number> = { [BOX.NEEDS_JACK]: 2, [BOX.PASTE]: 2, [BOX.INFLIGHT]: 1 };
+export const STALE_AFTER_DAYS: Record<number, number> = { [BOX.NEEDS_USER]: 2, [BOX.PASTE]: 2, [BOX.INFLIGHT]: 1 };
 
 export const isStale = (box: number, item: BoxItem, today: string): boolean => {
     if (item.queued) return false;   // a queued to-do has not started, so it cannot have run too long
