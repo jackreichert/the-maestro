@@ -15,6 +15,9 @@
  * generator wrote itself is recognised by its hash (`.now-seen.json`) and reported as nothing, so regenerating never fires.
  * The baseline moves in `check`, before the loop records the events: a crash in that instant loses the event, but not the
  * answer, which is already in the ledger (with no ledger known, only the page, until the next regeneration, holds it).
+ * An answer given on the web page is already in the ledger (the route closes the ask) and is on the page too, so it is reported here once as
+ * `answered on the page, already recorded and closed: ...` (see lib/web/answer-write.ts); an answer the session records itself with `resolve` never
+ * touches the page, so it is never reported.
  * The digest cuts a summary at 300 characters, so the decision comes before the answer; a summary ending in `...` has the
  * full text in `.now-seen.md` (the baseline just adopted), under the same ask id.
  * State { sha, fresh } is the page hash and the summaries to report this tick; `fresh` is empty on every quiet check.
@@ -23,6 +26,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT, statusDirFor } from '../local-config.ts';
+import { fold } from '../lib/ledger-core.ts';
 import { latestRow, recordAnswer, squash } from '../lib/journal/answers.ts';
 import { openStore } from '../lib/journal/store.ts';
 import type { AnswerStore } from '../lib/journal/answers.ts';
@@ -71,7 +75,8 @@ export function describe(u: Unprocessed, page: string): string[] {
   const out = ids.map((id) => {
     const answer = u.answers[id];
     const ticked = u.ticks.includes(id);
-    const what = [answer ? `answered: ${answer}` : '', ticked ? 'ticked' : ''].filter(Boolean).join(', ');
+    const how = u.closed?.includes(id) ? 'answered on the page, already recorded and closed' : 'answered';
+    const what = [answer ? `${how}: ${answer}` : '', ticked ? 'ticked' : ''].filter(Boolean).join(', ');
     const about = why.has(id) ? ` (decision: ${(why.get(id) as string).slice(0, 60)})` : '';
     return `ask ${id}${about} ${what}`;
   });
@@ -102,7 +107,10 @@ export function recordEdits(store: AnswerStore, edits: Unprocessed, nowMs: numbe
   };
   const entries = store.readLedger();
   const answers = Object.fromEntries(Object.entries(edits.answers).filter(([id, text]) => latestRow(entries, 'answer', id)?.text !== squash(text)));
-  const novel = { ...edits, answers };
+  // An answer given through the web route is on the page as well as in the ledger's closing row: say so, so the session acts and does not resolve the ask again.
+  const items = fold(entries, null).items;
+  const closed = Object.entries(answers).filter(([id, text]) => items.find((i) => i.id === id)?.closedBy?.text === squash(text)).map(([id]) => id);
+  const novel = { ...edits, answers, closed };
   // A bare tick says "as proposed", so it must not replace words already recorded for the ask.
   for (const id of new Set([...Object.keys(answers), ...edits.ticks])) {
     const text = answers[id] ?? (latestRow(entries, 'answer', id) ? null : '(ticked)');

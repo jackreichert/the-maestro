@@ -2,8 +2,10 @@
  * Answering an ask from the page: the one POST route beside the priorities edits, `POST /api/asks/answer`.
  *
  * It records the answer the way `journal.ts resolve <id> --answer` does (`closeItem` appends the same `resolved` row), then
- * writes the answer into the ask's `> answer:` stub in The-Podium.md and into the status watcher's baseline copy of the page, so the note
- * shows the answer and the watcher reports no second event for it. An answer already typed in the note and not yet reported is
+ * writes the answer into the ask's `> answer:` stub in The-Podium.md, and only there: the status watcher's baseline copy is left alone, so the
+ * watcher finds the answer as an edit it has not reported and raises the one event that wakes the orchestrator (it says the ask is already
+ * recorded and closed, so the handler acts on it and does not resolve it again). Until the watcher looks, the page generator carries the answer
+ * forward under `## Unprocessed answers` even after the ask has left the board. An answer already typed in the note and not yet reported is
  * refused (it is waiting to be recorded; a second answer would double it), and so is an ask that is closed or does not exist.
  * guard.ts and the token check in priorities-write.ts run first; this module checks the body's shape and the ask itself.
  * The ledger row is the source of truth: if the note cannot be updated the answer still stands and the failure is logged.
@@ -13,9 +15,9 @@ import { join } from 'node:path';
 import { closeItem } from '../journal/close.ts';
 import { fold } from '../ledger-core.ts';
 import { openStore } from '../journal/store.ts';
-import { fillStub, extractFields, unprocessed } from '../status-page/inline.ts';
+import { carryInline, fillStub, extractFields, unprocessed } from '../status-page/inline.ts';
 import { acquireLock, processAlive } from '../status-page/lock.ts';
-import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, writeAtomic, writeSeenPage } from '../status-page/seen.ts';
+import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, writeAtomic } from '../status-page/seen.ts';
 import { readBoard } from './api.ts';
 import { MAX_BODY_BYTES, sendError, sendJson } from './guard.ts';
 import { readBody, tokenOk, TOKEN_HEADER } from './priorities-write.ts';
@@ -96,24 +98,16 @@ function pendingInNote(statusDir: string, id: string): boolean {
 }
 
 /**
- * Put the answer in the note's stub and in the watcher's baseline, baseline first: the watcher reports an answer present in the page and
- * absent from the baseline, never the other way round. Skipped when either copy has no stub to fill (no baseline means every answer on the page
- * would read as new). If a rebuild or an edit changes the page meanwhile it starts over, then gives up.
+ * Put the answer in the note, for the watcher to report. It goes in the ask's empty stub; when the page has no such stub (the ask is not on the
+ * page, or its stub already holds words the ledger rendered back) it is carried in the way the generator carries an unreported edit. No note
+ * means nothing is written. The baseline is deliberately not touched: an answer present in the page and absent from the baseline is the event.
+ * answerAsk holds the page lock, so a rebuild cannot interleave; the write is one atomic rename.
  */
 function syncNote(statusDir: string, id: string, text: string): void {
-  const path = join(statusDir, PODIUM_FILE);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const page = readPodium(statusDir);
-    const baseline = readSeenPage(statusDir);
-    const filledPage = page === null ? null : fillStub(page, id, text);
-    const filledBase = baseline === null ? null : fillStub(baseline, id, text);
-    if (filledPage === null || filledBase === null) return;
-    writeSeenPage(statusDir, filledBase);
-    if (readPodium(statusDir) !== page) continue;   // changed while the baseline was written
-    writeAtomic(path, filledPage);
-    return;
-  }
-  throw new Error(`${PODIUM_FILE} kept changing`);
+  const page = readPodium(statusDir);
+  if (page === null) return;
+  const filled = fillStub(page, id, text) ?? carryInline(page, { answers: { [id]: text }, discuss: {}, ticks: [], priorities: null }, page);
+  writeAtomic(join(statusDir, PODIUM_FILE), filled);
 }
 
 /** Handles the answer POST that the guard let through. Always answers; never throws. */
