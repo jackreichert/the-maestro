@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyLine, triageEvents, triagePath } from './digest-triage.ts';
+import { classifyLine, rulesOnlyTriage, suppressedSince, sweepSuppressed, triageEvents, triagePath } from './digest-triage.ts';
+import type { Triage } from './digest-triage.ts';
 import type { DigestEvent } from './types.ts';
 import { tick } from '../event-loop.ts';
 import type { EventType } from './types.ts';
@@ -61,4 +62,78 @@ test('a tick triages its events and an empty tick writes no log', () => {
   tick({ ...base, now: Date.parse(AT) + 3600000 });
   assert.deepEqual(rows(dir).map((x) => x.rule), ['new-conflict']);
   assert.equal(readDigest(dir).filter((e) => e.actionable).length, 1);
+});
+
+const ev = (summary: string, type = 'pr-watch', actionable = true): DigestEvent => ({ watch: 'w', type, at: AT, summary, actionable, report: 'r' });
+const tmp = () => mkdtempSync(join(tmpdir(), 'triage-seam-'));
+const COMMENT = `COMMENT org/repo#7 by alice: ${U}`;
+
+test('the rules-only default is unsure, so an ambiguous line wakes', () => {
+  assert.equal(rulesOnlyTriage({ watch: 'w', type: 'pr-watch', kind: 'comment', summary: COMMENT }).verdict, 'unsure');
+  const dir = tmp();
+  const [e] = triageEvents([ev(COMMENT)], { dir });
+  assert.equal(e.actionable, true);
+  assert.match(rows(dir)[0].reason, /rules-only/);
+});
+
+test('noise with a reason suppresses and is logged with that reason; the report is dropped', () => {
+  const dir = tmp();
+  const noise: Triage = () => ({ verdict: 'noise', reason: 'bare thanks' });
+  const [e] = triageEvents([ev(COMMENT)], { dir, triage: noise });
+  assert.deepEqual([e.actionable, e.report], [false, '']);
+  assert.deepEqual(rows(dir).map((x) => [x.decision, x.rule, x.reason]), [['noise', 'triage', 'bare thanks']]);
+  assert.equal(suppressedSince(dir).length, 1);
+});
+
+test('the seam is never asked about a rule-covered line, and cannot suppress one', () => {
+  const dir = tmp();
+  let asked = 0;
+  const [e] = triageEvents([ev(`CONFLICT org/repo#7 main <- x ${U}`)], { dir, triage: () => { asked += 1; return { verdict: 'noise', reason: 'x' }; } });
+  assert.deepEqual([asked, e.actionable], [0, true]);
+});
+
+test('unsure, actionable, a throw, a bad answer and noise without a reason all wake', () => {
+  const answers: Triage[] = [() => ({ verdict: 'unsure', reason: 'hm' }), () => ({ verdict: 'actionable', reason: 'asks a question' }),
+    () => { throw new Error('model down'); }, () => ({ verdict: 'maybe' }) as never, () => ({ verdict: 'noise', reason: '  ' })];
+  for (const triage of answers) {
+    const dir = tmp();
+    const [e] = triageEvents([ev(COMMENT)], { dir, triage });
+    assert.equal(e.actionable, true);
+    assert.equal(rows(dir)[0].decision, 'wake');
+  }
+});
+
+test('the sweep lists suppressed lines once an hour, and only once', () => {
+  const dir = tmp();
+  const t0 = Date.parse(AT);
+  triageEvents([ev(COMMENT), ev(`REPLY org/repo#7 by bob: ${U}`)], { dir, triage: () => ({ verdict: 'noise', reason: 'bot chatter' }) });
+  const first = sweepSuppressed(dir, t0 + 1000);
+  assert.ok(first && !first.actionable);
+  assert.match(first.summary, /^TRIAGE-SWEEP 2 lines suppressed as noise .*bot chatter/);
+  assert.equal(sweepSuppressed(dir, t0 + 60 * 1000), null);
+  triageEvents([{ ...ev(COMMENT), at: new Date(t0 + 1800 * 1000).toISOString() }], { dir, triage: () => ({ verdict: 'noise', reason: 'again' }) });
+  const next = sweepSuppressed(dir, t0 + 3700 * 1000);
+  assert.match(next?.summary ?? '', /^TRIAGE-SWEEP 1 line suppressed/);
+  assert.equal(sweepSuppressed(dir, t0 + 7400 * 1000), null);
+});
+
+test('the sweep does nothing with no log, and a due sweep with no noise is silent', () => {
+  const dir = tmp();
+  assert.equal(sweepSuppressed(dir, Date.parse(AT)), null);
+  assert.equal(existsSync(triagePath(dir)), false);
+  triageEvents([ev(`CONFLICT org/repo#7 main <- x ${U}`)], { dir });
+  assert.equal(sweepSuppressed(dir, Date.parse(AT) + 1000), null);
+});
+
+test('a tick with a noise triage writes an info event, not an actionable one', () => {
+  const dir = tmp();
+  let n = 0;
+  const type: EventType<{ n: number }> = { check: () => ({ n: n++ }), diff: (prev) => (prev ? [{ summary: COMMENT }] : []) };
+  addWatch(dir, { id: 'w', type: 'pr-watch', target: 't', ttlMs: 86400000 }, Date.parse(AT));
+  const base = { dir, types: { 'pr-watch': type }, config: { quietHours: 'off', tz: 'UTC' } as const, triage: (() => ({ verdict: 'noise', reason: 'thanks' })) as Triage };
+  tick({ ...base, now: Date.parse(AT) });
+  tick({ ...base, now: Date.parse(AT) + 3600000 });
+  const out = readDigest(dir);
+  assert.deepEqual(out.map((e) => e.actionable), [false]);
+  assert.equal(suppressedSince(dir).length, 1);
 });

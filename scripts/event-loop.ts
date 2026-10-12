@@ -51,7 +51,8 @@ import {
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import { migrateDigests } from './lib/digest-migrate.ts';
-import { triageEvents } from './lib/digest-triage.ts';
+import { readTriageLog, sweepSuppressed, triageEvents } from './lib/digest-triage.ts';
+import type { Triage } from './lib/digest-triage.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
 import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './lib/event-inbox.ts';
 import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
@@ -75,6 +76,8 @@ export interface TickDeps {
   now?: number;
   notifyCommand?: string[];
   notifyRun?: NotifyRun;
+  /** The triage seam for ambiguous pr lines; the rules-only default suppresses nothing. */
+  triage?: Triage;
 }
 
 /** What one tick did: the digest events, retired watches, ids skipped in quiet hours and ids not yet due. */
@@ -152,7 +155,7 @@ function renewed(dir: string, watch: Watch, type: EventType | undefined, now: nu
  * during quiet hours only `notify_overnight` watches are checked or notified.
  */
 export function tick(deps: TickDeps): TickResult {
-  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun } = deps;
+  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun, triage } = deps;
   const state = loadState(dir);
   // Quiet means the clock says so, whatever quietMode does to the pace (`slow` never returns stop).
   const quiet = 'stop' in nextInterval({ now, recentEvents: state.events, config: { ...config, quietMode: 'stop' } });
@@ -193,7 +196,7 @@ export function tick(deps: TickDeps): TickResult {
     if (state.watches[watch.id]) state.watches[watch.id].nextDue = now + (quiet && slowOnly(watch, types, config) ? Math.max(seconds, SLOW_QUIET_SECONDS) : seconds) * 1000;
   }
   // Rules classify the pr lines and log each decision before anything wakes the orchestrator.
-  triageEvents(out.events, { dir });
+  triageEvents(out.events, { dir, triage });
   // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
   saveState(dir, state);
@@ -281,6 +284,7 @@ async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep
       if (!serve && !listWatches(dir).length) { console.log('no watches registered'); return EXIT.ok; }
       try {
         tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND });
+        sweepTriage(dir);
         if (serve) drainDigestToInbox(dir);
       } catch (err) { beat({ lastError: errorMessage(err).split('\n')[0] }); throw err; }
       beat({ lastError: '' });
@@ -294,6 +298,24 @@ async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep
     if (err instanceof DOMException && err.name === 'AbortError') return EXIT.ok;
     throw err;
   }
+}
+
+/** The hourly list of lines triage suppressed, as an info event (it never wakes). A failure is logged, never thrown: the sweep is advisory. */
+function sweepTriage(dir: string): void {
+  try {
+    const event = sweepSuppressed(dir, Date.now());
+    if (event) appendDigest(dir, [event]);
+  } catch (err) { console.error(`triage sweep failed: ${errorMessage(err)}`); }
+}
+
+/** `triage-log [--suppressed] [--hours N]`: the logged triage decisions, or only those suppressed as noise, newest last. */
+function printTriageLog(dir: string, v: { suppressed?: boolean; hours?: string; json?: boolean }): number | string {
+  const hours = v.hours === undefined ? undefined : Number(v.hours);
+  if (hours !== undefined && !(hours > 0)) return '--hours needs a positive number';
+  const since = hours === undefined ? 0 : Date.now() - hours * 3600 * 1000;
+  const rows = readTriageLog(dir).filter((r) => r.decision && Date.parse(String(r.at)) >= since && (!v.suppressed || r.decision === 'noise'));
+  console.log(v.json ? JSON.stringify(rows) : rows.map((r) => `${r.at} ${r.decision} ${r.rule} ${r.kind} ${r.watch}: ${r.reason} | ${r.summary}`).join('\n') || 'no triage decisions');
+  return EXIT.ok;
 }
 
 /** Prints the unseen digests. With `claim`, they are first claimed (so no other waiter takes them) and marked seen only after printing: at-least-once. Returns whether anything was printed. */
@@ -377,7 +399,7 @@ const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
+  suppressed: { type: 'boolean' }, hours: { type: 'string' }, once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
@@ -422,6 +444,9 @@ async function main(argv: string[]): Promise<number> {
       if (v.once && v.serve) return usage('--once and --serve cannot be combined');
       acquireLock(dir);
       return await run({ dir, types, once: v.once, serve: v.serve, pinned });
+    } else if (cmd === 'triage-log') {
+      const done = printTriageLog(dir, v);
+      return typeof done === 'string' ? usage(done) : done;
     } else if (cmd === 'events') {
       const done = await eventsCommand(dir, arg, rest, v);
       return typeof done === 'string' ? usage(done) : done;
@@ -432,7 +457,7 @@ async function main(argv: string[]): Promise<number> {
       // `digest-wait` is `events wait` under its old name: saved digests are moved into the inbox first (and again each poll), then it waits on the inbox.
       const done = await eventsCommand(dir, 'wait', [], v, () => { try { migrateDigests(dir, saved); } catch (err) { console.error(`digest-wait: could not move saved digests into the inbox: ${errorMessage(err)}`); } });
       return typeof done === 'string' ? usage(done) : done;
-    } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests | events');
+    } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests | events | triage-log');
   } catch (err) {
     return usage(errorMessage(err));
   }
