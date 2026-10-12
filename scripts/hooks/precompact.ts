@@ -9,6 +9,7 @@
  * 1. Reads the whole transcript and raises every message that looks like an unledgered decision and was not raised before (the `[msg <ts> <hash>]` marker on a ledger row is the only memory), 20 messages per `ask` row, so nothing is left pending for a later run that may never come. It runs first so the asks it raises land in the handoff.
  * 2. Verifies the handoff: when the newest `--all` handoff (a single-stream one never counts) is at least as new as the newest ledger row that is not a hook or loop row (`handoffFresh`) and step 1 raised no ask, it is left alone (the raised asks are hook rows that `handoffFresh` ignores, so any ask forces the rewrite). Otherwise `journal.ts handoff --all --no-worktree-sweep --force --window <id> --out <Journal>/HANDOFF-<date>-precompact-<window>.md`: the hook's own file for this window, rewritten each run by that window only (45 s cap); another window's compaction the same day writes its own name, so `--force` never touches it.
  * 3. Copies dirty and untracked source (an allowlist of extensions, regular files only) of active worktrees to <scripts_dir>/scratch/snapshots/<date>/ (stops at 80 s). A file already held byte for byte in today's or yesterday's snapshot is not copied again.
+ * 3b. Verifies the `continuity` watch is registered and the loop alive (`watchProblem`); if not, step 4 is `precompact incomplete: continuity watch: <one line with the fix>`.
  * 4. Appends a `note` row starting "precompact": the marker `prime` reads. When all three were already current it says `precompact: all current`; when it had to repair something it says what and by how much. A step that failed makes it "precompact incomplete: ...".
  *
  * Fails open: always exits 0, because a hook that blocks compaction leaves a session stuck. A failure is a loud ledger row instead.
@@ -25,6 +26,7 @@ import type { AutocompactSetting } from '../lib/autocompact.ts';
 import { AUTOCOMPACT_FLOOR } from '../local-config.ts';
 import { COMPACTION_THRASH, errorLine, handoffFresh, HOOK_USED, newestHandoff, PRECOMPACT_INCOMPLETE, PRECOMPACT_MARK, PRECOMPACT_REPAIRED, PRECOMPACT_STARTED, REPAIR_ALARM_MS, snapshotDirty, thrash, unledgeredDecisions, userMessages } from '../lib/continuous-roll.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
+import { liveContinuityWatchProblem } from '../lib/continuity-watch.ts';
 import { resolveWindowId, windowEnv } from '../lib/window-id.ts';
 
 const JOURNAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'journal.ts');
@@ -52,6 +54,8 @@ export interface PrecompactDeps {
   lockDir?: string;
   /** The effective autocompact setting, named in a thrash row. */
   autocompact: () => AutocompactSetting;
+  /** One actionable line when the continuity watch is not registered and live; null when it is. Unset skips the check. */
+  watchProblem?: () => string | null;
 }
 
 export interface PrecompactInput { transcript_path?: string; trigger?: string; session_id?: string }
@@ -76,6 +80,16 @@ export function decisionsOnly(input: PrecompactInput & { reason?: string }, deps
     const why = (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 100);
     try { deps.journal(['log', `${PRECOMPACT_INCOMPLETE}: decisions: ${why} (${tag})`, '--kind', 'note', ...MARKS]); } catch { /* fail open */ }
     return 0;
+  }
+}
+
+/** The watch check as a failed-step entry; a throwing check is named, never fatal. */
+function watchFailure(deps: Pick<PrecompactDeps, 'watchProblem'>): string[] {
+  try {
+    const p = deps.watchProblem?.();
+    return p ? [`continuity watch: ${p}`] : [];
+  } catch (e) {
+    return [`continuity watch: ${(e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 100)}`];
   }
 }
 
@@ -107,7 +121,7 @@ export function precompact(input: PrecompactInput, deps: PrecompactDeps): string
   const locked = deps.lockDir ? withContinuityLock(deps.lockDir, LOCK_WAIT_MS, steps) : { ran: false as const };
   const done = locked.ran ? locked.value : steps();
   const { raised, count, snapshot: snap } = done;
-  const failed = done.failed;
+  const failed = [...done.failed, ...watchFailure(deps)];
   const handoff = done.handoff.reason;
   const handoffRepaired = done.handoff.repaired;
   const allCurrent = !handoffRepaired && !raised && !(snap?.copied ?? 0);
@@ -140,6 +154,7 @@ export function realDeps(argv: string[]): PrecompactDeps {
     snapshot: (date, deadline) => (SCRIPTS_SHELF_DIR && CONTAINER_ROOT ? snapshotDirty(CONTAINER_ROOT, join(SCRIPTS_SHELF_DIR, 'scratch', 'snapshots', date), Date.now(), deadline) : null),
     now: () => new Date(),
     autocompact: () => readAutocompact(),
+    watchProblem: () => liveContinuityWatchProblem(),
   };
 }
 
