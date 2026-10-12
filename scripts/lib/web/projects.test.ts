@@ -28,7 +28,7 @@ function setup(): { cfg: Parameters<typeof buildProjects>[0]; roots: string[] } 
   } } }));
   writePriorities(statusDir, DAY, [{ text: 'Plant the orchard', stream: 'Orchard' }, { text: 'Rehearse the cutover', stream: 'Avonlea' }]);
   const store = openStore({ vault: ledgerRoot, project: 'p', dryRun: false });
-  const row = (o: Record<string, unknown>): void => store.append({ ts: `${DAY}T12:00:00Z`, date: DAY, ...o });
+  const row = (o: Record<string, unknown>): void => { store.append({ ts: `${DAY}T12:00:00Z`, date: DAY, ...o }); };
   row({ id: 'ask1', kind: 'question', text: 'Approve the backfill window?', stream: 'Avonlea' });
   row({ id: 'wip1', kind: 'wip', text: 'Port the loader', stream: 'Avonlea', ts: '2026-10-03T12:00:00Z', date: '2026-10-03' });
   row({ id: 'wip2', kind: 'wip', text: 'Old cron', stream: 'Avonlea', ts: '2026-10-01T12:00:00Z', date: '2026-10-01' });
