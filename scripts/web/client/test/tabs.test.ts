@@ -54,7 +54,7 @@ test('nextTab moves right and left with wraparound, and Home/End jump to the end
 
 test('nextTab ignores other keys and treats an unknown current tab as the first', () => {
   assert.equal(nextTab('Enter', ids, 'ops'), null);
-  assert.equal(nextTab('ArrowRight', ids, 'gone'), 'acme-widgets');
+  assert.equal(nextTab('ArrowRight', ids, 'gone'), 'open-prs');
 });
 
 test('parseFilter reads &show=<tile> and ignores anything that is not a tile', () => {
