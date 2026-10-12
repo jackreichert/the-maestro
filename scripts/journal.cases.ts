@@ -2449,6 +2449,126 @@ test('priorities set and show round-trip through the status dir, with a stream s
     assert.match(run('priorities', 'show', '--status-dir', sd).out, /^Priorities for \d{4}-\d{2}-\d{2}:\n1\. Ship the widget \[Alpha\]\n2\. Second thing\n/);
 });
 
+test('priorities set also writes each mapped project\'s own file, and priorities show --repo reads it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-root-'));
+    mkdirSync(join(root, 'Projects', 'the-maestro'), { recursive: true });
+    const sd = join(vault, 'Status');
+    const runIn = (...args: string[]): Run => {
+        const r = spawnSync(process.execPath, [SCRIPT, ...args, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd,
+            env: { ...process.env, VAULT_ROOT: root, MAESTRO_WINDOW: 'testwin', MAESTRO_STATUS_REPO_STREAMS: 'the-maestro=Maestro', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const set = runIn('priorities', 'set', 'Ship the widget | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    const file = readFileSync(join(root, 'Projects', 'the-maestro', 'Status', 'priorities', '2030-01-02.md'), 'utf8');
+    assert.match(file, /^written-by: priorities set$/m);
+    assert.match(file, /^## Today\n- Ship the widget \| Maestro$/m);
+    const shown = runIn('priorities', 'show', '--repo', 'the-maestro', '--date', '2030-01-02');
+    assert.equal(shown.code, 0, shown.err);
+    assert.match(shown.out, /^Priorities for 2030-01-02:\n1\. Ship the widget \[Maestro\]\n/);
+    assert.match(runIn('priorities', 'show', '--repo', 'nowhere', '--date', '2030-01-02').out, /Priorities not set for today/);
+    assert.equal(existsSync(join(root, 'Projects', 'dev-env')), false, 'a project with no vault folder is not created');
+    rmSync(root, { recursive: true, force: true });
+});
+
+/** A temp vault root with the given project folders, and a runner for journal.ts with that vault root and the-maestro / options-app mapped to streams. */
+function projectVault(...names: string[]): { root: string; runIn: (...args: string[]) => Run; fileOf: (project: string, day: string) => string } {
+    const root = mkdtempSync(join(tmpdir(), 'journal-root-'));
+    for (const n of names) mkdirSync(join(root, 'Projects', n), { recursive: true });
+    const sd = join(vault, 'Status');
+    const runIn = (...args: string[]): Run => {
+        const r = spawnSync(process.execPath, [SCRIPT, ...args, '--status-dir', sd, '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd,
+            env: { ...process.env, VAULT_ROOT: root, MAESTRO_WINDOW: 'testwin', MAESTRO_STATUS_REPO_STREAMS: 'the-maestro=Maestro,options-app=Options', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        });
+        return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    const fileOf = (project: string, day: string): string => {
+        const path = join(root, 'Projects', project, 'Status', 'priorities', `${day}.md`);
+        return existsSync(path) ? readFileSync(path, 'utf8') : '';
+    };
+    return { root, runIn, fileOf };
+}
+
+const ROLL_FILE = [
+    '---', 'type: priorities', 'project: the-maestro', 'date: 2030-01-02', 'carried-from: 2030-01-01', 'written-by: roll-maintenance', '---', '',
+    '## Today', '- not set yet', '', '## Carried from 2030-01-01', '- Unfinished A | Maestro · 0 done, 1 in flight, 0 queued, 0 blocked', '- Unfinished B | Maestro · 0 done, 1 in flight, 0 queued, 0 blocked', '',
+].join('\n');
+
+test('priorities set keeps the carried section roll wrote for the day and replaces only Today', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro');
+    const dir = join(root, 'Projects', 'the-maestro', 'Status', 'priorities');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '2030-01-02.md'), ROLL_FILE);
+    const set = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    const file = fileOf('the-maestro', '2030-01-02');
+    assert.match(file, /^carried-from: 2030-01-01$/m);
+    assert.match(file, /^written-by: priorities set$/m);
+    assert.match(file, /^## Today\n- New thing \| Maestro$/m);
+    assert.match(file, /^## Carried from 2030-01-01\n- Unfinished A \| Maestro · 0 done, 1 in flight, 0 queued, 0 blocked\n- Unfinished B \| Maestro · /m);
+    assert.equal(runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02').code, 0);
+    assert.equal(fileOf('the-maestro', '2030-01-02'), file, 'setting the same list again changes nothing');
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('priorities set again without a stream clears that project\'s Today and Next but keeps its carry-over', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    const dir = join(root, 'Projects', 'options-app', 'Status', 'priorities');
+    assert.equal(runIn('priorities', 'set', 'New thing | Maestro', 'Opt work | Options', '--date', '2030-01-02').code, 0);
+    writeFileSync(join(dir, '2030-01-02.md'), readFileSync(join(dir, '2030-01-02.md'), 'utf8').replace('carried-from: none', 'carried-from: 2030-01-01') + '\n## Carried from 2030-01-01\n- Old opt | Options · 0 done, 1 in flight, 0 queued, 0 blocked\n');
+    const again = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(again.code, 0, again.err);
+    assert.match(runIn('priorities', 'show', '--repo', 'options-app', '--date', '2030-01-02').out, /Priorities not set for today/);
+    const file = fileOf('options-app', '2030-01-02');
+    assert.doesNotMatch(file, /Opt work/);
+    assert.match(file, /^## Today\n- not set yet$/m);
+    assert.match(file, /^## Carried from 2030-01-01\n- Old opt \| Options · /m);
+    assert.match(fileOf('the-maestro', '2030-01-02'), /^## Today\n- New thing \| Maestro$/m);
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('priorities set clears a dropped project\'s Today even when roll wrote it, and keeps its carry-over', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    const dir = join(root, 'Projects', 'options-app', 'Status', 'priorities');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '2030-01-02.md'), ROLL_FILE.replace('project: the-maestro', 'project: options-app').replace('- not set yet', '- Opt work | Options'));
+    const set = runIn('priorities', 'set', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 0, set.err);
+    assert.match(runIn('priorities', 'show', '--repo', 'options-app', '--date', '2030-01-02').out, /Priorities not set for today/);
+    const file = fileOf('options-app', '2030-01-02');
+    assert.doesNotMatch(file, /Opt work/);
+    assert.match(file, /^## Carried from 2030-01-01\n- Unfinished A \| Maestro · /m);
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('a project write that fails makes priorities set exit 1 after the other projects are written', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro', 'options-app');
+    mkdirSync(join(root, 'Projects', 'options-app', 'Status'), { recursive: true });
+    writeFileSync(join(root, 'Projects', 'options-app', 'Status', 'priorities'), 'blocker');
+    const set = runIn('priorities', 'set', 'Opt work | Options', 'New thing | Maestro', '--date', '2030-01-02');
+    assert.equal(set.code, 1);
+    assert.match(set.err, /project options-app: /);
+    assert.match(fileOf('the-maestro', '2030-01-02'), /^## Today\n- New thing \| Maestro$/m);
+    assert.match(set.out, /^wrote .*priorities\.md$/m, 'the container list is still written');
+    rmSync(root, { recursive: true, force: true });
+});
+
+test('priorities set for a past day writes nothing, not the container list either, and exits 1', () => {
+    const { root, runIn, fileOf } = projectVault('the-maestro');
+    const today = new Date().toLocaleDateString('en-CA');
+    assert.equal(runIn('priorities', 'set', 'Today thing | Maestro', '--date', today).code, 0);
+    const set = runIn('priorities', 'set', 'Old | Maestro', '--date', '2020-01-01');
+    assert.equal(set.code, 1);
+    assert.match(set.err, /refusing to set priorities for 2020-01-01: it is before today/);
+    assert.equal(set.out, '', 'nothing was written');
+    assert.equal(fileOf('the-maestro', '2020-01-01'), '', 'history is not rewritten');
+    assert.match(runIn('priorities', 'show').out, /^Priorities for \d{4}-\d\d-\d\d:\n1\. Today thing \[Maestro\]\n/, "today's list is intact");
+    rmSync(root, { recursive: true, force: true });
+});
+
 test('start-here prints the Start view as text with no server, as data with --json, and one stream with --stream', () => {
     seedRegistry();
     const sd = join(vault, 'Status');

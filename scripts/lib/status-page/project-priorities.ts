@@ -109,7 +109,7 @@ export function renderProjectFile(file: ProjectFile): string {
 }
 
 /** The sections of a project file by heading, and its `Today` items (the `not set yet` line is not an item). */
-export function parseProjectFile(text: string): { date: string; carriedFrom: string; today: Priority[]; notSet: boolean; carriedCount: number } {
+export function parseProjectFile(text: string): { date: string; carriedFrom: string; writtenBy: string; today: Priority[]; notSet: boolean; carriedCount: number; carried: ProjectFile['carried'] } {
   const front = (key: string): string => text.match(new RegExp(`^${key}: (\\S+)\\s*$`, 'm'))?.[1] ?? '';
   const sections = new Map<string, string[]>();
   let current = '';
@@ -122,7 +122,12 @@ export function parseProjectFile(text: string): { date: string; carriedFrom: str
   const today = bodies('Today');
   const date = front('date');
   const carriedFrom = front('carried-from');
+  const carried = bodies('Carried from').map((b) => {
+    const cut = b.lastIndexOf(' · ');
+    return cut === -1 ? { item: parsePriority(b), status: '' } : { item: parsePriority(b.slice(0, cut)), status: b.slice(cut + 3).trim() };
+  });
   return {
+    writtenBy: text.match(/^written-by: (.+?)\s*$/m)?.[1] ?? '', carried,
     date: DATE.test(date) ? date : '', carriedFrom: DATE.test(carriedFrom) ? carriedFrom : '',
     today: today.filter((b) => b !== NOT_SET_YET).map(parsePriority), notSet: today.length === 1 && today[0] === NOT_SET_YET,
     carriedCount: bodies('Carried from').length,
@@ -149,6 +154,19 @@ export function writeProjectPriorities(vault: string, project: string, today: st
   writeFileSync(tmp, body);
   renameSync(tmp, path);
   return 'written';
+}
+
+/** The projects whose file for `day` has Today items, by name, whoever wrote it (`priorities set` or roll). A folder that is not a plain project name is ignored. */
+export function projectsWithTodayOn(vault: string, day: string): string[] {
+  const root = join(vault, 'Projects');
+  if (!existsSync(root)) return [];
+  return readdirSync(root).filter((name) => plainName(name) && (readProjectFile(join(prioritiesDir(vault, name), `${day}.md`))?.today.length ?? 0) > 0);
+}
+
+/** The projects with Today items on `day` that the new fan-out does not name. Names compare ignoring case: on a case-insensitive filesystem `Options-App` and `options-app` are the same folder, and clearing it would wipe what was just written. */
+export function droppedProjects(vault: string, day: string, fanned: Iterable<string>): string[] {
+  const kept = new Set([...fanned].map((name) => name.toLowerCase()));
+  return projectsWithTodayOn(vault, day).filter((name) => !kept.has(name.toLowerCase()));
 }
 
 /** Reads and parses a project file; null when it is missing or unreadable. */
