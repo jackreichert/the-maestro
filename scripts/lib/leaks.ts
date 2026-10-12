@@ -129,10 +129,47 @@ export function rollReplay(t: Transcripts, prices: Prices, rollTokens: number, f
     };
 }
 
+/** A tool result of at least this many tokens (estimated from its size) is huge: it rides in the context of every later turn. */
+export const HUGE_RESULT_TOKENS = 8000;
+
+/**
+ * Huge tool results priced as carried: each result of HUGE_RESULT_TOKENS or more, times the cache-read price of every later turn of its
+ * transcript until the next compaction. Grouped by tool and file basename; the result text is never read, only its size.
+ */
+export function hugeResults(t: Transcripts, prices: Prices): Leak | null {
+    const byTool = new Map<string, { n: number; usd: number; tokens: number }>();
+    for (const turns of [...t.orch, ...t.subs.map((s) => s.turns)]) {
+        let later = 0; // read dollars per token over the turns after this one, in the same compaction segment
+        const carry: number[] = [];
+        for (let i = turns.length - 1; i >= 0; i -= 1) {
+            carry[i] = later;
+            const p = rowFor(prices, family(turns[i].model));
+            later = turns[i].since === 1 ? 0 : later + (p ? p.cache_read / 1e6 : 0);
+        }
+        turns.forEach((x, i) => {
+            for (const r of x.results || []) {
+                if (r.tokens < HUGE_RESULT_TOKENS) continue;
+                const key = r.file ? `${r.tool} ${r.file}` : r.tool;
+                const cur = byTool.get(key) || { n: 0, usd: 0, tokens: 0 };
+                byTool.set(key, { n: cur.n + 1, usd: cur.usd + r.tokens * carry[i], tokens: cur.tokens + r.tokens });
+            }
+        });
+    }
+    const total = sum([...byTool.values()].map((v) => v.usd));
+    if (total <= 0) return null;
+    const lines = [...byTool].sort((a, b) => b[1].usd - a[1].usd).slice(0, 5).map(([k, v]) => `${k}: ${plural(v.n, 'result')}, avg ${Math.round(v.tokens / v.n / 1000)}k tokens, carried ${usd(v.usd)}`);
+    return {
+        bucket: `Huge tool results (${Math.round(HUGE_RESULT_TOKENS / 1000)}k tokens or more) carried across later turns`,
+        usd: total,
+        detail: lines,
+        fix: 'read a range (offset and limit) or grep instead of a whole file, and pipe command output through head or tail; send big output to a file',
+    };
+}
+
 /** Every bucket with something to report, most dollars first. */
 export function leaks(t: Transcripts, prices: Prices, opts: LeakOptions = {}): Leak[] {
     const roll = opts.rollTokens === undefined ? null : rollReplay(t, prices, opts.rollTokens, opts.floorTokens);
-    return [readOnlySubagents(t, prices), subagentCacheTtl(t, prices), roll].filter((l): l is Leak => l !== null).sort((a, b) => b.usd - a.usd);
+    return [readOnlySubagents(t, prices), subagentCacheTtl(t, prices), roll, hugeResults(t, prices)].filter((l): l is Leak => l !== null).sort((a, b) => b.usd - a.usd);
 }
 
 /** The ranked report as text; says so when nothing avoidable was found. */

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseModelPrices } from '../local-config.ts';
 import { leaks, formatLeaks } from './leaks.ts';
+import type { Leak } from './leaks.ts';
 import { collectTranscripts } from '../token-metrics.ts';
 
 // Hermetic: never read the user's config file (see local-config.ts).
@@ -101,6 +102,31 @@ test('roll replay: past the threshold the context drops to the floor, reads are 
     assert.deepEqual(roll(fixture({ orch: ctxs.slice(0, 3).map((c, i) => turn(at(i), 'claude-opus-5', use(0, 0, c * M, 0))) }), M), []);
     // Without a threshold the bucket is not computed at all.
     assert.deepEqual(leaks(collectTranscripts(dir), PRICES), []);
+});
+
+test('huge results: tool and file basename, priced over every later turn until a compaction, small results ignored, content never printed', () => {
+    const at = (n: number) => `2026-09-26T10:0${n}:00Z`;
+    const call = (when: string, model: string, c: Call): [ReturnType<typeof turn>, number] => { const x = turn(when, model, use(0, 0, M, 0), [c]); return [x, seq]; };
+    const [t1, s1] = call(at(1), 'claude-opus-5', { name: 'Read', input: { file_path: '/some/dir/big.log' } });
+    const [t3, s3] = call(at(3), 'claude-sonnet-5', { name: 'Bash', input: { command: `echo ${SENTINEL}` } });
+    const orch = [
+        t1, toolResult(s1, 80_000),
+        turn(at(2), 'claude-opus-5', use(0, 0, M, 0)), // the result's first turn: written, not yet carried
+        t3, toolResult(s3, 8_000), // 2k tokens: small
+        turn(at(4), 'claude-haiku-5', use(0, 0, M, 0)), // carried at haiku's read price, 0.1
+        turn(at(5), 'claude-opus-5', use(0, 0, M, 0)), // and opus's, 0.2, as t3 (sonnet) did
+        { type: 'system', subtype: 'compact_boundary' },
+        turn(at(6), 'claude-opus-5', use(0, 0, M, 0)), // after a compaction: not carried
+    ];
+    const [g1, sg] = call(at(1), 'claude-sonnet-5', { name: 'Grep' });
+    const subs = [{ type: 'any', recs: [g1, toolResult(sg, 100_000), turn(at(2), 'claude-sonnet-5', use(0, 0, M, 0)), turn(at(3), 'claude-sonnet-5', use(0, 0, M, 0))] }];
+    // Read big.log: 20k tokens x (sonnet 0.2 + haiku 0.1 + opus 0.2 per MTok: the result first appears in turn 2, turns 3 to 5 carry it, turn 6 follows a compaction)
+    // Grep: 25k tokens x one later sonnet turn at 0.2
+    const l = report(fixture({ orch, subs })).find((x) => x.bucket.startsWith('Huge')) as Leak;
+    assert.match(l.bucket, /^Huge tool results \(8k tokens or more\)/);
+    assert.ok(Math.abs(l.usd - (20_000 * 0.5 + 25_000 * 0.2) / 1e6) < 1e-12, String(l.usd));
+    assert.deepEqual(l.detail, ['Read big.log: 1 result, avg 20k tokens, carried $0.01', 'Grep: 1 result, avg 25k tokens, carried $0.01']);
+    assert.doesNotMatch(formatLeaks([l]), /SENTINEL/);
 });
 
 test('--leaks CLI prints the ranked report and no content; without prices it says so', () => {
