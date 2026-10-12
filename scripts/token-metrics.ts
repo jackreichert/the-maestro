@@ -61,6 +61,7 @@ import { sessionText } from './lib/session-text.ts';
 import { leaks, formatLeaks } from './lib/leaks.ts';
 import type { Transcripts } from './lib/leaks.ts';
 import { toolReadOnly } from './lib/tool-class.ts';
+import { EXPIRY_GAP_SEC, EXPIRY_MIN_WRITE, isExpiryRewrite } from './lib/expiry.ts';
 import { FAMILIES, kindsOf, dollars, priceKey } from './lib/pricing.ts';
 import type { Usage, Kinds, Dollars } from './lib/pricing.ts';
 import type { SessionStatus } from './lib/session-text.ts';
@@ -80,6 +81,7 @@ export interface ToolResult { id: string; chars: number }
 /** A tool result carried into the context: which tool and file it came from, and its size in tokens (estimated from characters). */
 export interface CarriedResult { tool: string; file: string; tokens: number }
 /** A deduplicated API response. `growth` is context growth since the previous turn (unset for the first). */
+export { EXPIRY_GAP_SEC, EXPIRY_MIN_WRITE, isExpiryRewrite };
 export type { Usage, Kinds, Dollars };
 export { kindsOf, dollars };
 export interface Turn extends Usage { date: string; model: string; since: number; growth?: number; gapSec?: number; tools?: ToolUse[]; results?: CarriedResult[] }
@@ -436,12 +438,6 @@ function addTurn(s: Stats, t: Turn): void {
     s.sinceCompact = Math.max(s.sinceCompact, t.since);
     addMix(s, t, 'orch');
 }
-/** A gap longer than this (seconds) is past the 5-minute prompt-cache lifetime. */
-export const EXPIRY_GAP_SEC = 300;
-/** A turn must write at least this many 5m cache tokens to count as a rewrite of a whole context, not new content. */
-export const EXPIRY_MIN_WRITE = 30_000;
-/** Whether `t` is a cache-expiry rewrite: idle past the cache lifetime, then a large 5m write. */
-export const isExpiryRewrite = (t: Turn): boolean => t.gapSec !== undefined && t.gapSec > EXPIRY_GAP_SEC && kindsOf(t).w5 >= EXPIRY_MIN_WRITE;
 /** Counts `t` into the day's expiry totals when it is a rewrite; only its 5m write is kept, which is all that was rewritten. */
 function addExpiry(s: Stats, t: Turn): void {
     if (!isExpiryRewrite(t)) return;
