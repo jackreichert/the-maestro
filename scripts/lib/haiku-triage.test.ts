@@ -1,7 +1,10 @@
 // Run: node --test scripts/lib/haiku-triage.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { configuredTriage, haikuTriage, parseAnswer } from './haiku-triage.ts';
+import { configuredTriage, defaultRun, haikuTriage, parseAnswer } from './haiku-triage.ts';
+import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { rulesOnlyTriage } from './digest-triage.ts';
 import type { ModelRun } from './haiku-triage.ts';
 
@@ -48,4 +51,19 @@ test('configuredTriage is the Haiku seam unless MAESTRO_TRIAGE=off, which keeps 
   assert.equal(configuredTriage({ MAESTRO_TRIAGE: 'off' }), rulesOnlyTriage);
   assert.notEqual(configuredTriage({}), rulesOnlyTriage);
   assert.equal(typeof configuredTriage({}), 'function');
+});
+
+test('a child that ignores SIGTERM is killed with SIGKILL at the timeout and the answer is unsure', () => {
+  const bin = mkdtempSync(join(tmpdir(), 'fake-claude-'));
+  writeFileSync(join(bin, 'claude'), '#!/usr/bin/env node\nprocess.on("SIGTERM", () => {});\nsetInterval(() => {}, 1000);\n');
+  chmodSync(join(bin, 'claude'), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const t0 = Date.now();
+    const r = defaultRun('claude', ['-p'], { input: 'x', timeoutMs: 1000 });
+    assert.equal(r.signal, 'SIGKILL', 'SIGTERM can be ignored, so the timeout must kill outright');
+    assert.ok(Date.now() - t0 < 6000);
+    assert.equal(haikuTriage({ timeoutMs: 1000 })(INPUT).verdict, 'unsure');
+  } finally { process.env.PATH = path; }
 });

@@ -23,7 +23,8 @@ const SYSTEM = [
   'Answer with one JSON object and nothing else: {"verdict":"noise"|"actionable"|"unsure","reason":"<one short sentence>"}.',
 ].join('\n');
 
-const defaultRun: ModelRun = (cmd, args, { input, timeoutMs }) => spawnSync(cmd, args, { input, timeout: timeoutMs, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+/** SIGTERM can be ignored by a wedged child and spawnSync then waits for it, so the timeout kills outright. */
+export const defaultRun: ModelRun = (cmd, args, { input, timeoutMs }) => spawnSync(cmd, args, { input, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
 
 const unsure = (reason: string): TriageAnswer => ({ verdict: 'unsure', reason });
 
