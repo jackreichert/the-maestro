@@ -271,6 +271,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [ledger-index.ts](#ledger-indexts) | Disposable full-text index over the ledger, tickets, handoffs and library pages |
 | [prs-snapshot.ts](#prs-snapshotts) | Mid-day PR board snapshot and actionable diff |
 | [status-page.ts](#status-pagets) | The Podium, the always-current status page, with today's priorities and inline answers |
+| [podium-gate.ts](#podium-gatets) | The Podium v1 gate: checks a running Podium against the design, Home, handover and library bar |
 | [event-loop.ts](#event-loopts) | One loop for every "wake me when X" watch |
 | [session-start.ts](#session-startts) | First command of a session: registers the status watches, reports the page age and whether a loop is running |
 | [weekly-retro.ts](#weekly-retrots) | Ten-minute weekly retro draft: stale, blocked, dropped, last experiment |
@@ -389,6 +390,26 @@ Mid-day PR snapshot and diff, stored under the ledger root.
 - `prs-snapshot.ts --ready` adds the readiness report: PRs that are ready to merge (approved, not a draft, zero unresolved review threads, `mergeable` MERGEABLE, no open twin) and approved PRs that are not, each with the reason. After a merge it re-asks `mergeable` for the open PRs in that repo until two known answers agree (a stale cached MERGEABLE is not trusted). A PR holding a resolved review-bot thread also needs a SHIP IT from a fresh agent, recorded for its head commit with `review-verdict.ts record` (refused when the reviewer is the fixer), or it is listed as held ([details](reference/prs.md#re-review-before-ready); `rereview_gate` turns it off). `prs-snapshot.ts ready <snapshot.json>` prints it for a file, offline, with the file's age (it is not a merge gate).
 - `prs-snapshot.ts --stacks` adds the stack report: a stack is a PR whose base is another open PR's branch in the same repo, and any stack deeper than `stack_max_depth` (default 3) or whose oldest PR is older than `stack_max_age_days` (default 5) is named with its chain and the bottom PR to drive to merge. `prs-snapshot.ts stacks <snapshot.json>` prints it offline. A snapshot taken before creation times were recorded reports depth only. The limits are a judgement, not a measured optimum.
 - `prs-snapshot.ts diff <old.json> <new.json>` is the pure diff of two files: no network, no write.
+
+### podium-gate.ts
+
+The Podium v1 gate: a check that runs against a live Podium (or a throwaway one), not a document. It reads the Podium over HTTP and reports each criterion as `PASS`, `FAIL` (built, but short of the bar) or `NOT BUILT` (that piece is not in this build yet). A missing piece is a report line, never a crash, so the gate runs the same on a half-built Podium and on a finished one.
+
+```bash
+node scripts/podium-gate.ts                 # start a temp Podium with fictional data, check it, remove it
+node scripts/podium-gate.ts --url <base>    # check a Podium already running (journal.ts web prints its URL)
+node scripts/podium-gate.ts --json          # the results as JSON
+```
+
+| Criterion | Passes when |
+|---|---|
+| `tokens` | `theme.css` carries the type, grid, hairline, chart and status tokens, and the three fonts are served from the Podium's own origin with no off-origin link on the page |
+| `home` | `/api/projects` has a status row for every stream, with links and a weekly series; `/api/charts` has a throughput series; `/api/state` has the needs-you (asks) and done lists |
+| `shared-docs` | every stream's home payload has a `shared` list whose items carry a title, author and date and no absolute path |
+| `handover` | every project in every stream's home payload can answer the six new-engineer questions: what the project is, how to run it locally, how to run its tests, what is blocked, what was decided and where, and what to do next |
+| `plain-language` | this checkout's library check flags a bare ticket id in page prose and spares one cited as evidence |
+
+Exit 0 when every criterion passes, 1 when any is `FAIL` or `NOT BUILT`, 2 on a usage error or when a `--url` Podium does not answer at all. The library rule is read from this checkout, not from the server. Pass counts alone do not clear the gate: [playbooks/podium-handover-eval.md](playbooks/podium-handover-eval.md) is the scored run that checks a fresh agent can use one project tab, and [playbooks/podium-fresh-context.md](playbooks/podium-fresh-context.md) does the same for Home.
 
 ### status-page.ts
 
