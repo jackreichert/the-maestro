@@ -1,29 +1,23 @@
 import './stream-board.ts';
 import './podium-chart.ts';
 import './priority-list.ts';
-import './epic-lines.ts';
 import './local-review.ts';
-import './md-fragment.ts';
-import { h, s, shadow, streamTag } from './dom.ts';
-import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
+import { h, s, shadow } from './dom.ts';
+import { BOARD_CSS, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadProjects, loadState } from './api.ts';
-import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
 import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
 import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
-import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, OVERVIEW, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { DASHBOARD, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import type { ProjectsLoad } from './home-tab.ts';
 import { filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
-import type { ChartKind } from './podium-chart.ts';
-import type { ChartData } from './chart-math.ts';
 import type { AskBusyDetail, ChartsData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
 
 interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number }
@@ -201,13 +195,7 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .problem .detail { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-primary); background: var(--surface-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 `;
 
-/** How many asks the Overview lists before "Show all N": the oldest few, so Blocked and Shipped today stay above the fold. */
-export const ASK_PREVIEW = 4;
-/** On a phone each ask row takes two lines, so the preview is one shorter there. */
-const ASK_PREVIEW_PHONE = 3;
-const askPreview = (): number => (window.matchMedia('(max-width: 640px)').matches ? ASK_PREVIEW_PHONE : ASK_PREVIEW);
-
-/** <podium-app>: header with the cue line, stream tabs plus Overview. The active tab lives in the URL fragment. */
+/** <podium-app>: header with the cue line, Home, then one tab per stream. The active tab lives in the URL fragment. */
 export class PodiumApp extends HTMLElement {
   #root: ShadowRoot;
   #state: PodiumState | null = null;
@@ -417,12 +405,12 @@ export class PodiumApp extends HTMLElement {
     const count = <T extends { stream: string }>(xs: T[], id: string): number => (isAllStreams(id) ? xs.length : xs.filter((x) => x.stream === tabStream(id)).length);
     const tabs = ids.map((id) => {
       const on = id === this.#active;
-      const n = id === DASHBOARD ? 0 : count(st.asks, id);   // the badge rides on the Board, so the two all-streams tabs do not repeat it
+      const n = id === DASHBOARD ? 0 : count(st.asks, id);   // Home has no badge; a stream tab shows its ask count
       const blocked = id === DASHBOARD ? 0 : count(st.blocked, id);
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === DASHBOARD ? 'Home' : id === OVERVIEW ? 'Board' : tabStream(id),
+      }, id === DASHBOARD ? 'Home' : tabStream(id),
       n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
       blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
       tab.addEventListener('click', () => this.#select(id, true));
@@ -436,7 +424,7 @@ export class PodiumApp extends HTMLElement {
       return tab;
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
@@ -590,11 +578,6 @@ export class PodiumApp extends HTMLElement {
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
   #home(st: PodiumState): Node {
-    return homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects });
-  }
-
-  #overview(st: PodiumState): Node {
-    const ctx = { now: st.generatedAt, tz: st.tz, showStream: true, prs: st.prs };
     const pri = st.priorities;
     const editable = this.#sources.state === 'server';
     const stale = pri.state === 'stale' && pri.date !== st.today;
@@ -603,55 +586,12 @@ export class PodiumApp extends HTMLElement {
       : 'No priorities set for today.';
     const priorities = h('priority-list');
     priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note, epics: this.#epics ? Object.fromEntries(this.#epics.streams.map((g) => [g.stream, g.epics])) : {} };
-    const unfiled = this.#epics?.unfiled ?? [];
-    const unfiledList = unfiled.length ? h('epic-lines') : null;
-    if (unfiledList) unfiledList.epics = unfiled;
     const localList = h('local-review');
     localList.review = this.#local;
-    const asks = askCards(st.asks, this.#sources.state === 'server', true, askPreview());
-    const frag = fragmentFor(st.fragments, OVERVIEW);
-    const md = frag ? h('md-fragment') : null;
-    if (md && frag) md.markdown = frag;
-    return h('div', {},
-      h('div', { class: 'board' },
-        h('div', { class: 'col' },
-          section({ title: 'Needs you', n: st.asks.length, glyph: '●', tone: 'accent', empty: 'Nothing needs you right now.', rest: RESTS.asks, hint: askHint(this.#sources.state === 'server'), action: asks?.more }, asks?.list ?? null),
-          section({ title: 'Blocked', n: st.blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(st.blocked, ctx)),
-          section({ title: 'Shipped today', n: st.done.length, glyph: '✓', tone: 'success', empty: 'Nothing shipped yet today.', rest: RESTS.shipped }, itemRows(st.done, ctx))),
-        h('div', { class: 'col' },
-          section({ title: `Today's priorities`, n: 0, tone: 'neutral', empty: note, quiet: true }, priorities),
-          unfiledList ? section({ title: 'Unfiled epics', n: unfiled.length, tone: 'neutral', empty: '', quiet: true }, unfiledList) : null,
-          section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: '', quiet: true }, localList),
-          section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(st.working, ctx)),
-          section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
-      h('div', { class: 'wide' },
-        section({ title: 'Trends', n: 0, tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),
-        md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null));
-  }
-
-  #counts(st: PodiumState): Node | null {
-    if (st.footer.length === 0) return null;
-    const cell = (n: number): HTMLElement => h('td', { class: n === 0 ? 'z' : undefined }, String(n));
-    // The table scrolls sideways on a narrow screen, so its wrapper is a focusable, named region: arrow keys can scroll it.
-    return h('div', { class: 'table-wrap', role: 'region', tabindex: '0', 'aria-label': 'Counts per stream' }, h('table', { class: 'counts' }, h('caption', { class: 'vh' }, 'Counts per stream'),
-      h('thead', {}, h('tr', {}, ...['Stream', 'Need you', 'Working', 'Queued', 'Blocked', 'Done'].map((t) => h('th', { scope: 'col' }, t)))),
-      h('tbody', {}, ...st.footer.map((f) => h('tr', {}, h('th', { scope: 'row' }, streamTag(f.stream)),
-        ...[f.asks, f.working, f.queued, f.blocked, f.done].map(cell))))));
-  }
-
-  #chartGrid(): Node | null {
-    const c = this.#charts;
-    if (!c) return null;
-    const mk = (kind: ChartKind, title: string, data: ChartData): HTMLElement => {
-      const el = h('podium-chart', { kind, label: title });
-      el.data = data;
-      return el;
-    };
-    return h('div', { class: 'charts' },
-      mk('stacked', 'Done per day, by stream', throughputChart(c)),
-      mk('bar', 'Open asks by age', ageChart(c)),
-      mk('bar', 'Pull requests by CI state', prMixChart(c)),
-      mk('share', c.modelMix.source === 'tokens' ? 'Model mix (tokens)' : 'Model mix (items by model)', modelMixChart(c)));
+    return h('div', { class: 'home-plus' },
+      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects }),
+      section({ title: "Today's priorities", n: 0, tone: 'neutral', empty: note, quiet: true }, priorities),
+      section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
 }
 
