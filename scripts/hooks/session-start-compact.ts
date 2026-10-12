@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { floorWarnings, readAutocompact } from '../lib/autocompact.ts';
-import { scanText } from '../lib/library/scan.ts';
+import { WITHHELD, withhold } from '../lib/withhold.ts';
 
 const JOURNAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'journal.ts');
 const COLD_START = join(dirname(fileURLToPath(import.meta.url)), '..', 'cold-start.ts');
@@ -24,13 +24,7 @@ export const SOURCES = ['startup', 'resume', 'compact', 'clear'];
 /** About 5k tokens at four characters each. */
 export const MAX_CHARS = 20_000;
 
-export const WITHHELD = '[withheld: secret shape]';
-
-/** The body with every line the secret scan flags replaced by a marker, so a secret-shaped stream name or id the board printed never becomes session context. */
-function withhold(body: string): string {
-  const hits = new Set(scanText(body).map((h) => h.line));
-  return hits.size ? body.split('\n').map((l, i) => (hits.has(i + 1) ? WITHHELD : l)).join('\n') : body;
-}
+export { WITHHELD };
 
 /** Joins the parts under their headings, withholds secret-shaped lines, and cuts at the cap, saying so. */
 export function assemble(parts: { title: string; body: string }[], max: number = MAX_CHARS): string {
