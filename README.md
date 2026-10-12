@@ -299,7 +299,7 @@ J=~/.claude/skills/the-maestro/scripts/journal.ts
 
 | Command | Purpose and key flags |
 |---|---|
-| `log "<text>"` | Append a row. `--kind wip\|done\|blocked\|question\|decision\|note`, `--stream`, `--repo`, `--ticket` |
+| `log "<text>"` | Append a row. `--kind wip\|done\|blocked\|question\|decision\|note`, `--stream`, `--repo`, `--ticket`, `--parent <id>` (file the row under an open item; closing the last open child with `done` or `drop` then prints a prompt to close the parent, and never closes it for you) |
 | `start "<text>"` | Open an in-flight item (`--repo`, `--ticket`, `--stream`). `start <id>` on a queued item promotes it to in flight |
 | `queue "<text>"` | Open an item that is queued: a to-do not started yet, shown apart from in-flight work (`--repo`, `--ticket`, `--stream`). `queue <id>` moves an open in-flight item to queued and keeps its history |
 | `done <id\|text>` | Close an item (an id or a unique substring) |

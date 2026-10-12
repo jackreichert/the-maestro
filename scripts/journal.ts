@@ -154,6 +154,7 @@ import { parseLearned, relearn, LEARNED_USAGE } from './lib/journal/learned.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
+import { parentRefusal, parentPromptLine } from './lib/journal/parent.ts';
 import type { Groups } from './lib/journal/board.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
@@ -537,6 +538,12 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const settlePlan = settles ? planSettle(settleCtx, settles) : undefined;
     if (settlePlan?.unknown.length) die(`--settles names no item: ${settlePlan.unknown.join(', ')}. Nothing was written.`);
 
+    // --parent <id> files the row under an open item; closing the last open child then prompts for the parent.
+    const parent = arg('parent') || undefined;
+    if (has('parent') && !parent) die('--parent needs the id of an open item.');
+    const parentError = parent ? parentRefusal(fold(readLedger()).items, parent) : null;
+    if (parentError) die(parentError);
+
     const entries = readLedger();
     const entry = {
         id: newId(entries),
@@ -544,6 +551,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         date: arg('date', today()),   // backdate when reconstructing
         kind,
         text,
+        parent,
         reworks: reworked,
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
@@ -721,6 +729,7 @@ function cmdClose(newKind: string): void {
     if (!dryRun) render(true);
     const { target, note } = result;
     console.log(`${newKind}  ${target.id}  ${target.text}${note ? `\n      ${note}` : ''}`);
+    if (result.parent) console.log(`      ${parentPromptLine(result.parent)}`);
 }
 
 /** File an existing item under a workstream (or clear it with --stream none). */

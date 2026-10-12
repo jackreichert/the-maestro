@@ -2230,6 +2230,24 @@ test('roll and maintain list a stale in-flight row for close, drop or refresh, n
     assert.doesNotMatch(run('roll', '--fast').out, /Stale in flight/, 'a lease refreshes it');
 });
 
+test('closing the last open child prompts for its parent, a sibling still open does not, and --parent refuses an unknown or closed item (MAESTRO-319)', () => {
+    const parent = idOf(run('log', 'the epic', '--kind', 'wip', ...MARK).out);
+    const a = idOf(run('log', 'first child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    const b = idOf(run('log', 'second child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    assert.equal(must(ledger().find((r) => r.id === a)).parent, parent);
+    const first = run('done', a, ...MARK);
+    assert.equal(first.code, 0, first.err);
+    assert.doesNotMatch(first.out, /parent .* has no other open child/);
+    const last = run('done', b, ...MARK);
+    assert.match(last.out, new RegExp(`parent ${parent} has no other open child: close it\\?`));
+    assert.equal(statusJson().inflight.map((i) => i.id).join(), parent, 'the prompt did not close the parent');
+    run('done', parent, ...MARK);
+    const refused = run('log', 'orphan', '--kind', 'wip', '--parent', 'nosuch', ...MARK);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /--parent names no item: nosuch/);
+    assert.match(run('log', 'late child', '--kind', 'wip', '--parent', parent, ...MARK).err, /already done/);
+});
+
 test('prime is at most 40 lines however much is open, shares lines between boxes, and writes nothing', () => {
     const f = blockFile();
     run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
