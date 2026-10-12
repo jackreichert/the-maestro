@@ -90,6 +90,22 @@ test('MAESTRO_OVERLAY beats overlay: in the file; sibling of the skill dir is fo
     assert.equal(viaModule.stdout.trim(), 'sibling-org', viaModule.stderr);
 });
 
+test('overlay is found in an ancestor container .claude/skills when the checkout is reached by its real path', () => {
+    const container = mkdtempSync(join(tmpdir(), 'lc-container-'));
+    mkdirSync(join(container, 'skills', 'the-maestro', 'scripts'), { recursive: true });
+    write(join(container, '.claude', 'skills', 'anc-skill', 'config.md'), block('gh_org: ancestor-org'));
+    const run = (argv1: string): string => spawnSync(process.execPath, ['-e', `
+        process.argv[1] = ${JSON.stringify(argv1)};
+        const m = await import(${JSON.stringify(SCRIPT)});
+        console.log(m.GH_ORG);`, '--input-type=module'], {
+        encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH, HOME: home, MAESTRO_OVERLAY: 'anc-skill' },
+    }).stdout.trim();
+    assert.equal(run(join(container, 'skills', 'the-maestro', 'scripts', 'x.mjs')), 'ancestor-org');
+    mkdirSync(join(container, '.worktrees', 'wt', 'scripts'), { recursive: true });
+    assert.equal(run(join(container, '.worktrees', 'wt', 'scripts', 'x.mjs')), 'ancestor-org', 'a worktree under the container finds it too');
+    assert.equal(run(join(home, 'elsewhere', 'scripts', 'x.mjs')), '', 'no ancestor container, no overlay');
+});
+
 test('plugin-qualified overlay resolves through installed_plugins.json', () => {
     const install = join(home, 'cache', 'plug', '1.0.0');
     write(join(install, 'skills', 'p-skill', 'config.md'), block('gh_org: plugin-org'));

@@ -62,6 +62,8 @@ function overlayCandidates(overlay: string): string[] {
     } catch { /* no plugin registry: fall through to the sibling lookup */ }
   }
   for (const root of skillRoots()) out.push(join(root, '..', skill, 'config.md'));
+  // A checkout reached by its real path (no symlink in ~/.claude/skills) still sits under a container whose .claude/skills holds the overlay.
+  for (const root of skillRoots()) for (let dir = dirname(root); dirname(dir) !== dir; dir = dirname(dir)) out.push(join(dir, '.claude', 'skills', skill, 'config.md'));
   out.push(join(homedir(), '.claude', 'skills', skill, 'config.md'));
   return out;
 }
