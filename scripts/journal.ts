@@ -191,7 +191,7 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
-import { isRuleScope, parseRuleScope } from './lib/journal/scope.ts';
+import { isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
 import type { RuleScope } from './lib/journal/scope.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
@@ -312,7 +312,7 @@ const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : S
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
 const triageCtx = () => ({ readLedger, fold, today, resolveRefFile });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
-const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe });
+const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe, rules: () => ruleLines(readLedger(), windowId) });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
 const verifyLedger = () => verifyLedgerIn(verifyCtx());
 const autoCommitLedger = (d: string) => autoCommitLedgerIn(verifyCtx(), d);
@@ -1086,7 +1086,7 @@ function cmdStatus() {
         // another window, and its numbers must not appear under this window's name.
         const window = sessionId ? resolveWindow({ session: sessionId }).id : undefined;
         if (has('line')) { console.log(footerOneLine({ rows: footerRows(g, done, view.sinceRoll, live), queue: queueFooter, loop: liveLoopHealth().line, session, window, leases: leaseFooter(g, window) })); return; }
-        [...footerLines(g, done, view.sinceRoll, live), ...[boardQueueHygiene(g, queueClockDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
+        [...footerLines(g, done, view.sinceRoll, live), ...[ruleFooter(readLedger(), windowId)].filter(Boolean), ...[boardQueueHygiene(g, queueClockDay())].filter(Boolean), ...(queueFooter ? [queueFooter] : []), ...(selfFooter ? [selfFooter] : []), ...[liveLoopHealth().line].filter(Boolean), ...(window ? [`**Window:** ${window}`] : []), ...[leaseFooter(g, window, true)].filter(Boolean), sessionText(session), ...statusPageFooter(configuredStatusPageUri())].forEach((l) => console.log(l));
         return;
     }
 
@@ -1097,6 +1097,7 @@ function cmdStatus() {
     };
     windowWarning().forEach((l) => console.log(l));
     console.log(`Ledger — ${d}`);
+    ruleLines(readLedger(), windowId).forEach((l) => console.log(l));
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);

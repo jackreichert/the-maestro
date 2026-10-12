@@ -79,3 +79,42 @@ test('with --approval, --scope stays the approval scope and sets no ruleScope', 
     const row = ledger()[0];
     assert.deepEqual([row?.scope, row?.ruleScope], ['docs repos', undefined]);
 });
+
+/** Window A gives a window rule and a global rule; the text of each is distinct so a view can be searched for it. */
+function seedRules(): void {
+    assert.equal(runAs('winA', 'rule', 'WINDOW-ONLY pause maestro pushes', '--ref', memo(), '--scope', 'window', ...MARK).code, 0);
+    assert.equal(runAs('winA', 'rule', 'GLOBAL branch from staging', '--ref', memo(), '--scope', 'global', ...MARK).code, 0);
+    assert.equal(runAs('winA', 'rule', 'LEGACY unscoped rule', '--ref', memo(), ...MARK).code, 0);
+}
+
+for (const view of [['prime'], ['status']]) {
+    test(`${view.join(' ')}: the window that gave a window rule sees it as binding, with the global rule`, () => {
+        seedRules();
+        const out = runAs('winA', ...view).out;
+        assert.match(out, /WINDOW-ONLY/);
+        assert.match(out, /GLOBAL branch/);
+    });
+
+    test(`${view.join(' ')}: another window does not see the window rule as binding, only one FYI line, and still sees the global one`, () => {
+        seedRules();
+        const out = runAs('winB', ...view).out;
+        assert.doesNotMatch(out, /WINDOW-ONLY/, 'the rule text must not reach another window');
+        assert.match(out, /GLOBAL branch/);
+        assert.match(out, /1 (rule|rules) scoped to other windows/i);
+    });
+}
+
+test('rows without a scope are not listed as rules in force (they read as global, and have their own homes)', () => {
+    seedRules();
+    assert.doesNotMatch(runAs('winB', 'prime').out, /LEGACY/);
+});
+
+test('status --footer counts the rules that bind the window, never their text', () => {
+    seedRules();
+    const a = runAs('winA', 'status', '--footer').out;
+    assert.match(a, /\*\*Rules:\*\* 2 binding here \(1 this window, 1 global\)/);
+    assert.doesNotMatch(a, /scoped to other windows/);
+    const b = runAs('winB', 'status', '--footer').out;
+    assert.match(b, /\*\*Rules:\*\* 1 binding here \(0 this window, 1 global\); 1 rule scoped to other windows \(FYI\)/);
+    assert.doesNotMatch(b + a, /WINDOW-ONLY|GLOBAL branch/);
+});
