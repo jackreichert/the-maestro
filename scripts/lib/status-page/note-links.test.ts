@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { linkNotePaths, noteExistsIn, vaultRootFor } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
-import { renderPage } from './render.ts';
+import { renderPage, ticketNoteRef } from './render.ts';
 import type { Item, PageConfig, PageInput } from './render.ts';
 
 const FILES = new Set([
@@ -94,4 +94,12 @@ test('vaultRootFor prefers the configured root, else cuts the status dir at /Pro
   assert.equal(vaultRootFor('/v', '/x/Projects/p/Status'), '/v');
   assert.equal(vaultRootFor('', '/x/Fake Vault/Projects/p/Status'), '/x/Fake Vault');
   assert.equal(vaultRootFor('', '/elsewhere'), '');
+});
+
+test('a ticket link points at Archive/ once the ticket is archived, and stays put otherwise', () => {
+  const cfg = config((x) => x === 'Projects/fake-app/Tickets/fake-app-3.md' || x === 'Projects/fake-app/Tickets/Archive/fake-app-2.md');
+  assert.equal(ticketNoteRef(cfg, 'fake-app-1').url, uri('Projects/fake-app/Tickets/fake-app-1'), 'a missing note keeps its live path');
+    assert.equal(ticketNoteRef(cfg, 'fake-app-3').url, uri('Projects/fake-app/Tickets/fake-app-3'));
+  assert.equal(ticketNoteRef(cfg, 'fake-app-2').url, uri('Projects/fake-app/Tickets/Archive/fake-app-2'));
+  assert.equal(ticketNoteRef(config(undefined), 'fake-app-2').url, uri('Projects/fake-app/Tickets/fake-app-2'), 'no lookup, no rewrite');
 });

@@ -937,7 +937,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | Key | Environment variable | Default | Purpose |
 |---|---|---|---|
 | `overlay` | `MAESTRO_OVERLAY` | none | Org overlay skill name: `<skill>` or `<plugin>:<skill>` |
-| `gh_org` | `MAESTRO_GH_ORG` | none (no org filter) | GitHub org the PR board is scoped to |
+| `gh_org` | `MAESTRO_GH_ORG` | none (no org filter on the board; the Podium PR list is empty with a warning) | GitHub org the PR board is scoped to; the Podium's PR list and its cache only ever hold repos owned by it |
 | `gh_login` | `MAESTRO_GH_LOGIN` | the `gh`-authenticated user | Your GitHub login |
 | `project` | `MAESTRO_PROJECT` | a built-in fallback name | Container project name for ledger paths. `journal.ts` uses it when `--project` is omitted; with neither set it refuses |
 | `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<container_root, else the working directory, with separators as dashes>` | Claude Code transcript directory read by `token-metrics.ts`. Unset, it follows `container_root` so the roll nudge works from any directory. With neither set it is a guess from the working directory, and an empty result says so instead of reading it silently |
@@ -1014,7 +1014,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `status_streams` | `MAESTRO_STATUS_STREAMS` | none | Comma-separated stream names in the order the page lists them; streams found in the ledger and the repo map are added after, `other` last |
 | `status_repo_streams` | `MAESTRO_STATUS_REPO_STREAMS` | none | `repo=Stream, other-repo=Stream`: the stream of a PR in that repo (short name) |
 | `tracker_url_base` | `MAESTRO_TRACKER_URL_BASE` | none (keys are plain text) | Browse URL prefix for tracker keys, ending in `/` |
-| `ticket_note_path` | `MAESTRO_TICKET_NOTE_PATH` | `Projects/{prefix}/Tickets/{id}` | Vault-relative note path of a ticket, with `{id}` and `{prefix}` (the id minus its trailing number) |
+| `ticket_note_path` | `MAESTRO_TICKET_NOTE_PATH` | `Projects/{prefix}/Tickets/{id}` | Vault-relative note path of a ticket, with `{id}` and `{prefix}` (the id minus its trailing number); the Podium links the note under `Archive/` beside it when only that copy exists |
 | `scripts_dir` | `MAESTRO_SCRIPTS_DIR` | none (shelf off) | The shared scripts shelf; a leading `~/` is expanded |
 | `memory_dir` | `MAESTRO_MEMORY_DIR` | none (working rules refused) | The directory of memory files and their `MEMORY.md` index, for `decide --scope working-rule`; a leading `~/` is expanded |
 
@@ -1042,7 +1042,7 @@ flowchart TD
     ET --> EL[event-loop.ts]
 ```
 
-The overlay's `config.md` is found, first hit wins: for a `<plugin>:<skill>` name, `<installPath>/skills/<skill>/config.md` with `installPath` read from `~/.claude/plugins/installed_plugins.json`; otherwise `../<skill>/config.md` next to this skill (found through a symlink too), then `~/.claude/skills/<skill>/config.md`. Your git author emails, protected-branch list and other private values belong in the overlay or your own config file, never in this repo.
+The overlay's `config.md` is found, first hit wins: for a `<plugin>:<skill>` name, `<installPath>/skills/<skill>/config.md` with `installPath` read from `~/.claude/plugins/installed_plugins.json`; otherwise `../<skill>/config.md` next to this skill (found through a symlink too), then `<dir>/.claude/skills/<skill>/config.md` for each directory above this checkout (so a checkout or worktree reached by its real path still finds an overlay in its container's `.claude/skills`; used only when the file's real directory and every ancestor are owned by you or root and not group- or world-writable, since an overlay can name commands), then `~/.claude/skills/<skill>/config.md`. Your git author emails, protected-branch list and other private values belong in the overlay or your own config file, never in this repo.
 
 **A private overlay on a local-only branch.** To keep this repo public but version your overlay beside it, put the overlay on a branch that never leaves your machine, in its own worktree, and symlink that worktree as the skill:
 

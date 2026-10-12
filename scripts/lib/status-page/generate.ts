@@ -83,23 +83,30 @@ function settle(deps: GenerateDeps): RawPr[] {
 /** The first line of a caught value's message. */
 const firstLine = (e: unknown): string => (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? '';
 
+/** Only PRs in repos owned by one of `owners` (case-insensitive); nothing when `owners` is empty. */
+export function scopePrs(prs: RawPr[], owners: string[]): RawPr[] {
+  const allowed = new Set(owners.map((o) => o.toLowerCase()));
+  return prs.filter((n) => allowed.has((n.repository.nameWithOwner.split('/')[0] ?? '').toLowerCase()));
+}
+
 /**
  * Open PRs from GitHub, remembered in the cache. When the read fails, the last cached set with its fetch time (or none)
  * and the reason; the caller still writes the page. A dry run reads the cache but never writes it.
  */
-export function readPrs(statusDir: string, deps: GenerateDeps, dryRun: boolean, cachedOnly: boolean): { raw: RawPr[]; data: PrData } {
+export function readPrs(statusDir: string, deps: GenerateDeps, dryRun: boolean, cachedOnly: boolean, owners: string[]): { raw: RawPr[]; data: PrData } {
+  if (!owners.length) return { raw: [], data: { fetchedAt: null, failure: 'no GitHub org is configured (gh_org is empty), so the PR list is withheld rather than searched unscoped' } };
   if (cachedOnly) {
     const cached = readPrCache(statusDir);
-    return { raw: cached?.prs ?? [], data: { fetchedAt: cached?.fetchedAt ?? null } };
+    return { raw: scopePrs(cached?.prs ?? [], owners), data: { fetchedAt: cached?.fetchedAt ?? null } };
   }
   try {
-    const raw = settle(deps);
+    const raw = scopePrs(settle(deps), owners);
     const fetchedAt = deps.now();
     if (!dryRun) writePrCache(statusDir, { fetchedAt, prs: raw });
     return { raw, data: { fetchedAt } };
   } catch (e) {
     const cached = readPrCache(statusDir);
-    return { raw: cached?.prs ?? [], data: { fetchedAt: cached?.fetchedAt ?? null, failure: firstLine(e) || 'unknown error' } };
+    return { raw: scopePrs(cached?.prs ?? [], owners), data: { fetchedAt: cached?.fetchedAt ?? null, failure: firstLine(e) || 'unknown error' } };
   }
 }
 
@@ -152,7 +159,7 @@ export function gatherInputs(opts: GatherOptions, deps: GenerateDeps): GatheredI
   const status = deps.journal('status') as BoardStatus;
   const triage = deps.journal('triage') as Triage;
   const items = [...status.inflight, ...status.queued, ...status.blocked, ...status.awaiting, ...(status.paste ?? []), ...status.done];
-  const { raw, data: prData } = readPrs(statusDir, deps, opts.dryRun, !!opts.cachedPrsOnly);
+  const { raw, data: prData } = readPrs(statusDir, deps, opts.dryRun, !!opts.cachedPrsOnly, config.prOwners ?? []);
   const prs = loadPrs(raw, { items, ticketMap, overrides, repoStreams: config.repoStreams, keyPattern: config.trackerKeyPattern });
   const now = deps.now();
   const priorities = readPriorities(statusDir, localDate(now, config.tz));

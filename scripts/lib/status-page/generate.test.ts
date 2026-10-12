@@ -16,7 +16,7 @@ import type { PageConfig, Pr } from './render.ts';
 const NOW = new Date('2026-10-05T15:00:00Z');
 const CONFIG: PageConfig = {
   streams: ['Alpha'], repoStreams: { 'acme-widgets': 'Alpha', gadgets: 'Beta' }, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/',
-  ticketNotePath: 'Projects/{prefix}/Tickets/{id}', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'America/New_York',
+  ticketNotePath: 'Projects/{prefix}/Tickets/{id}', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'America/New_York', prOwners: ['org'],
 };
 const raw = (number: number, repo: string, over: Partial<RawPr> = {}): RawPr => ({
   number, title: `feat: thing ${number} FAKE-${number}`, url: `https://example.test/${repo}/pull/${number}`, isDraft: true, baseRefName: 'develop', headRefName: `feat/FAKE-${number}`,
@@ -181,7 +181,7 @@ test('UNKNOWN mergeable states are read once more after a pause', () => {
 });
 
 test('nothing in the page names an install: no org, vault or tracker unless the config gives one', () => {
-  const bare: PageConfig = { streams: [], repoStreams: {}, vaultName: '', trackerUrlBase: '', ticketNotePath: 'T/{id}', trackerKeyPattern: CONFIG.trackerKeyPattern, tz: 'UTC' };
+  const bare: PageConfig = { streams: [], repoStreams: {}, vaultName: '', trackerUrlBase: '', ticketNotePath: 'T/{id}', trackerKeyPattern: CONFIG.trackerKeyPattern, tz: 'UTC', prOwners: ['org'] };
   const page = generate(opts(dir(), { dryRun: true, config: bare }), deps([raw(5, 'whatever')])).page;
   assert.doesNotMatch(page, /obsidian:\/\/|tracker\.test|atlassian/);
   assert.match(page, /### other \(1\)/);
@@ -479,4 +479,31 @@ test('gatherInputsCached never asks for the Start view', () => {
   const d = dir();
   const inputs = gatherInputsCached(d, CONFIG, { journal: (sub) => board[sub], now: () => NOW });
   assert.equal('start' in inputs, false);
+});
+
+test('the PR list and its cache hold only repos owned by the configured org: a foreign-owned PR is dropped at write time', () => {
+  const d = dir();
+  const foreign = raw(9, 'other-repo', { repository: { nameWithOwner: 'femmebot/other-repo' } });
+  const { prs } = gatherInputs({ statusDir: d, dryRun: false, cachedPrsOnly: false, config: { ...CONFIG, prOwners: ['Org'] } }, deps([raw(1, 'acme-widgets'), foreign]));
+  assert.deepEqual(prs.map((p) => p.repo), ['org/acme-widgets'], 'owner match ignores case');
+  assert.deepEqual(readPrCache(d)?.prs.map((p) => p.repository.nameWithOwner), ['org/acme-widgets'], 'the foreign PR never reached the cache');
+});
+
+test('a cache written before the scope existed is filtered on read too', () => {
+  const d = dir();
+  writePrCache(d, { fetchedAt: NOW, prs: [raw(1, 'acme-widgets'), raw(9, 'other-repo', { repository: { nameWithOwner: 'femmebot/other-repo' } })] });
+  const { prs } = gatherInputs({ statusDir: d, dryRun: true, cachedPrsOnly: true, config: CONFIG }, deps([]));
+  assert.deepEqual(prs.map((p) => p.repo), ['org/acme-widgets']);
+});
+
+test('no configured org: no GitHub read, an empty PR list and a visible warning, never an unscoped list', () => {
+  const d = dir();
+  const unscoped = { ...CONFIG, prOwners: [] as string[] };
+  let reads = 0;
+  const r = generate(opts(d, { config: unscoped }), deps([raw(1, 'acme-widgets')], { fetchPrs: () => { reads++; return [raw(1, 'acme-widgets')]; } }));
+  assert.equal(reads, 0, 'gh was not asked');
+  assert.match(r.prFailure ?? '', /gh_org is empty/);
+  assert.equal(readPrCache(d), null, 'nothing written to the PR cache');
+  assert.doesNotMatch(r.page, /acme-widgets/);
+  assert.equal(gatherInputs({ statusDir: d, dryRun: true, cachedPrsOnly: false, config: { ...CONFIG, prOwners: undefined } }, deps([raw(1, 'acme-widgets')])).prs.length, 0, 'an absent scope fails closed too');
 });

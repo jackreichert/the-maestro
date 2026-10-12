@@ -57,6 +57,8 @@ export interface PageConfig {
   reviewQueueCap?: number;
   /** `self_review_repos`: PRs in these repos are not counted in the review queue. Absent: none. */
   selfReviewRepos?: string[];
+  /** Owners whose repos may appear in the PR list (the configured `gh_org`). Absent or empty means none: the PR list is withheld, never unscoped. */
+  prOwners?: string[];
 }
 
 /** Where the PR list came from: when GitHub was last read (null when never), and why the read just now failed, if it did. */
@@ -155,8 +157,14 @@ const mdLink = (r: Ref): string => {
   return r.nowrap ? `<span style="white-space:nowrap">${text}</span>` : text;
 };
 export const trackerRef = (cfg: PageConfig, key: string): Ref => (cfg.trackerUrlBase ? { label: key, url: `${cfg.trackerUrlBase}${key}`, nowrap: true } : { label: key, nowrap: true });
+/** A closed ticket moves to `Archive/` beside its folder; link there when the live path is gone and the archived note exists. */
+const liveOrArchived = (cfg: PageConfig, path: string): string => {
+  if (!cfg.noteExists || cfg.noteExists(`${path}.md`)) return path;
+  const archived = path.replace(/\/([^/]+)$/, '/Archive/$1');
+  return archived !== path && cfg.noteExists(`${archived}.md`) ? archived : path;
+};
 export const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
-  (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, ticketNotePath(cfg.ticketNotePath, id)), nowrap: true } : { label: id, nowrap: true });
+  (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, liveOrArchived(cfg, ticketNotePath(cfg.ticketNotePath, id))), nowrap: true } : { label: id, nowrap: true });
 
 /** The lookup `linkNotePaths` needs for `item`: a bare note path belongs to the project of its ticket (the id minus its number, as `ticketNotePath` reads it), else its stream's repo, else the page's project. */
 function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | undefined {
