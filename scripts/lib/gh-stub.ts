@@ -5,14 +5,14 @@
  * script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
  * for the cursor `p<i>` the stub itself hands out as endCursor, so a script that ignores
  * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
- * `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
+ * `delayMs: n` makes `api graphql` sleep n ms before answering; `callLog: path` records each `api graphql` call. `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export interface GhStubConfig { pages: unknown[][]; prState?: 'OPEN' | 'MERGED' | 'CLOSED'; failOnPage?: number; editLog?: string }
+export interface GhStubConfig { pages: unknown[][]; prState?: 'OPEN' | 'MERGED' | 'CLOSED'; failOnPage?: number; editLog?: string; delayMs?: number; callLog?: string }
 
 const STUB = `#!${process.execPath}
 const { appendFileSync, readFileSync } = require('node:fs');
@@ -21,7 +21,10 @@ const argv = process.argv.slice(2);
 const cursor = argv.find((a) => a.startsWith('after='));
 const page = cursor ? Number(cursor.slice('after=p'.length)) : 0;
 if (argv[0] === 'api' && argv[1] === 'user') console.log('me');
-else if (argv[0] === 'api' && cfg.failOnPage === page) {
+else if (argv[0] === 'api' && cfg.delayMs) {
+  if (cfg.callLog) appendFileSync(cfg.callLog, 'call\\n');
+  setTimeout(() => { console.log(JSON.stringify({ data: { search: { pageInfo: { hasNextPage: false }, nodes: cfg.pages[0] } } })); }, cfg.delayMs);
+} else if (argv[0] === 'api' && cfg.failOnPage === page) {
   console.error('HTTP 502: bad gateway');
   process.exit(1);
 } else if (argv[0] === 'api') {
