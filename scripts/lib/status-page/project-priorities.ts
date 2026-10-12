@@ -163,6 +163,12 @@ export function projectsWithTodayOn(vault: string, day: string): string[] {
   return readdirSync(root).filter((name) => plainName(name) && (readProjectFile(join(prioritiesDir(vault, name), `${day}.md`))?.today.length ?? 0) > 0);
 }
 
+/** The projects with Today items on `day` that the new fan-out does not name. Names compare ignoring case: on a case-insensitive filesystem `Options-App` and `options-app` are the same folder, and clearing it would wipe what was just written. */
+export function droppedProjects(vault: string, day: string, fanned: Iterable<string>): string[] {
+  const kept = new Set([...fanned].map((name) => name.toLowerCase()));
+  return projectsWithTodayOn(vault, day).filter((name) => !kept.has(name.toLowerCase()));
+}
+
 /** Reads and parses a project file; null when it is missing or unreadable. */
 export function readProjectFile(path: string): ReturnType<typeof parseProjectFile> | null {
   try { return parseProjectFile(readFileSync(path, 'utf8')); } catch { return null; }

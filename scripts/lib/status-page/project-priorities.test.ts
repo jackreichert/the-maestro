@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { carryPriorities, fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, projectsWithTodayOn, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
+import { carryPriorities, droppedProjects, fanOut, nextItems, parseProjectFile, previousFile, prioritiesDir, projectsFor, projectsWithTodayOn, readProjectFile, renderProjectFile, streamStatus, writeProjectPriorities } from './project-priorities.ts';
 import type { ProjectFile } from './project-priorities.ts';
 import type { Homes } from '../home/config.ts';
 import type { LedgerRow } from '../ledger-core.ts';
@@ -143,4 +143,11 @@ test('projectsWithTodayOn lists the projects with Today items on the day, whoeve
   writeProjectPriorities(v, 'c-proj', '2026-10-13', file({ project: 'c-proj', date: '2026-10-13' }));
   assert.deepEqual(projectsWithTodayOn(v, '2026-10-12'), ['a-proj', 'b-proj']);
   assert.deepEqual(projectsWithTodayOn(join(v, 'nothing'), '2026-10-12'), []);
+});
+
+test('droppedProjects ignores case: a config name that differs from its folder only by case is not dropped', () => {
+  const v = vaultWith('options-app', 'old-proj');
+  writeProjectPriorities(v, 'options-app', '2026-10-12', file({ project: 'options-app' }));
+  writeProjectPriorities(v, 'old-proj', '2026-10-12', file({ project: 'old-proj' }));
+  assert.deepEqual(droppedProjects(v, '2026-10-12', ['Options-App']), ['old-proj']);
 });
