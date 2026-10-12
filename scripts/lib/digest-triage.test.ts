@@ -176,3 +176,23 @@ test('a noise answer cannot suppress the failing-check line (tick)', () => {
   assert.deepEqual(readDigest(dir).map((e) => e.actionable), [true]);
   assert.equal(suppressedSince(dir).length, 0);
 });
+
+test('the loop health lines are never triaged: a noise seam cannot suppress them', () => {
+  for (const summary of ['check keeps failing: gh exited 1', 'watch expired after 72h']) {
+    const dir = tmp();
+    let asked = 0;
+    const [e] = triageEvents([ev(summary)], { dir, triage: () => { asked += 1; return { verdict: 'noise', reason: 'x' }; } });
+    assert.deepEqual([asked, e.actionable, existsSync(triagePath(dir))], [0, true, false], summary);
+  }
+});
+
+test('a check-failing line from a real tick stays actionable under a noise triage', () => {
+  const dir = tmp();
+  const type: EventType<{ n: number }> = { check: () => { throw new Error('gh exited 1'); }, diff: () => [] };
+  addWatch(dir, { id: 'w', type: 'pr-watch', target: 't', ttlMs: 86400000 }, Date.parse(AT));
+  const base = { dir, types: { 'pr-watch': type }, config: { quietHours: 'off', tz: 'UTC' } as const, triage: noise };
+  for (let i = 0; i < 4; i += 1) tick({ ...base, now: Date.parse(AT) + i * 3600000 });
+  const out = readDigest(dir).filter((e) => /^check keeps failing/.test(e.summary));
+  assert.deepEqual(out.map((e) => e.actionable), [true]);
+  assert.equal(suppressedSince(dir).length, 0);
+});

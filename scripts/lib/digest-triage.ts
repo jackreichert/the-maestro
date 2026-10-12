@@ -21,6 +21,9 @@ import type { DigestEvent } from './types.ts';
 /** Watch types whose lines this triage reads. Every other type is passed through untouched and unlogged. */
 const TRIAGED_TYPES: ReadonlySet<string> = new Set(['pr-watch', 'pr-checks']);
 
+/** The loop's own health lines (a watch gone blind, a watch expired). They are never triaged: they always wake, whatever a seam would say. */
+const UNTRIAGED_KINDS: ReadonlySet<string> = new Set(['check-failing', 'watch-expired']);
+
 /** `wake`: a rule says this is always actionable. `ambiguous`: no rule covers the line. */
 export type RuleVerdict = 'wake' | 'ambiguous';
 
@@ -103,6 +106,7 @@ export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: st
   for (const e of events) {
     if (!e.actionable || !TRIAGED_TYPES.has(e.type)) continue;
     const kind = toInboxEvent({ ...e })?.kind ?? 'other';
+    if (UNTRIAGED_KINDS.has(kind)) continue;
     const base = { at: e.at, watch: e.watch, type: e.type, kind, summary: e.summary };
     const r = classifyLine(e);
     if (r.verdict === 'wake') { logRow(opts.dir, { ...base, decision: 'wake', rule: r.rule, reason: r.reason }); continue; }
