@@ -955,7 +955,8 @@ function cmdReviewQueue() {
     if (has('cap') && !(capArg !== null && /^\d+$/.test(capArg) && Number(capArg) > 0)) { console.error('--cap must be a positive whole number.'); process.exit(2); }
     const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(freshestSnapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg), new Date(), SELF_REVIEW_REPOS);
     if (asJson) console.log(JSON.stringify(reading, null, 2)); else queueText(reading).forEach((l) => console.log(l));
-    process.exit(queueExitCode(reading));
+    // Not process.exit: it drops output a pipe has not yet taken, so a slow reader would see a cut answer.
+    process.exitCode = queueExitCode(reading);
 }
 
 function cmdStandup() {
