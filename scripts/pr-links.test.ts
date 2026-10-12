@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { writeStub } from './lib/stub-bin.ts';
+import { stubEnv, writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { diffAnchor, expandTokens, parseAnchor, tokenPaths, tokenProblems } from './pr-links.ts';
@@ -87,9 +87,8 @@ function fixture() {
     const edited = join(dir, 'edited.md');
     const view = join(dir, 'view.json');
     writeFileSync(view, JSON.stringify({ url: PR, body: 'See {{file:src/widgets/alpha.ts}}.', files: [{ path: 'src/widgets/alpha.ts' }] }));
-    const gh = join(dir, 'gh.sh');
-    writeStub(gh, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase "$1 $2" in\n"pr create") echo '${PR}' ;;\n"pr view") cat '${view}' ;;\n"pr edit") cp "$5" '${edited}' ;;\nesac\n`);
-    return { repo, dir, log, edited, view, gh, env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh } };
+    const gh = writeStub(join(dir, 'gh.sh'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase "$1 $2" in\n"pr create") echo '${PR}' ;;\n"pr view") cat '${view}' ;;\n"pr edit") cp "$5" '${edited}' ;;\nesac\n`);
+    return { repo, dir, log, edited, view, gh, env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', ...stubEnv('MAESTRO_GH_BIN', gh) } };
 }
 
 const BODY = (guide: string): string => ['## Context', 'Why.', '## Reviewer guide', guide, '## Risk and blast radius', 'Risk: low - tool.', '## Rollback / flag', 'Plain revert.', '## How to verify locally', '```', 'npm test', '```', ''].join('\n');

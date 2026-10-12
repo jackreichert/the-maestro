@@ -3,7 +3,7 @@ import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { writeStub } from './lib/stub-bin.ts';
+import { stubEnv, writeStub, type Stub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { bodyProblems, type BodyRules } from './pr-body.ts';
@@ -34,8 +34,7 @@ function fixture(files: Record<string, string>) {
     git(repo, 'add', '--all');
     git(repo, 'commit', '-q', '-m', 'change');
     const log = join(tmpdir(), `gh-${Math.random().toString(36).slice(2)}.log`);
-    const gh = join(repo, '..', `fake-gh-${Math.random().toString(36).slice(2)}.sh`);
-    writeStub(gh, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`);
+    const gh = writeStub(join(repo, '..', `fake-gh-${Math.random().toString(36).slice(2)}.sh`), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`);
     return { repo, log, gh };
 }
 
@@ -52,8 +51,8 @@ const GOOD_BODY = [
 /** A body file next to the repo; `open` supplies a valid one unless the test passes its own --body-file. */
 const bodyFile = (repo: string, text: string): string => { const p = join(repo, '..', `body-${Math.random().toString(36).slice(2)}.md`); writeFileSync(p, text); return p; };
 
-const open = ({ repo, gh }: { repo: string; gh: string }, extra: string[] = [], env: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: gh, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file', ...env },
+const open = ({ repo, gh }: { repo: string; gh: Stub }, extra: string[] = [], env: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--title', 'T', ...(extra.includes('--body-file') || extra.includes('--no-body') ? [] : ['--body-file', bodyFile(repo, GOOD_BODY)]), ...extra.filter((a) => a !== '--no-body')], {
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo, MAESTRO_LOCAL_CONFIG: '', ...stubEnv('MAESTRO_GH_BIN', gh), GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file', ...env },
 });
 
 /** A throwaway user config file. Gate settings are read from this file, not from the environment. */
@@ -285,7 +284,7 @@ test('pr-open runs the structural rules end to end: a stacked base needs a diagr
     const f = fixture({ 'src/a.py': lines(3) });
     git(f.repo, 'branch', 'feature-base', 'main');
     const stacked = spawnSync(process.execPath, [SCRIPT, '--repo', f.repo, '--base', 'feature-base', '--title', 'T', '--body-file', bodyFile(f.repo, GOOD_BODY), '--dry-run'], {
-        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: f.repo, MAESTRO_LOCAL_CONFIG: '', MAESTRO_GH_BIN: f.gh },
+        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: f.repo, MAESTRO_LOCAL_CONFIG: '', ...stubEnv('MAESTRO_GH_BIN', f.gh) },
     });
     assert.equal(stacked.status, 1);
     assert.match(stacked.stderr, /stacked PR needs a mermaid diagram/);

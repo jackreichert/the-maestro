@@ -1,22 +1,26 @@
 /**
- * Test support: write a stub executable (a fake `gh`, `git`, loop binary) that a spawned process runs.
- * Every test that needs one goes through `writeStub`, so how a stub gets executed lives in one place.
+ * Test support: a stand-in for a tool the code under test spawns (a fake `gh`, `git`, loop binary).
  *
- * The first run of any newly written executable stalls for 76-87 s on macOS (a scan of new executables), which times
- * out tests under load. So the stub's script is written as a plain, non-executable `<path>.stub.cjs` (a .cjs extension, so node accepts it when a test loads it with --import or NODE_OPTIONS), and `<path>` is a
- * symlink to the committed `stub-runner.sh`, which runs the script through the interpreter on its shebang line.
- * Nothing newly written is ever executed.
+ * macOS stalls the first run of any newly written executable for minutes, and git writes a committed script fresh into
+ * every new checkout, so nothing on the test path may execute a file that a test or a checkout wrote. A stub is
+ * therefore a plain, non-executable script that an interpreter already on the machine runs: `writeStub` writes the
+ * script and returns the interpreter plus script, and `stubEnv` turns that into the env pair the code under test
+ * reads (`X` and `X_ARGS`, see tool-bin.ts). The interpreter comes from the script's own `#!` line.
  */
-import { rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { writeFileSync } from 'node:fs';
 
-const RUNNER = fileURLToPath(new URL('./stub-runner.sh', import.meta.url));
+/** The only interpreters a stub may name; all exist on the machine already, so running one never waits on a scan. */
+const INTERPRETERS = [process.execPath, '/bin/sh', '/bin/bash'];
 
-/** Writes `body` (a script whose first line is `#!<one interpreter>`, no arguments) behind an executable `path`, and returns `path`. */
-export function writeStub(path: string, body: string): string {
-  if (!/^#![^\s]+\n/.test(body)) throw new Error('a stub needs a first line of `#!<interpreter>` with no arguments');
-  writeFileSync(`${path}.stub.cjs`, body);
-  rmSync(path, { force: true });
-  symlinkSync(RUNNER, path);
-  return path;
+export interface Stub { script: string; bin: string; args: string[] }
+
+/** Writes `body` (a script whose first line is `#!` plus node's path, /bin/sh or /bin/bash) to `path`, not executable. */
+export function writeStub(path: string, body: string): Stub {
+  const bin = /^#!([^\s]+)\n/.exec(body)?.[1];
+  if (!bin || !INTERPRETERS.includes(bin)) throw new Error(`a stub's first line must be #! plus one of ${INTERPRETERS.join(', ')}, with no arguments`);
+  writeFileSync(path, body);
+  return { script: path, bin, args: [path] };
 }
+
+/** The env entries that make `varName` (for example MAESTRO_GH_BIN) run `stub`. */
+export const stubEnv = (varName: string, stub: Stub): Record<string, string> => ({ [varName]: stub.bin, [`${varName}_ARGS`]: JSON.stringify(stub.args) });

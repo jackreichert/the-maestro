@@ -2,7 +2,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
@@ -11,16 +10,12 @@ import { installGhStub, prNode } from './lib/gh-stub.ts';
 const ledger = mkdtempSync(join(tmpdir(), 'sr-snap-ledger-'));
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.LEDGER_ROOT = ledger;
-// The fake is reached by path (MAESTRO_GH_BIN), not by PATH lookup, and PATH holds a `gh` that records a call and fails: any refresh that
-// reaches for the real gh (a 60 s network call under load) trips the marker and fails the suite instead of timing out.
-const realGhCalled = join(mkdtempSync(join(tmpdir(), 'sr-snap-realgh-')), 'called');
-const poisonDir = mkdtempSync(join(tmpdir(), 'sr-snap-poison-'));
-writeStub(join(poisonDir, 'gh'), `#!/bin/sh\ntouch '${realGhCalled}'\nexit 1\n`);
-process.env.PATH = `${poisonDir}:${process.env.PATH}`;
+// The fake is reached through MAESTRO_GH_BIN, never by PATH lookup, and PATH holds no gh at all: any refresh that reaches for the real gh
+// (a 60 s network call under load) fails on ENOENT instead of timing out. No file this test writes is ever executed.
+process.env.PATH = mkdtempSync(join(tmpdir(), 'sr-snap-emptybin-'));
 const withStub = (config: Parameters<typeof installGhStub>[0]): void => {
   const env = installGhStub(config);
-  process.env.GH_STUB_CONFIG = env.GH_STUB_CONFIG;
-  process.env.MAESTRO_GH_BIN = join(dirname(String(env.GH_STUB_CONFIG)), 'gh');
+  for (const name of ['GH_STUB_CONFIG', 'MAESTRO_GH_BIN', 'MAESTRO_GH_BIN_ARGS']) process.env[name] = env[name];
 };
 const { realIo } = await import('./event-types/status-refresh.ts');
 const { currentPath, snapshotPath } = await import('./prs-snapshot.ts');
@@ -47,6 +42,8 @@ test('a failed gh search returns the reason, leaves the current-state file as it
   assert.ok(existsSync(path));
 });
 
-test('the refresh never runs the gh found on PATH', () => {
-  assert.equal(existsSync(realGhCalled), false, 'the PATH gh was called');
+test('the refresh finds its gh only through MAESTRO_GH_BIN, with no gh on PATH', () => {
+  withStub({ pages: [[prNode(3)]] });
+  assert.deepEqual(readdirSync(String(process.env.PATH)), []);
+  assert.equal(realIo.refreshSnapshot(), undefined);
 });

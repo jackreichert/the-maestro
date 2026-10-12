@@ -3,7 +3,7 @@ import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
-import { writeStub } from './lib/stub-bin.ts';
+import { stubEnv, writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -890,14 +890,14 @@ test('--apply-worktrees from the command line removes what qualifies and prints 
 
 // ── sweepWorktrees: a failure it cannot decide through is reported in `failed`, never swallowed ──
 
-/** Runs `fn` with a `git` first on PATH that fails any command whose arguments match `pattern`, and runs the real git otherwise. */
+/** Runs `fn` with MAESTRO_GIT_BIN set to a git that fails any command whose arguments match `pattern`, and runs the real git otherwise. */
 function withFailingGit<T>(w: World, pattern: string, fn: () => T): T {
-    const bin = join(w.root, 'shim'); mkdirSync(bin, { recursive: true });
-    const real = must(process.env.PATH, 'PATH').split(':').map((d) => join(d, 'git')).find((p) => existsSync(p));
-    writeStub(join(bin, 'git'), `#!/bin/bash\ncase " $* " in *" ${pattern} "*) echo "injected failure" >&2; exit 1;; esac\nexec ${must(real, 'real git')} "$@"\n`);
-    const saved = process.env.PATH;
-    process.env.PATH = `${bin}:${saved}`;
-    try { return fn(); } finally { process.env.PATH = saved; }
+    const real = must(must(process.env.PATH, 'PATH').split(':').map((d) => join(d, 'git')).find((p) => existsSync(p)), 'real git');
+    const stub = writeStub(join(w.root, 'failing-git.sh'), `#!/bin/bash\ncase " $* " in *" ${pattern} "*) echo "injected failure" >&2; exit 1;; esac\nexec ${real} "$@"\n`);
+    const names = ['MAESTRO_GIT_BIN', 'MAESTRO_GIT_BIN_ARGS'];
+    const saved = names.map((n) => process.env[n]);
+    Object.assign(process.env, stubEnv('MAESTRO_GIT_BIN', stub));
+    try { return fn(); } finally { names.forEach((n, i) => { if (saved[i] === undefined) delete process.env[n]; else process.env[n] = saved[i]; }); }
 }
 const mergedWorktree = (w: World, branch: string): string => {
     feature(w, branch); mergeInto(w, 'develop', branch); mergeInto(w, 'staging', branch);

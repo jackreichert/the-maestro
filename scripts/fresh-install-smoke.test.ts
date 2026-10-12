@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,14 +29,14 @@ test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and k
   const tmp = mkdtempSync(join(tmpdir(), 'smoke-signal-'));
   try {
     // A `git` that records its pid and hangs holds the Quick start's clone step open, whatever the machine or checkout looks like.
-    const bin = join(tmp, 'bin');
-    mkdirSync(bin);
+    // It is a shell function sourced through SMOKE_BASH_ENV, which the smoke hands to its steps as BASH_ENV (the step runs `bash -c`), so no executable is written for the machine to scan.
     const pidfile = join(tmp, 'git.pid');
-    writeStub(join(bin, 'git'), `#!/bin/sh\necho $$ > '${pidfile}'\nexec sleep 300\n`);
+    const hangingGit = join(tmp, 'hanging-git.sh');
+    writeFileSync(hangingGit, `git() { echo $$ > '${pidfile}'; exec sleep 300; }\n`);
     const scratch = join(tmp, 'tmpdir');
     mkdirSync(scratch);
     const child = spawn(process.execPath, [fileURLToPath(new URL('./fresh-install-smoke.ts', import.meta.url))], {
-      env: { PATH: `${bin}:${process.env.PATH}`, HOME: tmp, TMPDIR: scratch, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
+      env: { PATH: process.env.PATH, SMOKE_BASH_ENV: hangingGit, HOME: tmp, TMPDIR: scratch, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
     });
     const closed = new Promise<number | null>((res) => child.on('close', (code) => res(code)));
     for (let i = 0; i < 200 && !existsSync(pidfile); i++) await new Promise((r) => setTimeout(r, 50));

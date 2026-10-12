@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess, StdioOptions } from 'node:child_process';
 import { closeSync, rmSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { writeStub } from './lib/stub-bin.ts';
+import { stubEnv, writeStub, type Stub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -95,11 +95,9 @@ test('quiet-hours parsing: next occurrence in the zone, wrap past midnight, 12h 
   assert.equal(quietSleepSeconds('nothing here', NOON), null);
 });
 
-/** An executable fake loop that prints a digest and exits 10. */
-function fakeLoop(dir: string): string {
-  const bin = join(dir, 'fake-loop.sh');
-  writeStub(bin, '#!/bin/sh\necho "ACTION w1 (fake): changed"\nexit 10\n');
-  return bin;
+/** A fake loop script that prints a digest and exits 10. */
+function fakeLoop(dir: string): Stub {
+  return writeStub(join(dir, 'fake-loop.sh'), '#!/bin/sh\necho "ACTION w1 (fake): changed"\nexit 10\n');
 }
 /** Every env a real supervisor or installer ran with; the `after` hook below fails the file if any of them reached a notify command. */
 const envsUsed: NodeJS.ProcessEnv[] = [];
@@ -113,7 +111,7 @@ after(() => { for (const env of envsUsed) assert.deepEqual(notifyCalls(env), [],
 
 test('the real supervisor process saves the fake loop digest under the ledger root only', () => {
   const ledger = tempDir();
-  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LOOP_BIN: fakeLoop(tempDir()), MAESTRO_SUPERVISOR_MAX_RUNS: '2' }) });
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: envFor(ledger, { ...stubEnv('MAESTRO_LOOP_BIN', fakeLoop(tempDir())), MAESTRO_SUPERVISOR_MAX_RUNS: '2' }) });
   assert.equal(r.status, 0, r.stderr);
   const dir = digestDir(ledger, 'proj');
   // Each saved digest is then moved into the inbox, which marks it seen.
@@ -125,7 +123,7 @@ test('the real supervisor process saves the fake loop digest under the ledger ro
 });
 
 test('the supervisor refuses to start without a ledger root and writes nothing', () => {
-  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: { ...envFor('x'), LEDGER_ROOT: '', MAESTRO_LOOP_BIN: fakeLoop(tempDir()), MAESTRO_SUPERVISOR_MAX_RUNS: '1' } });
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: { ...envFor('x'), LEDGER_ROOT: '', ...stubEnv('MAESTRO_LOOP_BIN', fakeLoop(tempDir())), MAESTRO_SUPERVISOR_MAX_RUNS: '1' } });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /no ledger root/);
 });
@@ -169,9 +167,8 @@ test('commands single-quote paths; a space and a single quote survive a shell ro
 test('SIGTERM to the supervisor is forwarded to the loop and the supervisor exits 0 after it', async () => {
   const dir = tempDir();
   const marker = join(dir, 'marker');
-  const bin = join(dir, 'slow-loop.sh');
-  writeStub(bin, `#!/bin/sh\ntrap 'echo term >> "${marker}"; exit 143' TERM\necho started >> "${marker}"\nwhile :; do sleep 0.1; done\n`);
-  const { p, closed } = startSupervisor(envFor(tempDir(), { MAESTRO_LOOP_BIN: bin }));
+  const bin = writeStub(join(dir, 'slow-loop.sh'), `#!/bin/sh\ntrap 'echo term >> "${marker}"; exit 143' TERM\necho started >> "${marker}"\nwhile :; do sleep 0.1; done\n`);
+  const { p, closed } = startSupervisor(envFor(tempDir(), { ...stubEnv('MAESTRO_LOOP_BIN', bin) }));
   try {
     assert.equal(await waitFor(() => existsSync(marker)), true, 'the loop never started');
     p.kill('SIGTERM');
@@ -187,9 +184,8 @@ test('a quiet-hours stop sleeps in quiet mode, a crash or refusal in backoff mod
 
 test('the real supervisor heartbeats while it waits, as itself, in idle mode', async () => {
   const ledger = tempDir();
-  const bin = join(tempDir(), 'exit0.sh');
-  writeStub(bin, '#!/bin/sh\nexit 0\n');
-  const { p, closed } = startSupervisor(envFor(ledger, { MAESTRO_LOOP_BIN: bin }));
+  const bin = writeStub(join(tempDir(), 'exit0.sh'), '#!/bin/sh\nexit 0\n');
+  const { p, closed } = startSupervisor(envFor(ledger, { ...stubEnv('MAESTRO_LOOP_BIN', bin) }));
   try {
     const file = join(ledger, 'Events', 'heartbeat.json');
     const read = (): { pid?: number; mode?: string; at: string; sleepingUntil: string } | null => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; } };
@@ -274,9 +270,8 @@ test('a hung loop (killed by the watchdog) is relaunched at once, with a log lin
 test('the real supervisor launches the loop in serve mode', () => {
   const ledger = tempDir();
   const dir = tempDir();
-  const bin = join(dir, 'args-loop.sh');
-  writeStub(bin, `#!/bin/sh\necho "$@" > "${join(dir, 'args')}"\necho "ACTION w1 (fake): x"\nexit 10\n`);
-  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
+  const bin = writeStub(join(dir, 'args-loop.sh'), `#!/bin/sh\necho "$@" > "${join(dir, 'args')}"\necho "ACTION w1 (fake): x"\nexit 10\n`);
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { ...stubEnv('MAESTRO_LOOP_BIN', bin), MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(join(dir, 'args'), 'utf8').trim(), 'run --serve');
 });
@@ -300,13 +295,12 @@ test('the real supervisor kills a loop that is alive but silent, then relaunches
 
 test('the real supervisor rotates its log when it is over the limit, keeping the old text in .1', async () => {
   const ledger = tempDir();
-  const bin = join(tempDir(), 'exit0.sh');
-  writeStub(bin, '#!/bin/sh\nexit 0\n');
+  const bin = writeStub(join(tempDir(), 'exit0.sh'), '#!/bin/sh\nexit 0\n');
   const log = supervisorLogPath(ledger, 'proj');
   mkdirSync(dirname(log), { recursive: true });
   writeFileSync(log, 'old line\n'.repeat(200));
   const fd = openSync(log, 'a');
-  const { p, closed } = startSupervisor(envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_LOG_MAX_BYTES: '1000' }), ['ignore', fd, fd]);
+  const { p, closed } = startSupervisor(envFor(ledger, { ...stubEnv('MAESTRO_LOOP_BIN', bin), MAESTRO_LOG_MAX_BYTES: '1000' }), ['ignore', fd, fd]);
   try {
     assert.equal(await waitFor(() => existsSync(`${log}.1`)), true, 'the log was never rotated');
     p.kill('SIGTERM');
@@ -320,9 +314,8 @@ test('the real supervisor moves a digest that was already saved and unseen into 
   const ledger = tempDir();
   const dir = digestDir(ledger, 'proj');
   saveDigest(dir, 'ACTION w9 (fake): left over from an older loop');
-  const bin = join(tempDir(), 'exit10.sh');
-  writeStub(bin, '#!/bin/sh\nexit 10\n');
-  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
+  const bin = writeStub(join(tempDir(), 'exit10.sh'), '#!/bin/sh\nexit 10\n');
+  const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { ...stubEnv('MAESTRO_LOOP_BIN', bin), MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(unseenDigests(dir).length, 0);
   assert.deepEqual(readInbox(join(ledger, 'Events')).map((e) => e.watch), ['w9']);
