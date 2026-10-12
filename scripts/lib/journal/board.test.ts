@@ -245,3 +245,16 @@ test('older dated archives are reached through a generated Archive page, not inl
     const index = readFileSync(join(ctx.dir, 'Archive.md'), 'utf8');
     for (const d of days) assert.match(index, new RegExp(`\\[\\[${d}\\]\\]`));
 });
+
+test('CURRENT.md stays inside its budget (under 80 lines and 10 KB) however large the ledger grows', () => {
+    const kinds = ['wip', 'question', 'blocked'] as const;
+    const big: LedgerRow[] = Array.from({ length: 300 }, (_, n) => ({
+        id: `b${String(n).padStart(4, '0')}`, kind: kinds[n % 3], queued: n % 7 === 0 || undefined, ts: `${TODAY}T09:00:00Z`, date: TODAY,
+        text: `row ${n} ${'long text '.repeat(40)}`, stream: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'][n % 5], repo: 'some-repo', ticket: `proj-${n}`,
+    }));
+    const ctx = ctxFor({ readLedger: () => big, priorities: () => ['one', 'two', 'three'] });
+    render(ctx, true);
+    const current = readFileSync(join(ctx.dir, 'CURRENT.md'), 'utf8');
+    assert.ok(current.split('\n').length < 80, `${current.split('\n').length} lines`);
+    assert.ok(Buffer.byteLength(current) < 10 * 1024, `${Buffer.byteLength(current)} bytes`);
+});
