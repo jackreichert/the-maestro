@@ -32,3 +32,11 @@ test('an answer holding a fake ask line stays one answer on its own stub', () =>
   assert.deepEqual(Object.keys(extractFields(p).ticks), ['ab12']);
   assert.equal(Object.keys(extractFields(p).answers).length, 1);
 });
+
+test('an ask marked for discussion shows the mark under its stub, with the topic if there is one', () => {
+  const p = page([ask({ discussing: 'rollout order' }), ask({ id: 'cd34', text: 'Other?', discussing: '' })]);
+  const lines = p.split('\n');
+  assert.equal(lines[lines.findIndex((l) => l.startsWith('- [ ] `ab12`')) + 2], '  > discuss: rollout order');
+  assert.equal(lines[lines.findIndex((l) => l.startsWith('- [ ] `cd34`')) + 2], '  > discuss:');
+  assert.deepEqual(extractFields(p).discuss, { ab12: 'rollout order', cd34: '' });
+});

@@ -109,7 +109,7 @@ function pendingEdits(statusDir: string, current: string | null): { edits: Unpro
   const baseline = baselineText === null ? null : extractFields(baselineText);
   const meta = readSeenMeta(statusDir);
   const seenPriorities = meta ? meta.priorities_seen : baseline?.priorities ?? null;
-  if (current === null) return { edits: { answers: {}, ticks: [], priorities: null }, seenPriorities };
+  if (current === null) return { edits: { answers: {}, discuss: {}, ticks: [], priorities: null }, seenPriorities };
   return { edits: unprocessed(extractFields(current), baseline, meta ? meta.priorities_seen : undefined), seenPriorities };
 }
 

@@ -1,7 +1,10 @@
 /**
  * status-watch: wakes the orchestrator when the user edits the status page by hand. Target is the status directory
  * (the one holding The-Podium.md); see scripts/lib/status-page/inline.ts for what counts as an edit: an `> answer:` line under
- * an ask, a ticked `- [x]` box on an ask, or a changed priorities list.
+ * an ask, a `> discuss:` line under an ask, a ticked `- [x]` box on an ask, or a changed priorities list.
+ *
+ * An edit is held back until the page has been unchanged for SETTLE_MS (20 s), so a half-typed answer is not reported; the
+ * baseline stays put meanwhile, so the edit is still new on the check that finds the page settled.
  *
  * Each check compares The-Podium.md with the baseline beside it (`.now-seen.md`) and reports only what is new, one actionable
  * event per ask (answer and tick together) and one for the priorities, then adopts The-Podium.md as the new baseline. A page the
@@ -14,6 +17,7 @@
  * `add` refuses a target that is not an existing directory.
  */
 import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { extractFields, unprocessed } from '../lib/status-page/inline.ts';
 import { PODIUM_FILE, readPodium, readSeenMeta, readSeenPage, sha, writeSeenMeta, writeSeenPage } from '../lib/status-page/seen.ts';
 import type { Unprocessed } from '../lib/status-page/inline.ts';
@@ -21,8 +25,8 @@ import type { CheckContext, WatchEvent } from '../lib/types.ts';
 
 export interface StatusWatchState { sha: string; fresh: string[] }
 
-// Scheduling: a local file read every minute; no idle back-off, so an answer is noticed within about a minute.
-export const interval = 60;
+// Scheduling: a local file read every 30 s (the local floor); no idle back-off. With the settle window below, an answer is reported within about a minute.
+export const interval = 30;
 export const renews = true;
 export const network = false;
 export const backoff = false;
@@ -30,6 +34,8 @@ export const singleton = true;
 // The user's own edits are not worth a phone buzz.
 export const notifies = 'never' as const;
 
+/** An edit is reported only once the page has not changed for this long, so an autosave mid-sentence is never taken for the answer. */
+export const SETTLE_MS = 20_000;
 const THREE_DAYS_MS = 3 * 24 * 3600 * 1000;
 export const defaultTtlMs = (): number => THREE_DAYS_MS;
 
@@ -50,7 +56,7 @@ function decisions(page: string): Map<string, string> {
   return out;
 }
 
-/** One summary per ask that was answered or ticked, then one for the priorities. */
+/** One summary per ask that was answered or ticked, one per discuss mark (starting `DISCUSS`), then one for the priorities. */
 export function describe(u: Unprocessed, page: string): string[] {
   const why = decisions(page);
   const ids = [...new Set([...Object.keys(u.answers), ...u.ticks])].sort();
@@ -61,11 +67,16 @@ export function describe(u: Unprocessed, page: string): string[] {
     const about = why.has(id) ? ` (decision: ${(why.get(id) as string).slice(0, 60)})` : '';
     return `ask ${id}${about} ${what}`;
   });
+  // A discuss mark is its own event, tagged so the orchestrator raises it in chat and holds off acting on that ask.
+  for (const id of Object.keys(u.discuss).sort()) {
+    const about = why.has(id) ? ` (decision: ${(why.get(id) as string).slice(0, 60)})` : '';
+    out.push(`DISCUSS ask ${id}${about}${u.discuss[id] ? `: ${u.discuss[id]}` : ' (no topic given)'}`);
+  }
   if (u.priorities) out.push(`priorities edited inline: ${u.priorities.map((p, i) => `${i + 1}) ${p}`).join('; ') || '(emptied)'}`);
   return out;
 }
 
-export function check(target: string, _ctx?: Pick<CheckContext, 'now'>): StatusWatchState {
+export function check(target: string, ctx?: Pick<CheckContext, 'now'>): StatusWatchState {
   const page = readPodium(target);
   if (page === null) return { sha: '', fresh: [] };
   const hash = sha(page);
@@ -76,6 +87,9 @@ export function check(target: string, _ctx?: Pick<CheckContext, 'now'>): StatusW
   const ownOutput = meta !== null && meta.generated_sha === hash && meta.carried === 0;
   const fields = extractFields(page);
   const fresh = ownOutput ? [] : describe(unprocessed(fields, baselineText === null ? null : extractFields(baselineText), meta ? meta.priorities_seen : undefined), page);
+  // A page still being typed into holds an edit that may be half a sentence: leave the baseline alone and look again next check.
+  // Without a clock (a direct call) there is nothing to settle against.
+  if (fresh.length && ctx && ctx.now - statSync(join(target, PODIUM_FILE)).mtimeMs < SETTLE_MS) return { sha: hash, fresh: [] };
   writeSeenPage(target, page);
   writeSeenMeta(target, { generated_sha: meta?.generated_sha ?? '', carried: meta?.carried ?? 0, priorities_seen: fields.priorities });
   return { sha: hash, fresh };
