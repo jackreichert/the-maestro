@@ -52,7 +52,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         if (closed?.kind === 'learned' && row.kind !== 'curated') problems.push({ line, id: row.id, problem: `closes ${row.closes}, a learned row; only a composer pass handles a learned row` });
         if (row.kind === 'curated') for (const p of curatedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `curated: ${p}` });
         if (row.kind === 'learned') for (const p of learnedProblems(row, learnedIds)) problems.push({ line, id: row.id, problem: `learned: ${p}` });
-        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes', 'briefs']) missing(line, row, field, row[field]);
+        for (const field of ['closes', 'carries', 'tags', 'annotates', 'approves', 'defers', 'queues', 'promotes', 'briefs', 'of']) missing(line, row, field, row[field]);
         if (row.kind === 'archive') for (const id of row.ids || []) missing(line, row, 'archive ids', id);
     }
     problems.sort((a, b) => a.line - b.line);

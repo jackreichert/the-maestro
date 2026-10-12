@@ -36,6 +36,8 @@ export interface LedgerRow {
     report?: string;
     /** On a `rework` row: the id of the item whose output had to be edited before use. */
     reworks?: string;
+    /** On an `answer` or `discuss` row: the id of the ask it is about (lib/journal/answers.ts). */
+    of?: string;
     /** On a `wip` row: written as queued (a to-do not yet started). On a folded item: true only while it is queued, absent when it is in flight. */
     queued?: boolean;
     /** Item ids an `archive` row hides. */
@@ -70,6 +72,9 @@ export type LedgerItem = LedgerRow & {
     state: string | undefined;
     /** When the item last moved between queued and in flight (the `queue` or `promote` row); absent if it never moved. */
     stateTs?: string;
+    /** On an open ask: the latest answer recorded for it (an `answer` row's text), and the topic of the latest `discuss` row (empty for a bare one). Absent when there is none. */
+    answer?: string;
+    discussing?: string;
 };
 
 export interface StreamMeta { aliases?: unknown[]; status?: string }
@@ -92,7 +97,7 @@ export const OPEN_KINDS = ['wip', 'blocked', 'question'];
 export const isPendingDecision = (i: LedgerRow): boolean => i.kind === 'decision' && i.pending === true;
 export const isOpen = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => !i.closedBy && ((i.kind !== undefined && OPEN_KINDS.includes(i.kind)) || isPendingDecision(i));
 // Rows that are events about items, not items themselves.
-export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote', 'brief', 'rework', 'lease', 'unlease'];
+export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote', 'brief', 'rework', 'lease', 'unlease', 'answer', 'discuss'];
 
 /** An open `wip` item that is queued (a to-do not yet started), as opposed to in flight. The fold sets `queued`. */
 export const isQueued = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => i.kind === 'wip' && i.queued === true && isOpen(i);
@@ -224,7 +229,11 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
     const streams = new Map<string, string | undefined>();
     const archivedBy = new Map<string, string[]>();
     const moves = new Map<string, { queued: boolean; ts: string | undefined }>();
+    const answers = new Map<string, string>();
+    const discussing = new Map<string, string>();
     for (const e of entries) {
+        if (e.kind === 'answer' && e.of) answers.set(e.of, String(e.text ?? ''));
+        if (e.kind === 'discuss' && e.of) discussing.set(e.of, String(e.text ?? ''));
         if (e.kind === 'queue' && e.queues) moves.set(e.queues, { queued: true, ts: e.ts });
         if (e.kind === 'promote' && e.promotes) moves.set(e.promotes, { queued: false, ts: e.ts });
         if (e.closes) closed.set(e.closes, mapModel(withStamp(e, stamped)));
@@ -246,6 +255,8 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
         const item: LedgerItem = { ...base, stream, closedBy: close, state: close ? close.kind : base.kind };
         if (queued) item.queued = true; else delete item.queued;
         if (move?.ts) item.stateTs = move.ts;
+        if (!close && answers.has(e.id)) item.answer = answers.get(e.id);
+        if (!close && discussing.has(e.id)) item.discussing = discussing.get(e.id);
         items.push(item);
     }
     // Ids hidden by the latest archive event of each still-archived stream.
