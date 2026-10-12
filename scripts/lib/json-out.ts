@@ -18,10 +18,10 @@ function walk(value: unknown): unknown {
   if (typeof value === 'string') return flagged(value) ? WITHHELD : value;
   if (Array.isArray(value)) return value.map(walk);
   if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
+    const out: Record<string, unknown> = Object.create(null);   // no prototype: `key in out` must not see `toString` or `constructor`
     for (const [k, v] of Object.entries(value)) {
       let key = flagged(k) ? WITHHELD : k;
-      for (let n = 2; key in out; n += 1) key = `${WITHHELD} ${n}`;
+      for (let n = 2; Object.hasOwn(out, key); n += 1) key = `${WITHHELD} ${n}`;
       out[key] = walk(v);
     }
     return out;
