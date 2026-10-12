@@ -6,8 +6,9 @@
  *   - away: an actionable event counts only when no session has seen it for AWAY_MS (10 min), and it is not handled;
  *   - kind allowlist: changes-requested, conflict, approved-unmerged, reminder, notion-changed, and a human thread or reply. Never a bot thread,
  *     never an info event, never a text from the user;
- *   - health: loop DOWN or STALLED for HEALTH_AFTER_MS (15 min) in waking hours (one text per outage), one "recovered" text when the loop is healthy again after such a text,
- *     RESTART_LIMIT restarts within RESTART_WINDOW_MS (one text per burst), and a check that keeps failing. A normal start texts nothing;
+ *   - health is not a text. Loop DOWN, STALLED, recovered, a restart burst, and a check that keeps failing are self-healing
+ *     infra. The session already shows them (the footer Loop line, and session-start). They never go to the phone.
+ *     A normal start texts nothing;
  *   - rate limit: at most one text per RATE_MS (20 min); everything pending goes out as one batched line;
  *   - quiet hours (default 23:00-07:00): nothing is sent; what is still pending goes out as one morning line.
  *
@@ -27,7 +28,7 @@ import type { LoopHealth } from './loop-health.ts';
 export const AWAY_MS = 10 * 60_000;
 export const RATE_MS = 20 * 60_000;
 export const HEALTH_AFTER_MS = 15 * 60_000;
-/** This many abnormal restarts (hung, refused or crashed launches) inside the window is one text. */
+/** This many abnormal restarts (hung, refused or crashed launches) inside the window used to be one text. The count is still kept; it is not sent. */
 export const RESTART_LIMIT = 5;
 export const RESTART_WINDOW_MS = 60 * 60_000;
 export const DEFAULT_ALERT_QUIET_HOURS = '23:00-07:00';
@@ -40,8 +41,6 @@ const MAX_BACKOFF_DOUBLINGS = 3;
 const ALWAYS_KINDS = new Set(['changes-requested', 'conflict', 'approved-unmerged', 'reminder', 'notion-changed']);
 /** Kinds that may be texted only when a human raised them; a bot or unknown author never texts. */
 const HUMAN_KINDS = new Set(['thread', 'reply']);
-/** Inbox kinds that mean the loop itself is failing; reported as a health alert, never with a name. */
-const FAILING_KINDS = new Set(['check-failing']);
 
 export interface AlertState {
   /** Epoch ms of the last text sent. */
@@ -50,11 +49,11 @@ export interface AlertState {
   alerted: string[];
   /** When the loop was first seen DOWN or STALLED in this stretch; 0 when it is fine. */
   badSince: number;
-  /** True once a DOWN or STALLED stretch has been texted; it stays true until the "recovered" text has gone out. */
+  /** Kept so an older alerts.json still parses. Health is no longer texted, so this is not set. */
   badAlerted: boolean;
   /** Epoch ms of recent abnormal restarts, pruned to RESTART_WINDOW_MS. */
   restarts: number[];
-  /** True once the restart-burst text went out, until the count in the window falls back under RESTART_LIMIT. */
+  /** Kept so an older alerts.json still parses. A restart burst is no longer texted, so this is only cleared. */
   restartAlerted: boolean;
   /** Sends in a row that failed (non-zero exit, error or timeout); each doubles the wait before the next try, up to MAX_BACKOFF_DOUBLINGS. 0 after a send that worked. */
   failures: number;
@@ -91,35 +90,22 @@ export function decide({ now, entries, health, state, config }: DecideInput): De
   const next: AlertState = { ...state, alerted: [...state.alerted] };
   const bad = health.state === 'down' || health.state === 'stalled';
   if (bad) { if (!next.badSince) next.badSince = now; } else next.badSince = 0;
-  const healthy = health.state === 'ok' || health.state === 'quiet' || health.state === 'running';
   next.restarts = state.restarts.filter((t) => now - t < RESTART_WINDOW_MS);
-  const burst = next.restarts.length >= RESTART_LIMIT;
-  if (!burst) next.restartAlerted = false;
+  if (next.restarts.length < RESTART_LIMIT) next.restartAlerted = false;
 
   const known = new Set(state.alerted);
   const due = entries.filter((e) => e.actionable && !e.handled && !e.seen && !known.has(e.id) && now - Date.parse(e.at) >= AWAY_MS);
   const items = due.flatMap((e) => { const d = describe(e); return d ? [{ id: e.id, text: d }] : []; });
-  const failing = due.filter((e) => FAILING_KINDS.has(e.kind));
   const parts: string[] = [];
   const ids: string[] = items.map((i) => i.id);
 
   if (items.length === 1) parts.push(items[0]!.text);
   else if (items.length > 1) parts.push(`${items.length} PR events: ${items.slice(0, MAX_LISTED).map((i) => i.text).join(', ')}${items.length > MAX_LISTED ? `, +${items.length - MAX_LISTED}` : ''}`);
-  if (failing.length) { parts.push(`${failing.length} loop check${failing.length === 1 ? '' : 's'} failing`); ids.push(...failing.map((e) => e.id)); }
-  const badDue = bad && !next.badAlerted && now - next.badSince >= HEALTH_AFTER_MS;
-  if (badDue) parts.push(`loop ${health.state === 'down' ? 'DOWN' : 'STALLED'}`);
-  const recoveredDue = healthy && next.badAlerted;
-  if (recoveredDue) parts.push('loop recovered');
-  const burstDue = burst && !next.restartAlerted;
-  if (burstDue) parts.push(`loop restarted ${next.restarts.length} times in an hour`);
 
   if (!parts.length || inQuiet(now, config) || now - state.lastSentAt < RATE_MS * 2 ** Math.min(state.failures, MAX_BACKOFF_DOUBLINGS)) return { text: null, state: { ...state, badSince: next.badSince, restarts: next.restarts, restartAlerted: next.restartAlerted }, ids: [] };
   next.lastSentAt = now;
   next.failures = 0;
   next.alerted = [...next.alerted, ...ids].slice(-MAX_REMEMBERED);
-  if (badDue) next.badAlerted = true;
-  if (recoveredDue) next.badAlerted = false;
-  if (burstDue) next.restartAlerted = true;
   return { text: `maestro: ${parts.join('; ')}`, state: next, ids };
 }
 
