@@ -612,6 +612,7 @@ export class PodiumApp extends HTMLElement {
           unfiledList ? section({ title: 'Unfiled epics', n: unfiled.length, tone: 'neutral', empty: '', quiet: true }, unfiledList) : null,
           section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: '', quiet: true }, localList),
           section({ title: 'In flight', n: st.working.length, tone: 'neutral', empty: 'Nothing in flight.', rest: RESTS.working, quiet: true }, itemRows(st.working, ctx)),
+          st.stale.length ? section({ title: 'Stale', n: st.stale.length, tone: 'neutral', empty: '', quiet: true }, itemRows(st.stale, ctx)) : null,
           section({ title: 'Streams', n: 0, tone: 'neutral', empty: 'No streams yet.', quiet: true }, this.#counts(st)))),
       h('div', { class: 'wide' },
         section({ title: 'Trends', n: 0, tone: 'neutral', empty: 'No chart data.', quiet: true }, this.#chartGrid()),

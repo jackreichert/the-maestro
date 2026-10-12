@@ -32,7 +32,7 @@ export interface Pr {
 /** The numbers `journal.ts status --footer` prints, as `status --json` carries them: one row per stream, and the session. */
 export interface FooterData { ledger: FooterRow[]; session: SessionStatus }
 /** `journal.ts status --json`, the part the page reads. */
-export interface BoardStatus { inflight: Item[]; queued: Item[]; blocked: Item[]; awaiting: Item[]; /** Run-this asks; older boards omit it. */ paste?: Item[]; done: Item[]; footer?: FooterData }
+export interface BoardStatus { inflight: Item[]; /** Rows with no live lease past `stale_wip_days`; absent when the board was read without leases. */ stale?: Item[]; queued: Item[]; blocked: Item[]; awaiting: Item[]; /** Run-this asks; older boards omit it. */ paste?: Item[]; done: Item[]; footer?: FooterData }
 /** `journal.ts triage --json`, the part the page reads. */
 export interface Triage { items: (Item & { gate?: string; deferredUntil?: string })[] }
 
@@ -463,6 +463,7 @@ export function renderPage(input: PageInput): { page: string; date: string } {
     ...prSection(cfg, prs, streams),
     '## Other status and findings', '',
     ...section('In flight', status.inflight.map((i) => withAge(i, ` [${i.stream ?? OTHER}]`))),
+    ...((status.stale ?? []).length ? section('Stale (no lease)', (status.stale ?? []).map((i) => withAge(i, ` [${i.stream ?? OTHER}]`))) : []),
     ...section('Blocked', blocked.map((b) => withAge(b, ` (gate: ${b.gate ? escLinkChars(plain(b.gate)) : 'none recorded'})`))),
     ...section('Recent done', status.done.map((d) => `${li(d)}${doneAt(d)}`)),
     ...section('Deferred', deferred.map((d) => `${li(d)} (until ${d.deferredUntil})`)),

@@ -28,6 +28,7 @@ const ROW_RULES = {
     recommend: opt(str), door: opt(oneOf('one-way', 'two-way')), default: opt(str), by: opt(str), class: opt(oneOf('expedite', 'fixed-date', 'standard', 'intangible')), paste: opt(str),
   } satisfies Shape,
   working: WORK,
+  stale: WORK,
   queued: WORK,
   blocked: { ...WORK, gate: opt(str) },
   done: { ...WORK, closedAt: str },
@@ -36,7 +37,7 @@ const ROW_RULES = {
     repo: str, short: str, number: num, title: str, url: str, stream: str, base: str, head: str, isDraft: bool, ci: str,
     mergeable: str, mergeStateStatus: str, unresolved: num, review: str, flags: arrOf(str), twinOf: opt(num), stackedOn: opt(num), selfReview: opt(bool), createdAt: opt(str),
   } satisfies Shape,
-  footer: { stream: str, asks: num, working: num, queued: num, blocked: num, done: num } satisfies Shape,
+  footer: { stream: str, asks: num, working: num, stale: opt(num), queued: num, blocked: num, done: num } satisfies Shape,
 };
 
 type RowKey = keyof typeof ROW_RULES;
@@ -100,7 +101,7 @@ export function sanitizeState(x: unknown): { state: PodiumState; dropped: number
   const state: PodiumState = {
     generatedAt: text(x.generatedAt), today: text(x.today), tz: text(x.tz), seq: text(x.seq),
     streams: x.streams as string[], priorities: pri.value, prioritiesMax: wholeAtLeastOne(x.prioritiesMax, DEFAULT_PRIORITIES_MAX), prData, fragments,
-    asks: rows.asks as AskCard[], working: rows.working as WorkItem[], queued: rows.queued as WorkItem[], blocked: rows.blocked as BlockedItem[],
+    asks: rows.asks as AskCard[], working: rows.working as WorkItem[], stale: rows.stale as WorkItem[], queued: rows.queued as WorkItem[], blocked: rows.blocked as BlockedItem[],
     done: rows.done as DoneItem[], deferred: rows.deferred as DeferredItem[], prs: rows.prs as PrCard[], footer: rows.footer as FooterRow[],
   };
   return { state, dropped };

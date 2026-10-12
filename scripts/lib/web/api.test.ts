@@ -189,3 +189,22 @@ test('a done item with a ticket in the map links to its note', () => {
   const done = buildCharts(cfg, 3, NOW).doneItems[0];
   assert.equal(done.ticket?.label, 'FAKE-99');
 });
+
+test('buildState lists an in-flight row past stale_wip_days apart from working, in the footer and per stream, and a lease keeps it live (MAESTRO-319)', () => {
+  const cfg = fixture();
+  const store = openStore({ vault: cfg.vault, project: 'p', dryRun: false });
+  store.append({ id: 'old1', ts: '2026-09-30T12:00:00Z', date: '2026-09-30', kind: 'wip', text: 'Forgotten export', stream: 'widgets' });
+  store.append({ id: 'old2', ts: '2026-09-30T12:00:00Z', date: '2026-09-30', kind: 'wip', text: 'Old but held', stream: 'widgets', leaseTtl: 100_000_000, window: 'w-live' });
+  const state = buildState(cfg, NOW);
+  assert.deepEqual(state.stale.map((w) => w.id), ['old1']);
+  assert.deepEqual(state.working.map((w) => w.id), ['wip1', 'old2'], 'a leased old row stays live; the stale one is not working');
+  const widgets = state.footer.find((f) => f.stream === 'widgets');
+  assert.equal(widgets?.stale, 1);
+  assert.equal(widgets?.working, 2);
+  assert.deepEqual(buildStream(cfg, 'widgets', NOW)?.stale.map((w) => w.id), ['old1']);
+  assert.deepEqual(buildStream(cfg, 'ops', NOW)?.stale, []);
+  const got = sanitizeState(JSON.parse(JSON.stringify(state)));
+  assert.equal(got?.dropped, 0);
+  assert.deepEqual(got?.state.stale.map((w) => w.id), ['old1']);
+  assert.deepEqual(buildState({ ...cfg, staleWipDays: 30 }, NOW).stale, [], 'a longer limit makes the same row live');
+});

@@ -219,6 +219,7 @@ export class StreamBoard extends HTMLElement {
     const ctx: RowContext = { now: st.generatedAt, tz: st.tz, showStream: false, prs: st.prs };
     const asks = inStream(st.asks);
     const working = inStream(st.working);
+    const stale = inStream(st.stale);
     const queued = inStream(st.queued);
     const blocked = inStream(st.blocked);
     const done = inStream(st.done);
@@ -252,6 +253,7 @@ export class StreamBoard extends HTMLElement {
       h('div', { class: 'col' },
         slots.rail,
         shown(working.length, () => section({ title: 'In flight', n: working.length, tone: 'neutral', empty: '', quiet: true }, itemRows(working, ctx))),
+        shown(stale.length, () => section({ title: 'Stale', n: stale.length, tone: 'neutral', empty: '', quiet: true }, itemRows(stale, ctx))),
         shown(queued.length, () => section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: '', quiet: true }, itemRows(queued, ctx))),
         shown(done.length, () => section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: '', quiet: true }, itemRows(done, ctx))),
         shown(deferred.length, () => section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx))),
