@@ -2531,12 +2531,16 @@ test('a project write that fails makes priorities set exit 1 after the other pro
     rmSync(root, { recursive: true, force: true });
 });
 
-test('priorities set for a past day does not rewrite that day\'s project file', () => {
+test('priorities set for a past day writes nothing, not the container list either, and exits 1', () => {
     const { root, runIn, fileOf } = projectVault('the-maestro');
+    const today = new Date().toLocaleDateString('en-CA');
+    assert.equal(runIn('priorities', 'set', 'Today thing | Maestro', '--date', today).code, 0);
     const set = runIn('priorities', 'set', 'Old | Maestro', '--date', '2020-01-01');
     assert.equal(set.code, 1);
-    assert.match(set.err, /project the-maestro: refusing to write 2020-01-01: it is before today/);
+    assert.match(set.err, /refusing to set priorities for 2020-01-01: it is before today/);
+    assert.equal(set.out, '', 'nothing was written');
     assert.equal(fileOf('the-maestro', '2020-01-01'), '', 'history is not rewritten');
+    assert.match(runIn('priorities', 'show').out, /^Priorities for \d{4}-\d\d-\d\d:\n1\. Today thing \[Maestro\]\n/, "today's list is intact");
     rmSync(root, { recursive: true, force: true });
 });
 

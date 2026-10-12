@@ -2084,6 +2084,8 @@ function cmdPriorities() {
     if (!dirPath) die('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
     const day = arg('date', priorityDay());
     if (sub === 'set') {
+        // A past day is refused before anything is written: the container list is a single file, so writing it would replace today's.
+        if (day < priorityDay()) die(`refusing to set priorities for ${day}: it is before today (${priorityDay()})`);
         if (dryRun) { console.log('[dry-run]', JSON.stringify(words.map(parsePriority))); return; }
         const items = words.map(parsePriority);
         try { console.log(`wrote ${writePriorities(dirPath, day, items, PRIORITIES_MAX)}`); } catch (e) { die(errorMessage(e)); }
