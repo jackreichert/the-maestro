@@ -191,6 +191,8 @@ import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from '
 import type { EnvAsk } from './branch-sweep.ts';
 import { envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
+import { isRuleScope, parseRuleScope } from './lib/journal/scope.ts';
+import type { RuleScope } from './lib/journal/scope.ts';
 import { resolveWindow, windowEnv, windowNotice } from './lib/window-id.ts';
 import { acquireLease, releaseLease, describeLease, foldLeases, liveLease, summarizeLeases } from './lib/journal/leases.ts';
 import { sessionText } from './lib/session-text.ts';
@@ -443,10 +445,20 @@ const refsFromArgs = () => refFlagValues().flatMap((v) => v.split(',')).map((s) 
  * --approval standing|one-off, with its optional --scope. Returns the fields to merge into a row, or
  * nothing when the flag is absent. A value outside APPROVALS, or --scope without --approval, exits 1.
  */
+/**
+ * `--scope window|global` on a rule or note: who the row binds (lib/journal/scope.ts). With --approval, --scope keeps its older meaning
+ * (the approval's own scope text), so no ruleScope is set. A bad value or a kind that cannot carry it exits 1 before anything is written.
+ */
+function ruleScopeFor(kind: string): { ruleScope?: RuleScope } {
+    if (!has('scope') || has('approval')) return {};
+    const parsed = parseRuleScope(arg('scope'), kind);
+    return 'error' in parsed ? die(parsed.error) : { ruleScope: parsed.scope };
+}
+
 function parseApproval(): { approval?: string; scope?: string } {
     const approval = arg('approval');
     if (has('approval') && !approval) die(`--approval needs a value: ${[...APPROVALS].join(' | ')}`);
-    if (!approval) return has('scope') ? die('--scope only goes with --approval.') : {};
+    if (!approval) return has('scope') && !isRuleScope(arg('scope')) ? die('--scope only goes with --approval (or is window|global on a decision or note).') : {};
     if (!APPROVALS.has(approval)) die(`--approval must be one of: ${[...APPROVALS].join(', ')} (got "${approval}")`);
     return { approval, scope: arg('scope') || undefined };
 }
@@ -585,6 +597,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         gate,
         transitioned: transitionedFlag(),
         ...askFields,
+        ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
     };

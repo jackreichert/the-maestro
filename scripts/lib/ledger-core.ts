@@ -15,6 +15,8 @@ export interface LedgerRow {
     stream?: string;
     /** The orchestrator window that wrote the row (lib/window-id.ts); absent on rows written before windows were recorded. */
     window?: string;
+    /** On a rule or note: `window` binds only the window in `window`, `global` binds all. Absent reads as global (lib/journal/scope.ts). */
+    ruleScope?: 'window' | 'global';
     model?: string;
     used?: unknown;
     tokens?: unknown;
