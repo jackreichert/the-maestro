@@ -36,3 +36,9 @@ export const docs = (): Record<string, any> => ({
   groups: [{ kind: 'plan', items: [{ title: 'Rollout plan', kind: 'plan', project: 'avonlea-api', ticket: 'avonlea-api-042', status: 'draft', updated: '2026-01-02', url: 'obsidian://open?vault=Fictional&file=plan' }], more: 2 }, { kind: 'runbook', items: [{ title: 'Cutover runbook', kind: 'runbook', project: '', ticket: 'avonlea-api-042', url: 'https://docs.example.com/cutover' }], more: 0 }],
   unattributedRecent: 3,
 });
+
+/** One local review unit as `GET /api/local-review` sends it. */
+export const localUnit = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id: 'local:alpha#feat/one', repo: 'alpha', branch: 'feat/one', head: 'a'.repeat(40), ahead: 2, at: '2026-10-11T08:00:00-04:00', subject: 'add one',
+  where: 'alpha', checkedOut: false, base: 'origin/staging', command: "git -C 'alpha' difftool 'origin/staging...feat/one'", verdict: { state: 'none' }, ...over,
+});

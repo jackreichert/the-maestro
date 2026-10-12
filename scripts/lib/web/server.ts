@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { extname } from 'node:path';
+import { extname, join } from 'node:path';
 import { buildRoutes, TYPES } from '../../web/serve-static.ts';
 import { boardFiles, createChangeHub, serveEvents } from './events.ts';
 import { vaultWatch } from './vault-watch.ts';
@@ -19,6 +19,8 @@ import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { buildEpics, buildHome } from './home.ts';
+import { withVerdicts } from './local-review.ts';
+import { createLocalReviewCache, spawnProducer } from './local-review-cache.ts';
 import { TOKEN_PATH, WRITE_PATHS as PRIORITY_PATHS, handleWrite } from './priorities-write.ts';
 import { ANSWER_PATH, handleAnswer } from './answer-write.ts';
 import { DEFAULT_PRIORITIES_MAX } from '../status-page/priorities.ts';
@@ -39,6 +41,10 @@ export interface WebServerOptions {
   eventsKeepAliveMs?: number;
   /** The change hub behind /api/events; tests pass their own to watch subscribers come and go. */
   hub?: ChangeHub;
+  /** Produces the local review snapshot file (default: the snapshot script in a child process). Tests pass a fake. */
+  localReviewScan?: (file: string) => Promise<void>;
+  /** Age in ms after which the local review snapshot is refreshed in the background (default 120000). */
+  localReviewStaleMs?: number;
   /** The write token. Default: 32 random bytes, new on every start; tests pass a known one. */
   token?: string;
 }
@@ -68,11 +74,17 @@ function decodeName(segment: string): string | null {
 /** The data routes. Handlers return the JSON value, or undefined for "no such thing" (404). */
 export function dataRoutes(o: WebServerOptions): Route[] {
   const now = (): Date => o.now?.() ?? new Date();
+  const containerRoot = o.web.containerRoot;
+  // The queue is a snapshot another process writes; the route only reads it, so a slow scan never holds up a request.
+  const localReview = createLocalReviewCache({ file: join(o.web.statusDir, 'local-review.json'), scan: o.localReviewScan ?? spawnProducer(containerRoot ?? ''), now, staleMs: o.localReviewStaleMs, log: o.log });
   return [
     { method: 'GET', pattern: /^\/api\/state$/, handler: () => buildState(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
+    { method: 'GET', pattern: /^\/api\/local-review$/, handler: () => containerRoot
+      ? withVerdicts(localReview.read(), o.web.vault)
+      : { generatedAt: now().toISOString(), available: false, reason: 'No container folder is configured (set container_root), so local branches are not read.', units: [], more: 0, notes: [] } },
     { method: 'GET', pattern: /^\/api\/link-hosts$/, handler: () => ({ atlassian: o.trustedAtlassianHosts ?? [] }) },
     { method: 'GET', pattern: /^\/api\/charts$/, handler: (u) => buildCharts(o.web, daysParam(u), now()) },
   ];
