@@ -21,8 +21,8 @@ export function scriptsDir(argv1: string | undefined = process.argv[1], realDir:
 }
 export const SCRIPTS_DIR = scriptsDir();
 export const SLOTS = ['<user git emails>', '<tracker key example>', '<maestro scripts dir>'];
-/** Angle-bracket text that is part of the block's own wording, not a slot. */
-const LITERALS = new Set(['<base>', '<check>']);
+/** Angle-bracket text that is part of the block's own wording, not a slot. `<id>` is the rework command's item id. */
+const LITERALS = new Set(['<base>', '<check>', '<id>']);
 
 /** The standing block: the first ```text fence under its heading in brief.md. */
 export function extractBlock(markdown: string): string {
