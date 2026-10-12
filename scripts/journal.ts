@@ -43,7 +43,7 @@
  *   journal.ts rule "<text>" --ref <file> --model "<name>" --used "skill:x,tool:y"
  *                                             record a decision already made and promoted: refuses (exit 1, nothing written) unless every --ref is an existing file; never open
  *   journal.ts decide "<decision>" --why "<rationale>" [--rejected "<alt>"] [--consequence "<text>"] [--scope project|working-rule] [--topic <slug>] --model ... --used ...
- *                                             write a decision down on the turn it is said: --scope project (default) adds a dated entry to Projects/<project>/DECISIONS.md under --tickets-vault (else $VAULT_ROOT); working-rule writes a memory file and its MEMORY.md line under memory_dir (the same --topic updates, never duplicates). Also records one decision row naming the file. Refuses with nothing written when --why is missing, a field looks like a secret, or the file cannot be written; prints the closest earlier decision on the topic
+ *                                             write a decision down on the turn it is said: --scope project (default) adds a dated entry to Projects/<repo, else project>/DECISIONS.md under --tickets-vault (else $VAULT_ROOT), while the row goes to --project's ledger; working-rule writes a memory file and its MEMORY.md line under memory_dir (the same --topic updates, never duplicates). Also records one decision row naming the file. Refuses with nothing written when --why is missing, a field looks like a secret, or the file cannot be written; prints the closest earlier decision on the topic
  *   journal.ts resolve <id> --model "<name>" --used "skill:x,tool:y" [--answer "..."]
  *   journal.ts stamp <id> --model "<name>" --used "skill:x,tool:y"
  *   journal.ts stamp-missing [--model unrecorded] [--used unrecorded] [--tokens unmeasured]
@@ -601,10 +601,12 @@ function cmdDecide(): void {
     const scope = arg('scope', 'project') as Scope;
     const input = { decision: arg('text') || positional.join(' '), why: arg('why') || '', rejected: arg('rejected') || undefined, consequence: arg('consequence') || undefined, scope, date: arg('date', today()), topic: arg('topic') || undefined };
     const problems = decideProblems(input);
+    const decisionsProject = arg('repo') || project;   // the file belongs to the project the decision is about; the row stays in --project's ledger
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(decisionsProject) || decisionsProject.includes('..')) problems.push('--repo must be a plain project name (letters, digits, . _ -), since it names the DECISIONS.md folder.');
     if (scope === 'working-rule' && !MEMORY_DIR) problems.push('--scope working-rule needs memory_dir (env MAESTRO_MEMORY_DIR) set to the directory that holds the memory files.');
     if (problems.length) die(`decide: refused, nothing written.\n${problems.map((p) => `  - ${p}`).join('\n')}`);
     const usage = usageFromArgs();   // before any write: a missing --model exits here, not after the file is written
-    const decisionsPath = join(ticketsBase(), 'Projects', project, 'DECISIONS.md');
+    const decisionsPath = join(ticketsBase(), 'Projects', decisionsProject, 'DECISIONS.md');
     const entries = readLedger();
     const related = relatedDecision(input.decision, existsSync(decisionsPath) ? readFileSync(decisionsPath, 'utf8') : null, entries);
     if (dryRun) { console.log(`decide  (dry run)  ${scope === 'project' ? decisionsPath : MEMORY_DIR}`); return; }

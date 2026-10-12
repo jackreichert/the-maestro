@@ -110,3 +110,16 @@ test('a reversal prints the closest earlier decision', () => {
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /Closest earlier decision \(.*\): .*50 percent/);
 });
+
+test('decide --repo names the DECISIONS.md project while the row goes to the --project ledger', () => {
+    const r = run(['decide', 'Name tickets by task', '--why', 'readable footers', '--repo', 'other-repo', ...MARK]);
+    assert.equal(r.code, 0, r.err);
+    const target = join(vault, 'Projects', 'other-repo', 'DECISIONS.md');
+    assert.match(readFileSync(target, 'utf8'), /Name tickets by task/);
+    assert.equal(existsSync(decisionsPath()), false);
+    const rows = ledger().filter((x) => x.kind === 'decision');
+    assert.equal(rows.length, 1, 'the row is in the container ledger');
+    assert.deepEqual(rows[0]?.refs, [target]);
+    const bad = run(['decide', 'Escape', '--why', 'because', '--repo', '../x', ...MARK]);
+    assert.equal(bad.code, 1);
+});
