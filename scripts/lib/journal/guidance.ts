@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { clip } from './format.ts';
 import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
+import type { Priority } from '../status-page/priorities.ts';
 
 /** The note the roll writes for the next session, beside the ledger's other generated files. */
 export const GUIDANCE_FILE = 'GUIDANCE.md';
@@ -30,6 +31,15 @@ const median = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - 
 const fmtHours = (h: number): string => (h >= 48 ? `${Math.round(h / 24)}d` : `${Math.round(h)}h`);
 const fmtTokens = (n: number): string => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
+/** Items parked on purpose, or waiting on Jack: the next session cannot act on them. */
+const PARKED = /\b(on hold|hold for now|parked|paused|frozen|deferred|waiting (on|for) (jack|him|a decision)|awaiting (jack|a decision)|needs[- ]you)\b/i;
+
+/** What `guidanceLines` may also know: asks waiting on Jack (their ids are never "do first") and today's priorities (preferred when any item matches). */
+export interface GuidanceContext { awaiting?: LedgerItem[]; priorities?: Priority[] }
+
+/** Whether an item answers a priority: it names the item's id, shares its stream, or its text appears in the item's. */
+const matchesPriority = (i: LedgerItem, ps: Priority[]): boolean => ps.some((p) => p.text.toLowerCase().includes(String(i.id).toLowerCase()) || (!!p.stream && !!i.stream && p.stream.toLowerCase() === i.stream.toLowerCase()) || (p.text.length > 3 && i.text?.toLowerCase().includes(p.text.toLowerCase())));
+
 /** Hours an in-flight item must have run to count as stalled: the floor, or a multiple of the median finished item, whichever is longer. */
 export function stallThresholdHours(items: LedgerItem[], nowMs: number): number {
     const since = nowMs - HISTORY_DAYS * 24 * HOUR;
@@ -41,10 +51,10 @@ export function stallThresholdHours(items: LedgerItem[], nowMs: number): number 
 /**
  * The guidance for the next session, derived from ledger data alone: what stalled (in flight far longer than finished items
  * usually take), what was reworked today (any item with a `rework` row dated today, finished or open), what cost most (the biggest `--tokens` item and stream among items started or finished today
- * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (the first blocked item, else the first in flight, in board order).
+ * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (an item that answers one of today's priorities, else the first blocked item, else the first in flight, in board order; never an item parked on purpose or waiting on Jack).
  * Empty when there is nothing to say; never a model call.
  */
-export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], inflight: LedgerItem[], blocked: LedgerItem[], d: string, nowMs: number): string[] {
+export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], inflight: LedgerItem[], blocked: LedgerItem[], d: string, nowMs: number, ctx: GuidanceContext = {}): string[] {
     const limit = stallThresholdHours(items, nowMs);
     const stalled = inflight.map((i) => ({ i, age: (nowMs - startedAt(i)) / HOUR })).filter(({ age }) => age > limit);
     stalled.sort((a, b) => b.age - a.age);
@@ -69,8 +79,12 @@ export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], infligh
     const topStream = [...byStream].sort((a, b) => b[1] - a[1])[0];
     const costLine = topItem && topStream ? `Cost most: ${label(topItem.i)} (${fmtTokens(topItem.n)} tokens); stream ${topStream[0]} ${fmtTokens(topStream[1])} in all` : null;
 
-    const first = blocked[0] ?? inflight[0];
-    const firstLine = first ? `Do first: ${label(first)}${blocked[0] ? ' (blocked: clear the block)' : ''}` : null;
+    const waiting = new Set((ctx.awaiting ?? []).map((i) => i.id));
+    const actionable = (i: LedgerItem): boolean => !waiting.has(i.id) && !PARKED.test(i.text ?? '');
+    const pool = [...blocked, ...inflight].filter(actionable);
+    const ps = ctx.priorities ?? [];
+    const first = (ps.length ? pool.find((i) => matchesPriority(i, ps)) : undefined) ?? pool[0];
+    const firstLine = first ? `Do first: ${label(first)}${blocked.includes(first) ? ' (blocked: clear the block)' : ''}` : null;
 
     const lines = [stalledLine, reworkLine, costLine, firstLine].filter((l): l is string => l !== null);
     return lines.length ? [`Guidance from the ${d} roll:`, ...lines.map((l) => `  ${l}`)] : [];

@@ -72,6 +72,18 @@ test('do first prefers a blocked item, then the first in flight; empty ledger sa
     assert.deepEqual(guidanceLines([], [], [], [], '2026-10-12', NOW), []);
 });
 
+test('do first skips items on hold and items waiting on Jack, and prefers today\'s priorities', () => {
+    const hold = item({ id: 'h1', text: 'monitor, on hold until spring', kind: 'blocked', ts: '2026-10-12T09:00:00Z' });
+    const ask = item({ id: 'k1', text: 'needs a call', kind: 'blocked', ts: '2026-10-12T09:00:00Z' });
+    const real = item({ id: 'r1', text: 'fix the build', kind: 'blocked', stream: 'alpha', ts: '2026-10-12T09:00:00Z' });
+    const run = item({ id: 'f1', text: 'ship docs', stream: 'beta', ts: '2026-10-12T09:00:00Z' });
+    const all = [hold, ask, real, run];
+    assert.match(guidanceLines(all, [], [run], [hold, ask, real], '2026-10-12', NOW, { awaiting: [ask] }).join('\n'), /Do first: r1 fix the build \(blocked/);
+    assert.match(guidanceLines(all, [], [run], [hold, ask], '2026-10-12', NOW, { awaiting: [ask] }).join('\n'), /Do first: f1 ship docs$/m);
+    assert.match(guidanceLines(all, [], [run], [hold, ask, real], '2026-10-12', NOW, { awaiting: [ask], priorities: [{ text: 'Docs', stream: 'beta' }] }).join('\n'), /Do first: f1 ship docs$/m);
+    assert.match(guidanceLines(all, [], [run], [hold, ask, real], '2026-10-12', NOW, { awaiting: [ask], priorities: [{ text: 'unrelated thing' }] }).join('\n'), /Do first: r1/);
+});
+
 test('the note stays within a header and four lines', () => {
     const a = item({ id: 'a1', text: 'x', tokens: '1k', ts: '2026-10-01T00:00:00Z' });
     assert.ok(guidanceLines([a], [], [a], [], '2026-10-12', NOW).length <= 5);

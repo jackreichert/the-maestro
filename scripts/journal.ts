@@ -1173,7 +1173,9 @@ function cmdNotesCheck() {
 /** The roll's guidance for the next session: derived from the ledger (no model call), saved as GUIDANCE.md beside it, and printed. `prime` shows it. */
 function writeRollGuidance(d: string): void {
     const g = groups();
-    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now()).map(withhold);
+    const sd = statusDir();
+    const today = sd && existsSync(sd) ? readPriorities(sd, priorityDay()) : null;
+    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now(), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [] }).map(withhold);
     if (!dryRun) { ensureDir(); writeGuidance(dir, lines, d); }
     (lines.length ? lines : [`Guidance from the ${d} roll:`, '  Nothing stalled, nothing costly, nothing open.']).forEach((l) => console.log(l));
 }
