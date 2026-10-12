@@ -6,6 +6,7 @@
  *   event-loop.ts list [--json] | remove <id> | digest [--peek]
  *   event-loop.ts run [--once | --serve] [--interval N]
  *   event-loop.ts digest-wait [--timeout-hours N] | digests [--unseen] [--mark-seen]
+ *   event-loop.ts adopt <queue-file> [--until ISO] | adopt --clear | adopt
  *   event-loop.ts events [list] [--unseen | --unhandled | --all] [--json] | events ack <id...> | events wait [--timeout-hours N] [--poll-seconds N]
  *
  * check(target, ctx) gets ctx.watch and ctx.prev (the state it returned last time, null on the first check).
@@ -49,6 +50,7 @@ import {
   EVENT_DIR, INBOX_COMMAND, NOTIFY_COMMAND, STATUS_REPO_STREAMS, VAULT_ROOT, WATCH_MAX_INTERVAL, WATCH_MIN_INTERVAL, WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE,
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
+import { adoptLine, clearAdopt, readAdopt, writeAdopt } from './lib/adopt.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import { migrateDigests } from './lib/digest-migrate.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
@@ -374,7 +376,7 @@ const OPTIONS = {
   'timeout-hours': { type: 'string' }, 'poll-seconds': { type: 'string' }, unseen: { type: 'boolean' }, 'mark-seen': { type: 'boolean' },
   id: { type: 'string' }, type: { type: 'string' }, target: { type: 'string' }, 'done-when': { type: 'string' }, report: { type: 'string' },
   'ttl-hours': { type: 'string' }, 'notify-overnight': { type: 'boolean' }, notify: { type: 'boolean' }, 'no-notify': { type: 'boolean' }, json: { type: 'boolean' }, peek: { type: 'boolean' },
-  once: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
+  once: { type: 'boolean' }, until: { type: 'string' }, clear: { type: 'boolean' }, serve: { type: 'boolean' }, all: { type: 'boolean' }, interval: { type: 'string' }, window: { type: 'string' }, session: { type: 'string' },
 } as const;
 
 /** Overlay-added types for cleanup on `remove`; a broken overlay yields none, since removal must still work. */
@@ -419,6 +421,11 @@ async function main(argv: string[]): Promise<number> {
       if (v.once && v.serve) return usage('--once and --serve cannot be combined');
       acquireLock(dir);
       return await run({ dir, types, once: v.once, serve: v.serve, pinned });
+    } else if (cmd === 'adopt') {
+      // The record every SessionStart prints: which queue file a fresh session reads and works. No argument shows it; --clear removes it.
+      if (v.clear) console.log(clearAdopt(dir) ? 'adopt record cleared' : 'no adopt record');
+      else if (arg === undefined) console.log(adoptLine(readAdopt(dir)) || 'no live adopt record');
+      else { const a = writeAdopt(dir, arg, { until: v.until }); console.log(`adopted ${a.file} until ${a.until}`); }
     } else if (cmd === 'events') {
       const done = await eventsCommand(dir, arg, rest, v);
       return typeof done === 'string' ? usage(done) : done;
@@ -429,7 +436,7 @@ async function main(argv: string[]): Promise<number> {
       // `digest-wait` is `events wait` under its old name: saved digests are moved into the inbox first (and again each poll), then it waits on the inbox.
       const done = await eventsCommand(dir, 'wait', [], v, () => { try { migrateDigests(dir, saved); } catch (err) { console.error(`digest-wait: could not move saved digests into the inbox: ${errorMessage(err)}`); } });
       return typeof done === 'string' ? usage(done) : done;
-    } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests | events');
+    } else return usage('commands: add | list | remove <id> | adopt | digest | run [--once | --serve] | digest-wait | digests | events');
   } catch (err) {
     return usage(errorMessage(err));
   }
