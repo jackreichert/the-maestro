@@ -6,13 +6,13 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { installGhStub, prNode } from './lib/gh-stub.ts';
+import { ghStubRun, installGhStub, prNode } from './lib/gh-stub.ts';
 
 const ledger = mkdtempSync(join(tmpdir(), 'sb-ledger-'));
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.LEDGER_ROOT = ledger;
 const { currentPath, snapshotPath, freshestSnapshotPath } = await import('./prs-snapshot.ts');
-const { realIo } = await import('./event-types/status-refresh.ts');
+const { refreshSnapshotWith } = await import('./event-types/status-refresh.ts');
 const { readSnapshotPrs } = await import('./lib/review-queue.ts');
 
 const withStub = (config: Parameters<typeof installGhStub>[0]): NodeJS.ProcessEnv => { const env = installGhStub(config); process.env.PATH = env.PATH; process.env.GH_STUB_CONFIG = env.GH_STUB_CONFIG; return env; };
@@ -26,8 +26,8 @@ test('a loop refresh between two greetings leaves the draft promotion in the nex
   backdate(snapshotPath(ledger), 11 * 60_000);
   const baseline = readFileSync(snapshotPath(ledger), 'utf8');
 
-  withStub({ pages: [[prNode(7, { isDraft: false })]] }); // the draft is promoted
-  assert.equal(realIo.refreshSnapshot(), undefined);
+  // The draft is promoted; the loop's refresh is answered in-process, so it spawns no gh.
+  assert.equal(refreshSnapshotWith(ghStubRun({ pages: [[prNode(7, { isDraft: false })]] })), undefined);
   assert.equal(readFileSync(snapshotPath(ledger), 'utf8'), baseline, 'the refresh leaves the baseline byte for byte');
   assert.ok(existsSync(currentPath(ledger)));
 
