@@ -12,13 +12,14 @@
  * Digests are written only under the ledger root; with no ledger root the supervisor refuses to start (exit 2).
  * While it runs it keeps <event dir>/supervisor.json ({ pid, startedAt }); a stop by SIGTERM or SIGINT removes it, so `prime` can tell a
  * supervisor that was stopped from one that died (lib/supervisor-state.ts).
+ * Text alerts (lib/alert-policy.ts) tick on the watchdog timer while the loop runs and on each wait chunk while it does not.
  * While it waits (idle, quiet hours or crash back-off) it sleeps in chunks of at most 60 s against the wall clock, so a closed lid costs
  * under a minute, and rewrites <event dir>/heartbeat.json each chunk with mode `idle`, `quiet` or `backoff`, so a supervisor between loop launches
  * still reads as alive (lib/loop-health.ts). The loop writes its own heartbeat while it runs.
  * It launches `run --serve`, so the loop never exits on an event, and watches the child's heartbeat: a child that is alive but silent for
  * HANG_GRACE_MS past its declared wake time is killed (SIGTERM, then SIGKILL) and relaunched at once (lib/loop-watchdog.ts).
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run --serve`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches,
- * MAESTRO_WATCHDOG_GRACE_MS and MAESTRO_WATCHDOG_INTERVAL_MS shrink the watchdog's timing.
+ * MAESTRO_WATCHDOG_GRACE_MS and MAESTRO_WATCHDOG_INTERVAL_MS shrink the watchdog's timing (the alert tick shares that timer), MAESTRO_ALERT_QUIET_HOURS replaces the alert quiet window (`off` disables it).
  * Its log (<ledger root>/Projects/<project>/Journal/Supervisor/loop-supervisor.log, written by launchd) is rotated at 5 MB on each wait chunk, keeping one old file (lib/log-rotate.ts).
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -150,8 +151,12 @@ let running: ChildProcess | null = null;
 /** Test hooks: the watchdog's grace and check interval in ms, and the log size limit in bytes. Unset in production. */
 const envMs = (name: string, fallback: number): number => { const n = Number(process.env[name]); return n > 0 ? n : fallback; };
 
-/** Launches the real loop (or MAESTRO_LOOP_BIN) once in serve mode, collecting its output and watching its heartbeat for a hang. */
-function launch(): Promise<LoopResult> {
+/**
+ * Launches the real loop (or MAESTRO_LOOP_BIN) once in serve mode, collecting its output and watching its heartbeat for a hang. The same timer runs the alert tick
+ * after each watchdog check: a serve loop never exits, so without it nothing would text a recovery or a PR event while the loop is up. Both run synchronously
+ * on this one timer, and `waitWithAlerts` only ticks after the child is gone, so two ticks can never overlap (the policy's rate limit and saved state stop a repeat send).
+ */
+function launch(alertTick: () => void): Promise<LoopResult> {
   const bin = process.env.MAESTRO_LOOP_BIN;
   const child = bin ? spawn(bin, ['run', '--serve'], { stdio: ['ignore', 'pipe', 'pipe'] }) : spawn(process.execPath, [EVENT_LOOP, 'run', '--serve'], { stdio: ['ignore', 'pipe', 'pipe'] });
   running = child;
@@ -164,7 +169,10 @@ function launch(): Promise<LoopResult> {
     childPid: child.pid, launchedAt: Date.now(), readBeat: () => readHeartbeat(EVENT_DIR), now: Date.now, log: (line) => console.error(stamped(line)),
     kill: (signal) => { hung = true; child.kill(signal); }, graceMs: envMs('MAESTRO_WATCHDOG_GRACE_MS', HANG_GRACE_MS),
   });
-  const timer = dog ? setInterval(() => { try { dog.check(); } catch (err) { console.error(stamped(`watchdog check failed: ${err instanceof Error ? err.message : String(err)}`)); } }, envMs('MAESTRO_WATCHDOG_INTERVAL_MS', 60_000)) : null;
+  const timer = dog ? setInterval(() => {
+    try { dog.check(); } catch (err) { console.error(stamped(`watchdog check failed: ${err instanceof Error ? err.message : String(err)}`)); }
+    try { alertTick(); } catch (err) { console.error(stamped(`alert tick failed: ${err instanceof Error ? err.message : String(err)}`)); }
+  }, envMs('MAESTRO_WATCHDOG_INTERVAL_MS', 60_000)) : null;
   const finish = (resolve: (r: LoopResult) => void, r: LoopResult): void => { if (timer) clearInterval(timer); running = null; resolve({ ...r, hung }); };
   return new Promise((resolve) => {
     child.on('error', (err) => finish(resolve, { code: -1, stdout, stderr: err.message }));
@@ -265,11 +273,12 @@ async function main(): Promise<number> {
   writeRecord(EVENT_DIR, process.pid);
   moveDigestsToInbox(dir);
   stopOnSignals(EVENT_DIR);
+  const alertTick = (): void => { runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now: Date.now(), entries: readInbox(EVENT_DIR), health: liveLoopHealth(), config: { quietHours: process.env.MAESTRO_ALERT_QUIET_HOURS || DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } }); };
   await supervise({
-    runLoop: launch,
+    runLoop: () => launch(alertTick),
     sleep: waitWithAlerts({
       beat,
-      alertTick: () => { runAlerts({ eventDir: EVENT_DIR, command: NOTIFY_COMMAND, now: Date.now(), entries: readInbox(EVENT_DIR), health: liveLoopHealth(), config: { quietHours: DEFAULT_ALERT_QUIET_HOURS, tz: WATCH_TZ } }); },
+      alertTick,
       log: (line) => console.error(stamped(line)),
       nap: (chunk) => new Promise((r) => setTimeout(r, chunk * 1000)),
     }),

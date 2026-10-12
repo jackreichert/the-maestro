@@ -11,7 +11,7 @@ import { DELAYS, quietSleepSeconds, queueSavedDigest, secondsUntilClock, supervi
 import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-store.ts';
-import { readInbox } from './lib/event-inbox.ts';
+import { appendEvents, readInbox } from './lib/event-inbox.ts';
 import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq } from './install-loop-supervisor.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
 import { cleanEnv, notifyCalls } from './lib/test-env.ts';
@@ -385,4 +385,45 @@ test('the installer will not replace an existing plist that points at a differen
   assert.equal(readFileSync(out, 'utf8'), before, 'the existing plist is untouched');
   assert.equal(install(scratch, '--force').status, 0);
   assert.match(readFileSync(out, 'utf8'), new RegExp(scratch));
+});
+
+/**
+ * A real supervisor whose loop is `run --serve` and stays up (it never exits, as in production): node steered by a preloaded module that takes the
+ * loop lock and writes a fresh `run` heartbeat. `seed` runs before the supervisor starts. Notify goes to the recording stub in `env`, never a real command.
+ */
+function serveSupervisor(seed: (events: string) => void) {
+  const ledger = tempDir();
+  const events = join(ledger, 'Events');
+  mkdirSync(events, { recursive: true });
+  seed(events);
+  const preload = join(tempDir(), 'serve-loop.mjs');
+  writeFileSync(preload, `import { writeFileSync } from 'node:fs';\nif (process.argv.includes('--serve')) {\n  const dir = ${JSON.stringify(events)};\n  writeFileSync(dir + '/loop.lock', String(process.pid));\n  const now = Date.now();\n  writeFileSync(dir + '/heartbeat.json', JSON.stringify({ pid: process.pid, at: new Date(now).toISOString(), tick: 1, watchesLive: 1, sleepingUntil: new Date(now + 3600_000).toISOString(), mode: 'run', lastError: '' }));\n  setInterval(() => {}, 1000);\n  await new Promise(() => {});\n}\n`);
+  const env = cleanEnv({ LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: events, MAESTRO_LOOP_BIN: process.execPath, NODE_OPTIONS: `--import ${pathToFileURL(preload).href}`, MAESTRO_WATCHDOG_INTERVAL_MS: '100', MAESTRO_ALERT_QUIET_HOURS: 'off' });
+  return { ...startSupervisor(env), env, events };
+}
+
+test('while a serve loop stays up, the supervisor still texts a recovery and a PR event once each', async () => {
+  const { p, closed, env } = serveSupervisor((events) => {
+    // A DOWN text went out an hour ago and was never followed by a recovered one; a conflict has sat unseen for 20 minutes.
+    writeFileSync(join(events, 'alerts.json'), JSON.stringify({ lastSentAt: Date.now() - 3600_000, alerted: [], badSince: Date.now() - 3600_000, badAlerted: true, restarts: [], restartAlerted: false, failures: 0 }));
+    appendEvents(events, [{ watch: 'pr-watch', type: 'pr-watch', at: new Date(Date.now() - 20 * 60_000).toISOString(), summary: 'CONFLICT Fake-Org/fake-repo#12 needs a rebase', actionable: true, report: '' }]);
+  });
+  try {
+    assert.equal(await waitFor(() => notifyCalls(env).length > 0), true, 'no text reached the notify command while the loop was up');
+    await new Promise((r) => setTimeout(r, 1500));
+    const calls = notifyCalls(env);
+    assert.equal(calls.length, 1, calls.join(' | '));
+    assert.match(calls[0] ?? '', /loop recovered/);
+    assert.match(calls[0] ?? '', /fake-repo#12/);
+  } finally { p.kill('SIGTERM'); await closed; killTree(p); }
+});
+
+test('a normal start with an empty inbox and a loop that stays up sends no text', async () => {
+  const { p, closed, env, events } = serveSupervisor(() => {});
+  try {
+    // Ticks run every 100 ms here; wait until the tick has really run (it saves nothing when it has nothing to say), then a little longer.
+    assert.equal(await waitFor(() => existsSync(join(events, 'supervisor.json'))), true, 'the supervisor never started');
+    await new Promise((r) => setTimeout(r, 2000));
+    assert.deepEqual(notifyCalls(env), []);
+  } finally { p.kill('SIGTERM'); await closed; killTree(p); }
 });
