@@ -921,7 +921,7 @@ function cmdStatus() {
         return;
     }
 
-    const live = { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS };
+    const live = { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
     const queueFooter = boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
@@ -1090,7 +1090,7 @@ function cmdRoll() {
 /** The in-flight rows no lease covers past `stale_wip_days`, for roll to ask about. Printed only; closing is a decision. */
 function staleRows(d: string): LedgerItem[] {
     const g = groups();
-    return splitInflight(g.inflight, { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS }).stale;
+    return splitInflight(g.inflight, { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched }).stale;
 }
 function printStaleRows(d: string): void { staleRollLines(staleRows(d), d, STALE_WIP_DAYS).forEach((l) => console.log(l)); }
 

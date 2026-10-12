@@ -73,3 +73,12 @@ test('renderEvidence leads with the totals and names the proof behind a close', 
     assert.match(lines[0], /Open in-flight rows on 2026-10-12: 2 \(1 with hard evidence to close, 1 for a batch ask\)/);
     assert.ok(lines.some((l) => /because: all 1 child row\(s\) are closed/.test(l)));
 });
+
+test('lastTouchOf is the newest of the opening date, the state move and the touching rows; touchDates reads every pointer field', async () => {
+    const { touchDates, lastTouchOf } = await import('./last-touch.ts');
+    const touched = touchDates([{ id: 'l1', kind: 'lease', date: '2026-10-10', ts: '2026-10-10T09:00:00Z', leases: 'a', text: 'lease a' }, { id: 'p1', kind: 'promote', date: '2026-10-08', promotes: 'a', text: 'x' }]);
+    assert.equal(touched.get('a'), '2026-10-10');
+    assert.equal(lastTouchOf({ id: 'a', date: '2026-10-01' }, touched), '2026-10-10');
+    assert.equal(lastTouchOf({ id: 'a', date: '2026-10-01', stateTs: '2026-10-11T01:00:00Z' }, touched), '2026-10-11');
+    assert.equal(lastTouchOf({ id: 'b', date: '2026-10-01' }, touched), '2026-10-01');
+});

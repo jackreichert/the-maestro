@@ -28,3 +28,18 @@ test('staleRollLines names each stale row oldest first with its age and the thre
     assert.match(lines[3], /done <id>.*drop <id>.*lease <id>/);
     assert.deepEqual(staleRollLines([], '2026-10-12', 3), []);
 });
+
+test('a row opened long ago is not stale when a row touched it within the limit: started, re-tagged or leased (MAESTRO-319)', () => {
+    const rows = [item('q1', '2026-10-01'), item('t1', '2026-10-01'), item('k1', '2026-10-01'), item('z1', '2026-10-01')];
+    const touched = new Map([['q1', '2026-10-12'], ['t1', '2026-10-11'], ['k1', '2026-10-12']]);
+    const { live, stale } = splitInflight(rows, { today: '2026-10-12', leased: new Set(), staleDays: 3, touched });
+    assert.deepEqual(stale.map((i) => i.id), ['z1']);
+    assert.deepEqual(live.map((i) => i.id), ['q1', 't1', 'k1']);
+});
+
+test('a touch older than the limit still leaves the row stale, and a later state move counts as a touch', () => {
+    const moved: LedgerItem = { ...item('m1', '2026-10-01'), stateTs: '2026-10-12T08:00:00Z' };
+    const rows = [item('a', '2026-10-01'), moved];
+    const { stale } = splitInflight(rows, { today: '2026-10-12', leased: new Set(), staleDays: 3, touched: new Map([['a', '2026-10-05']]) });
+    assert.deepEqual(stale.map((i) => i.id), ['a']);
+});

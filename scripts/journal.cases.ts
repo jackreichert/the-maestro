@@ -2230,6 +2230,23 @@ test('roll and maintain list a stale in-flight row for close, drop or refresh, n
     assert.doesNotMatch(run('roll', '--fast').out, /Stale in flight/, 'a lease refreshes it');
 });
 
+test('an old row that was started or re-tagged inside stale_wip_days is not stale (MAESTRO-319)', () => {
+    const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString().slice(0, 10);
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    const base = { kind: 'wip', date: '2020-01-01', ts: '2020-01-01T00:00:00.000Z', model: 'x', used: ['x'] };
+    const rows = [
+        { ...base, id: 'oldq', text: 'queued long ago', queued: true }, { id: 'pro1', kind: 'promote', promotes: 'oldq', date: day(0), ts: hoursAgo(1), text: 'start' },
+        { ...base, id: 'oldt', text: 'retagged yesterday' }, { id: 'tag1', kind: 'tag', tags: 'oldt', stream: 'Other', date: day(1), ts: hoursAgo(30), text: 'tag' },
+        { ...base, id: 'oldz', text: 'untouched' },
+    ];
+    mkdirSync(dirname(ledgerFile()), { recursive: true });
+    writeFileSync(ledgerFile(), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    const j = statusJson();
+    assert.deepEqual(j.stale?.map((i) => i.id), ['oldz'], 'only the untouched row is stale');
+    assert.deepEqual(j.inflight.map((i) => i.id).sort(), ['oldq', 'oldt']);
+    assert.match(run('roll', '--fast').out, /Stale in flight: 1 row/);
+});
+
 test('closing the last open child prompts for its parent, a sibling still open does not, and --parent refuses an unknown or closed item (MAESTRO-319)', () => {
     const parent = idOf(run('log', 'the epic', '--kind', 'wip', ...MARK).out);
     const a = idOf(run('log', 'first child', '--kind', 'wip', '--parent', parent, ...MARK).out);

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { isInFlight, isOpen } from './ledger-core.ts';
 import type { LedgerItem, LedgerRow } from './ledger-core.ts';
 import { daysBetween } from './boxes.ts';
+import { lastTouchOf, touchDates } from './last-touch.ts';
 
 /** What is known about one open in-flight row, gathered without writing anything or calling the network. */
 export interface StaleEvidence {
@@ -27,8 +28,6 @@ export interface StaleEvidence {
     because: string[];
 }
 
-/** Ledger row fields that point at another row's id: any row carrying one of them touched that row. */
-const TOUCH_FIELDS = ['annotates', 'tags', 'carries', 'queues', 'promotes', 'briefs', 'reworks', 'defers', 'leases', 'unleases'] as const;
 const CLOSED_TICKET = new Set(['closed', 'done', 'dropped', 'resolved', 'cancelled', 'canceled', 'superseded']);
 
 const PR_URL = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
@@ -51,18 +50,12 @@ export function ticketStatus(ticketsVault: string | undefined, id: string): stri
     return /^status:\s*"?([\w-]+)"?\s*$/m.exec(front?.[1] ?? '')?.[1] ?? null;
 }
 
-const dayOf = (r: LedgerRow): string => String(r.date ?? r.ts ?? '').slice(0, 10);
-
 /**
  * Evidence for every open in-flight item (queued and deferred rows are not in-flight), oldest first. `today` is the day it is read on.
  * Read-only: `entries` is the raw ledger, `items` its fold, `ticketsVault` an optional notes vault.
  */
 export function staleEvidence(entries: LedgerRow[], items: LedgerItem[], today: string, ticketsVault?: string): StaleEvidence[] {
-    const touched = new Map<string, string>();
-    for (const r of entries) for (const f of TOUCH_FIELDS) {
-        const target = r[f];
-        if (typeof target === 'string' && dayOf(r) > (touched.get(target) ?? '')) touched.set(target, dayOf(r));
-    }
+    const touched = touchDates(entries);
     return items.filter((i) => isOpen(i) && isInFlight(i)).map((i) => {
         const id = String(i.id);
         const kids = items.filter((k) => k.parent === id);
@@ -73,7 +66,7 @@ export function staleEvidence(entries: LedgerRow[], items: LedgerItem[], today: 
             ...(children.total && !children.open ? [`all ${children.total} child row(s) are closed`] : []),
         ];
         const opened = String(i.date ?? '');
-        const lastTouch = [opened, touched.get(id) ?? ''].sort().at(-1) as string;
+        const lastTouch = lastTouchOf(i, touched);
         return {
             id, stream: i.stream ?? null, text: String(i.text ?? ''), opened, lastTouch,
             ageDays: daysBetween(opened, today), idleDays: daysBetween(lastTouch, today),

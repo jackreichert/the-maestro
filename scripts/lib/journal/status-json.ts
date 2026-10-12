@@ -27,7 +27,7 @@ export interface StatusJson {
  */
 export function statusJson(g: Groups, d: string, session: SessionStatus, done?: LedgerItem[], sinceRoll?: LedgerItem[], leases?: LeaseSummary, staleDays?: number): StatusJson {
     const view = done === undefined ? footerDone(g, d) : { all: done, sinceRoll };
-    const live = leases ? { today: d, leased: new Set(leases.held.map((h) => h.item)), staleDays } : undefined;
+    const live = leases ? { today: d, leased: new Set(leases.held.map((h) => h.item)), staleDays, touched: g.touched } : undefined;
     const stale = live ? staleInflight(g.inflight, live) : undefined;
     return {
         date: d,

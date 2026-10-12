@@ -8,6 +8,7 @@ import { fmt, slug } from './format.ts';
 import { askSummary, asksNote } from './ask-fields.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { daysBetween } from '../boxes.ts';
+import { lastTouchOf, touchDates } from '../last-touch.ts';
 
 /** What the board reads from the run: the store, the fold, the clock, the stream mapping and the flags. */
 export interface BoardContext extends Pick<Store, 'readLedger' | 'rollPoint' | 'loadRegistry' | 'ensureDir' | 'dir'> {
@@ -36,6 +37,8 @@ export interface Groups {
     doneOn: (d: string, opts?: { sinceRoll?: boolean; tz?: string }) => LedgerItem[];
     notesOn: (d: string) => LedgerItem[];
     dates: (string | undefined)[];
+    /** Newest day of any row that touched each item id; feeds the stale rule. */
+    touched?: ReadonlyMap<string, string>;
 }
 
 /** Whether `ts` (in `tz`) or, with no zone, the stored date field, is day `d`. An unreadable timestamp falls back to the stored date. */
@@ -97,6 +100,7 @@ export function groups(ctx: BoardContext, includeArchived = false): Groups {
         },
         notesOn: (d: string) => items.filter((i) => i.state === 'note' && i.date === d),
         dates: [...new Set(items.map((i) => i.date))].sort(),
+        touched: touchDates(entries),
     };
 }
 
@@ -137,11 +141,13 @@ export function footerDone(g: Groups, d: string, opts?: { tz?: string }): DayDon
 export const FOOTER_STALE_DAYS = 3;
 
 /** What the footer needs to tell a live in-flight row from a forgotten one: the day it is read on, and the ids that hold a live lease. */
-export interface FooterLiveness { today: string; leased: ReadonlySet<string>; /** Days in flight, with no live lease, after which a row counts as stale; `FOOTER_STALE_DAYS` when absent (`stale_wip_days`). */ staleDays?: number }
+export interface FooterLiveness { today: string; leased: ReadonlySet<string>; /** Days in flight, with no live lease, after which a row counts as stale; `FOOTER_STALE_DAYS` when absent (`stale_wip_days`). */ staleDays?: number;
+    /** Newest day of any row that touched each id (`touchDates`); a row touched within `staleDays` is not stale however old its opening row is. */
+    touched?: ReadonlyMap<string, string> }
 
-/** The in-flight items nothing is known to be working on: at least `staleDays` old and holding no live lease. The footer counts them and `status --json` lists them. */
+/** The in-flight items nothing is known to be working on: untouched for `staleDays` (see `lastTouchOf`) and holding no live lease. The footer counts them and `status --json` lists them. */
 export const staleInflight = (inflight: LedgerItem[], live: FooterLiveness): LedgerItem[] =>
-    inflight.filter((i) => !live.leased.has(i.id ?? '') && daysBetween(i.date, live.today) >= (live.staleDays ?? FOOTER_STALE_DAYS));
+    inflight.filter((i) => !live.leased.has(i.id ?? '') && daysBetween(lastTouchOf(i, live.touched), live.today) >= (live.staleDays ?? FOOTER_STALE_DAYS));
 
 export function footerRows(g: Pick<Groups, 'inflight' | 'queued' | 'blocked' | 'awaiting' | 'paste'>, done: LedgerItem[], sinceRoll?: LedgerItem[], live?: FooterLiveness): FooterRow[] {
     const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
