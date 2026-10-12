@@ -49,7 +49,7 @@ export type PrioritiesState =
   | { state: 'missing' }
   | { state: 'stale'; date: string };
 
-export interface FooterRow { stream: string; asks: number; working: number; queued: number; blocked: number; done: number }
+export interface FooterRow { stream: string; asks: number; working: number; stale?: number; queued: number; blocked: number; done: number }
 
 export interface PodiumState {
   generatedAt: string;
@@ -63,6 +63,8 @@ export interface PodiumState {
   prData: { fetchedAt: string | null; stale: boolean };
   asks: AskCard[];
   working: WorkItem[];
+  /** In flight with no live lease past `stale_wip_days`; not counted in `working`. */
+  stale: WorkItem[];
   queued: WorkItem[];
   blocked: BlockedItem[];
   done: DoneItem[];

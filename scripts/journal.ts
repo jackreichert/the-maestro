@@ -149,7 +149,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR } from './local-config.ts';
+import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -163,11 +163,14 @@ import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields } from './lib/journal/ask-fields.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
+import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
+import { parentRefusal, parentPromptLine } from './lib/journal/parent.ts';
 import type { Groups } from './lib/journal/board.ts';
 import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, footerDone, footerRows, footerLines, standupText as boardStandupText, render as boardRender } from './lib/journal/board.ts';
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
@@ -578,6 +581,19 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const gate = gateFlag(kind);
     const askFields = askFieldsFromArgs(ask, Boolean(paste));
 
+    // --settles closes the named items once the note is written; check the ids first so a typo writes nothing.
+    const settles = parseList('settles');
+    if (settles && (ask || queued || lease || !['note', 'decision'].includes(kind))) die('--settles goes on a plain note: `journal.ts note "what settled it" --settles <id>[,<id>]`.');
+    const settleCtx = { readLedger, append, newId, fold, today, now };
+    const settlePlan = settles ? planSettle(settleCtx, settles) : undefined;
+    if (settlePlan?.unknown.length) die(`--settles names no item: ${settlePlan.unknown.join(', ')}. Nothing was written.`);
+
+    // --parent <id> files the row under an open item; closing the last open child then prompts for the parent.
+    const parent = arg('parent') || undefined;
+    if (has('parent') && !parent) die('--parent needs the id of an open item.');
+    const parentError = parent ? parentRefusal(fold(readLedger()).items, parent) : null;
+    if (parentError) die(parentError);
+
     const entries = readLedger();
     const entry = {
         id: newId(entries),
@@ -585,6 +601,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         date: arg('date', today()),   // backdate when reconstructing
         kind,
         text,
+        parent,
         reworks: reworked,
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
@@ -605,8 +622,13 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         ...usageFromArgs(),
     };
     append(entry);
+    const settled = settlePlan ? settleItems(settleCtx, entry.id, settlePlan, usageFromArgs) : undefined;
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
+    settled?.closed.forEach((i) => console.log(`      settled  ${i.id}  ${i.text}`));
+    settled?.parents.forEach((p) => console.log(`      ${parentPromptLine(p)}`));
+    settlePlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
+    settled?.refused.forEach((r) => console.error(`      not closed  ${r.item.id}: ${r.reason}`));
     // `ask --how-do-i`: the question is a how-do-I the library could not answer, so it is also a miss for the composer.
     if (ask && has('how-do-i')) {
         const missed = recordMiss(text, 'ask', entry.repo, usageFromArgs());
@@ -891,6 +913,7 @@ function cmdClose(newKind: string): void {
     if (!dryRun) render(true);
     const { target, note } = result;
     console.log(`${newKind}  ${target.id}  ${target.text}${note ? `\n      ${note}` : ''}`);
+    if (result.parent) console.log(`      ${parentPromptLine(result.parent)}`);
 }
 
 /** File an existing item under a workstream (or clear it with --stream none). */
@@ -1088,11 +1111,11 @@ function cmdStatus() {
     const done = view.all;
 
     if (asJson) {
-        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g)));
+        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g), STALE_WIP_DAYS));
         return;
     }
 
-    const live = { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)) };
+    const live = { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched };
     const queueFooter = has('footer') ? footerReviewQueue() ?? undefined : boardReviewQueue()?.footer;
     const selfFooter = boardSelfReview()?.footer;
     if (has('footer')) {
@@ -1106,6 +1129,8 @@ function cmdStatus() {
         return;
     }
 
+    const { live: running, stale } = splitInflight(g.inflight, live);
+    const staleLabel = `Stale (${STALE_WIP_DAYS}d+, no lease)`;
     const line = (label: string, arr: LedgerItem[]): void => {
         if (!arr.length) return;
         console.log(`\n${label}`);
@@ -1114,10 +1139,11 @@ function cmdStatus() {
     windowWarning().forEach((l) => console.log(l));
     console.log(`Ledger — ${d}`);
     ruleLines(readLedger(), windowId).forEach((l) => console.log(l));
-    const streams = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done);
+    const streams = activeStreams(running, stale, g.queued, g.blocked, g.awaiting, g.paste, done);
     for (const s of streams) {
         console.log(`\n== ${streamTitle(s)} ==`);
-        line('In flight', inStream(g.inflight, s));
+        line('In flight', inStream(running, s));
+        line(staleLabel, inStream(stale, s));
         line('Queued', inStream(g.queued, s));
         line('Blocked', inStream(g.blocked, s));
         line('Awaiting you', inStream(g.awaiting, s));
@@ -1125,8 +1151,9 @@ function cmdStatus() {
         line(`Done ${d}`, inStream(done, s));
     }
     // Without this heading the unstreamed sections read as part of the last stream.
-    if (streams.length && [g.inflight, g.queued, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
-    line('In flight', noStream(g.inflight));
+    if (streams.length && [running, stale, g.queued, g.blocked, g.awaiting, g.paste, done].some((arr) => noStream(arr).length)) console.log('\n== other ==');
+    line('In flight', noStream(running));
+    line(staleLabel, noStream(stale));
     line('Queued', noStream(g.queued));
     line('Blocked', noStream(g.blocked));
     line('Awaiting you', noStream(g.awaiting));
@@ -1134,12 +1161,12 @@ function cmdStatus() {
     line(`Done ${d}`, noStream(done));
     if (view.sinceRoll) console.log(`\n  (${done.length - view.sinceRoll.length} earlier item(s) archived to ${d}.md)`);
     if (has('full')) line('Notes', g.notesOn(d));
-    if (!g.inflight.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
+    if (!running.length && !stale.length && !g.queued.length && !g.blocked.length && !g.awaiting.length && !g.paste.length && !done.length) {
         console.log('\n  (empty)');
     }
     const leased = leaseSummary(g).held;
     if (leased.length) { console.log('\nLeases'); leased.forEach((l) => console.log(`  ${l.item}  leased by ${l.holder}${l.holder === windowId ? ' (this window)' : ''} until ${l.until.slice(0, 16)}Z`)); }
-    console.log(`\n  ${done.length} done · ${g.inflight.length} in flight${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
+    console.log(`\n  ${done.length} done · ${running.length} in flight${stale.length ? ` · ${stale.length} stale` : ''}${g.queued.length ? ` · ${g.queued.length} queued` : ''} · ${g.awaiting.length} awaiting you${g.paste.length ? ` · ${g.paste.length} to run` : ''}${g.blocked.length ? ` · ${g.blocked.length} blocked` : ''}`);
     const queue = boardReviewQueue();
     if (queue) console.log(`  ${queue.text}`);
     const self = boardSelfReview();
@@ -1283,9 +1310,17 @@ function cmdRoll() {
     writeRollGuidance(d);
     rollArchive(d);
     printEpicBriefs(d);
+    printStaleRows(d);
     printNotesReachability();
     if (!has('fast')) sweepWorktreesForRoll();
 }
+
+/** The in-flight rows no lease covers past `stale_wip_days`, for roll to ask about. Printed only; closing is a decision. */
+function staleRows(d: string): LedgerItem[] {
+    const g = groups();
+    return splitInflight(g.inflight, { today: d, leased: new Set(leaseSummary(g).held.map((h) => h.item)), staleDays: STALE_WIP_DAYS, touched: g.touched }).stale;
+}
+function printStaleRows(d: string): void { staleRollLines(staleRows(d), d, STALE_WIP_DAYS).forEach((l) => console.log(l)); }
 
 /**
  * `maintain --today D [--container <dir>] [--budget N]`: the model-free half of roll, for a caller that runs unattended (the
@@ -1316,6 +1351,8 @@ function maintain(today: string): MaintainResult {
         if (!rollArchive(d)) problems.push(`ledger commit failed after archiving ${d}`);
         archivedDays.push(d);
     }
+    const stale = staleRows(today);
+    if (stale.length) console.log(`Stale in flight: ${stale.length} row(s) with no lease for ${STALE_WIP_DAYS}d or more; \`roll\` lists them.`);
     const out = worktreeSweepOutcome(dryRun);
     if (out.why) problems.push(out.why);
     const result = out.result;

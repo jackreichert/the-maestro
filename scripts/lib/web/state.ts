@@ -61,6 +61,8 @@ export interface PodiumState {
   prData: { fetchedAt: string | null; stale: boolean; failure?: string };
   asks: AskCard[];
   working: WorkItem[];
+  /** In flight for `stale_wip_days` with no live lease: open, but not live work. Empty when the board was read without leases. */
+  stale: WorkItem[];
   queued: WorkItem[];
   blocked: BlockedItem[];
   done: DoneItem[];
@@ -78,7 +80,7 @@ export function buildState(input: GatheredInputs): PodiumState {
   for (const [t, list] of Object.entries(ticketMap)) for (const id of list) tickets.set(id, t);
   const meta = new Map(triage.items.map((i) => [i.id, i]));
   const priorityStreams = priorities.state === 'ok' ? priorities.items.map((p) => p.stream) : [];
-  const streams = streamOrder(config, [...status.awaiting.map((a) => a.stream), ...(status.paste ?? []).map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...priorityStreams]);
+  const streams = streamOrder(config, [...status.awaiting.map((a) => a.stream), ...(status.paste ?? []).map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...(status.stale ?? []).map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...priorityStreams]);
   const streamOf = (i: { stream?: string }): string => (streams.includes(i.stream ?? '') ? i.stream! : OTHER);
   const noteOf = (i: Item): string | undefined => i.ticket || meta.get(i.id)?.ticket || tickets.get(i.id) || undefined;
   const work = (i: Item): WorkItem => {
@@ -93,6 +95,7 @@ export function buildState(input: GatheredInputs): PodiumState {
     prData: prDataState(prData, now),
     asks: [...status.awaiting, ...(status.paste ?? [])].map((a) => askCard(config, a, prs, noteOf(a), streamOf(a), now)),
     working: status.inflight.map(work),
+    stale: (status.stale ?? []).map(work),
     queued: status.queued.map(work),
     blocked: status.blocked.map((b) => ({ ...work(b), ...(meta.get(b.id)?.gate ? { gate: meta.get(b.id)?.gate } : {}) })),
     done: status.done.map((d) => ({ ...work(d), ...(closedAt(d) ? { closedAt: closedAt(d) } : {}) })),

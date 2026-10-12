@@ -31,7 +31,10 @@ interface Out {
 interface Doc {
     inflight: Out[]; queued: Out[]; blocked: Out[]; awaiting: Out[]; paste: Out[]; done: Out[]; streams: Out[]; claims: Out[]; models: Out[];
     standing: Out[]; oneOff: Out[]; untagged: Out[]; byStream: Out[]; pending: Out[]; blockers: Out[]; pendingTransitions: Out[];
-    byBox: Record<string, Out[] | undefined>; problems: Out[]; model: Record<string, number>; [field: string]: unknown;
+    byBox: Record<string, Out[] | undefined>; problems: Out[]; model: Record<string, number>;
+    /** `status --json`: the rows with no live lease past stale_wip_days, and the footer counts. */
+    stale?: Out[]; footer: { ledger: { inflight: number; stale?: number }[] };
+    [field: string]: unknown;
 }
 const parse = <T = Doc>(text: string): T => JSON.parse(text);
 const emptyCwd = mkdtempSync(join(tmpdir(), 'journal-cwd-'));
@@ -2199,6 +2202,90 @@ test('a deferral that has reached its date no longer hides the item, and a later
     assert.equal(run('verify').code, 0);
 });
 
+test('an in-flight row older than stale_wip_days is stale: out of the in-flight list, count and board, listed under stale (MAESTRO-319)', () => {
+    const fresh = idOf(run('start', 'working now', ...MARK).out);
+    // `start` leases the row to its window; a plain wip row with an old date has no lease, which is what makes it stale.
+    const old = idOf(run('log', 'forgotten long ago', '--kind', 'wip', '--date', '2020-01-01', ...MARK).out);
+    const j = statusJson();
+    assert.deepEqual(j.inflight.map((i) => i.id), [fresh]);
+    assert.deepEqual(j.stale?.map((i) => i.id), [old]);
+    assert.equal(j.footer.ledger[0]?.inflight, 1);
+    assert.equal(j.footer.ledger[0]?.stale, 1);
+    assert.match(run('status', '--footer').out, /1 in flight · 1 stale \(3d\+, no lease\)/);
+    const board = run('status').out;
+    assert.match(board, /Stale \(3d\+, no lease\)\n\s+.*forgotten long ago/);
+    assert.match(board, /1 in flight · 1 stale/);
+    run('done', old, ...MARK);
+    assert.equal(statusJson().stale?.length, 0, 'closing the row clears it');
+});
+
+test('roll and maintain list a stale in-flight row for close, drop or refresh, never close it, and stay quiet when nothing is stale (MAESTRO-319)', () => {
+    const quiet = run('roll', '--fast');
+    assert.equal(quiet.code, 0, quiet.err);
+    assert.doesNotMatch(quiet.out, /Stale in flight/);
+    const old = idOf(run('log', 'forgotten long ago', '--kind', 'wip', '--date', '2020-01-01', ...MARK).out);
+    const roll = run('roll', '--fast');
+    assert.equal(roll.code, 0, roll.err);
+    assert.match(roll.out, /Stale in flight: 1 row\(s\) with no lease for 3d or more/);
+    assert.match(roll.out, new RegExp(`${old} +\\d+d +forgotten long ago`));
+    assert.match(roll.out, /journal\.ts done <id>.*drop <id>.*lease <id>/);
+    assert.match(run('maintain', '--today', new Date().toISOString().slice(0, 10), '--container', emptyCwd).out, /Stale in flight: 1 row\(s\)/);
+    assert.equal(statusJson().stale?.map((i) => i.id).join(), old, 'listing it did not close it');
+    run('lease', old, ...MARK);
+    assert.doesNotMatch(run('roll', '--fast').out, /Stale in flight/, 'a lease refreshes it');
+});
+
+test('an old row that was started or re-tagged inside stale_wip_days is not stale (MAESTRO-319)', () => {
+    const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString().slice(0, 10);
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    const base = { kind: 'wip', date: '2020-01-01', ts: '2020-01-01T00:00:00.000Z', model: 'x', used: ['x'] };
+    const rows = [
+        { ...base, id: 'oldq', text: 'queued long ago', queued: true }, { id: 'pro1', kind: 'promote', promotes: 'oldq', date: day(0), ts: hoursAgo(1), text: 'start' },
+        { ...base, id: 'oldt', text: 'retagged yesterday' }, { id: 'tag1', kind: 'tag', tags: 'oldt', stream: 'Other', date: day(1), ts: hoursAgo(30), text: 'tag' },
+        { ...base, id: 'oldz', text: 'untouched' },
+    ];
+    mkdirSync(dirname(ledgerFile()), { recursive: true });
+    writeFileSync(ledgerFile(), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    const j = statusJson();
+    assert.deepEqual(j.stale?.map((i) => i.id), ['oldz'], 'only the untouched row is stale');
+    assert.deepEqual(j.inflight.map((i) => i.id).sort(), ['oldq', 'oldt']);
+    assert.match(run('roll', '--fast').out, /Stale in flight: 1 row/);
+});
+
+test('"still going" (lease <id>) keeps a row out of stale for stale_wip_days after the lease lapses, then it goes stale again (MAESTRO-319)', () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000 - 3_600_000).toISOString();
+    const base = { kind: 'wip', date: '2020-01-01', ts: '2020-01-01T00:00:00.000Z', model: 'x', used: ['x'] };
+    const lease = (id: string, item: string, ts: string) => ({ id, kind: 'lease', leases: item, window: 'gone', ttl: 60, date: ts.slice(0, 10), ts, text: `lease ${item}` });
+    const rows = [
+        { ...base, id: 'keep1', text: 'kept going, lease lapsed 2 days ago' }, lease('ls01', 'keep1', daysAgo(2)),
+        { ...base, id: 'keep2', text: 'lease lapsed 10 days ago' }, lease('ls02', 'keep2', daysAgo(10)),
+    ];
+    mkdirSync(dirname(ledgerFile()), { recursive: true });
+    writeFileSync(ledgerFile(), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    const j = statusJson();
+    assert.deepEqual(j.inflight.map((i) => i.id), ['keep1'], 'a lapsed lease still counts as a touch inside stale_wip_days');
+    assert.deepEqual(j.stale?.map((i) => i.id), ['keep2'], 'ten days on, with no lease and no touch, it is stale again');
+    assert.match(run('roll', '--fast').out, /Stale in flight: 1 row/);
+});
+
+test('closing the last open child prompts for its parent, a sibling still open does not, and --parent refuses an unknown or closed item (MAESTRO-319)', () => {
+    const parent = idOf(run('log', 'the epic', '--kind', 'wip', ...MARK).out);
+    const a = idOf(run('log', 'first child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    const b = idOf(run('log', 'second child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    assert.equal(must(ledger().find((r) => r.id === a)).parent, parent);
+    const first = run('done', a, ...MARK);
+    assert.equal(first.code, 0, first.err);
+    assert.doesNotMatch(first.out, /parent .* has no other open child/);
+    const last = run('done', b, ...MARK);
+    assert.match(last.out, new RegExp(`parent ${parent} has no other open child: close it\\?`));
+    assert.equal(statusJson().inflight.map((i) => i.id).join(), parent, 'the prompt did not close the parent');
+    run('done', parent, ...MARK);
+    const refused = run('log', 'orphan', '--kind', 'wip', '--parent', 'nosuch', ...MARK);
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /--parent names no item: nosuch/);
+    assert.match(run('log', 'late child', '--kind', 'wip', '--parent', parent, ...MARK).err, /already done/);
+});
+
 test('prime is at most 40 lines however much is open, shares lines between boxes, and writes nothing', () => {
     const f = blockFile();
     run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
@@ -2830,7 +2917,7 @@ test('every row written carries the window id: --window, then --session, then MA
 
 test('rows written before windows were recorded still fold, and the footer names the window it is run in', () => {
     mkdirSync(join(vault, 'Projects', 'test-proj', 'Journal'), { recursive: true });
-    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), '{"id":"old1","ts":"2026-10-01T00:00:00Z","date":"2026-10-01","kind":"wip","text":"before windows"}\n');
+    writeFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), `${JSON.stringify({ id: 'old1', ts: new Date().toISOString(), date: new Date().toISOString().slice(0, 10), kind: 'wip', text: 'before windows' })}\n`);
     assert.equal(parse(run('status', '--json').out).inflight.length, 1);
     assert.equal(run('done', 'old1', ...MARK).code, 0);
     assert.equal(ledger().find((r) => r.kind === 'done')?.window, 'testwin');
@@ -3111,4 +3198,35 @@ test('ready-to-push lists my branches that no remote holds, and refuses without 
     assert.deepEqual(parse<{ held: { branch: string }[] }>(out.out).held.map((h) => h.branch), ['feat/AV-9-held']);
     assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: container, MAESTRO_GIT_EMAILS: 'someone@else.test' }, 'ready-to-push', '--json').out.includes('AV-9'), false, 'not my commits');
     assert.equal(runEnv({ MAESTRO_CONTAINER_ROOT: '', MAESTRO_GIT_EMAILS: 'me@example.com' }, 'ready-to-push').code, 1);
+});
+
+test('note --settles closes the named items, is idempotent, and a bad id writes nothing (MAESTRO-313)', () => {
+    const a = idOf(run('start', 'verify widget', ...MARK).out);
+    const b = idOf(run('start', 'verify gadget', ...MARK).out);
+    const before = ledger().length;
+    const bad = run('note', 'verified', '--settles', `${a},zzzz`, ...MARK);
+    assert.equal(bad.code, 1);
+    assert.equal(ledger().length, before, 'an unknown id writes neither the note nor a close');
+    const ok = run('note', 'verified both', '--settles', `${a},${b}`, ...MARK);
+    assert.equal(ok.code, 0);
+    assert.match(ok.out, new RegExp(`settled  ${a}`));
+    type S = { inflight: { id: string }[] };
+    assert.deepEqual(parse<S>(run('status', '--json').out).inflight.map((i) => i.id), [], 'both items left the board');
+    const rows = ledger().length;
+    const again = run('note', 'verified again', '--settles', a, ...MARK);
+    assert.match(again.out, /not open/);
+    assert.equal(ledger().length, rows + 1, 'only the note is written the second time');
+    assert.equal(run('ask', 'q?', '--settles', a, ...MARK).code, 1, 'only a plain note settles');
+});
+
+test('note --settles gives the last-child parent prompt, and only after the last open child (MAESTRO-319)', () => {
+    const parent = idOf(run('log', 'the epic', '--kind', 'wip', ...MARK).out);
+    const a = idOf(run('log', 'first child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    const b = idOf(run('log', 'second child', '--kind', 'wip', '--parent', parent, ...MARK).out);
+    const first = run('note', 'verified the first', '--settles', a, ...MARK);
+    assert.equal(first.code, 0, first.err);
+    assert.doesNotMatch(first.out, /has no other open child/);
+    const last = run('note', 'verified the last', '--settles', b, ...MARK);
+    assert.match(last.out, new RegExp(`parent ${parent} has no other open child: close it\\?`));
+    assert.equal(statusJson().inflight.map((i) => i.id).join(), parent, 'the prompt did not close the parent');
 });

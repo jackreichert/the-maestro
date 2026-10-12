@@ -119,3 +119,16 @@ test('closeItem refuses a learned row, whatever the closing kind, and appends no
     assert.equal(closeItem(ctx, { kind: 'done', needle: 'unique fake' }).kind, 'not-found', 'a text match never selects a learned row (it is not an open kind)');
     assert.equal(rows.length, 4);
 });
+
+test('closeItem returns the parent when the closed child was its last open one, and not while a sibling is open (MAESTRO-319)', () => {
+    const rows: LedgerRow[] = [
+        { id: 'par1', kind: 'wip', ts: `${DAY}T09:00:00Z`, date: DAY, text: 'the epic' },
+        { id: 'kid1', kind: 'wip', ts: `${DAY}T09:01:00Z`, date: DAY, text: 'first', parent: 'par1' },
+        { id: 'kid2', kind: 'wip', ts: `${DAY}T09:02:00Z`, date: DAY, text: 'second', parent: 'par1' },
+    ];
+    const { ctx } = ctxFor(rows);
+    const first = closeItem(ctx, { kind: 'done', needle: 'kid1' });
+    assert.equal(first.kind === 'closed' && first.parent, undefined);
+    const last = closeItem(ctx, { kind: 'done', needle: 'kid2' });
+    assert.equal(last.kind === 'closed' && last.parent?.id, 'par1');
+});

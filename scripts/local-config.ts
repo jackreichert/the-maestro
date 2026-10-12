@@ -203,6 +203,9 @@ export const APPROVALS_REVIEW_DAY = ((day: string) => (WEEKDAYS.has(day) ? day :
 /** Positive number from a config string, else the fallback. */
 const positive = (text: string, fallback: number): number => (Number(text) > 0 ? Number(text) : fallback);
 
+/** Days an in-flight item may sit with no live lease before the board, footer and `status --json` call it stale. Default 3. */
+export const STALE_WIP_DAYS = positive(pick('MAESTRO_STALE_WIP_DAYS', 'stale_wip_days'), 3);
+
 /** Valid IANA time zone name, else undefined (the system zone). */
 const validZone = (name: string): string | undefined => {
   try { return name ? new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone : undefined; } catch { return undefined; }

@@ -63,3 +63,19 @@ test('an epic block shows a stale-brief badge outside its fold, keeps the brief 
   assert.match(fold!.textContent ?? '', /Rollout plan/);
   cleanup();
 });
+
+test('a stale in-flight row gets its own Stale section, apart from In flight, and no section when there are none (MAESTRO-319)', async () => {
+  const stream = st.streams[0];
+  const h1 = { ...home(), stream } as unknown as StreamHome;
+  const row = { id: 'zz01', stream, text: 'forgotten export', since: '2026-09-30T12:00:00Z', links: { tracker: [], prs: [] } };
+  const titles = (root: ParentNode): string[] => [...root.querySelectorAll('section')].map((s) => (s.querySelector('h2, h3')?.textContent ?? '').split(',')[0].replace(/\d+$/, '').trim());
+  const withStale = await mount<Board>('../src/stream-board.ts', 'stream-board', { state: { ...st, stale: [row] }, home: h1 });
+  withStale.el.setAttribute('stream', stream);
+  assert.ok(titles(withStale.root).includes('Stale'), titles(withStale.root).join('|'));
+  assert.match(withStale.root.textContent ?? '', /forgotten export/);
+  withStale.cleanup();
+  const none = await mount<Board>('../src/stream-board.ts', 'stream-board', { state: st, home: h1 });
+  none.el.setAttribute('stream', stream);
+  assert.ok(!titles(none.root).includes('Stale'));
+  none.cleanup();
+});

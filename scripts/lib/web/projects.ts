@@ -45,13 +45,14 @@ function projectRow(inp: ProjectsInput, stream: string, projects: string[]): Pro
   const { state: st, now } = inp;
   const mine = <T extends { stream: string }>(xs: T[]): T[] => xs.filter((x) => x.stream === stream);
   const asks = mine(st.asks);
-  const open = [...mine(st.working), ...mine(st.blocked)];
+  const inflight = [...mine(st.working), ...mine(st.stale)];   // a stale row is still open, in flight work here
+  const open = [...inflight, ...mine(st.blocked)];
   const ages = [...asks.map((a) => a.ageDays), ...open.flatMap((w) => (w.since && Number.isFinite(Date.parse(w.since)) ? [(now.getTime() - Date.parse(w.since)) / DAY_MS] : []))];
   const days = inp.throughput.filter((d) => (d.byStream[stream] ?? 0) > 0).map((d) => d.date);
   const shippedWeek = inp.throughput.slice(-7).reduce((t, d) => t + (d.byStream[stream] ?? 0), 0);
   const priorities = st.priorities.state === 'ok' ? st.priorities.items : [];
   const rankAt = priorities.findIndex((p) => p.stream === stream);
-  const counts = { asks: asks.length, inflight: mine(st.working).length, blocked: mine(st.blocked).length, prs: mine(st.prs).length };
+  const counts = { asks: asks.length, inflight: inflight.length, blocked: mine(st.blocked).length, prs: mine(st.prs).length };
   return {
     stream, projects, status: statusLine(inp.readNote, projects, rankAt === -1 ? undefined : priorities[rankAt]?.text), rank: rankAt === -1 ? null : rankAt + 1,
     ...counts, oldestOpenDays: ages.length ? Math.max(0, Math.floor(Math.max(...ages))) : null,

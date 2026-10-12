@@ -1,4 +1,5 @@
 import { isOpen } from '../ledger-core.ts';
+import { orphanedParent } from './parent.ts';
 import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
 import type { Store } from './store.ts';
 
@@ -37,7 +38,8 @@ export interface CloseRequest {
 }
 
 export type CloseResult =
-    | { kind: 'closed'; target: LedgerItem; row: LedgerRow; note: string | null }
+    /** `parent` is set when this close left the target's parent open with no other open child: the caller offers to close it. */
+    | { kind: 'closed'; target: LedgerItem; row: LedgerRow; note: string | null; parent?: LedgerItem }
     | { kind: 'already-closed'; target: LedgerItem }
     | { kind: 'not-closable'; target: LedgerItem; reason: string }
     | { kind: 'ambiguous'; matches: LedgerItem[] }
@@ -64,5 +66,6 @@ export function closeItem(ctx: CloseContext, req: CloseRequest): CloseResult {
         ticket: req.ticket || target.ticket,
         ...req.extras?.(),
     });
-    return { kind: 'closed', target, row, note };
+    const parent = orphanedParent(ctx.fold(ctx.readLedger()).items, target);
+    return { kind: 'closed', target, row, note, ...(parent ? { parent } : {}) };
 }

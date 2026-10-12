@@ -24,6 +24,7 @@ gh_org: <github-org>        # PR board scope; the Podium PR list shows only repo
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
+stale_wip_days: 3             # days an in-flight item may have no live lease before it counts as stale; default 3
 autocompact_floor: 100000      # lowest autocompact trigger (tokens) that does not warn; default 100000
 roll_warn_pct: 60              # Session line says "roll soon" at this percent of the autocompact trigger; 1..100, below roll_at_pct; default 60
 roll_at_pct: 90                # ... and "roll now" at this percent; a pair with warn >= roll falls back to 60/90; default 90

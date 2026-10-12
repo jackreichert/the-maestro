@@ -18,6 +18,7 @@ import { footerDone, groups } from '../journal/board.ts';
 import type { Groups } from '../journal/board.ts';
 import { withholdJson } from '../json-out.ts';
 import { statusJson } from '../journal/status-json.ts';
+import { foldLeases, summarizeLeases } from '../journal/leases.ts';
 import { triageItems } from '../journal/triage.ts';
 import { ticketNoteRef } from '../status-page/render.ts';
 import type { PageConfig, Ref } from '../status-page/render.ts';
@@ -39,6 +40,8 @@ export interface WebConfig {
   containerProject?: string;
   /** `priorities_max`: the cap the page shows and the write path enforces. Default 5. */
   prioritiesMax?: number;
+  /** `stale_wip_days`: days an in-flight row may have no live lease before it is listed as stale instead of working. Default 3. */
+  staleWipDays?: number;
   /** `container_root`: the folder whose repos the local review queue reads; absent means the queue says it is not configured. */
   containerRoot?: string;
 }
@@ -60,9 +63,15 @@ export function readBoard(cfg: WebConfig, now: Date): Board {
   const g = groups(ctx);
   const view = footerDone(g, day, { tz: cfg.page.tz });
   const journal = (sub: 'status' | 'triage'): unknown => (sub === 'status'
-    ? statusJson(g, day, NO_SESSION, view.all, view.sinceRoll)
+    ? statusJson(g, day, NO_SESSION, view.all, view.sinceRoll, liveLeases(g, entries, now), cfg.staleWipDays)
     : { items: triageItems({ readLedger: ctx.readLedger, fold: ctx.fold, today: ctx.today, resolveRefFile: () => null }, utcDay, utcDay) });
   return { inputs: gatherInputsCached(cfg.statusDir, cfg.page, { journal, now: () => now }), g };
+}
+
+/** Live leases on the board's open rows, so a row held by a running window is not called stale. */
+function liveLeases(g: Groups, entries: Parameters<typeof foldLeases>[0], now: Date): ReturnType<typeof summarizeLeases> {
+  const open = new Set([...g.inflight, ...g.queued, ...g.blocked].map((i) => i.id));
+  return summarizeLeases(foldLeases(entries), '', now.getTime(), (id) => open.has(id));
 }
 
 const toRef = ({ label, url }: Ref): { label: string; url?: string } => (url === undefined ? { label } : { label, url });
@@ -87,13 +96,13 @@ function readFragments(statusDir: string, tabs: string[]): Record<string, string
 /** The reducer's state in the client's contract, with fragments and the content hash. */
 function toWire(cfg: WebConfig, s: ReducedState): PodiumState {
   const work = (w: ReducedWork): WorkItem => wireWork(cfg.page, w);
-  const footer: FooterRow[] = s.footer.map((r) => ({ stream: r.name ?? 'all', asks: r.awaiting + r.paste, working: r.inflight, queued: r.queued, blocked: r.blocked, done: r.done }));
+  const footer: FooterRow[] = s.footer.map((r) => ({ stream: r.name ?? 'all', asks: r.awaiting + r.paste, working: r.inflight, ...(r.stale ? { stale: r.stale } : {}), queued: r.queued, blocked: r.blocked, done: r.done }));
   const asks: AskCard[] = s.asks.map((a) => ({ ...a, ts: a.ts ?? '' }));
   const blocked: BlockedItem[] = s.blocked.map((b) => ({ ...work(b), ...(b.gate ? { gate: b.gate } : {}) }));
   const done: DoneItem[] = s.done.map((d) => ({ ...work(d), closedAt: d.closedAt ?? '' }));
   const deferred: DeferredItem[] = s.deferred.map((d) => ({ ...work(d), until: d.until }));
   const { generatedAt, ...body } = withholdJson({   // withheld before the hash, so `seq` names the bytes the client receives
-    ...s, footer, asks, prs: s.prs.map((p) => ({ ...p, review: p.review ?? '' })), blocked, done, deferred, working: s.working.map(work), queued: s.queued.map(work),
+    ...s, footer, asks, prs: s.prs.map((p) => ({ ...p, review: p.review ?? '' })), blocked, done, deferred, working: s.working.map(work), stale: s.stale.map(work), queued: s.queued.map(work),
     fragments: readFragments(cfg.statusDir, ['overview', ...s.streams]),
   }) as Omit<PodiumState, 'generatedAt' | 'prioritiesMax' | 'seq'> & { generatedAt: string };
   return { generatedAt, ...body, prioritiesMax: cfg.prioritiesMax ?? DEFAULT_PRIORITIES_MAX, seq: createHash('sha1').update(JSON.stringify(body)).digest('hex').slice(0, 12) };
@@ -109,7 +118,7 @@ export function buildStream(cfg: WebConfig, name: string, now: Date = new Date()
   const s = buildState(cfg, now);
   if (!s.streams.includes(name)) return null;
   const mine = <T extends { stream: string }>(rows: T[]): T[] => rows.filter((r) => r.stream === name);
-  return { ...s, asks: mine(s.asks), working: mine(s.working), queued: mine(s.queued), blocked: mine(s.blocked), done: mine(s.done), deferred: mine(s.deferred), prs: mine(s.prs), footer: mine(s.footer), fragments: s.fragments && name in s.fragments ? { [name]: s.fragments[name] as string } : {} };
+  return { ...s, asks: mine(s.asks), working: mine(s.working), stale: mine(s.stale), queued: mine(s.queued), blocked: mine(s.blocked), done: mine(s.done), deferred: mine(s.deferred), prs: mine(s.prs), footer: mine(s.footer), fragments: s.fragments && name in s.fragments ? { [name]: s.fragments[name] as string } : {} };
 }
 
 /** The chart data for the last `days` days (the caller clamps the range). Done items carry their ticket note as a link, like the board's rows. */
