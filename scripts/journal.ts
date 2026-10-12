@@ -211,6 +211,7 @@ import { listWatches, lockHolder } from './lib/watch-registry.ts';
 import { daysBefore, maintainLine } from './lib/journal/maintain.ts';
 import type { MaintainResult } from './lib/journal/maintain.ts';
 import { acquireLock as acquireMaintainLock, processAlive } from './lib/status-page/lock.ts';
+import { printJson } from './lib/json-out.ts';
 
 const DEFAULT_LEDGER_ROOT = LEDGER_ROOT || VAULT_ROOT;
 const KINDS = ['wip', 'done', 'blocked', 'question', 'decision', 'note', 'resolved', 'dropped', 'rolled', 'stamp', 'tag', 'approval-tag', 'ref', 'learned', 'curated', 'rework'];
@@ -818,7 +819,7 @@ function cmdApprovals() {
     const window = approvalsWindow({ arg, has, die, today });
     const g = collectApprovals(readLedger(), window);
     const week = isoWeek(window.until);
-    if (asJson) { console.log(JSON.stringify({ ...window, week, ...g }, null, 2)); return; }
+    if (asJson) { printJson({ ...window, week, ...g }); return; }
     const body = approvalsText(g, window, week, today);
     if (dryRun) { console.log(body); return; }
     const path = arg('out') || join(ticketsBase(), 'Projects', project, 'Reviews', `approvals-${week}.md`);
@@ -895,7 +896,7 @@ function cmdStatus() {
     const done = view.all;
 
     if (asJson) {
-        console.log(JSON.stringify(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g)), null, 2));
+        printJson(statusJson(g, d, sessionStatus(CLAUDE_PROJECTS_DIR), done, view.sinceRoll, leaseSummary(g)));
         return;
     }
 
@@ -957,7 +958,7 @@ function cmdReviewQueue() {
     const capArg = arg('cap');
     if (has('cap') && !(capArg !== null && /^\d+$/.test(capArg) && Number(capArg) > 0)) { console.error('--cap must be a positive whole number.'); process.exit(2); }
     const reading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(freshestSnapshotPath(vault)) }, capArg === null ? REVIEW_QUEUE_CAP : Number(capArg), new Date(), SELF_REVIEW_REPOS);
-    if (asJson) console.log(JSON.stringify(reading, null, 2)); else queueText(reading).forEach((l) => console.log(l));
+    if (asJson) printJson(reading); else queueText(reading).forEach((l) => console.log(l));
     // Not process.exit: it drops output a pipe has not yet taken, so a slow reader would see a cut answer.
     process.exitCode = queueExitCode(reading);
 }
@@ -1162,7 +1163,7 @@ function sinceDay(raw: string | undefined): string | undefined {
 function cmdNotesCheck() {
     const r = notesCheck(has('all') ? undefined : arg('since') ? sinceDay(arg('since') || undefined) : notesWindow());
     if (!r) { console.error(`notes-check: ${NO_VAULT_DETAIL}`); process.exit(2); }
-    if (asJson) console.log(JSON.stringify(r, null, 2)); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
+    if (asJson) printJson(r); else { reachabilityLines(r.report, Infinity).forEach((l) => console.log(l)); r.unreadable.forEach((u) => console.log(`could not be checked: ${u}`)); }
     // exitCode, not exit(): exiting right after a large write to a pipe cuts the output off at the pipe buffer.
     process.exitCode = r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0;
 }
@@ -1239,11 +1240,11 @@ function cmdTriage() {
         });
         appendMany(rows);
         if (!dryRun && rows.length) render(true);
-        if (asJson) console.log(JSON.stringify({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs?.[0] })), report: { ...t, items: undefined, byBox: undefined } }, null, 2));
+        if (asJson) printJson({ applied: rows.map((r) => ({ id: r.closes, ref: r.refs?.[0] })), report: { ...t, items: undefined, byBox: undefined } });
         else console.log(`triage --apply: closed ${rows.length} recorded item(s)${dryRun ? ' (dry-run)' : ''}; ${t.items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).length} still need a ref file.`);
         return;
     }
-    if (asJson) { console.log(JSON.stringify(t, null, 2)); return; }
+    if (asJson) { printJson(t); return; }
     triageLines(t).forEach((l) => console.log(l));
 }
 
@@ -1266,7 +1267,7 @@ function triageBeforeRoll(d: string): void {
 
 function cmdVerify() {
     const { rows, problems } = verifyLedger();
-    if (asJson) console.log(JSON.stringify({ ledger: ledgerPath, rows, problems }, null, 2));
+    if (asJson) printJson({ ledger: ledgerPath, rows, problems });
     else {
         console.log(`verify: ${rows} row(s), ${problems.length} problem(s)  (${ledgerPath})`);
         problems.slice(0, 50).forEach((p) => console.log(`  line ${p.line}${p.id ? ` [${p.id}]` : ''}: ${p.problem}`));
@@ -1336,7 +1337,7 @@ function cmdUsage() {
     }
     const sorted = (m: Map<string, number>) => [...m].sort((a, b) => b[1] - a[1]);
     if (asJson) {
-        console.log(JSON.stringify({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) }, null, 2));
+        printJson({ items: pool.length, model: Object.fromEntries(sorted(models)), used: Object.fromEntries(sorted(used)) });
         return;
     }
     console.log(`Usage marks — ${pool.length} item(s)${has('open') ? ' open' : ''}`);
@@ -1380,7 +1381,7 @@ function cmdStreams() {
             aliases: reg?.streams[name]?.aliases || [],
             ...tally(items.filter((i) => i.stream === name)),
         }));
-        if (asJson) { console.log(JSON.stringify({ registry: reg ? registryPath : null, streams: rows }, null, 2)); return; }
+        if (asJson) { printJson({ registry: reg ? registryPath : null, streams: rows }); return; }
         console.log(reg ? `Registry: ${registryPath}` : `No registry at ${registryPath} (streams are free text).`);
         for (const r of rows) {
             console.log(`  ${r.stream}  [${r.status}]  open ${r.open} · done ${r.done} · dropped ${r.dropped} · total ${r.total}${r.aliases.length ? `  aliases: ${r.aliases.join(', ')}` : ''}`);
@@ -1425,7 +1426,7 @@ function cmdStreams() {
         }
         const rowsWithOldSpelling = entries.filter((e) => e.stream && mapStream(e.stream) !== e.stream).length;
         const total = [...changes.values()].reduce((a, b) => a + b, 0);
-        if (asJson) { console.log(JSON.stringify({ items: total, rows: rowsWithOldSpelling, changes: Object.fromEntries(changes) }, null, 2)); return; }
+        if (asJson) { printJson({ items: total, rows: rowsWithOldSpelling, changes: Object.fromEntries(changes) }); return; }
         console.log(`${total} item(s) would change display stream (${rowsWithOldSpelling} ledger row(s) carry a non-canonical spelling); nothing appended.`);
         for (const [k, n] of changes) console.log(`  ${String(n).padStart(4)}  ${k}`);
         return;
@@ -1489,7 +1490,7 @@ function cmdModels() {
             aliases: meta?.aliases || [],
             rows: [...rowCounts].filter(([raw]) => canonicalModel(reg, raw) === id).reduce((a, [, n]) => a + n, 0),
         }));
-        if (asJson) { console.log(JSON.stringify({ registry: reg?.models ? registryPath : null, models: rows }, null, 2)); return; }
+        if (asJson) { printJson({ registry: reg?.models ? registryPath : null, models: rows }); return; }
         console.log(reg?.models ? `Model registry: ${registryPath}` : `No models section in ${registryPath} (model names are free text).`);
         for (const r of rows) console.log(`  ${r.model}  rows ${r.rows}${r.aliases.length ? `  aliases: ${r.aliases.join(', ')}` : ''}`);
         return;
@@ -1520,7 +1521,7 @@ function cmdModels() {
             return { model: raw, rows: n, canonical: canon, status };
         });
         const would = rows.filter((r) => r.status === 'alias');
-        if (asJson) { console.log(JSON.stringify({ rows: would.reduce((a, r) => a + r.rows, 0), models: rows }, null, 2)); return; }
+        if (asJson) { printJson({ rows: would.reduce((a, r) => a + r.rows, 0), models: rows }); return; }
         console.log(`${would.reduce((a, r) => a + r.rows, 0)} row(s) would show under a different model name; nothing appended.`);
         for (const r of rows) console.log(`  ${String(r.rows).padStart(5)}  ${r.model}  [${r.status}]${r.status === 'alias' ? ` -> ${r.canonical}` : ''}`);
         return;
@@ -1684,7 +1685,7 @@ function cmdQuery() {
     const problem = filterProblem(filter, rawLimit);
     if (problem) die(`${problem}\nUsage: journal.ts query [--stream S] [--id X] [--status ${QUERY_STATUSES.join('|')}] [--date D | --since D --until D] [--model M] [--limit N] [--json]`);
     const result = queryItems(fold(readLedger()).items, filter);
-    if (asJson) console.log(JSON.stringify(result, null, 2)); else queryLines(result).forEach((l) => console.log(l));
+    if (asJson) printJson(result); else queryLines(result).forEach((l) => console.log(l));
 }
 
 /** `ready-to-push`: held branches across the container's repos (or `--repo`). Reads git only; never fetches, never pushes. */
@@ -1694,7 +1695,7 @@ function cmdReadyToPush() {
     const only = arg('repo') ?? undefined;
     if (only) validRepo(only);
     const held = containerRepos(CONTAINER_ROOT, only).flatMap(([name, dir]) => heldBranches(dir, name, { emails: GIT_EMAILS, protectedNames: PROTECTED_BRANCHES, keyPattern: TRACKER_KEY_PATTERN }));
-    if (asJson) console.log(JSON.stringify({ held }, null, 2)); else heldLines(held).forEach((l) => console.log(l));
+    if (asJson) printJson({ held }); else heldLines(held).forEach((l) => console.log(l));
 }
 
 function cmdClaims() {
@@ -1707,7 +1708,7 @@ function cmdClaims() {
         const st = claimStaleness(c, hours);
         return { repo, scope: scope ?? null, key, desk: c?.desk ?? null, pid: c?.pid ?? null, host: c?.host ?? null, time: c?.time ?? null, branch: c?.branch ?? null, ageHours: Number.isFinite(st.ageHours) ? Math.round(st.ageHours * 10) / 10 : null, stale: st.stale, reason: st.reason };
     });
-    if (asJson) { console.log(JSON.stringify({ staleHours: hours, claims: rows }, null, 2)); return; }
+    if (asJson) { printJson({ staleHours: hours, claims: rows }); return; }
     if (!rows.length) { console.log('No claims.'); return; }
     for (const r of rows) console.log(`  ${r.key}  desk ${r.desk ?? '?'}  pid ${r.pid ?? 'unknown'}  ${r.host ?? '?'}  ${r.ageHours ?? '?'}h${r.branch ? `  ${r.branch}` : ''}${r.stale ? `  STALE (${r.reason})` : ''}`);
 }
@@ -1935,7 +1936,7 @@ function cmdBackfill() {
         writeFileSync(outPath, ['---', 'type: backfill-report', `generated: ${today()}`, '---', '', '# Backfill dry run', '', ...table, ''].join('\n'));
     }
     if (asJson) {
-        console.log(JSON.stringify({ untagged, proposed: proposed.length, noProposal, byConfidence: perConf, byStream: perStream }, null, 2));
+        printJson({ untagged, proposed: proposed.length, noProposal, byConfidence: perConf, byStream: perStream });
         return;
     }
     console.log(`Backfill dry run: ${untagged} untagged item(s); ${proposed.length} with a proposal, ${noProposal} with none. Nothing appended.`);
@@ -2164,7 +2165,7 @@ function cmdPriorities() {
     } else if (sub === 'show') {
         const target = arg('repo');
         const state = target ? readProjectState(target, day) : readPriorities(dirPath, day);
-        if (asJson) console.log(JSON.stringify(state, null, 2)); else showLines(state).forEach((l) => console.log(l));
+        if (asJson) printJson(state); else showLines(state).forEach((l) => console.log(l));
     } else die('Usage: journal.ts priorities set "<text>" ["<text> | <Stream>" ...] | priorities show [--repo <repo>]');
 }
 
@@ -2229,7 +2230,7 @@ function cmdStartHere() {
     const priorities = dirPath ? readPriorities(dirPath, local) : { state: 'missing' as const };
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
     const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), now: nowAt });
-    if (asJson) console.log(JSON.stringify(s, null, 2));
+    if (asJson) printJson(s);
     else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(withhold(l)));
 }
 
@@ -2244,7 +2245,7 @@ function cmdWeek() {
         try { console.log(`wrote ${writeWeek(dirPath, day, words.map(parsePriority))}`); } catch (e) { die(errorMessage(e)); }
     } else if (sub === 'show') {
         const state = readWeek(dirPath, day);
-        if (asJson) console.log(JSON.stringify(state, null, 2)); else weekLines(state).forEach((l) => console.log(l));
+        if (asJson) printJson(state); else weekLines(state).forEach((l) => console.log(l));
     } else die('Usage: journal.ts week set "<goal>" ["<goal> | <Stream>" ...] | week show');
 }
 
@@ -2299,7 +2300,7 @@ function cmdStanding() {
     if (sub === 'list' || sub === 'check') {
         const states = standingStates();
         const attention = states.filter((s) => s.status !== 'ok');
-        if (asJson) console.log(JSON.stringify({ rows: states, attention: attention.length }, null, 2));
+        if (asJson) printJson({ rows: states, attention: attention.length });
         else (sub === 'list' ? states : attention).forEach((s) => console.log(rowLine(s)));
         if (!asJson && sub === 'check' && !attention.length) console.log('All standing pickups are current.');
         if (sub === 'check' && attention.length) process.exitCode = 1;
@@ -2337,7 +2338,7 @@ function cmdTickets() {
     const since = arg('since', defaultPendingSince());
     if (!isDate(since)) die('--since must be YYYY-MM-DD.');
     const rows = pendingTransitions(since);
-    if (asJson) { console.log(JSON.stringify({ since, pending: rows }, null, 2)); return; }
+    if (asJson) { printJson({ since, pending: rows }); return; }
     console.log(rows.length ? `Done items whose tracker transition is not recorded (since ${since}):` : `No pending tracker transitions since ${since}.`);
     rows.forEach((r) => console.log(`  ${r.key}  ${r.id}  done ${r.doneOn}  ${clip(r.text, 90)}`));
     if (rows.length) console.log('Move each ticket, then: journal.ts log "moved <KEY> to <status>" --transitioned <KEY> ...');
