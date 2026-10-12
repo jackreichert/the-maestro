@@ -13,7 +13,14 @@ import type { JobStatus } from './suite-run.ts';
 const ROOT = new URL('..', import.meta.url).pathname;
 const SCRIPT = join(ROOT, 'scripts', 'suite-run.ts');
 /** Tests must never touch a live ledger. Run them with a throwaway HOME, MAESTRO_EVENT_DIR and MAESTRO_SUITE_DIR; whatever the code under test resolves by default must then sit under a temp dir, on any machine. */
-const underTemp = (p: string): boolean => { const root = realpathSync(tmpdir()); const real = existsSync(p) ? realpathSync(p) : join(realpathSync(dirname(p)), basename(p)); return real === root || real.startsWith(`${root}${sep}`); };
+/** realpath of a path that may not exist yet: resolve the nearest existing ancestor, then re-append the missing tail. */
+const resolveMissing = (p: string): string => (existsSync(p) ? realpathSync(p) : join(resolveMissing(dirname(p)), basename(p)));
+const underTemp = (p: string): boolean => { const root = realpathSync(tmpdir()); const real = resolveMissing(p); return real === root || real.startsWith(`${root}${sep}`); };
+test('a default dir whose parents do not exist is judged without throwing, and a live-ledger path still fails', () => {
+  const home = mkdtempSync(join(tmpdir(), 'suite-fixture-home-'));
+  assert.ok(underTemp(join(home, '.local', 'state', 'the-maestro')), 'a missing dir under a temp HOME is under a temp dir');
+  assert.equal(underTemp(join(ROOT, '.no-such-dir-maestro-340', 'x')), false, 'a missing dir outside tmp is reported as not under a temp dir');
+});
 test('the default event dir and suite dir resolve under a temp dir, so no registration can reach a live ledger', () => {
   assert.ok(underTemp(EVENT_DIR), `event dir ${EVENT_DIR} is not under a temp dir; run with MAESTRO_EVENT_DIR set to one`);
   assert.ok(underTemp(suitesDir()), `suite dir ${suitesDir()} is not under a temp dir; run with MAESTRO_SUITE_DIR set to one`);

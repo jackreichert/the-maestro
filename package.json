@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit && tsc -p scripts/web/client/tsconfig.json --noEmit && tsc -p scripts/web/client/tsconfig.dom-tests.json",
     "build:web": "tsc -p scripts/web/client/tsconfig.json",
     "web:static": "npm run build:web && node scripts/web/serve-static.ts",
-    "test": "MAESTRO_LOCAL_CONFIG= MAESTRO_STATUS_DIR=\"$(mktemp -d)\" NODE_COMPILE_CACHE=\"$(mktemp -d)\" GIT_ALLOW_PROTOCOL=file node --test 'scripts/**/*.test.ts'"
+    "test": "MAESTRO_LOCAL_CONFIG= MAESTRO_STATUS_DIR=\"$(mktemp -d)\" MAESTRO_EVENT_DIR=\"$(mktemp -d)\" MAESTRO_SUITE_DIR=\"$(mktemp -d)\" NODE_COMPILE_CACHE=\"$(mktemp -d)\" GIT_ALLOW_PROTOCOL=file node --test 'scripts/**/*.test.ts'"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
