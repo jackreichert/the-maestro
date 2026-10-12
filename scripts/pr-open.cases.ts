@@ -2,7 +2,8 @@
 import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { bodyProblems, type BodyRules } from './pr-body.ts';
@@ -34,8 +35,7 @@ function fixture(files: Record<string, string>) {
     git(repo, 'commit', '-q', '-m', 'change');
     const log = join(tmpdir(), `gh-${Math.random().toString(36).slice(2)}.log`);
     const gh = join(repo, '..', `fake-gh-${Math.random().toString(36).slice(2)}.sh`);
-    writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`);
-    chmodSync(gh, 0o755);
+    writeStub(gh, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`);
     return { repo, log, gh };
 }
 

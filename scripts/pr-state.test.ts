@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildState, parseRef } from './pr-state.ts';
@@ -26,14 +27,13 @@ const state = (over: Record<string, unknown>) => buildState({ repo: 'o/r', numbe
 function run(fixtures: Record<number, unknown>, ...args: string[]) {
   const dir = mkdtempSync(join(tmpdir(), 'pr-state-'));
   writeFileSync(join(dir, 'fixtures.json'), JSON.stringify(fixtures));
-  writeFileSync(join(dir, 'gh'), `#!${process.execPath}
+  writeStub(join(dir, 'gh'), `#!${process.execPath}
 const f = JSON.parse(require('node:fs').readFileSync(${JSON.stringify(join(dir, 'fixtures.json'))}, 'utf8'));
 const a = process.argv.slice(2);
 const n = a.find((x) => x.startsWith('number=')).slice(7);
 if (!f[n]) { console.error('GraphQL: Could not resolve to a PullRequest'); process.exit(1); }
 console.log(JSON.stringify({ data: { repository: { pullRequest: f[n] } } }));
 `);
-  chmodSync(join(dir, 'gh'), 0o755);
   return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } });
 }
 

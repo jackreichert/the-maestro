@@ -1,7 +1,8 @@
 // Run: node --test scripts/status-refresh-snapshot.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
@@ -14,8 +15,7 @@ process.env.LEDGER_ROOT = ledger;
 // reaches for the real gh (a 60 s network call under load) trips the marker and fails the suite instead of timing out.
 const realGhCalled = join(mkdtempSync(join(tmpdir(), 'sr-snap-realgh-')), 'called');
 const poisonDir = mkdtempSync(join(tmpdir(), 'sr-snap-poison-'));
-writeFileSync(join(poisonDir, 'gh'), `#!/bin/sh\ntouch '${realGhCalled}'\nexit 1\n`);
-chmodSync(join(poisonDir, 'gh'), 0o755);
+writeStub(join(poisonDir, 'gh'), `#!/bin/sh\ntouch '${realGhCalled}'\nexit 1\n`);
 process.env.PATH = `${poisonDir}:${process.env.PATH}`;
 const withStub = (config: Parameters<typeof installGhStub>[0]): void => {
   const env = installGhStub(config);

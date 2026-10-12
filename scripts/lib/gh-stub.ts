@@ -7,7 +7,8 @@
  * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
  * `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { writeStub } from './stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,8 +37,7 @@ else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPE
 /** Writes the stub and returns an env (PATH + config) for spawning a script against it. */
 export function installGhStub(config: GhStubConfig): NodeJS.ProcessEnv {
   const dir = mkdtempSync(join(tmpdir(), 'gh-stub-'));
-  writeFileSync(join(dir, 'gh'), STUB);
-  chmodSync(join(dir, 'gh'), 0o755);
+  writeStub(join(dir, 'gh'), STUB);
   const configPath = join(dir, 'config.json');
   writeFileSync(configPath, JSON.stringify(config));
   return { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_STUB_CONFIG: configPath, MAESTRO_LOCAL_CONFIG: '', MAESTRO_WATCH_QUIET_HOURS: 'off' };

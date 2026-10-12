@@ -2,7 +2,8 @@
 import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -893,8 +894,7 @@ test('--apply-worktrees from the command line removes what qualifies and prints 
 function withFailingGit<T>(w: World, pattern: string, fn: () => T): T {
     const bin = join(w.root, 'shim'); mkdirSync(bin, { recursive: true });
     const real = must(process.env.PATH, 'PATH').split(':').map((d) => join(d, 'git')).find((p) => existsSync(p));
-    writeFileSync(join(bin, 'git'), `#!/bin/bash\ncase " $* " in *" ${pattern} "*) echo "injected failure" >&2; exit 1;; esac\nexec ${must(real, 'real git')} "$@"\n`);
-    chmodSync(join(bin, 'git'), 0o755);
+    writeStub(join(bin, 'git'), `#!/bin/bash\ncase " $* " in *" ${pattern} "*) echo "injected failure" >&2; exit 1;; esac\nexec ${must(real, 'real git')} "$@"\n`);
     const saved = process.env.PATH;
     process.env.PATH = `${bin}:${saved}`;
     try { return fn(); } finally { process.env.PATH = saved; }

@@ -4,6 +4,7 @@ import { test } from './lib/shard.ts';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
 import { cpSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, utimesSync, realpathSync, symlinkSync, renameSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { installGhStub, prNode } from './lib/gh-stub.ts';
@@ -2098,7 +2099,7 @@ const inDays = (n: number): string => new Date(Date.now() + n * 864e5).toISOStri
 /** A fake `gh` on PATH answering `pr view <n> --repo <r> --json ...` from the env var STUB_STATE (a bare state, or 'fail'). */
 function ghStubDir() {
     const dir = mkdtempSync(join(tmpdir(), 'journal-gh-'));
-    writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`, { mode: 0o755 });
+    writeStub(join(dir, 'gh'), `#!${process.execPath}\nconst s = process.env.STUB_STATE || 'OPEN';\nif (process.argv[2] === 'pr' && process.argv[3] === 'list') { console.log('[]'); process.exit(0); }\nif (s === 'fail') { console.error('boom'); process.exit(1); }\nconsole.log(JSON.stringify({ state: s, mergedAt: s === 'MERGED' ? '2026-10-02T00:00:00Z' : null, args: process.argv.slice(2) }));\n`);
     return dir;
 }
 

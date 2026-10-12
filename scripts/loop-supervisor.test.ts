@@ -3,7 +3,8 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess, StdioOptions } from 'node:child_process';
-import { chmodSync, closeSync, rmSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, rmSync, readdirSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -97,8 +98,7 @@ test('quiet-hours parsing: next occurrence in the zone, wrap past midnight, 12h 
 /** An executable fake loop that prints a digest and exits 10. */
 function fakeLoop(dir: string): string {
   const bin = join(dir, 'fake-loop.sh');
-  writeFileSync(bin, '#!/bin/sh\necho "ACTION w1 (fake): changed"\nexit 10\n');
-  chmodSync(bin, 0o755);
+  writeStub(bin, '#!/bin/sh\necho "ACTION w1 (fake): changed"\nexit 10\n');
   return bin;
 }
 /** Every env a real supervisor or installer ran with; the `after` hook below fails the file if any of them reached a notify command. */
@@ -170,8 +170,7 @@ test('SIGTERM to the supervisor is forwarded to the loop and the supervisor exit
   const dir = tempDir();
   const marker = join(dir, 'marker');
   const bin = join(dir, 'slow-loop.sh');
-  writeFileSync(bin, `#!/bin/sh\ntrap 'echo term >> "${marker}"; exit 143' TERM\necho started >> "${marker}"\nwhile :; do sleep 0.1; done\n`);
-  chmodSync(bin, 0o755);
+  writeStub(bin, `#!/bin/sh\ntrap 'echo term >> "${marker}"; exit 143' TERM\necho started >> "${marker}"\nwhile :; do sleep 0.1; done\n`);
   const { p, closed } = startSupervisor(envFor(tempDir(), { MAESTRO_LOOP_BIN: bin }));
   try {
     assert.equal(await waitFor(() => existsSync(marker)), true, 'the loop never started');
@@ -189,8 +188,7 @@ test('a quiet-hours stop sleeps in quiet mode, a crash or refusal in backoff mod
 test('the real supervisor heartbeats while it waits, as itself, in idle mode', async () => {
   const ledger = tempDir();
   const bin = join(tempDir(), 'exit0.sh');
-  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
-  chmodSync(bin, 0o755);
+  writeStub(bin, '#!/bin/sh\nexit 0\n');
   const { p, closed } = startSupervisor(envFor(ledger, { MAESTRO_LOOP_BIN: bin }));
   try {
     const file = join(ledger, 'Events', 'heartbeat.json');
@@ -277,8 +275,7 @@ test('the real supervisor launches the loop in serve mode', () => {
   const ledger = tempDir();
   const dir = tempDir();
   const bin = join(dir, 'args-loop.sh');
-  writeFileSync(bin, `#!/bin/sh\necho "$@" > "${join(dir, 'args')}"\necho "ACTION w1 (fake): x"\nexit 10\n`);
-  chmodSync(bin, 0o755);
+  writeStub(bin, `#!/bin/sh\necho "$@" > "${join(dir, 'args')}"\necho "ACTION w1 (fake): x"\nexit 10\n`);
   const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(join(dir, 'args'), 'utf8').trim(), 'run --serve');
@@ -304,8 +301,7 @@ test('the real supervisor kills a loop that is alive but silent, then relaunches
 test('the real supervisor rotates its log when it is over the limit, keeping the old text in .1', async () => {
   const ledger = tempDir();
   const bin = join(tempDir(), 'exit0.sh');
-  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
-  chmodSync(bin, 0o755);
+  writeStub(bin, '#!/bin/sh\nexit 0\n');
   const log = supervisorLogPath(ledger, 'proj');
   mkdirSync(dirname(log), { recursive: true });
   writeFileSync(log, 'old line\n'.repeat(200));
@@ -325,8 +321,7 @@ test('the real supervisor moves a digest that was already saved and unseen into 
   const dir = digestDir(ledger, 'proj');
   saveDigest(dir, 'ACTION w9 (fake): left over from an older loop');
   const bin = join(tempDir(), 'exit10.sh');
-  writeFileSync(bin, '#!/bin/sh\nexit 10\n');
-  chmodSync(bin, 0o755);
+  writeStub(bin, '#!/bin/sh\nexit 10\n');
   const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', timeout: PATIENCE_MS, env: envFor(ledger, { MAESTRO_LOOP_BIN: bin, MAESTRO_SUPERVISOR_MAX_RUNS: '1' }) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(unseenDigests(dir).length, 0);

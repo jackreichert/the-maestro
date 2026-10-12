@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +33,7 @@ test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and k
     const bin = join(tmp, 'bin');
     mkdirSync(bin);
     const pidfile = join(tmp, 'git.pid');
-    writeFileSync(join(bin, 'git'), `#!/bin/sh\necho $$ > '${pidfile}'\nexec sleep 300\n`, { mode: 0o755 });
+    writeStub(join(bin, 'git'), `#!/bin/sh\necho $$ > '${pidfile}'\nexec sleep 300\n`);
     const scratch = join(tmp, 'tmpdir');
     mkdirSync(scratch);
     const child = spawn(process.execPath, [fileURLToPath(new URL('./fresh-install-smoke.ts', import.meta.url))], {

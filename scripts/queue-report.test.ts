@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeStub } from './lib/stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,8 +20,7 @@ function ledgerWith(rows: object[]): { vault: string; ledger: string } {
 /** A fake gh: PR 483 is MERGED, anything else OPEN. */
 function fakeGh(): string {
     const f = join(mkdtempSync(join(tmpdir(), 'qr-gh-')), 'gh');
-    writeFileSync(f, `#!/bin/sh\ncase "$3" in 483) echo MERGED;; *) echo OPEN;; esac\n`);
-    chmodSync(f, 0o755);
+    writeStub(f, `#!/bin/sh\ncase "$3" in 483) echo MERGED;; *) echo OPEN;; esac\n`);
     // The first run of a freshly written executable can stall for seconds under load (a security scan), past the report's per-lookup timeout; warm it here.
     spawnSync(f, ['pr', 'view', '0'], { timeout: 60_000 });
     return f;
