@@ -1073,7 +1073,8 @@ function deadlineRun(totalMs: number): Run {
     return (cmd, args) => {
         const left = end - Date.now();
         if (left <= 0) return { status: null, stdout: '', stderr: 'timed out' };
-        const r = spawnSync((cmd === 'gh' && process.env.MAESTRO_GH_BIN) || cmd, args, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
+        const [bin, binArgs] = toolCommand(cmd, args);
+        const r = spawnSync(bin, binArgs, { encoding: 'utf8', timeout: left, maxBuffer: 32 * 1024 * 1024 });
         return { status: r.status, stdout: r.stdout ?? '', stderr: r.error ? r.error.message : r.stderr ?? '' };
     };
 }
