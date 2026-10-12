@@ -118,3 +118,21 @@ test('status --footer counts the rules that bind the window, never their text', 
     assert.match(b, /\*\*Rules:\*\* 1 binding here \(0 this window, 1 global\); 1 rule scoped to other windows \(FYI\)/);
     assert.doesNotMatch(b + a, /WINDOW-ONLY|GLOBAL branch/);
 });
+
+for (const lift of ['drop', 'resolve']) {
+    test(`a rule that was ${lift === 'drop' ? 'dropped' : 'resolved'} stops binding in prime, status and the footer, for its own window and others`, () => {
+        const made = runAs('winA', 'rule', 'WINDOW-ONLY pause pushes', '--ref', memo(), '--scope', 'window', ...MARK);
+        const id = made.out.trim().split(/\s+/)[1] ?? '';
+        assert.equal(runAs('winA', 'rule', 'GLOBAL keep going', '--ref', memo(), '--scope', 'global', ...MARK).code, 0);
+        assert.match(runAs('winA', 'prime').out, /WINDOW-ONLY/);
+        assert.equal(runAs('winA', lift, id, 'lifted', ...MARK).code, 0);
+        for (const w of ['winA', 'winB']) {
+            for (const view of [['prime'], ['status'], ['status', '--footer']]) {
+                const out = runAs(w, ...view).out;
+                assert.doesNotMatch(out, /WINDOW-ONLY/, `${w} ${view.join(' ')}`);
+                assert.doesNotMatch(out, /scoped to other windows/, `${w} ${view.join(' ')}: a lifted rule is not even an FYI`);
+            }
+        }
+        assert.match(runAs('winB', 'prime').out, /GLOBAL keep going/);
+    });
+}
