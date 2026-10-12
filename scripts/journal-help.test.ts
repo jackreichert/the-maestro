@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { COMMANDS } from './lib/journal/help.ts';
+import { COMMANDS, GLOBAL_FLAGS } from './lib/journal/help.ts';
 
 const SCRIPT = new URL('./journal.ts', import.meta.url).pathname;
 
@@ -147,4 +147,25 @@ test('a flag first still names the command: -h roll and --help roll print roll u
         assert.doesNotMatch(r.out, /journal\.ts standup /);
     }
     assert.deepEqual(snapshot(s.root), before);
+}));
+
+test('every --flag in the table is read by journal code through arg(), has() or parseList()', () => {
+    const dir = new URL('./lib/journal/', import.meta.url).pathname;
+    const files = [SCRIPT, ...readdirSync(dir).filter((f) => f.endsWith('.ts')).filter((f) => f !== 'help.ts').map((f) => join(dir, f))];
+    const code = files.map((f) => readFileSync(f, 'utf8')).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    // A flag is read when journal code calls an accessor with its name, scans argv for the literal `--name`, or names it in a list
+    // of flags it forwards or validates (`['port', 'status-dir']`, the ask rules). help.ts is left out so the table cannot vouch for itself.
+    const read = (name: string): boolean => new RegExp(`\\b(arg|has|parseList|flag)\\(\\s*['"\`]${name}['"\`]|['"]--${name}['"]|['"]${name}['"]`).test(code);
+    const missing: string[] = [];
+    for (const c of [...COMMANDS, { name: '(every command)', flags: GLOBAL_FLAGS }]) {
+        for (const [f] of c.flags) for (const m of f.matchAll(/--([a-z][a-z-]*)/g)) if (m[1] !== 'help' && !read(m[1] as string)) missing.push(`${c.name}: --${m[1]}`);
+    }
+    assert.deepEqual(missing, [], 'listed in the help table but nothing in journal code reads them');
+});
+
+test('the global --project line is printed for commands that need a project, and not for autopull, settings or web', () => inSandbox((s) => {
+    for (const c of COMMANDS) {
+        const out = run(s, [c.name, '--help']).out;
+        assert.equal(out.includes('--project <name>'), !['autopull', 'settings', 'web'].includes(c.name), c.name);
+    }
 }));
