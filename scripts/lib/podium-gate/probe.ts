@@ -19,7 +19,7 @@ export function httpProbe(base: string, rule: Probe['plainLanguageRule'] = libra
 /** Whether this checkout's library check carries the plain-language rule and the rule flags a bare ticket id (and spares one cited as evidence). */
 export async function libraryRule(): Promise<'absent' | 'works' | 'broken'> {
   try {
-    const m = (await import('../library/rules.ts')) as { RULES?: { id: string }[]; bareIds?: (line: string, repos: ReadonlySet<string>) => string[] };
+    const m = (await import('../library/rules.ts')) as unknown as { RULES?: readonly { id: string }[]; bareIds?: (line: string, repos: ReadonlySet<string>) => string[] };
     if (!m.RULES?.some((r) => r.id === 'plain-language') || typeof m.bareIds !== 'function') return 'absent';
     const flagged = m.bareIds('- The sync follows MAESTRO-149 here.', new Set());
     const spared = m.bareIds('- The sync retries nightly (verified 2026-10-08, MAESTRO-149).', new Set());
