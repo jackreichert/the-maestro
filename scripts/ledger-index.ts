@@ -36,6 +36,7 @@ import { findPages, anyWordQuery, renderHit } from './lib/library/find.ts';
 import type { FoundPage } from './lib/library/find.ts';
 import { isOpen, readRegistry, mapStreamWith, fold as foldWith } from './lib/ledger-core.ts';
 import type { LedgerRow } from './lib/ledger-core.ts';
+import { printJson } from './lib/json-out.ts';
 
 /** A flat result row: node:sqlite hands back column name to value. */
 type SqlRow = Record<string, SQLOutputValue>;
@@ -371,7 +372,7 @@ function cmdSearch(): void {
     let hits: Hit[];
     try { hits = matchQuery(query, run); } finally { db.close(); }
 
-    if (has('json')) { console.log(JSON.stringify(hits, null, 2)); return; }
+    if (has('json')) { printJson(hits); return; }
     if (!hits.length) { console.log('(no hits)'); return; }
     for (const h of hits) console.log(`${h.ref}  [${h.source}]  ${h.title}\n    ${h.snippet.replace(/\s+/g, ' ')}`);
 }
@@ -398,7 +399,7 @@ function cmdFind(): void {
         const any = anyWordQuery(query);
         if (!hits.length && any) hits = findPages(db, any, opts, 'any');
     } finally { db.close(); }
-    if (has('json')) { console.log(JSON.stringify(hits, null, 2)); return; }
+    if (has('json')) { printJson(hits); return; }
     if (!hits.length) { console.log('(no library pages match)'); return; }
     if (hits[0].matched === 'any') console.log('(no page has every word; showing pages that match any)');
     console.log(hits.map(renderHit).join('\n'));
@@ -414,7 +415,7 @@ function cmdStats(): void {
             WHERE is_open = 1 ${withArchived ? '' : 'AND archived = 0'} GROUP BY 1 ORDER BY 2 DESC, 1`).all() as unknown as { stream: string; open: number }[];
     } finally { db.close(); }
     const openTotal = streams.reduce((n, r) => n + r.open, 0);
-    if (has('json')) { console.log(JSON.stringify({ counts: c, open: openTotal, streams }, null, 2)); return; }
+    if (has('json')) { printJson({ counts: c, open: openTotal, streams }); return; }
     console.log(Object.entries(c).map(([k, v]) => `${k}=${v}`).join(' '));
     console.log(`open items: ${openTotal}`);
     streams.forEach((r) => console.log(`  ${String(r.open).padStart(4)}  ${r.stream}`));
@@ -558,7 +559,7 @@ function cmdQuery(): void {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
         const { data, text } = sql ? runSql(db, sql) : QUERIES[name](db);
-        console.log(has('json') ? JSON.stringify(data, null, 2) : text);
+        has('json') ? printJson(data) : console.log(text);
     } finally { db.close(); }
 }
 
