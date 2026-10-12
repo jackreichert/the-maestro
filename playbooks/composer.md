@@ -39,9 +39,24 @@ node scripts/journal.ts notes-check --all
 
 `library-check` must exit 0. `library-write` has already applied these rules to every page it wrote; the run confirms the pages on disk. A hand edit of a page is not prevented, only seen. Every finding is yours to fix; do not weaken a page to pass (a fact with no evidence is removed, not given a vague one). `notes-check` must list none of your pages: a page it names has no `stream:` or names an unknown one. Report both exit codes. If either fails twice for the same reason, stop and report it.
 
+## 4b. Refresh stale pages
+
+Do this when the orchestrator asks for a refresh, or when `library-fresh` reports stale pages. It needs no learned rows. A page is stale when a file its facts cite changed in git after the page's `verified-at`; it is not known to be wrong, only unchecked since.
+
+1. List them: `node scripts/library-check.ts --stale --vault <vault root> --repo <repo> --code-root <folder holding the repo checkout>`. It prints each stale page with the file that changed. It always exits 0. Pages marked `unchecked` could not be looked at (no checkout, or no evidence file): list them in your report, do not touch them.
+2. Work one stale page at a time. Read the page, then open every file its facts cite, at the checkout's current head, and re-read the lines each fact rests on. Use `git log -p <verified-at sha>..HEAD -- <file>` to see what changed.
+3. For each fact, decide one of three things.
+   - Still true: keep the line and move its date forward. If the line numbers moved, fix them to where the text is now.
+   - No longer true: change the line to what the evidence says now, and put the old value in `## History` with its date and why (section 3).
+   - You cannot tell, or the cited file is gone: do not keep it as current. Remove the line and say in History that it could not be verified, naming the file. Never leave a fact you did not re-read.
+4. When every fact is done, set `verified-at` to today's date and the checkout's head sha (`<date>@<sha>`), and keep the `verify-how` text true.
+5. Write the page with `library-write.ts` exactly as in section 3 (begin, write, end). There are no learned rows, so there is nothing to `curate`.
+6. Never overwrite a human edit you disagree with. If a line was edited by a person (the page is newer than its `composed-by` write, or the line says `told-by-jack`) and the source says something different, leave their line as it is and raise a needs-you note instead, naming the page, the line, both sources, and what you would change: `node scripts/journal.ts ask` with the page path in the text. Skip that fact and carry on. A page you left a note on stays stale, and your report says so.
+7. Run section 4 (`library-check` and `notes-check`), then run `--stale` again. Every page you refreshed must be gone from the list. Report any that is not.
+
 ## 5. Report
 
-At most 12 lines: pages written or changed with their paths, facts rejected with a reason, questions you could not settle, and the two exit codes.
+At most 12 lines: pages written, refreshed or changed with their paths, facts you could not verify, needs-you notes raised, facts rejected with a reason, questions you could not settle, and the two exit codes.
 
 ## Hard rules
 
