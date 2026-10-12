@@ -122,3 +122,31 @@ test('the CLI: start prints a job id and returns; status exits 4 while running o
   assert.match(status.stdout, /PASS/);
   assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8', env }).status, 2);
 });
+
+test('zero tests is a FAIL with a note, never a PASS: a glob matching nothing, and a non-node repo', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const repo = fixture({ 'a.test.ts': PASSING });
+  const nothing = (await settled(startJob(repo, { tests: 'nope/*.test.ts', skipTsc: true, base }).id, base)).results;
+  assert.equal(nothing?.pass, false);
+  assert.equal(nothing?.tests.empty, true);
+  assert.match(nothing?.tests.note ?? '', /no tests ran.*--cmd/);
+  const other = fixture({ 'main.py': 'print(1)\n' });
+  const py = await settled(startJob(other, { skipTsc: true, base }).id, base);
+  assert.equal(py.results?.pass, false);
+  assert.match(statusLine(py), /FAIL.*0 ran, which is a failure/);
+});
+
+test('--cmd replaces node --test: the command exit code decides, and zero parsed tests is fine', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'suite-jobs-'));
+  const repo = fixture({ 'main.py': 'print(1)\n' });
+  const ok = await settled(startJob(repo, { cmd: 'python3 main.py', skipTsc: true, base }).id, base);
+  assert.equal(ok.results?.pass, true);
+  assert.equal(ok.results?.tests.cmd, 'python3 main.py');
+  assert.match(statusLine(ok), /PASS.*custom command exit 0/);
+  const bad = await settled(startJob(repo, { cmd: 'exit 3', skipTsc: true, base }).id, base);
+  assert.equal(bad.results?.pass, false);
+  assert.equal(bad.results?.tests.exit, 3);
+  const cli = spawnSync(process.execPath, [SCRIPT, 'start', repo, '--cmd', 'true', '--skip-tsc', '--json'], { encoding: 'utf8', env: { ...process.env, MAESTRO_SUITE_DIR: base, MAESTRO_LOCAL_CONFIG: '' } });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.equal((await settled((JSON.parse(cli.stdout) as { job: string }).job, base)).results?.pass, true);
+});

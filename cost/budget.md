@@ -83,7 +83,7 @@ is in the block (measured 2026-09-25, `scripts/token-metrics.ts`):
   overnight run that was 685 rewrites, about $242 of $474, most of it Opus reviewers. So no agent
   waits on a suite. The suite is a job with no model attached, and an agent only exists once its
   results do:
-  1. `node scripts/suite-run.ts start <worktree>` runs tsc and `node --test` detached and returns a
+  1. `node scripts/suite-run.ts start <worktree>` runs tsc and `node --test` (or `--cmd "<command>"` for a repo without it) detached and returns a
      job id; `results.json` (counts, failing names, head sha) lands in the job directory when it ends.
      `suite-run.ts status <job>` looks once and never blocks.
   2. The agent that started it exits with a findings note naming the job id. Nothing waits.

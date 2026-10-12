@@ -2,11 +2,12 @@
 /**
  * suite-run.ts: run a worktree's type check and test suite as a detached job, so no agent ever waits on one.
  *
- *   suite-run.ts start <worktree> [--tests <glob>] [--skip-tsc] [--json]   spawn the job, print its id, return at once
+ *   suite-run.ts start <worktree> [--tests <glob>] [--cmd "<shell command>"] [--skip-tsc] [--json]   spawn the job, print its id, return at once
  *   suite-run.ts status <job> [--json]                                      look once, never block
  *
  * `start` writes <suites dir>/<job>/job.json, spawns this script detached (`_worker`), and exits. The worker runs
- * `tsc --noEmit` (the worktree's own node_modules/.bin/tsc) and then `node --test`, and its last act is writing
+ * `tsc --noEmit` (the worktree's own node_modules/.bin/tsc) and then `node --test` (or the `--cmd` shell command, for a repo that
+ * does not use node's runner; then the job passes on that command's exit code), and its last act is writing
  * <suites dir>/<job>/results.json (atomically): pass/fail/cancelled counts, failing test names, head sha, start and end
  * times and both exit codes. results.json appearing is the "suite is done" signal; the `suite-done` event type watches it.
  * The raw output stays in <suites dir>/<job>/output.log for a failure worth reading.
@@ -41,6 +42,8 @@ export interface JobSpec {
   /** True when the worktree had uncommitted changes at start: the results describe the files on disk, not only the head commit. */
   dirty: boolean;
   tests: string;
+  /** A shell command that replaces `node --test <tests>`; its exit code decides. Unset for a node `--test` repo. */
+  cmd?: string;
   skipTsc: boolean;
   startedAt: string;
   workerPid: number;
@@ -49,7 +52,7 @@ export interface JobSpec {
 /** One command's outcome: exit code, with `skipped` for a step the job was told not to run. */
 export interface StepResult { exit: number | null; skipped?: boolean; note?: string }
 
-/** What the worker writes last. `pass` means tsc passed (or was skipped by request) and every test passed. */
+/** What the worker writes last. `pass` means tsc passed (or was skipped by request) and every test passed, with at least one test run by the default runner. */
 export interface Results {
   job: string;
   worktree: string;
@@ -59,7 +62,7 @@ export interface Results {
   endedAt: string;
   pass: boolean;
   tsc: StepResult;
-  tests: StepResult & { pass: number; fail: number; cancelled: number; failing: string[] };
+  tests: StepResult & { pass: number; fail: number; cancelled: number; failing: string[]; cmd?: string; empty?: boolean };
   concurrency: number;
 }
 
@@ -89,7 +92,7 @@ const readJson = <T>(path: string): T | null => {
 };
 
 /** Starts a detached job for `worktree` and returns its spec at once. Throws when the path is not a git worktree. */
-export function startJob(worktree: string, opts: { tests?: string; skipTsc?: boolean; base?: string; now?: Date } = {}): JobSpec {
+export function startJob(worktree: string, opts: { tests?: string; cmd?: string; skipTsc?: boolean; base?: string; now?: Date } = {}): JobSpec {
   const root = resolve(worktree);
   const head = git(root, ['rev-parse', 'HEAD']);
   if (head.status !== 0 || !head.stdout) throw new Error(`suite-run: ${root} is not a git worktree with a commit`);
@@ -99,7 +102,7 @@ export function startJob(worktree: string, opts: { tests?: string; skipTsc?: boo
   mkdirSync(dir, { recursive: true });
   const spec: JobSpec = {
     id, worktree: root, head: head.stdout, dirty: git(root, ['status', '--porcelain']).stdout !== '',
-    tests: opts.tests || DEFAULT_TESTS, skipTsc: Boolean(opts.skipTsc), startedAt: now.toISOString(), workerPid: 0,
+    tests: opts.tests || DEFAULT_TESTS, ...(opts.cmd?.trim() ? { cmd: opts.cmd.trim() } : {}), skipTsc: Boolean(opts.skipTsc), startedAt: now.toISOString(), workerPid: 0,
   };
   // job.json goes down before the worker starts, so a worker never reads a missing spec; the pid is filled in right after the spawn.
   writeAtomic(join(dir, 'job.json'), spec);
@@ -153,9 +156,14 @@ function runTests(spec: JobSpec, env: NodeJS.ProcessEnv, dir: string): Results['
   const out = openSync(tap, 'w');
   let status: number | null;
   try {
-    status = spawnSync(process.execPath, ['--test', `--test-concurrency=${TEST_CONCURRENCY}`, '--test-reporter=tap', spec.tests], { cwd: spec.worktree, env, stdio: ['ignore', out, 'inherit'] }).status;
+    const [file, args] = spec.cmd ? ['/bin/sh', ['-c', spec.cmd]] as const : [process.execPath, ['--test', `--test-concurrency=${TEST_CONCURRENCY}`, '--test-reporter=tap', spec.tests]] as const;
+    status = spawnSync(file, args, { cwd: spec.worktree, env, stdio: ['ignore', out, 'inherit'] }).status;
   } finally { closeSync(out); }
-  return { exit: status ?? 1, ...parseTap(readFileSync(tap, 'utf8')) };
+  const counts = parseTap(readFileSync(tap, 'utf8'));
+  // A run of zero tests proves nothing: with the default runner it fails (a glob that matched nothing, or a repo that is not node's). A custom command is judged by its exit code alone.
+  if (spec.cmd) return { exit: status ?? 1, ...counts, cmd: spec.cmd };
+  const empty = counts.pass + counts.fail + counts.cancelled === 0;
+  return { exit: status ?? 1, ...counts, ...(empty ? { empty, note: `no tests ran: "${spec.tests}" matched none (a run with zero tests is a failure); for a repo that does not use node --test, pass --cmd` } : {}) };
 }
 
 /** The detached half of `start`: runs both steps, then writes results.json. A crash before that leaves no results, which `status` reports as lost. */
@@ -167,7 +175,7 @@ export function runWorker(dir: string): Results {
   try {
     const tsc = runTsc(spec, env);
     const tests = runTests(spec, env, dir);
-    const pass = (tsc.exit === 0 || tsc.skipped === true) && tests.exit === 0 && tests.fail === 0 && tests.cancelled === 0;
+    const pass = (tsc.exit === 0 || tsc.skipped === true) && tests.exit === 0 && tests.fail === 0 && tests.cancelled === 0 && !tests.empty;
     const results: Results = { job: spec.id, worktree: spec.worktree, head: spec.head, dirty: spec.dirty, startedAt: spec.startedAt, endedAt: new Date().toISOString(), pass, tsc, tests, concurrency: TEST_CONCURRENCY };
     writeAtomic(join(dir, 'results.json'), results);
     return results;
@@ -199,21 +207,22 @@ export function statusLine(s: JobStatus): string {
   if (s.state === 'lost') return `suite ${s.job}: lost (the worker exited without results; see output.log)`;
   const r = s.results as Results;
   const tsc = r.tsc.skipped ? 'tsc skipped' : `tsc ${r.tsc.exit === 0 ? 'ok' : `exit ${r.tsc.exit}`}`;
+  const testsText = r.tests.cmd ? `tests: custom command exit ${r.tests.exit}${r.tests.pass + r.tests.fail ? `, ${r.tests.pass} pass, ${r.tests.fail} fail` : ''}` : r.tests.empty ? 'tests: 0 ran, which is a failure (the glob matched nothing, or the repo does not use node --test: pass --cmd)' : `tests ${r.tests.pass} pass, ${r.tests.fail} fail, ${r.tests.cancelled} cancelled`;
   const failing = r.tests.failing.length ? `; failing: ${r.tests.failing.slice(0, 5).join(' | ')}${r.tests.failing.length > 5 ? ` (+${r.tests.failing.length - 5} more)` : ''}` : '';
-  return `suite ${s.job}: ${r.pass ? 'PASS' : 'FAIL'} at ${r.head.slice(0, 12)}${r.dirty ? ' (dirty tree)' : ''}; ${tsc}; tests ${r.tests.pass} pass, ${r.tests.fail} fail, ${r.tests.cancelled} cancelled${failing}`;
+  return `suite ${s.job}: ${r.pass ? 'PASS' : 'FAIL'} at ${r.head.slice(0, 12)}${r.dirty ? ' (dirty tree)' : ''}; ${tsc}; ${testsText}${failing}`;
 }
 
 function main(argv: string[]): number {
   const [cmd, ...rest] = argv;
   if (cmd === '_worker') { runWorker(rest[0] as string); return 0; }
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { tests: { type: 'string' }, 'skip-tsc': { type: 'boolean' }, json: { type: 'boolean' } } });
+  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { tests: { type: 'string' }, cmd: { type: 'string' }, 'skip-tsc': { type: 'boolean' }, json: { type: 'boolean' } } });
   const target = positionals[0];
   if ((cmd !== 'start' && cmd !== 'status') || !target) {
-    console.error('usage: suite-run.ts start <worktree> [--tests <glob>] [--skip-tsc] [--json] | status <job> [--json]');
+    console.error('usage: suite-run.ts start <worktree> [--tests <glob>] [--cmd "<shell command>"] [--skip-tsc] [--json] | status <job> [--json]');
     return EXIT.usage;
   }
   if (cmd === 'start') {
-    const spec = startJob(target, { tests: values.tests, skipTsc: values['skip-tsc'] });
+    const spec = startJob(target, { tests: values.tests, cmd: values.cmd, skipTsc: values['skip-tsc'] });
     if (values.json) printJson({ job: spec.id, dir: jobDir(spec.id), head: spec.head }); else console.log(`${spec.id}\nresults: ${join(jobDir(spec.id), 'results.json')}`);
     return 0;
   }
