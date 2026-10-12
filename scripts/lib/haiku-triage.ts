@@ -1,16 +1,22 @@
 /**
  * The real triage behind the digest-triage seam: one `claude -p --model haiku` call per ambiguous pr-watch line. It uses the existing Claude Code
- * login, so there is no key to hold. The call is bounded by a timeout, runs with no tools and no saved session, and gets the line on stdin (never
+ * login, so there is no key to hold. The call is bounded by a timeout, runs isolated (no tools, hooks or MCP servers, an empty temp cwd, a child env marker) with no saved session, and gets the line on stdin (never
  * in argv). Anything other than a clean exit with a parseable verdict is `unsure`, which wakes: this module can only ever add a noise answer,
  * never hide an event because something went wrong. The line is untrusted text, so it is fenced as data in the prompt, and the seam still
  * requires a reason before a noise answer suppresses anything.
  */
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { rulesOnlyTriage } from './digest-triage.ts';
 import type { Triage, TriageAnswer, TriageInput } from './digest-triage.ts';
 
 /** Runs a command with `input` on stdin. A runner may report only what it knows; a missing `status` counts as failure. */
-export type ModelRun = (cmd: string, args: string[], opts: { input: string; timeoutMs: number }) => { status?: number | null; stdout?: string; error?: Error; signal?: string | null };
+export type ModelRun = (cmd: string, args: string[], opts: { input: string; timeoutMs: number; cwd?: string; env?: NodeJS.ProcessEnv }) => { status?: number | null; stdout?: string; error?: Error; signal?: string | null };
+
+/** Set in the child's environment; the-maestro's own SessionStart and UserPromptSubmit hooks exit 0 at once when they see it. */
+export const TRIAGE_CHILD_VAR = 'MAESTRO_TRIAGE_CHILD';
 
 export const TRIAGE_TIMEOUT_MS = 60_000;
 
@@ -24,7 +30,7 @@ const SYSTEM = [
 ].join('\n');
 
 /** SIGTERM can be ignored by a wedged child and spawnSync then waits for it, so the timeout kills outright. */
-export const defaultRun: ModelRun = (cmd, args, { input, timeoutMs }) => spawnSync(cmd, args, { input, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+export const defaultRun: ModelRun = (cmd, args, { input, timeoutMs, cwd, env }) => spawnSync(cmd, args, { input, cwd, env, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
 
 const unsure = (reason: string): TriageAnswer => ({ verdict: 'unsure', reason });
 
@@ -43,15 +49,19 @@ export function parseAnswer(text: string): TriageAnswer {
 /** The Haiku-backed seam. `run` and `timeoutMs` exist for tests and tuning; the defaults call the real CLI with a 60 second bound. */
 export function haikuTriage({ run = defaultRun, timeoutMs = TRIAGE_TIMEOUT_MS }: { run?: ModelRun; timeoutMs?: number } = {}): Triage {
   return (line: TriageInput): TriageAnswer => {
-    const args = ['-p', '--model', 'haiku', '--tools', '', '--no-session-persistence', '--disable-slash-commands', '--system-prompt', SYSTEM];
+    // Isolated: no hooks, no MCP servers, and an empty cwd so no project CLAUDE.md or settings load. `--bare` would do it but refuses OAuth.
+    const args = ['-p', '--model', 'haiku', '--tools', '', '--strict-mcp-config', '--settings', '{"disableAllHooks":true}', '--no-session-persistence', '--disable-slash-commands', '--system-prompt', SYSTEM];
     const input = `watch type: ${line.type}\nline kind: ${line.kind}\n<line>${line.summary}</line>\n`;
+    let cwd: string | undefined;
     try {
-      const r = run('claude', args, { input, timeoutMs });
+      cwd = mkdtempSync(join(tmpdir(), 'maestro-triage-'));
+      const r = run('claude', args, { input, timeoutMs, cwd, env: { ...process.env, [TRIAGE_CHILD_VAR]: '1' } });
       if (r.error) return unsure(`haiku call failed: ${r.error.message}`);
       if (r.signal) return unsure(`haiku call killed by ${r.signal}`);
       if (r.status !== 0) return unsure(`haiku call exited ${r.status}`);
       return parseAnswer(String(r.stdout ?? ''));
     } catch (err) { return unsure(`haiku call failed: ${err instanceof Error ? err.message : String(err)}`); }
+    finally { if (cwd) rmSync(cwd, { recursive: true, force: true }); }
   };
 }
 

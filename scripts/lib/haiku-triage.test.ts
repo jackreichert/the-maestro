@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { configuredTriage, defaultRun, haikuTriage, parseAnswer } from './haiku-triage.ts';
-import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rulesOnlyTriage } from './digest-triage.ts';
@@ -66,4 +66,17 @@ test('a child that ignores SIGTERM is killed with SIGKILL at the timeout and the
     assert.ok(Date.now() - t0 < 6000);
     assert.equal(haikuTriage({ timeoutMs: 1000 })(INPUT).verdict, 'unsure');
   } finally { process.env.PATH = path; }
+});
+
+test('the child is isolated: no hooks, no MCP, an empty temp cwd and the child marker', () => {
+  let seen: { args: string[]; cwd?: string; env?: NodeJS.ProcessEnv; entries?: string[] } | undefined;
+  haikuTriage({ run: (_c, args, o) => { seen = { args, cwd: o.cwd, env: o.env, entries: o.cwd ? readdirSync(o.cwd) : undefined }; return { status: 0, stdout: '{"verdict":"unsure","reason":"r"}' }; } })(INPUT);
+  const a = seen?.args ?? [];
+  assert.ok(a.includes('--strict-mcp-config'));
+  assert.deepEqual(JSON.parse(a[a.indexOf('--settings') + 1] ?? 'null'), { disableAllHooks: true });
+  assert.ok(seen?.cwd && seen.cwd.startsWith(tmpdir()) || seen?.cwd?.startsWith(realpathSync(tmpdir())), 'cwd is a temp dir');
+  assert.deepEqual(seen?.entries, [], 'and empty, so no project CLAUDE.md or settings load');
+  assert.equal(seen?.env?.MAESTRO_TRIAGE_CHILD, '1');
+  assert.equal(seen?.env?.PATH, process.env.PATH, 'the rest of the environment is kept so the login still works');
+  assert.equal(existsSync(seen?.cwd ?? '/nonexistent'), false, 'the temp dir is removed after the call');
 });
