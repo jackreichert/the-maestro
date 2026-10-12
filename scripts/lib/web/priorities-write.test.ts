@@ -270,6 +270,24 @@ test('a Podium edit keeps the carried section roll wrote, and an unmapped stream
   assert.equal(existsSync(join(v, 'Projects', 'Gamma')), false, 'no project folder is created from the Podium');
 });
 
+test('a Podium edit before the day\'s carry still leaves yesterday\'s items carried', async () => {
+  const v = notesVault('notes-before-carry');
+  const dir = prioritiesDir(v, 'alpha-app');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '2026-10-06.md'), ['---', 'type: priorities', 'project: alpha-app', 'date: 2026-10-06', 'carried-from: ', 'written-by: priorities set', '---', '', '## Today', '', '- a-old | Alpha', '', '## Next', '', '- none', ''].join('\n'));
+  const r = await rig('sync-before-carry', { initial: 'date: 2026-10-06\n- a-old | Alpha\n', vaultRoot: v });
+  assert.equal((await post(r, 'add', { text: 'a-new', stream: 'Alpha' })).status, 200);
+  const edited = readProjectFile(join(dir, '2026-10-07.md'));
+  assert.deepEqual(edited?.today.map((i) => i.text), ['a-new']);
+  assert.deepEqual(edited?.carried.map((c) => c.item.text), ['a-old'], 'the edit seeds Carried the way the carry would');
+  assert.equal(edited?.carriedFrom, '2026-10-06');
+  // The carry that runs afterwards finds the file and leaves it alone; nothing is lost.
+  const container = { date: '2026-10-07', items: [{ text: 'a-new', stream: 'Alpha' }] };
+  const out = carryPriorities({ vault: v, today: '2026-10-07', rows: [], registry: null, homes: { found: false, streams: {}, warnings: [] }, repoStreams: { 'alpha-app': 'Alpha', 'beta-app': 'Beta' }, containerProject: 'p', container });
+  assert.deepEqual(out.problems, []);
+  assert.deepEqual(readProjectFile(join(dir, '2026-10-07.md'))?.carried.map((c) => c.item.text), ['a-old']);
+});
+
 test('with no vault_root the Podium writes only priorities.md; a project file that cannot be written is logged and the edit stands', async () => {
   const none = await rig('sync-off', { initial: LIST });
   assert.equal((await post(none, 'add', { text: 'four' })).status, 200);

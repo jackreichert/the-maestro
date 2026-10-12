@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { LedgerRow, RegistryLookup } from '../ledger-core.ts';
 import { readHomes } from '../home/config.ts';
 import type { Priority } from './priorities.ts';
-import { droppedProjects, fanOut, nextItems, prioritiesDir, projectsFor, readProjectFile, writeProjectPriorities } from './project-priorities.ts';
+import { carriedInto, droppedProjects, fanOut, nextItems, prioritiesDir, projectsFor, readProjectFile, writeProjectPriorities } from './project-priorities.ts';
 
 export interface SyncInput {
   /** The notes vault holding `Projects/<project>/`. */
@@ -35,7 +35,7 @@ export interface SyncResult {
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** A project with Today items for `day` that this list no longer names is cleared, so a dropped item is neither shown nor carried. Carried sections are kept. */
+/** A project with Today items for `day` that this list no longer names is cleared, so a dropped item is neither shown nor carried. Carried sections are kept; a day's first file is seeded with the carry's own items, so an edit before the carry loses nothing. */
 export function syncProjectPriorities(input: SyncInput): SyncResult {
   const { vaultRoot, statusDir, day, today, items, rows, registry, repoStreams, containerProject } = input;
   const homes = readHomes(statusDir, Object.keys(registry?.streams ?? {}));
@@ -48,7 +48,8 @@ export function syncProjectPriorities(input: SyncInput): SyncResult {
       const streams = [...new Set(mine.map((p) => p.stream).filter((s): s is string => Boolean(s)))];
       const path = join(prioritiesDir(vaultRoot, name), `${day}.md`);
       const kept = readProjectFile(path);
-      const written = writeProjectPriorities(vaultRoot, name, today, { project: name, date: day, carriedFrom: kept?.carriedFrom ?? '', writtenBy: 'priorities set', today: mine, carried: kept?.carried ?? [], next: nextItems(rows, registry, streams) });
+      const carry = kept ?? (day === today ? carriedInto({ vault: vaultRoot, project: name, today, rows, registry, fromContainer: [] }) : { carriedFrom: '', carried: [] });
+      const written = writeProjectPriorities(vaultRoot, name, today, { project: name, date: day, carriedFrom: carry.carriedFrom, writtenBy: 'priorities set', today: mine, carried: carry.carried, next: nextItems(rows, registry, streams) });
       result.lines.push(written === 'written' ? `wrote ${path}` : `skipped ${name}: no vault folder Projects/${name}`);
     } catch (e) { result.problems.push(`project ${name}: ${message(e).split('\n')[0].slice(0, 100)}`); }
   }
