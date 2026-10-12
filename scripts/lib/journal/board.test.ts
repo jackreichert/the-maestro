@@ -201,3 +201,17 @@ test('the footer splits in-flight rows 3 days old or more with no lease out as s
     assert.match(footerLines(g, [], undefined, live).join('\n'), /3 in flight \(1 stale, 3d\+ with no lease\)/);
     assert.equal(footerRows(g, [], undefined, { today, leased: new Set(['old1', 'old2']) })[0]?.stale, undefined);
 });
+
+test('the stale limit is configurable: staleDays moves the cutoff and the footer text names it (MAESTRO-313)', () => {
+    const rows: LedgerRow[] = [
+        { id: 'old1', kind: 'wip', ts: '2026-10-08T10:00:00Z', date: '2026-10-08', text: 'three days', stream: 'Alpha' },
+        { id: 'old2', kind: 'wip', ts: '2026-10-05T10:00:00Z', date: '2026-10-05', text: 'six days', stream: 'Alpha' },
+    ];
+    const g = groups(ctxFor({ readLedger: () => rows }));
+    const today = '2026-10-11';
+    const at = (staleDays: number) => ({ today, leased: new Set<string>(), staleDays });
+    assert.equal(footerRows(g, [], undefined, at(3))[0]?.stale, 2);
+    assert.equal(footerRows(g, [], undefined, at(5))[0]?.stale, 1);
+    assert.equal(footerRows(g, [], undefined, at(7))[0]?.stale, undefined);
+    assert.match(footerLines(g, [], undefined, at(5)).join('\n'), /\(1 stale, 5d\+ with no lease\)/);
+});
