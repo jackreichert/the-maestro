@@ -20,8 +20,8 @@
  * Only watches added with `--notify` (reminders by default, inbox never) are sent to `notify_command`.
  * Cadence is lib/cadence.ts (floors, back-off, quiet hours). Settings are in local-config.ts (event_dir, notify_command).
  *
- * `digest-wait` blocks until the supervisor (loop-supervisor.ts) has saved an unseen digest, prints it, marks it seen and
- * exits 10, so a session that cannot hold the loop lock is still woken; it exits 0 quietly at the timeout (default 6h).
+ * `digest-wait` is the old name of `events wait`: it first moves any saved digest (the supervisor's old exit-10 files) into the inbox, then waits
+ * on the inbox like `events wait` (exit 10 with the event lines, 0 quietly at the timeout, default 6h).
  *
  * `run --serve` is the daemon mode: it never exits on an event. Each tick's events go to the event inbox (lib/event-inbox.ts,
  * <event dir>/events.jsonl) instead of the exit-10 digest, quiet hours become an in-process wait, and no registered watches just
@@ -50,6 +50,7 @@ import {
   WATCH_LOCAL_FLOOR, WATCH_NETWORK_FLOOR, WATCH_QUIET_WEEKENDS, WATCH_TYPE_INTERVALS, WATCH_TZ, LEDGER_ROOT, CONTAINER_PROJECT,
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
+import { migrateDigests } from './lib/digest-migrate.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
 import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './lib/event-inbox.ts';
 import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
@@ -301,16 +302,6 @@ function printUnseen(dir: string, claim: boolean): boolean {
   return true;
 }
 
-/** Blocks until an unseen digest is claimed (printed, then marked seen, exit 10) or the timeout passes (exit 0, silent). A waiter that loses a claim keeps waiting. */
-async function digestWait(dir: string, timeoutMs: number, pollSeconds: number): Promise<number> {
-  const end = Date.now() + timeoutMs;
-  for (;;) {
-    if (printUnseen(dir, true)) return EXIT.actionable;
-    if (Date.now() >= end) return EXIT.ok;
-    await sleep(Math.min(pollSeconds, Math.max(0.05, (end - Date.now()) / 1000)));
-  }
-}
-
 /** The inbox view `events list` shows: `--unseen`, `--all`, else everything not yet handled. */
 const listFilter = (v: { unseen?: boolean; all?: boolean }, window: string): ((e: InboxEntry) => boolean) => (v.unseen ? (e) => !seenByWindow(e, window) : v.all ? () => true : (e) => !e.handled);
 
@@ -339,10 +330,11 @@ export function claimFor(dir: string, window: string | undefined, beforeMark: ()
   return mine.filter((e) => owners.get(e.id) !== undefined || after.get(e.id)?.seenBy === me);
 }
 
-/** Blocks until an event for this window is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). */
-async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, nap: (s: number) => Promise<void> = sleep, window?: string): Promise<number> {
+/** Blocks until an event for this window is in the inbox, prints and marks it seen (exit 10), or the timeout passes (exit 0, silent). `beforePoll` runs before every look (the `digest-wait` alias moves saved digests in there). */
+async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, nap: (s: number) => Promise<void> = sleep, window?: string, beforePoll: () => void = () => {}): Promise<number> {
   const end = Date.now() + timeoutMs;
   for (;;) {
+    beforePoll();
     const fresh = claimFor(dir, window);
     if (fresh.length) { console.log(fresh.map(formatEntry).join('\n')); return EXIT.actionable; }
     if (Date.now() >= end) return EXIT.ok;
@@ -351,7 +343,7 @@ async function eventsWait(dir: string, timeoutMs: number, pollSeconds: number, n
 }
 
 /** `events [list|ack|wait]`. Returns the exit code, or a usage message. */
-async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string; window?: string; session?: string }): Promise<number | string> {
+async function eventsCommand(dir: string, sub: string | undefined, ids: string[], v: { unseen?: boolean; all?: boolean; json?: boolean; 'timeout-hours'?: string; 'poll-seconds'?: string; window?: string; session?: string }, beforePoll?: () => void): Promise<number | string> {
   // The window that reads or acks is recorded on the seen and handled rows, so a later router can tell whose mark it is.
   const window = resolveWindowId({ window: v.window, session: v.session, ...windowEnv() });
   if (sub === undefined || sub === 'list') {
@@ -373,7 +365,7 @@ async function eventsCommand(dir: string, sub: string | undefined, ids: string[]
     const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
     const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
     if (!(hours > 0) || !(poll > 0)) return '--timeout-hours and --poll-seconds need positive numbers';
-    return eventsWait(dir, hours * 3600 * 1000, poll, sleep, window);
+    return eventsWait(dir, hours * 3600 * 1000, poll, sleep, window, beforePoll);
   }
   return 'events commands: list | ack <id...> | wait';
 }
@@ -434,10 +426,9 @@ async function main(argv: string[]): Promise<number> {
       if (!LEDGER_ROOT) return usage('saved digests live under the ledger root; set LEDGER_ROOT (or ledger_root in the config)');
       const saved = digestDir(LEDGER_ROOT, CONTAINER_PROJECT);
       if (cmd === 'digests') { if (!printUnseen(saved, Boolean(v['mark-seen']))) console.log('no unseen digests'); return EXIT.ok; }
-      const hours = v['timeout-hours'] === undefined ? 6 : Number(v['timeout-hours']);
-      const poll = v['poll-seconds'] === undefined ? 5 : Number(v['poll-seconds']);
-      if (!(hours > 0) || !(poll > 0)) return usage('--timeout-hours and --poll-seconds need positive numbers');
-      return await digestWait(saved, hours * 3600 * 1000, poll);
+      // `digest-wait` is `events wait` under its old name: saved digests are moved into the inbox first (and again each poll), then it waits on the inbox.
+      const done = await eventsCommand(dir, 'wait', [], v, () => { try { migrateDigests(dir, saved); } catch (err) { console.error(`digest-wait: could not move saved digests into the inbox: ${errorMessage(err)}`); } });
+      return typeof done === 'string' ? usage(done) : done;
     } else return usage('commands: add | list | remove <id> | digest | run [--once | --serve] | digest-wait | digests | events');
   } catch (err) {
     return usage(errorMessage(err));

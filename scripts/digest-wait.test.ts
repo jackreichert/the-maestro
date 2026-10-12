@@ -6,11 +6,12 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { digestBody, digestDir, claimDigests, drainDigests, saveDigest, unseenDigests } from './lib/digest-store.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'digest-wait-test-'));
 const EVENT_LOOP = new URL('./event-loop.ts', import.meta.url).pathname;
 const NOON = Date.parse('2026-10-01T12:00:00Z');
-const envFor = (ledger: string, extra: Record<string, string> = {}) => ({ ...process.env, LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: join(ledger, 'Events'), ...extra });
+const envFor = (ledger: string, extra: Record<string, string> = {}) => ({ ...cleanEnv(), LEDGER_ROOT: ledger, MAESTRO_PROJECT: 'proj', MAESTRO_EVENT_DIR: join(ledger, 'Events'), ...extra });
 
 test('digest store: saved unseen, listed oldest first, marked seen idempotently, never overwritten', () => {
   const dir = join(tempDir(), 'Digests');
@@ -35,7 +36,7 @@ const waitProc = (ledger: string, args: string[]) => new Promise<{ code: number 
   p.on('close', (code) => resolve({ code, out }));
 });
 
-test('digest-wait returns exit 10 on a digest saved later, prints it and marks it seen', async () => {
+test('digest-wait (an alias of events wait) returns exit 10 on a digest saved later, prints its event and marks the digest seen', async () => {
   const ledger = tempDir();
   const dir = digestDir(ledger, 'proj');
   const pending = waitProc(ledger, ['--timeout-hours', '0.01']);
@@ -43,14 +44,14 @@ test('digest-wait returns exit 10 on a digest saved later, prints it and marks i
   const file = saveDigest(dir, 'ACTION w1 (fake): changed');
   const r = await pending;
   assert.equal(r.code, 10);
-  assert.equal(r.out.trim(), 'ACTION w1 (fake): changed');
+  assert.match(r.out.trim(), /^[0-9a-f]{12} new ACTION other w1 \(fake\)$/);
   assert.deepEqual(unseenDigests(dir), []);
   assert.equal(readFileSync(file, 'utf8').split('\n')[0], '<!-- seen: true -->');
 });
 
 test('digest-wait takes an already-saved unseen digest at once; at the timeout it exits 0 and prints nothing', async () => {
   const ledger = tempDir();
-  saveDigest(digestDir(ledger, 'proj'), 'ACTION early');
+  saveDigest(digestDir(ledger, 'proj'), 'ACTION early (fake): changed');
   assert.equal((await waitProc(ledger, [])).code, 10);
   const idle = await waitProc(ledger, ['--timeout-hours', '0.0003']);
   assert.deepEqual([idle.code, idle.out], [0, '']);
@@ -62,22 +63,23 @@ test('two waiters on one digest: exactly one prints it, the loser keeps waiting 
   const dir = digestDir(ledger, 'proj');
   const both = Promise.all([waitProc(ledger, ['--timeout-hours', '0.0008']), waitProc(ledger, ['--timeout-hours', '0.0008'])]);
   await new Promise((r) => setTimeout(r, 600));
-  saveDigest(dir, 'ACTION once');
+  saveDigest(dir, 'ACTION once (fake): changed');
   const r = await both;
   assert.deepEqual(r.map((x) => x.code).sort(), [0, 10]);
-  assert.equal(r.map((x) => x.out).join('').trim(), 'ACTION once');
+  assert.match(r.map((x) => x.out).join('').trim(), /^[0-9a-f]{12} new ACTION other once \(fake\)$/);
   assert.deepEqual(unseenDigests(dir), []);
 });
 
 test('a waiter killed between claim and finish: its claim is reclaimed and the digest shown again, once', async () => {
   const ledger = tempDir();
   const dir = digestDir(ledger, 'proj');
-  saveDigest(dir, 'ACTION survive');
+  saveDigest(dir, 'ACTION survive (fake): changed');
   const dead = spawnSync(process.execPath, ['-e', '0']).pid;
   assert.equal(claimDigests(dir, Date.now(), dead).length, 1);
   assert.deepEqual(unseenDigests(dir), []);
   const r = await waitProc(ledger, ['--timeout-hours', '0.01']);
-  assert.deepEqual([r.code, r.out.trim()], [10, 'ACTION survive']);
+  assert.equal(r.code, 10);
+  assert.match(r.out.trim(), /^[0-9a-f]{12} new ACTION other survive \(fake\)$/);
   assert.equal(readdirSync(dir).filter((f) => f.includes('.claim-')).length, 0);
   assert.equal((await waitProc(ledger, ['--timeout-hours', '0.0003'])).code, 0);
 });

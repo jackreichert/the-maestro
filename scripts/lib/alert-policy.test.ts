@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendEvents, readInbox } from './event-inbox.ts';
 import type { InboxEntry } from './event-inbox.ts';
-import { AWAY_MS, RATE_MS, HEALTH_AFTER_MS, decide, emptyState, readAlertState, runAlerts } from './alert-policy.ts';
+import { AWAY_MS, RATE_MS, RESTART_LIMIT, RESTART_WINDOW_MS, HEALTH_AFTER_MS, decide, emptyState, noteRestart, readAlertState, runAlerts } from './alert-policy.ts';
 import type { AlertState } from './alert-policy.ts';
 
 const SENTINEL = 'SENTINEL_FREE_TEXT_7c1e';
 const CFG = { quietHours: '23:00-07:00', tz: 'UTC' };
 const NOON = Date.parse('2026-10-09T12:00:00Z');
 const ok = { state: 'ok' as const, line: '**Loop:** ok' };
-const started: AlertState = { ...emptyState(), startSent: true };
+const started: AlertState = emptyState();
 let n = 0;
 const ev = (over: Partial<InboxEntry> = {}): InboxEntry => ({ id: (++n).toString(16).padStart(12, '0'), watch: 'prs', type: 'pr-watch', kind: 'conflict', at: new Date(NOON - 11 * 60_000).toISOString(), actionable: true, fields: { repo: 'a/scraper', number: 542 }, seen: false, handled: false, seenWindows: [], ...over });
 const go = (entries: InboxEntry[], over: Partial<Parameters<typeof decide>[0]> = {}) => decide({ now: NOON, entries, health: ok, state: started, config: CFG, ...over });
@@ -69,7 +69,7 @@ test('health: DOWN texts only after 15 minutes, once per stretch, and never in q
   const later = go([], { health: down, state: first.state, now: NOON + HEALTH_AFTER_MS });
   assert.equal(later.text, 'maestro: loop DOWN');
   assert.equal(go([], { health: down, state: later.state, now: NOON + HEALTH_AFTER_MS + RATE_MS }).text, null, 'once per stretch');
-  assert.equal(go([], { health: ok, state: later.state, now: NOON + 60 * 60_000 }).state.badAlerted, false, 'recovery resets it');
+  assert.equal(go([], { health: ok, state: later.state, now: NOON + 60 * 60_000 }).text, 'maestro: loop recovered', 'recovery is its own text');
   const night = Date.parse('2026-10-09T23:30:00Z');
   assert.equal(go([], { health: down, state: { ...started, badSince: night - HEALTH_AFTER_MS * 2 }, now: night }).text, null);
 });
@@ -78,11 +78,69 @@ test('health: a check that keeps failing texts as a count, without its name', ()
   assert.equal(go([ev({ kind: 'check-failing', watch: 'secretwatch', fields: {} })]).text, 'maestro: 1 loop check failing');
 });
 
-test('first start: texted once when the loop is first healthy', () => {
-  const first = go([], { state: emptyState() });
-  assert.equal(first.text, 'maestro: loop started');
-  assert.equal(go([], { state: first.state, now: NOON + RATE_MS }).text, null);
-  assert.equal(go([], { state: emptyState(), health: { state: 'down', line: 'DOWN' } }).text, null, 'not while down');
+test('a normal start texts nothing, however healthy the loop reads and however many times it is seen', () => {
+  for (const state of ['ok', 'quiet', 'running'] as const) {
+    const d = go([], { state: emptyState(), health: { state, line: state } });
+    assert.equal(d.text, null, state);
+    assert.deepEqual(d.state, emptyState());
+  }
+  assert.equal(go([], { state: emptyState(), health: { state: 'down', line: 'DOWN' } }).text, null, 'not while down, before the 15 minutes');
+});
+
+test('recovery: one text when the loop is healthy again after a DOWN text, none before, and none for a stretch that was never texted', () => {
+  const down = { state: 'down' as const, line: 'DOWN' };
+  const first = go([], { health: down });
+  const texted = go([], { health: down, state: first.state, now: NOON + HEALTH_AFTER_MS });
+  assert.equal(texted.text, 'maestro: loop DOWN');
+  assert.equal(texted.state.badAlerted, true);
+  const later = NOON + HEALTH_AFTER_MS + RATE_MS;
+  assert.equal(go([], { health: down, state: texted.state, now: later }).text, null, 'still down: no second DOWN and no recovery');
+  const back = go([], { health: ok, state: texted.state, now: later });
+  assert.equal(back.text, 'maestro: loop recovered');
+  assert.equal(back.state.badAlerted, false);
+  assert.equal(go([], { health: ok, state: back.state, now: later + RATE_MS }).text, null, 'recovery texts once');
+  // A blip shorter than 15 minutes was never texted as DOWN, so it is not texted as recovered either.
+  const blip = go([], { health: down });
+  assert.equal(go([], { health: ok, state: blip.state, now: NOON + 60_000 }).text, null);
+});
+
+test('recovery text held by quiet hours or the rate limit stays pending and goes out later', () => {
+  const night = Date.parse('2026-10-09T23:30:00Z');
+  const state = { ...emptyState(), badAlerted: true, lastSentAt: night - RATE_MS * 2 };
+  const held = go([], { health: ok, state, now: night });
+  assert.equal(held.text, null);
+  assert.equal(held.state.badAlerted, true, 'still owed');
+  assert.equal(go([], { health: ok, state: held.state, now: Date.parse('2026-10-10T07:00:00Z') }).text, 'maestro: loop recovered');
+});
+
+test('restarts: one text when RESTART_LIMIT restarts land inside the window, none for fewer or for old ones, and one per burst', () => {
+  const at = (n: number) => Array.from({ length: n }, (_, i) => NOON - i * 60_000);
+  assert.equal(go([], { state: { ...emptyState(), restarts: at(RESTART_LIMIT - 1) } }).text, null);
+  const old = Array.from({ length: RESTART_LIMIT }, (_, i) => NOON - RESTART_WINDOW_MS - (i + 1) * 60_000);
+  const none = go([], { state: { ...emptyState(), restarts: old } });
+  assert.equal(none.text, null);
+  assert.deepEqual(none.state.restarts, [], 'old restarts are pruned');
+  const burst = go([], { state: { ...emptyState(), restarts: at(RESTART_LIMIT) } });
+  assert.equal(burst.text, `maestro: loop restarted ${RESTART_LIMIT} times in an hour`);
+  assert.equal(burst.state.restartAlerted, true);
+  const more = go([], { state: { ...burst.state, restarts: [...burst.state.restarts, NOON + RATE_MS] }, now: NOON + RATE_MS });
+  assert.equal(more.text, null, 'the same burst does not text twice');
+  const calm = go([], { state: burst.state, now: NOON + RESTART_WINDOW_MS + RATE_MS });
+  assert.equal(calm.state.restartAlerted, false, 'the burst ends when the count falls back under the limit');
+});
+
+test('noteRestart records restarts in alerts.json, and runAlerts texts the burst once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'alerts-'));
+  try {
+    for (let i = 0; i < RESTART_LIMIT; i += 1) noteRestart(dir, NOON - (RESTART_LIMIT - i) * 1000);
+    assert.equal(readAlertState(dir).restarts.length, RESTART_LIMIT);
+    const sent: string[] = [];
+    const run = (_c: string, a: string[]) => { sent.push(a.join(' ')); return { status: 0 }; };
+    const tick = (now: number) => runAlerts({ eventDir: dir, command: ['say-it'], now, entries: [], health: ok, config: CFG, run });
+    assert.match(tick(NOON) ?? '', /restarted 5 times/);
+    assert.equal(tick(NOON + RATE_MS), null);
+    assert.equal(sent.length, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('runAlerts saves the alerted ids and send time only after a send that worked', () => {

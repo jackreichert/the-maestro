@@ -12,6 +12,7 @@ import { BUILTIN_TYPES } from './event-types/index.ts';
 import { listWatches } from './lib/watch-registry.ts';
 import type { StartDeps } from './session-start.ts';
 import type { Watch } from './lib/types.ts';
+import { cleanEnv } from './lib/test-env.ts';
 
 const NOW = Date.parse('2026-10-06T15:00:00Z');
 const HOUR = 3600_000;
@@ -101,7 +102,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
   writeFileSync(page, '# page\n');
   const old = new Date(Date.now() - 20 * 60_000);
   utimesSync(page, old, old);
-  const run = () => spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', status], { encoding: 'utf8', env: { ...process.env, MAESTRO_EVENT_DIR: events } });
+  const run = () => spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', status], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events } });
   const first = run();
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stdout, /status-watch: registered/);
@@ -118,7 +119,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
 
 test('a status directory that does not exist fails the registration with the type\'s own message', () => {
   const events = mkdtempSync(join(tmpdir(), 'session-start-events-'));
-  const r = spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', join(events, 'nope')], { encoding: 'utf8', env: { ...process.env, MAESTRO_EVENT_DIR: events } });
+  const r = spawnSync(process.execPath, [new URL('./session-start.ts', import.meta.url).pathname, '--status-dir', join(events, 'nope')], { encoding: 'utf8', env: { ...cleanEnv(), MAESTRO_EVENT_DIR: events } });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /NOT registered.*must be the status directory/);
 });
