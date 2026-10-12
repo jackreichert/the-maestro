@@ -2,7 +2,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentPrompt, briefPaths, briefText, libraryBlock } from './lib/journal/brief.ts';
@@ -482,3 +482,21 @@ test('a brief that takes the repo while a release is mid-way does not lose its g
     assert.equal(third.code, 1, third.err);
     assert.match(third.err, /(already has a writer brief for item|already claimed by)/);
 });
+
+for (const [flag, value] of [['--branch', 'bad..name'], ['--worktree', '/tmp/x\ny']] as const) {
+    test(`brief refuses an invalid ${flag} before it writes a claim, a grant or a brief file`, () => {
+        const id = start('fix the widget', '--repo', 'repo-a', '--stream', 'Alpha');
+        const before = rows().length;
+        const r = run(['brief', id, '--out-dir', outDir, flag, value, ...MARK]);
+        assert.notEqual(r.code, 0, 'the bad flag is refused');
+        assert.ok(r.err.length > 0, 'the refusal says why');
+        const claims = join(vault, 'Projects', 'test-proj', 'Claims');
+        const left = existsSync(claims) ? readdirSync(claims, { recursive: true }).map(String) : [];
+        assert.deepEqual(left.filter((f) => f.endsWith('.lock')), [], 'no repo claim and no item grant is left behind');
+        assert.equal(existsSync(briefPaths(outDir, id).brief), false, 'no brief file');
+        assert.equal(rows().length, before, 'no rows written');
+        // The repo is free: another desk can brief a different item in it, and a retry with valid input works.
+        const other = start('other job', '--repo', 'repo-a', '--stream', 'Beta');
+        assert.equal(run(['brief', other, '--out-dir', outDir, ...MARK]).code, 0);
+    });
+}

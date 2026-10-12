@@ -88,7 +88,9 @@
  *   journal.ts query [--stream S] [--id X] [--status open|inflight|queued|blocked|done|dropped|resolved|closed|all] [--date D | --since D --until D] [--model M] [--limit N] [--json]   read-only, capped (default 50, max 200) filters over every item, newest first
  *   journal.ts ready-to-push [--repo R] [--json]        my local branches with commits on no remote (held back from push), per repo of the container; read-only git
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
- *   journal.ts brief <id> [--repo r] [--desk stream] [--branch b] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
+ *   journal.ts next <id> "<step>" [--worktree w] [--branch b]   record what an open item does next (and, optionally, where its work lives); `recover` reads it
+ *   journal.ts recover <id>                       print a re-dispatch prompt for an open item: its brief path, the worktree's git status and last commits (or that the worktree is missing), the ticket, the library pages, the recorded next step
+ *   journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
  *   journal.ts backfill --apply --min-confidence high|medium|low   append `tag` events for those proposals (one batch, one render)
  *   journal.ts maintain --today YYYY-MM-DD [--container <dir>] [--budget N]   the model-free half of roll for an unattended caller: archive each of the last 7 days before --today that still owes one, then the same worktree sweep as roll (records branch-sweep), under a lock; ends with one maintain-result JSON line, exit 1 if a step failed. Triage, reports and asks stay in roll
@@ -159,6 +161,7 @@ import { streamTitle, activeStreams, inStream, noStream, groups as boardGroups, 
 import { triageReport as triageReportIn, triageLines } from './lib/journal/triage.ts';
 import { verifyLedger as verifyLedgerIn, autoCommitLedger as autoCommitLedgerIn } from './lib/journal/verify.ts';
 import { briefPaths, briefText, agentPrompt, libraryBlock } from './lib/journal/brief.ts';
+import { recoveryFromFlags, recoverPrompt } from './lib/journal/recover.ts';
 import { scriptsDir } from './brief-block.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
@@ -543,6 +546,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         reworks: reworked,
         repo: arg('repo') || undefined,
         ticket: arg('ticket') || undefined,
+        ...(kind === 'wip' ? recoveryFlags() : {}),
         stream: streamOrNone(arg('stream')),
         refs,
         pending: ask && kind === 'decision' ? true : undefined,
@@ -662,12 +666,59 @@ function cmdStart(): void {
     const target = itemNamedByArg(fold(entries).items);
     if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
-    // The lease comes first: a window that does not get it writes nothing.
+    // A refused --branch/--worktree must exit before the lease is written: die() does not roll it back, and a --steal would take it from its owner.
+    const where = recoveryFlags();
+    // The lease comes next: a window that does not get it writes nothing.
     takeLease(target.id as string);
-    if (!isQueued(target)) { console.log(`wip  ${target.id}  ${target.text}  (already in flight)`); return; }
-    append({ id: newId(entries), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() });
-    if (!dryRun) render(true);
+    if (!isQueued(target)) {
+        if (Object.keys(where).length) writeNext(target, where, entries);
+        console.log(`wip  ${target.id}  ${target.text}  (already in flight)`);
+        return;
+    }
+    const ids = [...entries];
+    const rows = [{ id: newId(ids), ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usageFromArgs() }];
+    appendMany(rows);
+    if (Object.keys(where).length) writeNext(target, where, [...entries, ...rows]);
+    else if (!dryRun) render(true);
     console.log(`wip  ${target.id}  ${target.text}  (promoted from queued)`);
+}
+
+/** The worktree, branch and next step the flags carry (`--worktree`, `--branch`, `--next`); a worktree alone names its checked-out branch. Empty when none is given. */
+const recoveryFlags = () => recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: arg('next') });
+
+/** `recoveryFromFlags`, with a refused value (a bad branch name, control characters in a path) reported as a usage error before anything is written. */
+function recoveryOrDie(flags: Parameters<typeof recoveryFromFlags>[0]): ReturnType<typeof recoveryFromFlags> {
+    try { return recoveryFromFlags(flags); } catch (e) { return die((e as Error).message); }
+}
+
+/** Append a `next` row recording where an item's work lives and what it does next, and refresh the board. */
+function writeNext(item: LedgerItem, where: ReturnType<typeof recoveryFlags>, entries: LedgerRow[]): void {
+    append({ id: newId(entries), ts: now(), date: today(), kind: 'next', nexts: item.id, ...where, text: `next ${item.id}${where.nextStep ? `: ${where.nextStep}` : ''}`, ...usageFromArgs() });
+    if (!dryRun) render(true);
+}
+
+/** `next <id> "<step>" [--worktree w] [--branch b]`: record the next step of an open item so a cold session can recover it. */
+function cmdNext(): void {
+    const entries = readLedger();
+    const target = fold(entries).items.find((i) => i.id === positional[0]);
+    const step = arg('text') || positional.slice(1).join(' ');
+    if (!target || !step) die('Usage: journal.ts next <id> "<step>" [--worktree w] [--branch b]   (an open item id)');
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; only an open item has a next step.`);
+    refuseIfLeasedByOther(target.id as string, entries);
+    const where = recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: step });
+    writeNext(target, where, entries);
+    console.log(`next  ${target.id}  ${where.nextStep}`);
+}
+
+/** `recover <id>`: print the prompt that re-dispatches an open item whose session died. Read-only. */
+function cmdRecover(): void {
+    const entries = readLedger();
+    const target = fold(entries).items.find((i) => i.id === positional[0]);
+    if (!target) die('Usage: journal.ts recover <id>   (an open item id)');
+    if (target.kind !== 'wip' || !isOpen(target)) die(`${target.id} is ${target.closedBy ? target.closedBy.kind : target.kind}, not open work; there is nothing to recover.`);
+    const briefRow = [...entries].reverse().find((r) => r.kind === 'brief' && r.briefs === target.id);
+    const ticketPath = target.ticket && target.repo && VAULT_ROOT ? join(VAULT_ROOT, 'Projects', target.repo, 'Tickets', `${target.ticket}.md`) : undefined;
+    console.log(withhold(recoverPrompt({ item: target, briefRow, ticketPath: ticketPath && existsSync(ticketPath) ? ticketPath : undefined, library: libraryFor(target.repo, target.text || '', scriptsDir(process.argv[1])) })));
 }
 
 const leaseCtx = () => ({ readLedger, append: (row: LedgerRow) => append(row), window: windowId, now, dryRun });
@@ -1793,8 +1844,21 @@ function cmdClaims() {
  */
 const LIBRARY_LOOKUP_TIMEOUT_MS = 10000;
 
+/** The "Library pages for this task" block for a repo and task words; a lookup that cannot run says why instead of failing. */
+function libraryFor(repo: string | undefined, words: string, scripts: string): string {
+    const libraryScript = join(scripts, 'library-brief.ts');
+    const libraryArgs = ['--repo', repo || '', '--vault', vault, '--project', project, ...(VAULT_ROOT ? ['--tickets-vault', VAULT_ROOT] : []), words];
+    return libraryBlock(
+        !repo ? null : existsSync(libraryScript) ? () => {
+            const r = spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8', timeout: LIBRARY_LOOKUP_TIMEOUT_MS });
+            return r.error ? { status: null, stdout: '', stderr: `lookup did not finish within ${LIBRARY_LOOKUP_TIMEOUT_MS} ms (${errorMessage(r.error)})` } : r;
+        } : null,
+        !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
+    );
+}
+
 function cmdBrief(): void {
-    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--as holder] [--pid n] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
+    const BRIEF_USAGE = 'Usage: journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--as holder] [--pid n] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d] --model "<name>" --used "skill:x,tool:y"';
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
     if (!target) die(`No item with that id.\n${BRIEF_USAGE}`);
@@ -1811,16 +1875,7 @@ function cmdBrief(): void {
     const block = spawnSync(process.execPath, [join(scripts, 'brief-block.ts')], { encoding: 'utf8' });
     if (block.status !== 0 || !block.stdout.trim()) die(`The standing block could not be built, so no brief was written:\n${(block.stderr || 'brief-block.ts printed nothing').trim()}`);
 
-    const libraryScript = join(scripts, 'library-brief.ts');
-    const words = target.text || '';
-    const libraryArgs = ['--repo', repo || '', '--vault', vault, '--project', project, ...(VAULT_ROOT ? ['--tickets-vault', VAULT_ROOT] : []), words];
-    const library = libraryBlock(
-        !repo ? null : existsSync(libraryScript) ? () => {
-            const r = spawnSync(process.execPath, [libraryScript, ...libraryArgs], { encoding: 'utf8', timeout: LIBRARY_LOOKUP_TIMEOUT_MS });
-            return r.error ? { status: null, stdout: '', stderr: `lookup did not finish within ${LIBRARY_LOOKUP_TIMEOUT_MS} ms (${errorMessage(r.error)})` } : r;
-        } : null,
-        !repo ? 'no repo named' : 'library-brief.ts is not installed in this checkout',
-    );
+    const library = libraryFor(repo, target.text || '', scripts);
 
     let details: string | undefined;
     const detailsFile = arg('details-file');
@@ -1834,6 +1889,8 @@ function cmdBrief(): void {
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
+    // A refused --branch/--worktree must fail before the lease, grant, claim or brief file exist: die() does not roll them back.
+    const where = recoveryFlags();
     const scope = claimScope(arg('worktree') || arg('branch'));
     const claim = writer && repo && desk ? { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why } : undefined;
 
@@ -1941,7 +1998,7 @@ function cmdBrief(): void {
         const batch = [
             ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, scope, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claimKey(claim.repo, scope)} for ${claim.desk}: ${why}`, ...usage })] : []),
             ...(!briefed && isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
-            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
+            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, ...where, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
         ];
         try { appendMany(batch); } catch (e) { rollBack(); die(`The ledger rows could not be written (${errorMessage(e)}); nothing is held, run it again.`); }
     }
@@ -2483,6 +2540,8 @@ switch (cmd) {
     case 'query': cmdQuery(); break;
     case 'ready-to-push': cmdReadyToPush(); break;
     case 'brief': cmdBrief(); break;
+    case 'next': cmdNext(); break;
+    case 'recover': cmdRecover(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
     case 'defer': cmdDefer(); break;
