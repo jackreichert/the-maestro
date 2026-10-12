@@ -2766,6 +2766,52 @@ test('status and status --footer show the review queue from the stored snapshot,
     assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
 });
 
+/** A gh stub already run once: the first run of a new executable can be slow on some machines, which would eat the footer's live-read budget. */
+const warmedGhStub = (config: Parameters<typeof installGhStub>[0]): NodeJS.ProcessEnv => {
+    const env = installGhStub(config);
+    spawnSync('gh', ['api', 'user'], { env, encoding: 'utf8' });
+    return env;
+};
+
+test('status --footer refreshes a stale review-queue snapshot from a live read, and says unknown when it cannot (MAESTRO-136)', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const old = new Date(Date.now() - 11 * 36e5).toISOString();
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: old, prs: [0, 1, 2, 3].map(() => ({ isDraft: false })) }));
+    const footer = (env: NodeJS.ProcessEnv) => spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+    }).stdout;
+    const live = warmedGhStub({ pages: [[1, 2, 3, 4, 5, 6].map((n) => prNode(n, { isDraft: false }))] });
+    assert.match(footer(live), /^\*\*Review queue:\*\* 6 of 4 \(full, 2 over the cap\)$/m, 'the live count, not the 11h-old 4');
+    rmSync(join(journalDir, 'prs-current.json'), { force: true }); // the live read above was saved; drop it so the failing read is the one under test
+    const broken = warmedGhStub({ pages: [[]], failOnPage: 0 });
+    assert.match(footer(broken), /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
+});
+
+test('status --footer bounds a slow live read, then reuses a successful one (MAESTRO-285)', () => {
+    const journalDir = join(vault, 'Projects', 'test-proj', 'Journal');
+    mkdirSync(journalDir, { recursive: true });
+    const old = new Date(Date.now() - 11 * 36e5).toISOString();
+    writeFileSync(join(journalDir, 'prs-snapshot.json'), JSON.stringify({ takenAt: old, prs: [0, 1, 2, 3].map(() => ({ isDraft: false })) }));
+    const footer = (env: NodeJS.ProcessEnv) => {
+        const t0 = Date.now();
+        const out = spawnSync(process.execPath, [SCRIPT, 'status', '--footer', '--vault', vault, '--project', 'test-proj'], {
+            encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
+        }).stdout;
+        return { out, ms: Date.now() - t0 };
+    };
+    const slow = footer(warmedGhStub({ pages: [[prNode(1)]], delayMs: 60_000 }));
+    assert.match(slow.out, /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
+    assert.ok(slow.ms < 25_000, `a hung gh must not hold the footer (took ${slow.ms} ms)`);
+    assert.equal(existsSync(join(journalDir, 'prs-current.json')), false, 'a failed read saves nothing');
+
+    const callLog = join(vault, 'gh-calls.log');
+    const quick = warmedGhStub({ pages: [[1, 2, 3].map((n) => prNode(n))], delayMs: 50, callLog });
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m);
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m, 'the second footer reuses the saved read');
+    assert.equal(readFileSync(callLog, 'utf8').trim().split('\n').length, 1, 'only one gh call across two footers');
+});
+
 // ── window id ───────────────────────────────────────────────────────────────
 
 test('every row written carries the window id: --window, then --session, then MAESTRO_WINDOW, then a pid-based id', () => {
