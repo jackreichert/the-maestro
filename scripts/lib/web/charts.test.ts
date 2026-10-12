@@ -142,3 +142,15 @@ test('the review queue count matches the cap rule (non-draft, not self-review) a
   assert.deepEqual(buildCharts({ ...base, reviewQueueCap: 4 }).reviewQueue, { count: 1, cap: 4 });
   assert.deepEqual(buildCharts(base).reviewQueue, { unavailable: 'no review_queue_cap is configured' });
 });
+
+test('PR age buckets use the same owner scope as the review-queue count: other owners are never in the queue side', () => {
+  const at = (n: number, repo: string, over: Partial<Pr> = {}): Pr => pr({ number: n, repo, createdAt: '2026-10-06T05:00:00Z', ...over });
+  const prs = [at(1, 'Example-Org/a'), at(2, 'jackreichert/mithril'), at(3, 'other-user/google-type'), at(4, 'EXAMPLE-ORG/b', { createdAt: undefined }), at(5, 'other-user/x', { createdAt: undefined })];
+  const out = buildCharts({ items: [], awaiting: [], prs, now: NOW, tz: TZ, days: 1, selfReview: ['jackreichert/the-maestro'], reviewQueueCap: 4, reviewQueueOwners: ['example-org'] });
+  assert.deepEqual(out.reviewQueue, { count: 2, cap: 4 });
+  const queued = out.prAge.buckets.flatMap((b) => b.inQueue).concat(out.prAge.unknownAge.inQueue).map((p) => p.number);
+  assert.deepEqual(queued, [1, 4], 'the queue side matches the count');
+  assert.deepEqual(out.prAge.buckets[0]?.other.map((p) => p.number), [2, 3]);
+  assert.deepEqual(out.prAge.unknownAge.other.map((p) => p.number), [5]);
+  assert.equal(prAgeBuckets(prs, NOW, TZ).buckets[0]?.inQueue.length, 3, 'no owners configured means no owner filter');
+});
