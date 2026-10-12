@@ -24,7 +24,7 @@ test('the stub path is a symlink to the committed runner and the written script 
   const p = writeStub(join(dir, 'tool'), '#!/bin/sh\nexit 0\n');
   assert.ok(lstatSync(p).isSymbolicLink());
   assert.match(readlinkSync(p), /stub-runner\.sh$/);
-  assert.equal(statSync(`${p}.stub`).mode & 0o111, 0);
+  assert.equal(statSync(`${p}.stub.cjs`).mode & 0o111, 0);
   assert.notEqual(statSync(readlinkSync(p)).mode & 0o111, 0);
 });
 
