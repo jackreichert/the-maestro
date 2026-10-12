@@ -1815,6 +1815,8 @@ function cmdBrief(): void {
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
     if (arg('pid') && !Number.isInteger(pid)) die('--pid must be an integer.');
+    // A refused --branch/--worktree must fail before the lease, grant, claim or brief file exist: die() does not roll them back.
+    const where = recoveryFlags();
     const scope = claimScope(arg('worktree') || arg('branch'));
     const claim = writer && repo && desk ? { repo, desk, pid, host: hostname(), time: now(), scope, branch: arg('branch') || undefined, why } : undefined;
 
@@ -1922,7 +1924,7 @@ function cmdBrief(): void {
         const batch = [
             ...(claimRowMissing && claim ? [row({ ts: claim.time, date: today(), kind: 'claim', repo: claim.repo, scope, stream: claim.desk, desk: claim.desk, branch: claim.branch, text: `claim ${claimKey(claim.repo, scope)} for ${claim.desk}: ${why}`, ...usage })] : []),
             ...(!briefed && isQueued(target) ? [row({ ts: now(), date: today(), kind: 'promote', promotes: target.id, text: `start ${target.text}`, ...usage })] : []),
-            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, ...recoveryFlags(), text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
+            ...(briefed ? [] : [row({ ts: now(), date: today(), kind: 'brief', briefs: target.id, repo, stream: target.stream, brief: paths.brief, report: paths.report, ...where, text: `brief ${target.id}${claim ? `, claim ${claim.repo}` : ''}`, ...usage })]),
         ];
         try { appendMany(batch); } catch (e) { rollBack(); die(`The ledger rows could not be written (${errorMessage(e)}); nothing is held, run it again.`); }
     }
