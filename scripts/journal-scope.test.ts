@@ -136,3 +136,25 @@ for (const lift of ['drop', 'resolve']) {
         assert.match(runAs('winB', 'prime').out, /GLOBAL keep going/);
     });
 }
+
+/** Runs journal.ts with no window flag and none of the variables that name a window, so the id falls back to the per-shell pid (unstable). */
+function runUnstable(...args: string[]): Run {
+    const env = { ...process.env, VAULT_ROOT: '', LEDGER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_STATUS_DIR: statusDir, MAESTRO_EVENT_DIR: join(vault, 'Events') } as Record<string, string | undefined>;
+    for (const k of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_PID', 'MAESTRO_WINDOW']) delete env[k];
+    const r = spawnSync(process.execPath, [SCRIPT, ...args, '--vault', vault, '--project', 'test-proj'], { encoding: 'utf8', cwd, env });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+test('--scope window is refused when the window id is unstable, since the rule could never be matched again', () => {
+    const r = runUnstable('note', 'pause pushes here', '--scope', 'window', ...MARK);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /window id .* is unstable/i);
+    assert.match(r.err, /MAESTRO_WINDOW/);
+    assert.equal(ledger().length, 0);
+});
+
+test('--scope global and an unscoped note still write when the window id is unstable', () => {
+    assert.equal(runUnstable('note', 'everywhere', '--scope', 'global', ...MARK).code, 0);
+    assert.equal(runUnstable('note', 'plain', ...MARK).code, 0);
+    assert.equal(ledger().length, 2);
+});

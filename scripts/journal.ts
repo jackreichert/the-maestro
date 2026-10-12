@@ -452,7 +452,10 @@ const refsFromArgs = () => refFlagValues().flatMap((v) => v.split(',')).map((s) 
 function ruleScopeFor(kind: string): { ruleScope?: RuleScope } {
     if (!has('scope') || has('approval')) return {};
     const parsed = parseRuleScope(arg('scope'), kind);
-    return 'error' in parsed ? die(parsed.error) : { ruleScope: parsed.scope };
+    if ('error' in parsed) return die(parsed.error);
+    // An unstable id (the per-shell pid) changes on every call, so a window rule written under it could never be matched by its own window again.
+    if (parsed.scope === 'window' && !resolvedWindow.stable) die(`--scope window needs a stable window id, and ${windowNotice(resolvedWindow)}`);
+    return { ruleScope: parsed.scope };
 }
 
 function parseApproval(): { approval?: string; scope?: string } {
