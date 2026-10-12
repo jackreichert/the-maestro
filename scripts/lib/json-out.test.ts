@@ -28,6 +28,31 @@ test('keys named like Object.prototype members pass through unchanged', () => {
   assert.equal(Object.getPrototypeOf(out.model), Object.prototype, 'callers get an ordinary object');
 });
 
+const splitToken = (sep: string): string => `${token.slice(0, 10)}${sep}${token.slice(10)}`;
+
+test('withholdJson catches a token split by a zero-width character or a space, in a value, a key and mid-string', () => {
+  for (const sep of ['\u200b', ' ']) {
+    const split = splitToken(sep);
+    const out = withholdJson({ stream: split, [split]: 'x', list: [`id ${split} end`] });
+    assert.deepEqual(out, { stream: WITHHELD, [WITHHELD]: 'x', list: [WITHHELD] });
+    assert.ok(!JSON.stringify(out).includes('ghp_'));
+  }
+});
+
+test('withholdJson reads a key and its string value together, as the text path does', () => {
+  const fake = 'fake_pw_123abc';   // not secret-shaped alone; the key is what makes it one
+  assert.deepEqual(withholdJson({ PassWord: fake, note: fake }), { PassWord: WITHHELD, note: fake });
+  assert.deepEqual(withholdJson({ nested: [{ api_key: fake }] }), { nested: [{ api_key: WITHHELD }] });
+  assert.deepEqual(withholdJson({ tokens: 12, token_count: 'many', password: '<redacted>' }), { tokens: 12, token_count: 'many', password: '<redacted>' });
+});
+
+test('withholdJson lets status words under secret-sounding keys through, and still withholds real pairs', () => {
+  const words = { tokens: 'unmeasured', token: 'refreshed', credentials: 'missing_file', secrets: 'scanned', access_token: 'present', ['pass' + 'word']: 'unchanged' };   // placeholder status words
+  assert.deepEqual(withholdJson(words), words);
+  const fake = 'fake_pw_123abc';   // placeholder fixture, not a secret
+  assert.deepEqual(withholdJson({ PassWord: fake, api_key: fake }), { PassWord: WITHHELD, api_key: WITHHELD });
+});
+
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NOT_PRODUCERS = new Set(['lib/json-out.ts', 'lib/gh-stub.ts', 'journal.cases.ts']);   // the helper itself; two fake gh binaries (test input, not producers)
 
