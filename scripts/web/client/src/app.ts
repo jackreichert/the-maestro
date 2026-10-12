@@ -587,8 +587,6 @@ export class PodiumApp extends HTMLElement {
     });
   }
 
-  /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
-  #home(st: PodiumState): Node {
   /** The Open PRs tab. Its data comes from the page's own store; a live update redraws the table in place and never starts a refresh. */
   #openPrs(st: PodiumState): Node {
     const el = h('open-prs');
@@ -603,6 +601,8 @@ export class PodiumApp extends HTMLElement {
     return el;
   }
 
+  /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
+  #home(st: PodiumState): Node {
     const pri = st.priorities;
     const editable = this.#sources.state === 'server';
     const stale = pri.state === 'stale' && pri.date !== st.today;
