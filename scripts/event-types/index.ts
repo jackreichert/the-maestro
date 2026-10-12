@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { overlayPath } from '../local-config.ts';
+import * as coldStartGate from './cold-start-gate.ts';
 import * as continuity from './continuity.ts';
 import * as ghRun from './gh-run.ts';
 import * as inbox from './inbox.ts';
@@ -41,7 +42,7 @@ export type TypeRegistry = Record<string, EventType>;
 /** Old type names that still resolve, so watches registered under them keep working. pr-review became pr-watch. */
 export const ALIASES: Record<string, string> = { 'pr-review': 'pr-watch' };
 
-const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'roll-maintenance': rollMaintenance, continuity, 'library-due': libraryDue, 'retro-due': retroDue, 'status-refresh': statusRefresh, 'status-watch': statusWatch, 'notion-watch': notionWatch, 'slack-watch': slackWatch, wake, stall, 'suite-done': suiteDone, 'whats-next': whatsNext };
+const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'roll-maintenance': rollMaintenance, continuity, 'cold-start-gate': coldStartGate, 'library-due': libraryDue, 'retro-due': retroDue, 'status-refresh': statusRefresh, 'status-watch': statusWatch, 'notion-watch': notionWatch, 'slack-watch': slackWatch, wake, stall, 'suite-done': suiteDone, 'whats-next': whatsNext };
 export const BUILTIN_TYPES: TypeRegistry = { ...TYPES, ...Object.fromEntries(Object.entries(ALIASES).flatMap(([old, current]) => (TYPES[current] ? [[old, TYPES[current]]] : []))) };
 
 const OPTIONAL_HOOKS = ['done', 'retired', 'validate', 'defaultTtlMs'];
