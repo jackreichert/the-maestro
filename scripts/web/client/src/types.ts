@@ -201,3 +201,20 @@ export interface WeekCount { start: string; total: number; byStream: Record<stri
 
 /** `GET /api/projects`: Home's status rows, important links and done-per-week series. No absolute path anywhere. */
 export interface ProjectsData { generatedAt: string; today: string; rows: ProjectRow[]; links: HomeLink[]; weeks: WeekCount[] }
+
+/** One open PR in the Open PRs tab. `review` is none for a PR nobody has decided on; `twins` are the other PRs of the repo on the same head branch (or its develop/staging pair). */
+export interface OpenPrRow {
+  number: number; title: string; url: string; base: string; head: string; isDraft: boolean;
+  review: 'approved' | 'changes-requested' | 'none'; unresolved: number; mergeable: 'mergeable' | 'conflicting' | 'unknown';
+  twins: number[]; ageDays?: number; ticket?: { label: string; url?: string };
+}
+export interface OpenPrsRepo { repo: string; count: number; prs: OpenPrRow[] }
+/** `team` repos are reviewed by others; `self-review` repos only by the user (`self_review_repos`). */
+export interface OpenPrsGroup { id: 'team' | 'self-review'; label: string; count: number; repos: OpenPrsRepo[] }
+export interface OpenPrsData {
+  generatedAt: string;
+  prData: { fetchedAt: string | null; stale: boolean; failure?: string };
+  total: number; groups: OpenPrsGroup[];
+}
+/** Where the PR refresh stands: `locked` means another rebuild held the page lock. */
+export interface PrsRefreshStatus { state: 'idle' | 'running' | 'done' | 'failed' | 'locked'; startedAt?: string; finishedAt?: string; message?: string }

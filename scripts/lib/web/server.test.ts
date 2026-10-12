@@ -87,6 +87,14 @@ test('GET /api/state returns JSON that the client contract accepts with no dropp
   hasSecurityHeaders(r);
 });
 
+test('GET /api/prs answers from the PR cache only: no cache means no groups and PR data that says it is stale', async () => {
+  const r = await hit('/api/prs');
+  assert.equal(r.status, 200);
+  hasSecurityHeaders(r);
+  const body = JSON.parse(r.body) as { total: number; groups: unknown[]; prData: { fetchedAt: string | null; stale: boolean } };
+  assert.deepEqual([body.total, body.groups, body.prData.fetchedAt, body.prData.stale], [0, [], null, true]);
+});
+
 test('GET /api/state withholds secret-shaped ledger values, keeps seq on the served body, and leaves the token reply verbatim', async () => {
   const tok = `ghp_${'a1B2c3D4e5F6g7H8i9J0'}${'k1L2m3N4o5P6'}`;   // fake, assembled so no literal secret sits in the file
   const aws = `AK${'IAIOSFODNN7EXAMPLE'}`;

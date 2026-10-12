@@ -1,6 +1,6 @@
-import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeProjects, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
-import type { ChartsData, EpicsData, LocalReview, PodiumState, ProjectsData, StreamHome } from './types.ts';
+import type { ChartsData, EpicsData, LocalReview, OpenPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -88,6 +88,24 @@ export async function loadEpics(): Promise<EpicsData | null> {
 export async function loadLocalReview(): Promise<LocalReview | null> {
   try {
     return sanitizeLocalReview(await getJson('/api/local-review'))?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Every open PR grouped by repo, or null when the server has none to give (sample data, an old server, an unusable body). No fixture stands in. */
+export async function loadOpenPrs(): Promise<OpenPrsData | null> {
+  try {
+    return sanitizeOpenPrs(await getJson('/api/prs'))?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the PR refresh stands, or null when the server cannot say. */
+export async function loadRefreshStatus(): Promise<PrsRefreshStatus | null> {
+  try {
+    return sanitizeRefreshStatus(await getJson('/api/prs/refresh-state'));
   } catch {
     return null;
   }

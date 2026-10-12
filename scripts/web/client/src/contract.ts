@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -319,4 +319,41 @@ export function sanitizeProjects(x: unknown): { data: ProjectsData; dropped: num
   const links = validRows(x.links, HOME_LINK) as HomeLink[];
   const weeks = validRows(x.weeks, WEEK) as WeekCount[];
   return { data: { generatedAt: x.generatedAt as string, today: x.today as string, rows, links, weeks }, dropped: lost(x.rows, rows) + lost(x.links, links) + lost(x.weeks, weeks) };
+}
+
+const OPEN_PR: Shape = {
+  number: count, title: str, url: str, base: str, head: str, isDraft: bool, review: oneOf('approved', 'changes-requested', 'none'), unresolved: count,
+  mergeable: oneOf('mergeable', 'conflicting', 'unknown'), twins: arrOf(count), ageDays: opt(num), ticket: opt(ref),
+};
+const OPEN_PRS_REPO: Shape = { repo: str, count, prs: arrOf(shape(OPEN_PR)) };
+
+/**
+ * OpenPrsData from an untrusted `GET /api/prs` body, or null when it has no usable shape. A repo block whose rows fail the rules is
+ * dropped and counted, so a bad row never shows a count that disagrees with its table. Totals are recomputed from what survived.
+ */
+export function sanitizeOpenPrs(x: unknown): { data: OpenPrsData; dropped: number } | null {
+  if (!isObj(x) || !str(x.generatedAt) || !Array.isArray(x.groups)) return null;
+  const pd = isObj(x.prData) ? x.prData : null;
+  if (!pd || !(pd.fetchedAt === null || str(pd.fetchedAt)) || !bool(pd.stale)) return null;
+  let dropped = 0;
+  const groups: OpenPrsGroup[] = [];
+  for (const g of x.groups) {
+    if (!isObj(g) || !oneOf('team', 'self-review')(g.id) || !str(g.label) || !Array.isArray(g.repos)) { dropped += 1; continue; }
+    const repos = validRows(g.repos, OPEN_PRS_REPO) as { repo: string; count: number; prs: unknown[] }[];
+    dropped += lost(g.repos, repos);
+    const clean = repos.map((r) => ({ repo: r.repo, count: r.prs.length, prs: r.prs })) as OpenPrsGroup['repos'];
+    if (clean.length > 0) groups.push({ id: g.id as 'team' | 'self-review', label: g.label as string, count: clean.reduce((n, r) => n + r.count, 0), repos: clean });
+  }
+  const failure = str(pd.failure) ? { failure: pd.failure as string } : {};
+  return { data: { generatedAt: x.generatedAt as string, prData: { fetchedAt: pd.fetchedAt as string | null, stale: pd.stale as boolean, ...failure }, total: groups.reduce((n, g) => n + g.count, 0), groups }, dropped };
+}
+
+/** A refresh status from an untrusted body, or null when its state is not one of the five. The message is shown as text only. */
+export function sanitizeRefreshStatus(x: unknown): PrsRefreshStatus | null {
+  if (!isObj(x) || !oneOf('idle', 'running', 'done', 'failed', 'locked')(x.state)) return null;
+  const out: PrsRefreshStatus = { state: x.state as PrsRefreshStatus['state'] };
+  if (str(x.startedAt)) out.startedAt = x.startedAt as string;
+  if (str(x.finishedAt)) out.finishedAt = x.finishedAt as string;
+  if (str(x.message)) out.message = x.message as string;
+  return out;
 }
