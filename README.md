@@ -586,6 +586,19 @@ The home base response carries `links`: groups in a fixed order (`pinned`, `epic
 
 The stream tab draws the home base (`web/client/src/home-view.ts`, wording and counts in `home-text.ts`). It fetches `GET /api/streams/<name>/home` once the board is up, checks it with `sanitizeHome` (rows and epics that fail their rules are dropped and counted; an epic whose counts do not add up to its total is dropped, so a progress sentence never contradicts its rows) and fills its own slots, so it never rebuilds the ask rows. With no server, or no home base, the tab simply has none: no sample epic stands in. Each epic shows one sentence with its denominator (`9 of 14 closed (64%)`, plus `6 of 14 verified` when the epic needs it), a bar that repeats the sentence for sighted readers only, its next ticket and its unknowns count (a button that opens the unknowns list). What's left lists In progress, Blocked and Not started, five rows then Show more; unknowns sit in a closed disclosure. Every empty section folds into one `Clear:` line, and opening an ask folds the others, so one answer form is open at a time.
 
+#### Home tab and `GET /api/projects`
+
+Home is the landing tab (its id stays `dashboard`, so older `#tab=dashboard` links still open it). It reads top-down: **Needs you** (the oldest asks, answerable in place, then Show all), **Projects** (one row per stream on the board), **What we got done** (today's finished items by stream, and this week's count per stream), **Trends** (done per seven-day period by stream, and open asks and open work by age, each chart with its data table and its n stated), then **Important links**. A section with nothing in it collapses to one line that says what empty means. Every count is a count with its noun; there is no ETA, velocity or health score.
+
+```mermaid
+flowchart LR
+  B[Board payload] --> H[Home]
+  C[Charts payload] --> H
+  P["GET /api/projects"] -->|after the board| H
+```
+
+The rows come from `GET /api/projects` (`scripts/lib/web/projects.ts`), read-only. Each row carries the stream, its projects (from `stream-homes.json`, or the folder named like the stream when it has a CONTEXT or INDEX note), a one-line status (the first line under `## Now` in the project's CONTEXT note, else the stream's place in today's priorities), today's priority rank, counts of asks, in flight, blocked and open PRs, the oldest open item's age in days, the last day something shipped, this week's shipped count, and a state word from a rule table: an ask makes it *waiting on you*, then *blocked*, then *moving* (in flight or shipped this week), else *quiet*. `links` are each stream's pins, then each project's CONTEXT and library INDEX notes; `weeks` are eight seven-day periods counted back from today. The vault reader may open only a project's `CONTEXT.md` and `INDEX.md`, so no other note, no absolute path and no secret-shaped file name reaches the payload. The page loads this after the board, so Home answers at once; while it loads, or if it fails, only the sections that need it say so.
+
 #### Podium design system
 
 **The browser tab is the first glance.** While asks need you, the tab title reads `(n) Podium` (n counts every stream, whichever tab is open; blocked items never count, they are not your hand) and the favicon, a baton, lights its tip in the accent. With nothing waiting, or on sample data, it reads `Podium` and the tip stays grey. Both icons are static SVG files served beside the page. The header's wordmark is the same baton, drawn inline with presentation attributes only (no style attribute, so the CSP holds), and its tip carries the same cue; on hover the baton dips 8 degrees around its grip and returns, a downbeat, and under reduced motion it stays still.

@@ -6,7 +6,7 @@ import './local-review.ts';
 import './md-fragment.ts';
 import { h, s, shadow, streamTag } from './dom.ts';
 import { BOARD_CSS, RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadState } from './api.ts';
+import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadProjects, loadState } from './api.ts';
 import { fragmentFor } from './contract.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
@@ -17,7 +17,8 @@ import type { LiveStatus } from './live.ts';
 import { ageChart, modelMixChart, prMixChart, throughputChart } from './chart-data.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
 import { DASHBOARD, OVERVIEW, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
-import { DASHBOARD_CSS, dashboardView } from './dashboard-view.ts';
+import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
+import type { ProjectsLoad } from './home-tab.ts';
 import { filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
@@ -25,9 +26,9 @@ import type { ChartKind } from './podium-chart.ts';
 import type { ChartData } from './chart-math.ts';
 import type { AskBusyDetail, ChartsData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
 
-interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; local: LocalReview | null; dropped: number }
+interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number }
 
-const CSS = `${BOARD_CSS}${DASHBOARD_CSS}
+const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
 
   /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
@@ -218,8 +219,8 @@ export class PodiumApp extends HTMLElement {
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
   #dropped = 0;
   #active = DASHBOARD;
-  // The day whose finished items the Dashboard has open, if any. Lives here so a live redraw keeps it.
-  #day: string | null = null;
+  // Home's project rows load after the board, so the page answers at once and the rows fill in.
+  #projects: ProjectsLoad = { state: 'loading' };
   // The summary tile pressed, if any: the board shows only that bucket. It lives in the fragment beside the tab.
   #filter: CueKey | null = null;
   #tick: number | undefined;
@@ -273,6 +274,16 @@ export class PodiumApp extends HTMLElement {
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
       if (this.#live) this.#startLive(s.data.seq);   // sample data has no server to follow
+      void projectsLoad(this.#live).then((p) => {
+        if (!this.isConnected || this.#projects.state === 'ok') return;   // a live update got there first
+        this.#projects = p;
+        // Typing an answer holds the redraw; the next render (any tab switch or live update) shows the rows.
+        if (this.#active === DASHBOARD && !this.#filter && !typingAnAnswer()) {
+          const folds = foldStates(this.#root);
+          keepAcross(this.#root, () => this.#safeRender());
+          restoreFolds(this.#root, folds);
+        }
+      });
     }).catch((e: unknown) => {
       this.#root.replaceChildren(problem(`Can't reach the Podium server`, e, 'Start it with node scripts/journal.ts web (or npm run web:static for sample data), then reload.'));
     });
@@ -298,8 +309,8 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
-        const [s, c, e, lr] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview()]);
-        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, local: lr, dropped: s.dropped + c.dropped } : null;
+        const [s, c, e, lr, p] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true)]);
+        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
       },
       seqOf: (f) => f.state.seq,
       apply: (f) => this.#adopt(f),
@@ -322,6 +333,7 @@ export class PodiumApp extends HTMLElement {
     this.#charts = f.charts;
     this.#epics = f.epics;
     this.#local = f.local;
+    this.#projects = f.projects;
     this.#dropped = f.dropped;
     askState.prune(f.state.asks.map((a) => a.id));
     if (!this.#ids().includes(this.#active)) this.#active = DASHBOARD;   // the stream behind the open tab is gone
@@ -410,7 +422,7 @@ export class PodiumApp extends HTMLElement {
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === DASHBOARD ? 'Dashboard' : id === OVERVIEW ? 'Board' : tabStream(id),
+      }, id === DASHBOARD ? 'Home' : id === OVERVIEW ? 'Board' : tabStream(id),
       n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
       blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
       tab.addEventListener('click', () => this.#select(id, true));
@@ -424,7 +436,7 @@ export class PodiumApp extends HTMLElement {
       return tab;
     });
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#dashboard(st) : this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OVERVIEW ? this.#overview(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
     // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
@@ -576,12 +588,9 @@ export class PodiumApp extends HTMLElement {
     });
   }
 
-  /** The landing tab. Read-only: every mark and row links to where the thing is answered or opened. */
-  #dashboard(st: PodiumState): Node {
-    return dashboardView(st, this.#charts, {
-      day: this.#day,
-      setDay: (day) => keepAcross(this.#root, () => { this.#day = day; this.#release({ busy: false }); this.#safeRender(); }),   // the column that was pressed is redrawn; keep focus on its twin
-    });
+  /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
+  #home(st: PodiumState): Node {
+    return homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects });
   }
 
   #overview(st: PodiumState): Node {
@@ -678,6 +687,11 @@ function showCue(asks: number): void {
   const icon = document.querySelector<HTMLLinkElement>('link[rel=icon]');
   const href = asks > 0 ? '/favicon-cue.svg' : '/favicon.svg';
   if (icon && icon.getAttribute('href') !== href) icon.setAttribute('href', href);
+}
+
+/** The projects payload as Home's load state: a failure is shown in the sections that need it, never thrown, and on a live page never replaced by sample data. */
+function projectsLoad(live: boolean): Promise<ProjectsLoad> {
+  return loadProjects(live).then((p): ProjectsLoad => ({ state: 'ok', data: p.data }), (e: unknown): ProjectsLoad => ({ state: 'error', message: e instanceof Error ? e.message : 'unknown error' }));
 }
 
 /** True while the focused field (looked for through nested shadow roots) holds text: an answer being typed there. */

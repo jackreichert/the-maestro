@@ -19,6 +19,7 @@ import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { buildEpics, buildHome } from './home.ts';
+import { buildProjects } from './projects.ts';
 import { withVerdicts } from './local-review.ts';
 import { createLocalReviewCache, spawnProducer } from './local-review-cache.ts';
 import { TOKEN_PATH, WRITE_PATHS as PRIORITY_PATHS, handleWrite } from './priorities-write.ts';
@@ -82,6 +83,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildStream(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
+    { method: 'GET', pattern: /^\/api\/projects$/, handler: () => buildProjects(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/local-review$/, handler: () => containerRoot
       ? withVerdicts(localReview.read(), o.web.vault)
       : { generatedAt: now().toISOString(), available: false, reason: 'No container folder is configured (set container_root), so local branches are not read.', units: [], more: 0, notes: [] } },
