@@ -53,6 +53,7 @@ import { readAutocompact, triggerTokens } from './lib/autocompact.ts';
 import { sessionText } from './lib/session-text.ts';
 import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
+import { printJson } from './lib/json-out.ts';
 
 const FAMILIES = ['opus', 'sonnet', 'haiku'];
 
@@ -153,7 +154,7 @@ function main(argv: string[]): void {
 
     const todays = sessions.filter((s) => s.date === date);
     if (flag('json')) {
-        console.log(JSON.stringify({ day: days.get(date) || null, sessions: todays }, null, 2));
+        printJson({ day: days.get(date) || null, sessions: todays });
     } else {
         printDay(date, days.get(date));
         printSessions(todays);

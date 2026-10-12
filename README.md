@@ -291,7 +291,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 
 ### journal.ts
 
-The ledger tool. `--project <name>` is required on every command unless the `project` config setting (or `MAESTRO_PROJECT`) names one; an explicit flag wins and there is no built-in default. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. The root is `--vault`, then `LEDGER_ROOT`, then `VAULT_ROOT`. Every new row needs `--model "<name>"` and `--used "skill:x,tool:y"` (`--tokens` and `--harness` are optional).
+The ledger tool. `--project <name>` is required on every command unless the `project` config setting (or `MAESTRO_PROJECT`) names one; an explicit flag wins and there is no built-in default. Common flags: `--vault`, `--project`, `--json`, `--dry-run`, `--include-archived`. Every `--json` output goes through one shared print path (`printJson` in `scripts/lib/json-out.ts`, and the same scan inside the web Podium's `sendJson`, which exempts only the edit-token reply); a test fails on any script that prints `JSON.stringify` output directly. The path applies the same secret scan as printed text: a string value or object key shaped like a secret is replaced in place by `[withheld: secret shape]`, so the output keeps its structure and still parses. The root is `--vault`, then `LEDGER_ROOT`, then `VAULT_ROOT`. Every new row needs `--model "<name>"` and `--used "skill:x,tool:y"` (`--tokens` and `--harness` are optional).
 
 ```bash
 J=~/.claude/skills/the-maestro/scripts/journal.ts

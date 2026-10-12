@@ -20,6 +20,7 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { printJson } from './lib/json-out.ts';
 
 export type Verdict = 'APPROVED-on-head' | 'APPROVED-stale' | 'DISMISSED' | 'CHANGES_REQUESTED' | 'COMMENTED-only';
 export interface Ref { repo: string; number: number }
@@ -179,7 +180,7 @@ function main(): void {
       text.push(`${a}\n  could not read: ${msg}\nREADY-FOR-REVIEW: no (could not read the PR)\nREADY-TO-MERGE: no (could not read the PR)`);
     }
   }
-  console.log(json ? JSON.stringify(out, null, 2) : text.join('\n\n'));
+  if (json) printJson(out); else console.log(text.join('\n\n'));
   process.exitCode = failed ? 2 : 0;
 }
 

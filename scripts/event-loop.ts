@@ -65,6 +65,7 @@ import type { TypeRegistry } from './event-types/index.ts';
 import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult, Watch, WatchEvent, WatchState } from './lib/types.ts';
 import type { NotifyRun } from './lib/notify.ts';
 import { resolveWindowId, windowEnv } from './lib/window-id.ts';
+import { printJson } from './lib/json-out.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 
@@ -373,7 +374,7 @@ async function eventsCommand(dir: string, sub: string | undefined, ids: string[]
     const shown = entries.filter(listFilter(v, window));
     // `list` shows every event to every window (nothing is hidden by routing); `--json` adds `owner` where a window owns the event now.
     const owners = ownersOf(shown);
-    console.log(v.json ? JSON.stringify(shown.map((e) => (owners.get(e.id) ? { ...e, owner: owners.get(e.id) } : e))) : shown.map(formatEntry).join('\n') || 'no events');
+    if (v.json) printJson(shown.map((e) => (owners.get(e.id) ? { ...e, owner: owners.get(e.id) } : e)), { compact: true }); else console.log(shown.map(formatEntry).join('\n') || 'no events');
     return EXIT.ok;
   }
   if (sub === 'ack') {
@@ -425,7 +426,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(`added ${w.id} (${w.type} ${w.target}), expires ${w.expires}`);
     } else if (cmd === 'list') {
       const ws = listWatches(dir);
-      console.log(v.json ? JSON.stringify(ws) : ws.map((w) => `${w.id}\t${w.type}\t${w.target}\texpires ${w.expires}`).join('\n') || 'no watches registered');
+      if (v.json) printJson(ws, { compact: true }); else console.log(ws.map((w) => `${w.id}\t${w.type}\t${w.target}\texpires ${w.expires}`).join('\n') || 'no watches registered');
     } else if (cmd === 'remove') {
       const watch = listWatches(dir).find((w) => w.id === arg);
       console.log(removeWatch(dir, String(arg), 'removed by user') ? `removed ${arg}` : `no live watch ${arg}`);

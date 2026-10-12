@@ -16,6 +16,7 @@ import { openStore } from '../journal/store.ts';
 import { boardContextFor } from '../journal/board-context.ts';
 import { footerDone, groups } from '../journal/board.ts';
 import type { Groups } from '../journal/board.ts';
+import { withholdJson } from '../json-out.ts';
 import { statusJson } from '../journal/status-json.ts';
 import { triageItems } from '../journal/triage.ts';
 import { ticketNoteRef } from '../status-page/render.ts';
@@ -88,10 +89,10 @@ function toWire(cfg: WebConfig, s: ReducedState): PodiumState {
   const blocked: BlockedItem[] = s.blocked.map((b) => ({ ...work(b), ...(b.gate ? { gate: b.gate } : {}) }));
   const done: DoneItem[] = s.done.map((d) => ({ ...work(d), closedAt: d.closedAt ?? '' }));
   const deferred: DeferredItem[] = s.deferred.map((d) => ({ ...work(d), until: d.until }));
-  const { generatedAt, ...body } = {
+  const { generatedAt, ...body } = withholdJson({   // withheld before the hash, so `seq` names the bytes the client receives
     ...s, footer, asks, prs: s.prs.map((p) => ({ ...p, review: p.review ?? '' })), blocked, done, deferred, working: s.working.map(work), queued: s.queued.map(work),
     fragments: readFragments(cfg.statusDir, ['overview', ...s.streams]),
-  };
+  }) as Omit<PodiumState, 'generatedAt' | 'prioritiesMax' | 'seq'> & { generatedAt: string };
   return { generatedAt, ...body, prioritiesMax: cfg.prioritiesMax ?? DEFAULT_PRIORITIES_MAX, seq: createHash('sha1').update(JSON.stringify(body)).digest('hex').slice(0, 12) };
 }
 
