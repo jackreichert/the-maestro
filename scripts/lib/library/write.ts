@@ -137,9 +137,9 @@ const sha256 = (s: string | Buffer): string => createHash('sha256').update(s).di
 
 /**
  * Replace one page from a staged file. The real page is untouched unless every check passes; the new text goes to a temp file beside
- * it and is renamed over it (the rename is the commit), and identical bytes write nothing. Returns the sha256 of the bytes on disk.
+ * it and is renamed over it (the rename is the commit), and identical bytes write nothing (and are recorded only when the record already matches the disk, or with `acceptHandEdit`). Returns the sha256 of the bytes on disk.
  */
-export function writePage(env: WriteEnv, holder: string | undefined, page: string, stagedPath: string): Outcome<{ sha: string; changed: boolean }> {
+export function writePage(env: WriteEnv, holder: string | undefined, page: string, stagedPath: string, opts: { acceptHandEdit?: boolean } = {}): Outcome<{ sha: string; changed: boolean }> {
   const lock = requireHolder(env, holder);
   if (!lock.ok) return lock;
   const bad = pagePathProblem(page);
@@ -157,7 +157,12 @@ export function writePage(env: WriteEnv, holder: string | undefined, page: strin
   if (problems.length) return refuse(1, ...problems, 'nothing was written');
   const target = join(env.vault, page);
   const sha = sha256(text);
-  if (existsSync(target) && sha256(readFileSync(target)) === sha) { env.lastWrites.set(page, sha); return { ok: true, sha, changed: false }; }
+  if (existsSync(target) && sha256(readFileSync(target)) === sha) {
+    // Identical bytes change nothing on disk, so they must not change what the record says is composer output: only a disk the record already matches is re-recorded.
+    if (!opts.acceptHandEdit && env.lastWrites.get(page) !== sha) return refuse(1, 'the page on disk is not what the last composer `write` left (a hand edit, or no write recorded): writing its own bytes back would record them as composer output. Pass --accept-hand-edit to record the disk as it is; nothing written');
+    env.lastWrites.set(page, sha);
+    return { ok: true, sha, changed: false };
+  }
   mkdirSync(dirname(target), { recursive: true });
   const tmp = `${target}.tmp-${holder}`;
   try { writeFileSync(tmp, text, { flag: 'w' }); renameSync(tmp, target); } catch (e) { rmSync(tmp, { force: true }); throw e; }

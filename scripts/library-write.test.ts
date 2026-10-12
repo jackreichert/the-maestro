@@ -301,8 +301,37 @@ test('a plain curate --page refuses a hand edit made after the last write, passe
   const accepted = f.cli('curate', 'lrn2', '--page', PAGE, '--accept-hand-edit', '--holder', holder, ...MARKS);
   assert.equal(accepted.code, 0, accepted.err);
   const edited = readFileSync(join(f.root, PAGE), 'utf8');
-  assert.equal(f.cli('write', PAGE, '--from', f.stage(edited), '--holder', holder).code, 0);
-  assert.equal(f.cli('curate', 'lrn3', '--page', PAGE, '--holder', holder, ...MARKS).code, 0, 'an identical-bytes write records the sha');
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(edited), '--holder', holder, '--accept-hand-edit').code, 0);
+  assert.equal(f.cli('curate', 'lrn3', '--page', PAGE, '--holder', holder, ...MARKS).code, 0, 'an identical-bytes write with --accept-hand-edit records the sha');
+});
+
+test('an identical-bytes write of a hand-edited page does not record it as composer output, so the next curate is still refused', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  f.env().append(learnedRow('lrn1'));
+  f.env().append(learnedRow('lrn2'));
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  assert.equal(f.cli('curate', 'lrn1', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+  writeFileSync(join(f.root, PAGE), readFileSync(join(f.root, PAGE), 'utf8').replace('runs nightly', 'runs hourly'));
+  const edited = readFileSync(join(f.root, PAGE), 'utf8');
+  const before = f.ledger().length;
+  const write = f.cli('write', PAGE, '--from', f.stage(edited), '--holder', holder);
+  assert.equal(write.code, 1, 'staging the disk copy and writing it back must not bless it');
+  assert.match(write.err, /--accept-hand-edit/);
+  const curate = f.cli('curate', 'lrn2', '--page', PAGE, '--holder', holder, ...MARKS);
+  assert.equal(curate.code, 1);
+  assert.equal(f.ledger().length, before, 'neither refusal writes a row');
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(edited), '--holder', holder, '--accept-hand-edit').code, 0, 'the explicit override still works');
+  assert.equal(f.cli('curate', 'lrn2', '--page', PAGE, '--holder', holder, ...MARKS).code, 0);
+});
+
+test('an identical-bytes write of an unchanged composer page still records and is a no-op', () => {
+  const f = fixture();
+  const holder = holderOf(f.cli('begin').out);
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  const again = f.cli('write', PAGE, '--from', f.stage(readFileSync(join(f.root, PAGE), 'utf8')), '--holder', holder);
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /unchanged/);
 });
 
 test('curate --refresh is allowed straight after a write, and refused again once the page is hand-edited after that write', () => {

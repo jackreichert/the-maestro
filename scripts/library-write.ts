@@ -3,13 +3,14 @@
  * LIBRARY WRITE: the only way a composer pass writes a library page or closes a learned row.
  *
  *   library-write.ts begin                                       take the composer lock (a ledger lease), print the holder id
- *   library-write.ts write <page> --from <staged> --holder <id>  replace one page after every check passes
+ *   library-write.ts write <page> --from <staged> [--accept-hand-edit] --holder <id>  replace one page after every check passes
  *   library-write.ts curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model M --used a,b
  *   library-write.ts end --holder <id>                           free the lock
  *
  * <page> is vault-relative: Projects/<repo>/(Knowledge|Runbooks)/<name>.md. Options: --vault <root> (pages), --ledger-root <root>,
  * --project <ledger project> (defaults come from the local config), --tokens N, --allow-unmarked (tests).
  * `curate --page` (first close or --refresh) refuses (exit 1) unless the page on disk is what the last `write` left; `--accept-hand-edit` overrides that on purpose.
+ * An identical-bytes `write` is recorded only when the record already matches the disk; `write --accept-hand-edit` records the disk as it is.
  * Exit 0 done; 1 a check refused the work (nothing written); 2 usage; 3 the lock is not this pass's (held by another, lapsed, wrong holder).
  * See lib/library/write.ts for what the checks are and lib/library/composer.ts for the lock.
  */
@@ -21,7 +22,7 @@ import { openStore } from './lib/journal/store.ts';
 import { begin, curate, end, fileLastWrites, writePage } from './lib/library/write.ts';
 import type { Marks, Outcome, WriteEnv } from './lib/library/write.ts';
 
-const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> --holder <id> | curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model <m> --used <a,b> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
+const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> [--accept-hand-edit] --holder <id> | curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model <m> --used <a,b> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
 
 interface Args { cmd: string; positional: string[]; flags: Map<string, string> }
 
@@ -79,7 +80,7 @@ export function run(argv: string[], io: { out: (s: string) => void; err: (s: str
       const [page, extra] = a.positional;
       const from = a.flags.get('from');
       if (!page || extra !== undefined || !from) { io.err(`library-write: write needs one <page> and --from <staged>\n${USAGE}`); return 2; }
-      return finish(writePage(env, holder, page, from), (r) => `${r.changed ? 'wrote' : 'unchanged'} ${page} (sha256 ${r.sha.slice(0, 12)})`);
+      return finish(writePage(env, holder, page, from, a.flags.has('accept-hand-edit') ? { acceptHandEdit: true } : {}), (r) => `${r.changed ? 'wrote' : 'unchanged'} ${page} (sha256 ${r.sha.slice(0, 12)})`);
     }
     default: {
       const [id, extra] = a.positional;
