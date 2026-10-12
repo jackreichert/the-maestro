@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { sessionFileById, pick, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf, collect, expiryUsd, isExpiryRewrite } from './token-metrics.ts';
+import { sessionFileById, pick, scanFile, compare, uncompact, compact, emptyDirWarning, sessionLine, sessionStatus, mixCell, parseMix, toRow, shares, kindsOf, kindsCell, parseKinds, dollars, priceFamilies, pricedShares, sonnetWhatIf, collect, expiryUsd, isExpiryRewrite } from './token-metrics.ts';
 import { parseModelPrices } from './local-config.ts';
 import type { Comparison } from './token-metrics.ts';
 
@@ -76,6 +76,43 @@ test('pick reads the 5m/1h cache-write split as two numbers and nothing else of 
     assert.deepEqual(pick(line).usage, { fresh: 1, write: 100, write5m: 0, write1h: 0, read: 3, out: 4 });
 });
 
+test('pick keeps tool names, read-only flags, file basenames and result sizes, never the input or the text', () => {
+    const call = { type: 'assistant', timestamp: 't', message: { id: 'm1', role: 'assistant', model: 'claude-haiku-5', content: [
+        { type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: `/some/dir/${SENTINEL}-dir/notes.txt`.replace(SENTINEL, 'x') } },
+        { type: 'tool_use', id: 'tu2', name: 'Bash', input: { command: `rm -rf ${SENTINEL}` } },
+        { type: 'tool_use', id: 'tu3', name: 'Bash', input: { command: `grep -n ${SENTINEL} f` } },
+    ] } };
+    const rec = pick(call);
+    assert.deepEqual(rec.tools, [
+        { id: 'tu1', name: 'Read', readOnly: true, file: 'notes.txt' },
+        { id: 'tu2', name: 'Bash', readOnly: false, file: '' },
+        { id: 'tu3', name: 'Bash', readOnly: true, file: '' },
+    ]);
+    const res = pick({ type: 'user', timestamp: 't', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'tu1', content: SENTINEL },
+        { type: 'tool_result', tool_use_id: 'tu2', content: [{ type: 'text', text: 'abcd' }, { type: 'text', text: 'ef' }] },
+    ] } });
+    assert.deepEqual(res.results, [{ id: 'tu1', chars: SENTINEL.length }, { id: 'tu2', chars: 6 }]);
+    assert.doesNotMatch(JSON.stringify([rec, res]), /SENTINEL/);
+});
+
+test('scanFile attaches tool calls to their turn (across the lines of one response) and results to the next turn; compaction drops pending results', () => {
+    const toolLine = (id: string, tu: string, name: string, file: string) => ({ type: 'assistant', timestamp: '2026-09-25T10:00:00Z', message: { id, role: 'assistant', model: 'claude-opus-5-5', usage: { input_tokens: 1, cache_read_input_tokens: 1 }, content: [{ type: 'tool_use', id: tu, name, input: { file_path: file } }] } });
+    const result = (tu: string, chars: number) => ({ type: 'user', timestamp: '2026-09-25T10:00:01Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tu, content: 'x'.repeat(chars) }] } });
+    const path = join(projects, 'scan.jsonl');
+    writeFileSync(path, jsonl([
+        toolLine('a', 'tu1', 'Read', '/p/big.log'), toolLine('a', 'tu2', 'Grep', '/p/other.ts'),
+        result('tu1', 40_000), result('tu2', 400),
+        ...assistant('b', '2026-09-25T10:00:02Z', [1, 0, 1, 1]),
+        result('tu1', 4_000), { type: 'system', subtype: 'compact_boundary' },
+        ...assistant('c', '2026-09-25T10:00:03Z', [1, 0, 1, 1]),
+    ]));
+    const { turns } = scanFile(path);
+    assert.deepEqual(turns[0].tools?.map((t) => t.name), ['Read', 'Grep']);
+    assert.deepEqual(turns[1].results, [{ tool: 'Read', file: 'big.log', tokens: 10_000 }, { tool: 'Grep', file: 'other.ts', tokens: 100 }]);
+    assert.deepEqual(turns[2].results, [], 'a result pending at a compaction is not carried into the next context');
+});
+
 test('pick reads compaction as two metadata flags and never the summary text', () => {
     const boundary = pick({ type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'auto', summary: SENTINEL }, content: SENTINEL });
     const summary = pick({ type: 'user', isCompactSummary: true, message: { role: 'user', content: SENTINEL } });
@@ -85,7 +122,7 @@ test('pick reads compaction as two metadata flags and never the summary text', (
     assert.equal(pick({ type: 'user', isCompactSummary: SENTINEL }).compact, false, 'only a boolean true counts');
     assert.doesNotMatch(JSON.stringify([boundary, summary]), /SENTINEL/);
     // The allowlist is the whole output shape: a new field here is a new thing the script reads.
-    assert.deepEqual(Object.keys(boundary).sort(), ['compact', 'handback', 'id', 'model', 'originKind', 'role', 'subtype', 'ts', 'type', 'usage']);
+    assert.deepEqual(Object.keys(boundary).sort(), ['compact', 'handback', 'id', 'model', 'originKind', 'results', 'role', 'subtype', 'tools', 'ts', 'type', 'usage']);
 });
 
 test('model mix covers orchestrator and subagent turns by family; tokens are kept by price kind per side', () => {

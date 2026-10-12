@@ -57,6 +57,7 @@ import type { ModelPrice } from './local-config.ts';
 import { family } from './lib/model-family.ts';
 import { readAutocompact, triggerTokens } from './lib/autocompact.ts';
 import { sessionText } from './lib/session-text.ts';
+import { toolReadOnly } from './lib/tool-class.ts';
 import type { SessionStatus } from './lib/session-text.ts';
 import { CLAUDE_PROJECTS_DIR, PROJECTS_DIR_GUESSED, CONTAINER_PROJECT, VAULT_ROOT, ROLL_WARN_PCT, ROLL_AT_PCT, COST_TARGETS, MODEL_PRICES } from './local-config.ts';
 import { printJson } from './lib/json-out.ts';
@@ -68,10 +69,16 @@ export interface Usage { fresh: number; write: number; write5m: number; write1h:
 /** The only fields of a transcript line that survive `pick`. */
 export interface Picked {
     type: string; subtype: string; role: string; ts: string; id: string; model: string; originKind: string;
-    handback: boolean; compact: boolean; usage: Usage | null;
+    handback: boolean; compact: boolean; usage: Usage | null; tools: ToolUse[]; results: ToolResult[];
 }
+/** A tool call: its id, tool name, whether it only reads, and the basename of the file it names ('' when none). Never the input itself. */
+export interface ToolUse { id: string; name: string; readOnly: boolean; file: string }
+/** A tool result: the id of the call it answers and the size of its content in characters. Never the content. */
+export interface ToolResult { id: string; chars: number }
+/** A tool result carried into the context: which tool and file it came from, and its size in tokens (estimated from characters). */
+export interface CarriedResult { tool: string; file: string; tokens: number }
 /** A deduplicated API response. `growth` is context growth since the previous turn (unset for the first). */
-export interface Turn extends Usage { date: string; model: string; since: number; growth?: number; gapSec?: number }
+export interface Turn extends Usage { date: string; model: string; since: number; growth?: number; gapSec?: number; tools?: ToolUse[]; results?: CarriedResult[] }
 export interface TurnEvent { date: string; kind: string }
 export interface ScanResult { turns: Turn[]; events: TurnEvent[]; reports: { date: string; tokens: number }[] }
 /** Tokens by price kind: fresh input, 5m and 1h cache writes, cache reads, output. */
@@ -110,6 +117,20 @@ const TABLE_HEADER = [
     'Subagent tokens by model', 'Expiry rewrites', 'Expiry write tokens by model',
 ];
 
+/** Characters per token, for sizing tool results (which carry no usage of their own). */
+export const CHARS_PER_TOKEN = 4;
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+/** Content blocks of a message; a plain string content has none. */
+const blocksOf = (content: unknown): Record<string, unknown>[] => (Array.isArray(content) ? content.map((b) => obj(b) ?? {}) : []);
+/** Length of a tool result's content in characters: a string, or the text blocks of an array. The text itself is not kept. */
+const sizeOf = (content: unknown): number => (typeof content === 'string' ? content.length : blocksOf(content).reduce((n, b) => n + str(b.text).length, 0));
+const toolUses = (blocks: Record<string, unknown>[]): ToolUse[] => blocks.filter((b) => b.type === 'tool_use').map((b) => {
+    const input = obj(b.input) ?? {};
+    const name = str(b.name);
+    return { id: str(b.id), name, readOnly: toolReadOnly(name, str(input.command)), file: basename(str(input.file_path) || str(input.notebook_path) || str(input.path)) };
+});
+const toolResults = (blocks: Record<string, unknown>[]): ToolResult[] => blocks.filter((b) => b.type === 'tool_result').map((b) => ({ id: str(b.tool_use_id), chars: sizeOf(b.content) }));
+
 // --- the only function allowed to look at a parsed transcript line ----------
 export function pick(parsed: unknown): Picked {
     // A null line throws here, as before, and scanFile skips it.
@@ -120,6 +141,7 @@ export function pick(parsed: unknown): Picked {
     // The 5m/1h split of cache writes: two numeric fields of `cache_creation`, absent on older transcripts.
     const cc = obj(u?.cache_creation) ?? {};
     const origin = obj(o.origin);
+    const blocks = blocksOf(msg.content);
     return {
         type: typeof o.type === 'string' ? o.type : '',
         subtype: typeof o.subtype === 'string' ? o.subtype : '',
@@ -129,6 +151,8 @@ export function pick(parsed: unknown): Picked {
         model: typeof msg.model === 'string' ? msg.model : '',
         originKind: typeof origin?.kind === 'string' ? origin.kind : '',
         handback: Boolean(origin && origin.handback !== undefined),
+        tools: msg.role === 'assistant' ? toolUses(blocks) : [],
+        results: msg.role === 'user' ? toolResults(blocks) : [],
         // Compaction markers are two metadata flags, never the summary text: the system line with subtype
         // `compact_boundary`, and the `isCompactSummary` boolean on the user line that carries the summary.
         compact: (o.type === 'system' && o.subtype === 'compact_boundary') || o.isCompactSummary === true,
@@ -321,7 +345,8 @@ export function sessionStatus(dir: string, trigger: number = triggerTokens(readA
  */
 export const sessionLine = (...args: Parameters<typeof sessionStatus>): string => sessionText(sessionStatus(...args));
 
-function scanFile(path: string): ScanResult {
+/** Reads one transcript into deduplicated turns, wake-up events and handback reports. */
+export function scanFile(path: string): ScanResult {
     const turns: Turn[] = [];
     const events: TurnEvent[] = [];
     const reports: { date: string; tokens: number }[] = [];
@@ -330,16 +355,20 @@ function scanFile(path: string): ScanResult {
     let pending = null as { date: string; n: number } | null;
     let since = 0;
     let lastAt = null as number | null;
+    const toolById = new Map<string, ToolUse>();
+    let carried: CarriedResult[] = [];
     for (const line of readFileSync(path, 'utf8').split('\n')) {
         if (!line) continue;
         let rec: Picked;
         try { rec = pick(JSON.parse(line)); } catch { continue; }
-        if (rec.compact) { pending = null; last = null; since = 0; lastAt = null; continue; }
+        if (rec.compact) { pending = null; last = null; since = 0; lastAt = null; carried = []; continue; }
+        for (const u of rec.tools) toolById.set(u.id, u);
         if (rec.type === 'assistant' && rec.usage && rec.id) {
             const dup = seen.get(rec.id);
-            if (dup) { Object.assign(dup, rec.usage); continue; }
+            if (dup) { Object.assign(dup, rec.usage); if (rec.tools.length) dup.tools = [...(dup.tools || []), ...rec.tools]; continue; }
             since += 1;
-            const t: Turn = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage };
+            const t: Turn = { date: localDate(rec.ts), model: rec.model, since, ...rec.usage, tools: rec.tools, results: carried };
+            carried = [];
             const at = Date.parse(rec.ts);
             if (lastAt !== null && Number.isFinite(at)) t.gapSec = Math.max(0, (at - lastAt) / 1000);
             lastAt = Number.isFinite(at) ? at : lastAt;
@@ -356,6 +385,10 @@ function scanFile(path: string): ScanResult {
             pending = null;
             last = t;
             continue;
+        }
+        for (const r of rec.results) {
+            const use = toolById.get(r.id);
+            if (use) carried.push({ tool: use.name, file: use.file, tokens: Math.round(r.chars / CHARS_PER_TOKEN) });
         }
         if (rec.role === 'user' && rec.originKind) {
             const kind = rec.originKind === 'peer' ? (rec.handback ? 'handback' : 'peer') : rec.originKind;
