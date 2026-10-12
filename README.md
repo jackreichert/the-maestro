@@ -589,6 +589,10 @@ One loop for every "wake me when X happens". The orchestrator appends a **watch*
 
 An event row carries a `kind` (`thread`, `reply`, `conflict`, `changes-requested`, `reminder`, ...) and only the allowlisted `fields`: `repo`, `number`, `who` (`bot` or `human`) and `count`. Summaries, report text, titles and logins never enter the file. The allowlist is applied where rows are written and again where they are read, so a hand-edited row cannot carry free text to a reader. The digest still holds the full line.
 
+#### Digest triage
+
+Before a tick's events are written to the digest, the pr-watch and pr-checks lines are classified by rules, and every decision is appended to `<event_dir>/triage.jsonl` with the rule that made it and a reason. These always wake: a review that requests changes, a new merge conflict, a new unresolved review thread from a person (not a bot), and a failing check (the line does not say whether the check is required, so any failing-checks line wakes). A line no rule covers (a bot thread, a reply, a comment, a plain review, an approval, a Copilot line) is ambiguous and still wakes, so nothing is suppressed yet. Lines from other watch types, and info-only lines, are not triaged. A tick with no events writes nothing.
+
 **Exit codes of `run`.** The runner wakes the orchestrator only on 10.
 
 | Exit | Meaning | Do |

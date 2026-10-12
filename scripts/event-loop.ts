@@ -51,6 +51,7 @@ import {
 } from './local-config.ts';
 import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest-store.ts';
 import { migrateDigests } from './lib/digest-migrate.ts';
+import { triageEvents } from './lib/digest-triage.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
 import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './lib/event-inbox.ts';
 import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
@@ -191,6 +192,8 @@ export function tick(deps: TickDeps): TickResult {
     const seconds = intervalFor(watch, { types, config, now, recentEvents: state.events });
     if (state.watches[watch.id]) state.watches[watch.id].nextDue = now + (quiet && slowOnly(watch, types, config) ? Math.max(seconds, SLOW_QUIET_SECONDS) : seconds) * 1000;
   }
+  // Rules classify the pr lines and log each decision before anything wakes the orchestrator.
+  triageEvents(out.events, { dir });
   // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
   saveState(dir, state);
