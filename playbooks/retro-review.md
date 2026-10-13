@@ -10,6 +10,8 @@ You review the retros agents wrote before they handed back, and decide what each
 
 ## 2. Decide each lesson
 
+The composer also drains retros (`library-write.ts retros`, [composer.md](composer.md) section 4c), so a retro the composer already curated is closed here with the note "composed into the library"; do not promote its lessons again.
+
 Check for a duplicate first: `$J find "<a few words of the lesson>"` for library pages, and the retro's own `--learned` links for facts the agent already recorded. A lesson already on a page or already recorded is closed as a duplicate, not promoted again.
 
 | The lesson is | It becomes |
