@@ -191,7 +191,7 @@ test('write normalises case and aliases to the canonical stream', () => {
     const id = idOf(run('start', 'to retag', ...MARK).out);
     assert.equal(run('tag', id, '--stream', 'maestro', ...MARK).code, 0);
     assert.equal(must(ledger().find((e) => e.kind === 'tag')).stream, 'Maestro');
-    assert.equal(run('ask', 'q?', '--stream', 'launch', ...MARK).code, 0);
+    assert.equal(run('ask', 'q?', '--stream', 'launch', '--searched', 'test fixture', ...MARK).code, 0);
     assert.equal(run('log', 'n', '--stream', 'launch', ...MARK).code, 0);
     assert.ok(ledger().filter((e) => e.stream).every((e) => ['Launch', 'Maestro'].includes(String(e.stream))));
 });
@@ -217,7 +217,7 @@ test('--stream none means no stream on start, ask and log, with or without a reg
         if (seed) seedRegistry();
         const before = existsSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl')) ? ledger().length : 0;
         assert.equal(run('start', 'plain work', '--stream', 'none', ...MARK).code, 0);
-        assert.equal(run('ask', 'plain q?', '--stream', 'None', ...MARK).code, 0);
+        assert.equal(run('ask', 'plain q?', '--stream', 'None', '--searched', 'test fixture', ...MARK).code, 0);
         assert.equal(run('log', 'plain note', '--stream', 'none', ...MARK).code, 0);
         const added = ledger().slice(before);
         assert.equal(added.length, 3);
@@ -465,7 +465,7 @@ test('status --footer prints one Ledger line per active stream, registry names, 
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
     run('start', 'launch two', '--stream', 'launch-v2', ...MARK);
     run('done', a, ...MARK);
-    run('ask', 'which way?', '--stream', 'Maestro', ...MARK);
+    run('ask', 'which way?', '--stream', 'Maestro', '--searched', 'test fixture', ...MARK);
     run('log', 'stuck on x', '--kind', 'blocked', '--stream', 'Maestro', ...MARK);
     run('start', 'loose end', ...MARK);
     const r = run('status', '--footer');
@@ -529,7 +529,7 @@ test('status --json carries the footer numbers, and they match what status --foo
     seedRegistry();
     const a = idOf(run('start', 'launch one', '--stream', 'launch', ...MARK).out);
     run('done', a, ...MARK);
-    run('ask', 'which way?', '--stream', 'Maestro', ...MARK);
+    run('ask', 'which way?', '--stream', 'Maestro', '--searched', 'test fixture', ...MARK);
     run('log', 'stuck on x', '--kind', 'blocked', '--stream', 'Maestro', ...MARK);
     run('start', 'loose end', ...MARK);
     const f = parse<{ footer: { ledger: unknown; session: unknown } }>(run('status', '--json').out).footer;
@@ -590,7 +590,7 @@ test('queue <id> moves an in-flight item to queued, keeps its history, and is id
 test('queue refuses a closed or non-wip item, an unknown id-shaped token, and --kind; --text queues such a word', () => {
     const done = idOf(run('start', 'finished', ...MARK).out);
     run('done', done, ...MARK);
-    const ask = idOf(run('ask', 'which way?', ...MARK).out);
+    const ask = idOf(run('ask', 'which way?', '--searched', 'test fixture', ...MARK).out);
     const before = ledger().length;
     assert.equal(run('queue', done, ...MARK).code, 1);
     assert.equal(run('queue', ask, ...MARK).code, 1);
@@ -630,7 +630,7 @@ test('status separates queued from in flight: --json, --footer and the plain tex
     run('queue', parked, ...MARK);
     run('queue', 'never started', '--stream', 'maestro', ...MARK);
     run('queue', 'loose to-do', ...MARK);
-    run('ask', 'run this', '--paste', ledgerFile(), '--stream', 'launch', ...MARK);
+    run('ask', 'run this', '--paste', ledgerFile(), '--stream', 'launch', '--searched', 'test fixture', ...MARK);
     const j = parse<Doc>(run('status', '--json').out);
     assert.deepEqual(j.inflight.map((i) => i.text), ['running now']);
     assert.deepEqual(j.queued.map((i) => i.text).sort(), ['loose to-do', 'never started', 'parked later']);
@@ -776,7 +776,7 @@ function seedHandoff() {
     const done = idOf(run('start', 'wire the flag', '--stream', 'Launch', ...MARK).out);
     run('done', done, ...MARK);
     run('log', 'lesson: the cause was a stale cache, ruled out the queue', '--stream', 'Launch', ...MARK);
-    run('ask', 'ship on Friday?', '--stream', 'Launch', ...MARK);
+    run('ask', 'ship on Friday?', '--stream', 'Launch', '--searched', 'test fixture', ...MARK);
     run('start', 'other stream work', '--stream', 'Maestro', ...MARK);
     return { wip, done };
 }
@@ -815,7 +815,7 @@ test('handoff --delta: first roll is the full handoff; later rolls write b, c wi
     const late = idOf(run('start', 'late work after the roll, PR #456', '--stream', 'Launch', ...MARK).out);
     run('done', wip, ...MARK);
     run('log', 'direct done after the roll', '--kind', 'done', '--stream', 'Launch', ...MARK);
-    const asked = run('ask', 'merge order after the roll?', '--stream', 'Launch', ...MARK);
+    const asked = run('ask', 'merge order after the roll?', '--stream', 'Launch', '--searched', 'test fixture', ...MARK);
     assert.equal(asked.code, 0, asked.err);
     assert.equal(run('handoff', '--stream', 'launch', '--delta').code, 0);
     const second = readFileSync(file('b'), 'utf8');
@@ -1213,7 +1213,7 @@ test('render writes one page per active stream and CURRENT.md stays the combined
     run('log', 'launch blocker', '--kind', 'blocked', '--stream', 'Launch', ...MARK);
     const d = idOf(run('start', 'finished thing', '--stream', 'Launch', ...MARK).out);
     run('done', d, ...MARK);
-    run('ask', 'maestro question?', '--stream', 'Maestro', ...MARK);
+    run('ask', 'maestro question?', '--stream', 'Maestro', '--searched', 'test fixture', ...MARK);
     run('start', 'loose', ...MARK);
     const r = run('render');
     assert.equal(r.code, 0, r.err);
@@ -1281,10 +1281,10 @@ test('log rejects an invalid --approval value and writes nothing', () => {
 });
 
 test('resolve accepts --approval when the user answers an ask with one', () => {
-    const q = idOf(run('ask', 'retarget #3934?', ...MARK).out);
+    const q = idOf(run('ask', 'retarget #3934?', '--searched', 'test fixture', ...MARK).out);
     assert.equal(run('resolve', q, '--answer', 'yes, retarget #3934', '--approval', 'one-off', ...MARK).code, 0);
     assert.equal(must(ledger().find((e) => e.closes === q)).approval, 'one-off');
-    const q2 = idOf(run('ask', 'another?', ...MARK).out);
+    const q2 = idOf(run('ask', 'another?', '--searched', 'test fixture', ...MARK).out);
     assert.equal(run('resolve', q2, '--approval', 'bogus', ...MARK).code, 1);
 });
 
@@ -1307,7 +1307,7 @@ test('approve-tag only accepts decision, resolved and question rows', () => {
     const wip = idOf(run('log', 'building', '--kind', 'wip', ...MARK).out);
     const done = idOf(run('log', 'shipped', '--kind', 'done', ...MARK).out);
     const dropped = idOf(run('log', 'gave up', '--kind', 'dropped', ...MARK).out);
-    const q = idOf(run('ask', 'retarget?', ...MARK).out);
+    const q = idOf(run('ask', 'retarget?', '--searched', 'test fixture', ...MARK).out);
     const decision = idOf(run('log', 'use sqlite', '--kind', 'decision', ...MARK).out);
     const resolved = idOf(run('resolve', q, '--answer', 'yes', ...MARK).out);
     for (const id of [decision, resolved]) assert.equal(run('approve-tag', id, '--approval', 'one-off', ...MARK).code, 0, id);
@@ -1317,7 +1317,7 @@ test('approve-tag only accepts decision, resolved and question rows', () => {
         assert.equal(r.code, 1, id);
         assert.match(r.err, /can be approved/);
     }
-    const q2 = idOf(run('ask', 'still open?', ...MARK).out);
+    const q2 = idOf(run('ask', 'still open?', '--searched', 'test fixture', ...MARK).out);
     assert.equal(run('approve-tag', q2, '--approval', 'one-off', ...MARK).code, 0);
 });
 
@@ -1761,7 +1761,7 @@ test('a decision is a record: log --kind decision never shows as awaiting', () =
 });
 
 test('ask --kind decision is pending: it shows as awaiting until resolved', () => {
-    const r = run('ask', 'ship on Friday or Monday?', '--kind', 'decision', ...MARK);
+    const r = run('ask', 'ship on Friday or Monday?', '--kind', 'decision', '--searched', 'test fixture', ...MARK);
     assert.equal(r.code, 0, r.err);
     const id = idOf(r.out);
     assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
@@ -1771,7 +1771,7 @@ test('ask --kind decision is pending: it shows as awaiting until resolved', () =
 });
 
 test('ask takes only question or decision', () => {
-    const r = run('ask', 'misfiled', '--kind', 'note', ...MARK);
+    const r = run('ask', 'misfiled', '--kind', 'note', '--searched', 'test fixture', ...MARK);
     assert.equal(r.code, 1);
     assert.match(r.err, /ask takes --kind question/);
     assert.throws(() => ledger());
@@ -1780,7 +1780,7 @@ test('ask takes only question or decision', () => {
 // ── ask fields: recommend, default, door, decide-by, class ──
 
 test('ask stores its decision fields on the row and the fold exposes them', () => {
-    const r = run('ask', 'use the nightly window?', '--recommend', 'Yes, 01:00 to 03:00', '--door', 'two-way', '--default', 'apply the window', '--decide-by', '2d', '--class', 'intangible', ...MARK);
+    const r = run('ask', 'use the nightly window?', '--recommend', 'Yes, 01:00 to 03:00', '--door', 'two-way', '--default', 'apply the window', '--decide-by', '2d', '--class', 'intangible', '--searched', 'test fixture', ...MARK);
     assert.equal(r.code, 0, r.err);
     assert.equal(r.err, '', 'a complete ask warns about nothing');
     const row = must(ledger().find((e) => e.id === idOf(r.out)));
@@ -1792,7 +1792,7 @@ test('ask stores its decision fields on the row and the fold exposes them', () =
 });
 
 test('ask without --recommend or --door warns naming each flag, still writes, and defaults the class to standard', () => {
-    const r = run('ask', 'which way?', ...MARK);
+    const r = run('ask', 'which way?', '--searched', 'test fixture', ...MARK);
     assert.equal(r.code, 0);
     assert.match(r.err, /no --recommend/);
     assert.match(r.err, /no --door/);
@@ -1803,7 +1803,7 @@ test('ask without --recommend or --door warns naming each flag, still writes, an
 
 test('a one-way ask can never carry a default: refused with nothing written', () => {
     for (const args of [['--door', 'one-way', '--default', 'merge it'], ['--default', 'merge it']]) {
-        const r = run('ask', 'merge to staging?', '--recommend', 'wait', ...args, ...MARK);
+        const r = run('ask', 'merge to staging?', '--recommend', 'wait', ...args, '--searched', 'test fixture', ...MARK);
         assert.equal(r.code, 1, args.join(' '));
         assert.match(r.err, /default/);
     }
@@ -1812,14 +1812,14 @@ test('a one-way ask can never carry a default: refused with nothing written', ()
 
 test('ask refuses a bad door, class or decide-by, and a decide-by in the past', () => {
     for (const args of [['--door', 'sideways'], ['--class', 'urgent'], ['--decide-by', 'someday'], ['--decide-by', '2020-01-01'], ['--decide-by', '-1d']]) {
-        const r = run('ask', 'q?', '--recommend', 'r', ...(args[0] === '--door' ? [] : ['--door', 'two-way']), ...args, ...MARK);
+        const r = run('ask', 'q?', '--recommend', 'r', ...(args[0] === '--door' ? [] : ['--door', 'two-way']), ...args, '--searched', 'test fixture', ...MARK);
         assert.equal(r.code, 1, args.join(' '));
     }
     assert.throws(() => ledger());
 });
 
 test('--by is an alias of --decide-by, and relative hours store an instant', () => {
-    const r = run('ask', 'q?', '--recommend', 'r', '--door', 'two-way', '--by', '6h', ...MARK);
+    const r = run('ask', 'q?', '--recommend', 'r', '--door', 'two-way', '--by', '6h', '--searched', 'test fixture', ...MARK);
     assert.equal(r.code, 0, r.err);
     assert.match(String(must(ledger()[0]).by), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 });
@@ -1828,10 +1828,10 @@ test('a paste ask takes no decision fields and warns about none', () => {
     const block = join(vault, 'block.txt');
     mkdirSync(vault, { recursive: true });
     writeFileSync(block, 'echo hi\n');
-    const bad = run('ask', 'run this', '--paste', block, '--recommend', 'r', ...MARK);
+    const bad = run('ask', 'run this', '--paste', block, '--recommend', 'r', '--searched', 'test fixture', ...MARK);
     assert.equal(bad.code, 1);
     assert.match(bad.err, /run-this block/);
-    const ok = run('ask', 'run this', '--paste', block, ...MARK);
+    const ok = run('ask', 'run this', '--paste', block, '--searched', 'test fixture', ...MARK);
     assert.equal(ok.code, 0);
     assert.equal(ok.err, '');
     assert.equal(must(ledger()[0]).class, undefined);
@@ -1923,7 +1923,7 @@ test('rule resolves a relative ref against the cwd, and the digest leaves pendin
     writeFileSync(join(emptyCwd, 'rel-memory.md'), 'x');
     assert.equal(run('rule', 'relative ref rule', '--ref', 'rel-memory.md', ...MARK).code, 0);
     assert.equal(ledger()[0]?.refs?.[0], join(realpathSync(emptyCwd), 'rel-memory.md'));
-    run('ask', 'still open?', '--kind', 'decision', ...MARK);
+    run('ask', 'still open?', '--kind', 'decision', '--searched', 'test fixture', ...MARK);
     const untagged = parse(run('approvals', '--json').out).untagged.map((u) => u.text);
     assert.deepEqual(untagged, ['relative ref rule']);
 });
@@ -1940,8 +1940,8 @@ function triageWorld() {
     run('log', 'Samwise rule: no merge on red', '--kind', 'decision', ...MARK);
     run('log', 'may delete merged branches', '--kind', 'decision', '--approval', 'standing', ...MARK);
     run('log', 'close one PR', '--kind', 'decision', '--approval', 'one-off', '--ref', memo, ...MARK);
-    run('ask', 'Ship Friday or Monday, which one?', ...MARK);
-    run('ask', 'run the read-only count query', '--paste', blockFile(), ...MARK);
+    run('ask', 'Ship Friday or Monday, which one?', '--searched', 'test fixture', ...MARK);
+    run('ask', 'run the read-only count query', '--paste', blockFile(), '--searched', 'test fixture', ...MARK);
     run('start', 'building the thing', ...MARK);
     run('log', 'waiting on a deploy', '--kind', 'blocked', ...MARK);
     run('log', 'follow-up: fix the cwd default next session', ...MARK);
@@ -1979,7 +1979,7 @@ test('triage blockers are unpromoted rules and unticketed findings, and triage i
 });
 
 test('a pending decision is Needs Jack, not a rule', () => {
-    run('ask', 'adopt the new schema?', '--kind', 'decision', ...MARK);
+    run('ask', 'adopt the new schema?', '--kind', 'decision', '--searched', 'test fixture', ...MARK);
     assert.deepEqual(boxIds(triageJson(), 4), ['adopt the new schema?']);
 });
 
@@ -2042,18 +2042,18 @@ test('roll --strict passes once the blockers are fixed', () => {
 });
 
 test('ask --paste needs an existing block file and writes nothing otherwise', () => {
-    const missing = run('ask', 'run this', '--paste', join(tv, 'nope.sh'), ...MARK);
+    const missing = run('ask', 'run this', '--paste', join(tv, 'nope.sh'), '--searched', 'test fixture', ...MARK);
     assert.equal(missing.code, 1);
     assert.match(missing.err, /not an existing file/);
-    assert.equal(run('ask', 'run this', '--paste', ...MARK).code, 1);
-    assert.equal(run('ask', 'decide', '--kind', 'decision', '--paste', blockFile(), ...MARK).code, 1);
+    assert.equal(run('ask', 'run this', '--paste', '--searched', 'test fixture', ...MARK).code, 1);
+    assert.equal(run('ask', 'decide', '--kind', 'decision', '--paste', blockFile(), '--searched', 'test fixture', ...MARK).code, 1);
     assert.throws(() => ledger());
 });
 
 test('paste asks show apart from the questions in status, the footer and CURRENT.md', () => {
     const f = blockFile();
-    run('ask', 'which way?', ...MARK);
-    run('ask', 'run the count', '--paste', f, ...MARK);
+    run('ask', 'which way?', '--searched', 'test fixture', ...MARK);
+    run('ask', 'run the count', '--paste', f, '--searched', 'test fixture', ...MARK);
     const s = run('status').out;
     assert.match(s, /Awaiting you\n  `\w+` which way\?[^]*Paste blocks for you\n  `\w+` run the count .*block: /);
     assert.doesNotMatch(s.split('Paste blocks for you')[0], /run the count/);
@@ -2067,8 +2067,8 @@ test('paste asks show apart from the questions in status, the footer and CURRENT
 
 test('handoff section 4 is generated from the Needs-Jack and paste boxes, text plus options and the block file', () => {
     const f = blockFile();
-    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
-    run('ask', 'run the count query', '--paste', f, '--stream', 'Launch', ...MARK);
+    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', '--searched', 'test fixture', ...MARK);
+    run('ask', 'run the count query', '--paste', f, '--stream', 'Launch', '--searched', 'test fixture', ...MARK);
     run('rule', 'a rule that is not awaiting', '--ref', f, '--stream', 'Launch', ...MARK);
     const out = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out;
     const sec = out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
@@ -2079,7 +2079,7 @@ test('handoff section 4 is generated from the Needs-Jack and paste boxes, text p
 
 test('triage --apply never closes a question on its wording, even with a ref file', () => {
     const memo = blockFile('plan.md');
-    const id = idOf(run('ask', 'Samwise: which branch ships first, A or B', '--ref', memo, ...MARK).out);
+    const id = idOf(run('ask', 'Samwise: which branch ships first, A or B', '--ref', memo, '--searched', 'test fixture', ...MARK).out);
     assert.deepEqual(boxIds(triageJson(), 4), ['Samwise: which branch ships first, A or B']);
     assert.match(run('triage', '--apply').out, /closed 0 recorded/);
     assert.deepEqual(statusJson().awaiting.map((i) => i.id), [id]);
@@ -2093,7 +2093,7 @@ test('triage --apply only closes decisions dated on --date, whatever --since say
 });
 
 test('handoff section 4 keeps every open question: one boxed as a rule by its approval still appears under Needs Jack', () => {
-    const id = idOf(run('ask', 'Samwise: pick a stream name', '--stream', 'Launch', '--new-stream', ...MARK).out);
+    const id = idOf(run('ask', 'Samwise: pick a stream name', '--stream', 'Launch', '--new-stream', '--searched', 'test fixture', ...MARK).out);
     run('approve-tag', id, '--approval', 'one-off');
     const sec = run('handoff', '--stream', 'Launch', '--dry-run', '--no-worktree-sweep').out.split('## 4. Decisions awaiting')[1].split('## 5.')[0];
     assert.match(sec, /\*\*Needs Jack\*\*[^]*pick a stream name/);
@@ -2290,8 +2290,8 @@ test('closing the last open child prompts for its parent, a sibling still open d
 
 test('prime is at most 40 lines however much is open, shares lines between boxes, and writes nothing', () => {
     const f = blockFile();
-    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', ...MARK);
-    run('ask', 'run the count', '--paste', f, ...MARK);
+    run('ask', 'Ship Friday or Monday?', '--stream', 'Launch', '--new-stream', '--searched', 'test fixture', ...MARK);
+    run('ask', 'run the count', '--paste', f, '--searched', 'test fixture', ...MARK);
     run('log', 'wait on deploy', '--kind', 'blocked', '--gate', 'date:2099-01-01', ...MARK);
     const small = run('prime');
     assert.equal(small.code, 0, small.err);
@@ -2300,7 +2300,7 @@ test('prime is at most 40 lines however much is open, shares lines between boxes
     assert.match(small.out, /Paste blocks for Jack \(1\)\n  \w+ run the count \[block: /);
     assert.match(small.out, /Blocked \/ gated \(1\)\n  \w+ wait on deploy \[gate: date:2099-01-01\]/);
     for (let i = 0; i < 60; i++) run('start', `work item number ${i} with a fairly long description to clip`, ...MARK);
-    for (let i = 0; i < 30; i++) run('ask', `question ${i}, which way?`, ...MARK);
+    for (let i = 0; i < 30; i++) run('ask', `question ${i}, which way?`, '--searched', 'test fixture', ...MARK);
     const before = readFileSync(join(vault, 'Projects', 'test-proj', 'Journal', 'ledger.jsonl'), 'utf8');
     const big = run('prime');
     const lines = big.out.trimEnd().split('\n');
@@ -2365,7 +2365,7 @@ test('handoff section 1 shows the gate of a blocked item', () => {
 
 test('prime stays within 40 lines even when stream names, block paths and the project carry newlines', () => {
     for (let s = 0; s < 30; s++) run('start', `w${s}`, '--stream', `st${s}\nx\ny`, '--new-stream', ...MARK);
-    for (let i = 0; i < 30; i++) run('ask', `q${i}, which?`, ...MARK);
+    for (let i = 0; i < 30; i++) run('ask', `q${i}, which?`, '--searched', 'test fixture', ...MARK);
     for (let i = 0; i < 30; i++) run('log', `b${i}`, '--kind', 'blocked', ...MARK);
     const lines = run('prime').out.trimEnd().split('\n');
     assert.ok(lines.length <= 40, `${lines.length} lines`);
@@ -2668,7 +2668,7 @@ test('start-here prints the Start view as text with no server, as data with --js
     seedRegistry();
     const sd = join(vault, 'Status');
     run('week', 'set', 'Ship the widget | Maestro', '--status-dir', sd);
-    run('ask', 'which way?', '--stream', 'Maestro', ...MARK);
+    run('ask', 'which way?', '--stream', 'Maestro', '--searched', 'test fixture', ...MARK);
     run('start', 'building it', '--stream', 'Maestro', ...MARK);
     run('start', 'elsewhere', '--stream', 'launch', ...MARK);
     const r = run('start-here', '--status-dir', sd);
@@ -3218,7 +3218,7 @@ test('note --settles closes the named items, is idempotent, and a bad id writes 
     const again = run('note', 'verified again', '--settles', a, ...MARK);
     assert.match(again.out, /not open/);
     assert.equal(ledger().length, rows + 1, 'only the note is written the second time');
-    assert.equal(run('ask', 'q?', '--settles', a, ...MARK).code, 1, 'only a plain note settles');
+    assert.equal(run('ask', 'q?', '--settles', a, '--searched', 'test fixture', ...MARK).code, 1, 'only a plain note settles');
 });
 
 test('note --settles gives the last-child parent prompt, and only after the last open child (MAESTRO-319)', () => {

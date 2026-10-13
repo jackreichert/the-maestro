@@ -20,7 +20,7 @@ function setup() {
     LEDGER_ROOT: '', VAULT_ROOT: '', MAESTRO_STATUS_REPO_STREAMS: 'repo=Alpha', MAESTRO_STATUS_STREAMS: 'Alpha', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_GH_ORG: 'org', MAESTRO_CONTAINER_ROOT: '',
   };
   const run = (...args: string[]) => spawnSync(process.execPath, [JOURNAL, ...args, '--vault', ledger, '--project', 'proj', '--status-dir', statusDir], { encoding: 'utf8', cwd, env });
-  assert.equal(run('ask', 'Merge widgets #12?', '--stream', 'Alpha', '--new-stream', ...MARK).status, 0);
+  assert.equal(run('ask', 'Merge widgets #12?', '--stream', 'Alpha', '--new-stream', '--searched', 'test fixture', ...MARK).status, 0);
   assert.equal(run('start', 'build a thing', '--stream', 'Alpha', ...MARK).status, 0);
   return { run, statusDir, env };
 }
