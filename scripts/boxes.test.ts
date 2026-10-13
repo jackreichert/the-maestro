@@ -2,6 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOX, classify, isStale, daysBetween } from './lib/boxes.ts';
+import { DEFAULT_STALE_WIP_DAYS } from './lib/journal/staleness.ts';
+import { FOOTER_STALE_DAYS } from './lib/journal/board.ts';
 
 test('classify: first matching rule wins, approvals before the generic rule', () => {
     assert.equal(classify({ kind: 'decision', text: 'x' }), BOX.RULE);
@@ -35,11 +37,14 @@ test('classify: a learned row is a learning whatever its wording, and is never a
     assert.equal(classify({ kind: 'note', text: 'The fake page count is the page length.' }), BOX.NOISE);
 });
 
-test('staleness: needs-jack and paste after 2 days, in-flight after 1, others never', () => {
+test('staleness: needs-jack and paste after 2 days, in-flight at the footer threshold (3 days), others never', () => {
     assert.equal(daysBetween('2026-10-01', '2026-10-03'), 2);
     assert.equal(isStale(BOX.NEEDS_USER, { date: '2026-10-01' }, '2026-10-03'), false);
     assert.equal(isStale(BOX.NEEDS_USER, { date: '2026-10-01' }, '2026-10-04'), true);
-    assert.equal(isStale(BOX.INFLIGHT, { date: '2026-10-01' }, '2026-10-03'), true);
+    assert.equal(isStale(BOX.INFLIGHT, { date: '2026-10-01' }, '2026-10-03'), false, 'two days is not stale: triage used to say 1 while the footer said 3');
+    assert.equal(isStale(BOX.INFLIGHT, { date: '2026-10-01' }, '2026-10-04'), true, 'the footer counts at 3 days or more, and so does triage');
+    assert.equal(isStale(BOX.INFLIGHT, { date: '2026-10-01' }, '2026-10-02', 1), true, 'stale_wip_days moves triage with the footer');
+    assert.equal(DEFAULT_STALE_WIP_DAYS, FOOTER_STALE_DAYS, 'one constant behind both');
     assert.equal(isStale(BOX.GATED, { date: '2026-01-01' }, '2026-10-03'), false);
 });
 

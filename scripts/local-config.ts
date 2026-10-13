@@ -15,6 +15,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_PRIORITIES_MAX } from './lib/status-page/priorities.ts';
+import { DEFAULT_STALE_WIP_DAYS } from './lib/journal/staleness.ts';
 import { fileURLToPath } from 'node:url';
 
 /** Reads the `maestro-config` fenced block of a markdown file into { key: value }. */
@@ -203,8 +204,8 @@ export const APPROVALS_REVIEW_DAY = ((day: string) => (WEEKDAYS.has(day) ? day :
 /** Positive number from a config string, else the fallback. */
 const positive = (text: string, fallback: number): number => (Number(text) > 0 ? Number(text) : fallback);
 
-/** Days an in-flight item may sit with no live lease before the board, footer and `status --json` call it stale. Default 3. */
-export const STALE_WIP_DAYS = positive(pick('MAESTRO_STALE_WIP_DAYS', 'stale_wip_days'), 3);
+/** Days an in-flight item may sit with no live lease before the board, footer, `status --json` and `triage` call it stale. Default 3 (DEFAULT_STALE_WIP_DAYS). */
+export const STALE_WIP_DAYS = positive(pick('MAESTRO_STALE_WIP_DAYS', 'stale_wip_days'), DEFAULT_STALE_WIP_DAYS);
 
 /** Valid IANA time zone name, else undefined (the system zone). */
 const validZone = (name: string): string | undefined => {

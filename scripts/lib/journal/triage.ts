@@ -9,7 +9,8 @@ import { defaultPendingSince, pendingTransitions } from './prime.ts';
 import type { PendingContext, PendingRow } from './prime.ts';
 
 /** What triage reads from the run: the ledger, its fold, the clock, and how a --ref resolves to a file. */
-export interface TriageContext extends PendingContext { today: () => string; resolveRefFile: (ref: string) => string | null; /** The window running triage: other windows' window-scoped rules and notes are not offered, so `--apply` cannot close them. */ window?: string }
+export interface TriageContext extends PendingContext { today: () => string; resolveRefFile: (ref: string) => string | null; /** The window running triage: other windows' window-scoped rules and notes are not offered, so `--apply` cannot close them. */ window?: string;
+    /** Days in flight after which a row is stale (`stale_wip_days`); the shared default when absent. */ staleWipDays?: number }
 /** One boxed item. */
 export interface TriageItem {
     id?: string; kind?: string; box: number; date?: string; text?: string; stream?: string; ticket?: string; paste?: string; gate?: string;
@@ -27,7 +28,7 @@ export interface TriageReport {
  * Every item triage looks at, boxed: open items of any age, plus decisions, notes and learned rows dated since..d that nothing
  * has closed. Each carries `ref` (the first --ref that is an existing file, else null) and `stale`.
  */
-export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'today' | 'resolveRefFile' | 'window'>, d: string, since: string): TriageItem[] {
+export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'today' | 'resolveRefFile' | 'window' | 'staleWipDays'>, d: string, since: string): TriageItem[] {
     const { readLedger, fold, today, resolveRefFile } = ctx;
     const entries = readLedger();
     const folded = fold(entries);
@@ -39,7 +40,7 @@ export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'to
         const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
         const until = deferred.get(i.id ?? '');
         const ask = (i.kind === 'question' || i.kind === 'decision') && !i.paste ? askBits(i) : [];
-        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ...(i.queued ? { queued: true as const } : {}), ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d), ...(ask.length ? { ask } : {}) };
+        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ...(i.queued ? { queued: true as const } : {}), ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d, ctx.staleWipDays), ...(ask.length ? { ask } : {}) };
     });
 }
 
