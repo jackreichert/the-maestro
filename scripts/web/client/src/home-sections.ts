@@ -148,6 +148,7 @@ export const HOME_SECTIONS_CSS = `
   .notes-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-4) 0 0; padding: 0; list-style: none; font-size: var(--text-xs); color: var(--text-muted); }
   .notes-row a { display: inline-block; padding: 2px var(--space-2); border-radius: var(--radius-sm); background: var(--surface-2); font-family: var(--font-mono); color: var(--text-primary); text-decoration: none; }
   .notes-row a:hover { text-decoration: underline; }
+  .library-none { margin: var(--space-4) 0 0; font-size: var(--text-xs); color: var(--text-muted); }
   @media (forced-colors: active) {
     .seg button { border: 1px solid ButtonText; }
     .seg button[aria-pressed=true], .fchip[aria-pressed=true] { forced-color-adjust: none; background: Highlight; color: HighlightText; border-color: Highlight; }
@@ -352,12 +353,17 @@ const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
 /** The right-hand panel of a stream tab: where today's priorities put this stream (or that none does), and its notes. */
 export function todayPanel(priorities: { text: string; stream?: string }[], projects: ProjectsData | null, stream: string): HTMLElement {
-  const mine = priorities.flatMap((p, i) => { const s = splitStream(p); return s.stream === stream ? [{ rank: i + 1, text: s.text }] : []; });
-  const notes = (projects?.links ?? []).filter((l) => l.stream === stream).flatMap((l) => { const a = linkAttrs(l.url); return a ? [h('li', {}, h('a', { ...a, title: LINK_KIND[l.kind] }, l.label))] : []; });
+  const ranked = priorities.flatMap((p, i) => { const s = splitStream(p); return s.stream === stream ? [{ rank: i + 1, text: s.text }] : []; });
+  const li = (l: HomeLink): HTMLElement[] => { const a = linkAttrs(l.url); return a ? [h('li', {}, h('a', { ...a, title: LINK_KIND[l.kind] }, l.label))] : []; };
+  const mine = (projects?.links ?? []).filter((l) => l.stream === stream);
+  const notes = mine.filter((l) => l.kind !== 'library').flatMap(li);
+  const library = mine.filter((l) => l.kind === 'library').flatMap(li);
   return h('section', { class: 'today-panel', 'aria-labelledby': 'today-h' },
     h('h2', { id: 'today-h' }, 'Today'),
-    ...(mine.length
-      ? mine.map((m) => h('p', {}, h('span', { class: 'rk' }, `Priority ${ROMAN[m.rank - 1] ?? m.rank} · `), m.text))
+    ...(ranked.length
+      ? ranked.map((m) => h('p', {}, h('span', { class: 'rk' }, `Priority ${ROMAN[m.rank - 1] ?? m.rank} · `), m.text))
       : [h('p', {}, 'Not in today\'s priorities. ', h('i', { lang: 'la' }, 'tacet'))]),
-    notes.length ? h('ul', { class: 'notes-row', role: 'list', 'aria-label': 'Notes' }, ...notes) : null);
+    notes.length ? h('ul', { class: 'notes-row', role: 'list', 'aria-label': 'Notes' }, ...notes) : null,
+    // Shown once the projects payload has loaded, so a stream is never called empty while the answer is still on its way.
+    projects ? (library.length ? h('ul', { class: 'notes-row', role: 'list', 'aria-label': 'Library' }, h('li', {}, 'Library'), ...library) : h('p', { class: 'library-none' }, 'No library yet.')) : null);
 }
