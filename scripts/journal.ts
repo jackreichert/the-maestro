@@ -170,7 +170,12 @@ import { openStore } from './lib/journal/store.ts';
 import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
+import { lapsedRequeues } from './lib/journal/lease-requeue.ts';
+import { umbrellaRefusal } from './lib/journal/umbrella.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { proposeCloses, proposalLines, applyProposals } from './lib/journal/age-out.ts';
+import { branchState } from './lib/journal/branch-state.ts';
+import { chosenClosing, planClosing, planRefusal, applyClosing } from './lib/journal/resolves.ts';
 import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields } from './lib/journal/ask-fields.ts';
 import { gateConflicts, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts';
@@ -192,7 +197,7 @@ import { scriptsDir } from './brief-block.ts';
 import { guidanceLines, writeGuidance, readGuidance } from './lib/journal/guidance.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
-import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
+import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, ghPrState as ghPrStateIn, ticketStatusOf as ticketStatusOfIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { containerRepos, heldBranches, heldLines } from './lib/journal/ready-to-push.ts';
 import { filterProblem, queryItems, queryLines, QUERY_STATUSES } from './lib/journal/query.ts';
@@ -324,7 +329,7 @@ const now = (): string => new Date().toISOString();
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
-const triageCtx = () => ({ readLedger, fold, today, resolveRefFile, window: windowId });
+const triageCtx = () => ({ readLedger, fold, today, resolveRefFile, window: windowId, staleWipDays: STALE_WIP_DAYS });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
 const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe, rules: () => ruleLines(readLedger(), windowId) });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
@@ -520,11 +525,11 @@ function pasteFile(kind: string): string | undefined {
  * `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>`: what a blocked item is waiting for. Only a `blocked` row
  * takes one, and a malformed gate exits 1 before anything is written, so `resume` never has to guess at it.
  */
-function gateFlag(kind: string): string | undefined {
+function gateFlag(kind: string, gateable: boolean): string | undefined {
     if (!has('gate')) return undefined;
     const spec = arg('gate');
     if (!spec) die('--gate needs a value: gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>');
-    if (kind !== 'blocked') die('--gate only goes on --kind blocked.');
+    if (kind !== 'blocked' && !gateable) die('--gate goes on --kind blocked, an ask, or a queued to-do.');
     if (!parseGate(spec)) die(`--gate "${spec}" is not gh:pr:<repo>#N, date:YYYY-MM-DD or ticket:<id>.`);
     return spec;
 }
@@ -606,7 +611,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const refs = rule ? ruleRefs() : refsFromArgs();
     const askGate = askGateFromArgs(ask);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
     const paste = ask ? pasteFile(kind) : undefined;
-    const gate = gateFlag(kind);
+    const gate = gateFlag(kind, ask || queued);
     const askFields = askFieldsFromArgs(ask, Boolean(paste));
     if (ask) { const conflicts = gateConflicts(askFields, askGate); if (conflicts.length) die(conflicts.join('\n')); }
     // The door routes: a two-way ask with a default is acted on and logged as a note, so it never reaches the board.
@@ -618,6 +623,15 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const settleCtx = { readLedger, append, newId, fold, today, now };
     const settlePlan = settles ? planSettle(settleCtx, settles) : undefined;
     if (settlePlan?.unknown.length) die(`--settles names no item: ${settlePlan.unknown.join(', ')}. Nothing was written.`);
+
+    // --resolves / --supersedes / --folds close the awaiting and queued rows they name once this row is written; ids are checked first so a typo writes nothing.
+    const closing = chosenClosing(has);
+    if (closing === 'many') die('Give one of --resolves, --supersedes or --folds, not several: the closing row says which one replaced the other.');
+    const closingIds = closing ? parseList(closing.flag) : undefined;
+    if (closing && !closingIds?.length) die(`--${closing.flag} needs the id of an awaiting ask or queued to-do: --${closing.flag} <id>[,<id>].`);
+    const closingPlan = closing && closingIds ? planClosing(settleCtx, closingIds) : undefined;
+    const closingRefusal = closing && closingPlan ? planRefusal(closing.flag, closingPlan) : null;
+    if (closingRefusal) die(closingRefusal);
 
     // --parent <id> files the row under an open item; closing the last open child then prompts for the parent.
     const parent = arg('parent') || undefined;
@@ -655,11 +669,15 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     };
     append(entry);
     const settled = settlePlan ? settleItems(settleCtx, entry.id, settlePlan, usageFromArgs) : undefined;
+    const closedByFlag = closing && closingPlan ? applyClosing(settleCtx, entry.id, closingPlan, closing, usageFromArgs) : undefined;
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : routed.acted !== null ? 'acted' : entry.kind}  ${entry.id}  ${entry.text}`);
     settled?.closed.forEach((i) => console.log(`      settled  ${i.id}  ${i.text}`));
     settled?.parents.forEach((p) => console.log(`      ${parentPromptLine(p)}`));
     settlePlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
+    closedByFlag?.closed.forEach((i) => console.log(`      ${closing?.kind === 'resolved' ? 'resolved' : 'dropped'}  ${i.id}  ${closing?.phrase} ${entry.id}  ${i.text}`));
+    closingPlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
+    closedByFlag?.refused.forEach((r) => console.error(`      not closed  ${r.item.id}: ${r.reason}`));
     settled?.refused.forEach((r) => console.error(`      not closed  ${r.item.id}: ${r.reason}`));
     // `ask --how-do-i`: the question is a how-do-I the library could not answer, so it is also a miss for the composer.
     if (ask && has('how-do-i')) {
@@ -878,8 +896,13 @@ function cmdQueue(): void {
 function cmdStart(): void {
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
-    if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
+    if (!target || target.kind !== 'wip') {
+        if (!has('force')) { const why = umbrellaRefusal({ text: positional.join(' ') || arg('text') }, fold(entries).items); if (why) die(why); }
+        cmdLog('wip', { lease: true });
+        return;
+    }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
+    if (isQueued(target) && !has('force')) { const why = umbrellaRefusal(target, fold(entries).items); if (why) die(why); }
     // A refused --branch/--worktree must exit before the lease is written: die() does not roll it back, and a --steal would take it from its owner.
     const where = recoveryFlags();
     // The lease comes next: a window that does not get it writes nothing.
@@ -1245,7 +1268,20 @@ function leaseFooter(g: Groups, window?: string, markup = false): string {
     return markup ? `**Leases:** ${s.mine} mine, ${s.other} other` : `Leases: ${s.mine} mine, ${s.other} other`;
 }
 
+/** Puts in-flight rows whose lease lapsed with no agent running back to queued. Returns their ids; writes nothing on a dry run. */
+function requeueLapsed(): string[] {
+    if (dryRun) return [];
+    const rows = readLedger();
+    const out = lapsedRequeues(rows, fold(rows).items, Date.now(), { model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a' });
+    const taken: LedgerRow[] = [...rows];
+    const withIds = out.map((r) => { const row = { ...r, id: newId(taken) }; taken.push(row); return row; });
+    if (withIds.length) appendMany(withIds);
+    return out.map((r) => String(r.queues));
+}
+
 function cmdStatus() {
+    const requeued = requeueLapsed();
+    if (requeued.length && !asJson) console.error(`requeued ${requeued.length} row(s) whose lease lapsed with no agent running: ${requeued.join(', ')}`);
     refreshBoard();
     const g = groups(has('include-archived'));
     // No --date: the day is WATCH_TZ, and closes match by timestamp in that zone. A passed --date still matches the stored date field.
@@ -1499,6 +1535,9 @@ function maintain(today: string): MaintainResult {
     }
     const stale = staleRows(today);
     if (stale.length) console.log(`Stale in flight: ${stale.length} row(s) with no lease for ${STALE_WIP_DAYS}d or more; \`roll\` lists them.`);
+    requeueLapsed();
+    const aged = dryRun ? [] : applyProposals({ readLedger, append, newId, fold, today: () => today, now }, ageOutProposals(today), () => ({ model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a' }));
+    if (aged.length) console.log(`Aged out: closed ${aged.length} awaiting or queued row(s) whose gate or ticket cleared (${aged.join(', ')}).`);
     const out = worktreeSweepOutcome(dryRun);
     if (out.why) problems.push(out.why);
     const result = out.result;
@@ -1647,6 +1686,30 @@ function rollArchive(d: string): boolean {
  * each rule or approval (boxes 1 to 3) whose ref is an existing file, and nothing else; it never closes an item
  * with no resolvable ref. Closed items fall out of scope, so a second run appends nothing.
  */
+/** The evidence age-out reads: gh and the ticket index, gated as gate lookups are, and the local clones for branches. */
+function ageOutProposals(d: string) {
+    const ctx = primeCtx();
+    const lookups = {
+        pr: (repo: string, n: number) => (RESUME_GH ? ghPrStateIn(ctx, repo, n) : null),
+        ticket: (id: string) => ticketStatusOfIn(ctx, id),
+        branch: (repo: string | undefined, name: string) => branchState(CONTAINER_ROOT, repo, name),
+    };
+    return proposeCloses(fold(readLedger()).items, d, lookups);
+}
+
+/** `age-out`: propose closing awaiting and queued rows whose gate, ticket or branch has cleared; --apply closes the verified ones. */
+function cmdAgeOut() {
+    const d = arg('date', today());
+    if (!isDate(d)) die('--date must be YYYY-MM-DD.');
+    const proposals = ageOutProposals(d);
+    const closed = has('apply') ? applyProposals({ readLedger, append, newId, fold, today, now }, proposals, usageFromArgs) : [];
+    if (closed.length && !dryRun) render(true);
+    if (asJson) { printJson({ proposals, closed }); return; }
+    const lines = proposalLines(proposals);
+    console.log(lines.length ? lines.join('\n') : 'age-out: nothing to close.');
+    if (has('apply')) console.log(`age-out --apply: closed ${closed.length} verified row(s)${dryRun ? ' (dry-run)' : ''}.`);
+}
+
 function cmdTriage() {
     const d = arg('date', today());
     const since = arg('since', d);
@@ -1671,7 +1734,7 @@ function cmdTriage() {
         return;
     }
     if (asJson) { printJson(t); return; }
-    triageLines(t).forEach((l) => console.log(l));
+    triageLines(t, proposalLines(ageOutProposals(d))).forEach((l) => console.log(l));
 }
 
 /** roll's gate: warns about triage blockers, or with --strict prints them and exits 1 before anything is changed. */
@@ -2872,6 +2935,7 @@ switch (cmd) {
     case 'recover': cmdRecover(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
+    case 'age-out': cmdAgeOut(); break;
     case 'defer': cmdDefer(); break;
     case 'answer': case 'discuss': cmdAnswerOrDiscuss(cmd); break;
     case 'prime': cmdPrime(); break;

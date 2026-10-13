@@ -52,3 +52,18 @@ test('triage boxes learned rows dated in the window as box 9, shows them under L
     assert.ok(triageLines(t).some((l) => /Box 9 Learnings \(1\)/.test(l)));
     assert.ok(triageLines(t).some((l) => /^\s+eeee  The fake page count/.test(l)));
 });
+
+test('roll --strict blocks on a queued row waiting more than seven days, but not on a fresh, deferred or in-flight one', () => {
+    const queued: LedgerRow[] = [
+        { id: 'qold', kind: 'wip', queued: true, date: '2026-09-20', ts: '2026-09-20T09:00:00Z', text: 'waited too long' },
+        { id: 'qnew', kind: 'wip', queued: true, date: '2026-09-30', ts: '2026-09-30T09:00:00Z', text: 'fresh enough' },
+        { id: 'qedge', kind: 'wip', queued: true, date: '2026-09-26', ts: '2026-09-26T09:00:00Z', text: 'exactly seven days' },
+        { id: 'qdef', kind: 'wip', queued: true, date: '2026-09-01', ts: '2026-09-01T09:00:00Z', text: 'deferred on purpose' },
+        { id: 'qdf2', kind: 'defer', date: '2026-09-02', text: 'defer', defers: 'qdef', until: '2026-12-01' },
+        { id: 'wipx', kind: 'wip', date: '2026-09-01', ts: '2026-09-01T09:00:00Z', text: 'in flight and stale: a warning only' },
+    ];
+    const t = triageReport({ ...ctx, readLedger: () => queued }, D);
+    const ids = t.blockers.map((b) => b.id);
+    assert.deepEqual(ids, ['qold']);
+    assert.match(t.blockers[0]?.why ?? '', /queued 13 days \(over 7\)/);
+});

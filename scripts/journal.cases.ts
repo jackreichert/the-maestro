@@ -2264,7 +2264,7 @@ test('"still going" (lease <id>) keeps a row out of stale for stale_wip_days aft
     ];
     mkdirSync(dirname(ledgerFile()), { recursive: true });
     writeFileSync(ledgerFile(), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
-    const j = statusJson();
+    const j = statusJson('--dry-run'); // a real status requeues a lapsed lease; the read-only view (dry-run, the web page) still classifies by touch
     assert.deepEqual(j.inflight.map((i) => i.id), ['keep1'], 'a lapsed lease still counts as a touch inside stale_wip_days');
     assert.deepEqual(j.stale?.map((i) => i.id), ['keep2'], 'ten days on, with no lease and no touch, it is stale again');
     assert.match(run('roll', '--fast').out, /Stale in flight: 1 row/);

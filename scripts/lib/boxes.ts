@@ -10,6 +10,7 @@
  * Wording alone never makes a question a rule, because triage --apply closes records: a real question
  * must not be closed on a regex.
  */
+import { DEFAULT_STALE_WIP_DAYS } from './journal/staleness.ts';
 
 /** The fields of a ledger row that box classification reads. */
 export interface BoxItem { kind?: string; text?: string; ticket?: string; paste?: string; pending?: boolean; date?: string; queued?: boolean }
@@ -89,10 +90,12 @@ export function classify(item: BoxItem, approval?: Approval): number {
 }
 
 /** Days after which an open item in a box is flagged stale; absent means the box never goes stale. */
-export const STALE_AFTER_DAYS: Record<number, number> = { [BOX.NEEDS_USER]: 2, [BOX.PASTE]: 2, [BOX.INFLIGHT]: 1 };
+export const STALE_AFTER_DAYS: Record<number, number> = { [BOX.NEEDS_USER]: 2, [BOX.PASTE]: 2 };
 
-export const isStale = (box: number, item: BoxItem, today: string): boolean => {
+/** An in-flight row is stale at the footer's threshold (`staleWipDays`, default DEFAULT_STALE_WIP_DAYS), counted the footer's way: at that many days or more. The other boxes go stale after more than their limit. */
+export const isStale = (box: number, item: BoxItem, today: string, staleWipDays: number = DEFAULT_STALE_WIP_DAYS): boolean => {
     if (item.queued) return false;   // a queued to-do has not started, so it cannot have run too long
+    if (box === BOX.INFLIGHT) return daysBetween(item.date, today) >= staleWipDays;
     const limit = STALE_AFTER_DAYS[box];
     return limit !== undefined && daysBetween(item.date, today) > limit;
 };
