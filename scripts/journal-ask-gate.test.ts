@@ -91,18 +91,27 @@ test('a two-way ask with a default is acted on: logged as a note, not on the boa
   assert.doesNotMatch(status.stdout, /which window/, 'it is not on the awaiting-you board');
 });
 
-test('an --outward ask always asks, even with a two-way door and a default, and warns the default will not fire', () => {
+test('an --outward ask always asks, and one that carries a default is refused with nothing written', () => {
   const f = fixture();
-  const r = f.run('ask', 'post the update in Slack?', ...TWO_WAY, '--outward', ...SEARCHED, ...MARKS);
+  const r = f.run('ask', 'post the update in Slack?', '--door', 'two-way', '--recommend', 'post', '--outward', ...SEARCHED, ...MARKS);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^question /);
-  assert.match(r.stderr, /--outward asks always ask/);
   const [row] = f.rows();
   assert.equal(row?.kind, 'question');
   assert.equal(row?.outward, true);
-  const status = f.run('status', '--json');
-  assert.match(status.stdout, /post the update in Slack/);
-  assert.doesNotMatch(status.stdout, /if silent/, 'the stored default is not offered as one that fires');
+  assert.match(f.run('status', '--json').stdout, /post the update in Slack/);
+  const bad = f.run('ask', 'post it?', ...TWO_WAY, '--outward', ...SEARCHED, ...MARKS);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /--outward ask can never carry a default/);
+  assert.equal(f.rows().length, 1);
+});
+
+test('a question cannot be written around the gate with log or note --kind question', () => {
+  const f = fixture();
+  const r = f.run('log', 'which way?', '--kind', 'question', ...MARKS);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /goes through `ask`/);
+  assert.deepEqual(f.rows(), []);
 });
 
 test('one-way and two-way asks with no default still ask; --outward only goes on ask', () => {

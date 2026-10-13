@@ -167,7 +167,7 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields } from './lib/journal/ask-fields.ts';
-import { gateWarnings, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts';
+import { gateConflicts, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts';
 import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
@@ -593,6 +593,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
     if (kind === 'miss') die('A miss row is written only by `journal.ts miss`, which scans the question and keeps one row per question per day.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
+    if (!ask && kind === 'question') die('A question goes through `ask`, which requires --searched: journal.ts ask "<question>" --searched "<where I looked>".');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
     const refs = rule ? ruleRefs() : refsFromArgs();
@@ -600,7 +601,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const paste = ask ? pasteFile(kind) : undefined;
     const gate = gateFlag(kind);
     const askFields = askFieldsFromArgs(ask, Boolean(paste));
-    if (ask) gateWarnings(askFields, askGate).forEach((w) => console.error(w));
+    if (ask) { const conflicts = gateConflicts(askFields, askGate); if (conflicts.length) die(conflicts.join('\n')); }
     // The door routes: a two-way ask with a default is acted on and logged as a note, so it never reaches the board.
     const routed = ask && !paste ? routeAsk(text, askFields, askGate) : { acted: null };
 
@@ -1315,6 +1316,7 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
         append({
             id: newId(readLedger()), ts: now(), date: today(), kind: 'question', text, repo: ask.repo, refs: [],
             recommend: 'Move them now; the next roll then removes the worktree and the files stay in the env store.', door: 'two-way',
+            searched: 'the roll worktree scan (branch-sweep) and the open asks',
             model: 'unrecorded', used: ['skill:the-maestro', 'tool:branch-sweep'],
         });
         if (!dryRun) render(true);

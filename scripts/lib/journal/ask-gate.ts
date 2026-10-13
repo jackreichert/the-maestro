@@ -44,8 +44,8 @@ export function parseAskGate(flags: RawGateFlags): GateParse {
     return { gate: errors.length ? {} : { ...(searched ? { searched } : {}), ...(flags.outward ? { outward: true as const } : {}) }, errors };
 }
 
-/** A nudge, not a refusal: an `--outward` ask is written, and the warning says its default will not fire. */
-export const gateWarnings = (fields: AskFields, gate: AskGate): string[] => (gate.outward && fields.default ? ['warning: --outward asks always ask, so the --default will never be acted on.'] : []);
+/** A refusal that needs the parsed fields: an `--outward` ask always asks, so a `--default` on it could never fire. */
+export const gateConflicts = (fields: AskFields, gate: AskGate): string[] => (gate.outward && fields.default ? ['An --outward ask can never carry a default: it always asks and is never acted on. Drop --default, or drop --outward.'] : []);
 
 /** How an ask is routed: acted on its default and logged (`acted` holds the default), or put to the user. */
 export type Routed = { acted: string; row: { kind: 'note'; text: string; actedOn: string } } | { acted: null };

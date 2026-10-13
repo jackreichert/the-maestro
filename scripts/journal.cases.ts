@@ -1486,7 +1486,7 @@ test('approvals rejects a bare --until instead of meaning today', () => {
 });
 
 test('a grant that is both resolved with --approval and approve-tagged is listed once, latest approval winning', () => {
-    const q = idOf(run('log', 'retarget #3934?', '--kind', 'question', '--date', daysAgo(1), ...MARK).out);
+    const q = idOf(run('ask', 'retarget #3934?', '--date', daysAgo(1), '--searched', 'test fixture', ...MARK).out);
     assert.equal(run('resolve', q, '--approval', 'one-off', '--scope', 'this PR', ...MARK).code, 0);
     assert.equal(run('approve-tag', q, '--approval', 'standing', ...MARK).code, 0);
     const g = jsonDigest('--days', '7');
