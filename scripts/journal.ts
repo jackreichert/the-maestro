@@ -98,6 +98,7 @@
  *   journal.ts query [--stream S] [--id X] [--status open|inflight|queued|blocked|done|dropped|resolved|closed|all] [--date D | --since D --until D] [--model M] [--limit N] [--json]   read-only, capped (default 50, max 200) filters over every item, newest first
  *   journal.ts ready-to-push [--repo R] [--json]        my local branches with commits on no remote (held back from push), per repo of the container; read-only git
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
+ *   journal.ts next [--top N] [--all] [--in <project>] [--json]   with no id: the ranked queue of what to work on next, across every project's tickets and the tracker snapshot, each with its score and why; --all adds what was held back and why (blocked, in flight, waiting on the user, frozen). Read-only
  *   journal.ts next <id> "<step>" [--worktree w] [--branch b]   record what an open item does next (and, optionally, where its work lives); `recover` reads it
  *   journal.ts tracker-import <file|-> [--source jira] [--status-dir <dir>]   normalise a fetched tracker search result (issues assigned to the user), scan its titles, and write <status dir>/tracker-items.json for `next`; prints what it wrote, withheld and skipped
  *   journal.ts recover <id>                       print a re-dispatch prompt for an open item: its brief path, the worktree's git status and last commits (or that the worktree is missing), the ticket, the library pages, the recorded next step
@@ -153,7 +154,10 @@ import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'nod
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { importTracker, writeTracker } from './lib/whats-next/tracker.ts';
-import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS } from './local-config.ts';
+import { gatherRankInput } from './lib/whats-next/gather.ts';
+import { nextLines, rankNext } from './lib/whats-next/rank.ts';
+import type { Ranking } from './lib/whats-next/rank.ts';
+import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -846,6 +850,7 @@ function writeNext(item: LedgerItem, where: ReturnType<typeof recoveryFlags>, en
 
 /** `next <id> "<step>" [--worktree w] [--branch b]`: record the next step of an open item so a cold session can recover it. */
 function cmdNext(): void {
+    if (!positional[0]) { cmdWhatsNext(); return; }
     const entries = readLedger();
     const target = fold(entries).items.find((i) => i.id === positional[0]);
     const step = arg('text') || positional.slice(1).join(' ');
@@ -855,6 +860,35 @@ function cmdNext(): void {
     const where = recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: step });
     writeNext(target, where, entries);
     console.log(`next  ${target.id}  ${where.nextStep}`);
+}
+
+/** How old the tracker snapshot may get before `next` and the whats-next event say so. */
+const TRACKER_STALE_MS = 6 * 3_600_000;
+
+/** The ranked queue across every project's tickets and the tracker snapshot, computed on read. */
+function whatsNext(): Ranking {
+    return rankNext(gatherRankInput({
+        vaultRoot: VAULT_ROOT, statusDir: statusDir(), items: foldLedger(readLedger()).items, today: priorityDay(),
+        frozenLabels: NEXT_FROZEN_LABELS, blockedLabels: NEXT_BLOCKED_LABELS, now: new Date(),
+    }));
+}
+
+/** The note `next` adds when the tracker snapshot is missing or older than six hours, else none. */
+function trackerAgeNote(r: Ranking): string | undefined {
+    if (!r.trackerFetchedAt) return 'Tracker: no snapshot, so tracker issues are not ranked (playbooks/tracker-snapshot.md fetches one).';
+    const age = Date.now() - Date.parse(r.trackerFetchedAt);
+    return age > TRACKER_STALE_MS ? `Tracker: the snapshot is ${Math.floor(age / 3_600_000)}h old; refresh it (playbooks/tracker-snapshot.md).` : undefined;
+}
+
+/** `next [--top N] [--all] [--in <project>] [--json]`: the top of the ranked queue with a named score, read-only. */
+function cmdWhatsNext(): void {
+    const top = arg('top') ? Number(arg('top')) : 5;
+    if (!Number.isInteger(top) || top < 1) die('--top takes a whole number of at least 1.');
+    const full = whatsNext();
+    const only = arg('in');
+    const r: Ranking = only ? { ...full, ranked: full.ranked.filter((c) => c.project === only), excluded: full.excluded.filter((e) => e.project === only) } : full;
+    if (asJson) { printJson({ ...r, ranked: r.ranked.slice(0, has('all') ? undefined : top), ...(has('all') ? {} : { excluded: undefined }) }); return; }
+    for (const line of nextLines(r, { top, all: has('all'), trackerAgeNote: trackerAgeNote(r) })) console.log(line);
 }
 
 /** `tracker-import <file|->`: write the tracker snapshot `next` ranks from. The input is what a runner fetched (playbooks/tracker-snapshot.md); nothing here talks to the tracker. */

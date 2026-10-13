@@ -53,3 +53,41 @@ test('tracker-import refuses unreadable input and a bad shape, and --dry-run wri
     assert.match(r.out, /^would write {2}1 item\(s\)/);
     assert.equal(existsSync(join(s.status, 'tracker-items.json')), false);
 });
+
+function ticketNote(s: Sandbox, project: string, id: string, fm: string, body = '\n## What done looks like\n\n- the lamps are lit\n'): void {
+    const dir = join(s.vault, 'Projects', project, 'Tickets');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${id}.md`), `---\nid: ${id}\ntitle: ${id} work\n${fm}\n---\n${body}`);
+}
+
+test('next with no id ranks tickets across projects with the tracker snapshot, and --all says what was held back', () => {
+    const s = sandbox();
+    ticketNote(s, 'orchard', 'orchard-1', 'status: open\npriority: 3');
+    ticketNote(s, 'orchard', 'orchard-2', 'status: open\npriority: 1\nlabels: [needs-you]');
+    ticketNote(s, 'meadow', 'meadow-1', 'status: open\npriority: 2\nexternal: jira-ZZ-7');
+    writeFileSync(join(s.vault, 'Projects', 'orchard', 'Board-rank.md'), '## Ranked\n1. [[orchard-1]]\n');
+    assert.equal(run(s, ['tracker-import', '-'], JSON.stringify(search)).code, 0);
+    const r = run(s, ['next', '--all']);
+    assert.equal(r.code, 0, r.err);
+    const lines = r.out.trimEnd().split('\n');
+    assert.equal(lines[0], "What's next (2 of 2 ready, 1 held back)");
+    assert.equal(lines[1], '1. orchard-1 · 50 · orchard-1 work [orchard] · P3 +10, ranked #1 +30, done defined +10');
+    assert.equal(lines[2], '2. meadow-1 (ZZ-7) · 40 · meadow-1 work [meadow] · P1 +30, done defined +10', 'one item, with the tracker\'s higher priority');
+    assert.match(r.out, /- orchard-2 \[orchard\] orchard-2 work · waiting on the user \(label needs-you\)/);
+    const json = JSON.parse(run(s, ['next', '--json', '--top', '1', '--in', 'meadow']).out) as { ranked: { id: string }[]; excluded?: unknown };
+    assert.deepEqual(json.ranked.map((c) => c.id), ['meadow-1']);
+    assert.equal(json.excluded, undefined);
+});
+
+test('next with no id says when there is no tracker snapshot, and refuses a bad --top', () => {
+    const s = sandbox();
+    const r = run(s, ['next']);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^Nothing ready/m);
+    assert.match(r.out, /Tracker: no snapshot/);
+    assert.match(run(s, ['next', '--top', '0']).err, /--top takes a whole number/);
+});
+
+test('next <id> "<step>" still needs an open item', () => {
+    assert.match(run(sandbox(), ['next', 'zzzz', 'do it']).err, /Usage: journal\.ts next <id>/);
+});
