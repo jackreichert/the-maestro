@@ -176,3 +176,13 @@ test('a PR in a self_review_repos repo is flagged selfReview on its card, and on
   const off = buildState(inputs({ prs: [pr(21, { repo: 'me/tool', short: 'tool' })] }));
   assert.equal(off.prs[0]?.selfReview, undefined, 'unconfigured, no flag');
 });
+
+test('a staging PR carries waitsOnDevelop until its develop twin has merged; other PRs and repos without the flow never do', () => {
+  const twin = (merged: boolean) => ({ number: 90, url: 'https://example.test/pull/90', merged });
+  const cards = (over: Partial<Pr>) => buildState(inputs({ prs: [pr(13, { baseRefName: 'staging', ...over })] })).prs;
+  assert.deepEqual(cards({ developTwin: twin(false) })[0]?.waitsOnDevelop, { number: 90, url: 'https://example.test/pull/90' });
+  assert.deepEqual(cards({ developTwin: null })[0]?.waitsOnDevelop, {}, 'no twin found still waits');
+  assert.equal(cards({ developTwin: twin(true) })[0]?.waitsOnDevelop, undefined, 'merged twin: free to merge');
+  assert.equal(cards({})[0]?.waitsOnDevelop, undefined, 'repo without the flow (field absent) is unaffected');
+  assert.equal(buildState(inputs({ prs: [pr(14, { developTwin: twin(false) })] })).prs[0]?.waitsOnDevelop, undefined, 'a develop PR never waits');
+});

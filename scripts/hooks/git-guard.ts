@@ -19,6 +19,10 @@
  * It also asks for a push in a repo listed in `review_note_repos` when no vault Reviews note names the pushed head commit (review-note.ts).
  *
  * Protected branches default to main, staging, develop; set GIT_GUARD_PROTECTED (comma separated) to change them.
+ *
+ * Scope: the guard exists for the shared work repos. A repo whose `origin` is under github.com/jackreichert/ is personal, so
+ * the guard passes silently there (decided by Jack, 2026-10-13). An unreadable or missing origin keeps the guard on, per the
+ * inconclusive-means-protected rule. The check follows `git -C` and `--git-dir`, so a command aimed at another repo is judged by that repo.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -34,6 +38,8 @@ export interface GuardContext {
   aliases: (dir: string, gitArgs: string[]) => Record<string, string>;
   /** Review-note gate: why a push of `ref` (a branch, or '' for HEAD) lacks its vault Reviews note, or undefined when it may go. Optional so a context without it skips the check. */
   reviewNote?: (dir: string, gitArgs: string[], ref: string) => string | undefined;
+  /** URL of the repo's `origin` remote, undefined when it cannot be read. Optional: without it the guard is never scoped out. */
+  origin?: (dir: string, gitArgs: string[]) => string | undefined;
 }
 export interface Decision { ask: boolean; reasons: string[] }
 
@@ -54,7 +60,7 @@ export function run(stdin: string, ctx: Partial<GuardContext> = {}, decider: typ
   try {
     const input = JSON.parse(stdin) as { tool_name?: string; tool_input?: { command?: unknown }; cwd?: string };
     if (input.tool_name !== 'Bash' || typeof input.tool_input?.command !== 'string') return { stdout: '', stderr: '' };
-    const full: GuardContext = { cwd: input.cwd || process.cwd(), branch: gitBranch, aliases: gitAliases, reviewNote: gitReviewNote, ...ctx };
+    const full: GuardContext = { cwd: input.cwd || process.cwd(), branch: gitBranch, aliases: gitAliases, origin: gitOrigin, reviewNote: gitReviewNote, ...ctx };
     const d = decider(input.tool_input.command, full);
     if (!d.ask) return { stdout: '', stderr: '' };
     const reason = `git-guard: ${d.reasons.join('; ')}. Your rules say to ask before this.`;
@@ -272,6 +278,13 @@ function opts(args: string[], takes: string[] = []): Opts {
 const has = (o: Opts, ...names: string[]): boolean => names.some((n) => o.flags.has(n));
 const plain = (o: Opts): string[] => o.pos.map((p) => p.replace(/^--:/, ''));
 
+/** True for an origin URL under github.com/jackreichert/ (https, scp-style ssh or ssh://). */
+export const isPersonalOrigin = (url: string | undefined): boolean => !!url && /(?:^|@|\/\/)github\.com[:/]jackreichert\//i.test(url.trim());
+
+function personalRepo(dir: string, gitArgs: string[], ctx: GuardContext): boolean {
+  try { return isPersonalOrigin(ctx.origin?.(dir, gitArgs)); } catch { return false; }
+}
+
 export const isProtected = (ref: string): boolean => PROTECTED.includes(ref.replace(/^\+/, '').replace(/^(refs\/)?heads\//, ''));
 
 function gitCommand(args: string[], startDir: string, ctx: GuardContext, reasons: string[], depth: number, inherited: string[] = []): void {
@@ -290,6 +303,7 @@ function gitCommand(args: string[], startDir: string, ctx: GuardContext, reasons
   }
   const verb = args[i];
   if (verb === undefined) return;
+  if (personalRepo(dir, gitArgs, ctx)) return;
   const rest = args.slice(i + 1);
   const alias = inlineAliases[verb] ?? (KNOWN.has(verb) || READ_ONLY.has(verb) ? undefined : aliasOf(verb, dir, gitArgs, ctx));
   if (alias !== undefined) {
@@ -444,6 +458,12 @@ function gitBranch(dir: string, gitArgs: string[]): string | '' | undefined {
     const status = (e as { status?: number }).status;
     return status === 1 ? '' : undefined; // 1: detached HEAD; anything else: not a repo / git missing / timeout
   }
+}
+
+function gitOrigin(dir: string, gitArgs: string[]): string | undefined {
+  try {
+    return execFileSync('git', [...gitArgs, 'remote', 'get-url', 'origin'], { cwd: dir, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() || undefined;
+  } catch { return undefined; }
 }
 
 function gitAliases(dir: string, gitArgs: string[]): Record<string, string> {

@@ -39,7 +39,8 @@ import { fileURLToPath } from 'node:url';
 import { openStore } from './lib/journal/store.ts';
 import { itemFor, linkRowToPr, parsePrUrl } from './lib/row-prs.ts';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
-import { CONFIGURED_PROJECT, LEDGER_ROOT, PROTECTED_BRANCHES, VAULT_ROOT, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
+import { CONFIGURED_PROJECT, LEDGER_ROOT, ONE_PR_EXEMPT_HEADS, ONE_PR_KEY_PATTERN, ONE_PR_PER_TICKET, PROTECTED_BRANCHES, VAULT_ROOT, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
+import { checkOnePerTicket, listOpenPrs, ticketKey } from './pr-ticket-key.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
 import { smellsProblems } from './pr-smells.ts';
@@ -77,6 +78,26 @@ export function parseArgs(argv: string[]): OpenArgs {
 
 /** The gh argv: draft and assignee first, so they can never be dropped. */
 export const ghArgs = ({ base, pass }: Pick<OpenArgs, 'base' | 'pass'>): string[] => ['pr', 'create', '--draft', '--assignee', '@me', '--base', base, ...pass];
+
+/**
+ * One PR per ticket (pr-ticket-key.ts): refuses when another open PR in the repo carries this branch's ticket key and is not a
+ * twin, a stack parent or a release PR; a stack prints a warning. A gh failure refuses too, so the rule is never skipped silently.
+ */
+function onePerTicket(o: OpenArgs, body: string): void {
+  if (!ONE_PR_PER_TICKET) return;
+  const t = flagIndex(o.pass, '--title');
+  const pr = { branch: branchOf(o), base: o.base, title: t >= 0 ? o.pass[t + 1] : '', body };
+  const rules = { pattern: ONE_PR_KEY_PATTERN, exemptHeads: ONE_PR_EXEMPT_HEADS, protectedBases: PROTECTED_BRANCHES };
+  try {
+    // No key means nothing to look up, so gh is not called.
+    const v = ticketKey(pr.branch, pr.title, rules.pattern) ? checkOnePerTicket(pr, listOpenPrs(o.repo), rules) : checkOnePerTicket(pr, [], rules);
+    if (v.status === 'fail') { console.error(`pr-open: ${v.message}`); process.exit(1); }
+    console.log(`pr-open: ${v.message}`);
+  } catch (e) {
+    console.error(`pr-open: refused, could not check the one-PR-per-ticket rule: ${(e as Error).message}. Fix gh access and retry; the rule can be turned off with one_pr_per_ticket: off in the user config.`);
+    process.exit(2);
+  }
+}
 
 /** Read and check the --body-file; the gh argument is rewritten to the absolute path that was checked. */
 function checkBody(o: OpenArgs): string {
@@ -143,6 +164,7 @@ function sizeMix(o: OpenArgs): SizeMix {
 function main(): void {
   const o = parseArgs(process.argv.slice(2));
   const body = checkBody(o);
+  onePerTicket(o, body);
   const gate = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, ...(headOf(o) ? ['--head', headOf(o)] : [])], { encoding: 'utf8' });
   process.stdout.write(gate.stdout || '');
   const overBudget = gate.status === 1;

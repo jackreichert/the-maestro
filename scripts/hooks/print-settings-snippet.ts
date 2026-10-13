@@ -9,8 +9,11 @@
  * `startup|resume|compact|clear` runs session-start-compact.ts (timeout 120 s; each command it runs is capped at 60 s).
  * SessionEnd with matcher `clear|resume|logout|prompt_input_exit|other` runs session-end-decisions.ts, the decision scan alone
  * (timeout 30 s; SessionEnd hooks otherwise get 1.5 s and never more than 60 s).
+ * A second SessionEnd entry runs session-end-requeue.ts (timeout 10 s): the ending window's in-flight rows go back to queued.
  * PreToolUse with matcher `Bash` runs git-guard.ts (timeout 10 s), which takes no flags: it asks before risky git commands.
- * `--project` and `--vault` are passed through to the three roll hooks, not to git-guard.
+ * PreToolUse with matcher `Agent` runs agent-dispatch.ts and SubagentStop runs agent-return.ts (timeout 10 s each): a dispatch
+ * opens or finds a leased in-flight row, and a stop marks it "returned, verify". Both fail open and write the ledger directly.
+ * `--project` and `--vault` are passed through to every hook but git-guard.
  * The one snippet also holds the event-inject entries (SessionStart with no matcher, UserPromptSubmit; see install-hooks.ts), so
  * everything to paste is in one place. `--autocompact-pct N` adds `"env": { "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "N" }`, and is
  * refused (exit 2, nothing printed on stdout) when N puts the trigger under the autocompact floor. Without it no `env` key is
@@ -34,8 +37,15 @@ export function snippet(extra: string[], autocompactPct?: number): object {
     ...(autocompactPct ? { env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(autocompactPct) } } : {}),
     hooks: {
       PreCompact: [{ matcher: 'auto|manual', hooks: [{ type: 'command', command: cmd('precompact.ts'), timeout: 120 }] }],
-      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'git-guard.ts'))].join(' '), timeout: 10 }] }],
-      SessionEnd: [{ matcher: 'clear|resume|logout|prompt_input_exit|other', hooks: [{ type: 'command', command: cmd('session-end-decisions.ts'), timeout: 30 }] }],
+      PreToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: ['node', shq(join(HOOKS, 'git-guard.ts'))].join(' '), timeout: 10 }] },
+        { matcher: 'Agent', hooks: [{ type: 'command', command: cmd('agent-dispatch.ts'), timeout: 10 }] },
+      ],
+      SessionEnd: [
+        { matcher: 'clear|resume|logout|prompt_input_exit|other', hooks: [{ type: 'command', command: cmd('session-end-decisions.ts'), timeout: 30 }] },
+        { matcher: 'clear|resume|logout|prompt_input_exit|other', hooks: [{ type: 'command', command: cmd('session-end-requeue.ts'), timeout: 10 }] },
+      ],
+      SubagentStop: [{ hooks: [{ type: 'command', command: cmd('agent-return.ts'), timeout: 10 }] }],
       SessionStart: [{ matcher: 'startup|resume|compact|clear', hooks: [{ type: 'command', command: cmd('session-start-compact.ts'), timeout: 120 }] }, ...events.SessionStart],
       UserPromptSubmit: events.UserPromptSubmit,
     },

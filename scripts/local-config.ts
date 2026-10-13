@@ -15,6 +15,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_PRIORITIES_MAX } from './lib/status-page/priorities.ts';
+import { DEFAULT_STALE_WIP_DAYS } from './lib/journal/staleness.ts';
 import { fileURLToPath } from 'node:url';
 
 /** Reads the `maestro-config` fenced block of a markdown file into { key: value }. */
@@ -203,8 +204,8 @@ export const APPROVALS_REVIEW_DAY = ((day: string) => (WEEKDAYS.has(day) ? day :
 /** Positive number from a config string, else the fallback. */
 const positive = (text: string, fallback: number): number => (Number(text) > 0 ? Number(text) : fallback);
 
-/** Days an in-flight item may sit with no live lease before the board, footer and `status --json` call it stale. Default 3. */
-export const STALE_WIP_DAYS = positive(pick('MAESTRO_STALE_WIP_DAYS', 'stale_wip_days'), 3);
+/** Days an in-flight item may sit with no live lease before the board, footer, `status --json` and `triage` call it stale. Default 3 (DEFAULT_STALE_WIP_DAYS). */
+export const STALE_WIP_DAYS = positive(pick('MAESTRO_STALE_WIP_DAYS', 'stale_wip_days'), DEFAULT_STALE_WIP_DAYS);
 
 /** Valid IANA time zone name, else undefined (the system zone). */
 const validZone = (name: string): string | undefined => {
@@ -427,6 +428,15 @@ export const REPO_OWNERS: Record<string, string> = Object.fromEntries(
 /** Owners (orgs or users, comma-separated) whose draft PRs the pr-watch event type requests Copilot review on. Empty means nowhere. */
 export const COPILOT_ORGS = globList('MAESTRO_COPILOT_ORGS', 'copilot_orgs');
 
+/** `journal.ts next`: ticket or tracker labels that freeze an item. A frozen item is read-only and never offered as work, whatever its score. Comma-separated, matched without case; default none (an org overlay sets its own). */
+export const NEXT_FROZEN_LABELS = globList('MAESTRO_NEXT_FROZEN_LABELS', 'next_frozen_labels');
+
+/** `journal.ts next`: labels meaning the item waits on the user, so it is held back until the label is gone. Comma-separated; default needs-you; `none` clears it. */
+export const NEXT_BLOCKED_LABELS: string[] = (() => {
+  const raw = pick('MAESTRO_NEXT_BLOCKED_LABELS', 'next_blocked_labels', 'needs-you').trim();
+  return raw.toLowerCase() === 'none' ? [] : raw.split(',').map((x) => x.trim()).filter(Boolean);
+})();
+
 /** Path globs pr-size.ts treats as tests / config / docs / mechanical. Empty means its built-in defaults. */
 export const PR_TEST_GLOBS = globList('MAESTRO_PR_TEST_GLOBS', 'pr_test_globs');
 export const PR_CONFIG_GLOBS = globList('MAESTRO_PR_CONFIG_GLOBS', 'pr_config_globs');
@@ -445,6 +455,21 @@ export const REVIEWER_CHECKLIST_PATH = ((v: string): string => {
   const p = v.startsWith('~/') ? join(homedir(), v.slice(2)) : resolve(dirname(overlayPath || userPath), v);
   return existsSync(p) ? p : '';
 })(pick('MAESTRO_REVIEWER_CHECKLIST', 'reviewer_checklist').trim());
+
+/**
+ * One PR per ticket: the tracker-key pattern the rule uses. Read from the user config file only (an environment variable must not be able to
+ * point it at a pattern that never matches), else the generic default, plus the local key prefixes (MAESTRO-N). Case-sensitive, so `utf-8` is not a key.
+ */
+export const ONE_PR_KEY_PATTERN = ((raw: string) => {
+  const base = (() => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })();
+  return LOCAL_KEY_PREFIXES.length ? `${base}|\\b(?:${LOCAL_KEY_PREFIXES.join('|')})-\\d+\\b` : base;
+})(pickUserFile('tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
+
+/** One PR per ticket (pr-open.ts, pr-ticket-key.ts): refuse a second independent open PR that carries the same tracker key. Default on. User config file only. */
+export const ONE_PR_PER_TICKET = switchOn(pickUserFile('one_pr_per_ticket'));
+
+/** One PR per ticket: head-branch globs exempt from the rule, comma-separated. Default `release/*`. User config file only. */
+export const ONE_PR_EXEMPT_HEADS = ((l: string[]) => (l.length ? l : ['release/*']))(globListFile('one_pr_exempt_heads'));
 
 /** Size-gate waiver (pr-open.ts): GitHub owners, or `owner/name` globs, whose repos skip the PR size budget, comma-separated. A bare `owner` means `owner/*`; an owner containing `*` is ignored, so no entry can waive every repo. Default none, so every repo keeps the gate until it is named here. User config file only; there is no flag. */
 export const WAIVE_SIZE_GATE_OWNERS = repoGlobs(globListFile('waive_size_gate_owners'));
@@ -565,7 +590,7 @@ if (process.argv[1] && isMain()) {
   console.log(`user_file:    ${userPath || '(disabled)'}${userPath && existsSync(userPath) ? '' : ' (not found)'}`);
   console.log(`overlay:      ${OVERLAY || '(none)'}`);
   console.log(`overlay_file: ${overlayPath || '(none found)'}`);
-  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, AUTOCOMPACT_FLOOR, CLAUDE_SETTINGS_PATH, ROLL_WARN_PCT, ROLL_AT_PCT, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, COST_TARGETS: Object.entries(COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '), MODEL_PRICES: MODEL_PRICES ? Object.entries(MODEL_PRICES).map(([f, p]) => `${f}(${PRICE_FIELDS.map((k) => `${k}=${p[k]}`).join(' ')})`).join('; ') : '', LEDGER_ROOT, VAULT_ROOT, PRIORITIES_MAX, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', UPDATE_CHECK: UPDATE_CHECK ? 'on' : 'off', LOOP_SUPERVISOR_REQUIRED: LOOP_SUPERVISOR_REQUIRED ? 'required' : 'optional', AUTO_PULL: AUTO_PULL ? 'on' : 'off', AUTO_PULL_SET: AUTO_PULL_SET ? 'yes' : 'no', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_WIDE_MAX_CODE_FILES, PR_WIDE_MAX_CODE_LINES, PR_BODY_SECTIONS: PR_BODY_SECTIONS.join(', '), PR_BODY_CHECK_RISK: PR_BODY_CHECK_RISK ? 'on' : 'off', PR_BODY_CHECK_VERIFY: PR_BODY_CHECK_VERIFY ? 'on' : 'off', PR_BODY_CHECK_FORBIDDEN: PR_BODY_CHECK_FORBIDDEN ? 'on' : 'off', PR_BODY_CHECK_DIAGRAM: PR_BODY_CHECK_DIAGRAM ? 'on' : 'off', PR_DIAGRAM_MIN_FILES, PR_BODY_CHECK_STACK: PR_BODY_CHECK_STACK ? 'on' : 'off', PR_BODY_CHECK_ORDER: PR_BODY_CHECK_ORDER ? 'on' : 'off', PR_REVIEW_ORDER_MIN_FILES, PR_SMELLS_REPOS: PR_SMELLS_REPOS.join(', '), REVIEW_NOTE_REPOS: REVIEW_NOTE_REPOS.join(', '), REVIEWER_CHECKLIST_PATH, WAIVE_SIZE_GATE_OWNERS: WAIVE_SIZE_GATE_OWNERS.join(', '), SELF_REVIEW_REPOS: SELF_REVIEW_REPOS.join(', '), PR_BODY_CHECK_PRIVATE: PR_BODY_CHECK_PRIVATE ? 'on' : 'off', PR_BODY_PRIVATE_WORDS: PR_BODY_PRIVATE_WORDS.join(', '), PR_BODY_PRIVATE_PATTERNS: PR_BODY_PRIVATE_PATTERNS.join(', '), PR_BODY_CHECK_VOICE: PR_BODY_CHECK_VOICE ? 'on' : 'off', PR_BODY_CHECK_COUNTS: PR_BODY_CHECK_COUNTS ? 'on' : 'off', PR_BODY_VOICE_NAMES: PR_BODY_VOICE_NAMES.join(', '), REVIEW_QUEUE_CAP, REREVIEW_GATE: REREVIEW_GATE ? 'on' : 'off', STACK_MAX_DEPTH, STACK_MAX_AGE_DAYS, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', '), REPO_OWNERS: Object.entries(REPO_OWNERS).map(([r, o]) => `${r}=${o}`).join(', '), COPILOT_ORGS: COPILOT_ORGS.join(', '), GIT_EMAILS: GIT_EMAILS.join(', '), PROTECTED_BRANCHES: PROTECTED_BRANCHES.join(', '), SWEEP_MERGE_TARGETS: Object.entries(SWEEP_MERGE_TARGETS).map(([r, t]) => `${r}=${t.join('|')}`).join(', '), SWEEP_IDLE_MINUTES, STALL_MINUTES, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, SWEEP_PROTECT_SYMLINK_DIRS: SWEEP_PROTECT_SYMLINK_DIRS.join(', '), SWEEP_DISPOSABLE_IGNORED: SWEEP_DISPOSABLE_IGNORED.join(', '), ENV_STORE_ROOT, APPROVALS_REVIEW_DAY, WATCH_MIN_INTERVAL, WATCH_MAX_INTERVAL, WATCH_NETWORK_FLOOR, WATCH_LOCAL_FLOOR, WATCH_TYPE_INTERVALS: Object.entries(WATCH_TYPE_INTERVALS).map(([t, n]) => `${t}=${n}`).join(', '), WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE, WATCH_QUIET_WEEKENDS: WATCH_QUIET_WEEKENDS ? 'on' : 'off', WATCH_TZ, EVENT_DIR, NOTIFY_COMMAND: NOTIFY_COMMAND.length ? '(set)' : '', INBOX_COMMAND: INBOX_COMMAND.length ? '(set)' : '', WAKE_LAUNCH_COMMAND: WAKE_LAUNCH_COMMAND.length ? '(set)' : '', SCRIPTS_DIR: SCRIPTS_SHELF_DIR, STATUS_DIR: STATUS_DIR_SETTING, OBSIDIAN_VAULT, STATUS_PAGE_URI: STATUS_PAGE_URI_SETTING, STATUS_STREAMS: STATUS_STREAMS.join(', '), STATUS_REPO_STREAMS: Object.entries(STATUS_REPO_STREAMS).map(([r, s]) => `${r}=${s}`).join(', '), TRACKER_URL_BASE, TICKET_NOTE_PATH, AGENT_OWNED_REPOS: AGENT_OWNED_REPOS.join(', '), CONTAINER_ROOT })) {
+  for (const [k, v] of Object.entries({ GH_ORG, GH_LOGIN, CONTAINER_PROJECT, CLAUDE_PROJECTS_DIR, AUTOCOMPACT_FLOOR, CLAUDE_SETTINGS_PATH, ROLL_WARN_PCT, ROLL_AT_PCT, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, COST_TARGETS: Object.entries(COST_TARGETS).map(([k, v]) => `${k}=${v}`).join(', '), MODEL_PRICES: MODEL_PRICES ? Object.entries(MODEL_PRICES).map(([f, p]) => `${f}(${PRICE_FIELDS.map((k) => `${k}=${p[k]}`).join(' ')})`).join('; ') : '', LEDGER_ROOT, VAULT_ROOT, PRIORITIES_MAX, LOOP_PATTERNS: LOOP_PATTERNS.join(', '), RESUME_GH: RESUME_GH ? 'on' : 'off', LEDGER_GIT_AUTOCOMMIT: LEDGER_GIT_AUTOCOMMIT ? 'on' : 'off', UPDATE_CHECK: UPDATE_CHECK ? 'on' : 'off', LOOP_SUPERVISOR_REQUIRED: LOOP_SUPERVISOR_REQUIRED ? 'required' : 'optional', AUTO_PULL: AUTO_PULL ? 'on' : 'off', AUTO_PULL_SET: AUTO_PULL_SET ? 'yes' : 'no', PR_MAX_CODE_FILES, PR_MAX_CODE_LINES, PR_WIDE_MAX_CODE_FILES, PR_WIDE_MAX_CODE_LINES, PR_BODY_SECTIONS: PR_BODY_SECTIONS.join(', '), PR_BODY_CHECK_RISK: PR_BODY_CHECK_RISK ? 'on' : 'off', PR_BODY_CHECK_VERIFY: PR_BODY_CHECK_VERIFY ? 'on' : 'off', PR_BODY_CHECK_FORBIDDEN: PR_BODY_CHECK_FORBIDDEN ? 'on' : 'off', PR_BODY_CHECK_DIAGRAM: PR_BODY_CHECK_DIAGRAM ? 'on' : 'off', PR_DIAGRAM_MIN_FILES, PR_BODY_CHECK_STACK: PR_BODY_CHECK_STACK ? 'on' : 'off', PR_BODY_CHECK_ORDER: PR_BODY_CHECK_ORDER ? 'on' : 'off', PR_REVIEW_ORDER_MIN_FILES, PR_SMELLS_REPOS: PR_SMELLS_REPOS.join(', '), REVIEW_NOTE_REPOS: REVIEW_NOTE_REPOS.join(', '), REVIEWER_CHECKLIST_PATH, ONE_PR_PER_TICKET: ONE_PR_PER_TICKET ? 'on' : 'off', ONE_PR_EXEMPT_HEADS: ONE_PR_EXEMPT_HEADS.join(', '), WAIVE_SIZE_GATE_OWNERS: WAIVE_SIZE_GATE_OWNERS.join(', '), SELF_REVIEW_REPOS: SELF_REVIEW_REPOS.join(', '), PR_BODY_CHECK_PRIVATE: PR_BODY_CHECK_PRIVATE ? 'on' : 'off', PR_BODY_PRIVATE_WORDS: PR_BODY_PRIVATE_WORDS.join(', '), PR_BODY_PRIVATE_PATTERNS: PR_BODY_PRIVATE_PATTERNS.join(', '), PR_BODY_CHECK_VOICE: PR_BODY_CHECK_VOICE ? 'on' : 'off', PR_BODY_CHECK_COUNTS: PR_BODY_CHECK_COUNTS ? 'on' : 'off', PR_BODY_VOICE_NAMES: PR_BODY_VOICE_NAMES.join(', '), REVIEW_QUEUE_CAP, REREVIEW_GATE: REREVIEW_GATE ? 'on' : 'off', STACK_MAX_DEPTH, STACK_MAX_AGE_DAYS, PR_TEST_GLOBS: PR_TEST_GLOBS.join(', '), PR_CONFIG_GLOBS: PR_CONFIG_GLOBS.join(', '), PR_DOCS_GLOBS: PR_DOCS_GLOBS.join(', '), PR_MECHANICAL_GLOBS: PR_MECHANICAL_GLOBS.join(', '), TWIN_FLOW_REPOS: TWIN_FLOW_REPOS.join(', '), REPO_OWNERS: Object.entries(REPO_OWNERS).map(([r, o]) => `${r}=${o}`).join(', '), COPILOT_ORGS: COPILOT_ORGS.join(', '), GIT_EMAILS: GIT_EMAILS.join(', '), PROTECTED_BRANCHES: PROTECTED_BRANCHES.join(', '), SWEEP_MERGE_TARGETS: Object.entries(SWEEP_MERGE_TARGETS).map(([r, t]) => `${r}=${t.join('|')}`).join(', '), SWEEP_IDLE_MINUTES, STALL_MINUTES, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, NEXT_FROZEN_LABELS: NEXT_FROZEN_LABELS.join(', '), NEXT_BLOCKED_LABELS: NEXT_BLOCKED_LABELS.join(', '), SWEEP_PROTECT_SYMLINK_DIRS: SWEEP_PROTECT_SYMLINK_DIRS.join(', '), SWEEP_DISPOSABLE_IGNORED: SWEEP_DISPOSABLE_IGNORED.join(', '), ENV_STORE_ROOT, APPROVALS_REVIEW_DAY, WATCH_MIN_INTERVAL, WATCH_MAX_INTERVAL, WATCH_NETWORK_FLOOR, WATCH_LOCAL_FLOOR, WATCH_TYPE_INTERVALS: Object.entries(WATCH_TYPE_INTERVALS).map(([t, n]) => `${t}=${n}`).join(', '), WATCH_QUIET_HOURS, WATCH_QUIET_HOURS_MODE, WATCH_QUIET_WEEKENDS: WATCH_QUIET_WEEKENDS ? 'on' : 'off', WATCH_TZ, EVENT_DIR, NOTIFY_COMMAND: NOTIFY_COMMAND.length ? '(set)' : '', INBOX_COMMAND: INBOX_COMMAND.length ? '(set)' : '', WAKE_LAUNCH_COMMAND: WAKE_LAUNCH_COMMAND.length ? '(set)' : '', SCRIPTS_DIR: SCRIPTS_SHELF_DIR, STATUS_DIR: STATUS_DIR_SETTING, OBSIDIAN_VAULT, STATUS_PAGE_URI: STATUS_PAGE_URI_SETTING, STATUS_STREAMS: STATUS_STREAMS.join(', '), STATUS_REPO_STREAMS: Object.entries(STATUS_REPO_STREAMS).map(([r, s]) => `${r}=${s}`).join(', '), TRACKER_URL_BASE, TICKET_NOTE_PATH, AGENT_OWNED_REPOS: AGENT_OWNED_REPOS.join(', '), CONTAINER_ROOT })) {
     console.log(`${k.padEnd(22)} ${v || '(unset)'}`);
   }
 }

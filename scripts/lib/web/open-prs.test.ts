@@ -93,3 +93,10 @@ test('reviewOf: history decides when it is read, and an empty decision is never 
   assert.equal(reviewOf(null), 'none');
   assert.equal(reviewOf('REVIEW_REQUIRED', ['fake-a'], []), 'none', 'GitHub still wants more reviews');
 });
+
+test('a row carries waitsOnDevelop from its card', () => {
+  const out = buildOpenPrs(state([card('org/a', 1, { base: 'staging', waitsOnDevelop: { number: 2, url: 'https://example.test/pull/2' } }), card('org/a', 3, { base: 'staging' })]), PAGE, NOW);
+  const [a, b] = out.groups[0]?.repos[0]?.prs ?? [];
+  assert.deepEqual(a?.waitsOnDevelop, { number: 2, url: 'https://example.test/pull/2' });
+  assert.equal(b?.waitsOnDevelop, undefined);
+});

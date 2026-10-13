@@ -24,12 +24,14 @@ import * as prChecks from './pr-checks.ts';
 import * as prMerged from './pr-merged.ts';
 import * as prWatch from './pr-watch.ts';
 import * as reminder from './reminder.ts';
+import * as retroDue from './retro-due.ts';
 import * as rollMaintenance from './roll-maintenance.ts';
 import * as stall from './stall.ts';
 import * as statusRefresh from './status-refresh.ts';
 import * as statusWatch from './status-watch.ts';
 import * as suiteDone from './suite-done.ts';
 import * as wake from './wake.ts';
+import * as whatsNext from './whats-next.ts';
 import type { EventType } from '../lib/types.ts';
 
 /** Every type the loop can run, by name. */
@@ -38,7 +40,7 @@ export type TypeRegistry = Record<string, EventType>;
 /** Old type names that still resolve, so watches registered under them keep working. pr-review became pr-watch. */
 export const ALIASES: Record<string, string> = { 'pr-review': 'pr-watch' };
 
-const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'roll-maintenance': rollMaintenance, continuity, 'library-due': libraryDue, 'status-refresh': statusRefresh, 'status-watch': statusWatch, 'notion-watch': notionWatch, wake, stall, 'suite-done': suiteDone };
+const TYPES: TypeRegistry = { 'pr-checks': prChecks, 'pr-merged': prMerged, 'pr-watch': prWatch, 'gh-run': ghRun, inbox, reminder, 'roll-maintenance': rollMaintenance, continuity, 'library-due': libraryDue, 'retro-due': retroDue, 'status-refresh': statusRefresh, 'status-watch': statusWatch, 'notion-watch': notionWatch, wake, stall, 'suite-done': suiteDone, 'whats-next': whatsNext };
 export const BUILTIN_TYPES: TypeRegistry = { ...TYPES, ...Object.fromEntries(Object.entries(ALIASES).flatMap(([old, current]) => (TYPES[current] ? [[old, TYPES[current]]] : []))) };
 
 const OPTIONAL_HOOKS = ['done', 'retired', 'validate', 'defaultTtlMs'];

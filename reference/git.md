@@ -58,6 +58,16 @@ So a "make a PR" request ends like this:
    equivalent) is not yours to open at all. Copilot review on the draft is handled per
    [prs.md#copilot-on-drafts](prs.md#copilot-on-drafts).
 
+## One PR per ticket
+
+**One ticket, one PR.** If the work needs more PRs, it needs smaller tickets. Size it before building: if it will not fit the [size budget](#pr-size-budget), split it into smaller tickets first (a parent ticket when they roll up into one outcome), each with its own branch key and PR. Never open several independent PRs under one ticket.
+
+- **Twins count as one.** A develop PR and its staging twin carry the same change; they share a key and a head branch (or, from different branches on different protected bases, the new body has a `Twin: #N` line naming the other). They are one PR for this rule.
+- **Release PRs are exempt.** A head branch matching `one_pr_exempt_heads` (default `release/*`) is skipped on either side.
+- **A stack is acceptable, not forbidden.** A PR sitting on, or under, another open PR's branch under the same key (any depth) opens with a warning. Prefer a smaller ticket when a slice is a separate unit of work.
+
+`pr-open.ts` enforces it ([pr-ticket-key.ts](../scripts/pr-ticket-key.ts)): the ticket key is the first `tracker_key_pattern` match in the branch name, else the title; the pattern is read from the user config file only (default: any `ABC-123` shaped key plus `local_key_prefixes`, case-sensitive) so an environment variable cannot hide the key; it asks `gh pr list` for the repo's open PRs and refuses, before creating anything, when another one carries the same key as a whole token and is neither a twin, in the same stack nor exempt. No key in the branch or title passes with a note. A failed `gh pr list` refuses rather than skipping the rule. Turn it off with `one_pr_per_ticket: off` in the user config file (see [local-config.md](local-config.md)). The check runs when the PR is opened through `pr-open.ts`; a push to an existing PR is not re-checked.
+
 ## Twin PRs (integration and release-candidate branches)
 
 Some repos promote work through two long-lived branches: an **integration branch** (usually `develop`) where
@@ -155,6 +165,7 @@ Diagram: <a mermaid block, or "n/a, <reason>">
 | Derivable counts | Enforced, best effort | refuses `N commits`, `N files (changed)`, `N lines` and `+A -B` outside code; a code span is the escape. Cannot tell a legitimate count in prose | `pr_body_check_counts` |
 | First-person voice | Enforced, best effort | refuses assistant self-references, AI-generated wording and the author's own name in the third person, outside code. Voice cannot be fully machine-checked | `pr_body_check_voice`, `pr_body_voice_names` |
 | File links | Enforced | a `{{file:path}}` token for a path outside the diff refuses before the PR is created; see below | none |
+| One PR per ticket | Enforced when the branch or title has a ticket key | no other open PR in the repo carries the key unless it is a twin, a stack parent (warning) or a release PR | `one_pr_per_ticket`, `one_pr_exempt_heads` |
 | Stack | Enforced when stacked | a stacked PR (base is not a `protected_branches` entry) needs a `## Stack` section that names its base PR (`Base: #<n>` or a PR link) or says `n/a, <reason>`. Does not check that the PR exists or is open | `pr_body_check_stack` |
 | Review order | Enforced over a file threshold | a PR over `pr_review_order_min_files` code files (default 3) needs a `Review order:` line in the Reviewer guide that holds a `{{file:path}}` token or a `` `path` `` in code, or `n/a, <reason>`. Whether the order is the best one stays advisory | `pr_body_check_order`, `pr_review_order_min_files` |
 | Evidence, Questions for reviewers | Advisory | nothing; write them when they help, skip when nothing applies. A fake question is worse than none | none |

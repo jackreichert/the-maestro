@@ -98,7 +98,9 @@
  *   journal.ts query [--stream S] [--id X] [--status open|inflight|queued|blocked|done|dropped|resolved|closed|all] [--date D | --since D --until D] [--model M] [--limit N] [--json]   read-only, capped (default 50, max 200) filters over every item, newest first
  *   journal.ts ready-to-push [--repo R] [--json]        my local branches with commits on no remote (held back from push), per repo of the container; read-only git
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
+ *   journal.ts next [--top N] [--all] [--in <project>] [--json]   with no id: the ranked queue of what to work on next, across every project's tickets and the tracker snapshot, each with its score and why; --all adds what was held back and why (blocked, in flight, waiting on the user, frozen). Read-only
  *   journal.ts next <id> "<step>" [--worktree w] [--branch b]   record what an open item does next (and, optionally, where its work lives); `recover` reads it
+ *   journal.ts tracker-import <file|-> [--source jira] [--status-dir <dir>]   normalise a fetched tracker search result (issues assigned to the user), scan its titles, and write <status dir>/tracker-items.json for `next`; prints what it wrote, withheld and skipped
  *   journal.ts recover <id>                       print a re-dispatch prompt for an open item: its brief path, the worktree's git status and last commits (or that the worktree is missing), the ticket, the library pages, the recorded next step
  *   journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
@@ -151,7 +153,11 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
-import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS } from './local-config.ts';
+import { importTracker, writeTracker } from './lib/whats-next/tracker.ts';
+import { gatherRankInput } from './lib/whats-next/gather.ts';
+import { nextLines, rankNext, whyOf } from './lib/whats-next/rank.ts';
+import type { Ranking } from './lib/whats-next/rank.ts';
+import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
@@ -164,13 +170,19 @@ import { openStore } from './lib/journal/store.ts';
 import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
+import { lapsedRequeues } from './lib/journal/lease-requeue.ts';
+import { umbrellaRefusal } from './lib/journal/umbrella.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
+import { proposeCloses, proposalLines, applyProposals } from './lib/journal/age-out.ts';
+import { branchState } from './lib/journal/branch-state.ts';
+import { chosenClosing, planClosing, planRefusal, applyClosing } from './lib/journal/resolves.ts';
 import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields } from './lib/journal/ask-fields.ts';
 import { gateConflicts, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts';
 import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
+import { missingRetros, noRetroRefusals, parseAgentRetro, pendingRetros, retroGate, reviewRefusals, seenRetro } from './lib/journal/agent-retro.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
@@ -185,7 +197,7 @@ import { scriptsDir } from './brief-block.ts';
 import { guidanceLines, writeGuidance, readGuidance } from './lib/journal/guidance.ts';
 import { compactChecklist } from './lib/journal/compact-checklist.ts';
 import { continuityLines, newestHandoff } from './lib/continuous-roll.ts';
-import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
+import { primeLines as primeLinesIn, startHereLines, gateReport as gateReportIn, ghPrState as ghPrStateIn, ticketStatusOf as ticketStatusOfIn, pendingTransitions as pendingTransitionsIn, defaultPendingSince } from './lib/journal/prime.ts';
 import { ticketStatuses as ticketStatusesIn, retroText as retroTextIn, findRetro as findRetroIn, archiveBlockers as archiveBlockersIn, PR_WORDS, LEARNING, TICKET_ID } from './lib/journal/retro.ts';
 import { containerRepos, heldBranches, heldLines } from './lib/journal/ready-to-push.ts';
 import { filterProblem, queryItems, queryLines, QUERY_STATUSES } from './lib/journal/query.ts';
@@ -211,8 +223,8 @@ import { currentPath, fetchLive, freshestSnapshotPath, selfReviewSummary, type S
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { withhold } from './lib/withhold.ts';
-import { buildStart, homeCounts, startLines, unreadableHome, viewDay } from './lib/start/start-here.ts';
-import type { UnreachableNotes } from './lib/start/start-here.ts';
+import { buildStart, homeCounts, startLines, unreadableHome, UP_NEXT_TOP, viewDay } from './lib/start/start-here.ts';
+import type { UnreachableNotes, UpNextRow } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
 import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
@@ -317,7 +329,7 @@ const now = (): string => new Date().toISOString();
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // Wrappers: the extracted triage, verify and prime modules read the run through these contexts.
-const triageCtx = () => ({ readLedger, fold, today, resolveRefFile, window: windowId });
+const triageCtx = () => ({ readLedger, fold, today, resolveRefFile, window: windowId, staleWipDays: STALE_WIP_DAYS });
 const verifyCtx = () => ({ ledgerPath, approvals: APPROVALS, approvableKinds: APPROVABLE_KINDS, autocommit: LEDGER_GIT_AUTOCOMMIT, dryRun, vault });
 const primeCtx = () => ({ groups, readLedger, fold, today, project, tryRun, ticketStatuses, arg, standing: () => standingLines(false), conditions: conditionLinesSafe, rules: () => ruleLines(readLedger(), windowId) });
 const triageReport = (d: string, since?: string) => triageReportIn(triageCtx(), d, since);
@@ -513,11 +525,11 @@ function pasteFile(kind: string): string | undefined {
  * `--gate gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>`: what a blocked item is waiting for. Only a `blocked` row
  * takes one, and a malformed gate exits 1 before anything is written, so `resume` never has to guess at it.
  */
-function gateFlag(kind: string): string | undefined {
+function gateFlag(kind: string, gateable: boolean): string | undefined {
     if (!has('gate')) return undefined;
     const spec = arg('gate');
     if (!spec) die('--gate needs a value: gh:pr:<repo>#N | date:YYYY-MM-DD | ticket:<id>');
-    if (kind !== 'blocked') die('--gate only goes on --kind blocked.');
+    if (kind !== 'blocked' && !gateable) die('--gate goes on --kind blocked, an ask, or a queued to-do.');
     if (!parseGate(spec)) die(`--gate "${spec}" is not gh:pr:<repo>#N, date:YYYY-MM-DD or ticket:<id>.`);
     return spec;
 }
@@ -599,7 +611,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const refs = rule ? ruleRefs() : refsFromArgs();
     const askGate = askGateFromArgs(ask);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
     const paste = ask ? pasteFile(kind) : undefined;
-    const gate = gateFlag(kind);
+    const gate = gateFlag(kind, ask || queued);
     const askFields = askFieldsFromArgs(ask, Boolean(paste));
     if (ask) { const conflicts = gateConflicts(askFields, askGate); if (conflicts.length) die(conflicts.join('\n')); }
     // The door routes: a two-way ask with a default is acted on and logged as a note, so it never reaches the board.
@@ -611,6 +623,15 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     const settleCtx = { readLedger, append, newId, fold, today, now };
     const settlePlan = settles ? planSettle(settleCtx, settles) : undefined;
     if (settlePlan?.unknown.length) die(`--settles names no item: ${settlePlan.unknown.join(', ')}. Nothing was written.`);
+
+    // --resolves / --supersedes / --folds close the awaiting and queued rows they name once this row is written; ids are checked first so a typo writes nothing.
+    const closing = chosenClosing(has);
+    if (closing === 'many') die('Give one of --resolves, --supersedes or --folds, not several: the closing row says which one replaced the other.');
+    const closingIds = closing ? parseList(closing.flag) : undefined;
+    if (closing && !closingIds?.length) die(`--${closing.flag} needs the id of an awaiting ask or queued to-do: --${closing.flag} <id>[,<id>].`);
+    const closingPlan = closing && closingIds ? planClosing(settleCtx, closingIds) : undefined;
+    const closingRefusal = closing && closingPlan ? planRefusal(closing.flag, closingPlan) : null;
+    if (closingRefusal) die(closingRefusal);
 
     // --parent <id> files the row under an open item; closing the last open child then prompts for the parent.
     const parent = arg('parent') || undefined;
@@ -648,11 +669,15 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     };
     append(entry);
     const settled = settlePlan ? settleItems(settleCtx, entry.id, settlePlan, usageFromArgs) : undefined;
+    const closedByFlag = closing && closingPlan ? applyClosing(settleCtx, entry.id, closingPlan, closing, usageFromArgs) : undefined;
     if (!dryRun) render(true);
     console.log(`${queued ? 'queued' : routed.acted !== null ? 'acted' : entry.kind}  ${entry.id}  ${entry.text}`);
     settled?.closed.forEach((i) => console.log(`      settled  ${i.id}  ${i.text}`));
     settled?.parents.forEach((p) => console.log(`      ${parentPromptLine(p)}`));
     settlePlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
+    closedByFlag?.closed.forEach((i) => console.log(`      ${closing?.kind === 'resolved' ? 'resolved' : 'dropped'}  ${i.id}  ${closing?.phrase} ${entry.id}  ${i.text}`));
+    closingPlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
+    closedByFlag?.refused.forEach((r) => console.error(`      not closed  ${r.item.id}: ${r.reason}`));
     settled?.refused.forEach((r) => console.error(`      not closed  ${r.item.id}: ${r.reason}`));
     // `ask --how-do-i`: the question is a how-do-I the library could not answer, so it is also a miss for the composer.
     if (ask && has('how-do-i')) {
@@ -733,6 +758,68 @@ function cmdMisses(): void {
     }
 }
 
+/** Every value of a repeatable `--<name>` flag, in order (`arg` keeps only the first). Comma-separated values are not split. */
+function repeatedFlag(name: string): string[] {
+    const out: string[] = [];
+    const stop = argv.indexOf('--');
+    for (let i = 0; i < (stop === -1 ? argv.length : stop); i++) {
+        if (argv[i] !== `--${name}`) continue;
+        const value = argv[i + 1];
+        if (value && !value.startsWith('--')) out.push(value);
+    }
+    return out;
+}
+
+/** `agent-retro <item> --lesson "<source>: <text>" ... [--learned id,id] | --nothing "<why>"`: what an agent learned on one item, before it is closed. Idempotent: the same retro for the same item is reported, not written twice. */
+function cmdAgentRetro(): void {
+    const entries = readLedger();
+    const item = positional[0] ?? null;
+    if (item && !fold(entries).items.some((i) => i.id === item)) die(`agent-retro: refused, nothing written.\n  - ${item} is not an item on this ledger (journal.ts agent-retro <item id> ...).`);
+    const learnedIds = new Set(entries.filter((e) => e.kind === 'learned' && typeof e.id === 'string').map((e) => e.id as string));
+    const parsed = parseAgentRetro({ item, lessons: repeatedFlag('lesson'), learned: parseList('learned') ?? [], nothing: has('nothing') ? (arg('nothing') ?? '') : null }, learnedIds);
+    if (!parsed.fields) die(`agent-retro: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\n(journal.ts agent-retro --help)`);
+    const { fields } = parsed;
+    const seen = seenRetro(entries, fields);
+    if (seen.kind === 'same') { console.log(`agent-retro  ${seen.id}  ${fields.retros}  ${fields.text}  (already recorded)`); return; }
+    const target = fold(entries).items.find((i) => i.id === item);
+    const entry = { id: newId(entries), ts: now(), date: today(), kind: 'agent-retro', ...fields, repo: target?.repo, stream: target?.stream, ...usageFromArgs() };
+    if (dryRun) { console.log(`[dry-run] agent-retro  ${fields.retros}  ${fields.text}`); return; }
+    append(entry);
+    render(true);
+    console.log(`agent-retro  ${entry.id}  ${fields.retros}  ${fields.text}`);
+}
+
+/** `agent-retros [--json]`: the retros waiting for review, and briefed items closed without one, oldest first. */
+function cmdAgentRetros(): void {
+    const rows = readLedger();
+    const pending = pendingRetros(rows).map((r) => ({ id: r.id as string, item: r.retros as string, date: r.date, text: r.text, lessons: (r.lessons as { source: string; text: string }[] | undefined) ?? [], learnedIds: (r.learnedIds as string[] | undefined) ?? [], nothing: r.nothing }));
+    const missing = missingRetros(rows);
+    if (asJson) { printJson({ pending, missing }); return; }
+    console.log(`${pending.length} retro${pending.length === 1 ? '' : 's'} to review, ${missing.length} briefed item${missing.length === 1 ? '' : 's'} closed without one`);
+    for (const p of pending) {
+        console.log(`  ${p.id}  ${p.date}  item ${p.item}  ${p.text}`);
+        p.lessons.forEach((l) => console.log(`      [${l.source}] ${clip(l.text, 140)}`));
+        if (p.learnedIds.length) console.log(`      learned: ${p.learnedIds.join(', ')}`);
+        if (p.nothing) console.log(`      nothing: ${clip(String(p.nothing), 140)}`);
+    }
+    for (const m of missing) console.log(`  ${m.item}  closed ${m.closedAt.slice(0, 10)} without a retro${m.noRetro ? ` (--no-retro: ${clip(m.noRetro, 100)})` : ''}  ${clip(m.text, 80)}`);
+}
+
+/** `retro-reviewed <retro id | item id> --note "..." [--promoted kind:id,...]`: closes one retro (or one briefed item closed without a retro) after the review. */
+function cmdRetroReviewed(): void {
+    const rows = readLedger();
+    const id = positional[0] ?? null;
+    const promoted = parseList('promoted') ?? [];
+    const note = arg('note');
+    const problems = reviewRefusals(rows, id, promoted, note);
+    if (problems.length) die(`retro-reviewed: refused, nothing written.\n${problems.map((p) => `  - ${p}`).join('\n')}`);
+    const entry = { id: newId(rows), ts: now(), date: today(), kind: 'retro-reviewed', reviews: id as string, text: (note as string).replace(/\s+/g, ' ').trim(), ...(promoted.length ? { promoted } : {}), ...usageFromArgs() };
+    if (dryRun) { console.log(`[dry-run] retro-reviewed  ${id}`); return; }
+    append(entry);
+    render(true);
+    console.log(`retro-reviewed  ${entry.id}  ${id}${promoted.length ? `  promoted ${promoted.join(', ')}` : ''}`);
+}
+
 /** `decide "<decision>" --why ...`: the file first (DECISIONS.md or a memory file), then the ledger row that names it; if the row cannot be written the file is put back. Idempotent: an entry already on disk writes nothing. */
 function cmdDecide(): void {
     const scope = arg('scope', 'project') as Scope;
@@ -809,8 +896,13 @@ function cmdQueue(): void {
 function cmdStart(): void {
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
-    if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
+    if (!target || target.kind !== 'wip') {
+        if (!has('force')) { const why = umbrellaRefusal({ text: positional.join(' ') || arg('text') }, fold(entries).items); if (why) die(why); }
+        cmdLog('wip', { lease: true });
+        return;
+    }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
+    if (isQueued(target) && !has('force')) { const why = umbrellaRefusal(target, fold(entries).items); if (why) die(why); }
     // A refused --branch/--worktree must exit before the lease is written: die() does not roll it back, and a --steal would take it from its owner.
     const where = recoveryFlags();
     // The lease comes next: a window that does not get it writes nothing.
@@ -844,6 +936,7 @@ function writeNext(item: LedgerItem, where: ReturnType<typeof recoveryFlags>, en
 
 /** `next <id> "<step>" [--worktree w] [--branch b]`: record the next step of an open item so a cold session can recover it. */
 function cmdNext(): void {
+    if (!positional[0]) { cmdWhatsNext(); return; }
     const entries = readLedger();
     const target = fold(entries).items.find((i) => i.id === positional[0]);
     const step = arg('text') || positional.slice(1).join(' ');
@@ -853,6 +946,58 @@ function cmdNext(): void {
     const where = recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: step });
     writeNext(target, where, entries);
     console.log(`next  ${target.id}  ${where.nextStep}`);
+}
+
+/** How old the tracker snapshot may get before `next` and the whats-next event say so. */
+const TRACKER_STALE_MS = 6 * 3_600_000;
+
+/** The ranked queue across every project's tickets and the tracker snapshot, computed on read. */
+function whatsNext(): Ranking {
+    return rankNext(gatherRankInput({
+        vaultRoot: VAULT_ROOT, statusDir: statusDir(), items: foldLedger(readLedger()).items, today: priorityDay(),
+        frozenLabels: NEXT_FROZEN_LABELS, blockedLabels: NEXT_BLOCKED_LABELS, now: new Date(),
+    }));
+}
+
+/** The note `next` adds when the tracker snapshot is missing or older than six hours, else none. */
+function trackerAgeNote(r: Ranking): string | undefined {
+    if (!r.trackerFetchedAt) return 'Tracker: no snapshot, so tracker issues are not ranked (playbooks/tracker-snapshot.md fetches one).';
+    const age = Date.now() - Date.parse(r.trackerFetchedAt);
+    return age > TRACKER_STALE_MS ? `Tracker: the snapshot is ${Math.floor(age / 3_600_000)}h old; refresh it (playbooks/tracker-snapshot.md).` : undefined;
+}
+
+/** The top of the ranked queue for the Start view. A failure to rank leaves the block out rather than failing the view. */
+function upNextForStart(): UpNextRow[] {
+    try {
+        return whatsNext().ranked.slice(0, UP_NEXT_TOP).map((c) => ({ id: c.id, ...(c.key ? { key: c.key } : {}), project: c.project, title: c.title, score: c.score, why: whyOf(c) }));
+    } catch { return []; }
+}
+
+/** `next [--top N] [--all] [--in <project>] [--json]`: the top of the ranked queue with a named score, read-only. */
+function cmdWhatsNext(): void {
+    const top = arg('top') ? Number(arg('top')) : 5;
+    if (!Number.isInteger(top) || top < 1) die('--top takes a whole number of at least 1.');
+    const full = whatsNext();
+    const only = arg('in');
+    const r: Ranking = only ? { ...full, ranked: full.ranked.filter((c) => c.project === only), excluded: full.excluded.filter((e) => e.project === only) } : full;
+    if (asJson) { printJson({ ...r, ranked: r.ranked.slice(0, has('all') ? undefined : top), ...(has('all') ? {} : { excluded: undefined }) }); return; }
+    for (const line of nextLines(r, { top, all: has('all'), trackerAgeNote: trackerAgeNote(r) })) console.log(line);
+}
+
+/** `tracker-import <file|->`: write the tracker snapshot `next` ranks from. The input is what a runner fetched (playbooks/tracker-snapshot.md); nothing here talks to the tracker. */
+function cmdTrackerImport(): void {
+    const src = positional[0];
+    if (!src) die('Usage: journal.ts tracker-import <file|-> [--source jira] [--status-dir <dir>]   (- reads standard input)');
+    const dir = statusDir();
+    if (!dir) die('No status directory: pass --status-dir or set status_dir.');
+    let raw: unknown;
+    try { raw = JSON.parse(readFileSync(src === '-' ? 0 : resolve(src), 'utf8')); } catch (e) { die(`tracker-import: ${src} is not readable JSON: ${errorMessage(e)}`); }
+    let result: ReturnType<typeof importTracker>;
+    try { result = importTracker(raw, { source: arg('source') || 'jira', fetchedAt: new Date() }); } catch (e) { die(errorMessage(e)); }
+    const path = dryRun ? join(dir, 'tracker-items.json') : writeTracker(dir, result.snapshot);
+    console.log(`${dryRun ? 'would write' : 'wrote'}  ${result.snapshot.items.length} item(s)  ${path}`);
+    if (result.withheld.length) console.log(`withheld titles  ${result.withheld.join(', ')}`);
+    for (const s of result.skipped) console.log(`skipped  ${s}`);
 }
 
 /** `recover <id>`: print the prompt that re-dispatches an open item whose session died. Read-only. */
@@ -925,12 +1070,17 @@ const approvalClose = (kind: string) => {
 
 function cmdClose(newKind: string): void {
     const needle = positional[0];
+    // `done` on a briefed item needs the agent's retro first, or --no-retro with the reason (recorded on the row). Only this CLI path asks.
+    const noRetro = has('no-retro') ? (arg('no-retro') ?? '') : null;
+    if (noRetro !== null && newKind !== 'done') die('--no-retro is for done: drop and resolve do not need a retro.');
+    if (noRetro !== null) { const bad = noRetroRefusals(noRetro); if (bad.length) die(`done: refused, nothing written.\n${bad.map((b) => `  - ${b}`).join('\n')}`); }
     const result = closeItem({ readLedger, append, newId, fold, today, now }, {
         kind: newKind,
         needle,
         note: arg('answer') || arg('why'),
         ticket: arg('ticket'),
-        extras: () => ({ ...approvalClose(newKind), ...usageFromArgs() }),
+        extras: () => ({ ...approvalClose(newKind), ...(noRetro !== null ? { noRetro: noRetro.replace(/\s+/g, ' ').trim() } : {}), ...usageFromArgs() }),
+        ...(newKind === 'done' && noRetro === null ? { guard: (target: LedgerItem, entries: LedgerRow[]) => retroGate(entries, target) } : {}),
     });
     if (result.kind === 'ambiguous') exitAmbiguous(needle, result.matches);
     if (result.kind === 'not-closable') die(result.reason);
@@ -990,14 +1140,7 @@ function cmdApproveTag() {
 
 /** Every `--ref <file>` on the command line, in order. `arg('ref')` keeps only the first. */
 function refFlagValues(): string[] {
-    const out: string[] = [];
-    const stop = argv.indexOf('--');
-    for (let i = 0; i < (stop === -1 ? argv.length : stop); i++) {
-        if (argv[i] !== '--ref') continue;
-        const value = argv[i + 1];
-        if (value && !value.startsWith('--')) out.push(value);
-    }
-    return out;
+    return repeatedFlag('ref');
 }
 
 /** Refs a later `ref` row attached to a decision, so a reader of the fold sees them. The decision row is not rewritten. */
@@ -1125,7 +1268,20 @@ function leaseFooter(g: Groups, window?: string, markup = false): string {
     return markup ? `**Leases:** ${s.mine} mine, ${s.other} other` : `Leases: ${s.mine} mine, ${s.other} other`;
 }
 
+/** Puts in-flight rows whose lease lapsed with no agent running back to queued. Returns their ids; writes nothing on a dry run. */
+function requeueLapsed(): string[] {
+    if (dryRun) return [];
+    const rows = readLedger();
+    const out = lapsedRequeues(rows, fold(rows).items, Date.now(), { model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a' });
+    const taken: LedgerRow[] = [...rows];
+    const withIds = out.map((r) => { const row = { ...r, id: newId(taken) }; taken.push(row); return row; });
+    if (withIds.length) appendMany(withIds);
+    return out.map((r) => String(r.queues));
+}
+
 function cmdStatus() {
+    const requeued = requeueLapsed();
+    if (requeued.length && !asJson) console.error(`requeued ${requeued.length} row(s) whose lease lapsed with no agent running: ${requeued.join(', ')}`);
     refreshBoard();
     const g = groups(has('include-archived'));
     // No --date: the day is WATCH_TZ, and closes match by timestamp in that zone. A passed --date still matches the stored date field.
@@ -1379,6 +1535,9 @@ function maintain(today: string): MaintainResult {
     }
     const stale = staleRows(today);
     if (stale.length) console.log(`Stale in flight: ${stale.length} row(s) with no lease for ${STALE_WIP_DAYS}d or more; \`roll\` lists them.`);
+    requeueLapsed();
+    const aged = dryRun ? [] : applyProposals({ readLedger, append, newId, fold, today: () => today, now }, ageOutProposals(today), () => ({ model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a' }));
+    if (aged.length) console.log(`Aged out: closed ${aged.length} awaiting or queued row(s) whose gate or ticket cleared (${aged.join(', ')}).`);
     const out = worktreeSweepOutcome(dryRun);
     if (out.why) problems.push(out.why);
     const result = out.result;
@@ -1527,6 +1686,30 @@ function rollArchive(d: string): boolean {
  * each rule or approval (boxes 1 to 3) whose ref is an existing file, and nothing else; it never closes an item
  * with no resolvable ref. Closed items fall out of scope, so a second run appends nothing.
  */
+/** The evidence age-out reads: gh and the ticket index, gated as gate lookups are, and the local clones for branches. */
+function ageOutProposals(d: string) {
+    const ctx = primeCtx();
+    const lookups = {
+        pr: (repo: string, n: number) => (RESUME_GH ? ghPrStateIn(ctx, repo, n) : null),
+        ticket: (id: string) => ticketStatusOfIn(ctx, id),
+        branch: (repo: string | undefined, name: string) => branchState(CONTAINER_ROOT, repo, name),
+    };
+    return proposeCloses(fold(readLedger()).items, d, lookups);
+}
+
+/** `age-out`: propose closing awaiting and queued rows whose gate, ticket or branch has cleared; --apply closes the verified ones. */
+function cmdAgeOut() {
+    const d = arg('date', today());
+    if (!isDate(d)) die('--date must be YYYY-MM-DD.');
+    const proposals = ageOutProposals(d);
+    const closed = has('apply') ? applyProposals({ readLedger, append, newId, fold, today, now }, proposals, usageFromArgs) : [];
+    if (closed.length && !dryRun) render(true);
+    if (asJson) { printJson({ proposals, closed }); return; }
+    const lines = proposalLines(proposals);
+    console.log(lines.length ? lines.join('\n') : 'age-out: nothing to close.');
+    if (has('apply')) console.log(`age-out --apply: closed ${closed.length} verified row(s)${dryRun ? ' (dry-run)' : ''}.`);
+}
+
 function cmdTriage() {
     const d = arg('date', today());
     const since = arg('since', d);
@@ -1551,7 +1734,7 @@ function cmdTriage() {
         return;
     }
     if (asJson) { printJson(t); return; }
-    triageLines(t).forEach((l) => console.log(l));
+    triageLines(t, proposalLines(ageOutProposals(d))).forEach((l) => console.log(l));
 }
 
 /** roll's gate: warns about triage blockers, or with --strict prints them and exits 1 before anything is changed. */
@@ -2067,7 +2250,7 @@ function cmdBrief(): void {
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
     const paths = briefPaths(outDir, target.id as string, writer);
     const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
-    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, writer, reportPath: paths.report });
+    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, writer, reportPath: paths.report, journal: `node ${join(scripts, 'journal.ts')} --project ${project}` });
     const why = `brief ${target.id}`;
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
@@ -2557,7 +2740,7 @@ function cmdStartHere() {
     const local = viewDay(nowAt, WATCH_TZ);
     const priorities = dirPath ? readPriorities(dirPath, local) : { state: 'missing' as const };
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
-    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), now: nowAt });
+    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), upNext: upNextForStart(), now: nowAt });
     if (asJson) printJson(s);
     else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(withhold(l)));
 }
@@ -2710,6 +2893,9 @@ switch (cmd) {
     case 'learned': cmdLearned(); break;
     case 'miss': cmdMiss(); break;
     case 'misses': cmdMisses(); break;
+    case 'agent-retro': cmdAgentRetro(); break;
+    case 'agent-retros': cmdAgentRetros(); break;
+    case 'retro-reviewed': cmdRetroReviewed(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
@@ -2745,9 +2931,11 @@ switch (cmd) {
     case 'ready-to-push': cmdReadyToPush(); break;
     case 'brief': cmdBrief(); break;
     case 'next': cmdNext(); break;
+    case 'tracker-import': cmdTrackerImport(); break;
     case 'recover': cmdRecover(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
+    case 'age-out': cmdAgeOut(); break;
     case 'defer': cmdDefer(); break;
     case 'answer': case 'discuss': cmdAnswerOrDiscuss(cmd); break;
     case 'prime': cmdPrime(); break;

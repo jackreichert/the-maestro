@@ -59,6 +59,8 @@ review_note_repos: example/*  # GitHub owner/name globs (comma-separated) where 
 reviewer_checklist: reviewer-checklist.md  # file of what the org's reviewers ask for (relative to the overlay folder, or ~/ or absolute); when it exists the Reviews note needs a filled Reviewer checklist section; default none
 pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off; file-only
 waive_size_gate_owners: example-owner # GitHub owners (or owner/name globs, comma-separated) whose repos skip the PR size limits in pr-open.ts (not the mixed code/mechanical refusal); a bare owner means owner/*; default none, so the gate holds everywhere; file-only
+one_pr_per_ticket: on         # on (default) or off: pr-open.ts refuses a second independent open PR with the same tracker key; file-only
+one_pr_exempt_heads: release/*  # head-branch globs (comma-separated) the one-PR-per-ticket rule skips; default release/*; file-only
 review_pool_owners: example-org # GitHub owners (or owner/name globs, comma-separated) whose PRs other people review; every repo outside the pool counts as self-review, so personal repos never fill review_queue_cap; default none
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
@@ -75,6 +77,8 @@ protected_branches: main, release/*  # names or globs (`*` within one path segme
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
 sweep_pr_days: 180             # days of merged PRs branch-sweep.ts reads as evidence; default 180
 tracker_key_pattern: \bABC-\d+\b  # regex for tracker keys in a PR title or branch, listed by the pr-merged event; default is any ABC-123 shaped key
+next_frozen_labels: pilot-hold  # ticket or tracker labels that freeze an item: `journal.ts next` never offers it as work; default none
+next_blocked_labels: needs-you  # labels meaning the item waits on you, held back by `journal.ts next`; `none` clears; default needs-you
 local_key_prefixes: MAESTRO,MITHRIL  # key prefixes no tracker holds (local keys of personal repos); never counted as pending transitions; `none` clears; default MAESTRO,MITHRIL
 sweep_budget_seconds: 300     # the worktree sweep stops at the next repo boundary once over this many seconds, and names what it skipped; default 300
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.ts offers it; default 60
@@ -109,7 +113,7 @@ Every key is optional. Blank values are ignored.
 
 Precedence per setting: **environment variable, then the user file, then the overlay's `config.md`.**
 
-These pr-open gate settings are the exception. They are read from the user config file only, not from an environment variable and not from the overlay file: `pr_max_code_files`, `pr_max_code_lines`, `pr_wide_max_code_files`, `pr_wide_max_code_lines`, `waive_size_gate_owners`, `pr_smells_repos`, `review_note_repos`, `pr_body_sections`, the `pr_body_check_*` switches, `pr_body_private_words`, `pr_body_private_patterns`, and `pr_body_voice_names`. An environment variable set in the same process cannot raise a size limit, including the wide tier, waive an owner, turn a body check off or on, change the required sections, change which repos the smells gate covers, or change those body-check lists. `MAESTRO_LOCAL_CONFIG` still names the file. `MAESTRO_GH_BIN` and `MAESTRO_OVERLAY` are not gate settings and are unchanged.
+These pr-open gate settings are the exception. They are read from the user config file only, not from an environment variable and not from the overlay file: `pr_max_code_files`, `pr_max_code_lines`, `pr_wide_max_code_files`, `pr_wide_max_code_lines`, `waive_size_gate_owners`, `pr_smells_repos`, `review_note_repos`, `one_pr_per_ticket`, `one_pr_exempt_heads`, `pr_body_sections`, the `pr_body_check_*` switches, `pr_body_private_words`, `pr_body_private_patterns`, and `pr_body_voice_names`. An environment variable set in the same process cannot raise a size limit, including the wide tier, waive an owner, turn a body check off or on, change the required sections, change which repos the smells gate covers, or change those body-check lists. `MAESTRO_LOCAL_CONFIG` still names the file. `MAESTRO_GH_BIN` and `MAESTRO_OVERLAY` are not gate settings and are unchanged.
 
 The user file is the first of:
 
@@ -155,6 +159,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Default branch base, and per-repo exceptions | git.md step 1 |
 | Repo-to-owner map for ledger rows that name a PR as `repo#N` (`repo_owners`; unset means none) | `scripts/merge-sweep.ts` |
 | Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/event-types/pr-watch.ts` |
+| Labels `journal.ts next` never offers (`next_frozen_labels`) or holds back as waiting on you (`next_blocked_labels`) | `scripts/lib/whats-next/rank.ts` |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |

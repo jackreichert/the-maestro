@@ -120,6 +120,12 @@ test('the settings snippet names both events with the matchers and passes flags 
   assert.equal(s.hooks.PreToolUse[0].matcher, 'Bash');
   assert.match(s.hooks.PreToolUse[0].hooks[0].command, /git-guard\.ts'$/, 'no pass-through flags reach the guard');
   assert.match(s.hooks.SessionStart[0].hooks[0].command, /session-start-compact\.ts' --project 'p'$/);
+  assert.equal(s.hooks.PreToolUse[1].matcher, 'Agent');
+  assert.match(s.hooks.PreToolUse[1].hooks[0].command, /agent-dispatch\.ts' --project 'p'$/);
+  assert.equal(s.hooks.SessionEnd.length, 2);
+  assert.equal(s.hooks.SessionEnd[1].matcher, 'clear|resume|logout|prompt_input_exit|other');
+  assert.match(s.hooks.SessionEnd[1].hooks[0].command, /session-end-requeue\.ts' --project 'p'$/);
+  assert.match(s.hooks.SubagentStop[0].hooks[0].command, /agent-return\.ts' --project 'p'$/);
 });
 
 test('a partial snapshot (deadline hit) is reported as a failed step, not as success', () => {
@@ -213,7 +219,7 @@ test('the one snippet holds the roll hooks and the event-inject entries, and no 
   const r = runSnippet([]);
   assert.equal(r.status, 0);
   const s = JSON.parse(r.stdout) as Record<string, unknown> & { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
-  assert.deepEqual(Object.keys(s.hooks).sort(), ['PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(s.hooks).sort(), ['PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'SubagentStop', 'UserPromptSubmit']);
   assert.equal(s.hooks.SessionStart.length, 2);
   assert.equal(s.hooks.SessionStart[1].matcher, undefined);
   assert.match(s.hooks.SessionStart[1].hooks[0].command, /event-inject\.ts'$/);

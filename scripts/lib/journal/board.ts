@@ -5,6 +5,7 @@ import type { LedgerItem, LedgerRow, fold as foldRows } from '../ledger-core.ts'
 import { visibleTo } from './scope.ts';
 import type { Args } from './args.ts';
 import type { Store } from './store.ts';
+import { DEFAULT_STALE_WIP_DAYS } from './staleness.ts';
 import { fmt, slug } from './format.ts';
 import { renderCurrent, ARCHIVE_INDEX, OTHER_STREAM, CURRENT_ARCHIVE_CAP } from './current.ts';
 import { askSummary, asksNote } from './ask-fields.ts';
@@ -144,7 +145,7 @@ export function footerDone(g: Groups, d: string, opts?: { tz?: string }): DayDon
  * The counts behind the reply-footer Ledger lines: one row per active stream (canonical registry names), then `other` for
  * items with no stream. With no streams at all it is the single plain row. The footer text and the status page both read this.
  */
-export const FOOTER_STALE_DAYS = 3;
+export const FOOTER_STALE_DAYS = DEFAULT_STALE_WIP_DAYS;
 
 /** What the footer needs to tell a live in-flight row from a forgotten one: the day it is read on, and the ids that hold a live lease. */
 export interface FooterLiveness { today: string; leased: ReadonlySet<string>; /** Days in flight, with no live lease, after which a row counts as stale; `FOOTER_STALE_DAYS` when absent (`stale_wip_days`). */ staleDays?: number;

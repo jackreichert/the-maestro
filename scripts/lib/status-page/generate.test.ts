@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gatherInputs, gatherInputsCached, generate, loadPrs } from './generate.ts';
+import { gatherInputs, gatherInputsCached, generate, loadPrs, readPrs } from './generate.ts';
 import { readPrCache, writePrCache } from './prcache.ts';
 import { extractFields } from './inline.ts';
 import type { GenerateDeps, RawPr } from './generate.ts';
@@ -506,4 +506,23 @@ test('no configured org: no GitHub read, an empty PR list and a visible warning,
   assert.equal(readPrCache(d), null, 'nothing written to the PR cache');
   assert.doesNotMatch(r.page, /acme-widgets/);
   assert.equal(gatherInputs({ statusDir: d, dryRun: true, cachedPrsOnly: false, config: { ...CONFIG, prOwners: undefined } }, deps([raw(1, 'acme-widgets')])).prs.length, 0, 'an absent scope fails closed too');
+});
+
+test('readPrs enriches the fetched PRs once, caches the marks, and loadPrs carries the develop twin onto the Pr', () => {
+  const d = dir();
+  const twin = { number: 90, url: 'https://example.test/pull/90', merged: false };
+  const seen: number[] = [];
+  const enrichPrs = (rs: RawPr[]): RawPr[] => { seen.push(rs.length); return rs.map((r) => (r.baseRefName === 'staging' ? { ...r, developTwin: twin } : r)); };
+  const got = readPrs(d, deps([raw(1, 'acme-widgets', { baseRefName: 'staging' }), raw(2, 'acme-widgets')], { enrichPrs }), false, false, ['org']);
+  assert.deepEqual(seen, [2]);
+  assert.deepEqual(readPrCache(d)?.prs[0]?.developTwin, twin, 'the mark survives the cache round trip');
+  const prs = loadPrs(got.raw, { items: [], ticketMap: {}, overrides: {}, repoStreams: CONFIG.repoStreams, keyPattern: CONFIG.trackerKeyPattern });
+  assert.deepEqual(prs[0]?.developTwin, twin);
+  assert.equal('developTwin' in (prs[1] as object), false);
+});
+
+test('a cache whose developTwin is damaged is treated as absent', () => {
+  const d = dir();
+  writePrCache(d, { fetchedAt: NOW, prs: [{ ...raw(1, 'acme-widgets'), developTwin: { number: 'x' } } as never] });
+  assert.equal(readPrCache(d), null);
 });
