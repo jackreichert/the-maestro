@@ -140,12 +140,13 @@ const MIX_LABEL: Record<Mix, string> = { pass: 'Passing', pending: 'Running', fa
 
 interface Drawn extends OpenPrRow { repo: string; selfReview: boolean }
 /**
- * What the tab lists: one PR, or a develop/staging pair drawn as one card. `lead` is the PR the card sorts, bands and links by (the develop
+ * What the tab lists: one PR, or a develop/staging pair drawn as one card. `lead` is the PR the card sorts and links by (the develop
  * PR while it is open, else the staging PR); `mate` is the staging PR beside an open develop PR; `merged` is a develop PR that has merged
  * and is kept beside its still-open staging PR until that merges too.
  */
 interface Unit { lead: Drawn; mate?: Drawn; merged?: NonNullable<OpenPrRow['sides']>['develop'] }
 const members = (u: Unit): Drawn[] => (u.mate ? [u.lead, u.mate] : [u.lead]);
+const MOVE_URGENCY: Move[] = ['orchestra', 'drafts', 'yours', 'ready'];
 
 /** Pairs each develop PR with the open staging PR on the other side of its `sides` (same repo), and keeps a merged develop twin on its staging PR. Everything else stays alone. */
 export function toUnits(list: Drawn[]): Unit[] {
@@ -167,6 +168,8 @@ export function toUnits(list: Drawn[]): Unit[] {
 
 const needsFix = (p: OpenPrRow): boolean => p.ci === 'FAILURE' || p.ci === 'ERROR' || p.mergeable === 'conflicting' || p.unresolved > 0 || p.review === 'changes-requested';
 const moveOf = (p: OpenPrRow): Move => (p.isDraft ? 'drafts' : readyToMerge(p) ? 'ready' : needsFix(p) ? 'orchestra' : 'yours');
+/** The band of a card: the most urgent move among its PRs, so a pair never reads Ready while one side needs fixing. */
+const unitMove = (u: Unit): Move => members(u).map(moveOf).sort((a, b) => MOVE_URGENCY.indexOf(a) - MOVE_URGENCY.indexOf(b))[0]!;
 const lensOn = (p: OpenPrRow, lens: Lens): boolean => {
   if (lens === 'failing') return p.ci === 'FAILURE' || p.ci === 'ERROR';
   if (lens === 'conflict') return p.mergeable === 'conflicting';
@@ -300,12 +303,12 @@ export class OpenPrs extends HTMLElement {
   #cue(all: Drawn[], units: Unit[]): HTMLElement {
     const line = h('h1', { class: 'cueline' });
     MOVES.forEach((mv, i) => {
-      const n = units.filter((u) => moveOf(u.lead) === mv.id).length;
+      const n = units.filter((u) => unitMove(u) === mv.id).flatMap(members).length;
       const b = h('button', { type: 'button', class: `cnt${mv.id === 'yours' && n ? ' hot' : ''}`, 'data-move': mv.id, 'aria-pressed': String(this.#move === mv.id) }, h('b', {}, String(n)), ` ${mv.word}`);
       line.append(h('span', { class: 'cue-item' }, b, i < MOVES.length - 1 ? h('span', { class: 'sep', 'aria-hidden': 'true' }, ' · ') : null), i < MOVES.length - 1 ? ' ' : '');
     });
     const repos = new Set(all.map((p) => p.repo)).size;
-    const oldest = units.filter((u) => moveOf(u.lead) === 'yours').map((u) => u.lead).sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
+    const oldest = units.filter((u) => unitMove(u) === 'yours').map((u) => u.lead).sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
     const short = (repo: string): string => repo.split('/')[1] ?? repo;
     return h('section', { class: 'cue' },
       h('div', {},
@@ -353,14 +356,14 @@ export class OpenPrs extends HTMLElement {
   }
 
   #band(mv: (typeof MOVES)[number], shown: Unit[]): HTMLElement {
-    const ps = shown.filter((u) => moveOf(u.lead) === mv.id);
+    const ps = shown.filter((u) => unitMove(u) === mv.id);
     const byRepo = new Map<string, Unit[]>();
     for (const u of ps) byRepo.set(u.lead.repo, [...(byRepo.get(u.lead.repo) ?? []), u]);
     const repos = [...byRepo.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
     const empty = this.#q || this.#lens ? ['No PR here matches.', 'rest'] as const : mv.empty;
     const body = repos.length ? repos.map(([repo, list]) => this.#repo(repo, list)) : [h('p', { class: 'empty' }, `${empty[0]} `, h('i', { lang: 'it' }, empty[1]))];
     return h('section', { class: 'band', id: mv.id },
-      h('div', { class: 'band-head' }, h('h2', {}, mv.title, ' ', h('span', { class: 'n' }, String(ps.length))), h('p', {}, mv.note)),
+      h('div', { class: 'band-head' }, h('h2', {}, mv.title, ' ', h('span', { class: 'n' }, String(ps.flatMap(members).length))), h('p', {}, mv.note)),
       ...body);
   }
 

@@ -208,10 +208,10 @@ test('a staging PR whose develop twin merged keeps the develop PR in its card, m
   cleanup();
 });
 
-test('a pair bands by its develop PR, and a search or lens that hits either side keeps the whole pair', async () => {
+test('a pair bands by its most urgent side, and a search or lens that hits either side keeps the whole pair', async () => {
   const rows = pairRows({ isDraft: true }, { ci: 'FAILURE', title: 'Zebra rollout (staging)' });
   const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one(rows) }) });
-  assert.equal(root.querySelector('section#drafts li.pair') !== null, true, 'the draft develop PR decides the band');
+  assert.equal(root.querySelector('section#orchestra li.pair') !== null, true, 'the staging side fails CI, which outranks the draft develop side');
   const search = root.querySelector('input[type=search]') as HTMLInputElement;
   search.value = 'zebra';
   search.dispatchEvent(new (root.ownerDocument!.defaultView as unknown as { Event: typeof Event }).Event('input', { bubbles: true }));
@@ -234,4 +234,14 @@ test('an unpaired PR, a pair whose sides disagree, and a stacked pair draw as be
   assert.equal(li.length, 2);
   assert.ok(li[1]?.classList.contains('child'), 'a PR stacked on either side nests under the pair');
   stacked.cleanup();
+});
+
+test('a pair never reads ready while its staging side needs fixing, and every count is in PRs', async () => {
+  const rows = pairRows({ review: 'approved' }, { ci: 'FAILURE', unresolved: 3 });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one(rows) }) });
+  assert.doesNotMatch(text(root.querySelector('section#ready')!), /Staging #9|Develop #7/);
+  assert.ok(root.querySelector('section#orchestra li.pair'));
+  assert.equal(root.querySelector('section#orchestra .n')?.textContent, '2');
+  assert.equal(root.querySelector('section#ready .n')?.textContent, '0');
+  cleanup();
 });
