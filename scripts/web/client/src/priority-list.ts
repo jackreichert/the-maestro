@@ -12,24 +12,33 @@ export interface PriorityData {
   epics?: Record<string, EpicLine[]>;
 }
 
+/** A priority's stream is its own field, or the trailing "[Stream]" the ledger file keeps; either shows as a tag, never as bracketed text. */
+function splitStream(p: Priority): { text: string; stream: string } {
+  if (p.stream) return { text: p.text, stream: p.stream };
+  const m = /\s*\[(\w+)\]\s*$/.exec(p.text);
+  return m ? { text: p.text.slice(0, m.index), stream: m[1] ?? '' } : { text: p.text, stream: '' };
+}
+
 const MAX_TEXT = 200;
 const MAX_STREAM = 40;
 
 const CSS = `${BASE_CSS}${UI_CSS}
   :host { display: block; }
-  .bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-2); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .bar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: var(--hairline-strong); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  .bar h2 { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); }
   .cap { font-variant-numeric: tabular-nums; }
   .warn { color: var(--warning); }
-  ol.priorities { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); counter-reset: p; }
-  ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto; align-items: center; gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
-  ol.priorities li::before { content: counter(p); color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
+  ol.priorities { list-style: none; margin: 0; padding: 0; counter-reset: p; }
+  ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; align-items: start; gap: 0 var(--space-2); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+  ol.priorities li::before { content: counter(p, upper-roman); font-family: var(--font-serif); font-size: 1.25rem; line-height: 1.3; color: var(--text-muted); }
+  ol.priorities li.has-tag .text .tag { display: block; margin: var(--space-1) 0 0; }
+  @media (hover: hover) { ol.priorities li:not(:hover):not(:focus-within) .tools { opacity: 0; } }
   ol.priorities li > epic-lines { grid-column: 2 / -1; padding-bottom: var(--space-1); }
   ol.priorities li.over { background: var(--surface-2); }
   ol.priorities li.target { box-shadow: inset 0 2px 0 var(--accent); }
   ol.priorities li.dragging { opacity: 0.5; }
   .text { min-width: 0; overflow-wrap: anywhere; }
-  .text .tag { margin-left: var(--space-2); }
-  .tools { display: flex; align-items: center; gap: 2px; }
+  .tools { display: flex; align-items: center; gap: 2px; transition: opacity var(--dur-fast) var(--ease-out); }
   .tools button, .grip {
     font: inherit; font-size: var(--text-sm); line-height: 1; min-width: 28px; min-height: 28px; padding: 0 var(--space-1);
     border: 1px solid transparent; border-radius: var(--radius-sm); background: none; color: var(--text-secondary); cursor: pointer;
@@ -41,6 +50,9 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); font-size: var(--text-sm); }
   .confirm button { min-height: 28px; padding: 0 var(--space-3); }
   button.danger { border: 1px solid var(--critical); background: var(--critical); color: var(--on-accent); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-semibold); border-radius: var(--radius-sm); cursor: pointer; }
+  button.open-add { font: inherit; font-size: var(--text-sm); color: var(--accent); background: none; border: 0; padding: var(--space-3) 0 0; min-height: 36px; cursor: pointer; text-align: left; }
+  button.open-add[disabled] { background: none; color: var(--text-muted); }
+  @media (hover: hover) { button.open-add:hover:not([disabled]) { text-decoration: underline; } }
   form.add { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding-top: var(--space-3); }
   @media (min-width: 480px) { form.add { grid-template-columns: minmax(0, 1fr) minmax(0, 10em) auto; align-items: end; } }
   form.add label { display: grid; gap: 2px; font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-secondary); }
@@ -72,6 +84,7 @@ export class PriorityList extends HTMLElement {
   #max = 5;
   #confirm = -1;
   #pending = false;
+  #adding = false;   // the add form is folded behind "+ Add a priority" until asked for
   #drag = -1;
   #over = -1;
   #message: { text: string; error: boolean } = { text: '', error: false };
@@ -175,6 +188,7 @@ export class PriorityList extends HTMLElement {
     const blocked = addBlockedReason(items.length, this.#max);
     const frag: Node[] = [];
     frag.push(h('div', { class: 'bar' },
+      h('h2', {}, 'Today\'s priorities'),
       h('span', { class: 'cap', id: 'pl-count' }, h('span', { class: 'vh' }, 'Priorities: '), c.label),
       c.over ? h('span', { class: 'warn' }, `Over the cap of ${this.#max}: you can reorder and remove, not add.`) : null));
     if (items.length === 0) frag.push(h('p', { class: 'empty' }, note || 'No priorities set for today.'));
@@ -183,7 +197,14 @@ export class PriorityList extends HTMLElement {
       list.setAttribute('aria-busy', String(this.#pending));
       frag.push(list);
     }
-    if (editable) {
+    if (editable && !this.#adding) {
+      const open = h('button', { type: 'button', class: 'open-add', id: 'pl-open', 'aria-describedby': blocked ? 'pl-hint' : undefined }, '+ Add a priority');
+      open.disabled = blocked !== null;
+      open.addEventListener('click', () => { this.#adding = true; this.#focus = 'pl-text'; this.#render(); });
+      frag.push(open);
+      if (blocked) frag.push(h('p', { class: 'hint', id: 'pl-hint' }, blocked));
+      frag.push(h('div', { class: `msg${this.#message.error ? ' err' : ''}`, role: this.#message.error ? 'alert' : 'status' }, this.#message.text));
+    } else if (editable) {
       const dl = h('datalist', { id: 'pl-streams' }, ...streams.map((s) => h('option', { value: s })));
       const text = h('input', { id: 'pl-text', type: 'text', maxlength: String(MAX_TEXT), autocomplete: 'off', required: true, 'aria-describedby': blocked ? 'pl-hint' : undefined });
       const stream = h('input', { id: 'pl-stream', type: 'text', list: 'pl-streams', maxlength: String(MAX_STREAM), autocomplete: 'off' });
@@ -197,6 +218,7 @@ export class PriorityList extends HTMLElement {
       const form = h('form', { class: 'add', autocomplete: 'off' },
         h('label', {}, 'New priority', text), h('label', {}, 'Stream (optional)', stream, dl), add);
       form.addEventListener('submit', (e) => { e.preventDefault(); this.#add(); });
+      form.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this.#adding = false; this.#focus = 'pl-open'; this.#render(); } });
       frag.push(form);
       if (blocked) frag.push(h('p', { class: 'hint', id: 'pl-hint' }, blocked));
       frag.push(h('div', { class: `msg${this.#message.error ? ' err' : ''}`, role: this.#message.error ? 'alert' : 'status' }, this.#message.text));
@@ -206,8 +228,9 @@ export class PriorityList extends HTMLElement {
   }
 
   #row(p: Priority, i: number, editable: boolean): HTMLElement {
-    const text = h('span', { class: 'text' }, p.text, p.stream ? streamTag(p.stream) : null);
-    const li = h('li', { 'data-i': String(i) }, text);
+    const shown = splitStream(p);
+    const text = h('span', { class: 'text' }, shown.text, shown.stream ? streamTag(shown.stream) : null);
+    const li = h('li', { 'data-i': String(i), class: shown.stream ? 'has-tag' : undefined }, text);
     const epics = p.stream && this.#items.findIndex((x) => x.stream === p.stream) === i ? this.#data.epics?.[p.stream] : undefined;
     const lines = epics?.length ? h('epic-lines') : null;
     if (lines && epics) lines.epics = epics;
