@@ -39,6 +39,14 @@ test('a title is scanned whole, so a flagged value straddling the clip is still 
   assert.ok(!JSON.stringify(snapshot).includes('bilbo'));
 });
 
+test('labels are never dropped: a freeze past the twentieth survives, and an issue with too many is skipped, not offered', () => {
+  const many = (n: number, last: string) => [...Array.from({ length: n - 1 }, (_, i) => `shire-${i}`), last];
+  const { snapshot, skipped } = importTracker([{ key: 'ZZ-9', labels: many(25, 'frozen-orchard') }, { key: 'ZZ-10', labels: many(101, 'frozen-orchard') }], opts);
+  assert.deepEqual(snapshot.items.map((i) => i.key), ['ZZ-9']);
+  assert.equal(snapshot.items[0]!.labels.at(-1), 'frozen-orchard');
+  assert.match(skipped[0]!, /ZZ-10 has 101 labels, over the cap of 100/);
+});
+
 test('long titles are clipped to one line; a missing title falls back to the key', () => {
   const { snapshot } = importTracker([{ key: 'ZZ-6', summary: 'x'.repeat(500) }, { key: 'ZZ-7' }], opts);
   assert.equal(snapshot.items[0]!.title.length, 200);

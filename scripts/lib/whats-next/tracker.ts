@@ -19,7 +19,7 @@ export const MAX_ITEMS = 500;
 export const TITLE_MAX = 200;
 const KEY = /^[A-Z][A-Z0-9]+-\d+$/;
 const LABEL_MAX = 60;
-const LABELS_MAX = 20;
+const LABELS_MAX = 100;
 const SHORT_MAX = 40;
 const URL_MAX = 300;
 const SOURCE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -51,7 +51,9 @@ function normalise(v: unknown, withheld: string[]): TrackerItem | string {
   let title = oneLine(rawTitle, TITLE_MAX) || key;
   const findings = scanFields({ title: rawTitle });
   if (findings.length) { withheld.push(key); title = `(title withheld: ${describeFindings(findings).join('; ').replace(/\s+/g, ' ').slice(0, 80)})`; }
-  const labels = (Array.isArray(f.labels) ? f.labels : []).filter((l): l is string => typeof l === 'string').map((l) => oneLine(l, LABEL_MAX)).filter(Boolean).slice(0, LABELS_MAX);
+  const labels = (Array.isArray(f.labels) ? f.labels : []).filter((l): l is string => typeof l === 'string').map((l) => oneLine(l, LABEL_MAX)).filter(Boolean);
+  // Labels carry the freeze and the waits, so none is dropped: an issue with too many to keep is skipped, never offered.
+  if (labels.length > LABELS_MAX) return `${key} has ${labels.length} labels, over the cap of ${LABELS_MAX}`;
   const url = typeof f.url === 'string' && /^https:\/\/\S+$/.test(f.url) && f.url.length <= URL_MAX ? f.url : undefined;
   const done = typeof f.doneLooksLike === 'boolean' ? f.doneLooksLike : typeof f.description === 'string' ? /what done looks like/i.test(f.description) : undefined;
   return {
