@@ -91,3 +91,12 @@ test('weekly: seven-day periods counted back from today, the oldest one partial'
   assert.deepEqual(weekly(days), [{ start: '2026-10-01', total: 2, byStream: { a: 2 } }, { start: '2026-10-03', total: 7, byStream: { a: 7 } }]);
   assert.deepEqual(weekly([]), []);
 });
+
+test('a stream with no stream-homes entry claims the repos mapped to it, and links the library INDEX of each that has one', () => {
+  const { cfg } = setup();
+  const data = buildProjects({ ...cfg, page: { ...cfg.page, repoStreams: { 'avonlea-api': 'Orchard', 'no-such-repo': 'Orchard' } } }, NOW);
+  const orchard = data.rows.find((r) => r.stream === 'Orchard');
+  assert.deepEqual(orchard?.projects, ['avonlea-api']);
+  assert.ok(data.links.some((l) => l.stream === 'Orchard' && l.kind === 'library' && l.label === 'avonlea-api library'));
+  assert.ok(!data.links.some((l) => l.label.includes('no-such-repo')), 'a repo with no notes gets no link');
+});
