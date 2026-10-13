@@ -42,7 +42,8 @@ export function addRegistryRow(text: string, row: RegistryRow): string | null {
   const lines = text.split('\n');
   const span = tableSpan(lines);
   if (!span) return null;
-  if (parseRegistry(text).some((r) => r.id === row.id)) return text;
+  // Any line in the table whose first cell is the id counts, even a row too short to parse: a hand-edit must not allow a second row.
+  if (lines.slice(span.header + 2, span.end).some((l) => cells(l)[0] === row.id)) return text;
   lines.splice(span.end, 0, `| ${COLUMNS.map((k) => cell(row[k])).join(' | ')} |`);
   return lines.join('\n');
 }
