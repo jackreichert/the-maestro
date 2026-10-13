@@ -99,6 +99,7 @@
  *   journal.ts ready-to-push [--repo R] [--json]        my local branches with commits on no remote (held back from push), per repo of the container; read-only git
  *   journal.ts claims [--stale-hours 12] [--json]         list claims with a stale check
  *   journal.ts next <id> "<step>" [--worktree w] [--branch b]   record what an open item does next (and, optionally, where its work lives); `recover` reads it
+ *   journal.ts tracker-import <file|-> [--source jira] [--status-dir <dir>]   normalise a fetched tracker search result (issues assigned to the user), scan its titles, and write <status dir>/tracker-items.json for `next`; prints what it wrote, withheld and skipped
  *   journal.ts recover <id>                       print a re-dispatch prompt for an open item: its brief path, the worktree's git status and last commits (or that the worktree is missing), the ticket, the library pages, the recorded next step
  *   journal.ts brief <id> [--repo r] [--desk stream] [--worktree w] [--branch b] [--next "<step>"] [--read-only] [--details-file f] [--done-when "<criteria>"] [--out-dir d]   write the dispatch brief file for an open item (standing block, library pages, the item's text, the hand-back cap, a report path), record it, promote a queued item, and take the repo claim; refuses, writing nothing, when another holder has the repo. Prints the one-line Agent prompt
  *   journal.ts backfill [--dry-run] [--samples N] [--out <report.md>] [--json]   propose a stream for untagged items; writes nothing
@@ -151,6 +152,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, rea
 import { join, basename, dirname, resolve, relative, sep, isAbsolute } from 'node:path';
 import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
+import { importTracker, writeTracker } from './lib/whats-next/tracker.ts';
 import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
@@ -853,6 +855,22 @@ function cmdNext(): void {
     const where = recoveryOrDie({ worktree: arg('worktree'), branch: arg('branch'), next: step });
     writeNext(target, where, entries);
     console.log(`next  ${target.id}  ${where.nextStep}`);
+}
+
+/** `tracker-import <file|->`: write the tracker snapshot `next` ranks from. The input is what a runner fetched (playbooks/tracker-snapshot.md); nothing here talks to the tracker. */
+function cmdTrackerImport(): void {
+    const src = positional[0];
+    if (!src) die('Usage: journal.ts tracker-import <file|-> [--source jira] [--status-dir <dir>]   (- reads standard input)');
+    const dir = statusDir();
+    if (!dir) die('No status directory: pass --status-dir or set status_dir.');
+    let raw: unknown;
+    try { raw = JSON.parse(readFileSync(src === '-' ? 0 : resolve(src), 'utf8')); } catch (e) { die(`tracker-import: ${src} is not readable JSON: ${errorMessage(e)}`); }
+    let result: ReturnType<typeof importTracker>;
+    try { result = importTracker(raw, { source: arg('source') || 'jira', fetchedAt: new Date() }); } catch (e) { die(errorMessage(e)); }
+    const path = dryRun ? join(dir, 'tracker-items.json') : writeTracker(dir, result.snapshot);
+    console.log(`${dryRun ? 'would write' : 'wrote'}  ${result.snapshot.items.length} item(s)  ${path}`);
+    if (result.withheld.length) console.log(`withheld titles  ${result.withheld.join(', ')}`);
+    for (const s of result.skipped) console.log(`skipped  ${s}`);
 }
 
 /** `recover <id>`: print the prompt that re-dispatches an open item whose session died. Read-only. */
@@ -2738,6 +2756,7 @@ switch (cmd) {
     case 'ready-to-push': cmdReadyToPush(); break;
     case 'brief': cmdBrief(); break;
     case 'next': cmdNext(); break;
+    case 'tracker-import': cmdTrackerImport(); break;
     case 'recover': cmdRecover(); break;
     case 'backfill': cmdBackfill(); break;
     case 'triage': cmdTriage(); break;
