@@ -171,6 +171,7 @@ import { gateConflicts, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts
 import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
+import { missingRetros, parseAgentRetro, pendingRetros, reviewRefusals, seenRetro } from './lib/journal/agent-retro.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
@@ -733,6 +734,68 @@ function cmdMisses(): void {
     }
 }
 
+/** Every value of a repeatable `--<name>` flag, in order (`arg` keeps only the first). Comma-separated values are not split. */
+function repeatedFlag(name: string): string[] {
+    const out: string[] = [];
+    const stop = argv.indexOf('--');
+    for (let i = 0; i < (stop === -1 ? argv.length : stop); i++) {
+        if (argv[i] !== `--${name}`) continue;
+        const value = argv[i + 1];
+        if (value && !value.startsWith('--')) out.push(value);
+    }
+    return out;
+}
+
+/** `agent-retro <item> --lesson "<source>: <text>" ... [--learned id,id] | --nothing "<why>"`: what an agent learned on one item, before it is closed. Idempotent: the same retro for the same item is reported, not written twice. */
+function cmdAgentRetro(): void {
+    const entries = readLedger();
+    const item = positional[0] ?? null;
+    if (item && !fold(entries).items.some((i) => i.id === item)) die(`agent-retro: refused, nothing written.\n  - ${item} is not an item on this ledger (journal.ts agent-retro <item id> ...).`);
+    const learnedIds = new Set(entries.filter((e) => e.kind === 'learned' && typeof e.id === 'string').map((e) => e.id as string));
+    const parsed = parseAgentRetro({ item, lessons: repeatedFlag('lesson'), learned: parseList('learned') ?? [], nothing: has('nothing') ? (arg('nothing') ?? '') : null }, learnedIds);
+    if (!parsed.fields) die(`agent-retro: refused, nothing written.\n${parsed.errors.map((e) => `  - ${e}`).join('\n')}\n(journal.ts agent-retro --help)`);
+    const { fields } = parsed;
+    const seen = seenRetro(entries, fields);
+    if (seen.kind === 'same') { console.log(`agent-retro  ${seen.id}  ${fields.retros}  ${fields.text}  (already recorded)`); return; }
+    const target = fold(entries).items.find((i) => i.id === item);
+    const entry = { id: newId(entries), ts: now(), date: today(), kind: 'agent-retro', ...fields, repo: target?.repo, stream: target?.stream, ...usageFromArgs() };
+    if (dryRun) { console.log(`[dry-run] agent-retro  ${fields.retros}  ${fields.text}`); return; }
+    append(entry);
+    render(true);
+    console.log(`agent-retro  ${entry.id}  ${fields.retros}  ${fields.text}`);
+}
+
+/** `agent-retros [--json]`: the retros waiting for review, and briefed items closed without one, oldest first. */
+function cmdAgentRetros(): void {
+    const rows = readLedger();
+    const pending = pendingRetros(rows).map((r) => ({ id: r.id as string, item: r.retros as string, date: r.date, text: r.text, lessons: (r.lessons as { source: string; text: string }[] | undefined) ?? [], learnedIds: (r.learnedIds as string[] | undefined) ?? [], nothing: r.nothing }));
+    const missing = missingRetros(rows);
+    if (asJson) { printJson({ pending, missing }); return; }
+    console.log(`${pending.length} retro${pending.length === 1 ? '' : 's'} to review, ${missing.length} briefed item${missing.length === 1 ? '' : 's'} closed without one`);
+    for (const p of pending) {
+        console.log(`  ${p.id}  ${p.date}  item ${p.item}  ${p.text}`);
+        p.lessons.forEach((l) => console.log(`      [${l.source}] ${clip(l.text, 140)}`));
+        if (p.learnedIds.length) console.log(`      learned: ${p.learnedIds.join(', ')}`);
+        if (p.nothing) console.log(`      nothing: ${clip(String(p.nothing), 140)}`);
+    }
+    for (const m of missing) console.log(`  ${m.item}  closed ${m.closedAt.slice(0, 10)} without a retro${m.noRetro ? ` (--no-retro: ${clip(m.noRetro, 100)})` : ''}  ${clip(m.text, 80)}`);
+}
+
+/** `retro-reviewed <retro id | item id> --note "..." [--promoted kind:id,...]`: closes one retro (or one briefed item closed without a retro) after the review. */
+function cmdRetroReviewed(): void {
+    const rows = readLedger();
+    const id = positional[0] ?? null;
+    const promoted = parseList('promoted') ?? [];
+    const note = arg('note');
+    const problems = reviewRefusals(rows, id, promoted, note);
+    if (problems.length) die(`retro-reviewed: refused, nothing written.\n${problems.map((p) => `  - ${p}`).join('\n')}`);
+    const entry = { id: newId(rows), ts: now(), date: today(), kind: 'retro-reviewed', reviews: id as string, text: (note as string).replace(/\s+/g, ' ').trim(), ...(promoted.length ? { promoted } : {}), ...usageFromArgs() };
+    if (dryRun) { console.log(`[dry-run] retro-reviewed  ${id}`); return; }
+    append(entry);
+    render(true);
+    console.log(`retro-reviewed  ${entry.id}  ${id}${promoted.length ? `  promoted ${promoted.join(', ')}` : ''}`);
+}
+
 /** `decide "<decision>" --why ...`: the file first (DECISIONS.md or a memory file), then the ledger row that names it; if the row cannot be written the file is put back. Idempotent: an entry already on disk writes nothing. */
 function cmdDecide(): void {
     const scope = arg('scope', 'project') as Scope;
@@ -990,14 +1053,7 @@ function cmdApproveTag() {
 
 /** Every `--ref <file>` on the command line, in order. `arg('ref')` keeps only the first. */
 function refFlagValues(): string[] {
-    const out: string[] = [];
-    const stop = argv.indexOf('--');
-    for (let i = 0; i < (stop === -1 ? argv.length : stop); i++) {
-        if (argv[i] !== '--ref') continue;
-        const value = argv[i + 1];
-        if (value && !value.startsWith('--')) out.push(value);
-    }
-    return out;
+    return repeatedFlag('ref');
 }
 
 /** Refs a later `ref` row attached to a decision, so a reader of the fold sees them. The decision row is not rewritten. */
@@ -2703,6 +2759,9 @@ switch (cmd) {
     case 'learned': cmdLearned(); break;
     case 'miss': cmdMiss(); break;
     case 'misses': cmdMisses(); break;
+    case 'agent-retro': cmdAgentRetro(); break;
+    case 'agent-retros': cmdAgentRetros(); break;
+    case 'retro-reviewed': cmdRetroReviewed(); break;
     case 'find': cmdFind(); break;
     case 'note': cmdLog('note'); break;
     case 'done': cmdClose('done'); break;
