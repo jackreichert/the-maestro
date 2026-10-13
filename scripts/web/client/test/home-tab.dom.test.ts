@@ -8,7 +8,7 @@ import type { ChartsData, PodiumState, ProjectsData } from '../src/types.ts';
 import type { ProjectsLoad } from '../src/home-tab.ts';
 
 installDom();
-const { homeTab } = await import('../src/home-tab.ts');
+const { homeTab, HOME_TAB_CSS } = await import('../src/home-tab.ts');
 const read = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 const state = (): PodiumState => structuredClone(sanitizeState(read('state.json'))!.state);
 const charts = (): ChartsData => structuredClone(sanitizeCharts(read('charts.json'))!.data);
@@ -77,4 +77,22 @@ test('every count states when it was read: projects, done and each chart carry a
   const figures = [...sec(el, 'Trends').querySelectorAll('figure')];
   assert.equal(figures.length, 2);
   for (const f of figures) assert.match(text(f.querySelector('.asof')), /^As of /, 'each chart says when its data was read');
+});
+
+test('wide layout: the trend charts sit in the row right under Needs you, above Projects and the long done list', () => {
+  const areas = /grid-template-areas:\s*([^;]+);/.exec(HOME_TAB_CSS)?.[1].match(/"[^"]+"/g) ?? [];
+  assert.deepEqual(areas.map((r) => r.replace(/"/g, '')), ['needs needs', 'charts charts', 'projects done', 'links done']);
+});
+
+test('today lists three items per stream and folds the rest behind a count, so the done list cannot push the page down', () => {
+  const c = charts();
+  const day = c.throughput.at(-1)!;
+  const ids = ['fakeA1', 'fakeA2', 'fakeA3', 'fakeA4', 'fakeA5'];
+  day.ids = ids; day.total = ids.length; day.byStream = { 'acme-widgets': ids.length };
+  c.doneItems = ids.map((id) => ({ id, stream: 'acme-widgets', text: `item ${id}`, finishedAt: '2026-10-06T12:00:00Z' }));
+  const el = draw(state(), c, { state: 'ok', data: projects() });
+  const fold = sec(el, 'What we got done').querySelector('details[data-fold="done-acme-widgets"]')!;
+  assert.equal(text(fold.querySelector('summary')), '2 more');
+  assert.equal(fold.querySelectorAll('li').length, 2);
+  assert.equal(sec(el, 'What we got done').textContent!.includes('item fakeA5'), true, 'folded items stay in the DOM');
 });
