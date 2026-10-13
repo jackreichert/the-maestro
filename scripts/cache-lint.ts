@@ -28,9 +28,9 @@ export interface Finding { rule: string; file: string; line: number; text: strin
 export const MAX_SLEEP_S = 270;
 const SUITES_NEEDLES = ['suite-run.ts', '4 minutes', 'targeted tests plus tsc'];
 const FULL_SUITE = /^\s*(?:\$\s*)?(?:npm (?:run )?test\b|node (?:--[\w-]+ )*--test(?: --[\w-]+(?:=\S+)?)*\s*$)/;
-const SLEEP = /\bsleep\s+(\d+(?:\.\d+)?)([smh]?)\b/g;
+const SLEEP = /\bsleep\s+(\d+(?:\.\d+)?)\s?(s|m|h|sec|secs|seconds?|min|mins|minutes?|hours?)?\b/g;
 
-const toSeconds = (n: number, unit: string): number => n * (unit === 'h' ? 3600 : unit === 'm' ? 60 : 1);
+const toSeconds = (n: number, unit: string): number => n * (unit.startsWith('h') ? 3600 : unit.startsWith('m') ? 60 : 1);
 
 /** The Suites bullet of the standing brief block, or undefined when it is gone. */
 export function suitesLine(brief: string): string | undefined {

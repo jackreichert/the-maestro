@@ -26,6 +26,7 @@ test('sleeps over 270 seconds are flagged, 270 and shorter pass, units are read'
   assert.equal(lintDoc('a.md', 'then `sleep 300` again', 'other')[0]?.rule, 'long-sleep');
   assert.equal(lintDoc('a.md', 'until x; do sleep 5m; done', 'other').length, 1);
   assert.deepEqual(lintDoc('a.md', 'sleep 4m', 'other'), []);
+  assert.equal(lintDoc('a.md', 'sleep 10 minutes', 'other').length, 1);
 });
 
 test('a full suite in a playbook code block is flagged; a targeted run and prose are not', () => {
