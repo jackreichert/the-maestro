@@ -329,3 +329,9 @@ test('real git lookups: a throwaway repo with a jackreichert origin is not guard
     assert.equal(run(hook('git reset --hard', dir)).stdout, '');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('isPersonalOrigin matches only a github.com remote under jackreichert, not a lookalike host or path', async () => {
+  const { isPersonalOrigin } = await import('./git-guard.ts');
+  for (const ok of ['git@github.com:jackreichert/x.git', 'https://github.com/jackreichert/x', 'ssh://git@github.com/jackreichert/x.git']) assert.equal(isPersonalOrigin(ok), true, ok);
+  for (const no of ['https://evil.example/github.com/jackreichert/x', 'git@gitlab.com:jackreichert/x.git', 'https://github.com/acme-corp/x', 'https://notgithub.com/jackreichert/x', undefined]) assert.equal(isPersonalOrigin(no), false, String(no));
+});

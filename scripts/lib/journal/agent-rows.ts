@@ -1,6 +1,6 @@
 import { isInFlight } from '../ledger-core.ts';
 import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
-import { foldLeases, liveLease } from './leases.ts';
+import { foldLeases } from './leases.ts';
 
 /**
  * The ledger side of an Agent dispatch. Two hooks call this: PreToolUse(Agent) before a subagent starts, SubagentStop when one
@@ -55,7 +55,8 @@ export function rowForDispatch(rows: readonly LedgerRow[], items: readonly Ledge
     const held = foldLeases(rows);
     const prompt = String(input.prompt ?? '');
     const desc = oneLine(input.description).toLowerCase();
-    const mine = items.filter((i) => i.id && isInFlight(i) && liveLease(held, i.id, nowMs)?.holder === input.window);
+    // A lapsed lease still counts when this window was its last holder: a re-dispatch an hour after its last ledger write is about the same row.
+    const mine = items.filter((i) => i.id && isInFlight(i) && held.get(i.id)?.holder === input.window);
     return mine.find((i) => prompt.includes(i.id as string)) ?? (desc ? mine.find((i) => String(i.text ?? '').toLowerCase().includes(desc)) : undefined) ?? null;
 }
 
@@ -74,13 +75,16 @@ export function dispatchRows(rows: readonly LedgerRow[], items: readonly LedgerI
     ];
 }
 
-/** Rows to append when an agent of `agentType` stops: the oldest unreturned dispatch of this window is marked returned. Empty when none is open. */
+/** Rows to append when an agent of `agentType` stops: the one unreturned dispatch of this window that fits is marked returned. Empty when none is open or when dispatches on more than one row fit (the stop cannot say which). */
 export function returnRows(rows: readonly LedgerRow[], window: string, agentType: string, nowMs: number, newId: () => string, base: Partial<LedgerRow> = {}): LedgerRow[] {
     const held = foldLeases(rows);
     const mine = [...openDispatches(rows).values()].flat().filter((d) => held.get(d.item)?.holder === window);
     const pick = [...mine].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-    const d = pick.find((x) => x.agentType === agentType) ?? pick[0];
-    if (!d) return [];
+    const same = pick.filter((x) => x.agentType === agentType);
+    const candidates = same.length ? same : pick;
+    // Dispatches on two or more rows fit and a stop carries nothing to tell them apart: guessing would shorten the lease of a row whose agent is still running. Write nothing; each dispatch lease lapses on its own.
+    if (new Set(candidates.map((x) => x.item)).size !== 1) return [];
+    const d = candidates[0];
     const at = new Date(nowMs).toISOString();
     const stamp = { ...base, ts: at, date: at.slice(0, 10), window };
     return [

@@ -85,6 +85,24 @@ test('two agents on one row: the first stop leaves the second still counted as r
   assert.equal(led.rows.length, before);
 });
 
+test('two same-type agents on different rows: a stop that cannot say which one writes nothing, so neither row is requeued under its agent', () => {
+  const led = memory();
+  dispatch(call('Build the widget'), led);
+  dispatch(call('Build the gadget'), led);
+  const before = led.rows.length;
+  assert.deepEqual(agentReturned({ session_id: SESSION, agent_type: 'general-purpose' }, led), []);
+  assert.equal(led.rows.length, before);
+  assert.deepEqual(lapsedRequeues(led.rows, items(led.rows), T0 + 85 * 60_000), [], 'both agents are still counted as out');
+});
+
+test('a re-dispatch on a row whose lease lapsed reuses it instead of opening a duplicate', () => {
+  const led = memory([{ id: 'ab12', kind: 'wip', ts: new Date(T0).toISOString(), date: '2026-10-13', text: 'Build the widget', window: WIN, leaseTtl: 60 } as LedgerRow]);
+  led.at = T0 + 3 * 60 * 60_000;
+  dispatch(call('fix round', 'redo ab12'), led);
+  assert.equal(items(led.rows).filter((i) => i.kind === 'wip').length, 1);
+  assert.equal(liveAgent(led.rows, 'ab12', led.at), true);
+});
+
 test('a lapsed lease does not requeue a row whose agent is still running', () => {
   const led = memory();
   dispatch(call('Build the widget'), led);

@@ -274,7 +274,7 @@ const has = (o: Opts, ...names: string[]): boolean => names.some((n) => o.flags.
 const plain = (o: Opts): string[] => o.pos.map((p) => p.replace(/^--:/, ''));
 
 /** True for an origin URL under github.com/jackreichert/ (https, scp-style ssh or ssh://). */
-export const isPersonalOrigin = (url: string | undefined): boolean => !!url && /(?:^|[@/.])github\.com[:/]jackreichert\//i.test(url.trim());
+export const isPersonalOrigin = (url: string | undefined): boolean => !!url && /(?:^|@|\/\/)github\.com[:/]jackreichert\//i.test(url.trim());
 
 function personalRepo(dir: string, gitArgs: string[], ctx: GuardContext): boolean {
   try { return isPersonalOrigin(ctx.origin?.(dir, gitArgs)); } catch { return false; }
