@@ -7,6 +7,7 @@ import { askRefs, keysIn, noteEnv, pairTwins, prFlagNames, stackParent, streamOr
 import type { BoardStatus, FooterData, Item, PageConfig, PageInput, Pr, Ref } from '../status-page/render.ts';
 import { askBy, askClass, askDoor, autoDefault, byLabel, hasAskFields, TEXT_MAX } from '../journal/ask-fields.ts';
 import type { AskClass, Door } from '../journal/ask-fields.ts';
+import { askMarkdown } from '../status-page/ask-format.ts';
 import { linkAskRefs } from '../status-page/links.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { askAgeDays } from './charts.ts';
@@ -24,8 +25,8 @@ export const PR_STALE_MS = 15 * 60_000;
 export interface LinkData { label: string; url?: string }
 export interface AskLinks { note?: LinkData; tracker: LinkData[]; prs: LinkData[] }
 /**
- * One decision awaiting the user. `context` is everything after the headline with its line breaks and URLs intact (the client
- * decides what becomes a link). The decision fields appear only on an ask that carries any; `default` only on a two-way door.
+ * One decision awaiting the user. `context` is everything after the headline as Markdown: the writer's own line breaks kept, a dense one-line
+ * context cut into short paragraphs and lists (`ask-format.ts`), note and PR links built here (the client checks every target again). The decision fields appear only on an ask that carries any; `default` only on a two-way door.
  * `paste` is a run-this ask's block file, named and never read here.
  */
 export interface AskCard {
@@ -164,7 +165,7 @@ function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefi
   const refs = askRefs(config, a, prs, ticket);
   const { needed, context } = splitAskBody(a.text);
   return {
-    id: a.id, stream, needed, context: linkAskRefs(context, noteEnv(config, a, ticket)), ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
+    id: a.id, stream, needed, context: askMarkdown(linkAskRefs(context, noteEnv(config, a, ticket))), ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
     ...decisionFields(a), ...(typeof a.paste === 'string' && a.paste ? { paste: a.paste } : {}),
     links: { ...(refs.note ? { note: link(refs.note) } : {}), tracker: refs.tracker.map(link), prs: withPullUrls(a.text, refs.prs).map(link) },
   };

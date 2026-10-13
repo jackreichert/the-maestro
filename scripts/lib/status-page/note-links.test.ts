@@ -148,3 +148,14 @@ test('shortUrlLabel: GitHub item, ticket, long host, and a short URL left as wri
   assert.equal(shortUrlLabel('https://example.test/' + 'a'.repeat(60)), 'example.test/…');
   assert.equal(shortUrlLabel('https://example.test/a'), null);
 });
+
+test('the Markdown page nests a long ask context as short bullets under its line, above the answer stub, and leaves a short one on the line', () => {
+  const long = 'Pick? Options: (1) go now; (2) wait. Recommend (1). Stakes: it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.';
+  const lines = render(config(), { awaiting: [item({ id: 'ab12', text: long }), item({ id: 'cd34', text: 'Short? Just this.' })] }).split('\n');
+  const i = lines.findIndex((l) => l.startsWith('- [ ] `ab12`'));
+  assert.deepEqual(lines.slice(i, i + 7), [
+    '- [ ] `ab12` **Pick?**', '  - Options:', '  - 1. go now', '  - 2. wait.', '  - Recommend (1).',
+    '  - **Stakes:** it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.', '  > answer: ',
+  ]);
+  assert.ok(lines.includes('- [ ] `cd34` **Short?** Just this.'));
+});

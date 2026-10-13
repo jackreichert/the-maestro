@@ -55,7 +55,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
     .age { font-size: 1.4rem; }
   }
 
-  /* The opened ask: context, links, then the answer form, indented to the decision's left edge. */
+  /* The opened ask: the decision fields, the context, links, then the answer form, indented to the decision's left edge. */
   .body { padding: 0 var(--space-4) var(--space-5) calc(52px + var(--space-4) + var(--space-1)); display: grid; gap: var(--space-3); }
   @container (max-width: 520px) { .body { padding-left: var(--space-3); } }
   .body[hidden] { display: none; }
@@ -105,7 +105,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
   @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
 `;
 
-/** The ask's body: the writer's line breaks, lists and bare https or obsidian URLs (as links, within the link policy) kept. */
+/** The ask's body: Markdown from the server (short paragraphs, lists, labelled lines, links) plus the writer's line breaks and any bare https or obsidian URL (as a link, within the link policy). */
 function context(text: string, id: string): HTMLElement {
   const frag = h('md-fragment', { class: 'context', id });
   frag.options = { autolink: true, breaks: true };
@@ -197,9 +197,9 @@ export class AskCardElement extends HTMLElement {
         error,
         h('div', { class: 'actions' }, ...buttons));
     const body = h('div', { class: 'body', id: `${uid}-b`, hidden: true },
+      decisionFields(a),
       a.context ? context(a.context, `${uid}-c`) : null,
       a.paste ? h('p', { class: 'paste' }, 'Run this block, then answer with what it printed: ', h('code', {}, a.paste)) : null,
-      decisionFields(a),
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
       links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
       form);
