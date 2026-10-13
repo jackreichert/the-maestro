@@ -3,9 +3,9 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { foldLeases, liveLease } from './lib/journal/leases.ts';
 import type { LedgerRow } from './lib/ledger-core.ts';
@@ -125,4 +125,21 @@ test('start always takes a lease, whether it opens new text or promotes a queued
     run(['start', queued, ...MARK]);
     const held = foldLeases(ledger() as LedgerRow[]);
     for (const id of [fresh, queued]) assert.ok(liveLease(held, id, Date.now()), `${id} carries a live lease`);
+});
+
+test('status requeues an in-flight row whose lease lapsed with no agent running, once, and leaves a never-leased row alone', () => {
+  const old = '2026-10-01T08:00:00.000Z';
+  const rows = [
+    { id: 'lap1', ts: old, date: '2026-10-01', kind: 'wip', text: 'abandoned piece', window: 'gone', leaseTtl: 60 },
+    { id: 'nol1', ts: old, date: '2026-10-01', kind: 'wip', text: 'never leased piece' },
+  ];
+  mkdirSync(dirname(ledgerPath()), { recursive: true });
+  writeFileSync(ledgerPath(), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  const first = run(['status']);
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.err, /requeued 1 row\(s\) whose lease lapsed/);
+  const queue = ledger().filter((r) => r.kind === 'queue');
+  assert.deepEqual(queue.map((r) => (r as Row & { queues?: string }).queues), ['lap1']);
+  run(['status']);
+  assert.equal(ledger().filter((r) => r.kind === 'queue').length, 1, 'idempotent: the next status writes nothing more');
 });

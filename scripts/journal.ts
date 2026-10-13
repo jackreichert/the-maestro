@@ -164,6 +164,7 @@ import { openStore } from './lib/journal/store.ts';
 import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
+import { lapsedRequeues } from './lib/journal/lease-requeue.ts';
 import { umbrellaRefusal } from './lib/journal/umbrella.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { proposeCloses, proposalLines, applyProposals } from './lib/journal/age-out.ts';
@@ -1147,7 +1148,20 @@ function leaseFooter(g: Groups, window?: string, markup = false): string {
     return markup ? `**Leases:** ${s.mine} mine, ${s.other} other` : `Leases: ${s.mine} mine, ${s.other} other`;
 }
 
+/** Puts in-flight rows whose lease lapsed with no agent running back to queued. Returns their ids; writes nothing on a dry run. */
+function requeueLapsed(): string[] {
+    if (dryRun) return [];
+    const rows = readLedger();
+    const out = lapsedRequeues(rows, fold(rows).items, Date.now(), { model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a' });
+    const taken: LedgerRow[] = [...rows];
+    const withIds = out.map((r) => { const row = { ...r, id: newId(taken) }; taken.push(row); return row; });
+    if (withIds.length) appendMany(withIds);
+    return out.map((r) => String(r.queues));
+}
+
 function cmdStatus() {
+    const requeued = requeueLapsed();
+    if (requeued.length && !asJson) console.error(`requeued ${requeued.length} row(s) whose lease lapsed with no agent running: ${requeued.join(', ')}`);
     refreshBoard();
     const g = groups(has('include-archived'));
     // No --date: the day is WATCH_TZ, and closes match by timestamp in that zone. A passed --date still matches the stored date field.
@@ -1401,6 +1415,7 @@ function maintain(today: string): MaintainResult {
     }
     const stale = staleRows(today);
     if (stale.length) console.log(`Stale in flight: ${stale.length} row(s) with no lease for ${STALE_WIP_DAYS}d or more; \`roll\` lists them.`);
+    requeueLapsed();
     const aged = dryRun ? [] : applyProposals({ readLedger, append, newId, fold, today: () => today, now }, ageOutProposals(today), () => ({ model: 'n/a', used: ['tool:journal.ts'], tokens: 'n/a' }));
     if (aged.length) console.log(`Aged out: closed ${aged.length} awaiting or queued row(s) whose gate or ticket cleared (${aged.join(', ')}).`);
     const out = worktreeSweepOutcome(dryRun);
