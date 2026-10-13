@@ -27,13 +27,15 @@ import { noteExistsIn, vaultRootFor } from './lib/status-page/links.ts';
 import { generate } from './lib/status-page/generate.ts';
 import type { GenerateDeps, GenerateResult, RawPr } from './lib/status-page/generate.ts';
 import type { PageConfig } from './lib/status-page/render.ts';
+import { withDevelopTwins } from './lib/status-page/twin.ts';
+import type { RepoFlow } from './lib/status-page/twin.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
 const PR_QUERY = `query{search(query:"${PR_SEARCH} archived:false",type:ISSUE,first:100){issueCount nodes{... on PullRequest{
 number title url isDraft createdAt baseRefName headRefName mergeable mergeStateStatus reviewDecision repository{nameWithOwner}
-reviewThreads(first:100){nodes{isResolved}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`;
+reviewThreads(first:100){nodes{isResolved}} reviews(last:100){nodes{state submittedAt author{login}}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`;
 
 const sleep = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
@@ -50,6 +52,29 @@ function fetchPrs(): RawPr[] {
     } catch (e) { last = firstLine(e); }
   }
   throw new Error(`gh read failed after 3 tries: ${last}`);
+}
+
+/** Merged develop PRs kept per repo: a staging PR's twin is among the recent ones, and one read of this size stays cheap. */
+const MERGED_DEVELOP_PAGE = 100;
+
+/**
+ * One GitHub read for a repo that has an open staging PR: whether it has `develop` and `staging` branches (a repo without both is not
+ * develop-then-staging, so its PRs are never held), and its open and most recently merged develop PRs, whoever authored them. Undefined when the repo name is not a plain
+ * owner/name or the read fails: the staging PRs of that repo are then marked as waiting, not guessed ready.
+ */
+export function readRepoFlow(nameWithOwner: string): RepoFlow | undefined {
+  const m = /^([\w.-]+)\/([\w.-]+)$/.exec(nameWithOwner);
+  if (!m) return undefined;
+  const query = `query{repository(owner:"${m[1]}",name:"${m[2]}"){develop:ref(qualifiedName:"refs/heads/develop"){name} staging:ref(qualifiedName:"refs/heads/staging"){name}}
+merged:search(query:"repo:${nameWithOwner} is:pr is:merged base:develop sort:updated-desc",type:ISSUE,first:${MERGED_DEVELOP_PAGE}){nodes{... on PullRequest{number url headRefName}}}
+open:search(query:"repo:${nameWithOwner} is:pr is:open base:develop",type:ISSUE,first:${MERGED_DEVELOP_PAGE}){nodes{... on PullRequest{number url headRefName}}}}`;
+  try {
+    const out = execFileSync(...toolCommand('gh', ['api', 'graphql', '-f', `query=${query}`]), { encoding: 'utf8', maxBuffer: 16 << 20, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const d = JSON.parse(out).data as { repository: { develop: unknown; staging: unknown } | null; merged: { nodes: ({ number: number; url: string; headRefName: string } | null)[] }; open: { nodes: ({ number: number; url: string; headRefName: string } | null)[] } };
+    if (!d.repository) return undefined;
+    const prs = (nodes: ({ number: number; url: string; headRefName: string } | null)[]) => nodes.filter((n): n is { number: number; url: string; headRefName: string } => !!n && !!n.number).map((n) => ({ number: n.number, url: n.url, head: n.headRefName }));
+    return { hasDevelop: !!d.repository.develop, hasStaging: !!d.repository.staging, openDevelop: prs(d.open.nodes), mergedDevelop: prs(d.merged.nodes) };
+  } catch { return undefined; }
 }
 
 /** `journal.ts <sub> --json` run as a child so the page sees exactly what `status` and `triage` print. */
@@ -75,7 +100,7 @@ export interface RegenerateOptions { project: string; ledger: string; statusDir:
 export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!o.statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
-  const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), start: () => journalJson('start-here', o.ledger, o.project), fetchPrs, sleep, now: () => new Date() };
+  const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), start: () => journalJson('start-here', o.ledger, o.project), fetchPrs, enrichPrs: (raw) => withDevelopTwins(raw, readRepoFlow), sleep, now: () => new Date() };
   return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig(o.project, o.statusDir) }, deps);
 }
 

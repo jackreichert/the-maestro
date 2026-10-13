@@ -15,7 +15,10 @@ import type { StreamEvidence } from './streams.ts';
 import { PRIORITIES_HEADING, carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
 import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
+import { reviewVerdicts } from './reviews.ts';
+import type { RawReview } from './reviews.ts';
 import { readPrCache, writePrCache } from './prcache.ts';
+import type { DevelopTwin } from './twin.ts';
 import { acquireLock, processAlive } from './lock.ts';
 import { PODIUM_FILE, readLegacyPage, readPodium, writePointer, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
 
@@ -26,7 +29,11 @@ export interface RawPr {
   /** When the PR was opened. Absent in a PR cache written before this was read. */
   createdAt?: string;
   repository: { nameWithOwner: string };
+  /** On a staging PR in a develop-then-staging repo: its develop PR (`null`: none found). Absent elsewhere and in a cache that predates it. */
+  developTwin?: DevelopTwin | null;
   reviewThreads: { nodes: { isResolved: boolean }[] };
+  /** The review history; absent in a PR cache written before it was read. */
+  reviews?: { nodes: RawReview[] };
   commits: { nodes: { commit: { statusCheckRollup: { state: string } | null } }[] };
 }
 
@@ -37,6 +44,8 @@ export interface GenerateDeps {
   start?(): unknown;
   /** Open PRs; throws when GitHub cannot be read. */
   fetchPrs(): RawPr[];
+  /** Marks staging PRs with their develop twin (see twin.ts). Optional: without it no PR is marked, so none waits. Runs once per read, after the PRs settle; may throw like `fetchPrs`. */
+  enrichPrs?(raw: RawPr[]): RawPr[];
   sleep(ms: number): void;
   now(): Date;
   /** Whether a process exists, for stale-lock recovery (default: ask the OS). */
@@ -67,6 +76,8 @@ export function loadPrs(raw: RawPr[], evidence: StreamEvidence): Pr[] {
       repo: n.repository.nameWithOwner, short, owner, ...(typeof n.createdAt === 'string' ? { createdAt: n.createdAt } : {}),
       unresolved: n.reviewThreads.nodes.filter((t) => !t.isResolved).length,
       ci: n.commits.nodes[0]?.commit.statusCheckRollup?.state ?? 'NONE', stream,
+      ...(n.reviews ? reviewVerdicts(n.reviews.nodes) : {}),
+      ...(n.developTwin !== undefined ? { developTwin: n.developTwin } : {}),
     };
   });
 }
@@ -100,7 +111,8 @@ export function readPrs(statusDir: string, deps: GenerateDeps, dryRun: boolean, 
     return { raw: scopePrs(cached?.prs ?? [], owners), data: { fetchedAt: cached?.fetchedAt ?? null } };
   }
   try {
-    const raw = scopePrs(settle(deps), owners);
+    const scoped = scopePrs(settle(deps), owners);
+    const raw = deps.enrichPrs ? deps.enrichPrs(scoped) : scoped;
     const fetchedAt = deps.now();
     if (!dryRun) writePrCache(statusDir, { fetchedAt, prs: raw });
     return { raw, data: { fetchedAt } };

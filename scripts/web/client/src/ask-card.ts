@@ -1,5 +1,4 @@
 import { BASE_CSS, UI_CSS, h, refLink, s, shadow, streamTag } from './dom.ts';
-import { askAge } from './glance.ts';
 import { canSkip, createAnswerer } from './answer-api.ts';
 import type { AnswerRequest } from './answer-api.ts';
 import { askState } from './ask-state.ts';
@@ -13,48 +12,56 @@ const CSS = `${BASE_CSS}${UI_CSS}
   :host { border-bottom: 1px solid var(--border); container-type: inline-size; }
   :host([open]) { border-bottom-color: transparent; }
   article {
-    display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: var(--space-3);
-    margin-inline: calc(-1 * var(--space-3)); border-radius: var(--radius-md);
+    border-radius: var(--radius-md);
     transition: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
   }
   :host([open]) article { background: var(--surface-1); box-shadow: var(--shadow-1); margin-block: var(--space-2); }
   @media (forced-colors: active) { :host([open]) article { outline: 1px solid CanvasText; } }
 
-  /* The row: id, the decision (the disclosure button), stream and age. The whole row is the click target. */
+  /* The row: the wait as a display numeral, then the stream, id and door over the decision, then the chevron. The whole row is the click target. */
   .row {
-    grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: baseline; row-gap: 2px;
-    padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); cursor: pointer;
+    display: grid; grid-template-columns: 52px minmax(0, 1fr) 20px; column-gap: var(--space-4); align-items: start;
+    padding: var(--space-4) var(--space-2) var(--space-4) var(--space-1); border-radius: var(--radius-md); cursor: pointer;
     transition: background-color var(--dur-fast) var(--ease-out);
   }
   @media (hover: hover) { :host(:not([open])) .row:hover { background: var(--surface-1); } }
-  h3 { margin: 0; min-width: 0; font-size: var(--text-md); line-height: var(--leading-md); font-weight: var(--weight-medium); letter-spacing: -0.005em; }
+  .age { font-family: var(--font-display); font-size: 1.75rem; line-height: 1; text-align: right; color: var(--text-secondary); padding-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .age small { font-family: var(--font-sans); font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--text-muted); margin-left: 2px; }
+  .age.today { font-size: var(--text-sm); font-family: var(--font-serif); font-style: italic; padding-top: 6px; }
+  .age.stale { color: var(--warning); }
+  .stale-mark { font-family: var(--font-sans); font-size: var(--text-xs); font-weight: var(--weight-semibold); margin-right: 2px; vertical-align: 0.5em; }
+  .main { min-width: 0; }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin-bottom: 6px; font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-muted); }
+  .meta .id { background: none; padding: 0; color: var(--text-muted); }
+  .door { border: var(--hairline-strong); border-radius: var(--radius-pill); padding: 0 7px; color: var(--text-secondary); white-space: nowrap; }
+  .door.one-way { border-color: var(--warning); color: var(--warning); }
+  h3 { margin: 0; min-width: 0; font-size: var(--text-md); line-height: 1.5; font-weight: var(--weight-regular); }
   button.ask-toggle {
-    all: unset; box-sizing: border-box; display: block; width: 100%; min-height: 24px; cursor: pointer; color: var(--text-primary);
+    all: unset; box-sizing: border-box; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    width: 100%; min-height: 24px; cursor: pointer; color: var(--text-primary);
     overflow-wrap: anywhere; text-wrap: pretty; border-radius: 4px;
   }
+  :host([open]) button.ask-toggle { display: block; overflow: visible; }
   button.ask-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-  .where { font-size: var(--text-sm); line-height: var(--leading-sm); white-space: nowrap; }
-  .age { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; min-width: 3.5em; }
-  .age.stale { color: var(--warning); font-weight: var(--weight-medium); }
-  .stale-mark { margin-right: 3px; font-size: 0.92em; }
+  .where { font-size: var(--text-xs); line-height: var(--leading-xs); white-space: nowrap; }
+  .where a.tag { font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--text-secondary); }
   .chev {
-    display: inline-block; width: 6px; height: 6px; margin-left: var(--space-2); border: solid var(--text-muted); border-width: 0 1.5px 1.5px 0;
-    transform: translateY(-2px) rotate(45deg); transition: transform var(--dur-base) var(--ease-out);
+    display: inline-block; width: 8px; height: 8px; margin: 10px 0 0 6px; border: solid var(--text-muted); border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg); transition: transform var(--dur-base) var(--ease-out);
   }
-  :host([open]) .chev { transform: translateY(1px) rotate(225deg); }
+  :host([open]) .chev { transform: translateY(4px) rotate(225deg); }
   @container (max-width: 520px) {
-    article { grid-template-columns: auto minmax(0, 1fr) auto; }
-    .where { grid-column: 2; grid-row: 2; }
-    .age { grid-column: 3; grid-row: 1; }
-    .body { grid-column: 1 / -1; padding-left: var(--space-3); }
+    .row { grid-template-columns: 40px minmax(0, 1fr) 20px; column-gap: var(--space-3); }
+    .age { font-size: 1.4rem; }
   }
 
   /* The opened ask: context, links, then the answer form, indented to the decision's left edge. */
-  .body { grid-column: 2 / -1; padding: 0 var(--space-3) var(--space-4) 0; }
+  .body { padding: 0 var(--space-4) var(--space-5) calc(52px + var(--space-4) + var(--space-1)); display: grid; gap: var(--space-3); }
+  @container (max-width: 520px) { .body { padding-left: var(--space-3); } }
   .body[hidden] { display: none; }
   .context { display: block; margin: 0; color: var(--text-secondary); max-width: 70ch; text-wrap: pretty; overflow-wrap: anywhere; }
-  .decide { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: var(--space-3) 0 0; max-width: 70ch; font-size: var(--text-sm); line-height: var(--leading-sm); }
-  .decide dt { color: var(--text-muted); font-weight: var(--weight-medium); }
+  .decide { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: var(--space-3) var(--space-4); margin: 0; padding: var(--space-4); max-width: 70ch; border-radius: var(--radius-md); background: var(--surface-page); box-shadow: var(--shadow-1); font-size: var(--text-sm); line-height: var(--leading-sm); }
+  .decide dt { color: var(--text-secondary); font-weight: var(--weight-semibold); }
   .decide dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; }
   .paste { margin: var(--space-3) 0 0; max-width: 70ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
   .paste code { font-family: var(--font-mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
@@ -197,15 +204,24 @@ export class AskCardElement extends HTMLElement {
       links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
       form);
     const savedMark = h('span', { class: 'saved-mark', hidden: true }, finalBar(), 'saved');
+    const days = Math.floor(a.ageDays);
+    const fresh = !(Number.isFinite(a.ageDays) && a.ageDays >= 1);
+    const door = a.door ? h('span', { class: `door ${a.door}` }, a.door === 'one-way' ? 'one-way door' : 'two-way door') : null;
     const row = h('div', { class: 'row' },
-      h('span', { class: 'id' }, h('span', { class: 'vh' }, 'Ask '), a.id),
-      h('h3', {}, toggle),
-      this.#showStream ? h('span', { class: 'where' }, streamTag(a.stream)) : null,
-      h('span', { class: `age${stale ? ' stale' : ''}` },
+      h('span', { class: `age${stale ? ' stale' : ''}${fresh ? ' today' : ''}` },
         // Stale is a glyph as well as the warning colour, so it survives forced colours and colour blindness.
         stale ? h('span', { class: 'stale-mark', 'aria-hidden': 'true' }, '⚠\uFE0E') : null,
-        h('span', { class: 'vh' }, a.ageDays < 1 ? 'asked ' : 'waiting '), askAge(a.ageDays), stale ? h('span', { class: 'vh' }, ', stale') : null,
-        h('span', { class: 'chev', 'aria-hidden': 'true' })));
+        h('span', { class: 'vh' }, a.ageDays < 1 ? 'asked ' : 'waiting '),
+        fresh ? 'today' : String(days),
+        fresh ? null : h('small', {}, h('span', { class: 'vh' }, ' days'), h('span', { 'aria-hidden': 'true' }, 'd')),
+        stale ? h('span', { class: 'vh' }, ', stale') : null),
+      h('div', { class: 'main' },
+        h('div', { class: 'meta' },
+          this.#showStream ? h('span', { class: 'where' }, streamTag(a.stream)) : null,
+          h('span', { class: 'id' }, h('span', { class: 'vh' }, 'Ask '), a.id),
+          door),
+        h('h3', {}, toggle)),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }));
     toggle.append(savedMark);
     const article = h('article', { 'aria-labelledby': `${uid}-h` }, row, body);
 

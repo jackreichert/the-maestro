@@ -306,6 +306,7 @@ agents in a **single message with multiple tool calls** so they run concurrently
 
 The brief and the standing brief block live in [brief.md](brief.md). For a ledger item, `journal.ts brief <id>` writes the brief file and takes the repo claim ([the brief file](brief.md#the-brief-file--journalts-brief-id)).
 The block carries the secrets-handling rule (names-only reads, no printing of secret-bearing files), so every dispatched agent gets it.
+It also carries the Retro line, and the brief file a Retro section with the exact `journal.ts agent-retro <id>` command: the agent writes its retro before it hands back, and `done` refuses the item until it has. The retros are reviewed in batches every few hours, when a `retro-due` event fires, by a Sonnet runner following [playbooks/retro-review.md](../playbooks/retro-review.md).
 
 ## External writes have one owner
 

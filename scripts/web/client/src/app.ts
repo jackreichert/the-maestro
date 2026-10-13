@@ -17,6 +17,8 @@ import { DASHBOARD, OPEN_PRS, formatFragment, isAllStreams, tabStream, tileId, n
 import { OpenPrsStore } from './open-prs-store.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
+import { streamScore, todayPanel } from './home-sections.ts';
+import { seriesClass } from './series.ts';
 import type { ProjectsLoad } from './home-tab.ts';
 import { filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
@@ -35,6 +37,7 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   header.topbar { position: sticky; top: 0; z-index: 20; background: var(--material-bar); -webkit-backdrop-filter: var(--material-blur); backdrop-filter: var(--material-blur); border-bottom: var(--hairline); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { header.topbar { background: var(--surface-page); } }
   header.topbar .bar { display: flex; align-items: center; gap: var(--space-5); min-height: 60px; }
+  h1.wordmark a { display: inline-flex; align-items: center; gap: var(--space-2); color: inherit; text-decoration: none; border-radius: var(--radius-xs); }
   h1.wordmark { margin: 0; display: inline-flex; align-items: center; gap: var(--space-2); flex: none; font-family: var(--font-display); font-size: 1.75rem; line-height: 1; font-weight: var(--weight-regular); letter-spacing: -0.01em; white-space: nowrap; }
   /* The baton wordmark: the stick is ink, and its tip takes the accent only while something needs you. */
   .baton { width: 20px; height: 20px; margin-right: 6px; vertical-align: -4px; color: var(--text-primary); overflow: visible; }
@@ -68,14 +71,15 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   @keyframes tick { 30% { opacity: 0.35; } }
   .scope { margin: var(--space-5) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
   .scope span { vertical-align: baseline; }
+  .scope { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
+  .scope .date { font-size: var(--text-md); color: var(--text-secondary); }
   button.tempo {
-    font: italic var(--text-sm) / var(--leading-sm) var(--font-serif); letter-spacing: 0.01em; color: var(--text-secondary);
-    background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: var(--radius-xs); cursor: pointer;
-    text-decoration: underline dotted var(--border-strong); text-underline-offset: 0.25em;
-    transition: color var(--dur-fast) var(--ease-out);
+    font: var(--text-sm) / var(--leading-sm) var(--font-sans); letter-spacing: 0.01em; color: var(--text-secondary);
+    background: var(--surface-1); border: var(--hairline-strong); padding: 5px var(--space-3); border-radius: var(--radius-pill); cursor: pointer;
+    transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
   }
-  button.tempo i { font-style: italic; }
-  @media (hover: hover) { button.tempo:hover { color: var(--text-primary); text-decoration-color: currentColor; } }
+  button.tempo i { font-family: var(--font-serif); font-size: var(--text-md); font-style: italic; }
+  @media (hover: hover) { button.tempo:hover { color: var(--text-primary); border-color: var(--text-muted); } }
   .tempo-rule { margin: var(--space-2) 0 0; max-width: 62ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
   .tempo-rule[hidden] { display: none; }
   .tempo-rule i { font-family: var(--font-serif); font-size: 1.04em; }
@@ -87,6 +91,7 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
      count is marked by ink, not bold. A display size on the text line height keeps the header's measured height. */
   .cue { margin: var(--space-4) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-4); padding: 0; list-style: none; font-family: var(--font-display); font-size: clamp(2.25rem, 4.4vw, 3.75rem); line-height: 1.08; letter-spacing: -0.02em; color: var(--text-muted); }
   .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
+  .cue li:not(:last-child)::after { content: '·' / ''; margin-left: var(--space-3); color: var(--text-muted); }
   button.tile {
     font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer;
     display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap;
@@ -131,19 +136,9 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .lede strong { color: var(--text-primary); font-weight: var(--weight-semibold); }
   .stream-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-3); }
   .stream-title h2 { margin: 0; display: inline-flex; align-items: center; gap: var(--space-3); font-size: var(--text-xl); font-weight: var(--weight-semibold); letter-spacing: -0.012em; }
+  .stream-title .projects-line { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+  .stream-page { display: grid; gap: var(--space-7); }
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
-  .score { margin: 0 0 var(--space-7); }
-  .score-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: var(--hairline); margin-bottom: var(--space-2); }
-  .score-head h2 { margin: 0; font-size: var(--text-lg); font-weight: var(--weight-semibold); }
-  .score-head span { font-size: var(--text-sm); color: var(--text-muted); }
-  .score-row { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: var(--space-4); align-items: center; min-height: 52px; border-bottom: var(--hairline); }
-  .score-name { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: var(--weight-semibold); }
-  .score-name i { width: 8px; height: 8px; border-radius: 2px; }
-  .score-staff { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); height: 36px; }
-  .score-cell { position: relative; }
-  .score-note { position: absolute; left: 50%; width: 9px; height: 7px; border-radius: 50%; transform: translateX(-50%) rotate(-20deg); }
-  .score-note.p0 { bottom: 2px; } .score-note.p1 { bottom: 8px; } .score-note.p2 { bottom: 14px; } .score-note.p3 { bottom: 22px; } .score-note.p4 { bottom: 28px; }
-  .score-rest { position: absolute; left: 50%; top: 12px; width: 8px; height: 3px; background: var(--text-muted); transform: translateX(-50%); opacity: 0.55; }
   @media (max-width: 900px) { .cue-grid { grid-template-columns: minmax(0, 1fr); } header.topbar .bar { gap: var(--space-3); } }
 
   @media (forced-colors: active) {
@@ -422,6 +417,14 @@ export class PodiumApp extends HTMLElement {
     if (refocus) this.#root.querySelector<HTMLElement>(`button.tile[data-key="${refocus}"]`)?.focus();
   }
 
+  /** Redraw after a Home board control changed. Focus returns to the same control, which the redraw replaced. */
+  #redrawKeepingFocus(): void {
+    const ctl = this.#root.activeElement?.getAttribute('data-ctl') ?? null;
+    this.#release({ busy: false });   // this render replaces any card still saving
+    this.#safeRender();
+    if (ctl) this.#root.querySelector<HTMLElement>(`[data-ctl="${ctl}"]`)?.focus();
+  }
+
   /** Render, and show the failure instead of throwing uncaught from an event handler or a promise callback. */
   #safeRender(): void {
     try {
@@ -517,18 +520,25 @@ export class PodiumApp extends HTMLElement {
     const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
     return h('header', { class: 'topbar' },
       h('div', { class: 'wrap bar' },
-        h('h1', { class: 'wordmark' }, baton(this.#waiting(st) > 0), 'Podium'),
+        h('h1', { class: 'wordmark' }, this.#homeLink(st)),
         nav,
         this.#freshness(st),
         this.#link()),
       note ? h('p', { class: 'source wrap' }, note) : null);
   }
 
+  /** The wordmark is a real link to Home, on every tab; it shares the global focus ring. */
+  #homeLink(st: PodiumState): HTMLElement {
+    const a = h('a', { class: 'wordmark-link', href: formatFragment(DASHBOARD), title: 'Podium home' }, baton(this.#waiting(st) > 0), 'Podium');
+    a.addEventListener('click', (e) => { e.preventDefault(); this.#select(DASHBOARD, true); });
+    return a;
+  }
+
   /** The cue line for Home and a stream tab. Open PRs draws its own. Counts follow the open tab. */
   #pageHead(st: PodiumState, stream: string | null): HTMLElement {
     const scope = stream === null ? 'All streams' : stream;
     const buckets = scoped(st, stream);
-    const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length });
+    const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length }, stream === null ? scope : null);
     const parts = cueParts(buckets);
     const cue = parts.map((p) => {
       const tile = h('button', { type: 'button', class: 'tile', id: tileId(p.key), 'data-key': p.key, 'aria-pressed': String(p.key === this.#filter) },
@@ -541,13 +551,19 @@ export class PodiumApp extends HTMLElement {
     const oneWay = buckets.asks.filter((a) => a.door === 'one-way').length;
     const queued = st.queued.filter((q) => stream === null || q.stream === stream).length;
     const lead = h('div', {},
-      stream ? h('div', { class: 'stream-title' }, h('h2', {}, h('span', { class: `mark ${seriesClass(stream)}`, 'aria-hidden': 'true' }), stream)) : null,
-      h('p', { class: 'scope' }, h('span', { id: 'scope' }, scope), h('span', { 'aria-hidden': 'true' }, ' · '), tempo, h('span', { class: 'date' }, ` · ${longDate(st.today) || shortDate(st.today)}`)),
+      stream ? h('div', { class: 'stream-title' }, h('h2', { id: 'scope' }, h('span', { class: `mark ${seriesClass(stream)}`, 'aria-hidden': 'true' }), stream), tempo,
+        this.#projectNames(stream) ? h('span', { class: 'projects-line' }, this.#projectNames(stream)) : null) : null,
+      stream ? null : h('p', { class: 'scope' }, h('span', { class: 'date' }, longDate(st.today) || shortDate(st.today)), tempo),
       h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue),
       rule,
       buckets.asks.length ? h('p', { class: 'lede' }, 'The oldest ask has waited ', h('strong', {}, `${oldest} ${oldest === 1 ? 'day' : 'days'}`), stale ? `, and ${stale} ${stale === 1 ? 'is' : 'are'} past the 3 day mark` : '', '. ', oneWay ? `${oneWay} ${oneWay === 1 ? 'is a one-way door' : 'are one-way doors'}. ` : '', `${queued} ${queued === 1 ? 'task is' : 'tasks are'} queued behind your answers.`) : null);
-    if (stream !== null || this.#filter) return lead;
-    return h('section', { class: 'cue-grid' }, lead, this.#priorities(st));
+    if (this.#filter) return lead;
+    return h('section', { class: 'cue-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream));
+  }
+
+  /** The project names a stream's rows cover, as one mono line; empty until the projects payload has loaded or when it lists none. */
+  #projectNames(stream: string): string {
+    return this.#projects.state === 'ok' ? (this.#projects.data.rows.find((r) => r.stream === stream)?.projects ?? []).join(' · ') : '';
   }
 
   #priorities(st: PodiumState): HTMLElement {
@@ -563,13 +579,13 @@ export class PodiumApp extends HTMLElement {
   }
 
   /** The tempo word for the scope's counts, as a button that opens the rule behind it in place (no tooltip, no modal). */
-  #tempo(counts: { asks: number; blocked: number; working: number }): { tempo: HTMLElement; rule: HTMLElement } {
+  #tempo(counts: { asks: number; blocked: number; working: number }, scope: string | null): { tempo: HTMLElement; rule: HTMLElement } {
     const t = tempoWord(counts);
     // The rule, with each tempo word in the score's italic and the one in force now set in primary ink.
     const scale = TEMPO_SCALE.flatMap((x, i) => [i > 0 ? '; ' : '', h('i', { lang: x.lang, class: x.word === t.word ? 'now' : undefined }, x.word), `, ${x.meaning}`]);
     const rule = h('p', { class: 'tempo-rule', id: 'tempo-rule', hidden: !this.#tempoOpen }, TEMPO_LEAD, ...scale, '.');
     const tempo = h('button', { type: 'button', class: 'tempo', 'aria-expanded': String(this.#tempoOpen), 'aria-controls': 'tempo-rule' },
-      h('i', { lang: t.lang }, t.word), h('span', { class: 'vh' }, ', what the tempo means'));
+      scope === null ? null : h('span', { id: 'scope' }, scope), scope === null ? null : h('span', { 'aria-hidden': 'true' }, ' · '), h('i', { lang: t.lang }, t.word), h('span', { class: 'vh' }, ', what the tempo means'));
     tempo.addEventListener('click', () => {
       this.#tempoOpen = !this.#tempoOpen;
       tempo.setAttribute('aria-expanded', String(this.#tempoOpen));
@@ -618,7 +634,8 @@ export class PodiumApp extends HTMLElement {
     board.state = st;
     board.home = this.#homes.get(stream) ?? null;
     if (board.live) void this.#loadHome(stream, board);
-    return board;
+    const score = streamScore(st, this.#charts, stream);
+    return score ? h('div', { class: 'stream-page' }, score, board) : board;
   }
 
   /** Fetch the stream's home base and hand it to the board that asked; a board redrawn in the meantime is a different element and is left alone. */
@@ -659,43 +676,9 @@ export class PodiumApp extends HTMLElement {
     const localList = h('local-review');
     localList.review = this.#local;
     return h('div', { class: 'home-plus' },
-      scoreBoard(st, this.#charts),
-      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects }),
+      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, redraw: () => this.#redrawKeepingFocus() }),
       section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
-}
-
-const NAMED_SERIES: Record<string, string> = { TeamSelect: 's1', Bayada: 's2', Security: 's3', Options: 's4', Maestro: 's5', ADLs: 's6', Mithril: 's7', other: 'so' };
-const SERIES = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
-
-/** A stable series slot for a stream, matching the design's known names and hashing the rest. */
-function seriesClass(name: string): string {
-  const named = NAMED_SERIES[name];
-  if (named) return named;
-  let n = 0;
-  for (const c of name) n = (n * 33 + c.charCodeAt(0)) >>> 0;
-  return SERIES[n % SERIES.length] ?? 's1';
-}
-
-/** One staff per stream for the last 14 chart days. Pitch is a few steps, not a computed pixel, so no inline style is needed. */
-function scoreBoard(st: PodiumState, charts: ChartsData | null): HTMLElement | null {
-  if (!charts?.throughput.length || st.streams.length === 0) return null;
-  const days = charts.days.slice(-14);
-  if (!days.length) return null;
-  const byDate = new Map(charts.throughput.map((t) => [t.date, t.byStream]));
-  const value = (stream: string, day: string): number => byDate.get(day)?.[stream] ?? 0;
-  const max = Math.max(1, ...st.streams.flatMap((s) => days.map((d) => value(s, d))));
-  const pitch = (n: number): string => (n <= 0 ? '' : `p${Math.min(4, Math.round((n / max) * 4))}`);
-  const rows = st.streams.map((stream) => h('div', { class: 'score-row' },
-    h('span', { class: 'score-name' }, h('i', { class: seriesClass(stream), 'aria-hidden': 'true' }), stream),
-    h('span', { class: 'score-staff', role: 'img', 'aria-label': `${stream}: ${days.map((d) => `${d} ${value(stream, d)}`).join(', ')}` },
-      ...days.map((d) => {
-        const n = value(stream, d);
-        return h('span', { class: 'score-cell' }, n ? h('span', { class: `score-note ${pitch(n)} ${seriesClass(stream)}` }) : h('span', { class: 'score-rest' }));
-      }))));
-  return h('section', { class: 'score', 'aria-label': 'Streams, last 14 days' },
-    h('div', { class: 'score-head' }, h('h2', {}, 'Streams, last 14 days'), h('span', {}, 'Higher notes mean more finished that day.')),
-    ...rows);
 }
 
 /**

@@ -2,6 +2,7 @@
 import { ASK_USAGE, CLASSES, DOORS } from './ask-fields.ts';
 import { CONFIDENCES, LEARNED_KINDS, LEARNED_USAGE } from './learned.ts';
 import { MISS_SOURCES } from './miss.ts';
+import { LESSON_MAX, LESSONS_MAX, RETRO_SOURCES } from './agent-retro.ts';
 import { QUERY_STATUSES } from './query.ts';
 
 type Flag = [flag: string, meaning: string];
@@ -60,10 +61,16 @@ export const COMMANDS: CommandHelp[] = [
         [`--confidence ${oneOf(CONFIDENCES)}`, 'required'], ['--supersedes <id|path>', 'an earlier learned id or page path'], ...MARK], notes: LEARNED_USAGE },
     { name: 'miss', args: '"<question>"', summary: 'Record a question the library could not answer, for the composer.', flags: [[`--source ${oneOf(MISS_SOURCES)}`, 'where the question came from (required)'], ['--repo <name>', 'repo'], ...MARK] },
     { name: 'misses', args: '', summary: 'List the open misses grouped by topic.', flags: [JSON_OUT] },
+    { name: 'agent-retro', args: '<item id>', summary: 'Record what an agent learned on one item, before it is closed.', flags: [
+        [`--lesson "${oneOf(RETRO_SOURCES)}: <text>"`, `one lesson, repeatable (up to ${LESSONS_MAX}, each one line under ${LESSON_MAX} characters); code: from the code, jack: from the user, process: how the work went`],
+        ['--learned id[,id]', 'learned rows written for facts with evidence'], ['--nothing "<why>"', 'instead of lessons: why there was nothing to learn'], ...MARK] },
+    { name: 'agent-retros', args: '', summary: 'List retros waiting for review, and briefed items closed without one.', flags: [JSON_OUT] },
+    { name: 'retro-reviewed', args: '<retro id | item id>', summary: 'Close one retro (or one briefed item closed without a retro) after the review.', flags: [
+        ['--note "<text>"', 'required: what the review did with it'], ['--promoted kind:id[,kind:id]', 'what it became: learned, ticket, memory, rule or decision'], ...MARK] },
     { name: 'find', args: '"<words>"', summary: 'Look up library pages, best first.', flags: [
         ['--repo <name>', 'filter by repo'], ['--kind <kind>', 'filter by kind'], ['--component <name>', 'filter by component'], ['--limit <n>', 'result cap (default 10)'], ['--neighbors', 'add pages one link away'],
         ['--include-superseded', 'include superseded pages'], ['--no-miss', 'do not log a miss when nothing matches'], ['--tickets-vault <path>', 'library root (default VAULT_ROOT)'], JSON_OUT] },
-    { name: 'done', args: '<id|text>', summary: 'Close an item (an id or a unique substring).', flags: [['--why "<text>"', 'a note recorded with the close'], ['--answer "<text>"', 'a note recorded with the close (wins over --why)'], ['--ticket <id>', 'ticket to attach'], ...MARK] },
+    { name: 'done', args: '<id|text>', summary: 'Close an item (an id or a unique substring). A briefed item needs its agent-retro first.', flags: [['--why "<text>"', 'a note recorded with the close'], ['--no-retro "<why>"', 'close a briefed item that has no agent-retro; the reason is recorded'], ['--answer "<text>"', 'a note recorded with the close (wins over --why)'], ['--ticket <id>', 'ticket to attach'], ...MARK] },
     { name: 'drop', args: '<id>', summary: 'Drop an item.', flags: [['--why "<text>"', 'why it was dropped'], ['--ticket <id>', 'ticket to attach'], ...MARK] },
     { name: 'resolve', args: '<id>', summary: 'Answer an ask.', flags: [['--answer "<text>"', 'the answer'], ['--ticket <id>', 'ticket to attach'], ['--approval standing|one-off', 'record the answer as an approval'], ['--scope "<text>"', 'with --approval: what it covers'], ['--ref <file-or-url>', 'with --approval: supporting reference, repeatable'], ...MARK] },
     { name: 'answer', args: '<ask id>', summary: 'Record the user\'s answer to an ask.', flags: [['--text "<answer>"', 'the answer (required)'], ['--source page|chat', 'where it came from'], ...MARK] },
