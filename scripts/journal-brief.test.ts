@@ -65,6 +65,7 @@ test('brief writes the file, the brief row and the repo claim, and prints a one-
     assert.match(text, /under 150 words plus that path/);
     assert.ok(text.includes(report));
     assert.match(text, /Library pages for this task: none \(library-brief\.ts is not installed/);
+    assert.match(text, new RegExp(`journal\\.ts --project \\S+ agent-retro ${id} --lesson`), 'the retro command names this item');
     assert.ok(r.out.includes(`Agent prompt: ${agentPrompt(brief, report)}`));
     assert.equal(JSON.parse(readFileSync(lock('repo-a'), 'utf8')).desk, 'Alpha');
     const row = rows().find((x) => x.kind === 'brief');
@@ -521,3 +522,11 @@ for (const [flag, value] of [['--branch', 'bad..name'], ['--worktree', '/tmp/x\n
         assert.equal(run(['brief', other, '--out-dir', outDir, ...MARK]).code, 0);
     });
 }
+
+test('briefText carries a Retro section with the item id and the given journal command, before the standing rules', () => {
+    const t = briefText({ id: 'ab12', text: 'obj', repo: 'r', library: 'lib', standing: 'rules', writer: false, reportPath: '/tmp/report-ab12.md', journal: 'node /x/journal.ts --project p' });
+    assert.match(t, /## Retro\n/);
+    assert.ok(t.includes('node /x/journal.ts --project p agent-retro ab12 --lesson "code: '));
+    assert.ok(t.indexOf('## Retro') < t.indexOf('## Standing rules'));
+    assert.match(briefText({ id: 'cd34', text: 'o', library: 'l', standing: 's', writer: false, reportPath: '/r' }), /\njournal\.ts agent-retro cd34 /);
+});

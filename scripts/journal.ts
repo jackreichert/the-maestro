@@ -2121,7 +2121,7 @@ function cmdBrief(): void {
     const outDir = resolve(arg('out-dir') || (SCRIPTS_SHELF_DIR ? join(SCRIPTS_SHELF_DIR, 'scratch', 'briefs') : join(vault, 'Projects', project, 'Dispatch')));
     const paths = briefPaths(outDir, target.id as string, writer);
     const workingDir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : undefined;
-    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, writer, reportPath: paths.report });
+    const text = briefText({ id: target.id as string, text: target.text || '', stream: target.stream, repo, ticket: target.ticket, workingDir, library, standing: block.stdout, details, doneWhen: arg('done-when') || undefined, writer, reportPath: paths.report, journal: `node ${join(scripts, 'journal.ts')} --project ${project}` });
     const why = `brief ${target.id}`;
     const holder = writer ? (arg('as') || desk) : undefined;
     const pid = arg('pid') ? Number(arg('pid')) : null;
