@@ -127,15 +127,27 @@ function closedAt(d: BoardStatus['done'][number]): string | undefined {
 
 const PULL_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d{1,6})(?!\d)/g;
 
+/** A URL in ask text, for finding the question mark: up to whitespace, its trailing sentence punctuation not counted as part of it. */
+const URL_IN_TEXT = /(?<![\w+.-])(?:[a-z][a-z0-9+.-]*:\/\/|obsidian:|www\.)\S*/gi;
+/** The length of `u` without its trailing sentence punctuation, found by a scan rather than a `[...]+$` regex, which is quadratic on a long run of it. */
+const keptLength = (u: string): number => {
+  let k = u.length;
+  while (k > 0 && '.,;:!?)]}'.includes(u[k - 1])) k -= 1;
+  return k;
+};
+/** The index of the first `?` in `s` that is not inside a URL's query (an `obsidian://open?vault=...` link always has one); -1 when none. */
+const questionMark = (s: string): number =>
+  s.replace(URL_IN_TEXT, (u) => ' '.repeat(keptLength(u)) + u.slice(keptLength(u))).indexOf('?');
+
 /**
  * The decision and the rest of the ask. Text with line breaks gives its first line as the decision; a single line is cut after its
- * first question mark. Either way the rest is kept whole: nothing is dropped, and the line breaks are the writer's.
+ * first question mark outside a URL. Either way the rest is kept whole: nothing is dropped, and the line breaks are the writer's.
  */
 export function splitAskBody(text: string): { needed: string; context: string } {
   const clean = text.replace(/\r\n?/g, '\n').trim();
   const nl = clean.indexOf('\n');
   if (nl !== -1) return { needed: clean.slice(0, nl).trim(), context: clean.slice(nl + 1).trim() };
-  const q = clean.indexOf('?');
+  const q = questionMark(clean);
   return q === -1 ? { needed: clean, context: '' } : { needed: clean.slice(0, q + 1), context: clean.slice(q + 1).trim() };
 }
 
