@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RawPr } from './generate.ts';
 import { writeAtomic } from './seen.ts';
+import { isStoredTwin } from './twin.ts';
 
 export const PRS_CACHE = '.now-prs.json';
 
@@ -23,9 +24,11 @@ function isRawPr(v: unknown): v is RawPr {
   const commits = v.commits;
   const str = (k: string): boolean => typeof v[k] === 'string';
   return typeof v.number === 'number' && typeof v.isDraft === 'boolean' && ['title', 'url', 'headRefName', 'baseRefName', 'mergeable', 'mergeStateStatus'].every(str)
+    && isStoredTwin(v.developTwin)
     && (v.reviewDecision === null || typeof v.reviewDecision === 'string')
     && isObject(repo) && typeof repo.nameWithOwner === 'string'
     && isObject(threads) && Array.isArray(threads.nodes) && threads.nodes.every((n) => isObject(n) && typeof n.isResolved === 'boolean')
+    && (v.reviews === undefined || (isObject(v.reviews) && Array.isArray(v.reviews.nodes) && v.reviews.nodes.every((n) => isObject(n) && typeof n.state === 'string')))
     && isObject(commits) && Array.isArray(commits.nodes) && commits.nodes.every((n) => isObject(n) && isObject(n.commit));
 }
 

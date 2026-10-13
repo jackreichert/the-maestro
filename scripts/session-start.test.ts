@@ -40,14 +40,14 @@ function world(over: Partial<StartDeps> & { held?: Watch[] } = {}) {
 test('a fresh session registers every needed watch, reports the page age and prints the loop command', () => {
   const w = world();
   const r = sessionStart('/s', w.deps);
-  assert.deepEqual(w.added, ['status-watch:status-watch', 'status-refresh:status-refresh', 'whats-next:whats-next']);
+  assert.deepEqual(w.added, ['status-watch:status-watch', 'status-refresh:status-refresh', 'whats-next:whats-next', 'retro-due:retro-due']);
   assert.equal(r.failed, false);
   assert.match(lineOf(r, 'Status page'), /Status page: updated 4 min ago \(2:56 PM UTC\)$/);
   assert.match(lineOf(r, 'Event loop'), /NOT RUNNING.*run_in_background: node loop run$/);
 });
 
 test('live watches are left alone, whatever their id, and a loop holding the lock is reported', () => {
-  const w = world({ held: [watch('mine', 'status-watch'), watch('other', 'status-refresh'), watch('next', 'whats-next')], lockHolder: () => 4242 });
+  const w = world({ held: [watch('mine', 'status-watch'), watch('other', 'status-refresh'), watch('next', 'whats-next'), watch('third', 'retro-due')], lockHolder: () => 4242 });
   const r = sessionStart('/s', w.deps);
   assert.deepEqual(w.added, []);
   assert.deepEqual(w.removed, []);
@@ -56,7 +56,7 @@ test('live watches are left alone, whatever their id, and a loop holding the loc
 });
 
 test('an expired watch the loop has not retired yet is removed and registered again', () => {
-  const w = world({ held: [watch('status-watch', 'status-watch', NOW - 1), watch('status-refresh', 'status-refresh'), watch('whats-next', 'whats-next')] });
+  const w = world({ held: [watch('status-watch', 'status-watch', NOW - 1), watch('status-refresh', 'status-refresh'), watch('whats-next', 'whats-next'), watch('retro-due', 'retro-due')] });
   sessionStart('/s', w.deps);
   assert.deepEqual(w.removed, ['status-watch']);
   assert.deepEqual(w.added, ['status-watch:status-watch']);
@@ -79,14 +79,14 @@ test('a page older than 15 minutes is flagged stale; a missing page says how to 
 
 test('a concurrent start that registered the watch first counts as success', () => {
   let reads = 0;
-  const w = world({ watches: () => (reads++ < 1 ? [] : [watch('status-watch', 'status-watch'), watch('status-refresh', 'status-refresh'), watch('whats-next', 'whats-next')]), addWatch: () => ({ ok: false, message: 'already runs' }) });
+  const w = world({ watches: () => (reads++ < 1 ? [] : [watch('status-watch', 'status-watch'), watch('status-refresh', 'status-refresh'), watch('whats-next', 'whats-next'), watch('retro-due', 'retro-due')]), addWatch: () => ({ ok: false, message: 'already runs' }) });
   const r = sessionStart('/s', w.deps);
   assert.equal(r.failed, false);
   assert.match(r.lines[0], /already registered/);
 });
 
 test('an existing watch aimed at another directory is called out', () => {
-  const r = sessionStart('/s', world({ held: [watch('status-watch', 'status-watch', NOW + HOUR, '/elsewhere'), watch('status-refresh', 'status-refresh')] }).deps);
+  const r = sessionStart('/s', world({ held: [watch('status-watch', 'status-watch', NOW + HOUR, '/elsewhere'), watch('status-refresh', 'status-refresh'), watch('retro-due', 'retro-due')] }).deps);
   assert.match(r.lines[0], /WARNING its target is \/elsewhere, not \/s/);
   assert.doesNotMatch(r.lines[1], /WARNING/);
 });
@@ -111,6 +111,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
   assert.match(first.stdout, /status-watch: registered/);
   assert.match(first.stdout, /status-refresh: registered/);
   assert.match(first.stdout, /whats-next: registered/);
+  assert.match(first.stdout, /retro-due: registered/);
   assert.match(first.stdout, /STALE/);
   assert.match(first.stdout, /NOT RUNNING/);
   const second = run();
@@ -118,6 +119,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
   assert.match(second.stdout, /status-watch: already registered/);
   assert.match(second.stdout, /status-refresh: already registered/);
   assert.match(second.stdout, /whats-next: already registered/);
+  assert.match(second.stdout, /retro-due: already registered/);
   writeFileSync(join(events, 'loop.lock'), String(process.pid));
   assert.match(run().stdout, new RegExp(`running \\(pid ${process.pid}\\)`));
 });

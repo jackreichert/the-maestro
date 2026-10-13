@@ -81,3 +81,22 @@ test('the PR data age and a failed read are passed through; a missing or unreada
   assert.deepEqual(out.prData, { fetchedAt: null, stale: true, failure: 'gh read failed' });
   assert.equal(out.groups[0]?.repos[0]?.prs[0]?.ageDays, undefined);
 });
+
+test('reviewOf: history decides when it is read, and an empty decision is never an approval', async () => {
+  const { reviewOf } = await import('./open-prs.ts');
+  assert.equal(reviewOf(null, ['fake-a'], []), 'approved');
+  assert.equal(reviewOf('APPROVED', [], []), 'none', 'history without an approver wins over a stale decision');
+  assert.equal(reviewOf('', [], undefined), 'none');
+  assert.equal(reviewOf('APPROVED', ['fake-a'], ['fake-b']), 'changes-requested');
+  assert.equal(reviewOf('CHANGES_REQUESTED', ['fake-a'], []), 'changes-requested');
+  assert.equal(reviewOf('APPROVED'), 'approved', 'no history: GitHub decision stands');
+  assert.equal(reviewOf(null), 'none');
+  assert.equal(reviewOf('REVIEW_REQUIRED', ['fake-a'], []), 'none', 'GitHub still wants more reviews');
+});
+
+test('a row carries waitsOnDevelop from its card', () => {
+  const out = buildOpenPrs(state([card('org/a', 1, { base: 'staging', waitsOnDevelop: { number: 2, url: 'https://example.test/pull/2' } }), card('org/a', 3, { base: 'staging' })]), PAGE, NOW);
+  const [a, b] = out.groups[0]?.repos[0]?.prs ?? [];
+  assert.deepEqual(a?.waitsOnDevelop, { number: 2, url: 'https://example.test/pull/2' });
+  assert.equal(b?.waitsOnDevelop, undefined);
+});

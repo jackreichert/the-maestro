@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { AGE_LABELS, ageChart, doneSpans, rowFacts, rowOrder, weeksChart } from '../src/home-model.ts';
+import { AGE_LABELS, ageChart, askAgeBars, byStreamName, doneSpans, epicCards, orderAsks, prGauge, queuedByStream, rowFacts, rowOrder, scoreTable, streamState, weeksChart } from '../src/home-model.ts';
 import { sanitizeCharts, sanitizeProjects, sanitizeState } from '../src/contract.ts';
 import type { ChartsData, PodiumState, ProjectRow, ProjectsData } from '../src/types.ts';
 
@@ -72,4 +72,75 @@ test('rowFacts: counts with their nouns, zeros left out, and when it last shippe
 test('rowOrder: waiting on you, then blocked, moving, quiet; ties by priority rank, then page order', () => {
   const rows = [row({ stream: 'q' }), row({ stream: 'm2', state: 'moving' }), row({ stream: 'm1', state: 'moving', rank: 1 }), row({ stream: 'w', state: 'waiting on you' }), row({ stream: 'b', state: 'blocked' })];
   assert.deepEqual(rowOrder(rows).map((r) => r.stream), ['w', 'b', 'm1', 'm2', 'q']);
+});
+
+test('scoreTable: last 14 days, a rest for zero, higher pitch for busier days, counts from the state, project names when loaded', () => {
+  const st = state();
+  const c = charts();
+  const s = scoreTable(st, c, projects());
+  assert.ok(s.days.length <= 14 && s.days.length > 0);
+  assert.equal(s.rows.length, st.streams.length);
+  for (const r of s.rows) {
+    assert.equal(r.days.length, s.days.length);
+    r.days.forEach((n, i) => assert.equal(r.pitches[i] === 0, n === 0, 'pitch 0 is a rest, and only a rest'));
+    assert.ok(r.pitches.every((p) => p >= 0 && p <= 4));
+    assert.equal(r.total, r.days.reduce((a, b) => a + b, 0));
+    assert.equal(r.asks, st.asks.filter((a) => a.stream === r.stream).length);
+  }
+  assert.equal(s.days.filter((d) => d.today).length <= 1, true);
+  assert.deepEqual(scoreTable(st, c, null).rows.map((r) => r.projects), s.rows.map(() => []), 'no names until the projects load');
+});
+
+test('streamState: asks first, then blocked, then movement, else quiet', () => {
+  assert.equal(streamState(1, 1, 1, 1), 'waiting on you');
+  assert.equal(streamState(0, 1, 1, 1), 'blocked');
+  assert.equal(streamState(0, 0, 1, 0), 'moving');
+  assert.equal(streamState(0, 0, 0, 2), 'moving');
+  assert.equal(streamState(0, 0, 0, 0), 'quiet');
+});
+
+test('orderAsks: oldest first, or one-way doors first with oldest first inside each group', () => {
+  const a = [{ id: 'a', ageDays: 1, ts: '2026-10-12', door: 'one-way' }, { id: 'b', ageDays: 5, ts: '2026-10-08', door: 'two-way' }, { id: 'c', ageDays: 3, ts: '2026-10-10', door: 'one-way' }];
+  assert.deepEqual(orderAsks(a, 'oldest').map((x) => x.id), ['b', 'c', 'a']);
+  assert.deepEqual(orderAsks(a, 'oneway').map((x) => x.id), ['c', 'a', 'b']);
+});
+
+test('askAgeBars: four buckets, the last two flagged stale', () => {
+  const bars = askAgeBars([{ ageDays: 0 }, { ageDays: 2 }, { ageDays: 5 }, { ageDays: 9 }, { ageDays: 10 }]);
+  assert.deepEqual(bars.map((b) => b.n), [1, 1, 1, 2]);
+  assert.deepEqual(bars.map((b) => b.stale), [false, false, true, true]);
+  assert.deepEqual(bars.map((b) => b.label), [...AGE_LABELS]);
+});
+
+test('prGauge: CI states are counted whatever their case, and threads and conflicts from the PRs', () => {
+  const prs = [
+    { ci: 'SUCCESS', unresolved: 0, mergeable: 'MERGEABLE' }, { ci: 'pass', unresolved: 2, mergeable: 'CONFLICTING' },
+    { ci: 'FAILURE', unresolved: 0, mergeable: 'UNKNOWN' }, { ci: 'pending', unresolved: 0, mergeable: 'MERGEABLE' }, { ci: '', unresolved: 0, mergeable: 'MERGEABLE' },
+  ] as unknown as PodiumState['prs'];
+  const g = prGauge(prs, null);
+  assert.deepEqual(g.ci, { pass: 2, pending: 1, fail: 1, none: 1 });
+  assert.equal(g.total, 5);
+  assert.equal(g.threads, 1);
+  assert.equal(g.conflicting, 1);
+  assert.equal(g.queue, null);
+});
+
+test('epicCards: one per epic with segments in reading order; none without epics', () => {
+  assert.deepEqual(epicCards(null), []);
+  const line = { id: 'e-1', title: 't', note: { label: 'n', url: 'x' }, status: 'open', total: 10, closed: 4, inProgress: 1, blocked: 2, notStarted: 3, awaiting: 0, quietDays: null, prs: [] };
+  const cards = epicCards({ streams: [{ stream: 'ops', epics: [line] }], unfiled: [line] } as unknown as Parameters<typeof epicCards>[0]);
+  assert.equal(cards.length, 2);
+  assert.deepEqual(cards[0]!.segments.map((s) => [s.key, s.n]), [['closed', 4], ['progress', 1], ['blocked', 2], ['open', 3]]);
+  assert.equal(cards[1]!.stream, 'unfiled');
+});
+
+test('queuedByStream: most queued first, ties in stream order', () => {
+  const q = [{ stream: 'b' }, { stream: 'a' }, { stream: 'b' }, { stream: 'c' }];
+  assert.deepEqual(queuedByStream(q, ['c', 'a', 'b']), [{ stream: 'b', n: 2 }, { stream: 'c', n: 1 }, { stream: 'a', n: 1 }]);
+});
+
+test('byStreamName: streams alphabetical, incoming order kept inside each stream, input untouched', () => {
+  const a = [{ id: 1, stream: 'zeta' }, { id: 2, stream: 'alpha' }, { id: 3, stream: 'zeta' }, { id: 4, stream: 'alpha' }];
+  assert.deepEqual(byStreamName(a).map((x) => x.id), [2, 4, 1, 3]);
+  assert.deepEqual(a.map((x) => x.id), [1, 2, 3, 4]);
 });

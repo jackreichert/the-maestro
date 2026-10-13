@@ -26,6 +26,8 @@ node <scripts_dir>/journal.ts done <id> "closed by triage: <the evidence, e.g. t
 
 Cite the evidence in the text every time. Never close a row the script marks `ASK` unless a PR is merged.
 
+A row that was briefed to an agent is refused by `done` when the agent left no retro. A stale row's agent is gone and cannot write one, so close it with `--no-retro "agent gone, closed by triage"` added to the same command; the reason is recorded and the retro review sees the gap.
+
 ## 4. One batch ask
 
 Every remaining row goes into a single message to the orchestrator, one line each: id, age, last touch, and a recommendation (`close`, `drop` or `keep`) with the reason. Do not ask one question per row. Do not apply anything until the answer arrives; then apply `done <id>` for close, `drop <id>` for drop, and `lease <id>` for keep.

@@ -31,8 +31,8 @@ import { digestDir, drainDigests } from './lib/digest-store.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
-/** The watches a session needs, keyed by the id used when one is missing. */
-export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }, { id: 'whats-next', type: 'whats-next' }] as const;
+/** The watches a session needs, keyed by the id used when one is missing. retro-due is here so the periodic retro review never depends on someone remembering to register it. */
+export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }, { id: 'retro-due', type: 'retro-due' }, { id: 'whats-next', type: 'whats-next' }] as const;
 /** The refresh ticks every 10 minutes; a page this old has had at least one missed tick. */
 export const STALE_MS = 15 * 60_000;
 

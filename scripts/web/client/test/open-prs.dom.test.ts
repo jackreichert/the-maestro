@@ -130,3 +130,39 @@ test('a finished refresh updates the table and the freshness line in place; fail
   assert.match(text(root), /already running/);
   cleanup();
 });
+
+test('ready-to-merge PRs are pinned in the first band with a count that filters, and an approved PR lists its approvers in a folded disclosure', async () => {
+  const ready = pr({ number: 21, isDraft: false, review: 'approved', approvers: ['fake-a', 'fake-b'], title: 'Ready one' });
+  const d = data({ total: 2, groups: [{ id: 'team', label: 'Team repos', count: 2, repos: [{ repo: 'acme/widgets', count: 2, prs: [pr({ number: 22, isDraft: false, title: 'Clean, unreviewed' }), ready] }] }] });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: d }) });
+  const bands = [...root.querySelectorAll('section.band')];
+  assert.equal(bands[0]?.id, 'ready', 'pinned first');
+  assert.match(bands[0]?.querySelector('h2')?.textContent ?? '', /Ready to merge\s*1/);
+  assert.equal(bands[0]?.querySelectorAll('li.pr').length, 1);
+  const toggle = root.querySelector<HTMLButtonElement>('button[data-move=ready]')!;
+  assert.match(toggle.textContent ?? '', /1 ready to merge/);
+  const details = bands[0]!.querySelector('details.appr')!;
+  assert.equal(details.hasAttribute('open'), false, 'collapsed by default');
+  assert.equal(details.querySelector('summary')?.textContent, 'Approved · 2');
+  assert.deepEqual([...details.querySelectorAll('li')].map((x) => x.textContent), ['fake-a', 'fake-b']);
+  assert.equal(root.querySelectorAll('details.appr').length, 1, 'an unapproved PR has no disclosure');
+  toggle.click();
+  assert.deepEqual([...root.querySelectorAll('section.band')].map((b) => b.id), ['ready'], 'the toggle shows only ready PRs');
+  cleanup();
+});
+
+test('a staging PR waiting on its develop twin names it, linked, and is not in the ready band; one with no twin says so', async () => {
+  const waits = pr({ number: 31, isDraft: false, review: 'approved', base: 'staging', title: 'Waits', waitsOnDevelop: { number: 30, url: 'https://github.com/acme/widgets/pull/30' } });
+  const lost = pr({ number: 32, isDraft: false, review: 'approved', base: 'staging', title: 'Lost twin', waitsOnDevelop: {} });
+  const free = pr({ number: 33, isDraft: false, review: 'approved', base: 'staging', title: 'Free' });
+  const d = data({ total: 3, groups: [{ id: 'team', label: 'Team repos', count: 3, repos: [{ repo: 'acme/widgets', count: 3, prs: [waits, lost, free] }] }] });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: d }) });
+  const ready = root.querySelector('section#ready');
+  assert.match(text(ready!), /Free/);
+  assert.doesNotMatch(text(ready!), /Waits|Lost twin/);
+  const link = [...root.querySelectorAll('a.wait')].find((a) => /#30/.test(a.textContent ?? ''));
+  assert.equal(link?.textContent, 'Waits on develop twin #30');
+  assert.equal(link?.getAttribute('href'), 'https://github.com/acme/widgets/pull/30');
+  assert.match(text(root), /Waits on develop twin: none found/);
+  cleanup();
+});
