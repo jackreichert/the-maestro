@@ -64,6 +64,18 @@ test('a develop PR with no staging twin names the gap, and a PR into main is not
   assert.equal(rows.find((r) => r.number === 3)?.sides, undefined);
 });
 
+test('a row copies CI and the stack parent, and omits a blank CI', () => {
+  const out = buildOpenPrs(state([
+    card('org/a', 1, { ci: 'FAILURE', stackedOn: 9 }),
+    card('org/a', 2, { ci: '' }),
+  ]), PAGE, NOW);
+  const rows = out.groups[0]?.repos[0]?.prs ?? [];
+  assert.equal(rows.find((r) => r.number === 1)?.ci, 'FAILURE');
+  assert.equal(rows.find((r) => r.number === 1)?.stackedOn, 9);
+  assert.equal(rows.find((r) => r.number === 2)?.ci, undefined);
+  assert.equal(rows.find((r) => r.number === 2)?.stackedOn, undefined);
+});
+
 test('the PR data age and a failed read are passed through; a missing or unreadable createdAt gives no age', () => {
   const out = buildOpenPrs(state([card('org/a', 1, { createdAt: 'not a date' })], { fetchedAt: null, stale: true, failure: 'gh read failed' }), PAGE, NOW);
   assert.deepEqual(out.prData, { fetchedAt: null, stale: true, failure: 'gh read failed' });
