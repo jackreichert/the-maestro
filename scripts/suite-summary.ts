@@ -41,7 +41,7 @@ export interface RunResult { exit: number | null; ms: number; log: string; timed
 
 /** Where a repo's baseline lives: <suites dir>/baselines/<repo>-<runner>.json. Worktrees share the main checkout's name. */
 export function baselinePath(repo: string, runner: Runner, name?: string, env: NodeJS.ProcessEnv = process.env): string {
-  const common = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  const common = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo, encoding: 'utf8' }).stdout?.trim() ?? '';
   const repoName = name || (common.endsWith('/.git') ? basename(dirname(common)) : basename(repo));
   return join(suitesDir(env), 'baselines', `${repoName.replace(/[^\w.-]/g, '_')}-${runner}.json`);
 }
@@ -63,7 +63,21 @@ export function runCommand(file: string, args: string[], opts: { cwd: string; en
     let timedOut = false;
     const child = spawn(file, args, { cwd: opts.cwd, env: opts.env, detached: true, stdio: ['ignore', fd, fd] });
     const timer = setTimeout(() => { timedOut = true; try { process.kill(-(child.pid as number), 'SIGKILL'); } catch { /* already gone */ } }, opts.timeoutMs);
-    const end = (exit: number | null): void => { clearTimeout(timer); closeSync(fd); done({ exit, ms: Date.now() - start, log: opts.log, timedOut }); };
+    let settled = false;
+    // A failed spawn emits `error` and then `close`; settling once keeps the second from closing the fd again.
+    const end = (exit: number | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+      closeSync(fd);
+      done({ exit, ms: Date.now() - start, log: opts.log, timedOut });
+    };
+    // Killing this script must not orphan the suite: stop its process group, then exit as a runner error.
+    const onSignal = (): void => { try { process.kill(-(child.pid as number), 'SIGKILL'); } catch { /* already gone */ } process.exit(EXIT.runner); };
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
     child.once('error', () => end(127));
     child.once('close', (code) => end(code ?? 1));
   });
@@ -115,7 +129,7 @@ export function formatOutput(out: Output, baseline: Baseline | null, o: SummaryO
   return lines.join('\n');
 }
 
-const git = (cwd: string, args: string[]): string => spawnSync('git', args, { cwd, encoding: 'utf8' }).stdout.trim();
+const git = (cwd: string, args: string[]): string => (spawnSync('git', args, { cwd, encoding: 'utf8' }).stdout ?? '').trim();
 
 interface Cli {
   repo: string; runner: Runner; typecheck: boolean; gates: boolean; json: boolean; writeBaseline: boolean; options: SummaryOptions;

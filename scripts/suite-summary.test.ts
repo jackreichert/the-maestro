@@ -63,6 +63,14 @@ test('a runner that produces no report, or matches no tests, exits 2 rather than
   assert.match(none.stdout, /RUNNER ERROR/);
 });
 
+test('a runner binary that is not installed exits 2, not a crash', () => {
+  const f = fixture(GREEN);
+  const { NODE_TEST_CONTEXT: _c, ...env } = process.env;
+  const missing = spawnSync(process.execPath, [SCRIPT, '--repo', f.repo, '--runner', 'jest'], { encoding: 'utf8', env: { ...env, PATH: '/usr/bin:/bin' } });
+  assert.equal(missing.status, 2, missing.stdout + missing.stderr);
+  assert.match(missing.stdout, /RUNNER ERROR/);
+});
+
 test('bad flags exit 2 with a usage message', () => {
   const f = fixture(GREEN);
   assert.equal(summary(f, '--runner', 'mocha').status, 2);
