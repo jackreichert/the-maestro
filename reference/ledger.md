@@ -491,7 +491,7 @@ When a `pr-merged` watch reports `MERGED` (or you learn of a merge any other way
 1. **Scoped sweep.** `node scripts/branch-sweep.ts --apply-worktrees --container <container_root> --repo <repo>`. It touches only that repo, and the same guards decide: a worktree that is not idle, is claimed or has uncommitted work stays and is listed.
 2. **Tickets.** Transition each key per the overlay's tracker rules (what a merge into each branch means), then record it: `journal.ts log "moved <KEY> to <status>" --transitioned <KEY>[,<KEY>]`. A merge with no key is worth a line saying so.
 3. **Overlay sync.** If the merged repo is the-maestro itself, fast-forward the live checkout and sync the overlay branch with the overlay's sync script.
-4. **Ledger.** Log the merge as a note carrying the repo and PR, so the board and the standup show that it landed.
+4. **Ledger.** Close the row the PR was for, not just a note about it. A row linked at PR open (`pr-open.ts` writes the link) closes itself: run `node scripts/merge-sweep.ts --close`, which appends `done` once every PR on the row has merged and leaves the row open while any linked PR is still open. If the row was never linked, close it by hand with `journal.ts done <id>`. Then log a note carrying the repo and PR only if the merge has no row.
 5. **Stack ancestry.** If the merged PR was part of a stack, check that each fix pushed to the PRs above it reached the base branch: `git merge-base --is-ancestor <fix sha> origin/<base>` for each recorded head ([reference/prs.md](prs.md#re-review-before-ready)). A fix not in the base is a follow-up, not a merged one.
 
 ## Reading it back

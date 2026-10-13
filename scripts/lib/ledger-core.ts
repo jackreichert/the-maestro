@@ -104,7 +104,7 @@ export const OPEN_KINDS = ['wip', 'blocked', 'question'];
 export const isPendingDecision = (i: LedgerRow): boolean => i.kind === 'decision' && i.pending === true;
 export const isOpen = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => !i.closedBy && ((i.kind !== undefined && OPEN_KINDS.includes(i.kind)) || isPendingDecision(i));
 // Rows that are events about items, not items themselves.
-export const NON_ITEM_KINDS = ['rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote', 'brief', 'rework', 'lease', 'unlease', 'next', 'answer', 'discuss', 'agent-retro', 'retro-reviewed'];
+export const NON_ITEM_KINDS = ['ref', 'rolled', 'stamp', 'tag', 'approval-tag', 'fact', 'carry', 'archive', 'unarchive', 'claim', 'released', 'defer', 'queue', 'promote', 'brief', 'rework', 'lease', 'unlease', 'next', 'answer', 'discuss', 'agent-retro', 'retro-reviewed'];
 
 /** An open `wip` item that is queued (a to-do not yet started), as opposed to in flight. The fold sets `queued`. */
 export const isQueued = (i: LedgerRow & { closedBy?: LedgerRow | null }): boolean => i.kind === 'wip' && i.queued === true && isOpen(i);
@@ -239,7 +239,12 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
     const where = new Map<string, Pick<LedgerRow, 'worktree' | 'branch' | 'nextStep'>>();
     const answers = new Map<string, string>();
     const discussing = new Map<string, string>();
+    const attached = new Map<string, string[]>();
     for (const e of entries) {
+        if (e.kind === 'ref' && typeof e.attaches === 'string') {
+            attached.set(e.attaches, [...(attached.get(e.attaches) ?? []), ...(Array.isArray(e.refs) ? e.refs.filter((r): r is string => typeof r === 'string' && r !== '') : [])]);
+            if (typeof e.branch === 'string' && e.branch) where.set(e.attaches, { ...where.get(e.attaches), branch: e.branch });
+        }
         if (e.kind === 'answer' && e.of) answers.set(e.of, String(e.text ?? ''));
         if (e.kind === 'discuss' && e.of) discussing.set(e.of, String(e.text ?? ''));
         const target = e.kind === 'next' ? e.nexts : e.kind === 'brief' ? e.briefs : undefined;
@@ -268,6 +273,8 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
         const queued = move ? move.queued : base.queued === true;
         const item: LedgerItem = { ...base, stream, closedBy: close, state: close ? close.kind : base.kind };
         Object.assign(item, where.get(e.id));
+        const more = attached.get(e.id);
+        if (more?.length) item.refs = [...new Set([...(Array.isArray(item.refs) ? item.refs : []), ...more])];
         if (queued) item.queued = true; else delete item.queued;
         if (move?.ts) item.stateTs = move.ts;
         if (!close && answers.has(e.id)) item.answer = answers.get(e.id);

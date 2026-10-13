@@ -25,13 +25,20 @@
  * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
  * opened but its file links could not be expanded (run pr-guide-links.ts).
  * The gh binary is `gh`, or the path in MAESTRO_GH_BIN (tests use a fake).
+ *
+ * Ledger link: once the PR exists, a `ref` row records `gh:pr:owner/repo#N` and the branch on the ledger row it is for, so
+ * merge-sweep can close that row when the PR merges. The row is `--item <id>`, else MAESTRO_ITEM, else a ledger id in the
+ * branch name (`feat/MAESTRO-6tq3-...`). `--vault <ledger root>` and `--project <name>` override the configured ledger.
+ * A link that cannot be written is a warning on stderr; it never changes the exit code, because the PR is already open.
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openStore } from './lib/journal/store.ts';
+import { itemFor, linkRowToPr, parsePrUrl } from './lib/row-prs.ts';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
-import { PROTECTED_BRANCHES, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
+import { CONFIGURED_PROJECT, LEDGER_ROOT, PROTECTED_BRANCHES, VAULT_ROOT, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
 import { smellsProblems } from './pr-smells.ts';
@@ -39,13 +46,13 @@ import { toolCommand } from './lib/tool-bin.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
 /** Parsed command line: `pass` holds the gh flags and values forwarded as given. */
-export interface OpenArgs { repo: string; base: string; dryRun: boolean; pass: string[] }
+export interface OpenArgs { repo: string; base: string; dryRun: boolean; pass: string[]; item?: string; vault?: string; project?: string }
 
 const PASSTHROUGH: Record<string, string> = { '--title': '--title', '--body-file': '--body-file', '--head': '--head' };
 
 function usage(msg?: string): never {
   if (msg) console.error(`pr-open: ${msg}`);
-  console.error('usage: node scripts/pr-open.ts --repo <path> --base <branch> --title <t> --body-file <f> [--head <branch>] [--dry-run]');
+  console.error('usage: node scripts/pr-open.ts --repo <path> --base <branch> --title <t> --body-file <f> [--head <branch>] [--item <ledger id>] [--vault <ledger root>] [--project <name>] [--dry-run]');
   process.exit(2);
 }
 
@@ -55,11 +62,12 @@ export function parseArgs(argv: string[]): OpenArgs {
     const a = argv[i];
     if (a === '--dry-run') o.dryRun = true;
     else if (a === '--repo' || a === '--base') o[a === '--repo' ? 'repo' : 'base'] = argv[++i] ?? '';
+    else if (a === '--item' || a === '--vault' || a === '--project') o[a.slice(2) as 'item' | 'vault' | 'project'] = argv[++i] ?? '';
     else if (Object.hasOwn(PASSTHROUGH, a)) {
       if (flagIndex(o.pass, a) >= 0) usage(`${a} given more than once`);
       o.pass.push(PASSTHROUGH[a], argv[++i] ?? '');
     }
-    else usage(`unknown argument ${a} (draft and assignee are always set; use --repo, --base, --title, --body-file, --head, --dry-run)`);
+    else usage(`unknown argument ${a} (draft and assignee are always set; use --repo, --base, --title, --body-file, --head, --item, --vault, --project, --dry-run)`);
   }
   if (!o.repo || !o.base) usage('--repo and --base are required');
   return o;
@@ -152,13 +160,37 @@ function main(): void {
   const ghEnv = waivedSlug ? { ...process.env, GH_REPO: '' } : process.env;
   if (o.dryRun) { console.log(`${gh} ${args.join(' ')}`); return; }
   const [ghCmd, ghArgv] = toolCommand('gh', args);
-  if (!hasLooseToken(body)) process.exit(spawnSync(ghCmd, ghArgv, { cwd: o.repo, stdio: 'inherit', env: ghEnv }).status ?? 2);
   const r = spawnSync(ghCmd, ghArgv, { cwd: o.repo, stdio: ['inherit', 'pipe', 'inherit'], encoding: 'utf8', env: ghEnv });
   process.stdout.write(r.stdout || '');
   if (r.status !== 0) process.exit(r.status ?? 2);
+  recordLink(o, r.stdout || '');
+  if (!hasLooseToken(body)) return;
   const pr = /\/pull\/(\d+)/.exec(r.stdout || '')?.[1];
   const err = pr ? linkPr(o.repo, Number(pr), body) : 'gh did not print the PR url';
   if (err) { console.error(`pr-open: the PR is open, but its file links were not expanded: ${err}. Fix and run pr-guide-links.ts ${o.repo} ${pr ?? '<pr-number>'}.`); process.exit(3); }
+}
+
+/** The branch the PR is from: `--head`, else the one checked out in --repo. */
+function branchOf(o: OpenArgs): string {
+  return headOf(o) || spawnSync('git', ['-C', o.repo, 'branch', '--show-current'], { encoding: 'utf8' }).stdout.trim();
+}
+
+/** Link the new PR to its ledger row (see the header). Best effort: every failure is a stderr warning. */
+function recordLink(o: OpenArgs, ghOut: string): void {
+  try {
+    const branch = branchOf(o);
+    const item = itemFor(o.item, process.env.MAESTRO_ITEM, branch);
+    const pr = parsePrUrl(ghOut);
+    const vault = o.vault || LEDGER_ROOT || VAULT_ROOT;
+    const project = o.project || CONFIGURED_PROJECT;
+    if (!item) { if (o.item || process.env.MAESTRO_ITEM) console.error(`pr-open: the PR is open, but the ledger id ${JSON.stringify(o.item || process.env.MAESTRO_ITEM)} is not a well-formed id, so no row was linked.`); return; }
+    if (!pr) { console.error('pr-open: the PR is open, but gh did not print a github.com pull URL, so the ledger row was not linked.'); return; }
+    if (!vault || !project) { console.error('pr-open: the PR is open, but no ledger is configured (--vault and --project, or LEDGER_ROOT and project), so the row was not linked.'); return; }
+    const store = openStore({ vault, project, dryRun: false });
+    const result = linkRowToPr(store, item, pr, branch, { now: () => new Date().toISOString(), today: () => new Date().toISOString().slice(0, 10) });
+    if (result === 'not-open') console.error(`pr-open: the PR is open, but ledger row ${item} is not an open row, so it was not linked.`);
+    else console.log(`pr-open: ${result === 'linked' ? 'linked' : 'already linked'} ${pr.repo}#${pr.number} to ledger row ${item}`);
+  } catch (e) { console.error(`pr-open: the PR is open, but linking the ledger row failed: ${(e as Error).message}`); }
 }
 
 const originUrl = (repo: string): string => spawnSync('git', ['-C', repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout || '';

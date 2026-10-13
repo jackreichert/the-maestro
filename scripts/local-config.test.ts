@@ -424,6 +424,13 @@ test('twin_flow_repos: empty by default, list from the file, environment wins', 
     assert.equal(show({ MAESTRO_TWIN_FLOW_REPOS: '' }).TWIN_FLOW_REPOS, '(unset)');
 });
 
+test('repo_owners: empty by default, list from the file, environment wins', () => {
+    assert.equal(show().REPO_OWNERS, '(unset)');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('repo_owners: widget=acme, gadget=acme'));
+    assert.equal(show().REPO_OWNERS, 'widget=acme, gadget=acme');
+    assert.equal(show({ MAESTRO_REPO_OWNERS: 'only=one' }).REPO_OWNERS, 'only=one');
+});
+
 test('copilot_orgs: empty by default, list from the file, environment wins', () => {
     assert.equal(show().COPILOT_ORGS, '(unset)');
     write(join(home, '.config', 'the-maestro', 'config.md'), block('copilot_orgs: org_a, org_b'));
