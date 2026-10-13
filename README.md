@@ -1083,6 +1083,16 @@ exit 0
 
 Make it executable, check it with `git push --dry-run origin local/private` (must be refused) and `git push --dry-run origin <public-branch>` (must pass), and never pass `-u` for the local branch.
 
+That push hook can only reject a commit that already exists. Put this next to it as `pre-commit`, so a staged test or fixture is refused before the commit:
+
+```sh
+#!/bin/sh
+# pre-commit: same private-pattern list as pre-push, on the staged diff only.
+script="$(git rev-parse --show-toplevel)/scripts/fixture-names.ts"
+[ -f "$script" ] || exit 0
+exec node "$script"
+```
+
 ## Safety guarantees
 
 The honest question for every rule is whether it is **enforced at runtime** (a script refuses, so breaking it takes deliberate effort) or only a **convention** the agent is asked to follow (the skill text and the brief say so, and nothing stops a harness that ignores them).

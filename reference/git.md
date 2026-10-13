@@ -261,7 +261,9 @@ changes (renames, moves, reformats) in their own commit, never mixed with behavi
 same commit as the code they cover; each commit ordered so the tree still works if you stop there.
 A task finished in one sitting is still usually several commits. Conventional Commits format — the
 global `commit-msg` hook rejects anything else. Full rules in the global **Slice commits for
-review** section.
+review** section. That hook lives outside this repo; run `node scripts/fixture-names.ts` from it
+so a staged test or fixture cannot add a private name the pre-push pattern list already rejects
+(the script exits non-zero when that list cannot be read).
 
 This matters more for dispatched work than for the user's own: they did not watch you write it, so the
 commit boundaries are the only narrative they get. A single "implement the thing" commit throws that
