@@ -44,6 +44,11 @@ export interface PrCard {
   twinOf?: number;
   /** The open PR this one is stacked on. */
   stackedOn?: number;
+  /**
+   * Set on a staging PR that must wait for its develop twin: the twin to wait on, or `{}` when none was found. Absent on every other PR,
+   * and once the twin has merged. Read from the PR cache, so it is as old as `prData.fetchedAt`.
+   */
+  waitsOnDevelop?: { number?: number; url?: string };
   /** The repo is in `self_review_repos`: only the user reviews it, so the client lists it apart from the org's PRs. Set only when true. */
   selfReview?: boolean;
   /** When the PR was opened; absent when the PR cache predates the field. */
@@ -169,11 +174,18 @@ function prCards(config: PageConfig, mine: Pr[], all: Pr[]): PrCard[] {
   return pairTwins(config, mine).flatMap((row) => [row.dev && prCard(row.dev, all, config), row.stg && prCard(row.stg, all, config, row.dev)]).filter((c): c is PrCard => !!c);
 }
 
+/** `waitsOnDevelop` for a staging PR whose develop twin is unmerged or unknown; nothing for a PR the check does not apply to or whose twin has merged. */
+function waitOf(p: Pr): Pick<PrCard, 'waitsOnDevelop'> {
+  if (p.baseRefName !== 'staging' || p.developTwin === undefined || p.developTwin?.merged) return {};
+  return { waitsOnDevelop: p.developTwin ? { number: p.developTwin.number, url: p.developTwin.url } : {} };
+}
+
 function prCard(p: Pr, all: Pr[], config: PageConfig, twinOf?: Pr): PrCard {
   const parent = stackParent(p, all);
   return {
     repo: p.repo, short: p.short, number: p.number, title: p.title, url: p.url, stream: p.stream, base: p.baseRefName, head: p.headRefName,
     isDraft: p.isDraft, ci: p.ci, mergeable: p.mergeable, mergeStateStatus: p.mergeStateStatus, unresolved: p.unresolved, review: p.reviewDecision,
     flags: prFlagNames(p), ...(p.createdAt ? { createdAt: p.createdAt } : {}), ...(p.approvers ? { approvers: p.approvers } : {}), ...(p.changesBy ? { changesBy: p.changesBy } : {}), ...(isSelfReview(p.repo, config.selfReviewRepos ?? []) ? { selfReview: true } : {}), ...(twinOf ? { twinOf: twinOf.number } : {}), ...(parent ? { stackedOn: parent.number } : {}),
+    ...waitOf(p),
   };
 }

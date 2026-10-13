@@ -206,7 +206,7 @@ flowchart LR
     PS -. "blocked until then" .-> OK
 ```
 
-The twin rule applies only to repos named in `twin_flow_repos`; an empty list turns it off. The PR board shows each twin as "develop twin merged, OK to merge" or "blocked on develop twin #N" and never calls a blocked one ready.
+The twin rule applies only to repos named in `twin_flow_repos`; an empty list turns it off. The PR board shows each twin as "develop twin merged, OK to merge" or "blocked on develop twin #N" and never calls a blocked one ready. The Podium's Open PRs tab applies the same rule to any repo that has both a `develop` and a `staging` branch: a staging PR stays out of the Ready band while its develop twin (an open or merged PR on the same head branch, or one differing only by a `-staging` or `-develop` suffix) is unmerged or cannot be found, and its row says which twin it waits on. The branch check and the merged twins are read once per refresh and cached, never on a page load.
 
 ### The scripts shelf
 

@@ -85,6 +85,7 @@ const CSS = `${BASE_CSS}
   .pr-t a.title { color: var(--text-primary); text-decoration: none; font-weight: var(--weight-medium); overflow-wrap: anywhere; }
   @media (hover: hover) { .pr-t a.title:hover { color: var(--accent); text-decoration: underline; } }
   .sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+  .sub .wait { color: var(--warning); font-weight: var(--weight-semibold); }
   .num { font-family: var(--font-mono); color: var(--text-secondary); }
   .base { font: 500 var(--text-xs)/1.3 var(--font-mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .base.staging { color: var(--accent); }
@@ -111,7 +112,7 @@ const CSS = `${BASE_CSS}
 `;
 
 const MOVES: { id: Move; word: string; title: string; note: string; empty: [string, string] }[] = [
-  { id: 'ready', word: 'ready to merge', title: 'Ready to merge', note: 'Approved, no open threads and no conflicts. Pinned here until merged.', empty: ['Nothing is ready to merge.', 'tacet'] },
+  { id: 'ready', word: 'ready to merge', title: 'Ready to merge', note: 'Approved, no open threads and no conflicts; a staging PR also needs its develop twin merged. Pinned here until merged.', empty: ['Nothing is ready to merge.', 'tacet'] },
   { id: 'yours', word: 'your move', title: 'Your move', note: 'Clean and out of draft. These wait on your review or your merge.', empty: ['Nothing waits on your review.', 'tacet'] },
   { id: 'orchestra', word: 'orchestra fixing', title: 'The orchestra is fixing', note: 'Failing CI, conflicts, open threads or changes requested. Fixes still go out without a new review.', empty: ['Nothing needs fixing.', 'a tempo'] },
   { id: 'drafts', word: 'drafts', title: 'Drafts', note: 'Still being written. They join your move when they leave draft.', empty: ['No drafts open.', 'rest'] },
@@ -348,11 +349,22 @@ export class OpenPrs extends HTMLElement {
         p.selfReview ? h('span', {}, 'self-review') : null,
         p.ticket ? refLink(p.ticket) : null,
         p.stackedOn !== undefined ? h('span', {}, `stacked on #${p.stackedOn}`) : null,
-        p.twins[0] !== undefined ? h('span', {}, `twin of #${p.twins[0]}`) : null),
+        p.twins[0] !== undefined ? h('span', {}, `twin of #${p.twins[0]}`) : null,
+        this.#waits(p)),
       this.#approvers(p)),
       h('span', { class: `base${p.base === 'staging' ? ' staging' : ''}`, title: `Base: ${p.base}` }, `→ ${PROTECTED.has(p.base) ? p.base : 'branch'}`),
       h('span', { class: 'gates' }, this.#gate('CI', CI[p.ci ?? ''] ?? CI.NONE), this.#gate('Merge', MERGE[p.mergeable]), this.#gate('Review', review), this.#gate('Threads', threads)),
       h('span', { class: 'age' }, p.ageDays === undefined ? '' : askAge(p.ageDays)));
+  }
+
+  /** Why a staging PR is not ready: it waits on its develop twin, linked, or none was found. Nothing for any other PR. */
+  #waits(p: Drawn): Node | null {
+    const w = p.waitsOnDevelop;
+    if (!w) return null;
+    if (w.number === undefined) return h('span', { class: 'wait' }, 'Waits on develop twin: none found');
+    const link = refLink({ label: `Waits on develop twin #${w.number}`, ...(w.url ? { url: w.url } : {}) });
+    if (link instanceof HTMLElement) link.classList.add('wait');
+    return link instanceof HTMLElement ? link : h('span', { class: 'wait' }, link);
   }
 
   /** The approvers behind an approved PR, folded to a count so a long list does not push the table around. A native disclosure, so it works by keyboard. */
