@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { linkNotePaths, noteExistsIn, vaultRootFor } from './links.ts';
+import { linkAskRefs, linkNotePaths, noteExistsIn, noteOfUri, shortUrlLabel, uriToNotePaths, vaultRootFor } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
 import { renderPage, ticketNoteRef } from './render.ts';
+import { carryInline, fillStub } from './inline.ts';
 import type { Item, PageConfig, PageInput } from './render.ts';
 
 const FILES = new Set([
@@ -102,4 +103,77 @@ test('a ticket link points at Archive/ once the ticket is archived, and stays pu
     assert.equal(ticketNoteRef(cfg, 'fake-app-3').url, uri('Projects/fake-app/Tickets/fake-app-3'));
   assert.equal(ticketNoteRef(cfg, 'fake-app-2').url, uri('Projects/fake-app/Tickets/Archive/fake-app-2'));
   assert.equal(ticketNoteRef(config(undefined), 'fake-app-2').url, uri('Projects/fake-app/Tickets/fake-app-2'), 'no lookup, no rewrite');
+});
+
+const SIB = new Set(['Projects/fake-app/Plans/2026-10-06-fake-checklist.md', 'Projects/fake-app/Research/a b.md']);
+const envSib: NoteLinkEnv = { vaultName: 'Fake Vault', projects: ['fake-app'], exists: (p) => SIB.has(p) || FILES.has(p) };
+const checklistUri = 'obsidian://open?vault=Fake%20Vault&file=Projects%2Ffake-app%2FResearch%2F2026-10-06-fake-checklist';
+
+test('an obsidian URI with encoded slashes resolves to its note; a wrong sibling folder is repaired; other vaults, traversal and secrets are not', () => {
+  assert.equal(noteOfUri(uri('Projects/fake-app/Plans/fake-design'), env), 'Projects/fake-app/Plans/fake-design.md');
+  assert.equal(noteOfUri(`${uri('Projects/fake-app/Plans/fake-design')}`, env), 'Projects/fake-app/Plans/fake-design.md');
+  assert.equal(noteOfUri(checklistUri, envSib), 'Projects/fake-app/Plans/2026-10-06-fake-checklist.md');
+  assert.equal(noteOfUri(uri('Projects/fake-app/Research/a b'), envSib), 'Projects/fake-app/Research/a b.md');
+  assert.equal(noteOfUri(checklistUri.replace('Fake%20Vault', 'Other'), envSib), null);
+  assert.equal(noteOfUri(uri('../Plans/2026-01-02-fake-questions'), env), null);
+  assert.equal(noteOfUri(uri('Projects/fake-app/.env'), env), null);
+  assert.equal(noteOfUri('javascript:alert(1)', env), null);
+  assert.equal(noteOfUri('obsidian://new?vault=Fake%20Vault&file=Plans%2Ffake-design', env), null);
+});
+
+test('uriToNotePaths swaps a resolving URI for its path and leaves the rest (punctuation included) alone', () => {
+  assert.equal(uriToNotePaths(`See ${checklistUri}.`, envSib), 'See Projects/fake-app/Plans/2026-10-06-fake-checklist.md.');
+  const gone = `See ${uri('Plans/missing')} now`;
+  assert.equal(uriToNotePaths(gone, envSib), gone);
+  assert.equal(uriToNotePaths(`See ${checklistUri}`, undefined), `See ${checklistUri}`);
+});
+
+test('the Markdown page links an ask note given as an obsidian URI, in the wrong folder, instead of dropping it', () => {
+  const p = render(config((x) => SIB.has(x)), { awaiting: [item({ text: `Ship it? Checklist: ${checklistUri} . Ticket x.` })] });
+  assert.ok(p.includes(`[Projects/fake-app/Plans/2026-10-06-fake-checklist.md](${uri('Projects/fake-app/Plans/2026-10-06-fake-checklist')})`), p);
+});
+
+test('linkAskRefs links URIs and paths with the note name, shortens PR and ticket URLs, and leaves the unresolved as written', () => {
+  const t = `Note ${checklistUri}, path Plans/fake-design.md, PR https://github.com/o/r/pull/590. Jira https://x.atlassian.net/browse/AB-12 gone ${uri('Plans/missing')}`;
+  const out = linkAskRefs(t, envSib);
+  assert.ok(out.includes(`[2026-10-06-fake-checklist](${uri('Projects/fake-app/Plans/2026-10-06-fake-checklist')}),`), out);
+  assert.ok(out.includes(`[Plans/fake-design.md](${uri('Projects/fake-app/Plans/fake-design')}),`), out);
+  assert.ok(out.includes('[#590](https://github.com/o/r/pull/590).'), out);
+  assert.ok(out.includes('[AB-12](https://x.atlassian.net/browse/AB-12)'), out);
+  assert.ok(out.endsWith(uri('Plans/missing')));
+  assert.equal(linkAskRefs('PR https://github.com/o/r/pull/7', undefined), 'PR [#7](https://github.com/o/r/pull/7)');
+});
+
+test('shortUrlLabel: GitHub item, ticket, long host, and a short URL left as written', () => {
+  assert.equal(shortUrlLabel('https://github.com/o/r/issues/0042'), '#42');
+  assert.equal(shortUrlLabel('https://example.test/' + 'a'.repeat(60)), 'example.test/…');
+  assert.equal(shortUrlLabel('https://example.test/a'), null);
+});
+
+test('the Markdown page nests a long ask context as short bullets under its line, after the answer stub, and leaves a short one on the line', () => {
+  const long = 'Pick? Options: (1) go now; (2) wait. Recommend (1). Stakes: it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.';
+  const lines = render(config(), { awaiting: [item({ id: 'ab12', text: long }), item({ id: 'cd34', text: 'Short? Just this.' })] }).split('\n');
+  const i = lines.findIndex((l) => l.startsWith('- [ ] `ab12`'));
+  assert.deepEqual(lines.slice(i, i + 7), [
+    '- [ ] `ab12` **Pick?**', '  > answer: ', '  - Options:', '  - 1. go now', '  - 2. wait.', '  - Recommend (1).',
+    '  - **Stakes:** it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.',
+  ]);
+  assert.ok(lines.includes('- [ ] `cd34` **Short?** Just this.'));
+});
+
+test('an answer typed under a laid-out context survives carryInline and fillStub, with no second stub', () => {
+  const long = 'Pick? Options: (1) go now; (2) wait. Recommend (1). Stakes: it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.';
+  const page = render(config(), { awaiting: [item({ id: 'ab12', text: long, answer: '1' })] });
+  const carried = carryInline(page, { answers: { ab12: 'actually 2' }, discuss: {}, ticks: [], priorities: null }, page);
+  assert.equal(carried.split('\n').filter((l) => l.includes('> answer:')).length, 1, carried);
+  assert.ok(carried.includes('> answer: actually 2'), carried);
+  const empty = render(config(), { awaiting: [item({ id: 'ab12', text: long })] });
+  const filled = fillStub(empty, 'ab12', 'go') as string;
+  assert.equal(filled.split('\n').filter((l) => l.includes('> answer:')).length, 1, filled);
+});
+
+test('linkAskRefs leaves an existing Markdown link and a code span exactly as written', () => {
+  const t = 'See [the PR](https://github.com/o/r/pull/5) first, spec at `Plans/fake-design.md`, and `https://github.com/o/r/pull/6`, then https://github.com/o/r/pull/7.';
+  const out = linkAskRefs(t, envSib);
+  assert.equal(out, t.replace('then https://github.com/o/r/pull/7.', 'then [#7](https://github.com/o/r/pull/7).'));
 });

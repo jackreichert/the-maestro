@@ -3,7 +3,9 @@
  * Nothing here reads a file, runs a command or knows an org, repo or vault by name; `generate.ts` supplies all of it.
  * The page is ids and counts only, never patient or personal data.
  */
-import { linkNotePaths, obsidianUri, ticketNotePath } from './links.ts';
+import { askBlocks } from './ask-format.ts';
+import type { AskBlock } from './ask-format.ts';
+import { linkNotePaths, obsidianUri, ticketNotePath, uriToNotePaths } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
 import type { DevelopTwin } from './twin.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
@@ -172,7 +174,7 @@ export const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
   (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, liveOrArchived(cfg, ticketNotePath(cfg.ticketNotePath, id))), nowrap: true } : { label: id, nowrap: true });
 
 /** The lookup `linkNotePaths` needs for `item`: a bare note path belongs to the project of its ticket (the id minus its number, as `ticketNotePath` reads it), else its stream's repo, else the page's project. */
-function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | undefined {
+export function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | undefined {
   if (!cfg.noteExists) return undefined;
   const streamRepos = Object.entries(cfg.repoStreams).filter(([, s]) => s === item.stream).map(([repo]) => repo);
   const projects = [ticket?.replace(/-\d+$/, ''), ...streamRepos, cfg.project].filter((p): p is string => !!p);
@@ -347,9 +349,16 @@ export function splitAsk(text: string): { needed: string; context: string } {
   return q === -1 ? { needed: clean, context: '' } : { needed: clean.slice(0, q + 1), context: clean.slice(q + 1).trim() };
 }
 
+/** A long ask's context as nested bullets under its line, one per short paragraph or list item, a `Label:` set in bold; `link` links the note paths in a stretch of text. */
+function contextLines(blocks: AskBlock[], link: (text: string) => string): string[] {
+  return blocks.flatMap((b) => (b.kind === 'p'
+    ? [`  - ${b.label ? `**${boldSafe(b.label)}:** ` : ''}${link(b.text)}`]
+    : b.items.map((it, i) => `  - ${/^\d/.test(b.marks[i] ?? '') ? `${b.marks[i]}.` : `(${b.marks[i]})`} ${link(it)}`)));
+}
+
 /**
  * Every ask, grouped under its stream's heading, one list item each: the ledger id, the full decision, its context, the
- * links, and the age when old. The `> answer:` stub is the line directly under the item (inline.ts reads it back by
+ * links, and the age when old. The `> answer:` stub is the line directly under the item, before any context bullets (inline.ts reads it back by
  * that shape), so the reply sits with the ask. Text is never clipped: the full ask stays readable.
  */
 function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<string, string>, streams: string[], today: string): string[] {
@@ -362,14 +371,16 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
     out.push(`### ${stream} (${mine.length})`, '');
     for (const a of mine) {
       const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
-      const { needed, context } = splitAsk(a.text);
       const env = noteEnv(cfg, a, a.ticket || tickets.get(a.id));
+      const { needed, context } = splitAsk(uriToNotePaths(a.text, env));
       const age = daysBetween(a.date, today);
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
       const bold = linkNotePaths(needed, env, escBold);
-      const text = [boldSafe(needed) ? `**${bold}**` : '', linkNotePaths(plain(context), env, escLinkChars)].filter(Boolean).join(' ');
+      const blocks = askBlocks(plain(context));
+      const flat = blocks.length <= 1 && blocks[0]?.kind !== 'list';
+      const text = [boldSafe(needed) ? `**${bold}**` : '', flat ? linkNotePaths(plain(context), env, escLinkChars) : ''].filter(Boolean).join(' ');
       const fields = askBits(a).map((b) => boldSafe(dropLinks(b).replace(/\bwww\.\S*/gi, ''))).join(' · ');
-      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, `  > answer: ${a.answer ?? ''}`, ...(a.discussing === undefined ? [] : [`  > discuss: ${a.discussing}`.trimEnd()]));
+      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, `  > answer: ${a.answer ?? ''}`, ...(a.discussing === undefined ? [] : [`  > discuss: ${a.discussing}`.trimEnd()]), ...(flat ? [] : contextLines(blocks, (t) => linkNotePaths(t, env, escLinkChars))));
     }
     out.push('');
   }

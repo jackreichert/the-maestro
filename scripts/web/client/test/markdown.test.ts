@@ -126,6 +126,19 @@ test('autolink never links an unsafe scheme or an obsidian action other than ope
   assert.ok(!renderMarkdown('https://example.test/a').includes('<a'));
 });
 
+test('an ask note link with encoded slashes is one anchor; no other scheme or Obsidian action becomes one', () => {
+  const ok = 'obsidian://open?vault=AryaVault&file=Projects%2Fexample-app%2FResearch%2Fnote';
+  const html = renderMarkdown(`Read ${ok} and [the note](${ok}).`, { autolink: true, breaks: true });
+  assert.equal(html.match(/<a /g)?.length, 2, html);
+  assert.equal(html.match(/href="obsidian:\/\/open\?vault=AryaVault&#38;file=Projects%2Fexample-app%2FResearch%2Fnote"/g)?.length, 2, html);
+  const bad = ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,x', 'vbscript:x', 'file:///etc/passwd', 'obsidian://new?vault=V&file=f', 'obsidian://open?vault=V&file=f&x=1', 'obsidian://adv-uri?vault=V'];
+  for (const u of bad) {
+    const out = renderMarkdown(`[x](${u}) ${u}`, { autolink: true });
+    assert.ok(!out.includes('<a'), `${u}: ${out}`);
+    assert.ok(!/href=/i.test(out), `${u}: ${out}`);
+  }
+});
+
 test('autolink leaves an explicit Markdown link alone and escapes the text around a URL', () => {
   const html = renderMarkdown('[label](https://example.test/a) <b>https://example.test/b</b>', { autolink: true });
   assert.equal(html.match(/<a /g)?.length, 2);

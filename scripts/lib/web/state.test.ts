@@ -124,7 +124,7 @@ test('an ask with line breaks takes its first line as the decision and keeps eve
 
 test('an ask on one line is cut after its first question mark, and nothing after it is lost', () => {
   const [ask] = buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'ml02', date: '2026-10-06', text: 'Which one? (1) a? (2) b', stream: 'Alpha' }] } })).asks;
-  assert.deepEqual([ask?.needed, ask?.context], ['Which one?', '(1) a? (2) b']);
+  assert.deepEqual([ask?.needed, ask?.context], ['Which one?', '1. a?\n2. b']);
 });
 
 test('paste asks reach the state as asks that carry their block path and no decision fields', () => {
@@ -185,4 +185,18 @@ test('a staging PR carries waitsOnDevelop until its develop twin has merged; oth
   assert.equal(cards({ developTwin: twin(true) })[0]?.waitsOnDevelop, undefined, 'merged twin: free to merge');
   assert.equal(cards({})[0]?.waitsOnDevelop, undefined, 'repo without the flow (field absent) is unaffected');
   assert.equal(buildState(inputs({ prs: [pr(14, { developTwin: twin(false) })] })).prs[0]?.waitsOnDevelop, undefined, 'a develop PR never waits');
+});
+
+test('an ask context carries links the server built: a vault URI in the wrong folder resolves to its note, a PR URL gets a short label', () => {
+  const files = new Set(['Projects/proj/Plans/fake-checklist.md']);
+  const config: PageConfig = { ...CONFIG, project: 'proj', noteExists: (p) => files.has(p) };
+  const text = 'Which? See obsidian://open?vault=Vault&file=Projects%2Fproj%2FResearch%2Ffake-checklist and https://github.com/o/r/pull/590 .';
+  const [ask] = buildState(inputs({ config, status: { ...inputs().status, awaiting: [{ id: 'ln01', date: '2026-10-06', text, stream: 'Alpha' }] } })).asks;
+  assert.equal(ask?.context, 'See [fake-checklist](obsidian://open?vault=Vault&file=Projects%2Fproj%2FPlans%2Ffake-checklist) and [#590](https://github.com/o/r/pull/590) .');
+});
+
+test('a dense one-line ask context reaches the card as short paragraphs and a list, with nothing lost', () => {
+  const text = 'Pick? Options: (1) go now; (2) wait. Recommend (1). Stakes: it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.';
+  const [ask] = buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'dn01', date: '2026-10-06', text, stream: 'Alpha' }] } })).asks;
+  assert.equal(ask?.context, 'Options:\n\n1. go now\n2. wait.\n\nRecommend (1).\n\n**Stakes:** it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.');
 });
