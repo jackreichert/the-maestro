@@ -110,7 +110,7 @@ test('validate refuses a missing folder; the type is a registered singleton stan
   assert.deepEqual([cont.interval, cont.singleton, cont.renews, cont.backoff, cont.network], [300, true, true, false, false]);
 });
 
-test('in the loop: a failure is an actionable event and success is silent', () => {
+test('in the loop: a failure is an info line (the quiet-wake rule: it never wakes) and success is silent', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cont-loop-'));
   const target = mkdtempSync(join(tmpdir(), 'cont-target-'));
   const r = rig();
@@ -120,7 +120,7 @@ test('in the loop: a failure is an actionable event and success is silent', () =
   assert.deepEqual(quiet.events, []);
   r.failSnapshot(true);
   const failed = tick({ dir, types, ctx: { run: () => ({ status: 0, stdout: '', stderr: '' }) }, config: { quietHours: 'off' }, now: T0 + 600_000 });
-  assert.deepEqual(failed.events.map((e) => [e.summary, e.actionable]), [['continuity tick failed: snapshot: disk full', true]]);
+  assert.deepEqual(failed.events.map((e) => [e.summary, e.actionable]), [['continuity tick failed: snapshot: disk full', false]]);
 });
 
 test('a tick whose snapshot was cut off after reading some worktrees is not a failure; one that read none is', () => {
