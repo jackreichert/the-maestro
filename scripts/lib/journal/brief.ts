@@ -27,6 +27,8 @@ export interface BriefInput {
     /** Whether this brief's agent writes to the repo (and so holds the repo claim). */
     writer: boolean;
     reportPath: string;
+    /** How the agent runs journal.ts (for the retro command); default `journal.ts`. */
+    journal?: string;
 }
 
 /** The brief and report file paths for an item under a directory. */
@@ -53,6 +55,14 @@ export function libraryBlock(run: (() => { status: number | null; stdout: string
     return `Library pages for this task: unavailable (library-brief failed, exit ${r.status ?? 'none'}${why ? `: ${why}` : ''}); look in the vault's Projects folder yourself.`;
 }
 
+/** The `## Retro` section: the exact command, with the item id filled in, so the agent records its lessons before it hands back. `done` refuses the item without one. */
+export const retroSection = (id: string, journal: string): string => [
+    '## Retro',
+    'Before you hand back, while you still remember, write your retro: every lesson you got from the code or from the user, and anything else a later agent should know. One `--lesson` each, one line, starting with its source:',
+    `\`\`\`bash\n${journal} agent-retro ${id} --lesson "code: <how the code really behaves>" --lesson "jack: <a preference or correction from the user>" --lesson "process: <what to do differently next time>" --model "<name>" --used "<marks>"\n\`\`\``,
+    'A fact with evidence goes through `journal.ts learned` first; pass its id with `--learned <id>`. Nothing worth keeping: `--nothing "<why>"` instead of lessons. No secrets or PHI: names, ids and counts only. This item cannot be closed with `done` until its retro exists. Say in your report that you wrote it.',
+].join('\n\n');
+
 /** The brief file's text. */
 export function briefText(b: BriefInput): string {
     const facts = [
@@ -66,6 +76,7 @@ export function briefText(b: BriefInput): string {
         `## Done when\n\n${b.doneWhen?.trim() || 'The dispatcher gave no criteria. Before you start, write the criteria you will check yourself against as the first lines of your report file.'}`,
         `## Library\n\n${b.library}`,
         `## Report\n\nWrite the full report to ${b.reportPath}. Hand back only a headline paragraph under ${HAND_BACK_WORDS} words plus that path: outcome, numbers, links, decisions needed, what is left open. If tests failed or a step was skipped, say so in the headline.\n\nThe report file states, so the next reader can pick the work up without you: the done criteria and whether each was met; your confidence and what it was measured on (a command and its result, not a feeling); what you tried that failed, with why; and who owns the work if you stop part-way (name the branch or worktree and the next step).`,
+        retroSection(b.id, b.journal ?? 'journal.ts'),
         `## Standing rules\n\n${b.standing.trim()}`,
     ];
     return sections.filter(Boolean).join('\n\n') + '\n';
