@@ -77,7 +77,7 @@ test('journal.ts answer and discuss: write once, refuse a closed ask, show the a
   const vault = mkdtempSync(join(tmpdir(), 'ans-cli-'));
   const home = mkdtempSync(join(tmpdir(), 'ans-home-'));
   const journal = (...args: string[]) => spawnSync(process.execPath, [new URL('../../journal.ts', import.meta.url).pathname, ...args, '--vault', vault, '--project', 'p', '--allow-unmarked'], { encoding: 'utf8', env: { ...process.env, HOME: home, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' } });
-  const ask = journal('ask', 'ship it?', '--kind', 'question');
+  const ask = journal('ask', 'ship it?', '--kind', 'question', '--searched', 'test fixture');
   assert.equal(ask.status, 0, ask.stderr);
   const id = ask.stdout.trim().split(/\s+/)[1] as string;
   const first = journal('answer', id, '--text', 'yes', '--source', 'page');

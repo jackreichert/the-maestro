@@ -29,6 +29,8 @@
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             add --how-do-i when the question is a how-do-I the library could not answer: it is also logged as a `miss` (source ask)
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
+ *   journal.ts ask "<question>" --searched "<where I looked: docs, code, library, ledger>"   required: ask refuses without it, so a question that could have been answered is caught first
+ *   journal.ts ask "<question>" ... --door two-way --default "<what to do>"   acted on and logged as a note, not queued; add --outward (Slack, Jira, email, anything another person sees) and it always asks
  *   journal.ts ask "<question>" [--recommend "<what you would do>"] [--door one-way|two-way] [--default "<what happens if silent>"] [--decide-by 2026-10-09|2d|6h] [--class expedite|fixed-date|standard|intangible]
  *                                             a decision made cheap to answer. No --door means one-way; a one-way ask is refused a --default; no --recommend warns. `ask --help` prints this
  *   journal.ts ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
@@ -165,6 +167,8 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields } from './lib/journal/ask-fields.ts';
+import { gateConflicts, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts';
+import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
@@ -555,6 +559,21 @@ function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
     return fields;
 }
 
+/**
+ * The gate of an `ask` (--searched, --outward), checked by the rule table in ask-gate.ts. A refusal exits 1 before anything is
+ * written. Any other command that is given the flag refuses rather than ignore it.
+ */
+function askGateFromArgs(ask: boolean): AskGate {
+    if (!ask) {
+        const stray = ['searched', 'outward'].filter((f) => has(f));
+        if (stray.length) die(`--${stray.join(', --')} only go on \`ask\`.`);
+        return {};
+    }
+    const { gate, errors } = parseAskGate({ searched: { given: has('searched'), value: arg('searched') }, outward: has('outward') });
+    if (errors.length) die(errors.join('\n'));
+    return gate;
+}
+
 /** `log <id> [note] --kind rework`: the item id the row names. It may be done or dropped (rework is found after use), so it is looked up among all item rows, by id or unique prefix; an unknown or ambiguous id exits 1. */
 function reworkTarget(text: string): string {
     const needle = text.split(/\s+/)[0] ?? '';
@@ -574,12 +593,17 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (kind === 'learned') die('A learned row is written only by `journal.ts learned`, which checks its fields and scans for secrets.');
     if (kind === 'miss') die('A miss row is written only by `journal.ts miss`, which scans the question and keeps one row per question per day.');
     if (queued && kind !== 'wip') die('queue takes no --kind: a queued item is a to-do that has not started.');
+    if (!ask && kind === 'question') die('A question goes through `ask`, which requires --searched: journal.ts ask "<question>" --searched "<where I looked>".');
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
     const refs = rule ? ruleRefs() : refsFromArgs();
+    const askGate = askGateFromArgs(ask);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
     const paste = ask ? pasteFile(kind) : undefined;
     const gate = gateFlag(kind);
     const askFields = askFieldsFromArgs(ask, Boolean(paste));
+    if (ask) { const conflicts = gateConflicts(askFields, askGate); if (conflicts.length) die(conflicts.join('\n')); }
+    // The door routes: a two-way ask with a default is acted on and logged as a note, so it never reaches the board.
+    const routed = ask && !paste ? routeAsk(text, askFields, askGate) : { acted: null };
 
     // --settles closes the named items once the note is written; check the ids first so a typo writes nothing.
     const settles = parseList('settles');
@@ -601,6 +625,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         date: arg('date', today()),   // backdate when reconstructing
         kind,
         text,
+        ...(routed.acted !== null ? routed.row : {}),
         parent,
         reworks: reworked,
         repo: arg('repo') || undefined,
@@ -608,7 +633,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         ...(kind === 'wip' ? recoveryFlags() : {}),
         stream: streamOrNone(arg('stream')),
         refs,
-        pending: ask && kind === 'decision' ? true : undefined,
+        pending: ask && kind === 'decision' && routed.acted === null ? true : undefined,
         queued: queued ? true : undefined,
         // A new in-flight item is leased to its window by its own row: nobody else knows the id yet, so there is no race to settle.
         leaseTtl: lease && kind === 'wip' ? leaseTtl() : undefined,
@@ -616,7 +641,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         paste,
         gate,
         transitioned: transitionedFlag(),
-        ...askFields,
+        ...(routed.acted === null ? { ...askFields, ...askGate } : { searched: askGate.searched }),
         ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
@@ -624,7 +649,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     append(entry);
     const settled = settlePlan ? settleItems(settleCtx, entry.id, settlePlan, usageFromArgs) : undefined;
     if (!dryRun) render(true);
-    console.log(`${queued ? 'queued' : entry.kind}  ${entry.id}  ${entry.text}`);
+    console.log(`${queued ? 'queued' : routed.acted !== null ? 'acted' : entry.kind}  ${entry.id}  ${entry.text}`);
     settled?.closed.forEach((i) => console.log(`      settled  ${i.id}  ${i.text}`));
     settled?.parents.forEach((p) => console.log(`      ${parentPromptLine(p)}`));
     settlePlan?.notOpen.forEach((i) => console.log(`      not open  ${i.id}  ${i.text}`));
@@ -1291,6 +1316,7 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
         append({
             id: newId(readLedger()), ts: now(), date: today(), kind: 'question', text, repo: ask.repo, refs: [],
             recommend: 'Move them now; the next roll then removes the worktree and the files stay in the env store.', door: 'two-way',
+            searched: 'the roll worktree scan (branch-sweep) and the open asks',
             model: 'unrecorded', used: ['skill:the-maestro', 'tool:branch-sweep'],
         });
         if (!dryRun) render(true);

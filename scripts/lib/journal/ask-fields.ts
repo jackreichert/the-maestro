@@ -18,7 +18,7 @@ export type AskClass = (typeof CLASSES)[number];
 export interface AskFields { recommend?: string; default?: string; door?: Door; by?: string; class?: AskClass }
 
 /** The part of a row these helpers read; anything may be there, so each field is checked before it is trusted. */
-export type AskRow = Partial<Record<'recommend' | 'default' | 'door' | 'by' | 'class', unknown>> & { kind?: string; paste?: unknown };
+export type AskRow = Partial<Record<'recommend' | 'default' | 'door' | 'by' | 'class', unknown>> & { kind?: string; paste?: unknown; outward?: unknown };
 
 /** One flag as the command line gave it: whether it was there at all, and its value (null when it had none). */
 export interface RawFlag { given: boolean; value: string | null }
@@ -27,7 +27,7 @@ export type RawAskFlags = Record<'recommend' | 'default' | 'door' | 'decide-by' 
 export const TEXT_MAX = 300;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
-const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+export const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const RELATIVE = /^(\d+)([hdw])$/;
 const DAY_MS = 86_400_000;
 
@@ -36,7 +36,7 @@ const isRealDate = (s: string): boolean => {
     const t = Date.parse(`${s}T00:00:00Z`);
     return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
 };
-const isText = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
+export const isText = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
 
 /** A decide-by as written (`2026-10-09`, `2026-10-09T14:00:00Z`, `2d`, `6h`, `1w`), normalised; null when it is none of those. */
 export function normaliseBy(raw: string, now: Date): string | null {
@@ -123,16 +123,17 @@ export function parseAskFields(flags: RawAskFlags, opts: { paste: boolean; now: 
  * True when the row carries a decision field. A class of `standard` alone does not count: every new ask is written with
  * it, so a plain ask reads and prints like a legacy one until it says something about its door, default, date or class.
  */
-export const hasAskFields = (r: AskRow): boolean => ['recommend', 'default', 'door', 'by'].some((k) => r[k as keyof AskRow] !== undefined) || (r.class !== undefined && r.class !== 'standard');
+export const hasAskFields = (r: AskRow): boolean => ['recommend', 'default', 'door', 'by'].some((k) => r[k as keyof AskRow] !== undefined) || r.outward === true || (r.class !== undefined && r.class !== 'standard');
 
 /** The door of an ask. Anything that is not exactly `two-way` (missing, misspelt, hand-edited) is one-way. */
 export const askDoor = (r: AskRow): Door => (r.door === 'two-way' ? 'two-way' : 'one-way');
 
 /**
- * What silence may do: the default of a two-way ask, else null. A one-way ask returns null even if its row carries a
- * default, so the door is enforced here at read time and not only when the row is written.
+ * What silence may do: the default of a two-way ask, else null. A one-way ask, and an `--outward` ask (anything another
+ * person sees), return null even if their row carries a default, so both are enforced here at read time and not only
+ * when the row is written.
  */
-export const autoDefault = (r: AskRow): string | null => (askDoor(r) === 'two-way' && isText(r.default) ? r.default.trim() : null);
+export const autoDefault = (r: AskRow): string | null => (askDoor(r) === 'two-way' && r.outward !== true && isText(r.default) ? r.default.trim() : null);
 
 export const askClass = (r: AskRow): AskClass => ((CLASSES as readonly string[]).includes(String(r.class)) ? (r.class as AskClass) : 'standard');
 
@@ -152,6 +153,7 @@ export function askBits(r: AskRow, max = 60): string[] {
     if (!hasAskFields(r)) return [];
     const bits: string[] = [r.door === 'two-way' || r.door === 'one-way' ? r.door : 'door not set: one-way'];
     const by = askBy(r);
+    if (r.outward === true) bits.push('outward: always asks');
     if (by) bits.push(`by ${byLabel(by)}`);
     if (askClass(r) !== 'standard') bits.push(askClass(r));
     if (isText(r.recommend)) bits.push(`rec: ${clipText(r.recommend.replace(/\s+/g, ' ').trim(), max)}`);
@@ -183,15 +185,19 @@ export function askFieldProblems(r: AskRow): string[] {
         const v = r[f];
         if (v !== undefined && (typeof v !== 'string' || v.trim().length > TEXT_MAX || CONTROL.test(v))) out.push(`${f} is not plain text of ${TEXT_MAX} characters or fewer`);
     }
+    if (r.outward !== undefined && r.outward !== true) out.push('outward is not true');
     if (r.default !== undefined && askDoor(r) !== 'two-way') out.push('carries a default but is not a two-way door: the default will never fire');
+    else if (r.default !== undefined && r.outward === true) out.push('carries a default but is outward: it always asks, so the default will never fire');
     return out;
 }
 
 export const ASK_USAGE = [
     'journal.ts ask "<question>" [--kind question|decision] [--stream S] [--ticket T] --model "<name>" --used "skill:x,tool:y"',
+    '    --searched "<where I looked>"           required: the docs, code, library page or ledger rows checked first; refused without it',
     '    [--recommend "<what you would do>"]   a position the user can accept; without one the ask is not ready (warns)',
     '    [--door one-way|two-way]               two-way = reversible. Missing is treated as one-way',
     '    [--default "<what happens if silent>"] two-way asks only; a one-way ask can never carry one (refused)',
+    '    [--outward]                            anything another person sees (Slack, Jira, email): always asks, never acted on a default',
     '    [--decide-by 2026-10-09|2d|6h|1w]      an ISO date, an ISO time with a zone, or relative; not in the past (alias: --by)',
     '    [--class expedite|fixed-date|standard|intangible]   default standard',
     'journal.ts ask "<what to run>" --paste <block-file>      a run-this ask; takes none of the fields above',

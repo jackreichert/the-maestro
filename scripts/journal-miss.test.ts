@@ -118,10 +118,10 @@ test('a secret-shaped query is not logged and the lookup still succeeds', () => 
 
 test('ask --how-do-i also logs a miss with source ask; a plain ask does not', () => {
   const f = fixture();
-  const plain = f.run('ask', 'Ship it on Friday?', ...MARKS);
+  const plain = f.run('ask', 'Ship it on Friday?', '--searched', 'test fixture', ...MARKS);
   assert.equal(plain.status, 0, plain.stderr);
   assert.deepEqual(f.rows().map((r) => r.kind), ['question']);
-  const how = f.run('ask', 'How do I rebuild the orchard index?', '--how-do-i', '--repo', 'fake-repo', ...MARKS);
+  const how = f.run('ask', 'How do I rebuild the orchard index?', '--how-do-i', '--repo', 'fake-repo', '--searched', 'test fixture', ...MARKS);
   assert.equal(how.status, 0, how.stderr);
   assert.match(how.stderr, /also logged as a library miss/);
   const rows = f.rows();

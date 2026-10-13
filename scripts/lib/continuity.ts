@@ -51,12 +51,15 @@ const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000));
 /** The `--model`/`--used` flags every row a caller writes carries, so the freshness check can tell its rows from work. */
 export const marks = (used: string): string[] => ['--model', 'unrecorded', '--used', used];
 
+/** What the decision scan looked at before it raised an ask: `ask` refuses a row that does not say where it searched. */
+const SEARCHED = 'the session transcript and the ledger (unledgered-decision scan)';
+
 /** Raises every unhandled decision-like message of one transcript's text as ask rows, 20 per row. Throws when an ask fails. */
 export function raiseDecisionsFromText(text: string, deps: Pick<ContinuityDeps, 'journal' | 'readLedger'>, used: string): { raised: number; count: number } {
   const found = unledgeredDecisions(userMessages(text), deps.readLedger());
   let raised = 0;
   for (const q of found.raise) {
-    const r = deps.journal(['ask', q, ...marks(used)]);
+    const r = deps.journal(['ask', q, '--searched', SEARCHED, ...marks(used)]);
     if (!r.ok) throw new Error(r.out || 'journal.ts ask failed');
     raised++;
   }

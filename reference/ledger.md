@@ -11,7 +11,7 @@ M=(--model "<your model>" --used "skill:the-maestro,tool:journal.ts")
 
 node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014 "${M[@]}"
 node $J done  "Port the calendar fix" "${M[@]}"  # id or a unique substring
-node $J ask   "Split the calendar change into a follow-up PR?" "${M[@]}"
+node $J ask   "Split the calendar change into a follow-up PR?" --searched "reference/ledger.md, the PR diff" "${M[@]}"
 node $J resolve "calendar change" --answer "Yes — no consumer yet" "${M[@]}"
 node $J status                            # what is open + done today, with usage marks
 node $J status --footer                   # the reply-footer Ledger lines (below)
@@ -52,7 +52,7 @@ crashed session cannot lose entries.
 | Work you intend to do but have not started (a to-do) | `queue` (see [Queued items](#queued-items)) |
 | That work lands, or the agent reports success | `done` |
 | You hit something you cannot proceed past | `log --kind blocked` |
-| A question only the user can answer | `ask`, with `--recommend` (what you would do), `--door one-way\|two-way` and, for a two-way door only, `--default` (what happens if the user stays silent) and `--decide-by` (`2d`, `2026-10-09`). No door means one-way, and a one-way ask is refused a default. `--class expedite\|fixed-date\|standard\|intangible` (default standard) |
+| A question only the user can answer | `ask`, with `--searched "<where I looked>"` (required, see [The ask gate](#the-ask-gate)), `--recommend` (what you would do), `--door one-way\|two-way` and, for a two-way door only, `--default` (what happens if the user stays silent; such an ask is acted on and logged, not queued: see the gate below, so leave `--default` off an ask the user must see) and `--decide-by` (`2d`, `2026-10-09`). No door means one-way, and a one-way ask is refused a default. `--class expedite\|fixed-date\|standard\|intangible` (default standard) |
 | A decision that is genuinely still pending | `ask --kind decision` (stays on the board until `resolve`d) |
 | A rule or decision the user already made, once it is saved in a memory file or DECISIONS.md | `rule "<text>" --ref <file>` (see [Rules](#rules-are-records-not-asks)) |
 | They answer it | `resolve --answer "..."` |
@@ -92,6 +92,16 @@ stateDiagram-v2
 Both id forms are idempotent (an item already in the target state is reported and nothing is written) and refuse a closed item or one that is not an in-flight `wip` item. A single 4-character token that has a digit and matches no item is rejected as a probable mistyped id; pass `--text "<word>"` to queue it as text. `queue` and `promote` are event rows, not items; the latest one for an item wins, and `verify` checks that each points at an existing id.
 
 Queued items stay **open**: `done`, `drop`, `defer`, `tag`, `carry` and `archive`'s blocker check treat them like any open item, and `roll` leaves them on the board (its summary names the count). `status`, `CURRENT.md`, `standup` and `prime` list them under **Queued**, after In flight, and the handoff tags them `queued`. The triage box is still 7 (In flight), but a queued item is never stale, since it has not started. The `to run` count (paste blocks) is unrelated and unchanged.
+
+## The ask gate
+
+`ask` is a gate, not a note. Everything below is checked by `journal.ts` when the row is written, and a refusal exits 1 with nothing written.
+
+- **Searched first.** `--searched "<where I looked>"` is required on every `ask` (a paste ask too): the docs, code, library page or ledger rows checked before the question was put to the user. It is stored on the row as `searched`, one line of at most 300 characters. Without it `ask` exits non-zero and says why. `--searched` is refused on any other command.
+- **The door routes.** A two-way ask with a `--default` is acted on and logged, not queued: the row is a `note` reading `acted on default: <default> (asked: <question>)`, it carries `actedOn` and `searched`, and the command prints `acted <id>`. It never reaches the board. A one-way ask, a two-way ask with no default, and any ask flagged `--outward` are queued for the user.
+- **`--outward`** marks anything another person sees (Slack, Jira, email). It always asks and is never acted on. An `--outward` ask with a `--default` is refused (the default could never fire). `autoDefault` (the one reader every consumer uses) returns null for an outward row, so a hand-edited row cannot act either, and `verify` flags such a row. A `question` row is written only by `ask`: `log`/`note --kind question` is refused so the gate cannot be walked around. `--outward` is refused on any other command.
+
+Not built yet (the-maestro-243 follow-ups): a daily ask budget with draft overflow, and answers that write a topic-scoped rule.
 
 ## Rules are records, not asks
 
