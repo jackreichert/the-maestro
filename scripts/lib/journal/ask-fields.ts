@@ -27,7 +27,7 @@ export type RawAskFlags = Record<'recommend' | 'default' | 'door' | 'decide-by' 
 export const TEXT_MAX = 300;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
-const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+export const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const RELATIVE = /^(\d+)([hdw])$/;
 const DAY_MS = 86_400_000;
 
@@ -36,7 +36,7 @@ const isRealDate = (s: string): boolean => {
     const t = Date.parse(`${s}T00:00:00Z`);
     return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
 };
-const isText = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
+export const isText = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
 
 /** A decide-by as written (`2026-10-09`, `2026-10-09T14:00:00Z`, `2d`, `6h`, `1w`), normalised; null when it is none of those. */
 export function normaliseBy(raw: string, now: Date): string | null {
@@ -189,6 +189,7 @@ export function askFieldProblems(r: AskRow): string[] {
 
 export const ASK_USAGE = [
     'journal.ts ask "<question>" [--kind question|decision] [--stream S] [--ticket T] --model "<name>" --used "skill:x,tool:y"',
+    '    --searched "<where I looked>"           required: the docs, code, library page or ledger rows checked first; refused without it',
     '    [--recommend "<what you would do>"]   a position the user can accept; without one the ask is not ready (warns)',
     '    [--door one-way|two-way]               two-way = reversible. Missing is treated as one-way',
     '    [--default "<what happens if silent>"] two-way asks only; a one-way ask can never carry one (refused)',

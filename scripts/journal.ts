@@ -29,6 +29,7 @@
  *   journal.ts ask "<question>" [--kind question|decision] --model "<name>" --used "skill:x,tool:y"
  *                                             add --how-do-i when the question is a how-do-I the library could not answer: it is also logged as a `miss` (source ask)
  *                                             a question for the user; --kind decision is a decision still pending (it stays on the board)
+ *   journal.ts ask "<question>" --searched "<where I looked: docs, code, library, ledger>"   required: ask refuses without it, so a question that could have been answered is caught first
  *   journal.ts ask "<question>" [--recommend "<what you would do>"] [--door one-way|two-way] [--default "<what happens if silent>"] [--decide-by 2026-10-09|2d|6h] [--class expedite|fixed-date|standard|intangible]
  *                                             a decision made cheap to answer. No --door means one-way; a one-way ask is refused a --default; no --recommend warns. `ask --help` prints this
  *   journal.ts ask "<what to run>" --paste <block-file>   a run-this ask: the file must exist; shown as "Paste blocks for you", apart from the questions
@@ -165,6 +166,8 @@ import { boardContextFor } from './lib/journal/board-context.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields } from './lib/journal/ask-fields.ts';
+import { parseAskGate } from './lib/journal/ask-gate.ts';
+import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
@@ -555,6 +558,20 @@ function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
     return fields;
 }
 
+/**
+ * The gate of an `ask` (--searched), checked by the rule table in ask-gate.ts. A refusal exits 1 before anything is
+ * written. Any other command that is given the flag refuses rather than ignore it.
+ */
+function askGateFromArgs(ask: boolean): AskGate {
+    if (!ask) {
+        if (has('searched')) die('--searched only goes on `ask`.');
+        return {};
+    }
+    const { gate, errors } = parseAskGate({ searched: { given: has('searched'), value: arg('searched') } });
+    if (errors.length) die(errors.join('\n'));
+    return gate;
+}
+
 /** `log <id> [note] --kind rework`: the item id the row names. It may be done or dropped (rework is found after use), so it is looked up among all item rows, by id or unique prefix; an unknown or ambiguous id exits 1. */
 function reworkTarget(text: string): string {
     const needle = text.split(/\s+/)[0] ?? '';
@@ -577,6 +594,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
     const refs = rule ? ruleRefs() : refsFromArgs();
+    const askGate = askGateFromArgs(ask);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
     const paste = ask ? pasteFile(kind) : undefined;
     const gate = gateFlag(kind);
     const askFields = askFieldsFromArgs(ask, Boolean(paste));
@@ -617,6 +635,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         gate,
         transitioned: transitionedFlag(),
         ...askFields,
+        ...askGate,
         ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
