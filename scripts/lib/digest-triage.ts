@@ -15,6 +15,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { toInboxEvent } from './event-inbox.ts';
 import { oneLine } from './notify.ts';
+import { quietVerdict } from './quiet-wakes.ts';
+import type { QuietDeps } from './quiet-wakes.ts';
 import { STEER_FAILING_CHECK } from './steer-line.ts';
 import type { DigestEvent } from './types.ts';
 
@@ -101,12 +103,14 @@ function ask(triage: Triage, input: TriageInput): TriageAnswer {
  * Triage for the actionable lines of a tick. Each is classified by the rules and the decision logged with its reason. An ambiguous line goes to
  * the seam: noise (with a reason) turns the event into an info line that does not wake; anything else keeps it actionable. Returns the same events.
  */
-export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: string; triage?: Triage }): T[] {
+export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: string; triage?: Triage; quiet?: QuietDeps }): T[] {
   const triage = opts.triage ?? rulesOnlyTriage;
   for (const e of events) {
-    if (!e.actionable || !TRIAGED_TYPES.has(e.type)) continue;
+    if (!e.actionable) continue;
     const kind = toInboxEvent({ ...e })?.kind ?? 'other';
     if (UNTRIAGED_KINDS.has(kind)) continue;
+    if (applyQuietRule(e, kind, opts)) continue;
+    if (!TRIAGED_TYPES.has(e.type)) continue;
     const base = { at: e.at, watch: e.watch, type: e.type, kind, summary: e.summary };
     const r = classifyLine(e);
     if (r.verdict === 'wake') { logRow(opts.dir, { ...base, decision: 'wake', rule: r.rule, reason: r.reason }); continue; }
@@ -118,6 +122,20 @@ export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: st
     } else logRow(opts.dir, { ...base, decision: 'wake', rule: a.verdict === 'actionable' ? 'triage' : 'no-rule', reason: a.verdict === 'actionable' ? a.reason : `${r.reason}; ${a.reason}` });
   }
   return events;
+}
+
+/**
+ * The quiet-wake rules (lib/quiet-wakes.ts) for one actionable event. True when a rule decided it: a suppress turns the event into an info
+ * line logged as noise (so the hourly sweep lists it); a wake keeps it actionable, logs why, and may replace its summary. False leaves it to the normal triage.
+ */
+function applyQuietRule(e: DigestEvent, kind: string, opts: { dir: string; quiet?: QuietDeps }): boolean {
+  const q = quietVerdict(e, opts.quiet);
+  if (!q) return false;
+  const base = { at: e.at, watch: e.watch, type: e.type, kind, summary: e.summary };
+  if (q.action === 'suppress') { e.actionable = false; e.report = ''; logRow(opts.dir, { ...base, decision: 'noise', rule: q.rule, reason: q.reason }); return true; }
+  if (q.summary) e.summary = oneLine(q.summary, 300);
+  logRow(opts.dir, { ...base, decision: 'wake', rule: q.rule, reason: q.reason });
+  return true;
 }
 
 export const SWEEP_EVERY_MS = 3600 * 1000;
