@@ -1,6 +1,6 @@
 /** The cue line (what the user must see in two seconds), relative ages and clock times. Pure and DOM-free. */
 import type { CueKey } from './tabs.ts';
-import type { PodiumState } from './types.ts';
+import type { AskCard, PodiumState, Priority } from './types.ts';
 
 /** One part of the cue line: a count, the words after it, and the tone it earns when it is not zero. */
 export interface CuePart { key: CueKey; n: number; label: string; tone: 'accent' | 'critical' | 'success' | 'neutral' }
@@ -130,3 +130,33 @@ export const TEMPO_LEAD = 'Tempo reads how much is waiting on you: ';
 
 /** What the tempo disclosure says, as one sentence. */
 export const TEMPO_RULE = `${TEMPO_LEAD}${TEMPO_SCALE.map((t) => `${t.word}, ${t.meaning}`).join('; ')}.`;
+
+/** A priority's stream is its own field, or the trailing "[Stream]" the ledger file keeps; either shows as a tag, never as bracketed text. */
+export function splitStream(p: Priority): { text: string; stream: string } {
+  if (p.stream) return { text: p.text, stream: p.stream };
+  const m = /\s*\[(\w+)\]\s*$/.exec(p.text);
+  return m ? { text: p.text.slice(0, m.index), stream: m[1] ?? '' } : { text: p.text, stream: '' };
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Which of today's priorities an ask belongs to, as a 0-based rank (Infinity when none). An ask is tied to a priority by a
+ * link it already carries: a ticket or note label (or its own id) written in the priority's text, or else the priority's
+ * stream (its own field or the trailing "[Stream]"). The earliest priority that either link reaches wins.
+ */
+export function priorityRank(ask: Pick<AskCard, 'id' | 'stream' | 'links'>, priorities: Priority[]): number {
+  const labels = [ask.id, ...ask.links.tracker.map((r) => r.label), ...(ask.links.note ? [ask.links.note.label] : [])].filter((l) => l.length >= 3);
+  const mentions = labels.map((l) => new RegExp(`(^|[^\\w-])${escapeRe(l)}($|[^\\w-])`, 'i'));
+  const at = priorities.findIndex((p) => mentions.some((re) => re.test(p.text)) || splitStream(p).stream === ask.stream);
+  return at === -1 ? Number.POSITIVE_INFINITY : at;
+}
+
+/** Asks grouped by the priority they serve (first priority first, unlinked last), keeping the incoming order inside each group. A copy. */
+export function byPriority<T extends Pick<AskCard, 'id' | 'stream' | 'links'>>(asks: T[], priorities: Priority[]): T[] {
+  if (priorities.length === 0) return [...asks];
+  return asks.map((a, i) => ({ a, i, r: priorityRank(a, priorities) })).sort((x, y) => (x.r === y.r ? x.i - y.i : x.r < y.r ? -1 : 1)).map((x) => x.a);
+}
+
+/** Today's priorities from the state, or none when the list is missing or stale. */
+export const todaysPriorities = (st: Pick<PodiumState, 'priorities'>): Priority[] => (st.priorities.state === 'ok' ? st.priorities.items : []);

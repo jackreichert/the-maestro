@@ -12,12 +12,8 @@ export interface PriorityData {
   epics?: Record<string, EpicLine[]>;
 }
 
-/** A priority's stream is its own field, or the trailing "[Stream]" the ledger file keeps; either shows as a tag, never as bracketed text. */
-function splitStream(p: Priority): { text: string; stream: string } {
-  if (p.stream) return { text: p.text, stream: p.stream };
-  const m = /\s*\[(\w+)\]\s*$/.exec(p.text);
-  return m ? { text: p.text.slice(0, m.index), stream: m[1] ?? '' } : { text: p.text, stream: '' };
-}
+import { splitStream } from './glance.ts';
+export { splitStream };
 
 const MAX_TEXT = 200;
 const MAX_STREAM = 40;
