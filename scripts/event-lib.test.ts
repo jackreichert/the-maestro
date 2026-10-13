@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { MAX_PER_TICK, MAX_SUMMARY, notify, oneLine } from './lib/notify.ts';
 import { acquireLock, addWatch, listWatches, readDigest, removeWatch } from './lib/watch-registry.ts';
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { startLockOwner } from './lib/lock-owner-fixture.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -79,8 +80,11 @@ test('the lock refuses a live owner, and is taken over from a dead one or junk',
   const d = dir();
   const file = acquireLock(d, 4000000);
   assert.equal(readFileSync(file, 'utf8'), '4000000');
-  writeFileSync(file, String(process.pid));
-  assert.throws(() => acquireLock(d), /another event loop is running/);
+  const owner = startLockOwner();
+  try {
+    writeFileSync(file, String(owner.pid));
+    assert.throws(() => acquireLock(d), /another event loop is running/);
+  } finally { owner.stop(); }
   writeFileSync(file, '99999999');
   assert.doesNotThrow(() => acquireLock(d, 4000001));
   writeFileSync(file, 'junk');

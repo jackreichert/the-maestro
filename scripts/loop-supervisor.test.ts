@@ -17,6 +17,7 @@ import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq }
 import { WAKE_PROMPT } from './lib/session-wake.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
 import { cleanEnv, notifyCalls } from './lib/test-env.ts';
+import { startLockOwner } from './lib/lock-owner-fixture.ts';
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'loop-supervisor-test-'));
 const SUPERVISOR = new URL('./loop-supervisor.ts', import.meta.url).pathname;
@@ -143,11 +144,13 @@ test('install fills every placeholder, prints the launchctl commands, never runs
   assert.match(ok.stdout, /launchctl print/);
   const events = join(ledger, 'Events');
   mkdirSync(events, { recursive: true });
-  writeFileSync(join(events, 'loop.lock'), String(process.pid));
+  const owner = startLockOwner();
+  writeFileSync(join(events, 'loop.lock'), String(owner.pid));
   const out2 = join(tempDir(), 'y.plist');
   const refused = spawnSync(process.execPath, [INSTALL, '--out', out2, '--allow-branch'], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir() }) });
+  owner.stop();
   assert.equal(refused.status, 2);
-  assert.match(refused.stderr, new RegExp(`pid ${process.pid}`));
+  assert.match(refused.stderr, new RegExp(`pid ${owner.pid}`));
   assert.equal(existsSync(out2), false);
   assert.equal(existsSync(join(events, 'loop.lock')), true);
 });

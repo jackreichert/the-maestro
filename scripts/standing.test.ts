@@ -9,6 +9,7 @@ import { DEFAULT_ROWS, STANDING_FILE, appendEvent, conditionLines, conditionStat
 import type { CheckContext, StandingEvent } from './lib/standing.ts';
 import { commitmentLines } from './lib/journal/handoff.ts';
 import { addWatch } from './lib/watch-registry.ts';
+import { startLockOwner } from './lib/lock-owner-fixture.ts';
 
 const NOON = Date.parse('2026-10-06T12:00:00Z');
 const HOUR = 3600_000;
@@ -173,12 +174,15 @@ test('cli: done on an unchecked row needs evidence; with it the row turns ok and
 test('cli: a live loop with live watches makes loop-alive pass, and done records the check result as evidence', () => {
   const { vault, events } = setup();
   mkdirSync(events, { recursive: true });
-  writeFileSync(join(events, 'loop.lock'), String(process.pid));
-  addWatch(events, { id: 'w', type: 't', target: 'x' });
-  assert.match(cli(vault, events, 'standing', 'list').out, /^ok      loop-alive:/m);
-  const done = cli(vault, events, 'standing', 'done', 'loop-alive');
-  assert.equal(done.code, 0, done.err);
-  assert.match(readFileSync(standingFile(vault), 'utf8'), /loop pid \d+ running, 1 watch\(es\) live/);
+  const owner = startLockOwner();
+  try {
+    writeFileSync(join(events, 'loop.lock'), String(owner.pid));
+    addWatch(events, { id: 'w', type: 't', target: 'x' });
+    assert.match(cli(vault, events, 'standing', 'list').out, /^ok      loop-alive:/m);
+    const done = cli(vault, events, 'standing', 'done', 'loop-alive');
+    assert.equal(done.code, 0, done.err);
+    assert.match(readFileSync(standingFile(vault), 'utf8'), /loop pid \d+ running, 1 watch\(es\) live/);
+  } finally { owner.stop(); }
 });
 
 test('cli: add validates before writing; a good row shows up, retire removes it', () => {

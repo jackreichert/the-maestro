@@ -6,6 +6,7 @@
  * with no later remove, each with the expiry of its latest renew, so the file is never rewritten. state.json holds each watch's last checked state and the event timestamps the
  * cadence reads; digest.jsonl holds events nobody has read yet.
  */
+import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DigestEvent, LoopState, Watch } from './types.ts';
@@ -128,11 +129,28 @@ const alive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (err) { return errorCode(err) === 'EPERM'; }
 };
 
-/** The pid holding the loop lock in `dir`, or null when there is no lock or its owner is gone. Read-only: never removes the lock. */
+/** The command line of a process: '' when there is no such process, null when it cannot be read (no `ps`, a timeout). */
+export function processCommand(pid: number): string | null {
+  const r = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 2000 });
+  if (r.error || r.status === null) return null;
+  return r.status === 0 ? r.stdout.trim() : '';
+}
+
+/**
+ * Whether a live pid is an event loop: its command line names `event-loop.ts`. A pid the lock file names may have been reused by an
+ * unrelated process after a reboot, and that must not read as a running loop. When the command line cannot be read the pid is assumed
+ * to be a loop, so a lock is never stolen from a loop that is really running.
+ */
+export function ownsLoop(pid: number, commandOf: (pid: number) => string | null = processCommand): boolean {
+  const command = commandOf(pid);
+  return command === null || command.includes('event-loop.ts');
+}
+
+/** The pid holding the loop lock in `dir`, or null when there is no lock or its owner is gone or is not an event loop. Read-only: never removes the lock. */
 export function lockHolder(dir: string): number | null {
   try {
     const owner = Number(readFileSync(join(dir, 'loop.lock'), 'utf8'));
-    return owner > 0 && alive(owner) ? owner : null;
+    return owner > 0 && alive(owner) && ownsLoop(owner) ? owner : null;
   } catch { return null; }
 }
 
@@ -141,7 +159,7 @@ const LOCK_ATTEMPTS = 5;
 
 /**
  * One loop at a time: two loops over one registry would each report every event. The lock file holds the
- * owner's pid; a lock whose process is gone (or whose content is junk) is removed and taken with an exclusive
+ * owner's pid; a lock whose process is gone or is not an event loop (or whose content is junk) is removed and taken with an exclusive
  * create, retried a few times. An empty file younger than a short grace is a lock being written, so it counts
  * as live. Released on exit, SIGINT and SIGTERM.
  */
@@ -159,7 +177,7 @@ export function acquireLock(dir: string, pid: number = process.pid): string {
       try { text = readFileSync(file, 'utf8'); } catch (readErr) { if (errorCode(readErr) === 'ENOENT') continue; throw readErr; }
       const owner = Number(text);
       if (text.trim() === '' && Date.now() - (statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? Number.NaN) < LOCK_GRACE_MS) throw new Error('another event loop is starting');
-      if (owner > 0 && alive(owner)) throw new Error(`another event loop is running (pid ${owner})`);
+      if (owner > 0 && alive(owner) && ownsLoop(owner)) throw new Error(`another event loop is running (pid ${owner})`);
       // Remove only the stale lock we read; a faster process may have replaced it since.
       if (readFileSync(file, 'utf8') === text) rmSync(file, { force: true });
     }

@@ -2,27 +2,24 @@
 
 You are the runner. The orchestrator registers watches; you run the loop, read what it found, and report only what needs a person. You do not fix, reply, merge, re-run or investigate anything. You report and stop.
 
-## 1. Run it
+## 1. Wait on the inbox
 
 ```bash
 node scripts/event-loop.ts list
-node scripts/event-loop.ts run
+node scripts/event-loop.ts events wait
 ```
 
-`run` polls every live watch, sleeps between ticks (the cadence is in [cost/budget.md](../cost/budget.md#pr-watcher-cadence)), and exits when there is something to say. It is the one long-running process in this design, so start it in the background and wait for it to finish; its completion wakes you, not the orchestrator.
+The launchd supervisor is the only runner: it keeps `run --serve` alive, which polls every live watch (cadence in [cost/budget.md](../cost/budget.md#pr-watcher-cadence)) and writes each event to the inbox (`<event_dir>/events.jsonl`). A plain `run` refuses while the supervisor is installed, so you never start the loop yourself. `events wait` is the one thing you run: start it in the background; its completion wakes you.
 
 | Exit | Meaning | You do |
 |---|---|---|
-| 10 | Actionable events. Stdout is the digest. | Step 2. |
-| 0 | Nothing to do (`no watches registered`, or `run --once` found nothing). | Report one line: the loop has nothing to watch. |
-| 3 | Quiet hours or a quiet weekend began (`QUIET-HOURS stop until <time>`); no `--notify-overnight` watch is live. | Report one line with the time. |
-| 2 | Usage or configuration error, or `another event loop is running`. | Report the stderr line. Do not retry or delete the lock. |
+| 10 | New events. Stdout is the event lines. | Step 2. |
+| 0 | Nothing new before the timeout. | Report one line: nothing to do. |
+| 2 | Usage or configuration error. | Report the stderr line. Do not retry or delete the lock. |
 
-If a launchd supervisor owns the lock, `run` exits 2 (`another event loop is running`). Start `node scripts/event-loop.ts digest-wait` in the background instead; it exits 10 with the saved digest (same handling as `run`), or 0 quietly after its timeout.
+Read the inbox with `node scripts/event-loop.ts events`, and when an event is dealt with run `events ack <id>`. Event lines carry a kind, the watch and `repo`/`number`/`who`/`count` only; open the PR or thread yourself for the rest. Digests the loop saved while no session was waiting are moved into the inbox by the supervisor; `digest-wait` is an alias for `events wait`.
 
-`run --serve` is the daemon form: it never exits on an event, and writes each one to the inbox (`<event_dir>/events.jsonl`). Read it with `node scripts/event-loop.ts events`, wake on the next one with `events wait` (exit 10 with the event lines, same handling as `run`), and when an event is dealt with run `events ack <id>`. Event lines carry a kind, the watch and `repo`/`number`/`who`/`count` only; open the PR or thread yourself for the rest.
-
-For one quick look instead of a long wait, `node scripts/event-loop.ts run --once` does a single pass with the same exit codes.
+For one quick look, `node scripts/event-loop.ts run --once` does a single pass.
 
 ## 2. Read the digest
 
