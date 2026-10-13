@@ -76,3 +76,18 @@ test('the gauges say how many asks are open and how many PRs are open, with word
   assert.match(text(el.querySelector('section.gauge')), /Open asks by age/);
   assert.match(text(el), /Open PRs/);
 });
+
+test('the Stream order groups the asks by stream and the choice survives a redraw', () => {
+  const st = state();
+  const streams = [...new Set(st.asks.map((a) => a.stream))];
+  homeUi.order = 'stream'; homeUi.stream = null; homeUi.allAsks = true; homeUi.allShipped = false;
+  const draw2 = (): HTMLElement => place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, redraw: () => {} })).el;
+  for (const el of [draw2(), draw2()]) {
+    assert.equal(el.querySelector('[data-ctl=order-stream]')!.getAttribute('aria-pressed'), 'true');
+    assert.equal(el.querySelector('[data-ctl=order-oldest]')!.getAttribute('aria-pressed'), 'false');
+    const shown = [...sec(el, 'Needs you').querySelectorAll('ask-card')].map((c) => (c as unknown as { ask: { stream: string } }).ask.stream);
+    assert.equal(shown.length, st.asks.length);
+    assert.deepEqual(shown, [...shown].sort((x, y) => x.localeCompare(y)));
+  }
+  assert.ok(streams.length >= 1);
+});

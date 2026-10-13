@@ -121,8 +121,13 @@ export function scoreTable(st: PodiumState, charts: ChartsData, projects: Projec
   };
 }
 
-export type AskOrder = 'oldest' | 'oneway';
-/** Asks in the order the reader picked: oldest first, or one-way doors first (oldest first inside each group). */
+export type AskOrder = 'oldest' | 'oneway' | 'stream';
+
+/** Rows grouped by stream, alphabetically, keeping the incoming order inside each stream. A copy. */
+export function byStreamName<T extends { stream: string }>(rows: T[]): T[] {
+  return rows.map((r, i) => ({ r, i })).sort((a, b) => a.r.stream.localeCompare(b.r.stream) || a.i - b.i).map((x) => x.r);
+}
+/** Asks in the order the reader picked: oldest first (also the base for the stream order, which byStreamName applies last), or one-way doors first (oldest first inside each group). */
 export function orderAsks<T extends { ageDays: number; ts: string; door?: string }>(asks: T[], order: AskOrder): T[] {
   const rank = (a: T): number => (order === 'oneway' && a.door !== 'one-way' ? 1 : 0);
   return oldestFirst(asks).map((a, i) => ({ a, i })).sort((x, y) => rank(x.a) - rank(y.a) || x.i - y.i).map((x) => x.a);

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { AGE_LABELS, ageChart, askAgeBars, doneSpans, epicCards, orderAsks, prGauge, queuedByStream, rowFacts, rowOrder, scoreTable, streamState, weeksChart } from '../src/home-model.ts';
+import { AGE_LABELS, ageChart, askAgeBars, byStreamName, doneSpans, epicCards, orderAsks, prGauge, queuedByStream, rowFacts, rowOrder, scoreTable, streamState, weeksChart } from '../src/home-model.ts';
 import { sanitizeCharts, sanitizeProjects, sanitizeState } from '../src/contract.ts';
 import type { ChartsData, PodiumState, ProjectRow, ProjectsData } from '../src/types.ts';
 
@@ -137,4 +137,10 @@ test('epicCards: one per epic with segments in reading order; none without epics
 test('queuedByStream: most queued first, ties in stream order', () => {
   const q = [{ stream: 'b' }, { stream: 'a' }, { stream: 'b' }, { stream: 'c' }];
   assert.deepEqual(queuedByStream(q, ['c', 'a', 'b']), [{ stream: 'b', n: 2 }, { stream: 'c', n: 1 }, { stream: 'a', n: 1 }]);
+});
+
+test('byStreamName: streams alphabetical, incoming order kept inside each stream, input untouched', () => {
+  const a = [{ id: 1, stream: 'zeta' }, { id: 2, stream: 'alpha' }, { id: 3, stream: 'zeta' }, { id: 4, stream: 'alpha' }];
+  assert.deepEqual(byStreamName(a).map((x) => x.id), [2, 4, 1, 3]);
+  assert.deepEqual(a.map((x) => x.id), [1, 2, 3, 4]);
 });
