@@ -17,11 +17,13 @@
  * While it waits (idle, quiet hours or crash back-off) it sleeps in chunks of at most 60 s against the wall clock, so a closed lid costs
  * under a minute, and rewrites <event dir>/heartbeat.json each chunk with mode `idle`, `quiet` or `backoff`, so a supervisor between loop launches
  * still reads as alive (lib/loop-health.ts). The loop writes its own heartbeat while it runs.
- * It launches `run --serve`, so the loop never exits on an event, and watches the child's heartbeat: a child that is alive but silent for
- * HANG_GRACE_MS past its declared wake time is killed (SIGTERM, then SIGKILL) and relaunched at once (lib/loop-watchdog.ts).
+ * It launches `run --serve`, so the loop never exits on an event, and watches the child's heartbeat: a child that is alive but whose heartbeat
+ * is older than its own declared `sleepingUntil` plus HANG_GRACE_MS (10 min) is killed once (SIGTERM, then SIGKILL if it ignores that) and relaunched
+ * once for that launch (lib/loop-watchdog.ts). A later launch gets its own grace; the same child is never killed in a loop.
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run --serve`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches,
  * MAESTRO_WATCHDOG_GRACE_MS and MAESTRO_WATCHDOG_INTERVAL_MS shrink the watchdog's timing (the alert tick shares that timer), MAESTRO_ALERT_QUIET_HOURS replaces the alert quiet window (`off` disables it).
- * Its log (<ledger root>/Projects/<project>/Journal/Supervisor/loop-supervisor.log, written by launchd) is rotated at 5 MB on each wait chunk, keeping one old file (lib/log-rotate.ts).
+ * Its log (<ledger root>/Projects/<project>/Journal/Supervisor/loop-supervisor.log, written by launchd) is rotated at 5 MB on each wait chunk and on each
+ * watchdog check, so a serve loop that never exits still rotates. One old file is kept (lib/log-rotate.ts).
  */
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
@@ -155,9 +157,10 @@ let running: ChildProcess | null = null;
 const envMs = (name: string, fallback: number): number => { const n = Number(process.env[name]); return n > 0 ? n : fallback; };
 
 /**
- * Launches the real loop (or MAESTRO_LOOP_BIN) once in serve mode, collecting its output and watching its heartbeat for a hang. The same timer runs the alert tick
- * after each watchdog check: a serve loop never exits, so without it nothing would text a recovery or a PR event while the loop is up. Both run synchronously
- * on this one timer, and `waitWithAlerts` only ticks after the child is gone, so two ticks can never overlap (the policy's rate limit and saved state stop a repeat send).
+ * Launches the real loop (or MAESTRO_LOOP_BIN) once in serve mode, collecting its output and watching its heartbeat for a hang. The same timer rotates the
+ * supervisor log and runs the alert tick after each watchdog check: a serve loop never exits, so without it the log would grow without bound and nothing would
+ * text a recovery or a PR event while the loop is up. Both run synchronously on this one timer, and `waitWithAlerts` only ticks after the child is gone, so two
+ * ticks can never overlap (the policy's rate limit and saved state stop a repeat send).
  */
 function launch(alertTick: () => void): Promise<LoopResult> {
   const [bin, binArgs] = process.env.MAESTRO_LOOP_BIN ? overrideCommand('MAESTRO_LOOP_BIN', '', ['run', '--serve']) : [process.execPath, [EVENT_LOOP, 'run', '--serve']];
@@ -172,7 +175,10 @@ function launch(alertTick: () => void): Promise<LoopResult> {
     childPid: child.pid, launchedAt: Date.now(), readBeat: () => readHeartbeat(EVENT_DIR), now: Date.now, log: (line) => console.error(stamped(line)),
     kill: (signal) => { hung = true; child.kill(signal); }, graceMs: envMs('MAESTRO_WATCHDOG_GRACE_MS', HANG_GRACE_MS),
   });
+  // Rotate before the first interval too: a serve child that exits in under one interval must not leave an over-size log for the next launch.
+  rotateSupervisorLog();
   const timer = dog ? setInterval(() => {
+    rotateSupervisorLog();
     try { dog.check(); } catch (err) { console.error(stamped(`watchdog check failed: ${err instanceof Error ? err.message : String(err)}`)); }
     try { alertTick(); } catch (err) { console.error(stamped(`alert tick failed: ${err instanceof Error ? err.message : String(err)}`)); }
   }, envMs('MAESTRO_WATCHDOG_INTERVAL_MS', 60_000)) : null;
@@ -254,9 +260,14 @@ export function queueSavedDigest(digest: string, log: (line: string) => void, op
 
 const stamped = (line: string): string => `${new Date().toISOString()} loop-supervisor: ${line}`;
 
+/** Copies an over-size supervisor log aside and truncates it in place. Never throws: a log that cannot be rotated must not stop the supervisor. */
+function rotateSupervisorLog(): void {
+  rotateLog(supervisorLogPath(LEDGER_ROOT, CONTAINER_PROJECT), envMs('MAESTRO_LOG_MAX_BYTES', LOG_MAX_BYTES));
+}
+
 /** The supervisor's own heartbeat while it waits (and, at each one, a check that its log is under 5 MB). Never throws: both are advisory. */
 function beat(mode: HeartbeatMode, until: number, lastError: string): void {
-  rotateLog(supervisorLogPath(LEDGER_ROOT, CONTAINER_PROJECT), envMs('MAESTRO_LOG_MAX_BYTES', LOG_MAX_BYTES));
+  rotateSupervisorLog();
   try { writeHeartbeat(EVENT_DIR, { pid: process.pid, at: new Date().toISOString(), tick: 0, watchesLive: 0, sleepingUntil: new Date(until).toISOString(), mode, lastError: lastError.slice(0, 200) }); } catch { /* advisory */ }
 }
 
