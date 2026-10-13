@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { START_MAX_LINES, buildStart, homeCounts, previousWorkingDay, startLines, unreadableHome, unreachableLine, viewDay } from './start-here.ts';
-import type { StartOptions } from './start-here.ts';
+import type { StartOptions, UpNextRow } from './start-here.ts';
 import type { Groups } from '../journal/board.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 import type { StreamHome } from '../home/types.ts';
@@ -116,4 +116,16 @@ test('--stream narrows every block to one stream, matched without regard to case
   assert.match(text, /^## Start here: alpha/);
   assert.ok(text.includes('`a1`') && text.includes('`f1`'));
   assert.ok(!text.includes('`b1`') && !text.includes('`f2`'));
+});
+
+test('Up next shows the top of the ranked queue after the priorities, at most five, and is left out when empty or for one stream', () => {
+  const upNext: UpNextRow[] = Array.from({ length: 7 }, (_, i) => ({ id: `orchard-${i + 1}`, project: 'orchard', title: `mend fence ${i + 1}`, score: 50 - i, why: 'P0 +40, done defined +10' }));
+  upNext[0] = { ...upNext[0]!, key: 'ZZ-7' };
+  const text = startLines(buildStart(groupsOf(), opts({ upNext })), NOW).join('\n');
+  assert.match(text, /### Up next\n1\. `orchard-1` \(ZZ-7\) \[orchard\] mend fence 1 · 50 · P0 \+40, done defined \+10\n/);
+  assert.ok(text.indexOf('### Up next') > text.indexOf('Priorities today'), 'after the priorities');
+  assert.match(text, /5\. `orchard-5`/);
+  assert.doesNotMatch(text, /orchard-6/);
+  assert.doesNotMatch(startLines(buildStart(groupsOf(), opts()), NOW).join('\n'), /Up next/);
+  assert.doesNotMatch(startLines(buildStart(groupsOf(), opts({ upNext })), NOW, { stream: 'Alpha' }).join('\n'), /Up next/);
 });

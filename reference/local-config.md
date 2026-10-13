@@ -73,6 +73,8 @@ protected_branches: main, release/*  # names or globs (`*` within one path segme
 sweep_merge_targets: repo_a=develop|staging  # per-repo branches a branch must be merged into; default develop (plus staging in twin-flow repos)
 sweep_pr_days: 180             # days of merged PRs branch-sweep.ts reads as evidence; default 180
 tracker_key_pattern: \bABC-\d+\b  # regex for tracker keys in a PR title or branch, listed by the pr-merged event; default is any ABC-123 shaped key
+next_frozen_labels: pilot-hold  # ticket or tracker labels that freeze an item: `journal.ts next` never offers it as work; default none
+next_blocked_labels: needs-you  # labels meaning the item waits on you, held back by `journal.ts next`; `none` clears; default needs-you
 local_key_prefixes: MAESTRO,MITHRIL  # key prefixes no tracker holds (local keys of personal repos); never counted as pending transitions; `none` clears; default MAESTRO,MITHRIL
 sweep_budget_seconds: 300     # the worktree sweep stops at the next repo boundary once over this many seconds, and names what it skipped; default 300
 sweep_idle_minutes: 60         # a worktree must be untouched this long before branch-sweep.ts offers it; default 60
@@ -153,6 +155,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Default branch base, and per-repo exceptions | git.md step 1 |
 | Repo-to-owner map for ledger rows that name a PR as `repo#N` (`repo_owners`; unset means none) | `scripts/merge-sweep.ts` |
 | Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/event-types/pr-watch.ts` |
+| Labels `journal.ts next` never offers (`next_frozen_labels`) or holds back as waiting on you (`next_blocked_labels`) | `scripts/lib/whats-next/rank.ts` |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |
 | Review bots whose threads we may resolve | prs.md |
