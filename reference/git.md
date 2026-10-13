@@ -151,13 +151,14 @@ Diagram: <a mermaid block, or "n/a, <reason>">
 | Attribution, key, token and PHI-shaped content | Enforced, best effort | regexes for attribution lines, private keys, cloud and GitHub tokens, credential assignments, SSN and MRN shapes; the match is named, never printed. A pass is not a guarantee | `pr_body_check_forbidden` |
 | Private references | Enforced, best effort | no wiki-links, `obsidian://` links or private-workspace words in the title or body; extra install-specific id patterns from config. Cannot catch every private reference | `pr_body_check_private`, `pr_body_private_patterns` |
 | Smells run | Enforced in repos listed in `pr_smells_repos` | a smells run recorded for the head commit (`pr-smells.ts record`) and its `Smells:` line in the body; exempt when the diff has no code files. Cannot tell whether the run was real | `pr_smells_repos` |
+| Review note | Enforced in repos listed in `review_note_repos` | a vault Reviews note for the head commit with a Naming pass (and the Reviewer checklist when configured); checked by `pr-open.ts`, `review-note.ts push` and git-guard. Cannot tell whether the review was real | `review_note_repos`, `reviewer_checklist` |
 | Derivable counts | Enforced, best effort | refuses `N commits`, `N files (changed)`, `N lines` and `+A -B` outside code; a code span is the escape. Cannot tell a legitimate count in prose | `pr_body_check_counts` |
 | First-person voice | Enforced, best effort | refuses assistant self-references, AI-generated wording and the author's own name in the third person, outside code. Voice cannot be fully machine-checked | `pr_body_check_voice`, `pr_body_voice_names` |
 | File links | Enforced | a `{{file:path}}` token for a path outside the diff refuses before the PR is created; see below | none |
 | Stack | Enforced when stacked | a stacked PR (base is not a `protected_branches` entry) needs a `## Stack` section that names its base PR (`Base: #<n>` or a PR link) or says `n/a, <reason>`. Does not check that the PR exists or is open | `pr_body_check_stack` |
 | Review order | Enforced over a file threshold | a PR over `pr_review_order_min_files` code files (default 3) needs a `Review order:` line in the Reviewer guide that holds a `{{file:path}}` token or a `` `path` `` in code, or `n/a, <reason>`. Whether the order is the best one stays advisory | `pr_body_check_order`, `pr_review_order_min_files` |
 | Evidence, Questions for reviewers | Advisory | nothing; write them when they help, skip when nothing applies. A fake question is worse than none | none |
-| Review order being the best order, skim-safe files really being safe, risk level honest, blast radius complete, deferred items legitimate, verify output real | Advisory | nothing; this is review's job | none |
+| Review order being the best order, skim-safe files really being safe (for the human reviewer only; our own review still reads them), risk level honest, blast radius complete, deferred items legitimate, verify output real | Advisory | nothing; this is review's job | none |
 
 Why each: review order, annotations and verify commands save the reviewer reading time ([Google, navigating a CL](https://google.github.io/eng-practices/review/reviewer/navigate.html); [awesomecodereviews template](https://www.awesomecodereviews.com/pull-request-template/)); risk, rollback and flags let a reviewer approve a medium-risk change because the exit is cheap ([Google, small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html)); the stack position stops reviewers flagging as missing what lives upstack ([Graphite on reviewing stacks](https://graphite.com/docs/best-practices-for-reviewing-stacks)); out-of-scope notes pre-empt scope comments, and a generic author checklist is left out because CI should enforce it. Keep the template short: long checklists become box ticking.
 
@@ -206,6 +207,18 @@ and paste the line it prints (`Smells: ...`) into the PR body on a line of its o
 - Enforced: the record exists for exactly the head commit being opened, so a later commit invalidates it and the run is repeated; and the body carries the recorded `Smells:` line. A diff with no code files (docs, config, tests only) is exempt. Advisory findings never block; only a missing run does.
 - Not enforced: that the run really happened or was any good. The record is an attestation kept in the repo's git directory, and the reviewer still reads the findings line.
 - Layer two, `mithril-gates` (lint, complexity, function length, duplication) as a CI check, needs the team and is not part of this.
+
+### Review-note gate
+
+In repos named in `review_note_repos` (GitHub `owner/name` globs, default none, so off), a push needs a vault Reviews note for the exact head commit. No note, no push. Like `pr_smells_repos`, it is read from the user config file only.
+
+The note lives at `<vault>/Projects/<repo>/Reviews/<YYYY-MM-DD>-<slug>-review-<sha7>.md`, where `<repo>` is the origin repo's name and `<sha7>` the first seven characters of the head commit. It counts only when the file name carries `-review-<sha7>.md`, the frontmatter has `head: <the full 40-character sha>`, and a `## Naming pass` section holds real content: every touched file, scripts and fixtures included, and what was renamed or why each name is fine. When the overlay supplies a `reviewer_checklist` file, a `## Reviewer checklist` section with each item marked pass, fixed or not applicable is needed too. `node <scripts dir>/review-note.ts new --repo <repo>` writes the stub; the stub does not pass until it is filled in.
+
+Push with `node <scripts dir>/review-note.ts push --repo <repo>` (it checks, then runs a plain `git push <remote> <branch>`, never a force push), or run `review-note.ts check` first.
+
+- Enforced: `review-note.ts push` refuses when no valid note names the head; `pr-open.ts` refuses to open a PR for such a head; and `hooks/git-guard.ts` asks on a raw `git push` of a head with no note, so a skipped wrapper still hits a prompt. A commit after the review changes the head, so the review is repeated.
+- Not enforced: that the review was real or good; the note is an attestation. The git-guard hook asks (the harness prompt), it does not deny, and a script that runs git by itself can still bypass it.
+- Naming is part of the review in team repos, not a nitpick: see [brief.md](brief.md#the-review-brief).
 
 All of these are settings in [local-config.md](local-config.md); each switch defaults on and any can be turned off, and `pr_body_sections` replaces the required list.
 
