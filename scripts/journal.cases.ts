@@ -2253,7 +2253,9 @@ test('an old row that was started or re-tagged inside stale_wip_days is not stal
 });
 
 test('"still going" (lease <id>) keeps a row out of stale for stale_wip_days after the lease lapses, then it goes stale again (MAESTRO-319)', () => {
-    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000 - 3_600_000).toISOString();
+    // Staleness counts UTC calendar days, so pin each lease to midday of the day N days back. An elapsed offset (now - N days - 1h) lands on
+    // day N+1 in the first hour after UTC midnight, which made keep1 read as 3 days old and stale.
+    const daysAgo = (n: number) => `${new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10)}T12:00:00.000Z`;
     const base = { kind: 'wip', date: '2020-01-01', ts: '2020-01-01T00:00:00.000Z', model: 'x', used: ['x'] };
     const lease = (id: string, item: string, ts: string) => ({ id, kind: 'lease', leases: item, window: 'gone', ttl: 60, date: ts.slice(0, 10), ts, text: `lease ${item}` });
     const rows = [
