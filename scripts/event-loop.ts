@@ -56,6 +56,8 @@ import { claimDigests, digestBody, digestDir, unseenDigests } from './lib/digest
 import { migrateDigests } from './lib/digest-migrate.ts';
 import { readTriageLog, sweepSuppressed, triageEvents } from './lib/digest-triage.ts';
 import type { Triage } from './lib/digest-triage.ts';
+import { realQuietDeps } from './lib/quiet-wakes.ts';
+import type { QuietDeps } from './lib/quiet-wakes.ts';
 import type { InboxEntry } from './lib/event-inbox.ts';
 import { appendEvents, formatEntry, mark, readInbox, readInboxReport } from './lib/event-inbox.ts';
 import { deliverableTo, loadRouteContext, ownerOf, seenByWindow } from './lib/event-route.ts';
@@ -84,6 +86,8 @@ export interface TickDeps {
   notifyRun?: NotifyRun;
   /** The triage seam for ambiguous pr lines; the rules-only default suppresses nothing. */
   triage?: Triage;
+  /** The outside world for the quiet-wake rules (merge-sweep, gh, the ledger note); without it only the continuity rule applies. */
+  quiet?: QuietDeps;
 }
 
 /** What one tick did: the digest events, retired watches, ids skipped in quiet hours and ids not yet due. */
@@ -162,7 +166,7 @@ function renewed(dir: string, watch: Watch, type: EventType | undefined, now: nu
  * during quiet hours only `notify_overnight` watches are checked or notified.
  */
 export function tick(deps: TickDeps): TickResult {
-  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun, triage } = deps;
+  const { dir, types, ctx = {} as LoopContext, config = cadenceConfig(), now = Date.now(), notifyCommand = [], notifyRun, triage, quiet: quietDeps } = deps;
   const state = loadState(dir);
   // Quiet means the clock says so, whatever quietMode does to the pace (`slow` never returns stop).
   const quiet = 'stop' in nextInterval({ now, recentEvents: state.events, config: { ...config, quietMode: 'stop' } });
@@ -202,8 +206,8 @@ export function tick(deps: TickDeps): TickResult {
     const seconds = intervalFor(watch, { types, config, now, recentEvents: state.events });
     if (state.watches[watch.id]) state.watches[watch.id].nextDue = now + (quiet && slowOnly(watch, types, config) ? Math.max(seconds, SLOW_QUIET_SECONDS) : seconds) * 1000;
   }
-  // Rules classify the pr lines and log each decision before anything wakes the orchestrator.
-  triageEvents(out.events, { dir, triage });
+  // Rules classify the pr lines (and the quiet-wake events) and log each decision before anything wakes the orchestrator.
+  triageEvents(out.events, { dir, triage, quiet: quietDeps });
   // Digest first: a crash between the two repeats an event on the next tick instead of losing it.
   appendDigest(dir, out.events.map(({ mayNotify, ...e }) => e));
   saveState(dir, state);
@@ -286,11 +290,12 @@ async function wait(next: Interval | Stop, { beat, serve, sleep: nap, signal }: 
 async function run({ dir, types, once, serve = false, pinned, sleep: nap = sleep, signal }: RunOptions): Promise<number> {
   const ctx = { run: defaultRun, config: { inboxCommand: INBOX_COMMAND }, dir };
   const beat = heartbeatWriter(dir, !once);
+  const quiet = realQuietDeps();
   try {
     for (;;) {
       if (!serve && !listWatches(dir).length) { console.log('no watches registered'); return EXIT.ok; }
       try {
-        tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND });
+        tick({ dir, types, ctx, config: cadenceConfig(pinned), notifyCommand: NOTIFY_COMMAND, quiet });
         sweepTriage(dir);
         if (serve) drainDigestToInbox(dir);
       } catch (err) { beat({ lastError: errorMessage(err).split('\n')[0] }); throw err; }
