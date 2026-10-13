@@ -23,33 +23,41 @@ const data = (over: Partial<OpenPrsData> = {}): OpenPrsData => ({
 const model = (over: Partial<OpenPrsModel> = {}): OpenPrsModel => ({ data: data(), loaded: true, refresh: { kind: 'idle' }, ...over });
 const text = (root: ParentNode): string => root.textContent ?? '';
 
-test('PRs are grouped team then self-review, one table per repo with its count', async () => {
+test('PRs are grouped by whose move, then by repo', async () => {
   const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model() });
   const heads = [...root.querySelectorAll('h2, h3')].map((e) => e.textContent?.replace(/\s+/g, ' ').trim());
-  assert.deepEqual(heads, ['Team repos (2)', 'acme/widgets (2)', 'Self-review repos (1)', 'me/tool (1)']);
-  assert.equal(root.querySelectorAll('table').length, 2);
-  assert.equal(root.querySelectorAll('tbody tr').length, 3);
+  assert.ok(heads.some((h) => h?.startsWith('Your move')));
+  assert.ok(heads.some((h) => h?.startsWith('Drafts')));
+  assert.ok(heads.includes('widgets 1 PR') || heads.some((h) => h?.startsWith('widgets')));
+  assert.equal(root.querySelectorAll('li.pr').length, 3);
   cleanup();
 });
 
-test('a row shows its facts in words, a link to the PR, the twin pairing and the ticket link', async () => {
+test('each PR is its own row, with its base, gates and the twin named beside it', async () => {
   const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model() });
-  const rows = [...root.querySelectorAll('tbody tr')];
-  const first = rows[0].textContent?.replace(/\s+/g, ' ') ?? '';
-  const second = rows[1].textContent?.replace(/\s+/g, ' ') ?? '';
-  assert.match(first, /develop #7/);
-  assert.match(first, /staging none/);
-  assert.match(second, /develop #7/);
-  assert.match(second, /staging #9/);
-  assert.doesNotMatch(second, /↔/);
-  assert.match(second, /Ready/);
-  assert.match(second, /Changes requested/);
-  assert.match(second, /2 open/);
-  assert.match(second, /Conflicts/);
-  assert.match(second, /3 d/);
-  assert.equal(rows[1].querySelector('a[href$="/pull/9"]')?.textContent, '#9');
-  assert.equal(rows[1].querySelector('a[href$="AB-1"]')?.textContent, 'AB-1');
-  assert.match(rows[0].textContent ?? '', /Draft/);
+  const rows = [...root.querySelectorAll('li.pr')];
+  const staging = rows.find((r) => r.textContent?.includes('#9'));
+  assert.ok(staging);
+  const line = staging.textContent?.replace(/\s+/g, ' ') ?? '';
+  assert.match(line, /→ staging/);
+  assert.match(line, /twin of #7/);
+  assert.match(line, /Changes/);
+  assert.match(line, /Conflicts/);
+  assert.match(line, /3 d/);
+  assert.equal(staging.querySelector('a[href$="/pull/9"]')?.textContent, 'Add the thing');
+  assert.equal(staging.querySelector('a[href$="AB-1"]')?.textContent, 'AB-1');
+  assert.ok(rows.some((r) => /→ develop/.test(r.textContent ?? '')));
+  cleanup();
+});
+
+test('a staging PR with no develop twin still names its base', async () => {
+  const only = data({
+    total: 1,
+    groups: [{ id: 'team', label: 'Team repos', count: 1, repos: [{ repo: 'acme/widgets', count: 1, prs: [pr({ number: 9, base: 'staging', url: 'https://github.com/acme/widgets/pull/9', isDraft: false, sides: { staging: { number: 9, url: 'https://github.com/acme/widgets/pull/9' } } })] }] }],
+  });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { model: model({ data: only }) });
+  assert.equal(root.querySelectorAll('li.pr').length, 1);
+  assert.match(text(root), /→ staging/);
   cleanup();
 });
 
@@ -110,7 +118,7 @@ test('a finished refresh updates the table and the freshness line in place; fail
   const button = root.querySelector('button.refresh');
   el.model = model({ refresh: { kind: 'done' }, data: data({ total: 1, prData: { fetchedAt: '2026-10-12T14:59:00Z', stale: false }, groups: [{ id: 'team', label: 'Team repos', count: 1, repos: [{ repo: 'acme/widgets', count: 1, prs: [pr()] }] }] }) });
   assert.equal(root.querySelector('button.refresh'), button, 'the button is the same node, so it keeps focus');
-  assert.equal(root.querySelectorAll('tbody tr').length, 1);
+  assert.equal(root.querySelectorAll('li.pr').length, 1);
   assert.match(text(root), /Refreshed\./);
   assert.match(text(root), /PR data 2:59 pm/);
   assert.equal(button?.getAttribute('aria-disabled'), 'false');
