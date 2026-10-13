@@ -5,6 +5,7 @@
  */
 import { linkNotePaths, obsidianUri, ticketNotePath } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
+import type { DevelopTwin } from './twin.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
 import { reviewQueue } from '../review-queue.ts';
@@ -32,6 +33,8 @@ export interface Pr {
   createdAt?: string;
   /** Who approved and who requested changes, by each reviewer's latest review; absent when the PR cache predates the review history. */
   approvers?: string[]; changesBy?: string[];
+  /** A staging PR's develop twin, `null` when none was found; absent when the repo is not develop-then-staging or the cache predates it. */
+  developTwin?: DevelopTwin | null;
 }
 /** The numbers `journal.ts status --footer` prints, as `status --json` carries them: one row per stream, and the session. */
 export interface FooterData { ledger: FooterRow[]; session: SessionStatus }

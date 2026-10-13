@@ -19,3 +19,10 @@ test('ready to merge needs approval, zero unresolved threads and a clean mergeab
 test('a draft is never ready, however clean', () => {
   assert.equal(readyToMerge({ ...base, isDraft: true }), false);
 });
+
+test('a staging PR waits on its develop twin: unmerged or not found is never ready, and clearing the wait makes it ready again', () => {
+  assert.equal(readyToMerge({ ...base, waitsOnDevelop: { number: 3990, url: 'https://example.test/pull/3990' } }), false, 'twin still open');
+  assert.equal(readyToMerge({ ...base, waitsOnDevelop: {} }), false, 'no twin found');
+  assert.equal(readyToMerge({ ...base }), true, 'twin merged (no wait) and the other checks pass');
+  assert.equal(readyToMerge({ ...base, review: 'none' }), false, 'a merged twin does not excuse the other checks');
+});
