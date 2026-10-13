@@ -155,7 +155,7 @@ import { hostname, homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { importTracker, writeTracker } from './lib/whats-next/tracker.ts';
 import { gatherRankInput } from './lib/whats-next/gather.ts';
-import { nextLines, rankNext } from './lib/whats-next/rank.ts';
+import { nextLines, rankNext, whyOf } from './lib/whats-next/rank.ts';
 import type { Ranking } from './lib/whats-next/rank.ts';
 import { CONTAINER_PROJECT, GIT_EMAILS, PROTECTED_BRANCHES, statusDirFor, LEDGER_ROOT, VAULT_ROOT, LOOP_PATTERNS, RESUME_GH, LEDGER_GIT_AUTOCOMMIT, CLAUDE_PROJECTS_DIR, SCRIPTS_SHELF_DIR, CONTAINER_ROOT, SWEEP_BUDGET_SECONDS, TRACKER_KEY_PATTERN, CONFIGURED_PROJECT, UPDATE_CHECK, AUTO_PULL, AUTO_PULL_SET, userPath, WATCH_TZ, STATUS_DIR_SETTING, STATUS_PAGE_URI_SETTING, OBSIDIAN_VAULT, REVIEW_QUEUE_CAP, SELF_REVIEW_REPOS, EVENT_DIR, PRIORITIES_MAX, NOTES_CHECK_SINCE, LEASE_TTL_MINUTES, STATUS_REPO_STREAMS, MEMORY_DIR, STALE_WIP_DAYS, NEXT_FROZEN_LABELS, NEXT_BLOCKED_LABELS } from './local-config.ts';
 import { supervisorStatus } from './lib/supervisor-state.ts';
@@ -217,8 +217,8 @@ import { currentPath, fetchLive, freshestSnapshotPath, selfReviewSummary, type S
 import { statusPageUri, statusPageFooter, podiumWebUrl } from './lib/status-page/links.ts';
 import { readWeek, weekLine, weekLines, writeWeek } from './lib/status-page/week.ts';
 import { withhold } from './lib/withhold.ts';
-import { buildStart, homeCounts, startLines, unreadableHome, viewDay } from './lib/start/start-here.ts';
-import type { UnreachableNotes } from './lib/start/start-here.ts';
+import { buildStart, homeCounts, startLines, unreadableHome, UP_NEXT_TOP, viewDay } from './lib/start/start-here.ts';
+import type { UnreachableNotes, UpNextRow } from './lib/start/start-here.ts';
 import type { HomeCounts } from './lib/start/start-here.ts';
 import { buildHome, notesReachability } from './lib/web/home.ts';
 import { reachabilityLines, windowStart } from './lib/notes/reachability.ts';
@@ -878,6 +878,13 @@ function trackerAgeNote(r: Ranking): string | undefined {
     if (!r.trackerFetchedAt) return 'Tracker: no snapshot, so tracker issues are not ranked (playbooks/tracker-snapshot.md fetches one).';
     const age = Date.now() - Date.parse(r.trackerFetchedAt);
     return age > TRACKER_STALE_MS ? `Tracker: the snapshot is ${Math.floor(age / 3_600_000)}h old; refresh it (playbooks/tracker-snapshot.md).` : undefined;
+}
+
+/** The top of the ranked queue for the Start view. A failure to rank leaves the block out rather than failing the view. */
+function upNextForStart(): UpNextRow[] {
+    try {
+        return whatsNext().ranked.slice(0, UP_NEXT_TOP).map((c) => ({ id: c.id, ...(c.key ? { key: c.key } : {}), project: c.project, title: c.title, score: c.score, why: whyOf(c) }));
+    } catch { return []; }
 }
 
 /** `next [--top N] [--all] [--in <project>] [--json]`: the top of the ranked queue with a named score, read-only. */
@@ -2602,7 +2609,7 @@ function cmdStartHere() {
     const local = viewDay(nowAt, WATCH_TZ);
     const priorities = dirPath ? readPriorities(dirPath, local) : { state: 'missing' as const };
     const names = activeStreams(g.inflight, g.queued, g.blocked, g.awaiting, g.paste);
-    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), now: nowAt });
+    const s = buildStart(g, { day: local, week: dirPath ? readWeek(dirPath, local) : { state: 'missing' }, priorities, conditions: conditionLinesSafe(), standing: standingLines(false), where: homesFor(names, dirPath), unreachableNotes: unreachableForStart(), upNext: upNextForStart(), now: nowAt });
     if (asJson) printJson(s);
     else startLines(s, nowAt, { stream: arg('stream') || undefined }).forEach((l) => console.log(withhold(l)));
 }

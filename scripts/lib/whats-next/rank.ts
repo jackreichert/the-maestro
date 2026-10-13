@@ -221,8 +221,11 @@ const oneLine = (s: string, n: number): string => { const t = s.replace(/\s+/g, 
 const signed = (n: number): string => (n < 0 ? `${n}` : `+${n}`);
 
 /** One line for a candidate: place, id (and tracker key), score, title, then every term with its points. */
+/** Every term with its points, e.g. `P0 +40, done defined +10`. */
+export const whyOf = (c: Candidate): string => c.terms.map((t) => `${t.why} ${signed(t.points)}`).join(', ');
+
 export function candidateLine(c: Candidate, place: number): string {
-  const why = c.terms.map((t) => `${t.why} ${signed(t.points)}`).join(', ');
+  const why = whyOf(c);
   return `${place}. ${c.id}${c.key ? ` (${c.key})` : ''} · ${c.score} · ${oneLine(c.title, 90)} [${c.project}] · ${why}`;
 }
 
