@@ -4,7 +4,7 @@ import { askCards, itemRows } from './stream-board.ts';
 import type { AskList, RowContext } from './stream-board.ts';
 import { byPriority, clockTime, splitStream, todaysPriorities } from './glance.ts';
 import { linkAttrs } from './link-policy.ts';
-import { STATE_TONE, askAgeBars, epicCards, orderAsks, prGauge, queuedByStream } from './home-model.ts';
+import { STATE_TONE, askAgeBars, byStreamName, epicCards, orderAsks, prGauge, queuedByStream } from './home-model.ts';
 import { scoreTable } from './home-model.ts';
 import type { AskOrder, CiKey, EpicCard, Score, ScoreRow } from './home-model.ts';
 import { seriesClass } from './series.ts';
@@ -223,10 +223,13 @@ export function boardSection(st: PodiumState, live: boolean, redraw: () => void)
   const picked = homeUi.stream && st.asks.some((a) => a.stream === homeUi.stream) ? homeUi.stream : null;
   const shown = picked ? st.asks.filter((a) => a.stream === picked) : st.asks;
   const cap = homeUi.allAsks ? Number.POSITIVE_INFINITY : ASK_CAP;
-  const list: AskList | null = askCards(shown, live, true, cap, (xs) => byPriority(orderAsks(xs, homeUi.order), todaysPriorities(st)));
+  const list: AskList | null = askCards(shown, live, true, cap, (xs) => {
+    const ranked = byPriority(orderAsks(xs, homeUi.order === 'stream' ? 'oldest' : homeUi.order), todaysPriorities(st));
+    return homeUi.order === 'stream' ? byStreamName(ranked) : ranked;
+  });
   const set = (patch: Partial<typeof homeUi>): void => { Object.assign(homeUi, patch); redraw(); };
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Order of asks' },
-    ...([['oldest', 'Oldest first'], ['oneway', 'One-way doors first']] as const).map(([k, label]) => {
+    ...([['oldest', 'Oldest first'], ['oneway', 'One-way doors first'], ['stream', 'Stream']] as const).map(([k, label]) => {
       const b = h('button', { type: 'button', 'data-ctl': `order-${k}`, 'aria-pressed': String(homeUi.order === k) }, label);
       b.addEventListener('click', () => set({ order: k }));
       return b;
