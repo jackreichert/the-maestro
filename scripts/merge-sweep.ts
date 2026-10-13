@@ -4,7 +4,8 @@
  *
  *   node scripts/merge-sweep.ts [--json] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]
  *
- * Read-only unless `--close` is given. A cheap runner follows playbooks/merge-sweep.md.
+ * Read-only unless `--close-ledger` (alias `--close`) is given. That flag is the only write, and it touches the local ledger only:
+ * this script never deletes a branch (branch-sweep.ts --apply does, as its own step). A cheap runner follows playbooks/merge-sweep.md.
  *
  * An open row (in flight, queued, blocked, or a question) names a pull request in its text, its gate, or its refs as
  * `gh:pr:owner/repo#N`, `owner/repo#N`, a github.com pull URL, or, for a repo whose owner is known, `repo#N`, `repo #N` or
@@ -19,7 +20,10 @@
  * refs (pr-open.ts writes that link), every PR it names is MERGED, and it is still open: never twice, and never while any
  * linked PR is open, closed, or unreadable. A closed row leaves the merged list for `autoClosed`. A row that only mentions a
  * PR in its text is listed with the printed command and is not closed.
+ * Only `wip` and `blocked` rows are matched at all, and only `wip` closes; a `question` or pending `decision` is skipped
+ * (counted in `skipped`), however it cites a PR.
  * If the open rows name no PR at all the sweep is blind, not clean: it prints a WARNING and exits 3.
+ * `--json` adds `actions` (rows left for a decision, +1 when blind; 0 exactly when the exit is 0), `closedCount` and `blind`.
  * Exit 0 when every named PR was read and none is merged, stale, or closed-unmerged; 1 when any of those lists is
  * non-empty; 3 when the only news is an unknown PR or a blind sweep; 2 on a usage or read error.
  */
@@ -34,7 +38,7 @@ import { parseArgs } from './lib/journal/args.ts';
 import { printJson } from './lib/json-out.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
-const USAGE = 'Usage: merge-sweep.ts [--json] [--close] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]';
+const USAGE = 'Usage: merge-sweep.ts [--json] [--close-ledger] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]';
 const DEFAULT_STALE_DAYS = 7;
 const SAFE_ID = /^[a-z0-9]{4,6}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,13 +48,15 @@ const REF_RE = /(?<![\w/.-])([\w.-]+\/[\w.-]+)#(\d+)\b/g;
 const URL_RE = /(?<![\w.-])https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\b/g;
 const KNOWN_STATE = new Set(['MERGED', 'OPEN', 'CLOSED']);
 const VALUED = new Set(['--vault', '--project', '--stale-days', '--today']);
-const BOOLEAN = new Set(['--json', '--close']);
+const BOOLEAN = new Set(['--json', '--close', '--close-ledger']);
 
 /** `linked` is true when the PR is named in the row's refs (written by pr-open.ts), not only mentioned in its text or gate. */
 export interface NamedPr { repo: string; number: number; owned: boolean; linked?: boolean }
 export interface PrHit { repo: string; number: number; state: string; updatedAt?: string; idleDays?: number; reason?: string }
 export interface SweepRow { id: string; text: string; prs: PrHit[]; allMerged: boolean; closable: boolean; done?: string }
-export interface SweepReport { today: string; staleDays: number; merged: SweepRow[]; stale: SweepRow[]; unknown: SweepRow[]; closed: SweepRow[]; autoClosed: SweepRow[]; openRows: number; parsed: number; warning?: string }
+export interface SweepReport { today: string; staleDays: number; merged: SweepRow[]; stale: SweepRow[]; unknown: SweepRow[]; closed: SweepRow[]; autoClosed: SweepRow[]; openRows: number; parsed: number; warning?: string; skipped?: number }
+/** The JSON a caller reads: the report plus `actions` (rows left for a decision, plus 1 when blind) and `closedCount` (rows this run closed). actions 0 is exit 0. */
+export interface SweepJson extends SweepReport { actions: number; closedCount: number; blind: boolean }
 
 /** Why argv cannot be used, or null. A positional, an unknown flag, or a valued flag with no value. */
 export function usageError(argv: string[]): string | null {
@@ -148,6 +154,11 @@ export function hitFor(ref: NamedPr, view: GhView | undefined, today: string): P
     return { ...base, state: 'OPEN', updatedAt: view.updatedAt, idleDays: daysBetween(day, today) };
 }
 
+/** Only a row that tracks work (`wip`, `blocked`) can be matched to a PR. A `question` or a pending `decision` never is. */
+export function matchable(row: LedgerRow): boolean {
+    return row.kind === 'wip' || row.kind === 'blocked';
+}
+
 function oneLine(s: string): string {
     return s.replace(/\s+/g, ' ').trim();
 }
@@ -158,7 +169,8 @@ function listRow(row: LedgerRow, named: NamedPr[], prs: PrHit[]): SweepRow {
     // Printed on every merged row, including a partial one. The caller must not run it; allMerged says whether it is ready.
     const done = prs.some((p) => p.state === 'MERGED') ? doneCommand(id) : undefined;
     // Closable: every PR on the row merged, at least one of them linked through refs (not just mentioned in text), and an id the close command accepts.
-    const closable = allMerged && named.some((n) => n.linked) && doneCommand(id) !== undefined;
+    // Only a `wip` row closes: a blocked row waits on something else, and a question is never closed here.
+    const closable = row.kind === 'wip' && allMerged && named.some((n) => n.linked) && doneCommand(id) !== undefined;
     return { id, text: typeof row.text === 'string' ? row.text : '', prs, allMerged, closable, ...(done ? { done } : {}) };
 }
 
@@ -183,6 +195,8 @@ export function classifyRows(
     const report: SweepReport = { today, staleDays, merged: [], stale: [], unknown: [], closed: [], autoClosed: [], openRows: rows.length, parsed: 0 };
     const parsed = new Set<string>();
     for (const row of rows) {
+        // An open question or pending decision is waiting on a person; a merge that its text cites does not answer it.
+        if (!matchable(row)) { report.skipped = (report.skipped ?? 0) + 1; continue; }
         const named = namedPrs(row);
         if (!named.length) continue;
         for (const n of named) parsed.add(`${n.repo}#${n.number}`);
@@ -194,8 +208,17 @@ export function classifyRows(
         else if (prs.some((p) => p.state === 'CLOSED')) report.closed.push(listed);
     }
     report.parsed = parsed.size;
-    if (rows.length > 0 && parsed.size === 0) report.warning = `WARNING: merge-sweep parsed 0 pull requests across ${rows.length} open rows, so it cannot see any merge. This is not a clean sweep. Rows name a PR as owner/repo#N, a github.com pull URL, or repo#N for a repo in repo_owners.`;
+    if (rows.length - (report.skipped ?? 0) > 0 && parsed.size === 0) report.warning = `WARNING: merge-sweep parsed 0 pull requests across ${rows.length - (report.skipped ?? 0)} open rows, so it cannot see any merge. This is not a clean sweep. Rows name a PR as owner/repo#N, a github.com pull URL, or repo#N for a repo in repo_owners.`;
     return report;
+}
+
+/** Rows left for a decision (merged but not closed, stale, closed unmerged, unknown), plus 1 for a blind sweep. 0 means nothing to do. */
+export function actionCount(report: SweepReport): number {
+    return report.merged.length + report.stale.length + report.closed.length + report.unknown.length + (report.warning ? 1 : 0);
+}
+
+export function toJson(report: SweepReport): SweepJson {
+    return { ...report, actions: actionCount(report), closedCount: report.autoClosed.length, blind: Boolean(report.warning) };
 }
 
 /** 0 clean, 1 something to report, 3 unknown only. Usage errors are the caller's 2. */
@@ -286,9 +309,10 @@ export function main(argv: string[]): number {
     try { entries = store.readLedger(); } catch { console.error(`merge-sweep: could not read ${store.ledgerPath}`); return 2; }
     const open = fold(entries, store.loadRegistry()).items.filter(isOpen);
     const report = classifyRows(open, ghView, today, Number(staleRaw));
-    if (has('close')) closeMerged(report, (id, why) => journalDone(id, why, vault, project));
-    if (has('json')) printJson(report);
-    else printText(report, has('close'));
+    const closing = has('close') || has('close-ledger');
+    if (closing) closeMerged(report, (id, why) => journalDone(id, why, vault, project));
+    if (has('json')) printJson(toJson(report));
+    else printText(report, closing);
     return exitCode(report);
 }
 
