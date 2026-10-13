@@ -15,6 +15,8 @@ export interface HomeOptions { live: boolean; projects: ProjectsLoad }
 
 /** Asks shown before "Show all N": enough to act on, few enough that the project rows stay above the fold. */
 const ASK_CAP = 3;
+/** Items listed per stream under "Today" before a "n more" disclosure; the full count is always in the heading. */
+const DONE_CAP = 3;
 const LINK_KIND: Record<HomeLink['kind'], string> = { pin: 'pinned', context: 'context', library: 'library' };
 
 export const HOME_TAB_CSS = `
@@ -22,7 +24,7 @@ export const HOME_TAB_CSS = `
   .asof { font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-muted); margin: var(--space-1) 0 0; }
   .home-grid { display: grid; gap: var(--space-7) var(--gutter); align-items: start; }
   @media (min-width: 1024px) {
-    .home-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-template-areas: "needs done" "projects done" "charts charts" "links links"; }
+    .home-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-template-areas: "needs needs" "charts charts" "projects done" "links done"; }
     .a-needs { grid-area: needs; } .a-projects { grid-area: projects; } .a-done { grid-area: done; } .a-charts { grid-area: charts; } .a-links { grid-area: links; }
   }
   ul.projects, ul.done, ul.links { list-style: none; margin: 0; padding: 0; border-top: var(--hairline); }
@@ -45,7 +47,7 @@ export const HOME_TAB_CSS = `
   ul.done ul li + li { margin-top: var(--space-1); }
   ul.week > li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
   .week-n { font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
-  .home-charts { display: grid; gap: var(--space-6) var(--gutter); }
+  .home-charts { display: grid; gap: var(--space-5) var(--gutter); }
   @media (min-width: 768px) { .home-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .home-charts figure { margin: 0; }
   .home-charts figcaption { margin-top: var(--space-2); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-muted); }
@@ -96,7 +98,7 @@ function projectRow(r: ProjectRow): HTMLElement {
 
 function doneBody(today: DoneSpan, week: DoneSpan, missing: number, read: HTMLElement): HTMLElement {
   const todayList = today.groups.length
-    ? h('ul', { class: 'done' }, ...today.groups.map((g) => h('li', {}, streamTag(g.stream), h('ul', {}, ...g.items.map((i) => h('li', {}, i.text, i.ticket ? ' ' : null, i.ticket ? refLink(i.ticket) : null))))))
+    ? h('ul', { class: 'done' }, ...today.groups.map((g) => h('li', {}, streamTag(g.stream), h('ul', {}, ...doneItems(g.items.slice(0, DONE_CAP)), g.items.length > DONE_CAP ? h('li', {}, h('details', { class: 'fold', 'data-fold': `done-${g.stream}` }, h('summary', {}, `${g.items.length - DONE_CAP} more`), h('ul', {}, ...doneItems(g.items.slice(DONE_CAP))))) : null))))
     : h('p', { class: 'loading' }, 'Nothing finished yet today.');
   return h('div', {},
     h('div', { class: 'done-span' }, h('h3', {}, `Today · ${today.n}`), todayList),
@@ -105,6 +107,8 @@ function doneBody(today: DoneSpan, week: DoneSpan, missing: number, read: HTMLEl
     missing > 0 ? h('p', { class: 'home-note' }, `${missing} finished this week ${missing === 1 ? 'is' : 'are'} counted but not listed by name: the server keeps only the newest.`) : null,
     read);
 }
+
+const doneItems = (items: DoneSpan['groups'][number]['items']): HTMLElement[] => items.map((i) => h('li', {}, i.text, i.ticket ? ' ' : null, i.ticket ? refLink(i.ticket) : null));
 
 function chartsBody(st: PodiumState, p: ProjectsLoad): HTMLElement {
   const age = ageChart(st);
