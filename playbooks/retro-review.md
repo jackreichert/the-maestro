@@ -25,6 +25,10 @@ Never copy a secret, a credential, a person's name or any patient data into a pr
 
 For every retro and every missing item: `$J retro-reviewed <retro id | item id> --note "<what was done, in one line>" [--promoted learned:<id>,ticket:<id>]`. A missing item with a good reason (`agent was stopped`) is closed with a note; one with no reason or a weak one is listed for the orchestrator, since an agent skipped its retro.
 
-## 4. Hand back
+## 4. Your own retro
+
+If you were briefed on an item, your pass owes a retro too, and a retro left open would wake the next review three hours later. So write it and close it in the same pass: `$J agent-retro <your item> --lesson "process: ..."` (or `--nothing "<why>"`), then `$J retro-reviewed <that retro id> --note "reviewed in its own pass"`, before your item is closed with `done`. Never close your item with `--no-retro`: that counts as missing and wakes the next review the same way.
+
+## 5. Hand back
 
 At most 8 lines: how many retros you closed, what each promotion became (with its id), the `jack` lessons waiting for the orchestrator to record, the process lessons you are watching for a second sighting, and any missing retro with no good reason. Nothing else.
