@@ -81,3 +81,14 @@ test('the PR data age and a failed read are passed through; a missing or unreada
   assert.deepEqual(out.prData, { fetchedAt: null, stale: true, failure: 'gh read failed' });
   assert.equal(out.groups[0]?.repos[0]?.prs[0]?.ageDays, undefined);
 });
+
+test('reviewOf: history decides when it is read, and an empty decision is never an approval', async () => {
+  const { reviewOf } = await import('./open-prs.ts');
+  assert.equal(reviewOf(null, ['fake-a'], []), 'approved');
+  assert.equal(reviewOf('APPROVED', [], []), 'none', 'history without an approver wins over a stale decision');
+  assert.equal(reviewOf('', [], undefined), 'none');
+  assert.equal(reviewOf('APPROVED', ['fake-a'], ['fake-b']), 'changes-requested');
+  assert.equal(reviewOf('CHANGES_REQUESTED', ['fake-a'], []), 'changes-requested');
+  assert.equal(reviewOf('APPROVED'), 'approved', 'no history: GitHub decision stands');
+  assert.equal(reviewOf(null), 'none');
+});

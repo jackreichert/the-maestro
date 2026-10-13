@@ -48,6 +48,8 @@ export interface PrCard {
   selfReview?: boolean;
   /** When the PR was opened; absent when the PR cache predates the field. */
   createdAt?: string;
+  /** Who approved and who requested changes (latest review per reviewer); absent when the PR cache has no review history. */
+  approvers?: string[]; changesBy?: string[];
 }
 
 export interface PodiumState {
@@ -172,6 +174,6 @@ function prCard(p: Pr, all: Pr[], config: PageConfig, twinOf?: Pr): PrCard {
   return {
     repo: p.repo, short: p.short, number: p.number, title: p.title, url: p.url, stream: p.stream, base: p.baseRefName, head: p.headRefName,
     isDraft: p.isDraft, ci: p.ci, mergeable: p.mergeable, mergeStateStatus: p.mergeStateStatus, unresolved: p.unresolved, review: p.reviewDecision,
-    flags: prFlagNames(p), ...(p.createdAt ? { createdAt: p.createdAt } : {}), ...(isSelfReview(p.repo, config.selfReviewRepos ?? []) ? { selfReview: true } : {}), ...(twinOf ? { twinOf: twinOf.number } : {}), ...(parent ? { stackedOn: parent.number } : {}),
+    flags: prFlagNames(p), ...(p.createdAt ? { createdAt: p.createdAt } : {}), ...(p.approvers ? { approvers: p.approvers } : {}), ...(p.changesBy ? { changesBy: p.changesBy } : {}), ...(isSelfReview(p.repo, config.selfReviewRepos ?? []) ? { selfReview: true } : {}), ...(twinOf ? { twinOf: twinOf.number } : {}), ...(parent ? { stackedOn: parent.number } : {}),
   };
 }

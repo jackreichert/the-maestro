@@ -219,6 +219,8 @@ export interface OpenPrRow {
   twins: number[]; sides?: OpenPrSides; ageDays?: number; ticket?: { label: string; url?: string };
   /** CI conclusion from the PR cache. Absent on a server that predates the redesigned board. */
   ci?: string;
+  /** Logins whose latest review is an approval; absent on a server without review history. */
+  approvers?: string[];
   /** The parent PR this one is stacked on, when both are open. */
   stackedOn?: number;
 }

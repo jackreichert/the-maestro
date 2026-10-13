@@ -11,7 +11,16 @@ import type { OpenPrRow, OpenPrSide, OpenPrSides, OpenPrsData, OpenPrsGroup, Ope
 
 const DAY_MS = 86_400_000;
 
-const reviewOf = (r: string | null): OpenPrRow['review'] => (r === 'APPROVED' ? 'approved' : r === 'CHANGES_REQUESTED' ? 'changes-requested' : 'none');
+/**
+ * The review verdict. With the review history (latest review per reviewer) an approval is somebody's standing APPROVED and no one's
+ * standing CHANGES_REQUESTED; an empty `reviewDecision` is not an approval and not a denial either. Without history (a PR cache from
+ * before it was read) GitHub's own decision stands.
+ */
+export function reviewOf(decision: string | null, approvers?: string[], changesBy?: string[]): OpenPrRow['review'] {
+  if (decision === 'CHANGES_REQUESTED' || (changesBy && changesBy.length > 0)) return 'changes-requested';
+  if (approvers) return approvers.length > 0 ? 'approved' : 'none';
+  return decision === 'APPROVED' ? 'approved' : 'none';
+}
 const mergeableOf = (m: string): OpenPrRow['mergeable'] => (m === 'MERGEABLE' ? 'mergeable' : m === 'CONFLICTING' ? 'conflicting' : 'unknown');
 
 /** Whole days since `createdAt`, or undefined when the cache predates the field (or holds a date nobody can read). */
@@ -51,9 +60,9 @@ function row(p: PrCard, mine: PrCard[], page: PageConfig, now: Date): OpenPrRow 
   const age = ageDays(p.createdAt, now);
   const sides = sidesOf(p, mine);
   return {
-    number: p.number, title: p.title, url: p.url, base: p.base, head: p.head, isDraft: p.isDraft, review: reviewOf(p.review),
+    number: p.number, title: p.title, url: p.url, base: p.base, head: p.head, isDraft: p.isDraft, review: reviewOf(p.review, p.approvers, p.changesBy),
     unresolved: p.unresolved, mergeable: mergeableOf(p.mergeable), twins: twinsOf(p, mine), ...(sides ? { sides } : {}),
-    ...(p.ci ? { ci: p.ci } : {}), ...(p.stackedOn !== undefined ? { stackedOn: p.stackedOn } : {}),
+    ...(p.ci ? { ci: p.ci } : {}), ...(p.approvers ? { approvers: p.approvers } : {}), ...(p.stackedOn !== undefined ? { stackedOn: p.stackedOn } : {}),
     ...(age !== undefined ? { ageDays: age } : {}),
     ...(key ? { ticket: (({ label, url }) => (url === undefined ? { label } : { label, url }))(trackerRef(page, key)) } : {}),
   };

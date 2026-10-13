@@ -26,6 +26,7 @@ function isRawPr(v: unknown): v is RawPr {
     && (v.reviewDecision === null || typeof v.reviewDecision === 'string')
     && isObject(repo) && typeof repo.nameWithOwner === 'string'
     && isObject(threads) && Array.isArray(threads.nodes) && threads.nodes.every((n) => isObject(n) && typeof n.isResolved === 'boolean')
+    && (v.reviews === undefined || (isObject(v.reviews) && Array.isArray(v.reviews.nodes) && v.reviews.nodes.every((n) => isObject(n) && typeof n.state === 'string')))
     && isObject(commits) && Array.isArray(commits.nodes) && commits.nodes.every((n) => isObject(n) && isObject(n.commit));
 }
 

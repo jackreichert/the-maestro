@@ -15,6 +15,8 @@ import type { StreamEvidence } from './streams.ts';
 import { PRIORITIES_HEADING, carryInline, countUnprocessed, extractFields, unprocessed } from './inline.ts';
 import type { Unprocessed } from './inline.ts';
 import { localDate, readPriorities } from './priorities.ts';
+import { reviewVerdicts } from './reviews.ts';
+import type { RawReview } from './reviews.ts';
 import { readPrCache, writePrCache } from './prcache.ts';
 import { acquireLock, processAlive } from './lock.ts';
 import { PODIUM_FILE, readLegacyPage, readPodium, writePointer, readSeenMeta, readSeenPage, sha, writeAtomic, writeSeenMeta } from './seen.ts';
@@ -27,6 +29,8 @@ export interface RawPr {
   createdAt?: string;
   repository: { nameWithOwner: string };
   reviewThreads: { nodes: { isResolved: boolean }[] };
+  /** The review history; absent in a PR cache written before it was read. */
+  reviews?: { nodes: RawReview[] };
   commits: { nodes: { commit: { statusCheckRollup: { state: string } | null } }[] };
 }
 
@@ -67,6 +71,7 @@ export function loadPrs(raw: RawPr[], evidence: StreamEvidence): Pr[] {
       repo: n.repository.nameWithOwner, short, owner, ...(typeof n.createdAt === 'string' ? { createdAt: n.createdAt } : {}),
       unresolved: n.reviewThreads.nodes.filter((t) => !t.isResolved).length,
       ci: n.commits.nodes[0]?.commit.statusCheckRollup?.state ?? 'NONE', stream,
+      ...(n.reviews ? reviewVerdicts(n.reviews.nodes) : {}),
     };
   });
 }
