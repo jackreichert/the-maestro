@@ -2,8 +2,8 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, realpathSync, writeFileSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseConfig, trustedConfigFile, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
 
@@ -26,6 +26,17 @@ function show(env: Record<string, string> = {}, cwd: string = home): Record<stri
 }
 
 const write = (path: string, text: string): void => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, text); };
+
+/**
+ * A temp directory whose ancestors are private. tmpdir() is world-writable on Linux
+ * (`/tmp` is 1777), and trustedConfigFile rejects that whole chain, so a fixture
+ * planted there is skipped. The real home is private on the machines this runs on.
+ */
+function privateTemp(prefix: string): string {
+    const root = realpathSync(mkdtempSync(join(homedir(), prefix)));
+    chmodSync(root, 0o700);
+    return root;
+}
 
 test('parseConfig reads only the maestro-config block, strips comments and quotes', () => {
     const c = parseConfig(block('overlay: my-skill   # trailing\ngh_org: "my-org"\nempty:\nledger_root: /a b/c'));
@@ -91,19 +102,21 @@ test('MAESTRO_OVERLAY beats overlay: in the file; sibling of the skill dir is fo
 });
 
 test('overlay is found in an ancestor container .claude/skills when the checkout is reached by its real path', () => {
-    const container = mkdtempSync(join(tmpdir(), 'lc-container-'));
-    mkdirSync(join(container, 'skills', 'the-maestro', 'scripts'), { recursive: true });
-    write(join(container, '.claude', 'skills', 'anc-skill', 'config.md'), block('gh_org: ancestor-org'));
-    const run = (argv1: string): string => spawnSync(process.execPath, ['-e', `
+    const container = privateTemp('.lc-container-');
+    try {
+        mkdirSync(join(container, 'skills', 'the-maestro', 'scripts'), { recursive: true });
+        write(join(container, '.claude', 'skills', 'anc-skill', 'config.md'), block('gh_org: ancestor-org'));
+        const run = (argv1: string): string => spawnSync(process.execPath, ['-e', `
         process.argv[1] = ${JSON.stringify(argv1)};
         const m = await import(${JSON.stringify(SCRIPT)});
         console.log(m.GH_ORG);`, '--input-type=module'], {
-        encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH, HOME: home, MAESTRO_OVERLAY: 'anc-skill' },
-    }).stdout.trim();
-    assert.equal(run(join(container, 'skills', 'the-maestro', 'scripts', 'x.mjs')), 'ancestor-org');
-    mkdirSync(join(container, '.worktrees', 'wt', 'scripts'), { recursive: true });
-    assert.equal(run(join(container, '.worktrees', 'wt', 'scripts', 'x.mjs')), 'ancestor-org', 'a worktree under the container finds it too');
-    assert.equal(run(join(home, 'elsewhere', 'scripts', 'x.mjs')), '', 'no ancestor container, no overlay');
+            encoding: 'utf8', cwd: home, env: { PATH: process.env.PATH, HOME: home, MAESTRO_OVERLAY: 'anc-skill' },
+        }).stdout.trim();
+        assert.equal(run(join(container, 'skills', 'the-maestro', 'scripts', 'x.mjs')), 'ancestor-org');
+        mkdirSync(join(container, '.worktrees', 'wt', 'scripts'), { recursive: true });
+        assert.equal(run(join(container, '.worktrees', 'wt', 'scripts', 'x.mjs')), 'ancestor-org', 'a worktree under the container finds it too');
+        assert.equal(run(join(home, 'elsewhere', 'scripts', 'x.mjs')), '', 'no ancestor container, no overlay');
+    } finally { rmSync(container, { recursive: true, force: true }); }
 });
 
 /** GH_ORG as the overlay `trust-skill` resolves it, for a script started from `argv1`. */
@@ -115,37 +128,41 @@ const orgFrom = (argv1: string): string => spawnSync(process.execPath, ['-e', `
 }).stdout.trim();
 
 test('an overlay config under a group- or world-writable ancestor is not used, and a private chain is', () => {
-    const container = realpathSync(mkdtempSync(join(tmpdir(), 'lc-trust-')));
-    const cfg = join(container, 'mid', '.claude', 'skills', 'trust-skill', 'config.md');
-    write(cfg, block('gh_org: trusted-org'));
-    mkdirSync(join(container, 'mid', 'wt', 'scripts'), { recursive: true });
-    const argv1 = join(container, 'mid', 'wt', 'scripts', 'x.mjs');
-    assert.equal(trustedConfigFile(cfg), true);
-    assert.equal(orgFrom(argv1), 'trusted-org');
-    chmodSync(container, 0o777);
-    assert.equal(trustedConfigFile(cfg), false, 'a world-writable ancestor above the config');
-    assert.equal(orgFrom(argv1), '', 'the config is skipped, not read');
-    chmodSync(container, 0o775);
-    assert.equal(trustedConfigFile(cfg), false, 'group-writable counts too');
-    chmodSync(container, 0o755);
-    chmodSync(join(container, 'mid', '.claude'), 0o777);
-    assert.equal(trustedConfigFile(cfg), false, 'the directory holding the config is checked as well');
-    assert.equal(trustedConfigFile(join(container, 'absent', 'config.md')), false);
+    const container = privateTemp('.lc-trust-');
+    try {
+        const cfg = join(container, 'mid', '.claude', 'skills', 'trust-skill', 'config.md');
+        write(cfg, block('gh_org: trusted-org'));
+        mkdirSync(join(container, 'mid', 'wt', 'scripts'), { recursive: true });
+        const argv1 = join(container, 'mid', 'wt', 'scripts', 'x.mjs');
+        assert.equal(trustedConfigFile(cfg), true);
+        assert.equal(orgFrom(argv1), 'trusted-org');
+        chmodSync(container, 0o777);
+        assert.equal(trustedConfigFile(cfg), false, 'a world-writable ancestor above the config');
+        assert.equal(orgFrom(argv1), '', 'the config is skipped, not read');
+        chmodSync(container, 0o775);
+        assert.equal(trustedConfigFile(cfg), false, 'group-writable counts too');
+        chmodSync(container, 0o755);
+        chmodSync(join(container, 'mid', '.claude'), 0o777);
+        assert.equal(trustedConfigFile(cfg), false, 'the directory holding the config is checked as well');
+        assert.equal(trustedConfigFile(join(container, 'absent', 'config.md')), false);
+    } finally { rmSync(container, { recursive: true, force: true }); }
 });
 
 test('a symlinked overlay config is judged by where it really lives', () => {
-    const container = realpathSync(mkdtempSync(join(tmpdir(), 'lc-link-')));
-    const open = join(container, 'open');
-    write(join(open, 'config.md'), block('gh_org: planted-org'));
-    chmodSync(open, 0o777);
-    const link = join(container, '.claude', 'skills', 'trust-skill');
-    mkdirSync(join(link, '..'), { recursive: true });
-    symlinkSync(open, link);
-    mkdirSync(join(container, 'wt', 'scripts'), { recursive: true });
-    assert.equal(trustedConfigFile(join(link, 'config.md')), false, 'the private-looking path leads into a world-writable directory');
-    assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), '');
-    chmodSync(open, 0o755);
-    assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), 'planted-org', 'the same link is fine once its target is private');
+    const container = privateTemp('.lc-link-');
+    try {
+        const open = join(container, 'open');
+        write(join(open, 'config.md'), block('gh_org: planted-org'));
+        chmodSync(open, 0o777);
+        const link = join(container, '.claude', 'skills', 'trust-skill');
+        mkdirSync(join(link, '..'), { recursive: true });
+        symlinkSync(open, link);
+        mkdirSync(join(container, 'wt', 'scripts'), { recursive: true });
+        assert.equal(trustedConfigFile(join(link, 'config.md')), false, 'the private-looking path leads into a world-writable directory');
+        assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), '');
+        chmodSync(open, 0o755);
+        assert.equal(orgFrom(join(container, 'wt', 'scripts', 'x.mjs')), 'planted-org', 'the same link is fine once its target is private');
+    } finally { rmSync(container, { recursive: true, force: true }); }
 });
 
 test('plugin-qualified overlay resolves through installed_plugins.json', () => {
