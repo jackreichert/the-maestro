@@ -160,20 +160,20 @@ export const HOME_SECTIONS_CSS = `
   }
 `;
 
-const secHead = (title: string, n: number, aside?: Node | string | null, extra?: Node | null): HTMLElement =>
+export const secHead = (title: string, n: number, aside?: Node | string | null, extra?: Node | null): HTMLElement =>
   h('div', { class: 'sec-head' },
     h('h2', {}, title, n > 0 ? h('span', { class: 'n' }, h('span', { class: 'vh' }, ', '), String(n)) : null),
     aside ? h('p', { class: 'aside' }, aside) : null, extra ?? null);
 
 let seq = 0;
 /** A section element named by its heading, so a screen reader lists the parts of Home. */
-function part(cls: string, head: HTMLElement, ...body: (Node | null)[]): HTMLElement {
+export function part(cls: string, head: HTMLElement, ...body: (Node | null)[]): HTMLElement {
   const id = `hp${++seq}`;
   head.querySelector('h2')?.setAttribute('id', id);
   return h('section', { class: cls, 'aria-labelledby': id }, head, ...body);
 }
 /** A bar segment sized by weight: CSSOM, not a style attribute, so the CSP holds. Zero-weight segments are not drawn. */
-function grow(cls: string, weight: number): HTMLElement {
+export function grow(cls: string, weight: number): HTMLElement {
   const el = h('span', { class: cls });
   el.style.flexGrow = String(weight);
   el.style.flexBasis = '0';
@@ -185,7 +185,7 @@ function fill(ratio: number): HTMLElement {
   el.style.width = `${Math.round(ratio * 100)}%`;
   return el;
 }
-const empty = (text: string, rest?: string): HTMLElement => h('p', { class: 'empty-line' }, text, rest ? ' ' : null, rest ? h('i', {}, rest) : null);
+export const empty = (text: string, rest?: string): HTMLElement => h('p', { class: 'empty-line' }, text, rest ? ' ' : null, rest ? h('i', {}, rest) : null);
 
 // ---- The score ----
 

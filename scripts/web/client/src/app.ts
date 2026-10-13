@@ -5,7 +5,7 @@ import './local-review.ts';
 import './open-prs.ts';
 import { h, s, shadow } from './dom.ts';
 import { BOARD_CSS, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
+import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
 import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
@@ -23,9 +23,9 @@ import type { ProjectsLoad } from './home-tab.ts';
 import { filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
-import type { AskBusyDetail, ChartsData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
+import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
 
-interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number }
+interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number }
 
 const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
@@ -222,6 +222,7 @@ export class PodiumApp extends HTMLElement {
   #charts: ChartsData | null = null;
   // Open epics for the Board's rollups; null when the server gave none (sample data, an old server), which draws no epic lines.
   #epics: EpicsData | null = null;
+  #cost: CostData | null = null;
   // The local review queue; null when the server gave none, which the panel says in words.
   #local: LocalReview | null = null;
   #sources: { state: Source; charts: Source } = { state: 'fixture', charts: 'fixture' };
@@ -276,11 +277,12 @@ export class PodiumApp extends HTMLElement {
     window.addEventListener('pointerup', this.#onRelease);
     window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
-    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts()]).then(([s, c, e, lr]) => {
+    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts(), loadCost()]).then(([s, c, e, lr, , co]) => {
       if (!this.isConnected) return;   // removed while loading: start nothing that disconnectedCallback has already missed
       this.#state = s.data;
       this.#charts = c.data;
       this.#epics = s.source === 'server' ? e : null;
+      this.#cost = s.source === 'server' ? co : null;
       this.#local = s.source === 'server' ? lr : null;
       this.#sources = { state: s.source, charts: c.source };
       this.#dropped = s.dropped + c.dropped;
@@ -325,8 +327,8 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
-        const [s, c, e, lr, p] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true)]);
-        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
+        const [s, c, e, lr, p, co] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true), loadCost()]);
+        return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, cost: co, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
       },
       seqOf: (f) => f.state.seq,
       apply: (f) => this.#adopt(f),
@@ -348,6 +350,7 @@ export class PodiumApp extends HTMLElement {
     this.#state = f.state;
     this.#charts = f.charts;
     this.#epics = f.epics;
+    this.#cost = f.cost;
     this.#local = f.local;
     this.#projects = f.projects;
     this.#dropped = f.dropped;
@@ -676,7 +679,7 @@ export class PodiumApp extends HTMLElement {
     const localList = h('local-review');
     localList.review = this.#local;
     return h('div', { class: 'home-plus' },
-      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, redraw: () => this.#redrawKeepingFocus() }),
+      homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, redraw: () => this.#redrawKeepingFocus() }),
       section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
 }

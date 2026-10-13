@@ -1,6 +1,6 @@
-import { sanitizeCharts, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeCost, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
-import type { ChartsData, EpicsData, LocalReview, OpenPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
+import type { ChartsData, CostData, EpicsData, LocalReview, OpenPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -79,6 +79,15 @@ export async function loadHome(stream: string): Promise<Loaded<StreamHome> | nul
 export async function loadEpics(): Promise<EpicsData | null> {
   try {
     return sanitizeEpics(await getJson('/api/epics'))?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The cost widget's data, or null when the server has none to give (sample data, an old server, an unusable body). No fixture stands in. */
+export async function loadCost(): Promise<CostData | null> {
+  try {
+    return sanitizeCost(await getJson('/api/cost'))?.data ?? null;
   } catch {
     return null;
   }

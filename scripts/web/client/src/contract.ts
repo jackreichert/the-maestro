@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -359,4 +359,33 @@ export function sanitizeRefreshStatus(x: unknown): PrsRefreshStatus | null {
   if (str(x.finishedAt)) out.finishedAt = x.finishedAt as string;
   if (str(x.message)) out.message = x.message as string;
   return out;
+}
+
+const nullableNum: Check = (v) => v === null || num(v);
+const COST_METRIC: Shape = {
+  name: str, fmt: oneOf('n', 'pct', 'ratio', 'usd'), today: nullableNum, median7: nullableNum, vs7: nullableNum, regression: bool, limit: nullableNum,
+  dir: (v) => v === null || v === 'max' || v === 'min', status: oneOf('PASS', 'MISS', '-'), series: arrOf(nullableNum),
+};
+const COST_EXPERIMENT: Shape = { id: str, practice: str, metric: str, threshold: str, start: str, status: str, result: str };
+const COST_MIX: Shape = { opus: nullableNum, sonnet: nullableNum, haiku: nullableNum, opusMax: num, haikuMin: num };
+
+/**
+ * A CostData from an untrusted `GET /api/cost` body, or null when it has no usable shape. A metric or experiment that fails its rules is
+ * dropped and counted; a mix that fails is left out (the bar then says it is missing instead of drawing a wrong one).
+ */
+export function sanitizeCost(x: unknown): { data: CostData; dropped: number } | null {
+  if (!isObj(x) || !oneOf('ok', 'empty')(x.state) || !arrOf(str)(x.days)) return null;
+  const metrics = validRows(x.metrics, COST_METRIC) as CostMetric[];
+  const lists = (['running', 'recent'] as const).map((k) => validRows(x[k], COST_EXPERIMENT) as CostExperiment[]);
+  const today = shape(COST_EXPERIMENT)(x.today) ? x.today as CostExperiment : null;
+  const mix = shape(COST_MIX)(x.mix) ? x.mix as CostData['mix'] : null;
+  const dropped = lost(x.metrics, metrics) + lost(x.running, lists[0] ?? []) + lost(x.recent, lists[1] ?? []);
+  return {
+    data: {
+      state: x.state as CostData['state'], ...(str(x.reason) ? { reason: x.reason as string } : {}), date: str(x.date) ? x.date as string : null, stale: x.stale === true,
+      days: x.days as string[], metrics, regressions: Array.isArray(x.regressions) ? x.regressions.filter(str) as string[] : [], mix,
+      running: lists[0] ?? [], recent: lists[1] ?? [], today,
+    },
+    dropped,
+  };
 }
