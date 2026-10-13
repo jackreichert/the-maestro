@@ -290,6 +290,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [library-write.ts](#library-writets) | The only way a composer pass writes a library page or closes a learned row |
 | [library-brief.ts](#library-briefts) | The three best library pages for a task, ready to paste into a dispatch brief |
 | [suite-run.ts](#suite-runts) | Run tsc and the test suite as a detached job, so no agent waits on it |
+| [suite-summary.ts](#suite-summaryts) | Run a suite (node, jest or pytest) and print a compact summary with timing and regressions against a baseline |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
@@ -881,6 +882,16 @@ Runs `tsc --noEmit` and then `node --test` in a worktree as a detached job, so n
 
 The rules this serves: never wait on a suite (start a job and exit with a findings note, the `suite-done` watch that `start` registers wakes the coordinating session); reviewers run targeted tests plus tsc only; re-reviews go to a mid tier. See [cost/budget.md](cost/budget.md).
 
+### suite-summary.ts
+
+Runs a repo's test suite in the foreground and prints one compact result, so an Opus agent reads a summary instead of running the suite itself. It uses the suite's own timing: node's `--test-reporter=junit`, `jest --json` or pytest's `--junitxml`, each of which carries a duration per test.
+
+`suite-summary.ts [--repo <path>] [--runner node|jest|pytest] [--typecheck] [--gates --base <ref> --body-file <path> (--title <text> | --title-file <path>)] [--json] [--write-baseline] [--top <n>] [--max-failures <n>] [--slow-factor <x>] [--slow-ms <ms>] [--min-delta-ms <ms>] [--tests <glob>] [--cmd "<command with {out}>"] [--concurrency <n>] [--timeout-min <n>] [--baseline-name <name>]`. The summary has the pass, fail, skip and todo counts, the first failures (test name, file, first error lines), the wall time, the ten slowest tests, and the tests that are more than 2x slower than the baseline (and at least 100ms slower) or over 5 seconds. `--typecheck` also runs `npm run typecheck` when the repo defines it; `--gates` runs `ci-gates.ts` with the arguments given. `--json` prints the same summary as JSON. Exit 0 is green, 1 is a failing test, type check or gate, 2 is a runner error (no report, a crash with no failing test, a timeout, a run where no test ran because none matched or every one was skipped, bad flags).
+
+The baseline is a per-test duration file written by `--write-baseline` from a green run (run it on main). It lives in `<suites dir>/baselines/<repo>-<runner>.json` (`MAESTRO_SUITE_DIR`, else `<event_dir>/suites`), never in the repo, and a worktree shares its main checkout's baseline. With no baseline there is no regression section, which is not an error. The node runner uses the same scrubbed environment as `suite-run.ts`; `jest` and `pytest` run the repo's own toolchain from the repo, and `--cmd` replaces the command (`{out}` is the report path). A new runner is one parser in `scripts/lib/suite-metrics.ts` that returns its test records, plus one case in `runnerCommand`. The same module exports `timeProbe` and `assertWithin`, so a timing probe can be an ordinary test whose regression shows up here.
+
+The rule this serves: Opus reviewers and builders do not loop on full suites; a script or a Haiku step runs `suite-summary.ts` and the reviewer reads the output and does targeted probes. Sonnet and Haiku builders keep looping on tests and gates. See [cost/budget.md](cost/budget.md).
+
 ### token-metrics.ts
 
 Token-cost metrics read from Claude Code transcripts: numeric usage fields, model ids, timestamps and message type metadata only. Message content is never read; for `--leaks` it also keeps tool names, file basenames and result sizes.
@@ -1165,7 +1176,7 @@ These live in `SKILL.md` and the brief. A script helps with some of them, but no
 Every orchestrator turn re-reads the whole session, so what costs money is turns and wake-ups, not words. The skill is built around that.
 
 - **Cheap workers, expensive decisions.** A model tier per job, always passed explicitly: the fastest tier for verifiable gathering (counts, status sweeps, formatting), a mid tier for well-specified implementation, the strongest for design, root cause and risky changes. An omitted model inherits the orchestrator's, which is the expensive default. Each brief carries a tool-call budget. See [cost/budget.md](cost/budget.md).
-- **Never wait on a suite.** An agent that idles past the 5-minute cache lifetime rewrites its whole context on its next turn. A full suite runs as a detached [`suite-run.ts`](#suite-runts) job: the agent exits with a findings note, a `suite-done` watch wakes the coordinating session when `results.json` lands, and a fresh reviewer starts from the diff and the results. Reviewers run targeted tests plus tsc only, and re-reviews go to a mid tier.
+- **Never wait on a suite.** An agent that idles past the 5-minute cache lifetime rewrites its whole context on its next turn. A full suite runs as a detached [`suite-run.ts`](#suite-runts) job: the agent exits with a findings note, a `suite-done` watch wakes the coordinating session when `results.json` lands, and a fresh reviewer starts from the diff and the results. Reviewers run targeted tests plus tsc only (the full-suite result comes from [`suite-summary.ts`](#suite-summaryts) run by a script, not from Opus looping on it), and re-reviews go to a mid tier.
 - **Foreground waits inside agents.** A background completion wakes the orchestrator for a full-context turn. A blocking loop inside the agent costs one tool call and the orchestrator nothing.
 - **Capped reports and lean tool output.** A report stays in context for the rest of the session and is re-read on every later turn, so detail goes in a file the orchestrator opens only if it needs it.
 - **One loop, one wake per event.** The event loop, including its `pr-watch` type, costs no tokens between checks, and its adaptive pace (slower when quiet, off overnight) keeps polling from becoming wake-ups.

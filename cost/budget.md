@@ -88,6 +88,10 @@ is in the block (measured with `scripts/token-metrics.ts`):
   3. `start` registers the `suite-done` watch itself (`--no-watch` opts out), and that event type fires when `results.json` appears, quiet hours included; the orchestrator, woken by its
      digest, starts a fresh reviewer with the diff and the results (batch several into one wake).
   Each round then pays one cold start instead of repeated rewrites of a context near 140k tokens.
+
+  When a reviewer only needs the result in one compact read, `node scripts/suite-summary.ts --repo <worktree> --typecheck` (run by a script or a Haiku step, not by Opus) prints the counts, the first
+  failures with their first error lines, the wall time, the slowest ten tests and any test more than 2x slower than the stored baseline. Opus reads that output and spends its own runs on targeted probes;
+  it never loops on a full suite.
   An agent that must pause for anything else keeps every gap under 4 minutes or writes its note and
   exits.
 - **Reviewers run targeted tests plus tsc only.** The full suite is the job's, not the reviewer's.
