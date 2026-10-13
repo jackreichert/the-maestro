@@ -14,11 +14,12 @@ const DAY_MS = 86_400_000;
 /**
  * The review verdict. With the review history (latest review per reviewer) an approval is somebody's standing APPROVED and no one's
  * standing CHANGES_REQUESTED; an empty `reviewDecision` is not an approval and not a denial either. Without history (a PR cache from
- * before it was read) GitHub's own decision stands.
+ * before it was read) GitHub's own decision stands. A decision GitHub does hold, such as REVIEW_REQUIRED (two approvals needed, one given),
+ * is never overruled by the history: one approver does not make the PR approved.
  */
 export function reviewOf(decision: string | null, approvers?: string[], changesBy?: string[]): OpenPrRow['review'] {
   if (decision === 'CHANGES_REQUESTED' || (changesBy && changesBy.length > 0)) return 'changes-requested';
-  if (approvers) return approvers.length > 0 ? 'approved' : 'none';
+  if (approvers) return approvers.length > 0 && (decision === null || decision === '' || decision === 'APPROVED') ? 'approved' : 'none';
   return decision === 'APPROVED' ? 'approved' : 'none';
 }
 const mergeableOf = (m: string): OpenPrRow['mergeable'] => (m === 'MERGEABLE' ? 'mergeable' : m === 'CONFLICTING' ? 'conflicting' : 'unknown');

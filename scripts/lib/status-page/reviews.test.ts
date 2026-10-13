@@ -2,6 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reviewVerdicts } from './reviews.ts';
+import { loadPrs } from './generate.ts';
+import type { RawPr } from './generate.ts';
 
 const r = (login: string | null, state: string, submittedAt: string) => ({ state, submittedAt, author: login ? { login } : null });
 
@@ -23,4 +25,12 @@ test('a later comment does not undo an approval, a dismissed approval is gone, a
 
 test('no reviews, no verdicts', () => {
   assert.deepEqual(reviewVerdicts([]), { approvers: [], changesBy: [] });
+});
+
+test('loadPrs carries the verdicts from the review history, and none when the cache has no history', () => {
+  const raw = (reviews?: RawPr['reviews']): RawPr => ({ number: 1, title: 't', url: 'https://example.test/1', isDraft: false, baseRefName: 'develop', headRefName: 'x', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repository: { nameWithOwner: 'acme/widgets' }, reviewThreads: { nodes: [] }, commits: { nodes: [] }, ...(reviews ? { reviews } : {}) });
+  const ev = { items: [], ticketMap: {}, overrides: {}, repoStreams: {}, keyPattern: '\\b[A-Z]+-\\d+\\b' };
+  const [withHistory, without] = loadPrs([raw({ nodes: [r('fake-a', 'APPROVED', '2026-10-01T00:00:00Z'), r('fake-a', 'CHANGES_REQUESTED', '2026-10-02T00:00:00Z')] }), raw()], ev);
+  assert.deepEqual([withHistory?.approvers, withHistory?.changesBy], [[], ['fake-a']]);
+  assert.equal(without?.approvers, undefined);
 });

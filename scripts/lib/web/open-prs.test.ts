@@ -91,4 +91,5 @@ test('reviewOf: history decides when it is read, and an empty decision is never 
   assert.equal(reviewOf('CHANGES_REQUESTED', ['fake-a'], []), 'changes-requested');
   assert.equal(reviewOf('APPROVED'), 'approved', 'no history: GitHub decision stands');
   assert.equal(reviewOf(null), 'none');
+  assert.equal(reviewOf('REVIEW_REQUIRED', ['fake-a'], []), 'none', 'GitHub still wants more reviews');
 });

@@ -12,6 +12,8 @@ test('ready to merge needs approval, zero unresolved threads and a clean mergeab
   assert.equal(readyToMerge({ ...base, unresolved: 1 }), false);
   assert.equal(readyToMerge({ ...base, mergeable: 'conflicting' }), false);
   assert.equal(readyToMerge({ ...base, mergeable: 'unknown' }), false, 'still computing is not clean');
+  assert.equal(readyToMerge({ ...base, ci: 'FAILURE' }), false, 'failing CI goes back to the orchestra');
+  assert.equal(readyToMerge({ ...base, ci: 'SUCCESS' }), true);
 });
 
 test('a draft is never ready, however clean', () => {
