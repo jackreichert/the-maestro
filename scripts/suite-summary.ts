@@ -3,7 +3,7 @@
  * suite-summary.ts: run a repo's test suite (and optionally its type check and the CI gates) in the foreground and print one compact
  * summary, so an Opus agent reads a result instead of running the suite itself.
  *
- *   suite-summary.ts [--repo <path>] [--runner node|jest|pytest] [--typecheck] [--gates --base <ref> --body-file <path> --title <text>]
+ *   suite-summary.ts [--repo <path>] [--runner node|jest|pytest] [--typecheck] [--gates --base <ref> --body-file <path> (--title <text> | --title-file <path>)]
  *                    [--json] [--write-baseline] [--top <n>] [--max-failures <n>] [--slow-factor <x>] [--slow-ms <ms>] [--min-delta-ms <ms>]
  *                    [--tests <glob>] [--cmd "<command with {out}>"] [--concurrency <n>] [--timeout-min <n>] [--baseline-name <name>]
  *
@@ -128,7 +128,7 @@ export function parseCli(argv: string[]): Cli {
     repo: { type: 'string' }, runner: { type: 'string' }, typecheck: { type: 'boolean' }, gates: { type: 'boolean' }, json: { type: 'boolean' }, 'write-baseline': { type: 'boolean' },
     top: { type: 'string' }, 'max-failures': { type: 'string' }, 'slow-factor': { type: 'string' }, 'slow-ms': { type: 'string' }, 'min-delta-ms': { type: 'string' },
     tests: { type: 'string' }, cmd: { type: 'string' }, concurrency: { type: 'string' }, 'timeout-min': { type: 'string' }, 'baseline-name': { type: 'string' },
-    base: { type: 'string' }, 'body-file': { type: 'string' }, title: { type: 'string' }, head: { type: 'string' }, 'base-name': { type: 'string' },
+    base: { type: 'string' }, 'body-file': { type: 'string' }, title: { type: 'string' }, 'title-file': { type: 'string' }, head: { type: 'string' }, 'base-name': { type: 'string' },
   } });
   const num = (name: string, fallback: number): number => {
     const raw = v[name as keyof typeof v] as string | undefined;
@@ -138,8 +138,8 @@ export function parseCli(argv: string[]): Cli {
   };
   const runner = (v.runner ?? 'node') as Runner;
   if (!RUNNERS.includes(runner)) throw new Error(`--runner must be one of ${RUNNERS.join(', ')}, got "${v.runner}"`);
-  const gateArgs = (['base', 'body-file', 'title', 'head', 'base-name'] as const).flatMap((k) => (v[k] === undefined ? [] : [`--${k}`, v[k] as string]));
-  if (v.gates && !(v.base && v['body-file'] && v.title)) throw new Error('--gates needs --base, --body-file and --title (passed on to ci-gates.ts)');
+  const gateArgs = (['base', 'body-file', 'title', 'title-file', 'head', 'base-name'] as const).flatMap((k) => (v[k] === undefined ? [] : [`--${k}`, v[k] as string]));
+  if (v.gates && !(v.base && v['body-file'] && (v.title || v['title-file']))) throw new Error('--gates needs --base, --body-file and --title or --title-file (passed on to ci-gates.ts)');
   const options: SummaryOptions = { top: num('top', DEFAULT_OPTIONS.top), maxFailures: num('max-failures', DEFAULT_OPTIONS.maxFailures), factor: num('slow-factor', DEFAULT_OPTIONS.factor), minDeltaMs: num('min-delta-ms', DEFAULT_OPTIONS.minDeltaMs), absMs: num('slow-ms', DEFAULT_OPTIONS.absMs) };
   return { repo: realpathSync(resolve(v.repo ?? process.cwd())), runner, typecheck: Boolean(v.typecheck), gates: Boolean(v.gates), json: Boolean(v.json), writeBaseline: Boolean(v['write-baseline']), options,
     tests: v.tests, cmd: v.cmd, concurrency: v.concurrency ? num('concurrency', 1) : undefined, timeoutMin: num('timeout-min', DEFAULT_TIMEOUT_MIN), baselineName: v['baseline-name'], gateArgs };
