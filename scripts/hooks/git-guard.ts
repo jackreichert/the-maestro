@@ -334,8 +334,8 @@ const push: Rule = (args, env) => {
   if (refspecs.some((r) => r.startsWith('+'))) env.reasons.push('git push +refspec is a force push');
   if (refspecs.length === 0) {
     if (has(o, 'tags') || has(o, 'all', 'mirror')) return;
-    const noNote = reviewNoteReason(env, '');
-    if (noNote) env.reasons.push(noNote);
+    const noNoteReason = reviewNoteReason(env, '');
+    if (noNoteReason) env.reasons.push(noNoteReason);
     const h = headIsProtected(env);
     if (h === true) env.reasons.push(`git push with no refspec pushes the protected branch ${head(env)}`);
     else if (h === 'unknown') env.reasons.push('git push: could not tell which branch HEAD is on');
@@ -347,8 +347,8 @@ const push: Rule = (args, env) => {
     if (dst.includes('*')) { env.reasons.push(`git push glob refspec ${r} may reach a protected branch`); continue; }
     if (/[$`{}]/.test(dst)) { env.reasons.push(`git push ${r}: the destination is built by the shell, so it cannot be shown to avoid a protected branch`); continue; }
     const src = spec.includes(':') ? spec.slice(0, spec.indexOf(':')) : spec;
-    const noNote = src && !/[$`{}*]/.test(src) ? reviewNoteReason(env, src) : undefined;
-    if (noNote) env.reasons.push(noNote);
+    const noNoteReason = src && !/[$`{}*]/.test(src) ? reviewNoteReason(env, src) : undefined;
+    if (noNoteReason) env.reasons.push(noNoteReason);
     let target = dst;
     if (dst === 'HEAD' || dst === '@' || dst === '') {
       const b = head(env);

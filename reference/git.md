@@ -217,7 +217,7 @@ The note lives at `<vault>/Projects/<repo>/Reviews/<YYYY-MM-DD>-<slug>-review-<s
 Push with `node <scripts dir>/review-note.ts push --repo <repo>` (it checks, then runs a plain `git push <remote> <branch>`, never a force push), or run `review-note.ts check` first.
 
 - Enforced: `review-note.ts push` refuses when no valid note names the head; `pr-open.ts` refuses to open a PR for such a head; and `hooks/git-guard.ts` asks on a raw `git push` of a head with no note, so a skipped wrapper still hits a prompt. A commit after the review changes the head, so the review is repeated.
-- Not enforced: that the review was real or good; the note is an attestation. The git-guard hook asks (the harness prompt), it does not deny, and a script that runs git by itself can still bypass it.
+- Not enforced: that the review was real or good; the note is an attestation. The git-guard hook asks (the harness prompt), it does not deny, and a script that runs git by itself can still bypass it. The gate list is read from the user config file, so `MAESTRO_LOCAL_CONFIG=` (or another file) empties it on a local run; CI strips that variable.
 - Naming is part of the review in team repos, not a nitpick: see [brief.md](brief.md#the-review-brief).
 
 All of these are settings in [local-config.md](local-config.md); each switch defaults on and any can be turned off, and `pr_body_sections` replaces the required list.

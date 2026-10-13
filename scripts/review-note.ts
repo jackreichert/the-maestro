@@ -8,7 +8,7 @@
  *   node scripts/review-note.ts push  --repo <path> [--remote origin] [--branch <b>] [--vault <root>]   check, then `git push <remote> <branch>`
  *
  * Note convention: `<vault>/Projects/<repo>/Reviews/<YYYY-MM-DD>-<slug>-review-<sha7>.md`, where <repo> is the origin repo's name and
- * <sha7> the first seven characters of the head commit. The note counts only when all three hold:
+ * <sha7> the first seven characters of the head commit. The note counts only when all four hold:
  *   1. the file name carries `-review-<sha7>.md`;
  *   2. its frontmatter has `head: <the full 40-character sha>`, so a note written for an older commit never matches;
  *   3. it has a `## Naming pass` section with real content (the files checked, scripts included, and what was renamed or why nothing was);
@@ -18,14 +18,14 @@
  *
  * `push` runs `git push` only after the check passes (never with --force: it passes no flag but `<remote> <branch>`). It is the push path
  * the playbooks call; git-guard.ts also asks on a raw `git push` in a gated repo with no note, so a skipped wrapper is still caught.
- * The gate list comes from the user config file only (`review_note_repos`); an environment variable cannot add or drop a repo.
+ * The gate list comes from the user config file only (`review_note_repos`); the list is not an environment variable, but `MAESTRO_LOCAL_CONFIG=` (or a path to another file) replaces the user config file and so empties it. CI (ci-gates.ts) strips that variable; a local run does not, and git-guard does not see a push made inside node.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateApplies, headSha, repoSlug } from './pr-smells.ts';
-import { REVIEWER_CHECKLIST, REVIEW_NOTE_REPOS, VAULT_ROOT } from './local-config.ts';
+import { REVIEWER_CHECKLIST_PATH, REVIEW_NOTE_REPOS, VAULT_ROOT } from './local-config.ts';
 
 const git = (repo: string, ...args: string[]) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
 
@@ -49,13 +49,13 @@ function sectionLines(text: string, title: string): string[] | undefined {
   return body.split('\n').map((l) => l.replace(/^[-*\s]+/, '').trim()).filter((l) => l && !PLACEHOLDER.test(l) && !/^<!--.*-->$/.test(l));
 }
 
-/** Why a note does not count for `sha`: its frontmatter head, a Naming pass with real content and, when `checklist` is set, a Reviewer checklist with real content. */
-export function noteProblems(text: string, sha: string, checklist = ''): string[] {
+/** Why a note does not count for `sha`: its frontmatter head, a Naming pass with real content and, when a checklist file is set, a Reviewer checklist with real content. */
+export function noteProblems(text: string, sha: string, checklistPath = ''): string[] {
   const out: string[] = [];
   const fm = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? '';
   const head = /^head:\s*"?([0-9a-f]{7,40})"?\s*$/im.exec(fm)?.[1];
   if (head !== sha) out.push(`frontmatter head is ${head ?? 'missing'}, not ${sha}`);
-  for (const [title, needed] of [['Naming pass', true], ['Reviewer checklist', Boolean(checklist)]] as const) {
+  for (const [title, needed] of [['Naming pass', true], ['Reviewer checklist', Boolean(checklistPath)]] as const) {
     if (!needed) continue;
     const lines = sectionLines(text, title);
     if (!lines) out.push(`no "## ${title}" section`);
@@ -73,7 +73,7 @@ function candidates(dir: string, sha: string): string[] {
 export interface GateResult { applies: boolean; ok: boolean; sha: string; dir: string; note?: string; problems: string[] }
 
 /** Whether a push of `head` is allowed: the gate does not apply, or a valid note exists for the head commit. */
-export function gate(repo: string, head = '', vault: string = VAULT_ROOT, globs: string[] = REVIEW_NOTE_REPOS, checklist: string = REVIEWER_CHECKLIST): GateResult {
+export function gate(repo: string, head = '', vault: string = VAULT_ROOT, globs: string[] = REVIEW_NOTE_REPOS, checklistPath: string = REVIEWER_CHECKLIST_PATH): GateResult {
   const sha = headSha(repo, head);
   if (!gateApplies(repo, globs)) return { applies: false, ok: true, sha, dir: '', problems: [] };
   if (!vault) return { applies: true, ok: false, sha, dir: '', problems: ['no vault is configured (vault_root), so no Reviews note can be found'] };
@@ -81,7 +81,7 @@ export function gate(repo: string, head = '', vault: string = VAULT_ROOT, globs:
   const found = candidates(dir, sha);
   const problems: string[] = [];
   for (const f of found) {
-    const p = noteProblems(readFileSync(f, 'utf8'), sha, checklist);
+    const p = noteProblems(readFileSync(f, 'utf8'), sha, checklistPath);
     if (p.length === 0) return { applies: true, ok: true, sha, dir, note: f, problems: [] };
     problems.push(`${basename(f)}: ${p.join('; ')}`);
   }
@@ -94,14 +94,14 @@ export const refusal = (r: GateResult, repo: string): string =>
   `needs a valid vault Reviews note for head ${r.sha.slice(0, 7)} (${r.problems.join(' | ')}). Run the local review (naming pass over every touched file, the reviewer checklist), then: node scripts/review-note.ts new --repo ${repo} and fill it in.`;
 
 /** Write the stub note for the head commit; refuses to overwrite one that exists. */
-export function newNote(repo: string, head: string, vault: string, slug: string, today = new Date().toISOString().slice(0, 10), checklist: string = REVIEWER_CHECKLIST): string {
+export function newNote(repo: string, head: string, vault: string, slug: string, today = new Date().toISOString().slice(0, 10), checklistPath: string = REVIEWER_CHECKLIST_PATH): string {
   const sha = headSha(repo, head);
   const dir = reviewsDir(vault, repo);
   const words = (slug || head || git(repo, 'branch', '--show-current').stdout.trim() || 'branch').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const path = join(dir, `${today}-${words}-review-${sha.slice(0, 7)}.md`);
   if (existsSync(path)) throw new Error(`${path} already exists`);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, `---\ntype: review\nhead: ${sha}\nrepo: ${repoName(repo)}\nverdict: pending\n---\n\n# Review of ${words} at ${sha.slice(0, 7)}\n\n## Naming pass\n<every touched file, scripts and fixtures included: variables, functions, parameters, flags; what was renamed, or why each is fine>\n\n## Reviewer checklist\n${checklist ? `<!-- read ${checklist} first -->\n` : ''}<each checklist item: pass, fixed or not applicable, one line each>\n\n## Findings\n<what the review found, what was fixed, what was left and why>\n`);
+  writeFileSync(path, `---\ntype: review\nhead: ${sha}\nrepo: ${repoName(repo)}\nverdict: pending\n---\n\n# Review of ${words} at ${sha.slice(0, 7)}\n\n## Naming pass\n<every touched file, scripts and fixtures included: variables, functions, parameters, flags; what was renamed, or why each is fine>\n\n## Reviewer checklist\n${checklistPath ? `<!-- read ${checklistPath} first -->\n` : ''}<each checklist item: pass, fixed or not applicable, one line each>\n\n## Findings\n<what the review found, what was fixed, what was left and why>\n`);
   return path;
 }
 

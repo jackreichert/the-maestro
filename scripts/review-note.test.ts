@@ -74,30 +74,30 @@ test('gate: off outside the listed repos, and with an empty list', () => {
 
 test('gate: no note refuses; a valid note for exactly the head passes; a new commit voids it', () => {
   const f = fixture();
-  const none = gate(f.repo, '', f.vault, GLOBS);
+  const none = gate(f.repo, '', f.vault, GLOBS, '');
   assert.equal(none.ok, false);
   assert.match(none.problems.join(), /no note named \*-review-[0-9a-f]{7}\.md/);
   const sha = git(f.repo, 'rev-parse', 'HEAD');
   const path = writeNote(f, sha);
-  const ok = gate(f.repo, '', f.vault, GLOBS);
+  const ok = gate(f.repo, '', f.vault, GLOBS, '');
   assert.equal(ok.ok, true);
   assert.equal(ok.note, path);
   commit(f.repo, 'b');
-  assert.equal(gate(f.repo, '', f.vault, GLOBS).ok, false, 'the review was of the old head');
+  assert.equal(gate(f.repo, '', f.vault, GLOBS, '').ok, false, 'the review was of the old head');
 });
 
 test('gate: a note whose file name matches but whose frontmatter names another sha does not count', () => {
   const f = fixture();
   const sha = git(f.repo, 'rev-parse', 'HEAD');
   writeNote(f, sha, noteText('c'.repeat(40)));
-  const r = gate(f.repo, '', f.vault, GLOBS);
+  const r = gate(f.repo, '', f.vault, GLOBS, '');
   assert.equal(r.ok, false);
   assert.match(r.problems.join(), /frontmatter head is c+/);
 });
 
 test('gate: an unconfigured vault refuses rather than passing', () => {
   const f = fixture();
-  assert.equal(gate(f.repo, '', '', GLOBS).ok, false);
+  assert.equal(gate(f.repo, '', '', GLOBS, '').ok, false);
 });
 
 test('new: writes a stub for the head that does not pass until the Naming pass is filled in', () => {
@@ -105,10 +105,10 @@ test('new: writes a stub for the head that does not pass until the Naming pass i
   const sha = git(f.repo, 'rev-parse', 'HEAD');
   const path = newNote(f.repo, '', f.vault, 'my feature', '2026-10-13');
   assert.ok(path.endsWith(`2026-10-13-my-feature-review-${sha.slice(0, 7)}.md`));
-  assert.equal(gate(f.repo, '', f.vault, GLOBS).ok, false, 'a stub is not a review');
+  assert.equal(gate(f.repo, '', f.vault, GLOBS, '').ok, false, 'a stub is not a review');
   assert.throws(() => newNote(f.repo, '', f.vault, 'my feature', '2026-10-13'), /already exists/);
   writeFileSync(path, noteText(sha));
-  assert.equal(gate(f.repo, '', f.vault, GLOBS).ok, true);
+  assert.equal(gate(f.repo, '', f.vault, GLOBS, '').ok, true);
 });
 
 test('cli push: refuses and pushes nothing without a note, pushes once the note names the head', () => {
