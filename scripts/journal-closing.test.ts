@@ -7,6 +7,9 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { foldLeases, liveLease } from './lib/journal/leases.ts';
+import type { LedgerRow } from './lib/ledger-core.ts';
+
 process.env.MAESTRO_LOCAL_CONFIG = '';
 process.env.MAESTRO_EVENT_DIR = mkdtempSync(join(tmpdir(), 'journal-closing-events-'));
 
@@ -97,4 +100,29 @@ test('--gate is refused on a plain note', () => {
     const r = run(['note', 'x', '--gate', 'date:2999-01-01', ...MARK]);
     assert.notEqual(r.code, 0);
     assert.match(r.err, /--gate goes on/);
+});
+
+test('start refuses an epic or umbrella unless --force, for new text and for a queued row with children', () => {
+    const before = ledger().length;
+    const epic = run(['start', 'Epic: rebuild the importer', ...MARK]);
+    assert.notEqual(epic.code, 0);
+    assert.match(epic.err, /reads as an epic/);
+    assert.equal(ledger().length, before, 'a refused start writes nothing');
+    assert.equal(run(['start', 'Epic: rebuild the importer', '--force', ...MARK]).code, 0);
+
+    const parent = idOf(run(['queue', 'importer rebuild tracking', ...MARK]));
+    const kid = run(['queue', 'parse the header', '--parent', parent, ...MARK]);
+    assert.equal(kid.code, 0, kid.err);
+    const promote = run(['start', parent, ...MARK]);
+    assert.notEqual(promote.code, 0);
+    assert.match(promote.err, /parent of 1 open item/);
+    assert.equal(run(['start', idOf(kid), ...MARK]).code, 0, 'the child itself starts normally');
+});
+
+test('start always takes a lease, whether it opens new text or promotes a queued row', () => {
+    const fresh = idOf(run(['start', 'plain piece of work', ...MARK]));
+    const queued = idOf(run(['queue', 'queued piece', ...MARK]));
+    run(['start', queued, ...MARK]);
+    const held = foldLeases(ledger() as LedgerRow[]);
+    for (const id of [fresh, queued]) assert.ok(liveLease(held, id, Date.now()), `${id} carries a live lease`);
 });

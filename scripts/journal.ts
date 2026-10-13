@@ -164,6 +164,7 @@ import { openStore } from './lib/journal/store.ts';
 import { recordAnswer } from './lib/journal/answers.ts';
 import { didYouMean, formatUsed, usageSuffix, fmt, slug, cell, clip, itemText } from './lib/journal/format.ts';
 import { boardContextFor } from './lib/journal/board-context.ts';
+import { umbrellaRefusal } from './lib/journal/umbrella.ts';
 import { closeItem, matchTarget } from './lib/journal/close.ts';
 import { proposeCloses, proposalLines, applyProposals } from './lib/journal/age-out.ts';
 import { branchState } from './lib/journal/branch-state.ts';
@@ -825,8 +826,13 @@ function cmdQueue(): void {
 function cmdStart(): void {
     const entries = readLedger();
     const target = itemNamedByArg(fold(entries).items);
-    if (!target || target.kind !== 'wip') { cmdLog('wip', { lease: true }); return; }
+    if (!target || target.kind !== 'wip') {
+        if (!has('force')) { const why = umbrellaRefusal({ text: positional.join(' ') || arg('text') }, fold(entries).items); if (why) die(why); }
+        cmdLog('wip', { lease: true });
+        return;
+    }
     if (!isOpen(target)) die(`${target.id} is ${target.closedBy?.kind}; start a new item with the text instead.`);
+    if (isQueued(target) && !has('force')) { const why = umbrellaRefusal(target, fold(entries).items); if (why) die(why); }
     // A refused --branch/--worktree must exit before the lease is written: die() does not roll it back, and a --steal would take it from its owner.
     const where = recoveryFlags();
     // The lease comes next: a window that does not get it writes nothing.
