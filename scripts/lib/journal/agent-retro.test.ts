@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/journal/agent-retro.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentRetroProblems, missingRetros, parseAgentRetro, parseLesson, pendingRetros, retroGate, retroReviewedProblems, reviewRefusals, seenRetro, LESSONS_MAX } from './agent-retro.ts';
+import { agentRetroProblems, missingRetros, noRetroRefusals, parseAgentRetro, parseLesson, pendingRetros, retroGate, retroReviewedProblems, reviewRefusals, seenRetro, LESSONS_MAX } from './agent-retro.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 
 // Built at run time so no secret-shaped literal sits in the source.
@@ -104,4 +104,10 @@ test('verify re-runs the write rules on stored rows and flags unknown fields', (
   assert.match(agentRetroProblems({ ...good, retros: undefined }, LEARNED).join(), /names no item/);
   assert.deepEqual(retroReviewedProblems({ id: 'v001', kind: 'retro-reviewed', reviews: 'r001', text: 'ok', promoted: ['learned:ab12'] }), []);
   assert.match(retroReviewedProblems({ id: 'v001', kind: 'retro-reviewed', reviews: 'r001', text: 'ok', promoted: ['bad'] }).join(), /kind:id/);
+});
+
+test('--no-retro needs a clean reason', () => {
+  assert.deepEqual(noRetroRefusals('the agent was stopped'), []);
+  assert.match(noRetroRefusals(null).join(), /needs the reason/);
+  assert.match(noRetroRefusals(`key ${FAKE_KEY}`).join(), /scanner/);
 });

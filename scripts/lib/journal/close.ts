@@ -35,6 +35,8 @@ export interface CloseRequest {
     extras?: () => object;
     /** Report an item that is already closed instead of appending a second closing row. The CLI appends; the web app skips. */
     skipIfClosed?: boolean;
+    /** A refusal for this open target (the reason), or null to close it. The CLI's `done` passes the retro gate; automatic closers pass none, so they are never blocked. */
+    guard?: (target: LedgerItem, entries: LedgerRow[]) => string | null;
 }
 
 export type CloseResult =
@@ -54,6 +56,8 @@ export function closeItem(ctx: CloseContext, req: CloseRequest): CloseResult {
     // A learned or miss row leaves triage when a composer pass handles it, not when someone closes it by hand (verify rejects any other closer).
     if (target.kind === 'learned' || target.kind === 'miss') return { kind: 'not-closable', target, reason: `${target.id} is a ${target.kind} row: it is closed only by a composer pass, not by ${req.kind}.` };
     if (req.skipIfClosed && !isOpen(target)) return { kind: 'already-closed', target };
+    const refused = isOpen(target) ? req.guard?.(target, entries) : null;
+    if (refused) return { kind: 'not-closable', target, reason: refused };
     const note = req.note || null;
     const row = ctx.append({
         id: ctx.newId(entries),

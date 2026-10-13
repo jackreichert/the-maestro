@@ -104,6 +104,9 @@ export function retroGate(rows: readonly LedgerRow[], target: Pick<LedgerItem, '
   return `${target.id} was briefed to an agent and has no retro. Write one first: journal.ts agent-retro ${target.id} --lesson "code: ..." --lesson "jack: ..." (or --nothing "<why>"). To close without one, pass --no-retro "<why>"; the reason is recorded.`;
 }
 
+/** The refusals for `done --no-retro "<why>"`: a reason is required, and it is scanned like a lesson. */
+export const noRetroRefusals = (why: string | null): string[] => (why && why.trim() ? textRefusals('--no-retro', oneLine(why)) : ['--no-retro needs the reason there is no retro, for example --no-retro "the agent was stopped before it finished".']);
+
 /** Ids a `retro-reviewed` row has closed: retros, and closed items that had none. */
 const reviewedIds = (rows: readonly LedgerRow[]): Set<string> => new Set(rows.filter((r) => r.kind === 'retro-reviewed' && typeof r.reviews === 'string').map((r) => r.reviews as string));
 

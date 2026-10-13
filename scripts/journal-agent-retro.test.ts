@@ -29,6 +29,41 @@ function fixture({ briefed = true } = {}) {
   return { run, rows, id };
 }
 
+test('done refuses a briefed item with no retro; a retro lets it close', () => {
+  const f = fixture();
+  const refused = f.run('done', f.id, ...MARKS);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, new RegExp(`agent-retro ${f.id}`));
+  assert.equal(f.rows().filter((r) => r.kind === 'done').length, 0);
+  const retro = f.run('agent-retro', f.id, '--lesson', 'code: the index rebuild needs the cache cleared first', '--lesson', 'jack: stage files by path', ...MARKS);
+  assert.equal(retro.status, 0, retro.stderr);
+  assert.match(retro.stdout, /retro: 2 lessons \(code 1, jack 1\)/);
+  const row = f.rows().find((r) => r.kind === 'agent-retro');
+  assert.equal(row?.retros, f.id);
+  assert.equal(row?.stream, 'orchard');
+  const closed = f.run('done', f.id, ...MARKS);
+  assert.equal(closed.status, 0, closed.stderr);
+});
+
+test('done --no-retro closes with the reason recorded; an empty reason is refused', () => {
+  const f = fixture();
+  assert.notEqual(f.run('done', f.id, '--no-retro', ...MARKS).status, 0);
+  const r = f.run('done', f.id, '--no-retro', 'the agent was stopped', ...MARKS);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(f.rows().find((x) => x.kind === 'done')?.noRetro, 'the agent was stopped');
+  const listed = f.run('agent-retros', '--json');
+  const out = JSON.parse(listed.stdout) as { missing: { item: string; noRetro?: string }[] };
+  assert.deepEqual(out.missing.map((m) => [m.item, m.noRetro]), [[f.id, 'the agent was stopped']]);
+});
+
+test('an item never briefed closes without a retro, and drop is never gated', () => {
+  const f = fixture({ briefed: false });
+  assert.equal(f.run('done', f.id, ...MARKS).status, 0);
+  const g = fixture();
+  assert.equal(g.run('drop', g.id, '--why', 'not needed', ...MARKS).status, 0);
+  assert.notEqual(g.run('drop', g.id, '--no-retro', 'x', ...MARKS).status, 0, '--no-retro is for done only');
+});
+
 test('agent-retro is idempotent, scans lessons and refuses an unknown item', () => {
   const f = fixture();
   const args = ['agent-retro', f.id, '--lesson', 'process: run the targeted test first', ...MARKS];

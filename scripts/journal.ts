@@ -171,7 +171,7 @@ import { gateConflicts, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts
 import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
-import { missingRetros, parseAgentRetro, pendingRetros, reviewRefusals, seenRetro } from './lib/journal/agent-retro.ts';
+import { missingRetros, noRetroRefusals, parseAgentRetro, pendingRetros, retroGate, reviewRefusals, seenRetro } from './lib/journal/agent-retro.ts';
 import type { AskFields, RawAskFlags, RawFlag } from './lib/journal/ask-fields.ts';
 import { statusJson } from './lib/journal/status-json.ts';
 import { splitInflight, staleRollLines } from './lib/journal/stale-wip.ts';
@@ -988,12 +988,17 @@ const approvalClose = (kind: string) => {
 
 function cmdClose(newKind: string): void {
     const needle = positional[0];
+    // `done` on a briefed item needs the agent's retro first, or --no-retro with the reason (recorded on the row). Only this CLI path asks.
+    const noRetro = has('no-retro') ? (arg('no-retro') ?? '') : null;
+    if (noRetro !== null && newKind !== 'done') die('--no-retro is for done: drop and resolve do not need a retro.');
+    if (noRetro !== null) { const bad = noRetroRefusals(noRetro); if (bad.length) die(`done: refused, nothing written.\n${bad.map((b) => `  - ${b}`).join('\n')}`); }
     const result = closeItem({ readLedger, append, newId, fold, today, now }, {
         kind: newKind,
         needle,
         note: arg('answer') || arg('why'),
         ticket: arg('ticket'),
-        extras: () => ({ ...approvalClose(newKind), ...usageFromArgs() }),
+        extras: () => ({ ...approvalClose(newKind), ...(noRetro !== null ? { noRetro: noRetro.replace(/\s+/g, ' ').trim() } : {}), ...usageFromArgs() }),
+        ...(newKind === 'done' && noRetro === null ? { guard: (target: LedgerItem, entries: LedgerRow[]) => retroGate(entries, target) } : {}),
     });
     if (result.kind === 'ambiguous') exitAmbiguous(needle, result.matches);
     if (result.kind === 'not-closable') die(result.reason);

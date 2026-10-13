@@ -132,3 +132,14 @@ test('closeItem returns the parent when the closed child was its last open one, 
     const last = closeItem(ctx, { kind: 'done', needle: 'kid2' });
     assert.equal(last.kind === 'closed' && last.parent?.id, 'par1');
 });
+
+test('a guard refuses an open target and nothing is appended; a closed target skips the guard', () => {
+    const { ctx, rows } = ctxFor();
+    const result = closeItem(ctx, { kind: 'done', needle: 'aaa1', guard: (t) => `no retro for ${t.id}` });
+    assert.deepEqual(result.kind === 'not-closable' && result.reason, 'no retro for aaa1');
+    assert.equal(rows.length, 3);
+    assert.equal(closeItem(ctx, { kind: 'done', needle: 'aaa1' }).kind, 'closed');
+    let asked = false;
+    assert.equal(closeItem(ctx, { kind: 'done', needle: 'aaa1', guard: () => { asked = true; return 'x'; } }).kind, 'closed');
+    assert.equal(asked, false);
+});
