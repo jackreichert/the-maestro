@@ -894,6 +894,10 @@ The baseline is a per-test duration file written by `--write-baseline` from a gr
 
 The rule this serves: Opus reviewers and builders do not loop on full suites; a script or a Haiku step runs `suite-summary.ts` and the reviewer reads the output and does targeted probes. Sonnet and Haiku builders keep looping on tests and gates. See [cost/budget.md](cost/budget.md).
 
+### cache-lint.ts
+
+Checks that the agent-facing docs (`reference/`, `playbooks/`, `bolero/`, `cost/` and `SKILL.md`) keep the rules that avoid prompt-cache expiry rewrites: `node scripts/cache-lint.ts [--root <repo>] [--json]` exits 0 clean, 1 with `file:line [rule] text` per finding. Rules: `suites-line` (the brief's standing block keeps its Suites line with the detached `suite-run.ts` job, the 4-minute ceiling and the targeted-tests-only reviewer rule), `long-sleep` (no `sleep` over 270 seconds, so one wake stays inside the 5-minute cache), and `foreground-suite` (no `npm test` or bare `node --test` in a playbook code block). One blocking call with a long `--timeout` is allowed, because it costs one rewrite rather than one per poll. `cache-lint.test.ts` runs it on this repo, so a doc edit that drops the rule fails the suite.
+
 ### token-metrics.ts
 
 Token-cost metrics read from Claude Code transcripts: numeric usage fields, model ids, timestamps and message type metadata only. Message content is never read; for `--leaks` it also keeps tool names, file basenames and result sizes.
