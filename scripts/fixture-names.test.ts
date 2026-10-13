@@ -150,7 +150,7 @@ test('with no --patterns flag the list is the hooks private-patterns file', () =
   writeFileSync(join(hooks, 'private-patterns.txt'), `${TOKEN}\n`);
   git(r, 'config', 'core.hooksPath', hooks);
   stage(r, 'tests/sample.test.ts', `const repo = '${TOKEN}';\n`);
-  const env = { ...process.env, MAESTRO_LOCAL_CONFIG: '' };
+  const env: NodeJS.ProcessEnv = { ...process.env, MAESTRO_LOCAL_CONFIG: '' };
   delete env.MAESTRO_PRIVATE_PATTERNS;
   const out = spawnSync(process.execPath, [SCRIPT, '--repo', r], { encoding: 'utf8', env });
   assert.equal(out.status, 1);
