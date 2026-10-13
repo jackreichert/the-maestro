@@ -186,3 +186,11 @@ test('a staging PR carries waitsOnDevelop until its develop twin has merged; oth
   assert.equal(cards({})[0]?.waitsOnDevelop, undefined, 'repo without the flow (field absent) is unaffected');
   assert.equal(buildState(inputs({ prs: [pr(14, { developTwin: twin(false) })] })).prs[0]?.waitsOnDevelop, undefined, 'a develop PR never waits');
 });
+
+test('an ask context carries links the server built: a vault URI in the wrong folder resolves to its note, a PR URL gets a short label', () => {
+  const files = new Set(['Projects/proj/Plans/fake-checklist.md']);
+  const config: PageConfig = { ...CONFIG, project: 'proj', noteExists: (p) => files.has(p) };
+  const text = 'Which? See obsidian://open?vault=Vault&file=Projects%2Fproj%2FResearch%2Ffake-checklist and https://github.com/o/r/pull/590 .';
+  const [ask] = buildState(inputs({ config, status: { ...inputs().status, awaiting: [{ id: 'ln01', date: '2026-10-06', text, stream: 'Alpha' }] } })).asks;
+  assert.equal(ask?.context, 'See [fake-checklist](obsidian://open?vault=Vault&file=Projects%2Fproj%2FPlans%2Ffake-checklist) and [#590](https://github.com/o/r/pull/590) .');
+});

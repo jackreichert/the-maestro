@@ -3,10 +3,11 @@
  * JSON the page needs. Links are data ({ label, url }), never HTML, and every URL is built here from the page settings, so
  * the client never makes one out of ledger text. No file, clock or process access; the caller passes the inputs.
  */
-import { askRefs, keysIn, pairTwins, prFlagNames, stackParent, streamOrder, ticketNoteRef, trackerRef } from '../status-page/render.ts';
+import { askRefs, keysIn, noteEnv, pairTwins, prFlagNames, stackParent, streamOrder, ticketNoteRef, trackerRef } from '../status-page/render.ts';
 import type { BoardStatus, FooterData, Item, PageConfig, PageInput, Pr, Ref } from '../status-page/render.ts';
 import { askBy, askClass, askDoor, autoDefault, byLabel, hasAskFields, TEXT_MAX } from '../journal/ask-fields.ts';
 import type { AskClass, Door } from '../journal/ask-fields.ts';
+import { linkAskRefs } from '../status-page/links.ts';
 import { localDate } from '../status-page/priorities.ts';
 import { askAgeDays } from './charts.ts';
 import { isSelfReview } from '../self-review.ts';
@@ -163,7 +164,7 @@ function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefi
   const refs = askRefs(config, a, prs, ticket);
   const { needed, context } = splitAskBody(a.text);
   return {
-    id: a.id, stream, needed, context, ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
+    id: a.id, stream, needed, context: linkAskRefs(context, noteEnv(config, a, ticket)), ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
     ...decisionFields(a), ...(typeof a.paste === 'string' && a.paste ? { paste: a.paste } : {}),
     links: { ...(refs.note ? { note: link(refs.note) } : {}), tracker: refs.tracker.map(link), prs: withPullUrls(a.text, refs.prs).map(link) },
   };

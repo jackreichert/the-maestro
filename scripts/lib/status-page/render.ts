@@ -3,7 +3,7 @@
  * Nothing here reads a file, runs a command or knows an org, repo or vault by name; `generate.ts` supplies all of it.
  * The page is ids and counts only, never patient or personal data.
  */
-import { linkNotePaths, obsidianUri, ticketNotePath } from './links.ts';
+import { linkNotePaths, obsidianUri, ticketNotePath, uriToNotePaths } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
 import type { DevelopTwin } from './twin.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
@@ -172,7 +172,7 @@ export const ticketNoteRef = (cfg: PageConfig, id: string): Ref =>
   (cfg.vaultName ? { label: id, url: obsidianUri(cfg.vaultName, liveOrArchived(cfg, ticketNotePath(cfg.ticketNotePath, id))), nowrap: true } : { label: id, nowrap: true });
 
 /** The lookup `linkNotePaths` needs for `item`: a bare note path belongs to the project of its ticket (the id minus its number, as `ticketNotePath` reads it), else its stream's repo, else the page's project. */
-function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | undefined {
+export function noteEnv(cfg: PageConfig, item: Item, ticket?: string): NoteLinkEnv | undefined {
   if (!cfg.noteExists) return undefined;
   const streamRepos = Object.entries(cfg.repoStreams).filter(([, s]) => s === item.stream).map(([repo]) => repo);
   const projects = [ticket?.replace(/-\d+$/, ''), ...streamRepos, cfg.project].filter((p): p is string => !!p);
@@ -362,8 +362,8 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
     out.push(`### ${stream} (${mine.length})`, '');
     for (const a of mine) {
       const refs = askRefs(cfg, a, prs, a.ticket || tickets.get(a.id));
-      const { needed, context } = splitAsk(a.text);
       const env = noteEnv(cfg, a, a.ticket || tickets.get(a.id));
+      const { needed, context } = splitAsk(uriToNotePaths(a.text, env));
       const age = daysBetween(a.date, today);
       const links = [...(refs.note ? [refs.note] : []), ...refs.tracker, ...refs.prs].map(mdLink).join(' · ');
       const bold = linkNotePaths(needed, env, escBold);
