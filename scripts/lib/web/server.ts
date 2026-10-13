@@ -19,6 +19,7 @@ import { rawError, refuse, send, sendError, sendJson } from './guard.ts';
 import { buildCharts, buildOpenPrs, buildState, buildStream } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { buildEpics, buildHome } from './home.ts';
+import { buildCost } from './cost.ts';
 import { buildProjects } from './projects.ts';
 import { withVerdicts } from './local-review.ts';
 import { createLocalReviewCache, spawnProducer } from './local-review-cache.ts';
@@ -88,6 +89,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/streams\/([^/]+)\/home$/, handler: (_u, m) => { const name = decodeName(m[1] ?? ''); return name === null ? undefined : buildHome(o.web, name, now()) ?? undefined; } },
     { method: 'GET', pattern: /^\/api\/prs$/, handler: () => buildOpenPrs(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/epics$/, handler: () => buildEpics(o.web, now()) },
+    { method: 'GET', pattern: /^\/api\/cost$/, handler: () => buildCost(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/projects$/, handler: () => buildProjects(o.web, now()) },
     { method: 'GET', pattern: /^\/api\/local-review$/, handler: () => containerRoot
       ? withVerdicts(localReview.read(), o.web.vault)
