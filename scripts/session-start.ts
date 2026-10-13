@@ -4,7 +4,7 @@
  *
  *   session-start.ts [--status-dir <dir>] [--project <name>]
  *
- * 1. Registers the `status-watch` and `status-refresh` watches (target = the status directory) when no live watch of that type exists.
+ * 1. Registers the `status-watch`, `status-refresh` and `whats-next` watches (target = the status directory) when no live watch of that type exists.
  *    It goes through `event-loop.ts add`, so each type's own validation, singleton rule and default TTL apply. A watch past its
  *    `expires` that the loop has not retired yet is removed first and registered again.
  * 2. Marks live watches of a standing type that lack the `renew` flag (see `repairStandingWatches`).
@@ -32,7 +32,7 @@ import { liveLoopHealth } from './lib/loop-health-live.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 /** The watches a session needs, keyed by the id used when one is missing. */
-export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }] as const;
+export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }, { id: 'whats-next', type: 'whats-next' }] as const;
 /** The refresh ticks every 10 minutes; a page this old has had at least one missed tick. */
 export const STALE_MS = 15 * 60_000;
 
