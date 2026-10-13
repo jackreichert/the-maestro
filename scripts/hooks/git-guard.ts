@@ -16,6 +16,8 @@
  * stderr and allows, because a broken guard must not brick the session. It is a safety net for an assistant's honest
  * mistakes, not a sandbox: a determined script (a git alias file, a Makefile target that runs git) can still get past it.
  *
+ * It also asks for a push in a repo listed in `review_note_repos` when no vault Reviews note names the pushed head commit (review-note.ts).
+ *
  * Protected branches default to main, staging, develop; set GIT_GUARD_PROTECTED (comma separated) to change them.
  *
  * Scope: the guard exists for the shared work repos. A repo whose `origin` is under github.com/jackreichert/ is personal, so
@@ -26,6 +28,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gate, refusal } from '../review-note.ts';
 
 export interface GuardContext {
   cwd: string;
@@ -33,6 +36,8 @@ export interface GuardContext {
   branch: (dir: string, gitArgs: string[]) => string | '' | undefined;
   /** The repo's `alias.*` config, name to value. */
   aliases: (dir: string, gitArgs: string[]) => Record<string, string>;
+  /** Review-note gate: why a push of `ref` (a branch, or '' for HEAD) lacks its vault Reviews note, or undefined when it may go. Optional so a context without it skips the check. */
+  reviewNote?: (dir: string, gitArgs: string[], ref: string) => string | undefined;
   /** URL of the repo's `origin` remote, undefined when it cannot be read. Optional: without it the guard is never scoped out. */
   origin?: (dir: string, gitArgs: string[]) => string | undefined;
 }
@@ -55,7 +60,7 @@ export function run(stdin: string, ctx: Partial<GuardContext> = {}, decider: typ
   try {
     const input = JSON.parse(stdin) as { tool_name?: string; tool_input?: { command?: unknown }; cwd?: string };
     if (input.tool_name !== 'Bash' || typeof input.tool_input?.command !== 'string') return { stdout: '', stderr: '' };
-    const full: GuardContext = { cwd: input.cwd || process.cwd(), branch: gitBranch, aliases: gitAliases, origin: gitOrigin, ...ctx };
+    const full: GuardContext = { cwd: input.cwd || process.cwd(), branch: gitBranch, aliases: gitAliases, origin: gitOrigin, reviewNote: gitReviewNote, ...ctx };
     const d = decider(input.tool_input.command, full);
     if (!d.ask) return { stdout: '', stderr: '' };
     const reason = `git-guard: ${d.reasons.join('; ')}. Your rules say to ask before this.`;
@@ -328,6 +333,11 @@ function headIsProtected(env: Env): boolean | 'unknown' {
   return b === undefined ? 'unknown' : isProtected(b);
 }
 
+/** The review-note gate (review-note.ts) for one pushed ref; a lookup that throws counts as no problem, since git itself refuses a ref it cannot resolve. */
+function reviewNoteReason(env: Env, ref: string): string | undefined {
+  try { return env.ctx.reviewNote?.(env.dir, env.gitArgs, ref); } catch { return undefined; }
+}
+
 const push: Rule = (args, env) => {
   const o = opts(args, ['repo', 'receive-pack', 'exec', 'push-option', 'o']);
   const force = ['force', 'f', 'force-with-lease', 'force-if-includes', 'mirror'].find((f) => o.flags.has(f));
@@ -338,6 +348,8 @@ const push: Rule = (args, env) => {
   if (refspecs.some((r) => r.startsWith('+'))) env.reasons.push('git push +refspec is a force push');
   if (refspecs.length === 0) {
     if (has(o, 'tags') || has(o, 'all', 'mirror')) return;
+    const noNoteReason = reviewNoteReason(env, '');
+    if (noNoteReason) env.reasons.push(noNoteReason);
     const h = headIsProtected(env);
     if (h === true) env.reasons.push(`git push with no refspec pushes the protected branch ${head(env)}`);
     else if (h === 'unknown') env.reasons.push('git push: could not tell which branch HEAD is on');
@@ -348,6 +360,9 @@ const push: Rule = (args, env) => {
     const dst = spec.includes(':') ? spec.slice(spec.indexOf(':') + 1) : spec;
     if (dst.includes('*')) { env.reasons.push(`git push glob refspec ${r} may reach a protected branch`); continue; }
     if (/[$`{}]/.test(dst)) { env.reasons.push(`git push ${r}: the destination is built by the shell, so it cannot be shown to avoid a protected branch`); continue; }
+    const src = spec.includes(':') ? spec.slice(0, spec.indexOf(':')) : spec;
+    const noNoteReason = src && !/[$`{}*]/.test(src) ? reviewNoteReason(env, src) : undefined;
+    if (noNoteReason) env.reasons.push(noNoteReason);
     let target = dst;
     if (dst === 'HEAD' || dst === '@' || dst === '') {
       const b = head(env);
@@ -456,6 +471,13 @@ function gitAliases(dir: string, gitArgs: string[]): Record<string, string> {
     const out = execFileSync('git', [...gitArgs, 'config', '--get-regexp', '^alias\\.'], { cwd: dir, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
     return Object.fromEntries(out.split('\n').filter(Boolean).map((l) => { const k = l.indexOf(' '); return [l.slice(0, k).replace(/^alias\./, ''), l.slice(k + 1)]; }));
   } catch { return {}; }
+}
+
+/** Real lookup for the gate: the repo root and its head, through review-note.ts. */
+function gitReviewNote(dir: string, gitArgs: string[], ref: string): string | undefined {
+  const top = execFileSync('git', [...gitArgs, 'rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const r = gate(top, ref);
+  return r.ok ? undefined : `git push: ${refusal(r, top)}`;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

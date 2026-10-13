@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -292,6 +292,47 @@ test('real git lookups: a throwaway repo on main asks to commit, on a feature br
     spawnSync('git', ['-C', dir, 'config', 'alias.go', 'push --force']);
     assert.match(run(hook('git go', dir)).stdout, /force/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// The review-note gate: the guard asks on a push whose head has no vault Reviews note.
+const noted = (missing: string[]): GuardContext => ({ ...ctx(), reviewNote: (_d, _g, ref) => (missing.includes(ref) ? `git push: needs a valid vault Reviews note for ${ref || 'HEAD'}` : undefined) });
+
+test('review-note gate: a push with no note asks, for a bare push and for a named ref', () => {
+  assert.match(decide('git push', noted(['']) ).reasons.join(), /Reviews note for HEAD/);
+  assert.match(decide('git push origin feat/x', noted(['feat/x'])).reasons.join(), /Reviews note for feat\/x/);
+  assert.match(decide('git push origin HEAD:feat/x', noted(['HEAD'])).reasons.join(), /Reviews note for HEAD/);
+  assert.match(decide('git push -u origin feat/x', noted(['feat/x'])).reasons.join(), /Reviews note/);
+});
+
+test('review-note gate: a push with a note, a branch deletion and a context without the gate pass quietly', () => {
+  assert.equal(decide('git push origin feat/x', noted([])).ask, false);
+  assert.equal(decide('git push origin :feat/x', noted(['feat/x', ''])).ask, false, 'deleting a remote branch has no head to review');
+  assert.equal(decide('git push origin feat/x', ctx()).ask, false);
+});
+
+test('review-note gate: a lookup that throws does not block the push', () => {
+  const boom: GuardContext = { ...ctx(), reviewNote: () => { throw new Error('boom'); } };
+  assert.equal(decide('git push origin feat/x', boom).ask, false);
+});
+
+test('review-note gate, end to end: the real hook asks on a gated repo with no note and stays quiet once the note exists', () => {
+  const root = mkdtempSync(join(tmpdir(), 'guard-rnote-'));
+  const repo = join(root, 'r');
+  const vault = join(root, 'vault');
+  const g = (...a: string[]): string => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).stdout.trim();
+  spawnSync('git', ['init', '-q', '-b', 'feat/x', repo]);
+  g('config', 'user.email', 't@example.com'); g('config', 'user.name', 'T'); g('config', 'core.hooksPath', '/dev/null');
+  g('remote', 'add', 'origin', 'https://github.com/example/widgets.git');
+  writeFileSync(join(repo, 'a'), 'a'); g('add', 'a'); g('commit', '-q', '-m', 'a');
+  const sha = g('rev-parse', 'HEAD');
+  const conf = join(root, 'config.md');
+  writeFileSync(conf, `\`\`\`maestro-config\nreview_note_repos: example/*\nvault_root: ${vault}\n\`\`\`\n`);
+  const ask = (): string => spawnSync(process.execPath, [SCRIPT], { input: hook('git push origin feat/x', repo), encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: conf } }).stdout;
+  assert.match(ask(), /needs a valid vault Reviews note for head/);
+  const dir = join(vault, 'Projects', 'widgets', 'Reviews');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `2026-10-13-x-review-${sha.slice(0, 7)}.md`), `---\nhead: ${sha}\n---\n## Naming pass\nchecked a\n`);
+  assert.equal(ask(), '');
 });
 
 test('personal repos (origin under github.com/jackreichert/) pass silently; work repos and unreadable origins stay guarded', () => {

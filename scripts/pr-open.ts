@@ -13,6 +13,7 @@
  *
  * In a repo listed in pr_smells_repos it also refuses unless a smells run is recorded for the head commit
  * (pr-smells.ts record) and the body carries its `Smells:` line; docs-only diffs are exempt.
+ * In a repo listed in review_note_repos it also refuses unless a vault Reviews note exists for the head commit (review-note.ts).
  *
  * Over budget: prints the pr-size summary and a split hint, exits 1, never calls gh, unless the
  * repo's origin matches `waive_size_gate_owners` (default none): then it prints a one-line waiver
@@ -43,6 +44,7 @@ import { checkOnePerTicket, listOpenPrs, ticketKey } from './pr-ticket-key.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
 import { smellsProblems } from './pr-smells.ts';
+import { gate as reviewNoteGate, refusal as reviewNoteRefusal } from './review-note.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
 const PR_SIZE = fileURLToPath(new URL('./pr-size.ts', import.meta.url));
@@ -108,7 +110,7 @@ function checkBody(o: OpenArgs): string {
   let body: string;
   try { body = readFileSync(path, 'utf8'); } catch (e) { console.error(`pr-open: cannot read --body-file ${path}: ${(e as Error).message}`); process.exit(2); }
   const ctx = diffContext(o);
-  const problems = [...bodyProblems(body, undefined, ctx), ...smellsGate(o, body, ctx)];
+  const problems = [...bodyProblems(body, undefined, ctx), ...smellsGate(o, body, ctx), ...reviewNoteProblems(o)];
   if (problems.length) {
     console.error(`pr-open: refused, the PR body ${problems.join('; ')}. Fix the body (see reference/git.md#pr-body); the rules are configurable in local-config.`);
     process.exit(1);
@@ -120,6 +122,11 @@ function checkBody(o: OpenArgs): string {
 /** The smells gate (reference/git.md#smells-gate); a git failure reading the head refuses rather than passing silently. */
 function smellsGate(o: OpenArgs, body: string, ctx: BodyContext): string[] {
   try { return smellsProblems(o.repo, headOf(o), body, ctx.codeFiles); } catch (e) { return [(e as Error).message]; }
+}
+
+/** The review-note gate (reference/git.md#review-note-gate): in a `review_note_repos` repo a PR opens only for a head commit with a vault Reviews note. */
+function reviewNoteProblems(o: OpenArgs): string[] {
+  try { const r = reviewNoteGate(o.repo, headOf(o)); return r.ok ? [] : [reviewNoteRefusal(r, o.repo)]; } catch (e) { return [(e as Error).message]; }
 }
 
 /** What the diff says about the PR: whether it targets a non-default branch (stacked) and how many code files it changes. */

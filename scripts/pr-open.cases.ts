@@ -405,6 +405,23 @@ test('smells gate: off by default, outside the listed repos, and for a diff with
     assert.equal(open(docs, ['--dry-run', '--head', 'feature'], GATED).status, 0, 'docs only');
 });
 
+test('review-note gate: a gated repo with no Reviews note for the head refuses and never calls gh; a note for the head opens it', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    withOrigin(f);
+    const vault = mkdtempSync(join(tmpdir(), 'pr-open-vault-'));
+    const cfg = gateFile(`review_note_repos: example/*\nvault_root: ${vault}`);
+    const refused = open(f, ['--dry-run', '--head', 'feature'], cfg);
+    assert.equal(refused.status, 1, refused.stderr);
+    assert.match(refused.stderr, /needs a valid vault Reviews note for head/);
+    assert.ok(!existsSync(f.log), 'gh must not run');
+    const sha = spawnSync('git', ['-C', f.repo, 'rev-parse', 'feature'], { encoding: 'utf8' }).stdout.trim();
+    const dir = join(vault, 'Projects', 'widgets', 'Reviews');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `2026-10-13-feature-review-${sha.slice(0, 7)}.md`), `---\nhead: ${sha}\n---\n## Naming pass\nchecked src/a.py\n`);
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], cfg).status, 0);
+    assert.equal(open(f, ['--dry-run', '--head', 'feature'], gateFile('review_note_repos: other/*')).status, 0, 'repo not listed');
+});
+
 const WAIVED = gateFile('waive_size_gate_owners: example-owner');
 const originAt = (f: { repo: string }, slug: string): void => git(f.repo, 'remote', 'add', 'origin', `https://github.com/${slug}.git`);
 
