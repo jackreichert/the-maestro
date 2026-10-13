@@ -22,6 +22,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'n
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { printJson } from './lib/json-out.ts';
+import { printJson } from './lib/json-out.ts';
 
 export interface Finding { rule: string; file: string; line: number; text: string }
 
