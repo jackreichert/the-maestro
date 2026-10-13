@@ -21,6 +21,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { printJson } from './lib/json-out.ts';
 
 export interface Finding { rule: string; file: string; line: number; text: string }
 
@@ -81,7 +82,7 @@ function main(argv: string[]): number {
     else { console.error('usage: cache-lint.ts [--root <repo>] [--json]'); return 2; }
   }
   const findings = lintRepo(root);
-  if (json) console.log(JSON.stringify(findings, null, 2));
+  if (json) printJson(findings);
   else if (findings.length) for (const f of findings) console.error(`${f.file}:${f.line} [${f.rule}] ${f.text}`);
   else console.log('cache-lint: ok');
   return findings.length ? 1 : 0;
