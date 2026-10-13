@@ -358,7 +358,7 @@ function contextLines(blocks: AskBlock[], link: (text: string) => string): strin
 
 /**
  * Every ask, grouped under its stream's heading, one list item each: the ledger id, the full decision, its context, the
- * links, and the age when old. The `> answer:` stub is the line directly under the item (inline.ts reads it back by
+ * links, and the age when old. The `> answer:` stub is the line directly under the item, before any context bullets (inline.ts reads it back by
  * that shape), so the reply sits with the ask. Text is never clipped: the full ask stays readable.
  */
 function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<string, string>, streams: string[], today: string): string[] {
@@ -380,7 +380,7 @@ function asksSection(cfg: PageConfig, asks: Item[], prs: Pr[], tickets: Map<stri
       const flat = blocks.length <= 1 && blocks[0]?.kind !== 'list';
       const text = [boldSafe(needed) ? `**${bold}**` : '', flat ? linkNotePaths(plain(context), env, escLinkChars) : ''].filter(Boolean).join(' ');
       const fields = askBits(a).map((b) => boldSafe(dropLinks(b).replace(/\bwww\.\S*/gi, ''))).join(' · ');
-      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, ...(flat ? [] : contextLines(blocks, (t) => linkNotePaths(t, env, escLinkChars))), `  > answer: ${a.answer ?? ''}`, ...(a.discussing === undefined ? [] : [`  > discuss: ${a.discussing}`.trimEnd()]));
+      out.push(`- [ ] \`${a.id}\` ${[text, links ? `(${links})` : '', fields ? `_${fields}_` : '', age > 3 ? `_${age} days old_` : ''].filter(Boolean).join(' ')}`, `  > answer: ${a.answer ?? ''}`, ...(a.discussing === undefined ? [] : [`  > discuss: ${a.discussing}`.trimEnd()]), ...(flat ? [] : contextLines(blocks, (t) => linkNotePaths(t, env, escLinkChars))));
     }
     out.push('');
   }

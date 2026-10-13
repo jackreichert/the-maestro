@@ -52,8 +52,8 @@ function markerRun(text: string): { mark: string; start: number; end: number }[]
   return best;
 }
 
-/** An item without the joining words the writer put after it (`; or`): whitespace is squashed first so the trailing match cannot backtrack over a long run. */
-const tidyItem = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/(?: ?(?:[;,—]| (?:and|or)))+$/i, '').trim();
+/** An item without the marker punctuation after it (`;`, `,`, a dash); a joining word (`and`, `or`) stays, since it says whether the items are all wanted or one is chosen: whitespace is squashed first so the trailing match cannot backtrack over a long run. */
+const tidyItem = (s: string): string => s.replace(/\s+/g, ' ').trim().replace(/(?: ?[;,—])+$/, '').trim();
 
 /** Sentences into paragraphs: a `Label:` sentence opens its own; others join up to the paragraph budget. */
 function paragraphs(text: string): AskBlock[] {

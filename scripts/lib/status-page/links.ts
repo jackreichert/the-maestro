@@ -111,7 +111,9 @@ export const noteExistsIn = (root: string) => (vaultPath: string): boolean => {
 
 const GITHUB_ITEM = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/(\d{1,7})(?:[/?#].*)?$/;
 const TICKET_URL = /^https:\/\/[a-z0-9-]+\.atlassian\.net\/browse\/([A-Z][A-Z0-9_]*-\d+)(?:[/?#].*)?$/;
-const REF = new RegExp(`${OBSIDIAN_URI.source}|https?:\\/\\/[^\\s<>"'\`]+|${NOTE_PATH.source}`, 'g');
+/** An existing Markdown link or code span: left exactly as written, so a link the writer made is not wrapped in another. */
+const PROTECTED = /\[[^\]\n]*\]\([^)\n]*\)|`[^`\n]*`/;
+const REF = new RegExp(`${PROTECTED.source}|${OBSIDIAN_URI.source}|https?:\\/\\/[^\\s<>"'\`]+|${NOTE_PATH.source}`, 'g');
 const mdLabel = (s: string): string => s.replace(/[\\[\]]/g, '\\$&');
 
 /** A short label for a web URL: `#590` for a GitHub pull request or issue, the key for a Jira ticket, else the host when the URL is long; null leaves the URL as written. */
@@ -134,6 +136,7 @@ export function shortUrlLabel(url: string): string | null {
  */
 export function linkAskRefs(text: string, env: NoteLinkEnv | undefined): string {
   return text.replace(REF, (raw) => {
+    if (raw.startsWith('[') || raw.startsWith('`')) return raw;
     if (raw.startsWith('obsidian:') || !/^https?:/.test(raw)) {
       const token = raw.startsWith('obsidian:') ? trimUri(raw) : raw;
       const path = !env?.vaultName ? null : raw.startsWith('obsidian:') ? noteOfUri(token, env) : resolveNote(raw, env);

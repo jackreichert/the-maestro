@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { linkAskRefs, linkNotePaths, noteExistsIn, noteOfUri, shortUrlLabel, uriToNotePaths, vaultRootFor } from './links.ts';
 import type { NoteLinkEnv } from './links.ts';
 import { renderPage, ticketNoteRef } from './render.ts';
+import { carryInline, fillStub } from './inline.ts';
 import type { Item, PageConfig, PageInput } from './render.ts';
 
 const FILES = new Set([
@@ -149,13 +150,30 @@ test('shortUrlLabel: GitHub item, ticket, long host, and a short URL left as wri
   assert.equal(shortUrlLabel('https://example.test/a'), null);
 });
 
-test('the Markdown page nests a long ask context as short bullets under its line, above the answer stub, and leaves a short one on the line', () => {
+test('the Markdown page nests a long ask context as short bullets under its line, after the answer stub, and leaves a short one on the line', () => {
   const long = 'Pick? Options: (1) go now; (2) wait. Recommend (1). Stakes: it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.';
   const lines = render(config(), { awaiting: [item({ id: 'ab12', text: long }), item({ id: 'cd34', text: 'Short? Just this.' })] }).split('\n');
   const i = lines.findIndex((l) => l.startsWith('- [ ] `ab12`'));
   assert.deepEqual(lines.slice(i, i + 7), [
-    '- [ ] `ab12` **Pick?**', '  - Options:', '  - 1. go now', '  - 2. wait.', '  - Recommend (1).',
-    '  - **Stakes:** it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.', '  > answer: ',
+    '- [ ] `ab12` **Pick?**', '  > answer: ', '  - Options:', '  - 1. go now', '  - 2. wait.', '  - Recommend (1).',
+    '  - **Stakes:** it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.',
   ]);
   assert.ok(lines.includes('- [ ] `cd34` **Short?** Just this.'));
+});
+
+test('an answer typed under a laid-out context survives carryInline and fillStub, with no second stub', () => {
+  const long = 'Pick? Options: (1) go now; (2) wait. Recommend (1). Stakes: it is cheap to undo and the window is short, so waiting costs a day. Ticket fake-1.';
+  const page = render(config(), { awaiting: [item({ id: 'ab12', text: long, answer: '1' })] });
+  const carried = carryInline(page, { answers: { ab12: 'actually 2' }, discuss: {}, ticks: [], priorities: null }, page);
+  assert.equal(carried.split('\n').filter((l) => l.includes('> answer:')).length, 1, carried);
+  assert.ok(carried.includes('> answer: actually 2'), carried);
+  const empty = render(config(), { awaiting: [item({ id: 'ab12', text: long })] });
+  const filled = fillStub(empty, 'ab12', 'go') as string;
+  assert.equal(filled.split('\n').filter((l) => l.includes('> answer:')).length, 1, filled);
+});
+
+test('linkAskRefs leaves an existing Markdown link and a code span exactly as written', () => {
+  const t = 'See [the PR](https://github.com/o/r/pull/5) first, spec at `Plans/fake-design.md`, and `https://github.com/o/r/pull/6`, then https://github.com/o/r/pull/7.';
+  const out = linkAskRefs(t, envSib);
+  assert.equal(out, t.replace('then https://github.com/o/r/pull/7.', 'then [#7](https://github.com/o/r/pull/7).'));
 });
