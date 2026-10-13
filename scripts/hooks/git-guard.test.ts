@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decide, run, isProtected } from './git-guard.ts';
+import { decide, run, isProtected, isPersonalOrigin } from './git-guard.ts';
 import type { GuardContext } from './git-guard.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -291,5 +291,41 @@ test('real git lookups: a throwaway repo on main asks to commit, on a feature br
     assert.equal(run(hook('git commit -m x', dir)).stdout, '');
     spawnSync('git', ['-C', dir, 'config', 'alias.go', 'push --force']);
     assert.match(run(hook('git go', dir)).stdout, /force/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('personal repos (origin under github.com/jackreichert/) pass silently; work repos and unreadable origins stay guarded', () => {
+  const origins: Record<string, string | undefined> = {
+    '/mine': 'git@github.com:jackreichert/the-maestro.git',
+    '/mine-https': 'https://github.com/jackreichert/the-maestro',
+    '/work': 'git@github.com:acme-corp/shop-api.git',
+    '/trick': 'https://github.com/acme-corp/jackreichert/x.git',
+    '/none': undefined,
+  };
+  const scoped = (cwd: string): GuardContext => ({ ...ctx(cwd), origin: (dir, args) => origins[args.includes('-C') ? args[args.indexOf('-C') + 1] : dir] });
+  const asksIn = (cmd: string, cwd: string): boolean => decide(cmd, scoped(cwd)).ask;
+  for (const cmd of ['git push --force origin main', 'git reset --hard', 'git add -A', 'git rebase main']) {
+    assert.equal(asksIn(cmd, '/mine'), false, `${cmd} in a personal ssh repo`);
+    assert.equal(asksIn(cmd, '/mine-https'), false, `${cmd} in a personal https repo`);
+    for (const dir of ['/work', '/trick', '/none']) assert.equal(asksIn(cmd, dir), true, `${cmd} in ${dir}`);
+  }
+  assert.equal(asksIn('git -C /work reset --hard', '/mine'), true, '-C aims the command at a guarded repo');
+  assert.equal(asksIn('git -C /mine reset --hard', '/work'), false, '-C aims the command at a personal repo');
+  assert.equal(asksIn('cd /work && git reset --hard', '/mine'), true, 'cd moves the command into a guarded repo');
+  assert.equal(decide('git reset --hard', { ...ctx('/mine'), origin: () => { throw new Error('boom'); } }).ask, true, 'a failing origin lookup keeps the guard on');
+  assert.equal(isPersonalOrigin('ssh://git@github.com/jackreichert/x.git'), true);
+  assert.equal(isPersonalOrigin('git@github.com:jackreichertx/x.git'), false);
+  assert.equal(isPersonalOrigin(undefined), false);
+});
+
+test('real git lookups: a throwaway repo with a jackreichert origin is not guarded, a work one is', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'git-guard-origin-'));
+  try {
+    spawnSync('git', ['init', '-q', '-b', 'main', dir]);
+    spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', 'git@github.com:acme-corp/shop-api.git']);
+    assert.match(run(hook('git commit -m x', dir)).stdout, /protected branch main/);
+    spawnSync('git', ['-C', dir, 'remote', 'set-url', 'origin', 'git@github.com:jackreichert/the-maestro.git']);
+    assert.equal(run(hook('git commit -m x', dir)).stdout, '');
+    assert.equal(run(hook('git reset --hard', dir)).stdout, '');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
