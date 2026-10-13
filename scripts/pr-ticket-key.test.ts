@@ -18,6 +18,7 @@ test('a second independent PR under the same key fails and names the other PR', 
   assert.equal(v.status, 'fail');
   assert.match(v.message, /ABC-12 already has an open PR: #7/);
   assert.match(v.message, /smaller ticket/);
+  assert.match(v.message, /add a `Twin: #N` line to the body/);
 });
 
 test('the key is also found in the other PR title', () => {
