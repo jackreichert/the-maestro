@@ -51,6 +51,8 @@ export interface PrCard {
    * and once the twin has merged. Read from the PR cache, so it is as old as `prData.fetchedAt`.
    */
   waitsOnDevelop?: { number?: number; url?: string };
+  /** Set on a staging PR whose develop twin has merged: that PR, so the Open PRs tab keeps it beside the staging PR until the staging PR merges too. */
+  developMerged?: { number: number; url: string };
   /** The repo is in `self_review_repos`: only the user reviews it, so the client lists it apart from the org's PRs. Set only when true. */
   selfReview?: boolean;
   /** When the PR was opened; absent when the PR cache predates the field. */
@@ -189,5 +191,6 @@ function prCard(p: Pr, all: Pr[], config: PageConfig, twinOf?: Pr): PrCard {
     isDraft: p.isDraft, ci: p.ci, mergeable: p.mergeable, mergeStateStatus: p.mergeStateStatus, unresolved: p.unresolved, review: p.reviewDecision,
     flags: prFlagNames(p), ...(p.createdAt ? { createdAt: p.createdAt } : {}), ...(p.approvers ? { approvers: p.approvers } : {}), ...(p.changesBy ? { changesBy: p.changesBy } : {}), ...(isSelfReview(p.repo, config.selfReviewRepos ?? []) ? { selfReview: true } : {}), ...(twinOf ? { twinOf: twinOf.number } : {}), ...(parent ? { stackedOn: parent.number } : {}),
     ...waitOf(p),
+    ...(p.baseRefName === 'staging' && p.developTwin?.merged ? { developMerged: { number: p.developTwin.number, url: p.developTwin.url } } : {}),
   };
 }

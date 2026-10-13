@@ -227,7 +227,8 @@ function prState(p: Pr): string {
   return [p.isDraft ? 'draft' : 'ready', ci, thr, merge, rev].filter(Boolean).join(', ');
 }
 
-export interface Row { dev?: Pr; stg?: Pr }
+/** `devMerged`: the develop twin of a staging-only row that has already merged, kept in the pair until the staging PR merges too. */
+export interface Row { dev?: Pr; stg?: Pr; devMerged?: DevelopTwin }
 
 /** Develop and staging PRs of one change: the same title or branch, else the only leftover pair in a repo sharing a tracker key. */
 export function pairTwins(cfg: PageConfig, prs: Pr[]): Row[] {
@@ -247,7 +248,7 @@ export function pairTwins(cfg: PageConfig, prs: Pr[]): Row[] {
     if (only && !more.length && withKey(freeDev, keyOf(d)).length === 1) twin.set(d, only);
   }
   const used = new Set(twin.values());
-  const rows: Row[] = [...rest.map((d) => ({ dev: d, stg: twin.get(d) })), ...stg.filter((s) => !used.has(s)).map((s) => ({ stg: s }))];
+  const rows: Row[] = [...rest.map((d) => ({ dev: d, stg: twin.get(d) })), ...stg.filter((s) => !used.has(s)).map((s): Row => ({ stg: s, ...(s.developTwin?.merged ? { devMerged: s.developTwin } : {}) }))];
   return rows.sort((x, y) => ((x.dev ?? x.stg)!.number) - ((y.dev ?? y.stg)!.number));
 }
 
@@ -289,7 +290,8 @@ function prSection(cfg: PageConfig, all: Pr[], streams: string[]): string[] {
       const lead = (r.dev ?? r.stg)!;
       const key = keysIn(cfg, `${lead.title} ${lead.headRefName}`)[0];
       const prCell = (p: Pr | undefined, none: string): string => (p ? [mdLink(prRef(p, prs, multiRepo)), prFlags(p)].filter(Boolean).join(' ') : none);
-      out.push(`| ${key ? mdLink(trackerRef(cfg, key)) : '-'} | ${prCell(r.dev, '-')} | ${prCell(r.stg, 'none')} | ${cell(oneLine(lead.title.replace(typePrefix, '').replace(twinSuffix, ''), 70))} |`);
+      const merged = r.devMerged ? mdLink({ label: `#${r.devMerged.number} merged`, url: r.devMerged.url, nowrap: true }) : '-';
+      out.push(`| ${key ? mdLink(trackerRef(cfg, key)) : '-'} | ${prCell(r.dev, merged)} | ${prCell(r.stg, 'none')} | ${cell(oneLine(lead.title.replace(typePrefix, '').replace(twinSuffix, ''), 70))} |`);
     }
     out.push('');
   }

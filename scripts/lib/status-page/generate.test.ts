@@ -241,6 +241,22 @@ test('develop and staging twins share a row, by title and by ticket key; a missi
   assert.match(rows[2] ?? '', /\[#30 → develop\].* \| none \|/);
 });
 
+test('a staging PR whose develop twin merged keeps it in the develop column, marked merged; an open twin and an unmerged one stay as they were', () => {
+  const merged = { number: 9, url: 'https://github.com/acme/widgets/pull/9', merged: true };
+  const prs = [
+    raw(11, 'acme-widgets', { title: 'feat: add thing FAKE-1 (staging)', baseRefName: 'staging', headRefName: 'feat/FAKE-1-staging', developTwin: merged }),
+    raw(20, 'acme-widgets', { title: 'fix: has open twin FAKE-2', headRefName: 'fix/a' }),
+    raw(21, 'acme-widgets', { title: 'fix: has open twin FAKE-2 (staging)', baseRefName: 'staging', headRefName: 'fix/a-staging', developTwin: { number: 20, url: 'https://github.com/acme/widgets/pull/20', merged: false } }),
+    raw(31, 'acme-widgets', { title: 'fix: lost twin FAKE-3', baseRefName: 'staging', headRefName: 'fix/c', developTwin: null }),
+  ];
+  const rows = generate(opts(dir(), { dryRun: true }), deps(prs)).page.split('\n').filter((l) => /^\| <span style=\"white-space:nowrap\">\[FAKE-[123]\]/.test(l));
+  assert.equal(rows.length, 3);
+  assert.match(rows[0] ?? '', /\[#9 merged\]\(https:\/\/github\.com\/acme\/widgets\/pull\/9\).*\| <span[^>]*>\[#11 → staging\]/);
+  assert.match(rows[1] ?? '', /\[#20 → develop\].*\| <span[^>]*>\[#21 → staging\]/);
+  assert.doesNotMatch(rows[1] ?? '', /merged/);
+  assert.match(rows[2] ?? '', /\| - \| <span[^>]*>\[#31 → staging\]/, 'no twin found: a bare dash, nothing invented');
+});
+
 test('sections come in the order priorities, working on now, queued, needs attention, open PRs, other status, status, and the bottom lists carry ages and done times', () => {
   const b = { ...board, status: { ...board.status,
     inflight: [{ id: 'aa11', date: '2026-10-05', ts: '2026-10-05T13:00:00Z', text: 'building a thing', stream: 'Alpha' }],

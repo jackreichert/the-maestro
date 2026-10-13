@@ -64,6 +64,21 @@ test('a develop PR with no staging twin names the gap, and a PR into main is not
   assert.equal(rows.find((r) => r.number === 3)?.sides, undefined);
 });
 
+test('a staging PR whose develop twin merged keeps it as the develop side, marked merged; an open develop twin wins over it', () => {
+  const merged = { number: 7, url: 'https://example.test/org/a/pull/7' };
+  const out = buildOpenPrs(state([
+    card('org/a', 50, { base: 'staging', head: 'feat/m-staging', developMerged: merged }),
+    card('org/a', 60, { base: 'staging', head: 'feat/o', developMerged: merged }), card('org/a', 61, { head: 'feat/o' }),
+    card('org/a', 70, { base: 'main', head: 'feat/main', developMerged: merged }),
+  ]), PAGE, NOW);
+  const rows = out.groups[0]?.repos[0]?.prs ?? [];
+  const sides = (n: number) => rows.find((r) => r.number === n)?.sides;
+  assert.deepEqual(sides(50), { develop: { ...merged, merged: true }, staging: { number: 50, url: 'https://example.test/org/a/pull/50' } });
+  assert.deepEqual([sides(60)?.develop?.number, sides(60)?.develop?.merged], [61, undefined]);
+  assert.equal(sides(70), undefined, 'a PR into main is never a pair');
+  assert.deepEqual(rows.find((r) => r.number === 50)?.twins, [], 'a merged PR is not an open twin');
+});
+
 test('a row copies CI and the stack parent, and omits a blank CI', () => {
   const out = buildOpenPrs(state([
     card('org/a', 1, { ci: 'FAILURE', stackedOn: 9 }),

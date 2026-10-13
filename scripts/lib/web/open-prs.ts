@@ -39,6 +39,7 @@ function twinsOf(p: PrCard, mine: PrCard[]): number[] {
 }
 
 const sideOf = (p: PrCard): OpenPrSide => ({ number: p.number, url: p.url });
+const mergedSideOf = (m: { number: number; url: string }): OpenPrSide => ({ number: m.number, url: m.url, merged: true });
 
 /** The open PR on `base` that this one is paired with, by the same head branch or an explicit twin link. */
 function partner(p: PrCard, mine: PrCard[], base: 'develop' | 'staging'): PrCard | undefined {
@@ -47,13 +48,15 @@ function partner(p: PrCard, mine: PrCard[], base: 'develop' | 'staging'): PrCard
 
 /**
  * Develop and staging of this PR, together. Only a PR whose base is one of those two gets it, so a PR into main
- * is not told it is missing a staging twin. A side that is not open is omitted; the client says none.
+ * is not told it is missing a staging twin. A side that is not open is omitted; the client says none, except a develop PR that has
+ * merged while its staging twin is still open: it stays as the develop side, marked `merged`, until the staging PR merges too.
  */
 function sidesOf(p: PrCard, mine: PrCard[]): OpenPrSides | undefined {
   if (p.base !== 'develop' && p.base !== 'staging') return undefined;
   const develop = p.base === 'develop' ? p : partner(p, mine, 'develop');
   const staging = p.base === 'staging' ? p : partner(p, mine, 'staging');
-  return { ...(develop ? { develop: sideOf(develop) } : {}), ...(staging ? { staging: sideOf(staging) } : {}) };
+  const merged = !develop && staging?.developMerged ? mergedSideOf(staging.developMerged) : undefined;
+  return { ...(develop ? { develop: sideOf(develop) } : merged ? { develop: merged } : {}), ...(staging ? { staging: sideOf(staging) } : {}) };
 }
 
 function row(p: PrCard, mine: PrCard[], page: PageConfig, now: Date): OpenPrRow {
