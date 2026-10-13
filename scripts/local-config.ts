@@ -446,6 +446,15 @@ export const PR_MECHANICAL_GLOBS = globList('MAESTRO_PR_MECHANICAL_GLOBS', 'pr_m
 /** Smells gate (pr-open.ts, pr-smells.ts): GitHub `owner/name` globs of repos where a PR needs a recorded smells run, comma-separated. Default none, so the gate is off until a repo is named. User config file only. */
 export const PR_SMELLS_REPOS = globListFile('pr_smells_repos');
 
+/**
+ * One PR per ticket: the tracker-key pattern the rule uses. Read from the user config file only (an environment variable must not be able to
+ * point it at a pattern that never matches), else the generic default, plus the local key prefixes (MAESTRO-N). Case-sensitive, so `utf-8` is not a key.
+ */
+export const ONE_PR_KEY_PATTERN = ((raw: string) => {
+  const base = (() => { try { new RegExp(raw); return raw; } catch { return DEFAULT_TRACKER_KEY_PATTERN; } })();
+  return LOCAL_KEY_PREFIXES.length ? `${base}|\\b(?:${LOCAL_KEY_PREFIXES.join('|')})-\\d+\\b` : base;
+})(pickUserFile('tracker_key_pattern').trim() || DEFAULT_TRACKER_KEY_PATTERN);
+
 /** One PR per ticket (pr-open.ts, pr-ticket-key.ts): refuse a second independent open PR that carries the same tracker key. Default on. User config file only. */
 export const ONE_PR_PER_TICKET = switchOn(pickUserFile('one_pr_per_ticket'));
 

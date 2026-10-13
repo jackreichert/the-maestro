@@ -7,7 +7,8 @@ const pr = (number: number, head: string, base: string, title = 't'): OpenPr => 
 const mine = (over: Partial<{ branch: string; base: string; title: string; body: string }> = {}) => ({ branch: 'feat/ABC-12-thing', base: 'develop', title: 'Thing', body: 'Context', ...over });
 
 test('key comes from the branch, else the title; matched as a whole token', () => {
-  assert.equal(ticketKey('feat/abc-12-x', 'ZZZ-1', RULES.pattern), 'ABC-12');
+  assert.equal(ticketKey('feat/ABC-12-x', 'ZZZ-1', RULES.pattern), 'ABC-12');
+  assert.equal(ticketKey('fix/utf-8-names', 'Support sha-256', RULES.pattern), '', 'lower-case words are not keys');
   assert.equal(ticketKey('feature', 'fix ABC-9: thing', RULES.pattern), 'ABC-9');
   assert.deepEqual(keysIn('ABC-1 ABC-12', RULES.pattern), ['ABC-1', 'ABC-12']);
 });
@@ -36,7 +37,8 @@ test('a twin on another branch passes only when it is on another protected base 
   assert.equal(checkOnePerTicket(mine({ base: 'staging', body: 'Twin: #7' }), other, RULES).status, 'pass');
   assert.equal(checkOnePerTicket(mine({ base: 'staging', body: 'Twin: https://github.com/o/r/pull/7' }), other, RULES).status, 'pass');
   assert.equal(checkOnePerTicket(mine({ base: 'staging', body: 'no link' }), other, RULES).status, 'fail');
-  assert.equal(checkOnePerTicket(mine({ base: 'staging', body: 'see #70' }), other, RULES).status, 'fail');
+  assert.equal(checkOnePerTicket(mine({ base: 'staging', body: 'Twin: #70' }), other, RULES).status, 'fail');
+  assert.equal(checkOnePerTicket(mine({ base: 'main', body: 'Related: #7' }), other, RULES).status, 'fail', 'a bare mention is not a twin link');
   assert.equal(checkOnePerTicket(mine({ base: 'develop', body: '#7' }), other, RULES).status, 'fail', 'same base is never a twin');
 });
 
@@ -65,4 +67,14 @@ test('a stack plus an independent rival still fails', () => {
 
 test('the PR being opened again (same head and base) is not its own rival', () => {
   assert.equal(checkOnePerTicket(mine(), [pr(7, 'feat/ABC-12-thing', 'develop')], RULES).status, 'pass');
+});
+
+test('a deeper stack still warns, and a child opened before its parent is a stack too', () => {
+  const chain = [pr(7, 'feat/ABC-12-a', 'develop'), pr(8, 'feat/ABC-12-b', 'feat/ABC-12-a')];
+  assert.equal(checkOnePerTicket(mine({ branch: 'feat/ABC-12-c', base: 'feat/ABC-12-b' }), chain, RULES).status, 'warn');
+  assert.equal(checkOnePerTicket(mine({ branch: 'feat/ABC-12-a', base: 'develop' }), [pr(8, 'feat/ABC-12-b', 'feat/ABC-12-a')], RULES).status, 'warn');
+});
+
+test('an open PR is judged by its own key, not by a key it merely mentions', () => {
+  assert.equal(checkOnePerTicket(mine(), [pr(7, 'feat/ABC-13-y', 'develop', 'ABC-13: follow-up to ABC-12')], RULES).status, 'pass');
 });

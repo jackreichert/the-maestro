@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { openStore } from './lib/journal/store.ts';
 import { itemFor, linkRowToPr, parsePrUrl } from './lib/row-prs.ts';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
-import { CONFIGURED_PROJECT, LEDGER_ROOT, ONE_PR_EXEMPT_HEADS, ONE_PR_PER_TICKET, PROTECTED_BRANCHES, TRACKER_KEY_PATTERN, VAULT_ROOT, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
+import { CONFIGURED_PROJECT, LEDGER_ROOT, ONE_PR_EXEMPT_HEADS, ONE_PR_KEY_PATTERN, ONE_PR_PER_TICKET, PROTECTED_BRANCHES, VAULT_ROOT, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
 import { checkOnePerTicket, listOpenPrs, ticketKey } from './pr-ticket-key.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
@@ -85,7 +85,7 @@ function onePerTicket(o: OpenArgs, body: string): void {
   if (!ONE_PR_PER_TICKET) return;
   const t = flagIndex(o.pass, '--title');
   const pr = { branch: branchOf(o), base: o.base, title: t >= 0 ? o.pass[t + 1] : '', body };
-  const rules = { pattern: TRACKER_KEY_PATTERN, exemptHeads: ONE_PR_EXEMPT_HEADS, protectedBases: PROTECTED_BRANCHES };
+  const rules = { pattern: ONE_PR_KEY_PATTERN, exemptHeads: ONE_PR_EXEMPT_HEADS, protectedBases: PROTECTED_BRANCHES };
   try {
     // No key means nothing to look up, so gh is not called.
     const v = ticketKey(pr.branch, pr.title, rules.pattern) ? checkOnePerTicket(pr, listOpenPrs(o.repo), rules) : checkOnePerTicket(pr, [], rules);

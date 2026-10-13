@@ -667,3 +667,11 @@ test('one PR per ticket: a gh failure refuses rather than skipping the rule', ()
     assert.equal(r.status, 2);
     assert.match(r.stderr, /could not check the one-PR-per-ticket rule: gh pr list failed: boom/);
 });
+
+test('one PR per ticket: the environment cannot swap the key pattern, and local MAESTRO-N keys are checked', () => {
+    const f = keyFixture('feat/ABC-12-mine', [pr7]);
+    const r = open(f, ['--dry-run'], { MAESTRO_TRACKER_KEY_PATTERN: '\\bNOPE-\\d+\\b' });
+    assert.equal(r.status, 1, r.stdout);
+    const local = keyFixture('feat/MAESTRO-12-mine', [{ ...pr7, headRefName: 'feat/MAESTRO-12-other' }]);
+    assert.equal(open(local, ['--dry-run']).status, 1);
+});
