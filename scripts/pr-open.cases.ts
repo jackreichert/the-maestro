@@ -620,3 +620,50 @@ test('row-prs: the id comes from --item, MAESTRO_ITEM or the branch, and a numer
     assert.deepEqual(parsePrUrl('created https://github.com/acme/widget/pull/42\n'), { repo: 'acme/widget', number: 42 });
     assert.equal(parsePrUrl('https://example.com/acme/widget/pull/42'), undefined);
 });
+
+/** A fake gh that answers `pr list` with a fixed JSON list and logs every call to <repo>/gh.log style file. */
+function keyFixture(branch: string, others: unknown[]) {
+    const f = fixture({ 'src/a.py': lines(10) });
+    git(f.repo, 'branch', '-m', branch);
+    const list = join(f.repo, '..', `list-${Math.random().toString(36).slice(2)}.json`);
+    writeFileSync(list, JSON.stringify(others));
+    const gh = writeStub(join(f.repo, '..', `key-gh-${Math.random().toString(36).slice(2)}.sh`), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${f.log}'\nif [ "$1" = pr ] && [ "$2" = list ]; then cat '${list}'; fi\n`);
+    return { ...f, gh };
+}
+const pr7 = { number: 7, title: 'Other', headRefName: 'feat/ABC-12-other', baseRefName: 'main', url: 'https://github.com/o/r/pull/7' };
+
+test('one PR per ticket: a second independent PR under the same key refuses and never creates', () => {
+    const f = keyFixture('feat/ABC-12-mine', [pr7]);
+    const r = open(f);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /one-PR-per-ticket: refused, ABC-12 already has an open PR: #7/);
+    assert.ok(!readFileSync(f.log, 'utf8').includes('pr create'), 'gh pr create must not run');
+});
+
+test('one PR per ticket: a stack under the same key warns and still opens', () => {
+    const f = keyFixture('feat/ABC-12-mine', [pr7]);
+    git(f.repo, 'branch', 'feat/ABC-12-other', 'main');
+    const stackBody = `${GOOD_BODY}\n## Stack\nBase: #7\n\n\`\`\`mermaid\nflowchart LR\n  A --> B\n\`\`\`\n`;
+    const r = open(f, ['--dry-run', '--body-file', bodyFile(f.repo, stackBody)]);
+    assert.equal(r.status, 1, 'base main is not the stack parent, so this is a rival');
+    const s = spawnSync(process.execPath, [SCRIPT, '--repo', f.repo, '--base', 'feat/ABC-12-other', '--title', 'T', '--body-file', bodyFile(f.repo, stackBody), '--dry-run'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: f.repo, MAESTRO_LOCAL_CONFIG: '', ...stubEnv('MAESTRO_GH_BIN', f.gh), GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file' } });
+    assert.equal(s.status, 0, s.stderr);
+    assert.match(s.stdout, /warning, this PR is stacked under ABC-12 on #7/);
+});
+
+test('one PR per ticket: no key never calls gh pr list, and the rule can be turned off', () => {
+    const none = keyFixture('feature', [pr7]);
+    assert.equal(open(none, ['--dry-run']).status, 0);
+    assert.ok(!existsSync(none.log) || !readFileSync(none.log, 'utf8').includes('pr list'));
+    const off = keyFixture('feat/ABC-12-mine', [pr7]);
+    assert.equal(open(off, ['--dry-run'], gateFile('one_pr_per_ticket: off')).status, 0);
+});
+
+test('one PR per ticket: a gh failure refuses rather than skipping the rule', () => {
+    const f = fixture({ 'src/a.py': lines(10) });
+    git(f.repo, 'branch', '-m', 'feat/ABC-12-mine');
+    const gh = writeStub(join(f.repo, '..', `fail-gh-${Math.random().toString(36).slice(2)}.sh`), '#!/bin/sh\necho boom >&2\nexit 1\n');
+    const r = open({ repo: f.repo, gh }, ['--dry-run']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /could not check the one-PR-per-ticket rule: gh pr list failed: boom/);
+});
