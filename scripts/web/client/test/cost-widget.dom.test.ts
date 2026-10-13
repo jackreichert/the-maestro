@@ -30,10 +30,13 @@ test('a regression is named in words on its row and in the header, not by colour
 
 test('the mix bar says whether each target is met, in text', () => {
   const el = draw(data())!;
-  assert.match(text(el.querySelector('.cost-mix-facts')), /Opus 57%, target at most 40%: missed.*Haiku 9%, target at least 15%: missed/);
+  assert.match(text(el.querySelector('.cost-mix-facts')), /Opus 57%, target at most 40%: Target missed.*Haiku 9%, target at least 15%: Target missed/);
   assert.equal(el.querySelectorAll('.cost-mix .seg-bar span').length, 3);
   const met = draw(data({ mix: { opus: 0.3, sonnet: 0.5, haiku: 0.2, opusMax: 0.4, haikuMin: 0.15 } }))!;
-  assert.match(text(met.querySelector('.cost-mix-facts')), /Opus 30%.*met.*Haiku 20%.*met/);
+  assert.match(text(met.querySelector('.cost-mix-facts')), /Opus 30%.*On target.*Haiku 20%.*On target/);
+  const none = draw(data({ mix: { opus: null, sonnet: null, haiku: null, opusMax: 0.4, haikuMin: Number.NaN } }))!;
+  assert.match(text(none.querySelector('.cost-mix-facts')), /Opus n\/a.*no data.*Haiku n\/a, target at least unset: no data/);
+  assert.match(text(draw(data({ stale: true }))!.querySelector('.sec-head')), /No data since 2026-10-12; regression check not run/);
 });
 
 test('an empty state shows its reason, a stale one says how to refresh, and no payload draws no section', () => {

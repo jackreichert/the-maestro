@@ -65,7 +65,7 @@ function limitText(m: CostMetric): string {
 }
 
 function metricLine(m: CostMetric, days: string[]): HTMLElement {
-  const status = m.regression ? h('span', { class: 'chip bad' }, 'Regression') : m.status === 'MISS' ? h('span', { class: 'chip bad' }, 'Over target') : m.status === 'PASS' ? h('span', { class: 'chip good' }, 'On target') : h('span', { class: 'chip' }, 'No target');
+  const status = m.regression ? h('span', { class: 'chip bad' }, 'Regression') : m.status === 'MISS' ? h('span', { class: 'chip bad' }, 'Target missed') : m.status === 'PASS' ? h('span', { class: 'chip good' }, 'On target') : h('span', { class: 'chip' }, 'No target');
   return h('li', { class: 'cost-line' },
     h('span', {}, m.name),
     h('span', { class: 'v' }, costValue(m.today, m.fmt)),
@@ -78,28 +78,30 @@ function metricLine(m: CostMetric, days: string[]): HTMLElement {
 function mixBlock(mix: NonNullable<CostData['mix']>): HTMLElement {
   const part3: [string, string, number | null][] = [['Opus', 'sg-opus', mix.opus], ['Sonnet', 'sg-sonnet', mix.sonnet], ['Haiku', 'sg-haiku', mix.haiku]];
   const pct = (n: number | null): string => (n === null ? 'n/a' : `${Math.round(n * 100)}%`);
-  const opusOk = mix.opus !== null && mix.opus <= mix.opusMax;
-  const haikuOk = mix.haiku !== null && mix.haiku >= mix.haikuMin;
+  const verdict = (share: number | null, target: number, max: boolean): string => (share === null ? 'no data' : !Number.isFinite(target) ? 'no target' : (max ? share <= target : share >= target) ? 'On target' : 'Target missed');
+  const tg = (n: number): string => (Number.isFinite(n) ? pct(n) : 'unset');
   return h('div', { class: 'cost-mix' },
-    h('h3', {}, 'Model mix, orchestrator read'),
+    h('h3', {}, 'Share of tokens by model'),
     h('div', { class: 'seg-bar', role: 'img', 'aria-label': `Opus ${pct(mix.opus)}, Sonnet ${pct(mix.sonnet)}, Haiku ${pct(mix.haiku)}` }, ...part3.filter(([, , n]) => n !== null && n > 0).map(([, cls, n]) => grow(cls, n as number))),
     h('ul', { class: 'cost-mix-facts', role: 'list' },
-      h('li', {}, `Opus ${pct(mix.opus)}, target at most ${pct(mix.opusMax)}: `, h('b', {}, opusOk ? 'met' : 'missed')),
+      h('li', {}, `Opus ${pct(mix.opus)}, target at most ${tg(mix.opusMax)}: `, h('b', {}, verdict(mix.opus, mix.opusMax, true))),
       h('li', {}, `Sonnet ${pct(mix.sonnet)}`),
-      h('li', {}, `Haiku ${pct(mix.haiku)}, target at least ${pct(mix.haikuMin)}: `, h('b', {}, haikuOk ? 'met' : 'missed'))));
+      h('li', {}, `Haiku ${pct(mix.haiku)}, target at least ${tg(mix.haikuMin)}: `, h('b', {}, verdict(mix.haiku, mix.haikuMin, false)))));
 }
 
-const expLine = (e: CostExperiment): HTMLElement => h('li', {}, h('span', { class: 'id' }, e.id), h('span', { class: 'chip' }, e.status), h('span', {}, e.practice), e.result && e.result !== '-' ? h('span', { class: 'vs' }, e.result) : null);
+const expLine = (e: CostExperiment, lead = false): HTMLElement => h('li', {}, lead ? h('span', { class: 'chip good' }, 'Today') : null, h('span', { class: 'id' }, e.id), h('span', { class: 'chip' }, e.status), h('span', {}, e.practice), e.result && e.result !== '-' ? h('span', { class: 'vs' }, e.result) : null);
 
 /** The Cost section. Null when the server sent none (an old server): a page without the widget is complete. */
 export function costSection(c: CostData | null): HTMLElement | null {
   if (!c) return null;
   if (c.state === 'empty') return part('cost-part', secHead('Cost', 0, 'Tokens per day against the 7-day median'), empty(c.reason ?? 'No token history yet.'));
   const aside = c.regressions.length ? `${c.date}: ${c.regressions.length} regressed (${c.regressions.join(', ')})` : `${c.date}: nothing regressed`;
+  const head = c.stale ? `No data since ${c.date}; regression check not run for today` : aside;
   const exps = [...(c.today ? [c.today] : []), ...c.running.filter((r) => r.id !== c.today?.id), ...c.recent];
-  return part('cost-part', secHead('Cost', 0, aside),
+  return part('cost-part', secHead('Cost', 0, head),
     c.stale ? h('p', { class: 'cost-stale', role: 'status' }, `The newest day in the token table is ${c.date}. Run token-metrics.ts --write to bring it up to date.`) : null,
     h('ul', { class: 'cost-table', role: 'list' }, ...c.metrics.map((m) => metricLine(m, c.days))),
     c.mix ? mixBlock(c.mix) : empty('The model mix is not available for this day.'),
-    h('ul', { class: 'cost-reg', role: 'list', 'aria-label': 'Cost experiments' }, ...(exps.length ? exps.map(expLine) : [h('li', {}, 'No cost experiments yet.')])));
+    h('h3', {}, 'Experiments'),
+    h('ul', { class: 'cost-reg', role: 'list', 'aria-label': 'Cost experiments' }, ...(exps.length ? exps.map((e) => expLine(e, e.id === c.today?.id)) : []), ...(c.today ? [] : [h('li', {}, 'No experiment proposed today.')])));
 }
