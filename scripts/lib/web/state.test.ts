@@ -1,7 +1,7 @@
 // Run: node --test scripts/lib/web/state.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildState, PR_STALE_MS } from './state.ts';
+import { buildState, PR_STALE_MS, splitAskBody } from './state.ts';
 import type { GatheredInputs } from '../status-page/generate.ts';
 import type { PageConfig, Pr } from '../status-page/render.ts';
 
@@ -133,6 +133,13 @@ test('a one-line ask is not cut at the question mark inside a vault link or URL 
   assert.deepEqual([ask(`Approve the plan. See ${link} for the reasons.`)?.needed, ask(`Approve the plan. See ${link} for the reasons.`)?.context], [`Approve the plan. See ${link} for the reasons.`, '']);
   assert.deepEqual([ask(`Does ${link} look right? It replaces https://x.test/p?id=1.`)?.needed, ask(`Does ${link} look right? It replaces https://x.test/p?id=1.`)?.context], [`Does ${link} look right?`, 'It replaces https://x.test/p?id=1.']);
   assert.equal(ask('Merge https://x.test/pull/5? It is green.')?.needed, 'Merge https://x.test/pull/5?');
+});
+
+test('finding the question mark stays linear on a long word or a long run of trailing punctuation', () => {
+  const started = Date.now();
+  assert.equal(splitAskBody(`${'a'.repeat(50_000)}? rest`).needed.length, 50_001);
+  assert.equal(splitAskBody(`Is https://x.test/${'.'.repeat(50_000)}a? rest`).context, 'rest');
+  assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
 });
 
 test('paste asks reach the state as asks that carry their block path and no decision fields', () => {
