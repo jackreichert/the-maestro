@@ -20,7 +20,7 @@ const ran = (id: string, hoursAgo: number): StandingEvent => ({ op: 'ran', id, e
 const statusOf = (events: StandingEvent[], ctx: CheckContext, id: string) => standingState(events, ctx).find((s) => s.row.id === id)?.status;
 
 test('the built-in rows cover the pickups the ticket names, each enforced by a check or a cadence', () => {
-  assert.deepEqual(DEFAULT_ROWS.map((r) => r.id), ['loop-alive', 'chain-next', 'merge-sweep', 'branch-sweep', 'epic-briefs', 'notes-reachable', 'library-fresh', 'tracker-reconcile']);
+  assert.deepEqual(DEFAULT_ROWS.map((r) => r.id), ['loop-alive', 'chain-next', 'merge-sweep', 'branch-sweep', 'epic-briefs', 'notes-reachable', 'library-fresh', 'cost-experiment', 'tracker-reconcile']);
   for (const r of DEFAULT_ROWS) assert.equal(validRow(r), null, r.id);
 });
 
@@ -113,15 +113,15 @@ test('the store skips corrupt lines and rows that would not validate, and a miss
 });
 
 test('standingBlock: silent when everything is ok, only rows needing attention for prime, every row for handoff, capped with a count', () => {
-  const all = standingState([ran('merge-sweep', 1), ran('branch-sweep', 1)], healthy());
+  const all = standingState([ran('merge-sweep', 1), ran('branch-sweep', 1), ran('cost-experiment', 1)], healthy());
   assert.deepEqual(standingBlock(all), []);
   assert.equal(standingBlock(all, { all: true }).length, 1 + DEFAULT_ROWS.length);
   const broken = standingState([], healthy({ loopPid: () => null }));
   const prime = standingBlock(broken, { max: 2 });
-  assert.match(prime[0], /Standing pickups \(3 need attention, 8 total\)/);
+  assert.match(prime[0], /Standing pickups \(4 need attention, 9 total\)/);
   assert.equal(prime.length, 1 + 2);
-  assert.match(prime[2], /… \+2 more/);
-  assert.equal(standingBlock(broken).length, 1 + 3);
+  assert.match(prime[2], /… \+3 more/);
+  assert.equal(standingBlock(broken).length, 1 + 4);
   assert.ok(standingBlock(broken).every((l) => !l.includes('\n')));
 });
 
@@ -212,7 +212,7 @@ test('cli: prime carries the rows needing attention inside its 40 lines; handoff
   for (let i = 0; i < 30; i += 1) assert.equal(cli(vault, events, 'log', `open item number ${i}`, '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
   const prime = cli(vault, events, 'prime');
   assert.equal(prime.code, 0, prime.err);
-  assert.match(prime.out, /^Standing pickups \(\d need attention, 8 total\)/m);
+  assert.match(prime.out, /^Standing pickups \(\d need attention, 9 total\)/m);
   assert.match(prime.out, /FAILING loop-alive/);
   assert.ok(prime.out.trimEnd().split('\n').length <= 40);
   const handoff = cli(vault, events, 'handoff', '--stream', 'S', '--dry-run', '--no-worktree-sweep');

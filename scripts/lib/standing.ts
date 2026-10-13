@@ -103,6 +103,7 @@ export const DEFAULT_ROWS: StandingRow[] = [
   { id: 'epic-briefs', trigger: 'roll, and when an epic changes state', action: 'refresh each stale or missing epic brief (`ticket.mjs brief <epic> --refresh`) and attach each note written today to its ticket (`ticket.mjs attach`)', who: 'any model (sonnet)', check: 'epic-briefs' },
   { id: 'notes-reachable', trigger: 'roll, and when a note is written under an active stream', action: 'list every unreachable note (`journal.ts notes-check`) and attach it to a ticket or give it a `stream:` field', who: 'any model (sonnet)', check: 'notes-reachable' },
   { id: 'library-fresh', trigger: 'roll, and when a library page\'s evidence changes', action: 'refresh each stale library page: `library-check.ts --stale` lists them; re-verify the facts and have the composer rewrite the page', who: 'composer (sonnet)', check: 'library-stale' },
+  { id: 'cost-experiment', trigger: 'each day, from the previous day\'s token numbers', action: 'run the daily cost experiment (playbooks/cost-experiment.md): `cost-experiment.ts propose` names the metric, write one proposal, `cost-experiment.ts write` records it', who: 'any model (sonnet)', everyHours: 24 },
   { id: 'tracker-reconcile', trigger: 'a done item carries a tracker key', action: 'move the tracker ticket and record it with `log --transitioned KEY`', who: 'any model (haiku)', check: 'tracker-transitions' },
 ];
 
