@@ -34,7 +34,7 @@ Two lanes may run at once only if their file sets are disjoint and they share no
 
 ## Merge order on the integration branch
 
-Dependency order, one branch at a time, full suite after each ([SKILL.md](SKILL.md#the-integration-branch)).
+Dependency order, one branch at a time, a detached `suite-run.ts` job after each, never a foreground wait ([SKILL.md](SKILL.md#the-integration-branch)).
 
 1. branch, then suite result (command, exit code)
 
