@@ -21,7 +21,7 @@ export interface CostInputs { rows: Map<string, TableRow>; registry: RegistryRow
 const finite = (n: number): number | null => (Number.isFinite(n) ? n : null);
 
 /** `day` shifted by `delta` days (YYYY-MM-DD in, YYYY-MM-DD out). */
-function shiftDay(day: string, delta: number): string {
+export function shiftDay(day: string, delta: number): string {
   const d = new Date(`${day}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + delta);
   return d.toISOString().slice(0, 10);
