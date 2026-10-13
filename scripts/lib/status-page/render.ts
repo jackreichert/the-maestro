@@ -17,6 +17,7 @@ import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
 import type { FooterRow } from '../journal/board.ts';
 import { askBits, asksNote } from '../journal/ask-fields.ts';
+import { streamLibraryLinks } from '../library/stream-links.ts';
 import { startLines } from '../start/start-here.ts';
 import type { StartHere } from '../start/start-here.ts';
 
@@ -60,6 +61,8 @@ export interface PageConfig {
   project?: string;
   /** Whether a vault-relative `.md` path exists in the vault. Absent: note paths in text are not linked. */
   noteExists?: (vaultPath: string) => boolean;
+  /** The project folders behind a stream (see `streamProjects`). Absent: the page has no Library section. */
+  streamProjects?: (stream: string) => string[];
   /** The review queue cap (`review_queue_cap`). Absent: the page shows no review queue line. */
   reviewQueueCap?: number;
   /** `self_review_repos`: PRs in these repos are not counted in the review queue. Absent: none. */
@@ -293,6 +296,18 @@ function prSection(cfg: PageConfig, all: Pr[], streams: string[]): string[] {
   return [...out, ...stackDiagram(prs), ...selfReviewSection(self, all)];
 }
 
+/** One line per stream: links to the library INDEX of each of its projects, or a quiet "no library yet". Empty when the page cannot say (no vault name, no note lookup or no stream-to-project map). */
+function librarySection(cfg: PageConfig, streams: string[]): string[] {
+  const { streamProjects, noteExists } = cfg;
+  const real = streams.filter((s) => s !== OTHER);
+  if (!cfg.vaultName || !noteExists || !streamProjects || !real.length) return [];
+  const lines = real.map((stream) => {
+    const links = streamLibraryLinks(cfg.vaultName, streamProjects(stream), noteExists);
+    return `- **${escBold(stream)}**: ${links.length ? links.map((l) => `[${escBold(l.label)}](${l.url})`).join(', ') : '_no library yet_'}`;
+  });
+  return ['## Library', '', ...lines, ''];
+}
+
 /** The Maestro PRs (self-review) section: PRs only their owner reviews, with where each stands. Empty when there are none. */
 function selfReviewSection(self: Pr[], all: Pr[]): string[] {
   if (!self.length) return [];
@@ -487,6 +502,7 @@ export function renderPage(input: PageInput): { page: string; date: string } {
     ...queuedSection(cfg, status.queued, tickets, streams, now),
     ...asksSection(cfg, asks, prs, tickets, streams, t.date),
     ...prSection(cfg, prs, streams),
+    ...librarySection(cfg, streams),
     '## Other status and findings', '',
     ...section('In flight', status.inflight.map((i) => withAge(i, ` [${i.stream ?? OTHER}]`))),
     ...((status.stale ?? []).length ? section('Stale (no lease)', (status.stale ?? []).map((i) => withAge(i, ` [${i.stream ?? OTHER}]`))) : []),

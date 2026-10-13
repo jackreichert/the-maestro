@@ -239,3 +239,15 @@ test('the Open PRs section lists self-review PRs under their own heading, outsid
   assert.ok(off.includes('## Open PRs (5)'), 'unconfigured, every PR is listed together');
   assert.ok(!off.some((l) => l.startsWith('## Maestro PRs')));
 });
+
+test('the Library section links each stream to its library INDEX, says "no library yet" for one without, and is absent when the page cannot say', () => {
+  const notes = new Set(['Projects/rivendell-api/INDEX.md']);
+  const withLibrary: PageConfig = { ...CONFIG, noteExists: (p) => notes.has(p), streamProjects: (s) => (s === 'Rivendell' ? ['rivendell-api'] : s === 'Narnia' ? ['wardrobe'] : []) };
+  const render = (config: PageConfig): string => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs: [], prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page;
+  const lib = section(render(withLibrary), '## Library');
+  assert.ok(lib.includes('- **Rivendell**: [rivendell-api library](obsidian://open?vault=Vault&file=Projects%2Frivendell-api%2FINDEX)'), lib.join('\n'));
+  assert.ok(lib.includes('- **Narnia**: _no library yet_'), 'a project whose INDEX is missing is not linked');
+  assert.ok(!lib.some((l) => l.includes('other')));
+  assert.doesNotMatch(render(CONFIG), /## Library/, 'no stream-to-project map: no section');
+  assert.doesNotMatch(render({ ...withLibrary, vaultName: '' }), /## Library/, 'no vault name: no link can be built');
+});

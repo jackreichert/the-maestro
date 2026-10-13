@@ -7,7 +7,7 @@ import { createReader } from '../vault/reader.ts';
 import { DOC_FILE_SCOPES } from '../home/docs.ts';
 import { readHomes } from '../home/config.ts';
 import type { Homes } from '../home/config.ts';
-import { slugOf } from '../home/mapping.ts';
+import { streamProjects } from '../library/stream-links.ts';
 import { obsidianUri } from '../status-page/links.ts';
 import { readBoard } from './api.ts';
 import type { WebConfig } from './api.ts';
@@ -26,16 +26,15 @@ const INDEX_SCOPE = { name: 'library index', pattern: /^Projects\/[^/]+\/INDEX\.
 
 /** A vault note's text by vault-relative path, or null when it is missing or the reader refused it. */
 export type ReadNote = (path: string) => string | null;
-export interface ProjectsInput { state: PodiumState; throughput: ThroughputDay[]; homes: Homes; readNote: ReadNote; vaultName?: string; now: Date }
+export interface ProjectsInput { state: PodiumState; throughput: ThroughputDay[]; homes: Homes; readNote: ReadNote; vaultName?: string; /** `status_repo_streams`: short repo name to stream. */ repoStreams?: Record<string, string>; now: Date }
 
 /** The rows, links and weekly counts for the board's streams (`other` left out: it is not a project). */
 export function projectsData(inp: ProjectsInput): ProjectsData {
   const streams = inp.state.streams.filter((s) => s !== 'other');
   const projectsOf = (stream: string): string[] => {
-    const listed = inp.homes.streams[stream]?.projects ?? [];
-    if (listed.length) return listed;
-    const guess = slugOf(stream);   // unconfigured: the folder named like the stream, claimed only when it has a note to show
-    return guess && (inp.readNote(`Projects/${guess}/CONTEXT.md`) !== null || inp.readNote(`Projects/${guess}/INDEX.md`) !== null) ? [guess] : [];
+    // unconfigured: the folder named like the stream and the repos mapped to it, each claimed only when it has a note to show
+    const hasNote = (p: string): boolean => inp.readNote(`Projects/${p}/CONTEXT.md`) !== null || inp.readNote(`Projects/${p}/INDEX.md`) !== null;
+    return streamProjects(stream, inp.homes.streams[stream]?.projects ?? [], inp.repoStreams ?? {}, hasNote);
   };
   const rows = streams.map((stream) => projectRow(inp, stream, projectsOf(stream)));
   return { generatedAt: inp.now.toISOString(), today: inp.state.today, rows, links: homeLinks(inp, rows), weeks: weekly(inp.throughput) };
@@ -97,7 +96,7 @@ const clip = (s: string): string => (s.length > STATUS_MAX ? `${s.slice(0, STATU
 function homeLinks(inp: ProjectsInput, rows: ProjectRow[]): HomeLink[] {
   const note = (path: string): string | null => (inp.vaultName ? obsidianUri(inp.vaultName, path.replace(/\.md$/, '')) : null);
   const out: HomeLink[] = [];
-  const add = (l: Omit<HomeLink, 'url'>, url: string | null): void => { if (url && !out.some((o) => o.url === url)) out.push({ ...l, url }); };
+  const add = (l: Omit<HomeLink, 'url'>, url: string | null): void => { if (url && !out.some((o) => o.url === url && o.stream === l.stream)) out.push({ ...l, url }); };
   for (const { stream, projects } of rows) {
     for (const pin of inp.homes.streams[stream]?.pins ?? []) add({ label: pin.label, kind: 'pin', stream }, 'url' in pin ? pin.url : note(pin.note));
     for (const p of projects) {
@@ -132,7 +131,7 @@ export function buildProjects(cfg: WebConfig, now: Date = new Date()): ProjectsD
     return cache.get(path) ?? null;
   };
   return projectsData({
-    state, homes: readHomes(cfg.statusDir, state.streams), readNote, now, ...(cfg.page.vaultName ? { vaultName: cfg.page.vaultName } : {}),
+    state, homes: readHomes(cfg.statusDir, state.streams), readNote, now, repoStreams: cfg.page.repoStreams, ...(cfg.page.vaultName ? { vaultName: cfg.page.vaultName } : {}),
     throughput: throughputByDay(g.items, WEEKS * 7, cfg.page.tz, now),
   });
 }

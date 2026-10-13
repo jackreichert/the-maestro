@@ -9,7 +9,8 @@ import type { ProjectsLoad } from '../src/home-tab.ts';
 
 installDom();
 const { homeTab } = await import('../src/home-tab.ts');
-const { homeUi } = await import('../src/home-sections.ts');
+const homeSections = await import('../src/home-sections.ts');
+const { homeUi } = homeSections;
 const read = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'));
 const state = (): PodiumState => structuredClone(sanitizeState(read('state.json'))!.state);
 const charts = (): ChartsData => structuredClone(sanitizeCharts(read('charts.json'))!.data);
@@ -90,4 +91,16 @@ test('the Stream order groups the asks by stream and the choice survives a redra
     assert.deepEqual(shown, [...shown].sort((x, y) => x.localeCompare(y)));
   }
   assert.ok(streams.length >= 1);
+});
+
+test('a stream tab shows its library link, a quiet "No library yet." when it has none, and nothing while the projects payload is loading', () => {
+  const { todayPanel } = homeSections;
+  const panel = (p: ProjectsData | null, stream: string): HTMLElement => place(todayPanel([], p, stream)).el;
+  const withLib = text(panel(projects(), 'acme-widgets').querySelector('[aria-label=Library]'));
+  assert.equal(withLib, 'Libraryacme-widgets library');
+  const link = panel(projects(), 'acme-widgets').querySelector('[aria-label=Library] a')!;
+  assert.match(link.getAttribute('href') ?? '', /^obsidian:\/\/open\?vault=Sample&file=Projects%2Facme-widgets%2FINDEX$/);
+  assert.ok(!panel(projects(), 'acme-widgets').querySelector('[aria-label=Notes]')!.textContent!.includes('library'), 'the library link is not repeated in Notes');
+  assert.equal(text(panel(projects(), 'ops').querySelector('.library-none')), 'No library yet.');
+  assert.equal(panel(null, 'ops').querySelector('.library-none, [aria-label=Library]'), null);
 });
