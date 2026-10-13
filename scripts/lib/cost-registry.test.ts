@@ -41,3 +41,8 @@ test('addRegistryRow keeps a cell on one line without a pipe, so the table canno
 test('addRegistryRow refuses a note with no registry table instead of writing one blind', () => {
   assert.equal(addRegistryRow('# no table', row('cx-2026-10-13')), null);
 });
+
+test('a hand-edited row too short to parse still counts as the day\'s row', () => {
+  const broken = NOTE.replace('| B |', '| cx-2026-10-13 | short |\n| B |');
+  assert.equal(addRegistryRow(broken, row('cx-2026-10-13')), broken);
+});
