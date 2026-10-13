@@ -40,7 +40,7 @@ function world(over: Partial<StartDeps> & { held?: Watch[] } = {}) {
 test('a fresh session registers every needed watch, reports the page age and prints the loop command', () => {
   const w = world();
   const r = sessionStart('/s', w.deps);
-  assert.deepEqual(w.added, ['status-watch:status-watch', 'status-refresh:status-refresh', 'whats-next:whats-next', 'retro-due:retro-due']);
+  assert.deepEqual(w.added, ['status-watch:status-watch', 'status-refresh:status-refresh', 'retro-due:retro-due', 'whats-next:whats-next']);
   assert.equal(r.failed, false);
   assert.match(lineOf(r, 'Status page'), /Status page: updated 4 min ago \(2:56 PM UTC\)$/);
   assert.match(lineOf(r, 'Event loop'), /NOT RUNNING.*run_in_background: node loop run$/);
