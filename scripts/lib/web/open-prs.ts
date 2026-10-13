@@ -53,6 +53,7 @@ function row(p: PrCard, mine: PrCard[], page: PageConfig, now: Date): OpenPrRow 
   return {
     number: p.number, title: p.title, url: p.url, base: p.base, head: p.head, isDraft: p.isDraft, review: reviewOf(p.review),
     unresolved: p.unresolved, mergeable: mergeableOf(p.mergeable), twins: twinsOf(p, mine), ...(sides ? { sides } : {}),
+    ...(p.ci ? { ci: p.ci } : {}), ...(p.stackedOn !== undefined ? { stackedOn: p.stackedOn } : {}),
     ...(age !== undefined ? { ageDays: age } : {}),
     ...(key ? { ticket: (({ label, url }) => (url === undefined ? { label } : { label, url }))(trackerRef(page, key)) } : {}),
   };

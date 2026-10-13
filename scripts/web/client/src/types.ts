@@ -217,6 +217,10 @@ export interface OpenPrRow {
   number: number; title: string; url: string; base: string; head: string; isDraft: boolean;
   review: 'approved' | 'changes-requested' | 'none'; unresolved: number; mergeable: 'mergeable' | 'conflicting' | 'unknown';
   twins: number[]; sides?: OpenPrSides; ageDays?: number; ticket?: { label: string; url?: string };
+  /** CI conclusion from the PR cache. Absent on a server that predates the redesigned board. */
+  ci?: string;
+  /** The parent PR this one is stacked on, when both are open. */
+  stackedOn?: number;
 }
 export interface OpenPrsRepo { repo: string; count: number; prs: OpenPrRow[] }
 /** `team` repos are reviewed by others; `self-review` repos only by the user (`self_review_repos`). */
