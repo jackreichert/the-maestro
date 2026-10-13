@@ -130,3 +130,23 @@ test('a finished refresh updates the table and the freshness line in place; fail
   assert.match(text(root), /already running/);
   cleanup();
 });
+
+test('ready-to-merge PRs are pinned in the first band with a count that filters, and an approved PR lists its approvers in a folded disclosure', async () => {
+  const ready = pr({ number: 21, isDraft: false, review: 'approved', approvers: ['fake-a', 'fake-b'], title: 'Ready one' });
+  const d = data({ total: 2, groups: [{ id: 'team', label: 'Team repos', count: 2, repos: [{ repo: 'acme/widgets', count: 2, prs: [pr({ number: 22, isDraft: false, title: 'Clean, unreviewed' }), ready] }] }] });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: d }) });
+  const bands = [...root.querySelectorAll('section.band')];
+  assert.equal(bands[0]?.id, 'ready', 'pinned first');
+  assert.match(bands[0]?.querySelector('h2')?.textContent ?? '', /Ready to merge\s*1/);
+  assert.equal(bands[0]?.querySelectorAll('li.pr').length, 1);
+  const toggle = root.querySelector<HTMLButtonElement>('button[data-move=ready]')!;
+  assert.match(toggle.textContent ?? '', /1 ready to merge/);
+  const details = bands[0]!.querySelector('details.appr')!;
+  assert.equal(details.hasAttribute('open'), false, 'collapsed by default');
+  assert.equal(details.querySelector('summary')?.textContent, 'Approved · 2');
+  assert.deepEqual([...details.querySelectorAll('li')].map((x) => x.textContent), ['fake-a', 'fake-b']);
+  assert.equal(root.querySelectorAll('details.appr').length, 1, 'an unapproved PR has no disclosure');
+  toggle.click();
+  assert.deepEqual([...root.querySelectorAll('section.band')].map((b) => b.id), ['ready'], 'the toggle shows only ready PRs');
+  cleanup();
+});
