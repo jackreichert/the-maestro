@@ -237,3 +237,21 @@ export interface OpenPrsData {
 }
 /** Where the PR refresh stands: `locked` means another rebuild held the page lock. */
 export interface PrsRefreshStatus { state: 'idle' | 'running' | 'done' | 'failed' | 'locked'; startedAt?: string; finishedAt?: string; message?: string }
+
+/** One cost metric for `GET /api/cost`: today's value against the 7-day median, its limit, and the last days as a series. Numbers are null where there is none (JSON has no NaN). */
+export interface CostMetric {
+  name: string; fmt: 'n' | 'pct' | 'ratio' | 'usd';
+  today: number | null; median7: number | null; vs7: number | null; regression: boolean;
+  limit: number | null; dir: 'max' | 'min' | null; status: 'PASS' | 'MISS' | '-';
+  /** One entry per calendar day ending at `date`; null on a day with no row. */
+  series: (number | null)[];
+}
+/** The model mix of one day's orchestrator read, as fractions, with the targets it is held to (Opus at most `opusMax`, Haiku at least `haikuMin`). */
+export interface CostMix { opus: number | null; sonnet: number | null; haiku: number | null; opusMax: number; haikuMin: number }
+export interface CostExperiment { id: string; practice: string; metric: string; threshold: string; start: string; status: string; result: string }
+/** `GET /api/cost`. `state` is `empty` when there is no history to read (the `reason` says why); `stale` when the newest day is before yesterday. */
+export interface CostData {
+  state: 'ok' | 'empty'; reason?: string; date: string | null; stale: boolean; days: string[];
+  metrics: CostMetric[]; regressions: string[]; mix: CostMix | null;
+  running: CostExperiment[]; recent: CostExperiment[]; today: CostExperiment | null;
+}

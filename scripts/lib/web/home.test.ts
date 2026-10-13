@@ -91,6 +91,18 @@ test('GET /api/epics lists each stream\'s open epics with their counts, and touc
   assert.deepEqual(roots.map(snapshot), before, 'vault, ledger and status dir are byte-identical');
 });
 
+test('GET /api/cost answers 200 with an empty state and its reason when the vault has no token table, and writes nothing', async () => {
+  const roots = [fx.root, ledgerRoot];
+  const before = roots.map(snapshot);
+  const r = await hit('/api/cost');
+  assert.equal(r.status, 200);
+  const data = JSON.parse(r.body);
+  assert.equal(data.state, 'empty');
+  assert.match(data.reason, /no day to show/);
+  assert.ok(!r.body.includes(fx.root) && !r.body.includes(ledgerRoot), 'no absolute path in the response');
+  assert.deepEqual(roots.map(snapshot), before);
+});
+
 test('GET /api/projects answers with a row per stream and no secret or absolute path', async () => {
   const r = await hit('/api/projects');
   assert.equal(r.status, 200);
