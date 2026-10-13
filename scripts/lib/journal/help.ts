@@ -18,6 +18,7 @@ export interface CommandHelp {
     notes?: readonly string[];
 }
 
+const CLOSES: [string, string][] = [['--resolves <id>', 'close that awaiting or queued row as resolved by this one'], ['--supersedes <id>', 'drop that row, noting this one replaces it'], ['--folds <id>', 'drop that row, noting it folded into this one']];
 const MARK: Flag[] = [['--model "<name>"', 'the model that did the work (folded through the model registry)'], ['--used "skill:x,tool:y"', 'skills and tools the work used']];
 const JSON_OUT: Flag = ['--json', 'machine-readable output'];
 const STATUS_DIR: Flag = ['--status-dir <dir>', 'the status directory (default: MAESTRO_STATUS_DIR or the configured one)'];
@@ -35,7 +36,7 @@ export const GLOBAL_FLAGS: Flag[] = [
 
 const LOG_FLAGS: Flag[] = [
         DATE, ['--kind wip|done|blocked|question|decision|note|rework', 'row kind (default note)'], ['--stream <name>', 'file under a workstream'], ['--repo <name>', 'repo the row is about'], ['--ticket <id>', 'ticket the row is about'],
-        ['--gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>', 'with --kind blocked: what the item waits for'], ['--approval standing|one-off', 'with --kind decision: an approval the user granted'],
+        ['--gate gh:pr:<repo>#N|date:YYYY-MM-DD|ticket:<id>', 'with --kind blocked, an ask or a queued to-do: what the item waits for'], ...CLOSES, ['--approval standing|one-off', 'with --kind decision: an approval the user granted'],
         ['--scope "<what it covers>"', 'with --approval'], ['--scope window|global', 'on a decision or note without --approval: window binds only this window, global binds all (no flag reads as global)'], ['--ref <file-or-url>', 'memory file or URL behind an approval, repeatable'], ['--transitioned KEY[,KEY]', 'tracker tickets that were moved'], ...MARK];
 
 /** The `--project` line, printed under every command that is not marked `noProject`. */
@@ -46,7 +47,7 @@ export const COMMANDS: CommandHelp[] = [
     { name: 'note', args: '"<text>"', summary: 'Same as log: append a note row.', flags: LOG_FLAGS },
     { name: 'start', args: '"<text>" | <id>', summary: 'Open an in-flight item, or promote a queued one by id.', flags: [
         ['--repo <name>', 'repo'], ['--ticket <id>', 'ticket'], ['--stream <name>', 'workstream'], ['--worktree <w>', 'where the work lives'], ['--branch <b>', 'branch the work is on'], ['--next "<step>"', 'what happens next'], ...MARK] },
-    { name: 'queue', args: '"<text>" | <id>', summary: 'Open a queued to-do, or move an in-flight item back to queued.', flags: [['--stream <name>', 'workstream'], ['--repo <name>', 'repo'], ['--ticket <id>', 'ticket'], ...MARK] },
+    { name: 'queue', args: '"<text>" | <id>', summary: 'Open a queued to-do, or move an in-flight item back to queued.', flags: [['--stream <name>', 'workstream'], ['--repo <name>', 'repo'], ['--ticket <id>', 'ticket'], ['--gate <spec>', 'close it automatically when the gate clears'], ...CLOSES, ...MARK] },
     { name: 'ask', args: '"<question>"', summary: 'Put a question or a run-this block on the awaiting-you board.', flags: [
         ['--kind question|decision', 'a decision still pending'], ['--stream <name>', 'workstream'], ['--repo <name>', 'repo the ask is about'], ['--ticket <id>', 'ticket'], ['--searched "<where I looked>"', 'required: what you checked before asking; refused without it'], ['--outward', 'anything another person sees: always asks, never acted on a default'], ['--how-do-i', 'the question is a how-do-I the library could not answer: also logged as a miss'], ['--recommend "<text>"', 'what you would do'], [`--door ${oneOf(DOORS)}`, 'reversibility'],
         ['--default "<text>"', 'what happens if silent (two-way only)'], ['--decide-by <date|2d|6h|1w>', 'deadline (alias --by)'], [`--class ${oneOf(CLASSES)}`, 'urgency class'], ['--paste <file>', 'a run-this ask: the block file'], ...MARK], notes: ASK_USAGE },
@@ -109,6 +110,7 @@ export const COMMANDS: CommandHelp[] = [
     { name: 'recover', args: '<id>', summary: 'Print a re-dispatch prompt for an open item (read-only).', flags: [] },
     { name: 'backfill', args: '', summary: 'Propose a stream for untagged items; writes nothing unless --apply.', flags: [['--dry-run', 'propose only'], ['--samples <n>', 'sample size'], ['--out <report.md>', 'write the report'], ['--apply', 'append tag events'], ['--min-confidence high|medium|low', 'with --apply'], JSON_OUT] },
     { name: 'triage', args: '', summary: 'Box every open item, flag stale and unticketed ones, print the don\'t-miss.', flags: [DATE, ['--since YYYY-MM-DD', 'range start'], ['--apply', 'apply the proposed changes'], JSON_OUT] },
+    { name: 'age-out', args: '', summary: 'Propose closing awaiting and queued rows whose gate, ticket or branch cleared; --apply closes the verified ones.', flags: [DATE, ['--apply', 'close the verified proposals']] },
     { name: 'defer', args: '<id>', summary: 'Hide an open item from the board until a future date.', flags: [['--until YYYY-MM-DD', 'required, in the future']] },
     { name: 'prime', args: '', summary: 'The box view for session start: 40 lines or fewer.', flags: [['--no-update-check', 'skip the fetch of this skill\'s checkout'], ['--source startup|compact', 'why it is running']] },
     { name: 'tickets', args: '', summary: 'Done items carrying a tracker key with no recorded transition.', flags: [['--pending', 'required'], ['--since YYYY-MM-DD', 'default 14 days back'], JSON_OUT] },

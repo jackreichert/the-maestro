@@ -2,6 +2,7 @@ import { activeDeferrals, isOpen } from '../ledger-core.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 import { BOX, BOX_TITLES, RECORD_BOXES, ACTIONS, classify, isStale, daysBetween } from '../boxes.ts';
 import { clip } from './format.ts';
+import { STALE_QUEUED_DAYS } from './staleness.ts';
 import { askBits } from './ask-fields.ts';
 import { approvalMap } from './approvals.ts';
 import { visibleTo } from './scope.ts';
@@ -14,7 +15,7 @@ export interface TriageContext extends PendingContext { today: () => string; res
 /** One boxed item. */
 export interface TriageItem {
     id?: string; kind?: string; box: number; date?: string; text?: string; stream?: string; ticket?: string; paste?: string; gate?: string;
-    deferredUntil: string | undefined; queued?: true; ref: string | null; ageDays: number; stale: boolean;
+    deferredUntil: string | undefined; queued?: true; /** Days since a queued row was queued (or moved back to queued). */ queuedDays?: number; ref: string | null; ageDays: number; stale: boolean;
     /** The decision fields of an ask in compact words (door, decide-by, class, recommendation, default); absent for any other item and for an ask that carries none. */
     ask?: string[];
 }
@@ -40,13 +41,13 @@ export function triageItems(ctx: Pick<TriageContext, 'readLedger' | 'fold' | 'to
         const ref = (i.refs || []).map(resolveRefFile).find(Boolean) || null;
         const until = deferred.get(i.id ?? '');
         const ask = (i.kind === 'question' || i.kind === 'decision') && !i.paste ? askBits(i) : [];
-        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ...(i.queued ? { queued: true as const } : {}), ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d, ctx.staleWipDays), ...(ask.length ? { ask } : {}) };
+        return { id: i.id, kind: i.kind, box, date: i.date, text: i.text, stream: i.stream, ticket: i.ticket, paste: i.paste, gate: i.gate, deferredUntil: until, ...(i.queued ? { queued: true as const, queuedDays: daysBetween((i.stateTs ?? i.date ?? '').slice(0, 10), d) } : {}), ref, ageDays: daysBetween(i.date, d), stale: !until && isStale(box, i, d, ctx.staleWipDays), ...(ask.length ? { ask } : {}) };
     });
 }
 
 /**
  * The triage report as data. `blockers` are what `roll --strict` refuses on: a rule or approval with no ref file
- * to point at (not yet promoted), and an incidental finding with no ticket. Stale items are warnings only.
+ * to point at (not yet promoted), an incidental finding with no ticket, and a queued to-do older than STALE_QUEUED_DAYS that is not deferred. Stale in-flight items are warnings only.
  */
 export function triageReport(ctx: TriageContext, d: string, since: string = d): TriageReport {
     const items = triageItems(ctx, d, since);
@@ -55,6 +56,8 @@ export function triageReport(ctx: TriageContext, d: string, since: string = d): 
     const blockers = [
         ...items.filter((i) => RECORD_BOXES.includes(i.box) && !i.ref).map((i) => ({ id: i.id, box: i.box, why: 'not promoted: no --ref that is an existing file' })),
         ...items.filter((i) => i.box === BOX.FINDING).map((i) => ({ id: i.id, box: i.box, why: 'finding with no ticket' })),
+        // A to-do that has waited past STALE_QUEUED_DAYS is work to start or a row to drop; `defer` is the way to say "not yet" on purpose.
+        ...items.filter((i) => i.queued && !i.deferredUntil && (i.queuedDays ?? 0) > STALE_QUEUED_DAYS).map((i) => ({ id: i.id, box: i.box, why: `queued ${i.queuedDays} days (over ${STALE_QUEUED_DAYS}): start it, drop it, or defer it` })),
     ];
     const stale = items.filter((i) => i.stale).map((i) => ({ id: i.id, box: i.box, ageDays: i.ageDays }));
     const applicable = items.filter((i) => RECORD_BOXES.includes(i.box) && i.ref).map((i) => i.id);
@@ -82,7 +85,7 @@ export function triageChecklist(items: TriageItem[], blockers: Blocker[], pendin
     ];
 }
 
-export function triageLines(t: TriageReport): string[] {
+export function triageLines(t: TriageReport, proposed: string[] = []): string[] {
     const out = [`Triage — ${t.date} (open items, plus decisions and notes since ${t.since})`];
     for (const box of Object.keys(t.byBox).map(Number).sort((a, b) => a - b)) {
         const list = t.byBox[box];
@@ -97,6 +100,7 @@ export function triageLines(t: TriageReport): string[] {
     out.push('', `Blockers (roll --strict refuses): ${t.blockers.length}`);
     t.blockers.forEach((b) => out.push(`  ${b.id}  box ${b.box}: ${b.why}`));
     out.push(`Stale: ${t.stale.length}${t.stale.length ? ` (${t.stale.map((s) => `${s.id} ${s.ageDays}d`).join(', ')})` : ''}`);
+    if (proposed.length) out.push('', ...proposed);
     out.push('', "Don't-miss checklist", ...t.checklist.map((l) => `  ${l}`));
     return out;
 }
