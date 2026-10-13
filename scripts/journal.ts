@@ -1457,12 +1457,19 @@ function cmdNotesCheck() {
     process.exitCode = r.unreadable.length ? 2 : r.report.unreachable.length ? 1 : 0;
 }
 
+/** Stall is measured as of the roll day. A later clock must not mark an item stalled only because the roll date has passed. */
+function rollNow(d: string): number {
+    const now = Date.now();
+    const end = Date.parse(`${d}T23:59:59.999Z`);
+    return Number.isFinite(end) && end < now ? end : now;
+}
+
 /** The roll's guidance for the next session: derived from the ledger (no model call), saved as GUIDANCE.md beside it, and printed. `prime` shows it. */
 function writeRollGuidance(d: string): void {
     const g = groups();
     const sd = statusDir();
     const today = sd && existsSync(sd) ? readPriorities(sd, priorityDay()) : null;
-    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, Date.now(), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [], gates: new Map(gateReport().map((r) => [String(r.item.id), r.state])) }).map(withhold);
+    const lines = guidanceLines(g.items, readLedger(), g.inflight, g.blocked, d, rollNow(d), { awaiting: g.awaiting, priorities: today?.state === 'ok' ? today.items : [], gates: new Map(gateReport().map((r) => [String(r.item.id), r.state])) }).map(withhold);
     if (!dryRun) { ensureDir(); writeGuidance(dir, lines, d); }
     (lines.length ? lines : [`Guidance from the ${d} roll:`, '  Nothing stalled, nothing costly, nothing open.']).forEach((l) => console.log(l));
 }
