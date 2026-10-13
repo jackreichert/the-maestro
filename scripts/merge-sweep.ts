@@ -4,23 +4,25 @@
  *
  *   node scripts/merge-sweep.ts [--json] [--vault <path>] [--project <name>] [--stale-days N] [--today YYYY-MM-DD]
  *
- * Read-only. It never writes the ledger, never runs `journal.ts done`, and has no apply flag. A cheap runner follows
- * playbooks/merge-sweep.md.
+ * Read-only. It never writes the ledger, never runs `journal.ts done`, and has no apply flag. A cheap runner follows playbooks/merge-sweep.md.
  *
- * An open row (in flight, queued, blocked, or a question) names a pull request as `gh:pr:owner/repo#N` or `owner/repo#N`
- * in its text, its gate, or its refs. Each such PR is read with `gh pr view` (`MAESTRO_GH_BIN` points at another gh).
+ * An open row (in flight, queued, blocked, or a question) names a pull request in its text, its gate, or its refs as
+ * `gh:pr:owner/repo#N`, `owner/repo#N`, a github.com pull URL, or, for a repo whose owner is known, `repo#N`, `repo #N` or
+ * `gh:pr:repo#N`. The owner comes from `repo_owners` (config) or the row's own `repo` field (`owner/name`); with neither the
+ * PR is unknown, never guessed. Each PR is read with `gh pr view` (`MAESTRO_GH_BIN` points at another gh).
  * The report has two lists:
  *   - merged: GitHub says MERGED, with the `journal.ts done <id>` command to close the row if you agree (printed, never run);
  *   - stale: GitHub says OPEN and `updatedAt` is at least `--stale-days` (default 7) whole UTC days before `--today`.
  * A PR this script cannot read (gh fails, the state is not MERGED/OPEN/CLOSED, the activity timestamp is missing, or the
  * name has no owner) is unknown, never merged. A PR closed without merging is listed apart from both, and is not a close.
+ * If the open rows name no PR at all the sweep is blind, not clean: it prints a WARNING and exits 3.
  * Exit 0 when every named PR was read and none is merged, stale, or closed-unmerged; 1 when any of those lists is
- * non-empty; 3 when the only news is an unknown PR; 2 on a usage or read error.
+ * non-empty; 3 when the only news is an unknown PR or a blind sweep; 2 on a usage or read error.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
+import { CONFIGURED_PROJECT, LEDGER_ROOT, REPO_OWNERS, VAULT_ROOT } from './local-config.ts';
 import { daysBetween } from './lib/boxes.ts';
 import { fold, isOpen, type LedgerRow } from './lib/ledger-core.ts';
 import { openStore } from './lib/journal/store.ts';
@@ -35,13 +37,16 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SEGMENT = /^(?!.*\.\.)[\w.-]+$/;
 const GATE_RE = /(?<![\w/.-])gh:pr:([\w.-]+(?:\/[\w.-]+)?)#(\d+)\b/g;
 const REF_RE = /(?<![\w/.-])([\w.-]+\/[\w.-]+)#(\d+)\b/g;
+const URL_RE = /(?<![\w.-])https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\b/g;
 const KNOWN_STATE = new Set(['MERGED', 'OPEN', 'CLOSED']);
 const VALUED = new Set(['--vault', '--project', '--stale-days', '--today']);
+const BOOLEAN = new Set(['--json']);
 
-export interface NamedPr { repo: string; number: number; owned: boolean }
+/** `linked` is true when the PR is named in the row's refs (written by pr-open.ts), not only mentioned in its text or gate. */
+export interface NamedPr { repo: string; number: number; owned: boolean; linked?: boolean }
 export interface PrHit { repo: string; number: number; state: string; updatedAt?: string; idleDays?: number; reason?: string }
 export interface SweepRow { id: string; text: string; prs: PrHit[]; allMerged: boolean; done?: string }
-export interface SweepReport { today: string; staleDays: number; merged: SweepRow[]; stale: SweepRow[]; unknown: SweepRow[]; closed: SweepRow[] }
+export interface SweepReport { today: string; staleDays: number; merged: SweepRow[]; stale: SweepRow[]; unknown: SweepRow[]; closed: SweepRow[]; openRows: number; parsed: number; warning?: string }
 
 /** Why argv cannot be used, or null. A positional, an unknown flag, or a valued flag with no value. */
 export function usageError(argv: string[]): string | null {
@@ -50,7 +55,7 @@ export function usageError(argv: string[]): string | null {
         const a = argv[i] ?? '';
         if (a === '--') return 'merge-sweep: unexpected extra arguments';
         if (!a.startsWith('--')) return `merge-sweep: unexpected argument ${a}`;
-        if (a === '--json') continue;
+        if (BOOLEAN.has(a)) continue;
         if (!VALUED.has(a)) return `merge-sweep: unknown flag ${a}`;
         const v = argv[i + 1];
         if (!v || v.startsWith('--')) return `merge-sweep: ${a} needs a value`;
@@ -65,24 +70,49 @@ export function isOwnedRepo(repo: string): boolean {
     return parts.length === 2 && parts.every((p) => p.length > 0 && p !== '.' && SEGMENT.test(p));
 }
 
+/** The owner/repo the row's own `repo` field names, or undefined when it is only a bare name. */
+const rowSlug = (row: LedgerRow): string | undefined => (typeof row.repo === 'string' && isOwnedRepo(row.repo.trim()) ? row.repo.trim() : undefined);
+
+/** The owner of a bare repo name: the configured map first, then the row's own `owner/name` repo field when its name matches. */
+function ownerOf(name: string, row: LedgerRow, owners: Readonly<Record<string, string>>): string | undefined {
+    if (Object.hasOwn(owners, name)) return owners[name];
+    const slug = rowSlug(row);
+    return slug && slug.split('/')[1] === name ? slug.split('/')[0] : undefined;
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
- * Pull requests named as `gh:pr:owner/repo#N`, `gh:pr:repo#N`, or `owner/repo#N` in the row's text, gate, and refs.
- * A bare `gh:pr:repo#N` is kept and marked unowned, so the caller can report it unknown instead of guessing an owner.
+ * Pull requests named in the row's text, gate, and refs as `gh:pr:owner/repo#N`, `owner/repo#N`, a github.com pull URL,
+ * `gh:pr:repo#N`, `repo#N` or `repo #N`. A bare repo name resolves to an owner through `owners` (default: `repo_owners` config)
+ * or the row's own `repo` field; `repo#N` and `repo #N` are read only for a repo the sweep can name this way (a configured repo,
+ * or the one in the row's repo field), so "ticket #12" is not a PR. A bare name with no known owner is kept and marked
+ * unowned, so the caller reports it unknown instead of guessing. `linked` marks a PR named in the row's refs.
  */
-export function namedPrs(row: LedgerRow): NamedPr[] {
+export function namedPrs(row: LedgerRow, owners: Readonly<Record<string, string>> = REPO_OWNERS): NamedPr[] {
     const refs = Array.isArray(row.refs) ? row.refs.filter((r): r is string => typeof r === 'string') : [];
-    const hay = [typeof row.text === 'string' ? row.text : '', typeof row.gate === 'string' ? row.gate : '', ...refs].join('\n');
     const found = new Map<string, NamedPr>();
-    const add = (repo: string, n: string, owned: boolean): void => {
+    const add = (repo: string, n: string, owned: boolean, linked: boolean): void => {
         const number = Number(n);
         if (!Number.isInteger(number) || number < 1 || number > 1_000_000_000) return;
-        const key = `${repo}#${number}`;
+        const owner = owned || repo.includes('/') ? undefined : ownerOf(repo, row, owners);
+        const full = owner ? `${owner}/${repo}` : repo;
+        const key = `${full}#${number}`;
+        const isOwned = owned || owner !== undefined;
         const prev = found.get(key);
-        if (!prev) found.set(key, { repo, number, owned });
-        else if (owned) prev.owned = true;
+        if (!prev) found.set(key, { repo: full, number, owned: isOwned, linked });
+        else { if (isOwned) prev.owned = true; if (linked) prev.linked = true; }
     };
-    for (const m of hay.matchAll(GATE_RE)) if (m[1] && m[2]) add(m[1], m[2], m[1].includes('/'));
-    for (const m of hay.matchAll(REF_RE)) if (m[1] && m[2]) add(m[1], m[2], true);
+    const names = [...new Set([...Object.keys(owners), ...(rowSlug(row) ? [rowSlug(row)!.split('/')[1]!] : [])])];
+    const bare = names.length ? new RegExp(`(?<![\\w/.:-])(${names.map(escapeRe).join('|')})\\s?#(\\d+)\\b`, 'g') : undefined;
+    const scan = (hay: string, linked: boolean): void => {
+        for (const m of hay.matchAll(URL_RE)) if (m[1] && m[2]) add(m[1], m[2], true, linked);
+        for (const m of hay.matchAll(GATE_RE)) if (m[1] && m[2]) add(m[1], m[2], m[1].includes('/'), linked);
+        for (const m of hay.matchAll(REF_RE)) if (m[1] && m[2]) add(m[1], m[2], true, linked);
+        if (bare) for (const m of hay.matchAll(bare)) if (m[1] && m[2]) add(m[1], m[2], false, linked);
+    };
+    scan([typeof row.text === 'string' ? row.text : '', typeof row.gate === 'string' ? row.gate : ''].join('\n'), false);
+    scan(refs.join('\n'), true);
     return [...found.values()];
 }
 
@@ -144,10 +174,12 @@ export function classifyRows(
         if (!cache.has(key)) cache.set(key, viewOf(ref));
         return cache.get(key);
     };
-    const report: SweepReport = { today, staleDays, merged: [], stale: [], unknown: [], closed: [] };
+    const report: SweepReport = { today, staleDays, merged: [], stale: [], unknown: [], closed: [], openRows: rows.length, parsed: 0 };
+    const parsed = new Set<string>();
     for (const row of rows) {
         const named = namedPrs(row);
         if (!named.length) continue;
+        for (const n of named) parsed.add(`${n.repo}#${n.number}`);
         const prs = named.map((ref) => hitFor(ref, ref.owned && isOwnedRepo(ref.repo) ? view(ref) : undefined, today));
         const listed = listRow(row, prs);
         if (prs.some((p) => p.state === 'MERGED')) report.merged.push(listed);
@@ -155,13 +187,15 @@ export function classifyRows(
         else if (prs.some((p) => p.state === 'UNKNOWN')) report.unknown.push(listed);
         else if (prs.some((p) => p.state === 'CLOSED')) report.closed.push(listed);
     }
+    report.parsed = parsed.size;
+    if (rows.length > 0 && parsed.size === 0) report.warning = `WARNING: merge-sweep parsed 0 pull requests across ${rows.length} open rows, so it cannot see any merge. This is not a clean sweep. Rows name a PR as owner/repo#N, a github.com pull URL, or repo#N for a repo in repo_owners.`;
     return report;
 }
 
 /** 0 clean, 1 something to report, 3 unknown only. Usage errors are the caller's 2. */
 export function exitCode(report: SweepReport): number {
     if (report.merged.length || report.stale.length || report.closed.length) return 1;
-    return report.unknown.length ? 3 : 0;
+    return report.unknown.length || report.warning ? 3 : 0;
 }
 
 function formatPr(p: PrHit): string {
@@ -184,6 +218,7 @@ function printList(title: string, rows: SweepRow[], withDone: boolean): void {
 }
 
 function printText(report: SweepReport): void {
+    if (report.warning) console.log(report.warning);
     printList('Merged open rows', report.merged, true);
     printList(`Stale open PRs, no activity in ${report.staleDays} days`, report.stale, false);
     printList('Unknown, not merged', report.unknown, false);
