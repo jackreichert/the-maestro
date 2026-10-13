@@ -126,7 +126,7 @@ function closedAt(d: BoardStatus['done'][number]): string | undefined {
 const PULL_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d{1,6})(?!\d)/g;
 
 /** A URL in ask text, for finding the question mark: up to whitespace, its trailing sentence punctuation not counted as part of it. */
-const URL_IN_TEXT = /(?<![\w+.-])(?:[a-z][a-z0-9+.-]*:\/\/|obsidian:)\S*/gi;
+const URL_IN_TEXT = /(?<![\w+.-])(?:[a-z][a-z0-9+.-]*:\/\/|obsidian:|www\.)\S*/gi;
 /** The length of `u` without its trailing sentence punctuation, found by a scan rather than a `[...]+$` regex, which is quadratic on a long run of it. */
 const keptLength = (u: string): number => {
   let k = u.length;

@@ -135,6 +135,11 @@ test('a one-line ask is not cut at the question mark inside a vault link or URL 
   assert.equal(ask('Merge https://x.test/pull/5? It is green.')?.needed, 'Merge https://x.test/pull/5?');
 });
 
+test('a one-line ask is not cut at the query of a bare www. link, and a word merely containing www. is left alone', () => {
+  assert.deepEqual(splitAskBody('Check www.x.test/p?q=1 please? It is new.'), { needed: 'Check www.x.test/p?q=1 please?', context: 'It is new.' });
+  assert.deepEqual(splitAskBody('Keep awww.x?y as is? yes'), { needed: 'Keep awww.x?', context: 'y as is? yes' });
+});
+
 test('finding the question mark stays linear on a long word or a long run of trailing punctuation', () => {
   const started = Date.now();
   assert.equal(splitAskBody(`${'a'.repeat(50_000)}? rest`).needed.length, 50_001);
