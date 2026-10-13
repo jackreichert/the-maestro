@@ -56,7 +56,7 @@ export function checkOnePerTicket(pr: NewPr, open: OpenPr[], rules: KeyRules): K
   const rivals = others.filter((o) => !mates.has(o) && !isTwin(o));
   if (rivals.length) {
     const list = rivals.map((o) => `#${o.number} (${o.headRefName} -> ${o.baseRefName}) ${o.url}`).join('; ');
-    return { status: 'fail', key, message: `one-PR-per-ticket: refused, ${key} already has an open PR: ${list}. The rule is one PR per ticket: if this is a separate unit of work, file a smaller ticket and use its key. A develop/staging twin is the same change, so open it from the same head branch or add a `Twin: #N` line to the body; otherwise add the work to the existing PR.` };
+    return { status: 'fail', key, message: `one-PR-per-ticket: refused, ${key} already has an open PR: ${list}. The rule is one PR per ticket: if this is a separate unit of work, file a smaller ticket and use its key. A develop/staging twin is the same change, so open it from the same head branch or add a \`Twin: #N\` line to the body; otherwise add the work to the existing PR.` };
   }
   if (stackMates.length) return { status: 'warn', key, message: `one-PR-per-ticket: warning, this PR is stacked under ${key} on #${stackMates[0].number}; if a slice is a separate unit of work, give it its own smaller ticket.` };
   return { status: 'pass', key, message: `one-PR-per-ticket: ${key} has no other open PR (twins excepted).` };
