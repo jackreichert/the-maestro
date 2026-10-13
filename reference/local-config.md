@@ -66,6 +66,7 @@ stack_max_age_days: 5         # most days since a stack's oldest PR was opened; 
 pr_test_globs: <globs>         # comma-separated path globs counted as tests; omit for the built-in defaults
 pr_config_globs: <globs>       # ... as config; pr_docs_globs: docs; pr_mechanical_globs: lockfiles, generated, vendored
 twin_flow_repos: repo_a, repo_b # repos with the integration/release-candidate twin-PR flow; omit to turn the rule off
+repo_owners: repo_a=acme, repo_b=acme  # repo name to GitHub owner, so merge-sweep.ts can resolve a row that names a PR as repo_a#12; omit for none
 copilot_orgs: my-org          # comma-separated owners whose draft PRs the pr-watch event type requests Copilot review on; omit to request nowhere
 git_emails: me@example.com     # comma-separated; the authorship check in branch-sweep.ts; omit to use each repo's user.email
 protected_branches: main, release/*  # names or globs (`*` within one path segment, `**` across segments) branch-sweep.ts never lists; setting it replaces the default, which is main, master, staging, develop, release/*, staging/*, hotfix/*; add backmerge/* here to protect those too
@@ -150,6 +151,7 @@ The environment variables that override single settings are `MAESTRO_OVERLAY`, `
 | Protected branches (`protected_branches`) | git.md, `scripts/branch-sweep.ts` |
 | Branch-sweep merge targets (`sweep_merge_targets`), idle window (`sweep_idle_minutes`), PR look-back (`sweep_pr_days`), live-skill dirs (`sweep_protect_symlink_dirs`), disposable ignored paths (`sweep_disposable_ignored`) and the env store root (`env_store_root`) | `scripts/branch-sweep.ts`, `scripts/env-store-move.ts`, ledger.md |
 | Default branch base, and per-repo exceptions | git.md step 1 |
+| Repo-to-owner map for ledger rows that name a PR as `repo#N` (`repo_owners`; unset means none) | `scripts/merge-sweep.ts` |
 | Owners pr-watch requests Copilot review for (`copilot_orgs`; unset means none) | `scripts/event-types/pr-watch.ts` |
 | Repos that use the twin-PR flow (`twin_flow_repos`), and the names of their integration and release-candidate branches | git.md, prs.md |
 | Deploy PR the user opens themselves | git.md step 4 |

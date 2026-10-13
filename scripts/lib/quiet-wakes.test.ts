@@ -17,11 +17,12 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'quiet-'));
 const rows = (dir: string) => readFileSync(triagePath(dir), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
 /** Stand-in deps that record what was asked of them. */
-function fakes(over: { sweep?: SweepOutcome | (() => never); state?: PrState | undefined; noteThrows?: boolean } = {}) {
-  const calls = { sweep: 0, state: [] as string[], notes: [] as string[] };
+function fakes(over: { sweep?: SweepOutcome | (() => never); state?: PrState | undefined; noteThrows?: boolean; closed?: string[] | 'throws' } = {}) {
+  const calls = { sweep: 0, state: [] as string[], notes: [] as string[], closeRows: 0 };
   const deps: QuietDeps = {
     sweep: () => { calls.sweep += 1; if (typeof over.sweep === 'function') return over.sweep(); return over.sweep ?? { status: 'clean' }; },
     prState: (repo, n) => { calls.state.push(`${repo}#${n}`); return 'state' in over ? over.state : 'MERGED'; },
+    closeRows: () => { calls.closeRows += 1; if (over.closed === 'throws') throw new Error('sweep exited 2'); return over.closed ?? []; },
     note: (text) => { if (over.noteThrows) throw new Error('ledger locked'); calls.notes.push(text); },
   };
   return { deps, calls };
@@ -116,4 +117,29 @@ test('the loop health lines of a quiet watch still wake: the rules never see the
   triageEvents(events, { dir, quiet: f.deps });
   assert.deepEqual(events.map((e) => e.actionable), [true, true]);
   assert.equal(f.calls.sweep, 0);
+});
+
+test('left-open-set MERGED closes the linked rows first and the note names them', () => {
+  const f = fakes({ closed: ['ab12'] });
+  const v = quietVerdict(ev('pr-watch', 'pr-watch', LEFT), f.deps);
+  assert.deepEqual([v?.action, v?.rule], ['suppress', 'left-open-set-merged']);
+  assert.equal(f.calls.closeRows, 1);
+  assert.match(f.calls.notes[0] ?? '', /closed on merge: ab12/);
+});
+
+test('left-open-set: rows are closed only for a merged PR, and a failed close wakes instead of dropping the event', () => {
+  const open = fakes({ state: 'OPEN', closed: ['ab12'] });
+  assert.equal(quietVerdict(ev('pr-watch', 'pr-watch', LEFT), open.deps)?.action, 'wake');
+  assert.equal(open.calls.closeRows, 0, 'a PR that is not merged closes nothing');
+  const broken = fakes({ closed: 'throws' });
+  const v = quietVerdict(ev('pr-watch', 'pr-watch', LEFT), broken.deps);
+  assert.equal(v?.action, 'wake');
+  assert.match((v as { reason: string }).reason, /closing its rows failed/);
+  assert.equal(broken.calls.notes.length, 0);
+});
+
+test('a clean merge-sweep that closed rows says so in its ledger note', () => {
+  const f = fakes({ sweep: { status: 'clean', closed: ['ab12', 'cd34'] } });
+  assert.equal(quietVerdict(ev('merge-sweep-hourly', 'wake', 'wake: x'), f.deps)?.action, 'suppress');
+  assert.match(f.calls.notes[0] ?? '', /closed on merge: ab12, cd34/);
 });
