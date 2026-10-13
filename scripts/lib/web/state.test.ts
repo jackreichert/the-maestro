@@ -127,6 +127,14 @@ test('an ask on one line is cut after its first question mark, and nothing after
   assert.deepEqual([ask?.needed, ask?.context], ['Which one?', '1. a?\n2. b']);
 });
 
+test('a one-line ask is not cut at the question mark inside a vault link or URL query, only at the sentence one', () => {
+  const ask = (text: string) => buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'ql01', date: '2026-10-06', text, stream: 'Alpha' }] } })).asks[0];
+  const link = 'obsidian://open?vault=Vault&file=Plans%2Fx';
+  assert.deepEqual([ask(`Approve the plan. See ${link} for the reasons.`)?.needed, ask(`Approve the plan. See ${link} for the reasons.`)?.context], [`Approve the plan. See ${link} for the reasons.`, '']);
+  assert.deepEqual([ask(`Does ${link} look right? It replaces https://x.test/p?id=1.`)?.needed, ask(`Does ${link} look right? It replaces https://x.test/p?id=1.`)?.context], [`Does ${link} look right?`, 'It replaces https://x.test/p?id=1.']);
+  assert.equal(ask('Merge https://x.test/pull/5? It is green.')?.needed, 'Merge https://x.test/pull/5?');
+});
+
 test('paste asks reach the state as asks that carry their block path and no decision fields', () => {
   const base = inputs();
   const s = buildState(inputs({ status: { ...base.status, paste: [{ id: 'ps01', date: '2026-10-06', text: 'Run the block: it checks gates', stream: 'Beta', paste: '/tmp/fake-block.sh' }] } }));
