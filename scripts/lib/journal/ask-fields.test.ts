@@ -120,3 +120,14 @@ test('control characters are refused in text fields, and a default is shown whol
     assert.equal(askFieldProblems({ recommend: 5 }).length, 1);
     assert.equal(askFieldProblems({ default: 'x'.repeat(301), door: 'two-way' }).length, 1);
 });
+
+test('an outward row never auto-acts, shows as outward, and verify flags a default it carries', () => {
+    const row = { door: 'two-way', default: 'post it', outward: true };
+    assert.equal(autoDefault(row), null, 'read-time guard: a hand-edited outward row cannot act');
+    assert.equal(autoDefault({ ...row, outward: false }), 'post it', 'only exactly true blocks it');
+    assert.ok(hasAskFields({ outward: true }));
+    assert.ok(askBits(row).includes('outward: always asks'));
+    assert.ok(!askBits(row).some((b) => b.startsWith('if silent')));
+    assert.deepEqual(askFieldProblems(row), ['carries a default but is outward: it always asks, so the default will never fire']);
+    assert.deepEqual(askFieldProblems({ outward: 'yes' }), ['outward is not true']);
+});

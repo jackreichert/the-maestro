@@ -98,6 +98,10 @@ Queued items stay **open**: `done`, `drop`, `defer`, `tag`, `carry` and `archive
 `ask` is a gate, not a note. Everything below is checked by `journal.ts` when the row is written, and a refusal exits 1 with nothing written.
 
 - **Searched first.** `--searched "<where I looked>"` is required on every `ask` (a paste ask too): the docs, code, library page or ledger rows checked before the question was put to the user. It is stored on the row as `searched`, one line of at most 300 characters. Without it `ask` exits non-zero and says why. `--searched` is refused on any other command.
+- **The door routes.** A two-way ask with a `--default` is acted on and logged, not queued: the row is a `note` reading `acted on default: <default> (asked: <question>)`, it carries `actedOn` and `searched`, and the command prints `acted <id>`. It never reaches the board. A one-way ask, a two-way ask with no default, and any ask flagged `--outward` are queued for the user.
+- **`--outward`** marks anything another person sees (Slack, Jira, email). It always asks and is never acted on. If it carries a `--default` the ask is still written, with a warning, and the default never fires: `autoDefault` (the one reader every consumer uses) returns null for an outward row, so a hand-edited row cannot act either, and `verify` flags such a row. `--outward` is refused on any other command.
+
+Not built yet (the-maestro-243 follow-ups): a daily ask budget with draft overflow, and answers that write a topic-scoped rule.
 
 ## Rules are records, not asks
 

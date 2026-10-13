@@ -1780,15 +1780,15 @@ test('ask takes only question or decision', () => {
 // ── ask fields: recommend, default, door, decide-by, class ──
 
 test('ask stores its decision fields on the row and the fold exposes them', () => {
-    const r = run('ask', 'use the nightly window?', '--recommend', 'Yes, 01:00 to 03:00', '--door', 'two-way', '--default', 'apply the window', '--decide-by', '2d', '--class', 'intangible', '--searched', 'test fixture', ...MARK);
+    const r = run('ask', 'use the nightly window?', '--recommend', 'Yes, 01:00 to 03:00', '--door', 'two-way', '--decide-by', '2d', '--class', 'intangible', '--searched', 'test fixture', ...MARK);
     assert.equal(r.code, 0, r.err);
     assert.equal(r.err, '', 'a complete ask warns about nothing');
     const row = must(ledger().find((e) => e.id === idOf(r.out)));
-    assert.deepEqual([row.recommend, row.door, row.default, row.class], ['Yes, 01:00 to 03:00', 'two-way', 'apply the window', 'intangible']);
+    assert.deepEqual([row.recommend, row.door, row.class], ['Yes, 01:00 to 03:00', 'two-way', 'intangible']);
     assert.match(String(row.by), /^\d{4}-\d{2}-\d{2}$/);
     const item = must(statusJson().awaiting.find((i) => i.id === row.id));
     assert.equal(item.door, 'two-way');
-    assert.equal(item.default, 'apply the window');
+    assert.equal(item.default, undefined, 'a two-way ask that carries a default is acted on and never reaches the board');
 });
 
 test('ask without --recommend or --door warns naming each flag, still writes, and defaults the class to standard', () => {
