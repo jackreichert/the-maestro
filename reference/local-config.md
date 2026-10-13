@@ -57,6 +57,8 @@ pr_diagram_min_files: 3        # a PR over this many code files needs a mermaid 
 pr_body_check_stack: on         # stacked PR needs a Stack section naming its base PR; also pr_body_check_order (Review order line over pr_review_order_min_files code files, default 3); on by default
 pr_smells_repos: example/*     # GitHub owner/name globs (comma-separated) where pr-open.ts needs a recorded smells run (pr-smells.ts record); default none, so off; file-only
 waive_size_gate_owners: example-owner # GitHub owners (or owner/name globs, comma-separated) whose repos skip the PR size limits in pr-open.ts (not the mixed code/mechanical refusal); a bare owner means owner/*; default none, so the gate holds everywhere; file-only
+one_pr_per_ticket: on         # on (default) or off: pr-open.ts refuses a second independent open PR with the same tracker key; file-only
+one_pr_exempt_heads: release/*  # head-branch globs (comma-separated) the one-PR-per-ticket rule skips; default release/*; file-only
 review_pool_owners: example-org # GitHub owners (or owner/name globs, comma-separated) whose PRs other people review; every repo outside the pool counts as self-review, so personal repos never fill review_queue_cap; default none
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
@@ -109,7 +111,7 @@ Every key is optional. Blank values are ignored.
 
 Precedence per setting: **environment variable, then the user file, then the overlay's `config.md`.**
 
-These pr-open gate settings are the exception. They are read from the user config file only, not from an environment variable and not from the overlay file: `pr_max_code_files`, `pr_max_code_lines`, `pr_wide_max_code_files`, `pr_wide_max_code_lines`, `waive_size_gate_owners`, `pr_smells_repos`, `pr_body_sections`, the `pr_body_check_*` switches, `pr_body_private_words`, `pr_body_private_patterns`, and `pr_body_voice_names`. An environment variable set in the same process cannot raise a size limit, including the wide tier, waive an owner, turn a body check off or on, change the required sections, change which repos the smells gate covers, or change those body-check lists. `MAESTRO_LOCAL_CONFIG` still names the file. `MAESTRO_GH_BIN` and `MAESTRO_OVERLAY` are not gate settings and are unchanged.
+These pr-open gate settings are the exception. They are read from the user config file only, not from an environment variable and not from the overlay file: `pr_max_code_files`, `pr_max_code_lines`, `pr_wide_max_code_files`, `pr_wide_max_code_lines`, `waive_size_gate_owners`, `pr_smells_repos`, `one_pr_per_ticket`, `one_pr_exempt_heads`, `pr_body_sections`, the `pr_body_check_*` switches, `pr_body_private_words`, `pr_body_private_patterns`, and `pr_body_voice_names`. An environment variable set in the same process cannot raise a size limit, including the wide tier, waive an owner, turn a body check off or on, change the required sections, change which repos the smells gate covers, or change those body-check lists. `MAESTRO_LOCAL_CONFIG` still names the file. `MAESTRO_GH_BIN` and `MAESTRO_OVERLAY` are not gate settings and are unchanged.
 
 The user file is the first of:
 
