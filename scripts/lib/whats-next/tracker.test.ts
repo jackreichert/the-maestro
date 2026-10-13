@@ -32,6 +32,13 @@ test('a title the scanner flags is replaced before anything is written, and the 
   assert.ok(!JSON.stringify(snapshot).includes('bagend'));
 });
 
+test('a title is scanned whole, so a flagged value straddling the clip is still withheld', () => {
+  const summary = `${'x'.repeat(190)} bilbo${'@'}bagend.test`;
+  const { snapshot, withheld } = importTracker({ issues: [{ key: 'ZZ-8', summary }] }, opts);
+  assert.deepEqual(withheld, ['ZZ-8']);
+  assert.ok(!JSON.stringify(snapshot).includes('bilbo'));
+});
+
 test('long titles are clipped to one line; a missing title falls back to the key', () => {
   const { snapshot } = importTracker([{ key: 'ZZ-6', summary: 'x'.repeat(500) }, { key: 'ZZ-7' }], opts);
   assert.equal(snapshot.items[0]!.title.length, 200);

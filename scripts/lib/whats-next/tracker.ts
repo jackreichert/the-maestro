@@ -6,7 +6,7 @@
  * Accepted input: `{ items: [...] }` in this file's own shape, or a search result `{ issues: [...] }` (or a bare array) whose
  * issues carry their fields either at the top level or under `fields`, with `summary` or `title`, and `status` / `priority` as a
  * string or `{ name }`. A `description` is read only to set `doneLooksLike` and is never stored. Titles are clipped to one line;
- * a title the secret and PHI scanner flags is replaced by a placeholder naming the rule, so nothing it flags reaches the disk.
+ * a title the secret and PHI scanner flags (scanned whole, before the clip) is replaced by a placeholder naming the rule, so nothing it flags reaches the disk.
  */
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,7 +49,7 @@ function normalise(v: unknown, withheld: string[]): TrackerItem | string {
   if (!KEY.test(key)) return `key ${JSON.stringify(oneLine(String(f.key ?? ''), 30))} is not a tracker key`;
   const rawTitle = typeof f.summary === 'string' ? f.summary : typeof f.title === 'string' ? f.title : '';
   let title = oneLine(rawTitle, TITLE_MAX) || key;
-  const findings = scanFields({ title });
+  const findings = scanFields({ title: rawTitle });
   if (findings.length) { withheld.push(key); title = `(title withheld: ${describeFindings(findings).join('; ').replace(/\s+/g, ' ').slice(0, 80)})`; }
   const labels = (Array.isArray(f.labels) ? f.labels : []).filter((l): l is string => typeof l === 'string').map((l) => oneLine(l, LABEL_MAX)).filter(Boolean).slice(0, LABELS_MAX);
   const url = typeof f.url === 'string' && /^https:\/\/\S+$/.test(f.url) && f.url.length <= URL_MAX ? f.url : undefined;
