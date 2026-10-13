@@ -91,7 +91,7 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
      count is marked by ink, not bold. A display size on the text line height keeps the header's measured height. */
   .cue { margin: var(--space-4) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-4); padding: 0; list-style: none; font-family: var(--font-display); font-size: clamp(2.25rem, 4.4vw, 3.75rem); line-height: 1.08; letter-spacing: -0.02em; color: var(--text-muted); }
   .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
-  .cue li:not(:last-child)::after { content: '·'; margin-left: var(--space-3); color: var(--text-muted); }
+  .cue li:not(:last-child)::after { content: '·' / ''; margin-left: var(--space-3); color: var(--text-muted); }
   button.tile {
     font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer;
     display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap;

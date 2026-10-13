@@ -148,6 +148,15 @@ export const HOME_SECTIONS_CSS = `
   .notes-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-4) 0 0; padding: 0; list-style: none; font-size: var(--text-xs); color: var(--text-muted); }
   .notes-row a { display: inline-block; padding: 2px var(--space-2); border-radius: var(--radius-sm); background: var(--surface-2); font-family: var(--font-mono); color: var(--text-primary); text-decoration: none; }
   .notes-row a:hover { text-decoration: underline; }
+  @media (forced-colors: active) {
+    .seg button { border: 1px solid ButtonText; }
+    .seg button[aria-pressed=true], .fchip[aria-pressed=true] { forced-color-adjust: none; background: Highlight; color: HighlightText; border-color: Highlight; }
+    .score-staff { forced-color-adjust: none; background-image: repeating-linear-gradient(to bottom, transparent 0 7px, GrayText 7px 8px); }
+    .big-staff .score-staff { background-image: repeating-linear-gradient(to bottom, transparent 0 15px, GrayText 15px 16px); }
+    .score-note, .k-note, .k-bar { forced-color-adjust: none; background: CanvasText; }
+    .score-rest, .k-rest { forced-color-adjust: none; background: GrayText; opacity: 1; }
+    .bars .fill, .cibar span, .seg-bar span, .qbar span, .fchip i { forced-color-adjust: none; background: Highlight; outline: 1px solid CanvasText; }
+  }
 `;
 
 const secHead = (title: string, n: number, aside?: Node | string | null, extra?: Node | null): HTMLElement =>
