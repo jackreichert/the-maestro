@@ -28,6 +28,15 @@ test('a repo block with a malformed row is dropped whole and counted, never show
   assert.equal(got.data.total, 1);
 });
 
+test('a merged develop side survives, and a merged flag that is not a boolean drops the repo', () => {
+  const side = { number: 2, url: 'https://github.com/a/b/pull/2' };
+  const good = sanitizeOpenPrs(body([{ repo: 'a/b', count: 1, prs: [row({ sides: { develop: { ...side, merged: true } } })] }]));
+  assert.equal(good?.dropped, 0);
+  assert.equal((good?.data.groups[0].repos[0].prs[0] as { sides?: { develop?: { merged?: boolean } } }).sides?.develop?.merged, true);
+  const bad = sanitizeOpenPrs(body([{ repo: 'a/b', count: 1, prs: [row({ sides: { develop: { ...side, merged: 'yes' } } })] }]));
+  assert.equal(bad?.dropped, 1);
+});
+
 test('a develop/staging pair survives, and a pair with a bad side drops the repo', () => {
   const side = { number: 2, url: 'https://github.com/a/b/pull/2' };
   const good = sanitizeOpenPrs(body([{ repo: 'a/b', count: 1, prs: [row({ sides: { develop: side } })] }]));

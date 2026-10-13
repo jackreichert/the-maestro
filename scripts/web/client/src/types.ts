@@ -205,7 +205,8 @@ export interface WeekCount { start: string; total: number; byStream: Record<stri
 export interface ProjectsData { generatedAt: string; today: string; rows: ProjectRow[]; links: HomeLink[]; weeks: WeekCount[] }
 
 /** One side of a develop/staging pair. The URL is the server's; the client re-checks it before it becomes a link. */
-export interface OpenPrSide { number: number; url: string }
+/** `merged` is set only on a develop side kept beside its still-open staging twin after the develop PR merged. */
+export interface OpenPrSide { number: number; url: string; merged?: boolean }
 /**
  * Both sides of a twin-flow PR, in one place so a missing side is visible.
  * Absent when the PR's base is neither develop nor staging. A missing side is omitted, not a guess.

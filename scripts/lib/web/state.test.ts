@@ -187,6 +187,16 @@ test('a staging PR carries waitsOnDevelop until its develop twin has merged; oth
   assert.equal(buildState(inputs({ prs: [pr(14, { developTwin: twin(false) })] })).prs[0]?.waitsOnDevelop, undefined, 'a develop PR never waits');
 });
 
+test('a staging PR whose develop twin merged carries it as developMerged; an open or missing twin, and a develop PR, never do', () => {
+  const twin = (merged: boolean) => ({ number: 90, url: 'https://example.test/pull/90', merged });
+  const cards = (over: Partial<Pr>) => buildState(inputs({ prs: [pr(13, { baseRefName: 'staging', ...over })] })).prs;
+  assert.deepEqual(cards({ developTwin: twin(true) })[0]?.developMerged, { number: 90, url: 'https://example.test/pull/90' });
+  assert.equal(cards({ developTwin: twin(false) })[0]?.developMerged, undefined);
+  assert.equal(cards({ developTwin: null })[0]?.developMerged, undefined);
+  assert.equal(cards({})[0]?.developMerged, undefined);
+  assert.equal(buildState(inputs({ prs: [pr(14, { developTwin: twin(true) })] })).prs[0]?.developMerged, undefined, 'a develop PR has no develop twin');
+});
+
 test('an ask context carries links the server built: a vault URI in the wrong folder resolves to its note, a PR URL gets a short label', () => {
   const files = new Set(['Projects/proj/Plans/fake-checklist.md']);
   const config: PageConfig = { ...CONFIG, project: 'proj', noteExists: (p) => files.has(p) };

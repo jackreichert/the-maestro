@@ -166,3 +166,82 @@ test('a staging PR waiting on its develop twin names it, linked, and is not in t
   assert.match(text(root), /Waits on develop twin: none found/);
   cleanup();
 });
+
+const U = 'https://github.com/acme/widgets/pull';
+const pairRows = (devOver: Partial<OpenPrRow> = {}, stgOver: Partial<OpenPrRow> = {}): OpenPrRow[] => [
+  pr({ number: 7, url: `${U}/7`, title: 'Add the thing', isDraft: false, sides: { develop: { number: 7, url: `${U}/7` }, staging: { number: 9, url: `${U}/9` } }, twins: [9], ...devOver }),
+  pr({ number: 9, url: `${U}/9`, title: 'Add the thing (staging)', base: 'staging', isDraft: false, sides: { develop: { number: 7, url: `${U}/7` }, staging: { number: 9, url: `${U}/9` } }, twins: [7], waitsOnDevelop: { number: 7, url: `${U}/7` }, ...stgOver }),
+];
+const one = (prs: OpenPrRow[]): OpenPrsData => data({ total: prs.length, groups: [{ id: 'team', label: 'Team repos', count: prs.length, repos: [{ repo: 'acme/widgets', count: prs.length, prs }] }] });
+
+test('a develop PR and its open staging twin are one card with a lane each, counted as two PRs in one band', async () => {
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one(pairRows({ unresolved: 1 }, { ci: 'FAILURE' })) }) });
+  const cards = [...root.querySelectorAll('li.pr')];
+  assert.equal(cards.length, 1);
+  assert.ok(cards[0]?.classList.contains('pair'));
+  const lanes = [...cards[0]!.querySelectorAll('.lane')];
+  assert.deepEqual(lanes.map((l) => l.querySelector('.lane-h a')?.textContent), ['Develop #7', 'Staging #9']);
+  assert.deepEqual(lanes.map((l) => l.querySelector('.lane-h a')?.getAttribute('href')), [`${U}/7`, `${U}/9`]);
+  assert.match(lanes[0]?.textContent ?? '', /→ develop/);
+  assert.match(lanes[1]?.textContent ?? '', /→ staging/);
+  assert.match(lanes[0]?.textContent ?? '', /Thread/, 'each lane keeps its own gates');
+  assert.match(lanes[1]?.textContent ?? '', /Failing/);
+  assert.equal(cards[0]?.querySelectorAll('a.title').length, 1, 'the title is drawn once');
+  assert.match(text(root), /widgets 2 PRs/);
+  assert.equal(root.querySelectorAll('section.band').length, 4);
+  cleanup();
+});
+
+test('a staging PR whose develop twin merged keeps the develop PR in its card, marked Merged, with no gates of its own', async () => {
+  const stg = pr({ number: 9, url: `${U}/9`, base: 'staging', isDraft: false, review: 'approved', sides: { develop: { number: 7, url: `${U}/7`, merged: true }, staging: { number: 9, url: `${U}/9` } } });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one([stg]) }) });
+  const cards = [...root.querySelectorAll('li.pr')];
+  assert.equal(cards.length, 1);
+  const merged = cards[0]!.querySelector('.lane.merged');
+  assert.ok(merged);
+  assert.equal(merged.querySelector('a')?.textContent, 'Develop #7');
+  assert.equal(merged.querySelector('a')?.getAttribute('href'), `${U}/7`);
+  assert.match(merged.textContent ?? '', /Merged/);
+  assert.equal(merged.querySelectorAll('.gate').length, 0);
+  assert.equal(cards[0]!.querySelectorAll('.lane:not(.merged) .gate').length, 4);
+  assert.match(text(root.querySelector('section#ready')!), /Staging #9/, 'a merged develop twin frees the staging PR for the ready band');
+  cleanup();
+});
+
+test('a pair bands by its most urgent side, and a search or lens that hits either side keeps the whole pair', async () => {
+  const rows = pairRows({ isDraft: true }, { ci: 'FAILURE', title: 'Zebra rollout (staging)' });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one(rows) }) });
+  assert.equal(root.querySelector('section#orchestra li.pair') !== null, true, 'the staging side fails CI, which outranks the draft develop side');
+  const search = root.querySelector('input[type=search]') as HTMLInputElement;
+  search.value = 'zebra';
+  search.dispatchEvent(new (root.ownerDocument!.defaultView as unknown as { Event: typeof Event }).Event('input', { bubbles: true }));
+  assert.equal(root.querySelectorAll('li.pair .lane').length, 2, 'only the staging title matches, both lanes stay');
+  assert.match(text(root), /2 PRs shown/);
+  cleanup();
+});
+
+test('an unpaired PR, a pair whose sides disagree, and a stacked pair draw as before', async () => {
+  const lone = pr({ number: 5, url: `${U}/5`, sides: { develop: { number: 5, url: `${U}/5` } } });
+  const askew = pairRows({}, {});
+  askew[1] = { ...askew[1]!, sides: { develop: { number: 99, url: `${U}/99` }, staging: { number: 9, url: `${U}/9` } } };
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one([lone, ...askew]) }) });
+  assert.equal(root.querySelectorAll('li.pair').length, 0);
+  assert.equal(root.querySelectorAll('li.pr').length, 3);
+  cleanup();
+  const kid = pr({ number: 12, url: `${U}/12`, base: 'feat/x', stackedOn: 9, isDraft: false });
+  const stacked = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one([...pairRows(), kid]) }) });
+  const li = [...stacked.root.querySelectorAll('li.pr')];
+  assert.equal(li.length, 2);
+  assert.ok(li[1]?.classList.contains('child'), 'a PR stacked on either side nests under the pair');
+  stacked.cleanup();
+});
+
+test('a pair never reads ready while its staging side needs fixing, and every count is in PRs', async () => {
+  const rows = pairRows({ review: 'approved' }, { ci: 'FAILURE', unresolved: 3 });
+  const { root, cleanup } = await mount<El>('../src/open-prs.ts', 'open-prs', { tz: 'UTC', model: model({ data: one(rows) }) });
+  assert.doesNotMatch(text(root.querySelector('section#ready')!), /Staging #9|Develop #7/);
+  assert.ok(root.querySelector('section#orchestra li.pair'));
+  assert.equal(root.querySelector('section#orchestra .n')?.textContent, '2');
+  assert.equal(root.querySelector('section#ready .n')?.textContent, '0');
+  cleanup();
+});

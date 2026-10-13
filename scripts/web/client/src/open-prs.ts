@@ -81,6 +81,17 @@ const CSS = `${BASE_CSS}
   .pr { display: grid; grid-template-columns: minmax(0, 1fr) 120px minmax(220px, 340px) 56px; gap: var(--space-4); align-items: center; padding: var(--space-3) var(--space-2) var(--space-3) 0; border-top: var(--hairline); }
   @media (hover: hover) { .pr:hover { background: var(--surface-2); } }
   .pr.child { padding-left: var(--space-6); }
+  .pr.pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+  .lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+  .lane { min-width: 0; display: grid; gap: var(--space-2); padding-left: var(--space-3); border-left: 2px solid var(--border-strong); }
+  .lane.staging { border-left-color: var(--accent); }
+  .lane.merged { border-left-style: dashed; color: var(--text-muted); }
+  .lane-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+  .lane-h .branch { font: 500 var(--text-xs)/1.3 var(--font-mono); color: var(--text-secondary); }
+  .lane-h a { color: var(--text-primary); font-weight: var(--weight-medium); text-decoration: none; }
+  @media (hover: hover) { .lane-h a:hover { color: var(--accent); text-decoration: underline; } }
+  .lane-h .tag { font-weight: var(--weight-semibold); color: var(--text-secondary); }
+  .lane-h .age { margin-left: auto; font-size: var(--text-xs); }
   .pr-t { min-width: 0; display: grid; gap: 4px; }
   .pr-t a.title { color: var(--text-primary); text-decoration: none; font-weight: var(--weight-medium); overflow-wrap: anywhere; }
   @media (hover: hover) { .pr-t a.title:hover { color: var(--accent); text-decoration: underline; } }
@@ -108,6 +119,7 @@ const CSS = `${BASE_CSS}
     .pr { grid-template-columns: minmax(0, 1fr) auto; }
     .pr .base, .pr .gates { grid-column: 1; }
     .pr .age { grid-column: 2; grid-row: 1; }
+    .lanes { grid-template-columns: minmax(0, 1fr); }
   }
 `;
 
@@ -127,9 +139,37 @@ const LENSES: { id: Lens; label: string }[] = [
 const MIX_LABEL: Record<Mix, string> = { pass: 'Passing', pending: 'Running', fail: 'Failing', none: 'No checks' };
 
 interface Drawn extends OpenPrRow { repo: string; selfReview: boolean }
+/**
+ * What the tab lists: one PR, or a develop/staging pair drawn as one card. `lead` is the PR the card sorts and links by (the develop
+ * PR while it is open, else the staging PR); `mate` is the staging PR beside an open develop PR; `merged` is a develop PR that has merged
+ * and is kept beside its still-open staging PR until that merges too.
+ */
+interface Unit { lead: Drawn; mate?: Drawn; merged?: NonNullable<OpenPrRow['sides']>['develop'] }
+const members = (u: Unit): Drawn[] => (u.mate ? [u.lead, u.mate] : [u.lead]);
+const MOVE_URGENCY: Move[] = ['orchestra', 'drafts', 'yours', 'ready'];
+
+/** Pairs each develop PR with the open staging PR on the other side of its `sides` (same repo), and keeps a merged develop twin on its staging PR. Everything else stays alone. */
+export function toUnits(list: Drawn[]): Unit[] {
+  const byNumber = new Map(list.map((p) => [`${p.repo}#${p.number}`, p]));
+  const open = (p: Drawn, n: number | undefined): Drawn | undefined => (n === undefined ? undefined : byNumber.get(`${p.repo}#${n}`));
+  const taken = new Set<Drawn>();
+  const units: Unit[] = [];
+  for (const p of list) {
+    const stg = p.base === 'develop' && !p.sides?.develop?.merged ? open(p, p.sides?.staging?.number) : undefined;
+    if (stg && stg.base === 'staging' && stg.sides?.develop?.number === p.number && !taken.has(stg) && !taken.has(p)) { taken.add(p); taken.add(stg); units.push({ lead: p, mate: stg }); }
+  }
+  for (const p of list) {
+    if (taken.has(p)) continue;
+    const merged = p.base === 'staging' ? p.sides?.develop : undefined;
+    units.push(merged?.merged ? { lead: p, merged } : { lead: p });
+  }
+  return units;
+}
 
 const needsFix = (p: OpenPrRow): boolean => p.ci === 'FAILURE' || p.ci === 'ERROR' || p.mergeable === 'conflicting' || p.unresolved > 0 || p.review === 'changes-requested';
 const moveOf = (p: OpenPrRow): Move => (p.isDraft ? 'drafts' : readyToMerge(p) ? 'ready' : needsFix(p) ? 'orchestra' : 'yours');
+/** The band of a card: the most urgent move among its PRs, so a pair never reads Ready while one side needs fixing. */
+const unitMove = (u: Unit): Move => members(u).map(moveOf).sort((a, b) => MOVE_URGENCY.indexOf(a) - MOVE_URGENCY.indexOf(b))[0]!;
 const lensOn = (p: OpenPrRow, lens: Lens): boolean => {
   if (lens === 'failing') return p.ci === 'FAILURE' || p.ci === 'ERROR';
   if (lens === 'conflict') return p.mergeable === 'conflicting';
@@ -242,9 +282,11 @@ export class OpenPrs extends HTMLElement {
     return (m.data?.groups ?? []).flatMap((g) => g.repos.flatMap((r) => r.prs.map((p): Drawn => ({ ...p, repo: r.repo, selfReview: g.id === 'self-review' }))));
   }
 
-  #visible(all: Drawn[]): Drawn[] {
+  /** The units with a member that passes the lens and the search: a pair stays whole when either side matches. */
+  #visible(units: Unit[]): Unit[] {
     const q = this.#q.trim().toLowerCase();
-    return all.filter((p) => (!this.#lens || lensOn(p, this.#lens)) && (!q || `${p.title} ${p.repo} ${p.number} ${p.ticket?.label ?? ''}`.toLowerCase().includes(q)));
+    const hit = (p: Drawn): boolean => (!this.#lens || lensOn(p, this.#lens)) && (!q || `${p.title} ${p.repo} ${p.number} ${p.ticket?.label ?? ''}`.toLowerCase().includes(q));
+    return units.filter((u) => members(u).some(hit));
   }
 
   #content(m: OpenPrsModel): Node[] {
@@ -252,20 +294,21 @@ export class OpenPrs extends HTMLElement {
     if (!d) return [h('p', { class: 'empty' }, this.#fresh)];
     if (d.total === 0) return [h('p', { class: 'empty' }, 'No open PRs. ', h('i', { lang: 'it' }, 'tacet')), h('p', { class: 'empty' }, this.#fresh)];
     const all = this.#list(m);
-    const shown = this.#visible(all);
+    const units = toUnits(all);
+    const shown = this.#visible(units);
     const bands = MOVES.filter((mv) => !this.#move || mv.id === this.#move);
-    return [this.#cue(all), ...this.#filterNote(), this.#controls(all, shown.length), ...bands.map((mv) => this.#band(mv, shown))];
+    return [this.#cue(all, units), ...this.#filterNote(), this.#controls(all, shown.flatMap(members).length), ...bands.map((mv) => this.#band(mv, shown))];
   }
 
-  #cue(all: Drawn[]): HTMLElement {
+  #cue(all: Drawn[], units: Unit[]): HTMLElement {
     const line = h('h1', { class: 'cueline' });
     MOVES.forEach((mv, i) => {
-      const n = all.filter((p) => moveOf(p) === mv.id).length;
+      const n = units.filter((u) => unitMove(u) === mv.id).flatMap(members).length;
       const b = h('button', { type: 'button', class: `cnt${mv.id === 'yours' && n ? ' hot' : ''}`, 'data-move': mv.id, 'aria-pressed': String(this.#move === mv.id) }, h('b', {}, String(n)), ` ${mv.word}`);
       line.append(h('span', { class: 'cue-item' }, b, i < MOVES.length - 1 ? h('span', { class: 'sep', 'aria-hidden': 'true' }, ' · ') : null), i < MOVES.length - 1 ? ' ' : '');
     });
     const repos = new Set(all.map((p) => p.repo)).size;
-    const oldest = all.filter((p) => moveOf(p) === 'yours').sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
+    const oldest = units.filter((u) => unitMove(u) === 'yours').map((u) => u.lead).sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))[0];
     const short = (repo: string): string => repo.split('/')[1] ?? repo;
     return h('section', { class: 'cue' },
       h('div', {},
@@ -312,27 +355,70 @@ export class OpenPrs extends HTMLElement {
       h('span', { class: 'shown', 'aria-live': 'polite' }, `${shown} ${shown === 1 ? 'PR' : 'PRs'} shown`));
   }
 
-  #band(mv: (typeof MOVES)[number], shown: Drawn[]): HTMLElement {
-    const ps = shown.filter((p) => moveOf(p) === mv.id);
-    const byRepo = new Map<string, Drawn[]>();
-    for (const p of ps) byRepo.set(p.repo, [...(byRepo.get(p.repo) ?? []), p]);
+  #band(mv: (typeof MOVES)[number], shown: Unit[]): HTMLElement {
+    const ps = shown.filter((u) => unitMove(u) === mv.id);
+    const byRepo = new Map<string, Unit[]>();
+    for (const u of ps) byRepo.set(u.lead.repo, [...(byRepo.get(u.lead.repo) ?? []), u]);
     const repos = [...byRepo.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
     const empty = this.#q || this.#lens ? ['No PR here matches.', 'rest'] as const : mv.empty;
     const body = repos.length ? repos.map(([repo, list]) => this.#repo(repo, list)) : [h('p', { class: 'empty' }, `${empty[0]} `, h('i', { lang: 'it' }, empty[1]))];
     return h('section', { class: 'band', id: mv.id },
-      h('div', { class: 'band-head' }, h('h2', {}, mv.title, ' ', h('span', { class: 'n' }, String(ps.length))), h('p', {}, mv.note)),
+      h('div', { class: 'band-head' }, h('h2', {}, mv.title, ' ', h('span', { class: 'n' }, String(ps.flatMap(members).length))), h('p', {}, mv.note)),
       ...body);
   }
 
-  #repo(repo: string, list: Drawn[]): HTMLElement {
+  #repo(repo: string, list: Unit[]): HTMLElement {
     const short = repo.split('/')[1] ?? repo;
-    const nums = new Set(list.map((p) => p.number));
-    const roots = list.filter((p) => p.stackedOn === undefined || !nums.has(p.stackedOn)).sort((a, b) => a.number - b.number);
-    const kids = (n: number): Drawn[] => list.filter((p) => p.stackedOn === n);
-    const walk = (p: Drawn, depth: number): Node[] => [this.#row(p, short, depth > 0), ...kids(p.number).flatMap((k) => walk(k, depth + 1))];
+    const stackedOn = (u: Unit): number | undefined => u.lead.stackedOn ?? u.mate?.stackedOn;
+    const nums = new Set(list.flatMap(members).map((p) => p.number));
+    const roots = list.filter((u) => { const n = stackedOn(u); return n === undefined || !nums.has(n); }).sort((a, b) => a.lead.number - b.lead.number);
+    const kids = (u: Unit): Unit[] => list.filter((k) => { const n = stackedOn(k); return n !== undefined && members(u).some((p) => p.number === n); });
+    const walk = (u: Unit, depth: number): Node[] => [this.#unit(u, short, depth > 0), ...kids(u).flatMap((k) => walk(k, depth + 1))];
+    const count = list.flatMap(members).length;
     return h('div', { class: 'repo' },
-      h('h3', {}, short, ' ', h('span', { class: 'c' }, `${list.length} ${list.length === 1 ? 'PR' : 'PRs'}`)),
-      h('ul', { class: 'prs' }, ...roots.flatMap((p) => walk(p, 0))));
+      h('h3', {}, short, ' ', h('span', { class: 'c' }, `${count} ${count === 1 ? 'PR' : 'PRs'}`)),
+      h('ul', { class: 'prs' }, ...roots.flatMap((u) => walk(u, 0))));
+  }
+
+  #unit(u: Unit, short: string, child: boolean): HTMLElement {
+    return u.mate || u.merged ? this.#pair(u, short, child) : this.#row(u.lead, short, child);
+  }
+
+  /** A develop/staging pair as one card: the shared heading once, then a lane per PR (or a merged develop PR's lane) with its own base and gates. */
+  #pair(u: Unit, short: string, child: boolean): HTMLElement {
+    const dev = u.mate ? u.lead : undefined;
+    const stg = u.mate ?? u.lead;
+    const title = refLink({ label: (dev ?? stg).title, url: (dev ?? stg).url });
+    if (title instanceof HTMLElement) title.classList.add('title');
+    const lanes = [
+      dev ? this.#lane(dev, 'Develop') : this.#mergedLane(u.merged),
+      this.#lane(stg, 'Staging'),
+    ];
+    return h('li', { class: `pr pair${child ? ' child' : ''}` },
+      h('div', { class: 'pr-t' }, title, h('span', { class: 'sub' },
+        h('span', {}, short),
+        stg.selfReview ? h('span', {}, 'self-review') : null,
+        (dev ?? stg).ticket ? refLink((dev ?? stg).ticket!) : null,
+        u.lead.stackedOn !== undefined ? h('span', {}, `stacked on #${u.lead.stackedOn}`) : null)),
+      h('div', { class: 'lanes' }, ...lanes));
+  }
+
+  #lane(p: Drawn, name: 'Develop' | 'Staging'): HTMLElement {
+    const threads: Gate = p.unresolved > 0
+      ? { tone: 'warn', glyph: String(p.unresolved), word: p.unresolved === 1 ? 'Thread' : 'Threads' }
+      : { tone: 'ok', glyph: '✓', word: 'None' };
+    const ref = refLink({ label: `${name} #${p.number}`, url: p.url });
+    return h('div', { class: `lane ${name.toLowerCase()}` },
+      h('div', { class: 'lane-h' }, ref, h('span', { class: 'branch', title: `Base: ${p.base}` }, `→ ${PROTECTED.has(p.base) ? p.base : 'branch'}`), p.isDraft ? h('span', {}, 'draft') : null,
+        h('span', { class: 'age' }, p.ageDays === undefined ? '' : askAge(p.ageDays))),
+      h('span', { class: 'gates' }, this.#gate('CI', CI[p.ci ?? ''] ?? CI.NONE), this.#gate('Merge', MERGE[p.mergeable]), this.#gate('Review', REVIEW[p.review]), this.#gate('Threads', threads)),
+      this.#approvers(p));
+  }
+
+  /** The develop PR that has merged while its staging twin is open: kept in the pair, plainly marked, with no gates because there is nothing left to do on it. */
+  #mergedLane(side: Unit['merged']): HTMLElement {
+    return h('div', { class: 'lane develop merged' },
+      h('div', { class: 'lane-h' }, side ? refLink({ label: `Develop #${side.number}`, url: side.url }) : 'Develop', h('span', { class: 'branch' }, '→ develop'), h('span', { class: 'tag' }, 'Merged')));
   }
 
   #row(p: Drawn, short: string, child: boolean): HTMLElement {
