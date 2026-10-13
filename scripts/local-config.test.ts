@@ -438,6 +438,15 @@ test('copilot_orgs: empty by default, list from the file, environment wins', () 
     assert.equal(show({ MAESTRO_COPILOT_ORGS: 'only_one' }).COPILOT_ORGS, 'only_one');
 });
 
+test('next labels: frozen empty and blocked needs-you by default, lists from the file, none clears blocked', () => {
+    assert.equal(show().NEXT_FROZEN_LABELS, '(unset)');
+    assert.equal(show().NEXT_BLOCKED_LABELS, 'needs-you');
+    write(join(home, '.config', 'the-maestro', 'config.md'), block('next_frozen_labels: pilot-freeze, hold\nnext_blocked_labels: waiting-on-me'));
+    assert.equal(show().NEXT_FROZEN_LABELS, 'pilot-freeze, hold');
+    assert.equal(show().NEXT_BLOCKED_LABELS, 'waiting-on-me');
+    assert.equal(show({ MAESTRO_NEXT_BLOCKED_LABELS: 'none' }).NEXT_BLOCKED_LABELS, '(unset)');
+});
+
 test('branch sweep settings: defaults, file values, environment wins, bad idle falls back', () => {
     const d = show();
     assert.equal(d.GIT_EMAILS, '(unset)');

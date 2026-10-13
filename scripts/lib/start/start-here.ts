@@ -37,12 +37,19 @@ export interface StartHere {
   where: Record<string, HomeCounts> | null;
   /** Null when the check did not run. `unchecked` is projects that could not be read, so `total` may be short. */
   unreachableNotes: UnreachableNotes | null;
+  /** The top of the ranked queue (`journal.ts next`), best first. Absent in a view written before the queue existed (the Podium reads this as JSON). */
+  upNext?: UpNextRow[];
 }
+
+/** One ranked item for the Up next block: the id, its tracker key when it has one, its project, title, score and the named terms. */
+export interface UpNextRow { id: string; key?: string; project: string; title: string; score: number; why: string }
+/** How many ranked items the Up next block shows. */
+export const UP_NEXT_TOP = 5;
 
 /** Unreachable notes for the start view: a count, not the note list. */
 export interface UnreachableNotes { total: number; byStream: Record<string, number>; unchecked?: number }
 
-export interface StartOptions { day: string; week: WeekState; priorities: PrioritiesState; conditions: string[]; standing: string[]; where: Record<string, HomeCounts> | null; now: Date; unreachableNotes?: UnreachableNotes | null }
+export interface StartOptions { day: string; week: WeekState; priorities: PrioritiesState; conditions: string[]; standing: string[]; where: Record<string, HomeCounts> | null; now: Date; unreachableNotes?: UnreachableNotes | null; upNext?: UpNextRow[] }
 
 const streamOf = (i: { stream?: string }): string => i.stream || OTHER;
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
@@ -102,6 +109,7 @@ export function buildStart(g: Groups, o: StartOptions): StartHere {
     answered: answered.map((a) => ({ id: a.id ?? '', stream: streamOf(a), asked: a.text ?? '', answer: a.closedBy?.text ?? '', date: a.closedBy?.date ?? '' })),
     where: o.where,
     unreachableNotes: o.unreachableNotes ?? null,
+    upNext: (o.upNext ?? []).slice(0, UP_NEXT_TOP),
   };
 }
 
@@ -144,6 +152,7 @@ function sections(s: StartHere, now: Date, stream?: string): Section[] {
     { title: 'This week', rows: stream ? [] : week, more: 'journal.ts week show' },
     { title: stream ? `Today's priorities for ${stream}` : 'Priorities today, in order', rows: stream ? pr.filter((l) => l.toLowerCase().includes(`[${stream.toLowerCase()}]`)) : pr, more: 'journal.ts priorities show' },
     { title: `Needs Jack (${total}${!stream && counts ? `: ${counts}` : ''})`, rows: needs.map((n) => `- \`${n.id}\`${tag(n.stream)} ${one(n.text, 130)}${n.ageDays === null ? '' : ` · ${n.ageDays}d`} · ${n.stakes || 'no decision fields'}`), more: 'journal.ts status', cap: stream ? 10 : NEEDS_TOP },
+    { title: 'Up next', rows: stream ? [] : (s.upNext ?? []).map((u, i) => `${i + 1}. \`${u.id}\`${u.key ? ` (${u.key})` : ''} [${u.project}] ${one(u.title, 90)} · ${u.score} · ${one(u.why, 80)}`), more: 'journal.ts next', cap: UP_NEXT_TOP },
     { title: 'Commitments and conditions', rows: [...s.conditions, ...s.standing].map((l) => `- ${one(l, 200)}`), more: 'journal.ts standing list', cap: 6 },
     { title: `In flight (${flight.length}${queued.length ? `, queued ${queued.map(([k, n]) => `${k} ${n}`).join(', ')}` : ''})`, rows: flight.map((f) => `- \`${f.id}\`${tag(f.stream)} ${one(f.text, 100)}${f.model ? ` · ${f.model}` : ''}${ago(f.since, now)}`), more: 'journal.ts status', cap: 10 },
     { title: 'Blocked', rows: mine(s.blocked).map((b) => `- \`${b.id}\`${tag(b.stream)} ${one(b.text, 100)}${b.gate ? ` · gate: ${one(b.gate, 60)}` : ''}`), more: 'journal.ts triage', cap: 4 },

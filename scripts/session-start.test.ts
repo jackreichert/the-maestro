@@ -18,6 +18,9 @@ const NOW = Date.parse('2026-10-06T15:00:00Z');
 const HOUR = 3600_000;
 const watch = (id: string, type: string, expires = NOW + HOUR, target = '/s'): Watch => ({ op: 'add', id, type, target, done_when: '', report: '', created: '', expires: new Date(expires).toISOString(), notify: false, notify_overnight: false, interval: null });
 
+/** The report line that starts with `prefix`; the per-watch lines come first, so later lines are found by what they say. */
+const lineOf = (r: { lines: string[] }, prefix: string): string => r.lines.find((l) => l.startsWith(prefix)) ?? '';
+
 /** Fake world: records adds and removes; `watches` is what the registry holds. */
 function world(over: Partial<StartDeps> & { held?: Watch[] } = {}) {
   const added: string[] = [];
@@ -34,26 +37,26 @@ function world(over: Partial<StartDeps> & { held?: Watch[] } = {}) {
   return { deps, added, removed };
 }
 
-test('a fresh session registers both watches, reports the page age and prints the loop command', () => {
+test('a fresh session registers every needed watch, reports the page age and prints the loop command', () => {
   const w = world();
   const r = sessionStart('/s', w.deps);
-  assert.deepEqual(w.added, ['status-watch:status-watch', 'status-refresh:status-refresh', 'retro-due:retro-due']);
+  assert.deepEqual(w.added, ['status-watch:status-watch', 'status-refresh:status-refresh', 'retro-due:retro-due', 'whats-next:whats-next']);
   assert.equal(r.failed, false);
-  assert.match(r.lines[3], /Status page: updated 4 min ago \(2:56 PM UTC\)$/);
-  assert.match(r.lines[4], /NOT RUNNING.*run_in_background: node loop run$/);
+  assert.match(lineOf(r, 'Status page'), /Status page: updated 4 min ago \(2:56 PM UTC\)$/);
+  assert.match(lineOf(r, 'Event loop'), /NOT RUNNING.*run_in_background: node loop run$/);
 });
 
 test('live watches are left alone, whatever their id, and a loop holding the lock is reported', () => {
-  const w = world({ held: [watch('mine', 'status-watch'), watch('other', 'status-refresh'), watch('third', 'retro-due')], lockHolder: () => 4242 });
+  const w = world({ held: [watch('mine', 'status-watch'), watch('other', 'status-refresh'), watch('next', 'whats-next'), watch('third', 'retro-due')], lockHolder: () => 4242 });
   const r = sessionStart('/s', w.deps);
   assert.deepEqual(w.added, []);
   assert.deepEqual(w.removed, []);
   assert.match(r.lines[0], /already registered \(mine/);
-  assert.match(r.lines[4], /running \(pid 4242\).*supervisor.*node loop digest-wait$/);
+  assert.match(lineOf(r, 'Event loop'), /running \(pid 4242\).*supervisor.*node loop digest-wait$/);
 });
 
 test('an expired watch the loop has not retired yet is removed and registered again', () => {
-  const w = world({ held: [watch('status-watch', 'status-watch', NOW - 1), watch('status-refresh', 'status-refresh'), watch('retro-due', 'retro-due')] });
+  const w = world({ held: [watch('status-watch', 'status-watch', NOW - 1), watch('status-refresh', 'status-refresh'), watch('whats-next', 'whats-next'), watch('retro-due', 'retro-due')] });
   sessionStart('/s', w.deps);
   assert.deepEqual(w.removed, ['status-watch']);
   assert.deepEqual(w.added, ['status-watch:status-watch']);
@@ -69,14 +72,14 @@ test('a refused registration is reported and fails the run, and the other watch 
 
 test('a page older than 15 minutes is flagged stale; a missing page says how to make one', () => {
   const old = sessionStart('/s', world({ pageWrittenAt: () => NOW - STALE_MS - 60_000 }).deps);
-  assert.match(old.lines[3], /updated 16 min ago.*STALE/);
+  assert.match(lineOf(old, 'Status page'), /updated 16 min ago.*STALE/);
   const none = sessionStart('/s', world({ pageWrittenAt: () => null }).deps);
-  assert.match(none.lines[3], /none yet.*journal\.ts podium/);
+  assert.match(lineOf(none, 'Status page'), /none yet.*journal\.ts podium/);
 });
 
 test('a concurrent start that registered the watch first counts as success', () => {
   let reads = 0;
-  const w = world({ watches: () => (reads++ < 1 ? [] : [watch('status-watch', 'status-watch'), watch('status-refresh', 'status-refresh'), watch('retro-due', 'retro-due')]), addWatch: () => ({ ok: false, message: 'already runs' }) });
+  const w = world({ watches: () => (reads++ < 1 ? [] : [watch('status-watch', 'status-watch'), watch('status-refresh', 'status-refresh'), watch('whats-next', 'whats-next'), watch('retro-due', 'retro-due')]), addWatch: () => ({ ok: false, message: 'already runs' }) });
   const r = sessionStart('/s', w.deps);
   assert.equal(r.failed, false);
   assert.match(r.lines[0], /already registered/);
@@ -107,6 +110,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stdout, /status-watch: registered/);
   assert.match(first.stdout, /status-refresh: registered/);
+  assert.match(first.stdout, /whats-next: registered/);
   assert.match(first.stdout, /retro-due: registered/);
   assert.match(first.stdout, /STALE/);
   assert.match(first.stdout, /NOT RUNNING/);
@@ -114,6 +118,7 @@ test('end to end: registers through event-loop.ts add, then a second run changes
   assert.equal(second.status, 0, second.stderr);
   assert.match(second.stdout, /status-watch: already registered/);
   assert.match(second.stdout, /status-refresh: already registered/);
+  assert.match(second.stdout, /whats-next: already registered/);
   assert.match(second.stdout, /retro-due: already registered/);
   writeFileSync(join(events, 'loop.lock'), String(process.pid));
   assert.match(run().stdout, new RegExp(`running \\(pid ${process.pid}\\)`));
@@ -128,9 +133,11 @@ test('a status directory that does not exist fails the registration with the typ
 
 test('the loop health verdict prints just before the event loop line, without footer markup, and nothing when it is empty', () => {
   const said = sessionStart('/s', world({ loopHealth: () => '**Loop:** STALLED 20 min (no heartbeat since 1:40 PM EDT)' }).deps).lines;
-  assert.equal(said[4], 'Loop: STALLED 20 min (no heartbeat since 1:40 PM EDT)');
-  assert.match(said[5], /^Event loop:/);
-  assert.equal(sessionStart('/s', world({ loopHealth: () => '' }).deps).lines.length, 5);
+  const at = said.indexOf('Loop: STALLED 20 min (no heartbeat since 1:40 PM EDT)');
+  assert.ok(at > 0, 'the verdict is printed');
+  assert.match(said[at + 1]!, /^Event loop:/);
+  const quiet = sessionStart('/s', world({ loopHealth: () => '' }).deps).lines;
+  assert.equal(quiet.length, said.length - 1, 'an empty verdict adds no line');
 });
 
 test('session start says which watches it marked standing, and nothing when none needed it', () => {
