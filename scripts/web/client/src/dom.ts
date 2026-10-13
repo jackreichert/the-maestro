@@ -3,6 +3,7 @@
 import { linkAttrs } from './link-policy.ts';
 import { formatFragment, streamTabId } from './tabs.ts';
 import { memoByKey } from './memo.ts';
+import { seriesClass } from './series.ts';
 
 type Attrs = Record<string, string | boolean | undefined>;
 type Child = Node | string | null | undefined | false;
@@ -59,7 +60,7 @@ export function refLink(ref: { label: string; url?: string }): Node {
 
 /** A link to a stream's tab, for rows and cards shown outside that tab. The href is built here, never taken from data. */
 export function streamTag(stream: string): HTMLElement {
-  return h('a', { class: 'tag', href: formatFragment(streamTabId(stream)), 'aria-label': `Open the ${stream} tab` }, stream);
+  return h('a', { class: `tag tag-${seriesClass(stream)}`, href: formatFragment(streamTabId(stream)), 'aria-label': `Open the ${stream} tab` }, stream);
 }
 
 /** Visually hidden but readable by assistive tech. */
@@ -105,14 +106,12 @@ export const UI_CSS = `
   @media (max-width: 480px) { .board { row-gap: var(--space-6); } .col { gap: var(--space-5); } }
   section { container-type: inline-size; min-width: 0; }
 
-  .head { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); }
+  .head { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-3); padding-bottom: var(--space-3); border-bottom: var(--hairline-strong); }
   .head h2 { margin: 0; font-size: var(--text-lg); line-height: var(--leading-lg); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-tight); }
-  .head .count { margin-left: var(--space-2); font-size: var(--text-sm); font-weight: var(--weight-regular); letter-spacing: 0; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  .quiet .head h2 { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); letter-spacing: 0.02em; }
+  .head .count { margin-left: var(--space-1); font-family: var(--font-display); font-size: 1.5rem; line-height: 1; font-weight: var(--weight-regular); letter-spacing: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .head + .asks, .head + ul.rows, .head + .empty, .section-hint + .asks { border-top: 0; }
   .glyph { display: inline-block; width: 1.1em; text-align: center; }
-  .head .glyph { color: var(--text-muted); }
-  /* Wide screens hang the status glyph in the margin, so every heading's text starts on the same edge as its rows. */
-  @media (min-width: 1100px) { .head .glyph { margin-left: calc(-1.1em - var(--space-2)); } }
+  .head .glyph { display: none; }
   .tone-critical .head .glyph { color: var(--critical); }
   .tone-success .head .glyph { color: var(--success); }
   .tone-accent .head .glyph { color: var(--accent); }
@@ -157,12 +156,14 @@ export const UI_CSS = `
     font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-xs); color: var(--text-secondary);
     background: var(--surface-2); border-radius: var(--radius-sm); padding: 1px 6px; white-space: nowrap;
   }
-  a.tag, span.tag {
-    font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap;
-    text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: var(--border-strong);
-  }
-  a.tag::before, span.tag::before { content: '#'; color: var(--text-muted); margin-right: 1px; }
-  a.tag:hover { color: var(--accent); text-decoration-style: solid; text-decoration-color: currentColor; }
+  /* A stream tag: its colour square, then the name. The square is decoration; the name carries the meaning. */
+  a.tag, span.tag { font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text-primary); white-space: nowrap; text-decoration: none; }
+  a.tag::before, span.tag::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; background: var(--text-muted); }
+  .tag.tag-s1::before { background: var(--series-1); } .tag.tag-s2::before { background: var(--series-2); } .tag.tag-s3::before { background: var(--series-3); } .tag.tag-s4::before { background: var(--series-4); }
+  .tag.tag-s5::before { background: var(--series-5); } .tag.tag-s6::before { background: var(--series-6); } .tag.tag-s7::before { background: var(--series-7); } .tag.tag-s8::before { background: var(--series-8); }
+  .tag.tag-so::before { background: var(--series-other); }
+  a.tag:hover { color: var(--accent); text-decoration: underline; }
+  @media (forced-colors: active) { a.tag::before, span.tag::before { forced-color-adjust: none; outline: 1px solid CanvasText; } }
 
   .chip {
     display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--radius-pill);

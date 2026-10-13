@@ -30,6 +30,8 @@ export interface Pr {
   repo: string; short: string; owner: string; unresolved: number; ci: string; stream: string;
   /** When the PR was opened; absent when the PR cache predates the field. */
   createdAt?: string;
+  /** Who approved and who requested changes, by each reviewer's latest review; absent when the PR cache predates the review history. */
+  approvers?: string[]; changesBy?: string[];
 }
 /** The numbers `journal.ts status --footer` prints, as `status --json` carries them: one row per stream, and the session. */
 export interface FooterData { ledger: FooterRow[]; session: SessionStatus }

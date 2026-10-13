@@ -121,3 +121,14 @@ test('tempoWord tags Tacet as Latin and the rest as Italian, and the rule names 
   assert.ok(at.every((i, k) => i >= 0 && (k === 0 || i > at[k - 1])), 'each word appears, in order');
   assert.ok(!/[\u2014]|--/.test(TEMPO_RULE), 'no em dashes in copy');
 });
+
+test('byPriority: asks follow today\'s priorities, linked by ticket label first and stream second, unlinked last, order kept inside a group', async () => {
+  const { byPriority, priorityRank } = await import('../src/glance.ts');
+  const mk = (id: string, stream: string, tracker: string[] = []) => ({ id, stream, links: { tracker: tracker.map((label) => ({ label })), prs: [] } });
+  const priorities = [{ text: 'Ship fake-ticket-7 first [ops]' }, { text: 'Clear the backlog', stream: 'acme-widgets' }];
+  const asks = [mk('a1', 'other'), mk('a2', 'acme-widgets'), mk('a3', 'zzz', ['fake-ticket-7']), mk('a4', 'ops'), mk('a5', 'acme-widgets'), mk('a6', 'other')];
+  assert.deepEqual(byPriority(asks, priorities).map((a) => a.id), ['a3', 'a4', 'a2', 'a5', 'a1', 'a6']);
+  assert.equal(priorityRank(mk('x', 'none'), priorities), Number.POSITIVE_INFINITY);
+  assert.equal(priorityRank(mk('x', 'none', ['fake-ticket-70']), priorities), Number.POSITIVE_INFINITY, 'a longer id is not a mention of a shorter one');
+  assert.deepEqual(byPriority(asks, []).map((a) => a.id), asks.map((a) => a.id), 'no priorities leaves the order alone');
+});
