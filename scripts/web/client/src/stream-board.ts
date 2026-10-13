@@ -4,7 +4,7 @@ import './md-fragment.ts';
 import { fragmentFor } from './contract.ts';
 import { keepAcross } from './keep-view.ts';
 import { prChips } from './pr-chips.ts';
-import { ago, clockTime, oldestFirst } from './glance.ts';
+import { ago, byPriority, clockTime, oldestFirst, todaysPriorities } from './glance.ts';
 import { gateView } from './gate.ts';
 import { HOME_CSS, epicStrip, leftBody, railBody, unknownsFold } from './home-view.ts';
 import { clearAgainstHome, clearLine, leftGroups, leftHeading } from './home-text.ts';
@@ -92,13 +92,13 @@ export function itemRows<T extends WorkItem>(xs: T[], ctx: RowContext): HTMLElem
 }
 
 /**
- * Asks as one row each, oldest first; `showStream` tags each row with its stream (the overview mixes streams). With a
+ * Asks as one row each, oldest first unless `order` says otherwise; `showStream` tags each row with its stream (the overview mixes streams). With a
  * `cap`, only the oldest `cap` rows show until "Show all N" reveals the rest, so the sections below stay in view.
  */
-export function askCards(asks: AskCard[], live: boolean, showStream: boolean, cap = Number.POSITIVE_INFINITY): AskList | null {
+export function askCards(asks: AskCard[], live: boolean, showStream: boolean, cap = Number.POSITIVE_INFINITY, order: (xs: AskCard[]) => AskCard[] = oldestFirst): AskList | null {
   if (asks.length === 0) return null;
   const id = `asks${++sectionSeq}`;
-  const cards = oldestFirst(asks).map((a, i) => {
+  const cards = order(asks).map((a, i) => {
     const card = h('ask-card', { role: 'listitem', hidden: i >= cap });
     card.showStream = showStream;
     card.locked = !live;
@@ -244,18 +244,18 @@ export class StreamBoard extends HTMLElement {
     this.#filled = false;
     this.#root.replaceChildren(slots.stand, h('div', { class: 'board' },
       h('div', { class: 'col' },
-        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false)?.list ?? null),
-        shown(blocked.length, () => section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: '' }, itemRows(blocked, ctx))),
+        section({ title: 'Needs you', n: asks.length, glyph: '●', tone: 'accent', empty: 'Nothing in this stream needs you right now.', rest: RESTS.asks, hint: askHint(this.#live) }, askCards(asks, this.#live, false, Number.POSITIVE_INFINITY, (xs) => byPriority(oldestFirst(xs), todaysPriorities(st)))?.list ?? null),
         slots.left,
         shown(prs.length, () => section({ title: 'Pull requests', n: prs.length, tone: 'neutral', empty: '' }, prList(prs))),
         shown(selfPrs.length, () => section({ title: 'Maestro PRs (self-review)', n: selfPrs.length, tone: 'neutral', empty: '' }, prList(selfPrs))),
         slots.clear),
       h('div', { class: 'col' },
-        slots.rail,
-        shown(working.length, () => section({ title: 'In flight', n: working.length, tone: 'neutral', empty: '', quiet: true }, itemRows(working, ctx))),
-        shown(stale.length, () => section({ title: 'Stale', n: stale.length, tone: 'neutral', empty: '', quiet: true }, itemRows(stale, ctx))),
+        section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(blocked, ctx)),
+        section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'No agent is running here.', rest: RESTS.working, quiet: true }, itemRows(working, ctx)),
         shown(queued.length, () => section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: '', quiet: true }, itemRows(queued, ctx))),
         shown(done.length, () => section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: '', quiet: true }, itemRows(done, ctx))),
+        slots.rail,
+        shown(stale.length, () => section({ title: 'Stale', n: stale.length, tone: 'neutral', empty: '', quiet: true }, itemRows(stale, ctx))),
         shown(deferred.length, () => section({ title: 'Deferred', n: deferred.length, tone: 'neutral', empty: '', quiet: true }, itemRows(deferred, ctx))),
         md ? section({ title: 'Notes', n: 0, tone: 'neutral', empty: '', quiet: true }, md) : null)),
     slots.below);

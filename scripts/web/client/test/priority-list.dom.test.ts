@@ -25,19 +25,19 @@ test('the list is titled, counts against its cap, and shows each stream as a tag
 test('the add form stays folded until "+ Add a priority" is pressed, and is disabled at the cap', async () => {
   const { root, cleanup } = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data() });
   assert.equal(root.querySelector('form.add'), null);
-  const open = root.getElementById('pl-open') as HTMLButtonElement;
+  const open = root.querySelector('#pl-open') as HTMLButtonElement;
   assert.equal(open.textContent, '+ Add a priority');
   open.click();
   assert.ok(root.querySelector('form.add'), 'pressing it opens the form');
   cleanup();
   const full = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data({ max: 2 }) });
-  assert.equal((full.root.getElementById('pl-open') as HTMLButtonElement).disabled, true);
+  assert.equal((full.root.querySelector('#pl-open') as HTMLButtonElement).disabled, true);
   full.cleanup();
 });
 
 test('a page that may not edit offers no add control and no move or delete buttons', async () => {
   const { root, cleanup } = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data({ editable: false }) });
-  assert.equal(root.getElementById('pl-open'), null);
+  assert.equal(root.querySelector('#pl-open'), null);
   assert.equal(root.querySelectorAll('.tools').length, 0);
   cleanup();
 });
