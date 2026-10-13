@@ -15,7 +15,7 @@
  *
  * `node` runs `node --test <glob>` in the same scrubbed environment as suite-run.ts (temporary home, event, status and suite dirs, no
  * notify command). `--cmd` replaces the runner's command; `{out}` is replaced by the report path.
- * Exit 0 green, 1 a test, the type check or a gate failed, 2 the runner itself failed (no report, a crash, a timeout, bad usage).
+ * Exit 0 green, 1 a test, the type check or a gate failed, 2 the runner itself failed (no report, no test ran, a crash, a timeout, bad usage).
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
@@ -186,6 +186,9 @@ export async function run(cli: Cli): Promise<{ out: Output; baseline: Baseline |
     else if ('error' in parsed) out.error = `${parsed.error}; runner exit ${r.exit}; last output: ${tail(r.log, 5).join(' | ')}`;
     if ('error' in parsed || r.timedOut) return { out, baseline };
     out.summary = summarize(parsed.records, baseline, cli.options);
+    // Every test skipped or todo (a skip guard on a tool the scrubbed env lacks, a stray .skip) means nothing ran: not a green suite.
+    const { pass, fail, skip, todo } = out.summary.counts;
+    if (pass + fail === 0) { out.error = `no test ran (${skip} skipped, ${todo} todo); runner exit ${r.exit}`; return { out, baseline }; }
     // A non-zero exit with no failing test is the runner breaking (a crash, a bad flag), not the suite failing.
     if (r.exit !== 0 && out.summary.counts.fail === 0) { out.error = `the runner exited ${r.exit} with no failing test; last output: ${tail(r.log, 5).join(' | ')}`; return { out, baseline }; }
     out.ok = out.summary.counts.fail === 0 && r.exit === 0 && out.steps.every((s) => s.ok);

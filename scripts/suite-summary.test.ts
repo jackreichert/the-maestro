@@ -63,6 +63,15 @@ test('a runner that produces no report, or matches no tests, exits 2 rather than
   assert.match(none.stdout, /RUNNER ERROR/);
 });
 
+test('a run where every test is skipped exits 2 and writes no baseline, since nothing ran', () => {
+  const f = fixture("import { test } from 'node:test';\ntest('needs a tool', { skip: 'tool missing' }, () => {});\ntest('later', { todo: true });\n");
+  const r = summary(f, '--write-baseline');
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stdout, /RUNNER ERROR/);
+  assert.match(r.stdout, /no test ran \(1 skipped, 1 todo\)/);
+  assert.equal(readBaseline(baselinePath(f.repo, 'node', undefined, { MAESTRO_SUITE_DIR: f.suites })), null);
+});
+
 test('a runner binary that is not installed exits 2, not a crash', () => {
   const f = fixture(GREEN);
   const { NODE_TEST_CONTEXT: _c, ...env } = process.env;
