@@ -99,7 +99,7 @@ export function realQuietDeps(): QuietDeps {
       } catch { return undefined; }
     },
     note: (text) => {
-      const r = spawnSync(process.execPath, [JOURNAL, 'note', text, '--model', 'unrecorded', '--used', 'tool:event-loop'], { encoding: 'utf8', timeout: 30_000 });
+      const r = spawnSync(process.execPath, [JOURNAL, 'note', text, '--model', 'unrecorded', '--used', 'loop:continuity'], { encoding: 'utf8', timeout: 30_000 });
       if (r.status !== 0) throw new Error(`journal note exited ${r.status}`);
     },
   };
