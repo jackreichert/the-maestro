@@ -73,3 +73,14 @@ test('fold: a closed item is neither queued nor in flight', () => {
     assert.equal(isQueued(item), false);
     assert.equal(isInFlight(item), false);
 });
+
+test('fold: a ref row attaches its refs and branch to the item it names, and is not an item itself', () => {
+    const rows = [
+        { id: 'aaaa', kind: 'wip', refs: ['gh:pr:acme/widget#1'], text: 'a' },
+        { id: 'rr01', kind: 'ref', attaches: 'aaaa', refs: ['gh:pr:acme/widget#2', 'gh:pr:acme/widget#1'], branch: 'feat/x', text: 'ref' },
+    ];
+    const { items } = fold(rows, null);
+    assert.deepEqual(items.map((i) => i.id), ['aaaa']);
+    assert.deepEqual(items[0]?.refs, ['gh:pr:acme/widget#1', 'gh:pr:acme/widget#2']);
+    assert.equal(items[0]?.branch, 'feat/x');
+});

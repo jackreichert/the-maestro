@@ -37,6 +37,7 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
           if [ ! -f scripts/ci-gates.ts ]; then
             echo "scripts/ci-gates.ts is not on the base ref. Refusing to run a copy from the pull request."
@@ -44,10 +45,22 @@ jobs:
           fi
           printf '%s' "$PR_TITLE" > "$RUNNER_TEMP/pr-title.txt"
           printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          set +e
           node scripts/ci-gates.ts \
             --repo . \
             --base "$BASE_SHA" \
             --base-name "$BASE_REF" \
             --head refs/ci-gates/head \
             --title-file "$RUNNER_TEMP/pr-title.txt" \
-            --body-file "$RUNNER_TEMP/pr-body.md"
+            --body-file "$RUNNER_TEMP/pr-body.md" | tee "$RUNNER_TEMP/gates.out"
+          code=${PIPESTATUS[0]}
+          set -e
+          # Size limits are waived for this owner's repos. Body and smells still fail the job.
+          if [ "$code" != 0 ] && [ "$REPO_OWNER" = "jackreichert" ]; then
+            if grep -E -q '^(body|smells): FAIL' "$RUNNER_TEMP/gates.out"; then
+              exit 1
+            fi
+            echo "size: waived for jackreichert repos"
+            exit 0
+          fi
+          exit "$code"

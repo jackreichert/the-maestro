@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { bodyProblems, type BodyRules } from './pr-body.ts';
 import { classifySizeJson } from './pr-open.ts';
+import { itemFor, itemIdFromBranch, parsePrUrl } from './lib/row-prs.ts';
 import { recordSmells, smellsLine } from './pr-smells.ts';
 
 const SCRIPT = new URL('./pr-open.ts', import.meta.url).pathname;
@@ -549,4 +550,73 @@ test('gate env vars do not lift pr-open against a gating repo', () => {
     const named = gateFile('pr_body_voice_names: Sam Fictional');
     const held = open(gated, ['--dry-run', '--head', 'feature', '--body-file', bodyFile(gated.repo, voiceBody)], { ...named, MAESTRO_PR_BODY_VOICE_NAMES: '' });
     assert.equal(held.status, 1, held.stderr);
+});
+
+/** A fake gh that prints a PR url, like `gh pr create`, and a ledger with one open row `ab12`. */
+function linkFixture(rows: object[] = [{ id: 'ab12', ts: '2026-10-01T10:00:00Z', date: '2026-10-01', kind: 'wip', text: 'build the thing' }]) {
+    const f = fixture({ 'src/a.py': lines(10) });
+    const gh = writeStub(join(f.repo, '..', `url-gh-${Math.random().toString(36).slice(2)}.sh`), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${f.log}'\necho https://github.com/acme/widget/pull/42\n`);
+    const vault = mkdtempSync(join(tmpdir(), 'pr-open-vault-'));
+    mkdirSync(join(vault, 'Projects', 'demo', 'Journal'), { recursive: true });
+    const ledger = join(vault, 'Projects', 'demo', 'Journal', 'ledger.jsonl');
+    writeFileSync(ledger, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const ledgerRows = (): { kind?: string; attaches?: string; refs?: string[]; branch?: string }[] => readFileSync(ledger, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    return { ...f, gh, ledgerRows, flags: ['--vault', vault, '--project', 'demo'] };
+}
+
+test('ledger link: --item records the PR and the branch on the row, once, and the PR still opens', () => {
+    const f = linkFixture();
+    const r = open(f, [...f.flags, '--item', 'ab12', '--head', 'feature']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /linked acme\/widget#42 to ledger row ab12/);
+    const link = f.ledgerRows().filter((x) => x.kind === 'ref');
+    assert.equal(link.length, 1);
+    assert.deepEqual([link[0]?.attaches, link[0]?.refs, link[0]?.branch], ['ab12', ['gh:pr:acme/widget#42'], 'feature']);
+    const again = open(f, [...f.flags, '--item', 'ab12', '--head', 'feature']);
+    assert.equal(again.status, 0, again.stderr);
+    assert.match(again.stdout, /already linked/);
+    assert.equal(f.ledgerRows().filter((x) => x.kind === 'ref').length, 1, 'linking twice writes one row');
+});
+
+test('ledger link: MAESTRO_ITEM and a ledger id in the branch name find the row; with neither nothing is written', () => {
+    const viaEnv = linkFixture();
+    assert.equal(open(viaEnv, viaEnv.flags, { MAESTRO_ITEM: 'ab12' }).status, 0);
+    assert.equal(viaEnv.ledgerRows().filter((x) => x.kind === 'ref').length, 1);
+
+    const viaBranch = linkFixture();
+    git(viaBranch.repo, 'branch', 'feat/MAESTRO-ab12-the-thing', 'feature');
+    const r = open(viaBranch, [...viaBranch.flags, '--head', 'feat/MAESTRO-ab12-the-thing']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(viaBranch.ledgerRows().find((x) => x.kind === 'ref')?.branch, 'feat/MAESTRO-ab12-the-thing');
+
+    const neither = linkFixture();
+    const n = open(neither, neither.flags);
+    assert.equal(n.status, 0, n.stderr);
+    assert.equal(neither.ledgerRows().some((x) => x.kind === 'ref'), false);
+});
+
+test('ledger link: a row that is closed or missing is a warning, never a failed PR', () => {
+    const closed = linkFixture([
+        { id: 'ab12', ts: '2026-10-01T10:00:00Z', date: '2026-10-01', kind: 'wip', text: 'x' },
+        { id: 'zz99', ts: '2026-10-02T10:00:00Z', date: '2026-10-02', kind: 'done', closes: 'ab12', text: 'x' },
+    ]);
+    const r = open(closed, [...closed.flags, '--item', 'ab12']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /not an open row/);
+    assert.equal(closed.ledgerRows().some((x) => x.kind === 'ref'), false);
+    const bad = open(linkFixture(), ['--item', 'not an id', '--vault', closed.flags[1] as string, '--project', 'demo']);
+    assert.equal(bad.status, 0, bad.stderr);
+    assert.match(bad.stderr, /not a well-formed id/);
+});
+
+test('row-prs: the id comes from --item, MAESTRO_ITEM or the branch, and a numeric ticket key is not an id', () => {
+    assert.equal(itemIdFromBranch('feat/MAESTRO-6tq3-close-rows'), '6tq3');
+    assert.equal(itemIdFromBranch('feat/MAESTRO-345-close-rows'), undefined);
+    assert.equal(itemIdFromBranch('main'), undefined);
+    assert.equal(itemFor('ab12', 'cd34', 'feat/MAESTRO-ef56-x'), 'ab12');
+    assert.equal(itemFor(undefined, 'cd34', 'feat/MAESTRO-ef56-x'), 'cd34');
+    assert.equal(itemFor('', '', 'feat/MAESTRO-ef56-x'), 'ef56');
+    assert.equal(itemFor('../etc', undefined, 'feat/MAESTRO-ef56-x'), undefined);
+    assert.deepEqual(parsePrUrl('created https://github.com/acme/widget/pull/42\n'), { repo: 'acme/widget', number: 42 });
+    assert.equal(parsePrUrl('https://example.com/acme/widget/pull/42'), undefined);
 });

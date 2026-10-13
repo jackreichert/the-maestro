@@ -32,11 +32,10 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .skip { position: fixed; inset-block-start: -100px; inset-inline-start: var(--space-3); z-index: 10; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-weight: var(--weight-semibold); text-decoration: none; }
   .skip:focus-visible { inset-block-start: var(--space-3); outline: 2px solid var(--focus); outline-offset: 2px; }
 
-  header { padding-block: var(--space-5) var(--space-4); }
-  .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
-  .brand { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
-  /* The wordmark is the one display-face word in the frame; it sits in the text line box, so the header keeps its height. */
-  h1 { margin: 0; font-family: var(--font-display); font-size: var(--text-xl); line-height: var(--leading-md); font-weight: var(--weight-regular); letter-spacing: var(--tracking-display); white-space: nowrap; }
+  header.topbar { position: sticky; top: 0; z-index: 20; background: var(--material-bar); -webkit-backdrop-filter: var(--material-blur); backdrop-filter: var(--material-blur); border-bottom: var(--hairline); }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { header.topbar { background: var(--surface-page); } }
+  header.topbar .bar { display: flex; align-items: center; gap: var(--space-5); min-height: 60px; }
+  h1.wordmark { margin: 0; display: inline-flex; align-items: center; gap: var(--space-2); flex: none; font-family: var(--font-display); font-size: 1.75rem; line-height: 1; font-weight: var(--weight-regular); letter-spacing: -0.01em; white-space: nowrap; }
   /* The baton wordmark: the stick is ink, and its tip takes the accent only while something needs you. */
   .baton { width: 20px; height: 20px; margin-right: 6px; vertical-align: -4px; color: var(--text-primary); overflow: visible; }
   .baton .stick { transform-box: view-box; transform-origin: 9.4px 22.6px; }
@@ -86,7 +85,7 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
 
   /* The headline count line is set in the display face: large numerals read first, words recede. One weight, so the
      count is marked by ink, not bold. A display size on the text line height keeps the header's measured height. */
-  .cue { margin: var(--space-1) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-5); padding: 0; list-style: none; font-family: var(--font-display); font-size: var(--text-3xl); line-height: var(--leading-2xl); letter-spacing: var(--tracking-display); }
+  .cue { margin: var(--space-4) 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-4); padding: 0; list-style: none; font-family: var(--font-display); font-size: clamp(2.25rem, 4.4vw, 3.75rem); line-height: 1.08; letter-spacing: -0.02em; color: var(--text-muted); }
   .cue li { display: inline-flex; align-items: baseline; gap: var(--space-2); white-space: nowrap; color: var(--text-secondary); }
   button.tile {
     font: inherit; letter-spacing: inherit; color: inherit; background: none; border: 0; cursor: pointer;
@@ -104,25 +103,48 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .cue .tone-success:not(.zero) .n { color: var(--success); }
   @media (max-width: 640px) { .cue { font-size: var(--text-2xl); line-height: var(--leading-xl); gap: var(--space-1) var(--space-4); } }
 
-  /* The sticky bar is a translucent material over the content scrolling beneath it; opaque where blur is unsupported. */
-  .tabbar { position: sticky; top: 0; z-index: 2; background: var(--material-bar); -webkit-backdrop-filter: var(--material-blur); backdrop-filter: var(--material-blur); border-bottom: var(--hairline); }
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .tabbar { background: var(--surface-page); } }
-  [role=tablist] { display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none; padding-top: var(--space-2); }
+  .tabbar { flex: 1; min-width: 0; background: none; border: 0; }
+  [role=tablist] { display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
   [role=tablist]::-webkit-scrollbar { display: none; }
   .more-end [role=tablist] { mask-image: linear-gradient(to right, black calc(100% - 56px), transparent); }
   .more-start [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px); }
   .more-start.more-end [role=tablist] { mask-image: linear-gradient(to right, transparent, black 56px, black calc(100% - 56px), transparent); }
   [role=tab] {
-    position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 40px;
-    padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: none; cursor: pointer;
-    font: inherit; font-size: var(--text-md); font-weight: var(--weight-medium); color: var(--text-secondary); white-space: nowrap;
+    position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 36px;
+    padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer;
+    font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-secondary); white-space: nowrap;
     transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
   }
   @media (hover: hover) { [role=tab]:hover { color: var(--text-primary); background: var(--surface-2); } }
-  [role=tab]:focus-visible { outline-offset: -2px; }
-  [role=tab][aria-selected=true] { color: var(--text-primary); font-weight: var(--weight-semibold); }
-  [role=tab][aria-selected=true]::after { content: ''; position: absolute; left: var(--space-3); right: var(--space-3); bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+  [role=tab]:focus-visible { outline-offset: 2px; }
+  [role=tab][aria-selected=true] { color: var(--text-primary); background: var(--surface-1); box-shadow: var(--shadow-1); }
+  .nav-sep { width: 1px; height: 20px; background: var(--border); margin: 0 var(--space-2); flex: none; }
+  .stream-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .s1 { background: var(--series-1); } .s2 { background: var(--series-2); } .s3 { background: var(--series-3); } .s4 { background: var(--series-4); }
+  .s5 { background: var(--series-5); } .s6 { background: var(--series-6); } .s7 { background: var(--series-7); } .s8 { background: var(--series-8); }
+  .so { background: var(--series-other); }
+  .count { font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  [role=tab][aria-selected=true] .count { color: var(--text-secondary); }
   .badge { min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--text-xs); line-height: 20px; font-weight: var(--weight-semibold); text-align: center; font-variant-numeric: tabular-nums; }
+  .cue-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); gap: var(--space-6) var(--space-7); align-items: start; padding-bottom: var(--space-6); border-bottom: var(--hairline); margin-bottom: var(--space-7); }
+  .lede { margin: var(--space-4) 0 0; max-width: 62ch; font-size: var(--text-lg); line-height: var(--leading-lg); color: var(--text-secondary); }
+  .lede strong { color: var(--text-primary); font-weight: var(--weight-semibold); }
+  .stream-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-3); }
+  .stream-title h2 { margin: 0; display: inline-flex; align-items: center; gap: var(--space-3); font-size: var(--text-xl); font-weight: var(--weight-semibold); letter-spacing: -0.012em; }
+  .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
+  .score { margin: 0 0 var(--space-7); }
+  .score-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); padding-bottom: var(--space-3); border-bottom: var(--hairline); margin-bottom: var(--space-2); }
+  .score-head h2 { margin: 0; font-size: var(--text-lg); font-weight: var(--weight-semibold); }
+  .score-head span { font-size: var(--text-sm); color: var(--text-muted); }
+  .score-row { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: var(--space-4); align-items: center; min-height: 52px; border-bottom: var(--hairline); }
+  .score-name { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: var(--weight-semibold); }
+  .score-name i { width: 8px; height: 8px; border-radius: 2px; }
+  .score-staff { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); height: 36px; }
+  .score-cell { position: relative; }
+  .score-note { position: absolute; left: 50%; width: 9px; height: 7px; border-radius: 50%; transform: translateX(-50%) rotate(-20deg); }
+  .score-note.p0 { bottom: 2px; } .score-note.p1 { bottom: 8px; } .score-note.p2 { bottom: 14px; } .score-note.p3 { bottom: 22px; } .score-note.p4 { bottom: 28px; }
+  .score-rest { position: absolute; left: 50%; top: 12px; width: 8px; height: 3px; background: var(--text-muted); transform: translateX(-50%); opacity: 0.55; }
+  @media (max-width: 900px) { .cue-grid { grid-template-columns: minmax(0, 1fr); } header.topbar .bar { gap: var(--space-3); } }
 
   @media (forced-colors: active) {
     [role=tab][aria-selected=true]::after { forced-color-adjust: none; background: Highlight; height: 4px; bottom: 0; }
@@ -414,16 +436,20 @@ export class PodiumApp extends HTMLElement {
     if (!st) return;
     const ids = this.#ids();
     const count = <T extends { stream: string }>(xs: T[], id: string): number => (isAllStreams(id) ? xs.length : xs.filter((x) => x.stream === tabStream(id)).length);
-    const tabs = ids.map((id) => {
+    const tabs = ids.flatMap((id, i) => {
       const on = id === this.#active;
-      const n = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.asks, id);   // Home and Open PRs have no ask badge
-      const blocked = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.blocked, id);
+      const stream = tabStream(id);
+      const n = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.asks, id);
+      const prs = id === OPEN_PRS ? st.prs.length : 0;
+      const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : stream ?? id;
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
-      }, id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : tabStream(id),
-      n > 0 ? h('span', { class: 'badge' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null,
-      blocked > 0 ? h('span', { class: 'blk' }, h('span', { 'aria-hidden': 'true' }, '⊘'), h('span', { class: 'vh' }, ` ${blocked} blocked`)) : null);
+      },
+      stream ? h('span', { class: `stream-dot ${seriesClass(stream)}`, 'aria-hidden': 'true' }) : null,
+      label,
+      prs > 0 ? h('span', { class: 'count' }, String(prs)) : null,
+      n > 0 ? h('span', { class: 'count' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null);
       tab.addEventListener('click', () => this.#select(id, true));
       tab.addEventListener('keydown', (e) => {
         if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;   // leave browser shortcuts such as Alt+Left alone
@@ -432,14 +458,17 @@ export class PodiumApp extends HTMLElement {
         e.preventDefault();
         this.#select(next, true);
       });
-      return tab;
+      const sep = i === 1 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
+      return [tab, sep];
     });
-    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap' },
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#board(st, tabStream(this.#active) ?? ''), fine());
-    const tablist = h('div', { role: 'tablist', 'aria-label': 'Streams', class: 'wrap' }, ...tabs);
-    // A nav landmark, so the tab bar is not stray content between the header and main (axe: region).
-    const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Stream tabs' }, tablist);
-    this.#root.replaceChildren(this.#skipLink(panel), this.#header(st), tabbar, h('main', {}, panel));
+    const stream = tabStream(this.#active);
+    const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap page' },
+      this.#active === OPEN_PRS ? null : this.#pageHead(st, stream),
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#board(st, stream ?? ''),
+      fine());
+    const tablist = h('div', { role: 'tablist', 'aria-label': 'Podium' }, ...tabs);
+    const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Podium' }, tablist);
+    this.#root.replaceChildren(this.#skipLink(panel), this.#topbar(st, tabbar), h('main', {}, panel));
     this.#watchTabOverflow(tabbar, tablist);
     showCue(this.#waiting(st));
   }
@@ -484,29 +513,53 @@ export class PodiumApp extends HTMLElement {
 
   get #live(): boolean { return this.#sources.state === 'server' && this.#sources.charts === 'server'; }
 
-  #header(st: PodiumState): HTMLElement {
+  #topbar(st: PodiumState, nav: HTMLElement): HTMLElement {
     const note = this.#live && this.#dropped === 0 ? '' : describeSources(this.#sources.state, this.#sources.charts, this.#dropped, st.generatedAt);
-    // The cue line follows the tab, so its counts always match the panel below it; the scope line says which.
-    const stream = tabStream(this.#active);
+    return h('header', { class: 'topbar' },
+      h('div', { class: 'wrap bar' },
+        h('h1', { class: 'wordmark' }, baton(this.#waiting(st) > 0), 'Podium'),
+        nav,
+        this.#freshness(st),
+        this.#link()),
+      note ? h('p', { class: 'source wrap' }, note) : null);
+  }
+
+  /** The cue line for Home and a stream tab. Open PRs draws its own. Counts follow the open tab. */
+  #pageHead(st: PodiumState, stream: string | null): HTMLElement {
     const scope = stream === null ? 'All streams' : stream;
     const buckets = scoped(st, stream);
     const { tempo, rule } = this.#tempo({ asks: buckets.asks.length, blocked: buckets.blocked.length, working: buckets.working.length });
     const parts = cueParts(buckets);
     const cue = parts.map((p) => {
-      // Each count is a toggle: pressing it shows only that bucket, pressing it again (or "Show everything") shows all.
       const tile = h('button', { type: 'button', class: 'tile', id: tileId(p.key), 'data-key': p.key, 'aria-pressed': String(p.key === this.#filter) },
         h('span', { class: 'n' }, String(p.n)), ' ', p.label);
       tile.addEventListener('click', () => this.#setFilter(p.key === this.#filter ? null : p.key, p.key));
       return h('li', { class: `tone-${p.tone}${p.n === 0 ? ' zero' : ''}` }, tile);
     });
-    return h('header', { class: 'wrap' },
-      h('div', { class: 'top' },
-        h('div', { class: 'brand' }, h('h1', {}, baton(this.#waiting(st) > 0), 'Podium'), h('span', { class: 'date' }, h('span', { class: 'long' }, longDate(st.today)), h('span', { class: 'short' }, shortDate(st.today)))),
-        h('div', { class: 'brand' }, this.#freshness(st), this.#link())),
-      note ? h('p', { class: 'source' }, note) : null,
-      h('p', { class: 'scope' }, h('span', { id: 'scope' }, scope), h('span', { 'aria-hidden': 'true' }, ' · '), tempo),
+    const oldest = Math.max(0, ...buckets.asks.map((a) => a.ageDays));
+    const stale = buckets.asks.filter((a) => a.ageDays > 3).length;
+    const oneWay = buckets.asks.filter((a) => a.door === 'one-way').length;
+    const queued = st.queued.filter((q) => stream === null || q.stream === stream).length;
+    const lead = h('div', {},
+      stream ? h('div', { class: 'stream-title' }, h('h2', {}, h('span', { class: `mark ${seriesClass(stream)}`, 'aria-hidden': 'true' }), stream)) : null,
+      h('p', { class: 'scope' }, h('span', { id: 'scope' }, scope), h('span', { 'aria-hidden': 'true' }, ' · '), tempo, h('span', { class: 'date' }, ` · ${longDate(st.today) || shortDate(st.today)}`)),
       h('ul', { class: 'cue', role: 'list', 'aria-labelledby': 'scope' }, ...cue),
-      rule);
+      rule,
+      buckets.asks.length ? h('p', { class: 'lede' }, 'The oldest ask has waited ', h('strong', {}, `${oldest} ${oldest === 1 ? 'day' : 'days'}`), stale ? `, and ${stale} ${stale === 1 ? 'is' : 'are'} past the 3 day mark` : '', '. ', oneWay ? `${oneWay} ${oneWay === 1 ? 'is a one-way door' : 'are one-way doors'}. ` : '', `${queued} ${queued === 1 ? 'task is' : 'tasks are'} queued behind your answers.`) : null);
+    if (stream !== null || this.#filter) return lead;
+    return h('section', { class: 'cue-grid' }, lead, this.#priorities(st));
+  }
+
+  #priorities(st: PodiumState): HTMLElement {
+    const pri = st.priorities;
+    const editable = this.#sources.state === 'server';
+    const stale = pri.state === 'stale' && pri.date !== st.today;
+    const note = stale
+      ? `Priorities are from ${longDate(pri.date) || pri.date}. ${editable ? 'Add one to start today\'s list.' : 'Set today\'s with journal.ts priorities set.'}`
+      : 'No priorities set for today.';
+    const priorities = h('priority-list');
+    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note, epics: this.#epics ? Object.fromEntries(this.#epics.streams.map((g) => [g.stream, g.epics])) : {} };
+    return priorities;
   }
 
   /** The tempo word for the scope's counts, as a button that opens the rule behind it in place (no tooltip, no modal). */
@@ -530,13 +583,13 @@ export class PodiumApp extends HTMLElement {
     const updated = clockTime(st.generatedAt, st.tz);
     const { age, stale } = freshness(st.generatedAt, Date.now());
     const live = this.#live;
+    const prAt = st.prData.fetchedAt ? clockTime(st.prData.fetchedAt, st.tz) : '';
     const text = !live ? `Sample data${updated ? ` · as of ${updated}` : ''}`
       : stale ? `Stale · updated ${updated}${age ? `, ${age} ago` : ''}. Reload for current data.`
         : null;
-    // Live and fresh: "Live · updated 2:05 pm", with "updated" dropped on a phone so the pill shares the brand's line.
-    const body: (Node | string)[] = text !== null ? [text] : updated ? ['Live · ', h('span', { class: 'short-hide' }, 'updated '), updated] : ['Live'];
-    // The dot is a metronome: it ticks once each time this pill is redrawn while the data is fresh, and stops (warning
-    // colour, no tick) once it is stale. Not a live region: a once-a-minute announcement would nag.
+    const body: (Node | string)[] = text !== null
+      ? [text]
+      : [updated ? `Updated ${updated}` : 'Updated', h('span', { class: 'short-hide' }, prAt ? ` · PR data ${prAt}` : ' · PR data unavailable')];
     const ticking = tick && live && !stale;
     return h('p', { class: `fresh${live ? (stale ? ' stale' : ' live') : ''}` },
       h('span', { class: `dot${ticking ? ' tick' : ''}`, 'aria-hidden': 'true' }), h('span', {}, ...body));
@@ -603,21 +656,46 @@ export class PodiumApp extends HTMLElement {
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
   #home(st: PodiumState): Node {
-    const pri = st.priorities;
-    const editable = this.#sources.state === 'server';
-    const stale = pri.state === 'stale' && pri.date !== st.today;
-    const note = stale
-      ? `Priorities are from ${longDate(pri.date) || pri.date}. ${editable ? `Add one to start today's list.` : `Set today's with journal.ts priorities set.`}`
-      : 'No priorities set for today.';
-    const priorities = h('priority-list');
-    priorities.data = { items: pri.state === 'ok' ? pri.items : [], max: st.prioritiesMax, streams: st.streams, editable, note, epics: this.#epics ? Object.fromEntries(this.#epics.streams.map((g) => [g.stream, g.epics])) : {} };
     const localList = h('local-review');
     localList.review = this.#local;
     return h('div', { class: 'home-plus' },
+      scoreBoard(st, this.#charts),
       homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects }),
-      section({ title: "Today's priorities", n: 0, tone: 'neutral', empty: note, quiet: true }, priorities),
       section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
+}
+
+const NAMED_SERIES: Record<string, string> = { TeamSelect: 's1', Bayada: 's2', Security: 's3', Options: 's4', Maestro: 's5', ADLs: 's6', Mithril: 's7', other: 'so' };
+const SERIES = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
+
+/** A stable series slot for a stream, matching the design's known names and hashing the rest. */
+function seriesClass(name: string): string {
+  const named = NAMED_SERIES[name];
+  if (named) return named;
+  let n = 0;
+  for (const c of name) n = (n * 33 + c.charCodeAt(0)) >>> 0;
+  return SERIES[n % SERIES.length] ?? 's1';
+}
+
+/** One staff per stream for the last 14 chart days. Pitch is a few steps, not a computed pixel, so no inline style is needed. */
+function scoreBoard(st: PodiumState, charts: ChartsData | null): HTMLElement | null {
+  if (!charts?.throughput.length || st.streams.length === 0) return null;
+  const days = charts.days.slice(-14);
+  if (!days.length) return null;
+  const byDate = new Map(charts.throughput.map((t) => [t.date, t.byStream]));
+  const value = (stream: string, day: string): number => byDate.get(day)?.[stream] ?? 0;
+  const max = Math.max(1, ...st.streams.flatMap((s) => days.map((d) => value(s, d))));
+  const pitch = (n: number): string => (n <= 0 ? '' : `p${Math.min(4, Math.round((n / max) * 4))}`);
+  const rows = st.streams.map((stream) => h('div', { class: 'score-row' },
+    h('span', { class: 'score-name' }, h('i', { class: seriesClass(stream), 'aria-hidden': 'true' }), stream),
+    h('span', { class: 'score-staff', role: 'img', 'aria-label': `${stream}: ${days.map((d) => `${d} ${value(stream, d)}`).join(', ')}` },
+      ...days.map((d) => {
+        const n = value(stream, d);
+        return h('span', { class: 'score-cell' }, n ? h('span', { class: `score-note ${pitch(n)} ${seriesClass(stream)}` }) : h('span', { class: 'score-rest' }));
+      }))));
+  return h('section', { class: 'score', 'aria-label': 'Streams, last 14 days' },
+    h('div', { class: 'score-head' }, h('h2', {}, 'Streams, last 14 days'), h('span', {}, 'Higher notes mean more finished that day.')),
+    ...rows);
 }
 
 /**
