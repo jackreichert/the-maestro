@@ -43,7 +43,8 @@ function metricOf(c: Comparison, series: (number | null)[]): CostMetric {
 export function buildCostWidget(i: CostInputs): CostData {
   const prices = i.prices === undefined ? MODEL_PRICES : i.prices;
   const experiments = { running: i.registry.filter((r) => r.status === 'running').map(experiment), recent: i.registry.filter((r) => CLOSED.includes(r.status)).slice(-RECENT_EXPERIMENTS).reverse().map(experiment) };
-  const proposed = i.registry.find((r) => r.id === experimentId(i.today));
+  // The runner records yesterday's numbers under yesterday's id, so a row for today or yesterday is the current proposal; today's wins.
+  const proposed = [i.today, shiftDay(i.today, -1)].map((d) => i.registry.find((r) => r.id === experimentId(d))).find(Boolean);
   const base = { ...experiments, today: proposed ? experiment(proposed) : null };
   const date = [...i.rows.keys()].filter((d) => d <= i.today).sort().pop();
   if (!date) return { state: 'empty', reason: 'The token table has no day to show yet. Run token-metrics.ts --all --write.', date: null, stale: false, days: [], metrics: [], regressions: [], mix: null, ...base };

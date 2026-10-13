@@ -72,7 +72,8 @@ test('registry rows split into running, the last five closed ones, and the exper
   assert.deepEqual(d.running.map((e) => e.id), ['B']);
   assert.deepEqual(d.recent.map((e) => e.id), ['G', 'F', 'E', 'D', 'C']);
   assert.equal(d.today?.id, 'cx-2026-10-13');
-  assert.equal(build([row('2026-10-12')], '2026-10-14', registry).today, null, 'yesterday\'s proposal is not today\'s');
+  assert.equal(build([row('2026-10-12')], '2026-10-14', registry).today?.id, 'cx-2026-10-13', 'the runner records yesterday\'s numbers under yesterday\'s id, still the current proposal');
+  assert.equal(build([row('2026-10-12')], '2026-10-15', registry).today, null, 'older than yesterday is not current');
 });
 
 test('buildCost reads the table and registry under the notes vault, and says why when there is no vault or no table', async () => {
