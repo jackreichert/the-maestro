@@ -2340,12 +2340,12 @@ test('the Loop line: silent with nothing set up, NOT INSTALLED when required, th
     mkdirSync(events, { recursive: true });
     const owner = startLockOwner();
     try {
-    writeFileSync(join(events, 'loop.lock'), String(owner.pid));
-    beat(owner.pid, 2);
-    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* ok 2 min$/m);
-    assert.match(runEnv(required, 'prime').out, /^Loop: ok 2 min$/m);
-    beat(owner.pid, 30);
-    assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* STALLED 30 min/m);
+      writeFileSync(join(events, 'loop.lock'), String(owner.pid));
+      beat(owner.pid, 2);
+      assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* ok 2 min$/m);
+      assert.match(runEnv(required, 'prime').out, /^Loop: ok 2 min$/m);
+      beat(owner.pid, 30);
+      assert.match(runEnv(required, 'status', '--footer').out, /^\*\*Loop:\*\* STALLED 30 min/m);
     } finally { owner.stop(); }
     rmSync(join(events, 'loop.lock'));
     beat(2 ** 22 + 12345, 30);
