@@ -1,0 +1,53 @@
+name: gates
+
+# The script is checked out from the pull request's base SHA, not the head, so the
+# writer cannot edit the gate in the same pull request. The diff is the head.
+# Until this workflow is on the base branch, the job fails closed rather than
+# running a copy from the pull request. Branch protection is not set here.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the base ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+
+      - name: Fetch the pull request head
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "pull/${PR_NUMBER}/head:refs/ci-gates/head"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run size, body, and smells gates from the base ref
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ ! -f scripts/ci-gates.ts ]; then
+            echo "scripts/ci-gates.ts is not on the base ref. Refusing to run a copy from the pull request."
+            exit 1
+          fi
+          printf '%s' "$PR_TITLE" > "$RUNNER_TEMP/pr-title.txt"
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          node scripts/ci-gates.ts \
+            --repo . \
+            --base "$BASE_SHA" \
+            --base-name "$BASE_REF" \
+            --head refs/ci-gates/head \
+            --title-file "$RUNNER_TEMP/pr-title.txt" \
+            --body-file "$RUNNER_TEMP/pr-body.md"
