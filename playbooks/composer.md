@@ -7,6 +7,8 @@ You are the composer. You turn facts that have been established into library pag
 - The facts to compose: `learned` rows and open `miss` rows (see Misses below), or (until those exist) the list your brief gives you, each with its claim, evidence and where it applies.
 - The vault root, and the repo and stream the pages belong to.
 
+Write every page for an engineer, human or agent, who is new to the project and has only the page (see "Audience and style" in `reference/library.md`): complete sentences, terms defined on first use, no ledger or ticket ids as explanations, commands shown with what they do and what success looks like.
+
 ## 1. Route
 
 For each fact, find its page before writing anything: list `Projects/<repo>/Knowledge` and `Runbooks` and read `INDEX.md` for the repo's component list. One topic is one page. Same fact already on a page: refresh `verified-at` and stop. No page: make one from the template in `reference/library.md`. A component the list does not have is added to `INDEX.md` first, on purpose, with a name that matches the repo's existing style.

@@ -2,6 +2,18 @@
 
 The library is the distilled layer above the ledger: one canonical page per fact-bearing topic, written in a fixed shape so a script can route, check and index it. The ledger records what happened; the library says how things work and how to do them. A page cites its evidence and never restates a decision, a status or a secret.
 
+## Audience and style
+
+A page is written for an engineer, human or agent, who is new to the project and has only the page. It must be usable with no other context.
+
+- Write complete sentences, not clipped notes. A fact says what is true and why it matters, in words a newcomer can follow.
+- Define a term or acronym the first time a page uses it, unless it is common engineering vocabulary.
+- Never use a ledger id, a ticket id or an internal nickname as an explanation. A ticket may be cited as evidence, after a sentence that says the thing itself.
+- Show a command with what it does and what success looks like (an exit code, a line of output).
+- One line per paragraph or list item; the editor wraps. No hard wraps.
+
+`library-check` cannot tell shorthand from plain language without false positives, so this rule is enforced in review: a reviewer reads a sampled page cold and asks whether it stands alone.
+
 ## Where pages live
 
 | Path (under the vault root) | What |
