@@ -243,6 +243,53 @@ test('no open rows at all is clean, not blind', () => {
     assert.equal(r.stdout.includes('WARNING'), false);
 });
 
+const rowsOf = (vault: string): { id?: string; kind?: string; closes?: string; text?: string }[] => readFileSync(join(vault, 'Projects', 'demo', 'Journal', 'ledger.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+test('--close appends done to a row linked by refs once every PR merged, and a second run does nothing', () => {
+    const { vault } = ledgerWith([
+        base('aa01', { kind: 'wip', refs: ['gh:pr:acme/widget#12'], text: 'linked, merged' }),
+        base('bb01', { kind: 'wip', text: 'mentions acme/widget#12 only in its text' }),
+        base('cc01', { kind: 'wip', refs: ['gh:pr:acme/widget#12', 'gh:pr:acme/widget#8'], text: 'one PR still open' }),
+        base('dd01', { kind: 'wip', refs: ['gh:pr:acme/widget#12', 'gh:pr:acme/widget#3'], text: 'one PR unreadable' }),
+        base('ee01', { kind: 'wip', refs: ['gh:pr:acme/widget#7'], text: 'closed unmerged' }),
+    ]);
+    const first = run(vault, ['--close', '--json'], fakeGh(VIEWS));
+    assert.equal(first.status, 1, first.stderr);
+    const report = JSON.parse(first.stdout) as { autoClosed: { id: string }[]; merged: { id: string; closable: boolean }[] };
+    assert.deepEqual(report.autoClosed.map((x) => x.id), ['aa01']);
+    assert.deepEqual(report.merged.map((x) => x.id).sort(), ['bb01', 'cc01', 'dd01']);
+    assert.equal(report.merged.some((x) => x.closable), false, 'only the all-merged linked row was closable');
+    const dones = rowsOf(vault).filter((r) => r.kind === 'done');
+    assert.deepEqual(dones.map((d) => d.closes), ['aa01']);
+    assert.match(dones[0]?.text ?? '', /acme\/widget#12/);
+
+    const second = run(vault, ['--close', '--json'], fakeGh(VIEWS));
+    assert.deepEqual((JSON.parse(second.stdout) as { autoClosed: unknown[] }).autoClosed, []);
+    assert.equal(rowsOf(vault).filter((r) => r.kind === 'done').length, 1, 'a closed row is never closed twice');
+});
+
+test('without --close the sweep still never writes, and --close text says what it closed', () => {
+    const { vault, ledger } = ledgerWith([base('aa01', { kind: 'wip', refs: ['gh:pr:acme/widget#12'], text: 'linked, merged' })]);
+    const before = readFileSync(ledger, 'utf8');
+    const read = run(vault, [], fakeGh(VIEWS));
+    assert.equal(read.status, 1);
+    assert.equal(readFileSync(ledger, 'utf8'), before);
+    const closed = run(vault, ['--close'], fakeGh(VIEWS));
+    assert.equal(closed.status, 0, closed.stderr);
+    assert.match(closed.stdout, /Closed on merge \(1\):\n {2}aa01 {2}linked, merged/);
+});
+
+test('a ref row written by pr-open links the row, so --close closes it', () => {
+    const { vault } = ledgerWith([
+        base('aa01', { kind: 'wip', text: 'build the thing' }),
+        base('rr01', { kind: 'ref', attaches: 'aa01', refs: ['gh:pr:acme/widget#12'], branch: 'feat/MAESTRO-aa01-thing', text: 'PR acme/widget#12 opened for aa01' }),
+    ]);
+    const r = run(vault, ['--close', '--json'], fakeGh(VIEWS));
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual((JSON.parse(r.stdout) as { autoClosed: { id: string }[] }).autoClosed.map((x) => x.id), ['aa01']);
+    assert.equal(rowsOf(vault).some((x) => x.kind === 'done' && x.closes === 'aa01'), true);
+});
+
 test('usage errors exit 2 and do not need gh', () => {
     const missing = spawnSync(process.execPath, [SCRIPT, '--project', 'demo', '--vault', join(tmpdir(), 'ms-no-such-vault')], {
         encoding: 'utf8',
@@ -268,7 +315,7 @@ test('usage errors exit 2 and do not need gh', () => {
     assert.match(badWindow.stderr, /--stale-days/);
 });
 
-test('the playbook names the exit codes and forbids closing a row', () => {
+test('the playbook names the exit codes and the close flag', () => {
     const text = readFileSync(PLAYBOOK, 'utf8');
     assert.match(text, /\| 0 \|/);
     assert.match(text, /\| 1 \|/);
@@ -276,6 +323,7 @@ test('the playbook names the exit codes and forbids closing a row', () => {
     assert.match(text, /\| 3 \|/);
     assert.match(text, /journal\.ts done/);
     assert.match(text, /Never run `journal\.ts done`/);
+    assert.match(text, /--close/);
     assert.match(text, /not merged/i);
     assert.match(text, /acme\/widget|owner\/repo/);
 });
