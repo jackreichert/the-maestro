@@ -50,6 +50,13 @@ test('parseJunit takes the failure message first and does not stop at a tag-like
   assert.equal(parseJunit(NODE_JUNIT, '/repo').length, 6);
 });
 
+test('parseJunit survives a raw > inside a quoted attribute, as node writes a diff', () => {
+  const xml = '<testsuites><testcase name="diffy" time="0.1" classname="test" file="/repo/a.test.ts" failure="+ a &gt; b&#10;  ]">\n<failure message="+ a > b&#10;  ]&quot;x&quot;">stack</failure></testcase><testcase name="after" time="0.2" file="/repo/a.test.ts"/></testsuites>';
+  const r = parseJunit(xml, '/repo');
+  assert.deepEqual(r.map((t) => [t.id, t.status]), [['a.test.ts > diffy', 'fail'], ['a.test.ts > after', 'pass']]);
+  assert.equal(r[0]?.error, '+ a > b\n  ]"x"');
+});
+
 test('parseJunit reads pytest output: classname ids, failure body when the message is one line', () => {
   const r = parseJunit(PYTEST_JUNIT);
   assert.equal(r[0]?.id, 'tests.test_x.TestY::test_a');

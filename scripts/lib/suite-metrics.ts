@@ -89,7 +89,8 @@ export function parseJunit(xml: string, root = ''): TestRecord[] {
     out.push({ ...record, file: file || (_a.classname ?? ''), id: `${path.join(' > ')}${file ? ' > ' : '::'}${_a.name ?? ''}` });
     cur = null;
   };
-  const tag = /<(\/?)(testsuite|testcase|failure|error|skipped)\b([^>]*?)(\/?)>/g;
+  // Attribute values are quoted and node leaves a raw `>` inside them (diff output has them), so a quoted run is skipped whole.
+  const tag = /<(\/?)(testsuite|testcase|failure|error|skipped)\b((?:[^>"]|"[^"]*")*?)(\/?)>/g;
   for (let m = tag.exec(xml); m; m = tag.exec(xml)) {
     const [, closing, name, rest, selfClosed] = m as unknown as [string, string, string, string, string];
     if (name === 'testsuite') {
@@ -195,7 +196,11 @@ export function formatSummary(s: Summary, baseline: Baseline | null, o: SummaryO
     lines.push('', `regressions vs baseline (${baseline ? `${baseline.head.slice(0, 10)}, ${baseline.writtenAt.slice(0, 10)}` : 'unknown'}; over ${o.factor}x and ${o.minDeltaMs}ms): ${s.regressions.length || 'none'}`);
     lines.push(...s.regressions.slice(0, o.top).map((r) => `  ${secs(r.baselineMs)} -> ${secs(r.ms)} (${r.ratio.toFixed(1)}x)  ${r.id}`));
   }
-  if (s.overThreshold.length) lines.push('', `over ${secs(o.absMs)}: ${s.overThreshold.length}`, ...s.overThreshold.slice(0, o.top).map((t) => `  ${secs(t.ms).padStart(7)}  ${t.id}`));
+  if (s.overThreshold.length) {
+    const listed = new Set(s.slowest.map((t) => t.id));
+    const more = s.overThreshold.filter((t) => !listed.has(t.id)).slice(0, o.top);
+    lines.push('', `over ${secs(o.absMs)}: ${s.overThreshold.length}${more.length ? ' (the slowest are listed above; also:)' : ' (all listed above)'}`, ...more.map((t) => `  ${secs(t.ms).padStart(7)}  ${t.id}`));
+  }
   return lines.join('\n');
 }
 
