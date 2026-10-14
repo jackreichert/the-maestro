@@ -25,6 +25,8 @@ Close a ticket only when each line is true and the report says how it is known. 
 | Tracker status moved | The status it now holds |
 | Follow-ups ticketed | The ids of each, or "none found" |
 
+An agent's "done" is a claim: accept "I changed X" only with the VCS diff or sha, and "tests pass" only with the command's output on this head, not its report or an earlier run.
+
 A ticket reopened for a missing line here is a defect in the brief or the close, not in the work: fix the page or the habit, then reopen.
 
 Source: the Scrum Guide's Definition of Done, linked above; the checklist shape follows the guide's rule that every increment meets one shared standard. The Guide is the only external source; the five lines are our choice of minimum.
