@@ -8,6 +8,7 @@
  *   refresh(registry, tag)  re-pull one changed tag: same (moved but nothing to read) / changed (note, diff file, +/- counts) / gone / rate-limited / error
  *
  * Events:  <LABEL>-CHANGED tag=<tag> note=<path> diff=<path> summary=+A/-R lines      actionable
+ *            (an append-only source says <LABEL>-NEW tag=<tag> note=<path> new=<n> file=<path> instead: see APPEND_ONLY_LABELS)
  *          <LABEL>-UNSHARED tag=<tag> reason=<404|403|archived>                         actionable, once per transition
  *          <LABEL>-CHECK-FAILING tag=<tag> <message>                                    informational, once after 3 failures in a row
  * A 429 is silent: the engine waits out Retry-After (at least a minute) and checks again; nothing is reported for it.
@@ -43,6 +44,9 @@ export interface TagAdapter {
 export interface TagState { status: 'ok' | 'unshared'; reason: string; fails: number; error: string; change: { id: string; note: string; diff: string; added: number; removed: number } | null }
 export interface TagWatchState { tags: Record<string, TagState>; retryAt: number }
 
+/** Sources whose note only ever grows (a chat): the change is "n new lines in this file", not a diff of the note. */
+const APPEND_ONLY_LABELS = new Set(['SLACK']);
+
 const FAILURES_BEFORE_EVENT = 3;
 const MIN_BACKOFF_S = 60;
 const blank = (): TagState => ({ status: 'ok', reason: '', fails: 0, error: '', change: null });
@@ -76,12 +80,17 @@ export function checkTags(adapter: TagAdapter, registryFile: string, ctx: Pick<C
   return next;
 }
 
+function changeLine(label: string, tag: string, c: NonNullable<TagState['change']>): string {
+  if (APPEND_ONLY_LABELS.has(label)) return `${label}-NEW tag=${tag} note=${c.note} new=${c.added} file=${c.diff}`;
+  return `${label}-CHANGED tag=${tag} note=${c.note} diff=${c.diff} summary=+${c.added}/-${c.removed} lines`;
+}
+
 /** The events for a state change. A change speaks once (by its id), a transition into unshared once, a failing check once. */
 export function tagEvents(label: string, prev: TagWatchState | null, next: TagWatchState): WatchEvent[] {
   const events: WatchEvent[] = [];
   for (const [tag, s] of Object.entries(next.tags)) {
     const before = prev?.tags[tag];
-    if (s.change && s.change.id !== before?.change?.id) events.push({ summary: `${label}-CHANGED tag=${tag} note=${s.change.note} diff=${s.change.diff} summary=+${s.change.added}/-${s.change.removed} lines`, actionable: true });
+    if (s.change && s.change.id !== before?.change?.id) events.push({ summary: changeLine(label, tag, s.change), actionable: true });
     if (s.status === 'unshared' && before?.status !== 'unshared') events.push({ summary: `${label}-UNSHARED tag=${tag} reason=${s.reason}`, actionable: true });
     if (s.fails === FAILURES_BEFORE_EVENT && (before?.fails ?? 0) < FAILURES_BEFORE_EVENT) events.push({ summary: `${label}-CHECK-FAILING tag=${tag} ${s.error}`, actionable: false });
   }
