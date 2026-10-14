@@ -39,18 +39,20 @@ test('SIGTERM mid-run (the playbook\'s outer timeout) removes the temp dir and k
       env: { PATH: process.env.PATH, SMOKE_BASH_ENV: hangingGit, HOME: tmp, TMPDIR: scratch, MAESTRO_NOTIFY_COMMAND: '/usr/bin/true' }, stdio: 'ignore',
     });
     const closed = new Promise<number | null>((res) => child.on('close', (code) => res(code)));
-    for (let i = 0; i < 200 && !existsSync(pidfile); i++) await new Promise((r) => setTimeout(r, 50));
+    // Deadlines are generous on purpose: a loaded machine can stall a fresh bash or node start for many seconds, and a pass never waits for them.
+    const until = async (done: () => boolean, ms: number): Promise<boolean> => {
+      for (const end = Date.now() + ms; Date.now() < end && !done(); ) await new Promise((r) => setTimeout(r, 50));
+      return done();
+    };
+    await until(() => existsSync(pidfile), 60_000);
     assert.ok(existsSync(pidfile), 'the clone step started');
     const stepPid = Number(readFileSync(pidfile, 'utf8').trim());
     assert.equal(readdirSync(scratch).filter((d) => d.startsWith('maestro-smoke-')).length, 1, 'the smoke created its temp dir');
     child.kill('SIGTERM');
     assert.equal(await closed, 143);
     assert.deepEqual(readdirSync(scratch), [], 'the temp dir is gone after SIGTERM');
-    let alive = true;
-    for (let i = 0; i < 40 && alive; i++) {
-      try { process.kill(stepPid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { alive = false; }
-    }
-    assert.equal(alive, false, 'the running step was killed with the smoke');
+    const gone = (): boolean => { try { process.kill(stepPid, 0); return false; } catch { return true; } };
+    assert.equal(await until(gone, 30_000), true, 'the running step was killed with the smoke');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
