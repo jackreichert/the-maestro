@@ -9,7 +9,9 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NO_CLEANUP } from './local-review.ts';
 import type { LocalReview } from './local-review.ts';
+import type { ClassCache } from './local-branch-class.ts';
 
 export type ScanState = 'fresh' | 'scanning' | 'stale' | 'none';
 export interface ScanStatus { state: ScanState; ageSeconds?: number }
@@ -44,10 +46,22 @@ export const spawnProducer = (containerRoot: string): ((file: string) => Promise
   execFile(process.execPath, [SCRIPT, '--container', containerRoot, '--out', file], { timeout: SCAN_TIMEOUT_MS, killSignal: 'SIGKILL' }, (e) => (e ? fail(e) : ok()));
 });
 
+/** The producer's classification cache, kept beside the snapshot; a missing or unreadable file is an empty cache. */
+export const classCacheFile = (snapshot: string): string => `${snapshot}.classes.json`;
+export function readClassCache(file: string): ClassCache {
+  try { const j: unknown = JSON.parse(readFileSync(file, 'utf8')); return j && typeof j === 'object' && !Array.isArray(j) ? j as ClassCache : {}; } catch { return {}; }
+}
+export function writeClassCache(file: string, cache: ClassCache): void {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(cache));
+  renameSync(tmp, file);
+}
+
 function readSnapshot(file: string): LocalReview | null {
   try {
     const j = JSON.parse(readFileSync(file, 'utf8')) as LocalReview;
-    return j && typeof j.generatedAt === 'string' && typeof j.available === 'boolean' && Array.isArray(j.units) ? j : null;
+    return j && typeof j.generatedAt === 'string' && typeof j.available === 'boolean' && Array.isArray(j.units) ? { ...j, cleanup: j.cleanup ?? NO_CLEANUP } : null;
   } catch { return null; }
 }
 
@@ -74,7 +88,7 @@ export function createLocalReviewCache(o: LocalReviewCacheOptions): { read: () =
       if (old) refresh();
       if (!snap) {
         const reason = running ? 'The first scan of the local branches is running; the queue appears here when it finishes.' : 'The local branches have not been scanned yet, and the last scan failed; it will be retried.';
-        return { generatedAt: now().toISOString(), available: false, reason, units: [], more: 0, notes: [], scan: { state: running ? 'scanning' : 'none' } };
+        return { generatedAt: now().toISOString(), available: false, reason, units: [], more: 0, notes: [], cleanup: NO_CLEANUP, scan: { state: running ? 'scanning' : 'none' } };
       }
       const state: ScanState = !old ? 'fresh' : running ? 'scanning' : 'stale';
       const note = state === 'fresh' ? `Scanned ${words(age ?? 0)} ago.` : state === 'scanning' ? `A new scan is running. This list is from ${words(age ?? 0)} ago.` : `This list is from ${words(age ?? 0)} ago and the last refresh failed; it will be retried.`;
