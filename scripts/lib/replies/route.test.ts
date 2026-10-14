@@ -172,12 +172,13 @@ test('a thread with more comments than one page is refused, never classed from t
   assert.equal(writes.length, 1, 'only the read happened');
 });
 
-test('a reply that goes out without approval cannot @-mention a person, but a code span or an email-like word is fine', () => {
-  const f = file();
-  const r = rig([bot]);
-  const out = postBotReply(f, { repo: 'acme/widgets', pr: 7, self: 'me', rootId: 201, text: 'Fixed; @jane can you re-check the cache path?', resolve: false }, { run: r.run });
-  assert.equal(out.ok, false);
-  assert.equal(out.ok === false && out.code, 'invalid');
-  assert.equal(r.writes.length, 0);
-  assert.equal(postBotReply(file(), { repo: 'acme/widgets', pr: 7, self: 'me', rootId: 201, text: 'Fixed in the decorator `@cached` and in a@b.example.', resolve: false }, { run: rig([bot]).run }).ok, true);
+test('a reply that goes out without approval cannot @-mention a person, however it is written', () => {
+  for (const text of ['Fixed; @jane can you re-check the cache path?', 'Fixed, see`@jane`', 'Done, cc &#64;jane', 'Done, cc &#x40;jane', 'Done, cc &commat;jane', 'cc @org/team please', 'the decorator `@cached` is used']) {
+    const f = file();
+    const r = rig([bot]);
+    const out = postBotReply(f, { repo: 'acme/widgets', pr: 7, self: 'me', rootId: 201, text, resolve: false }, { run: r.run });
+    assert.equal(out.ok === false && out.code, 'invalid', text);
+    assert.equal(r.writes.length, 0, text);
+  }
+  assert.equal(postBotReply(file(), { repo: 'acme/widgets', pr: 7, self: 'me', rootId: 201, text: 'Fixed: the guard now covers the empty case.', resolve: false }, { run: rig([bot]).run }).ok, true);
 });

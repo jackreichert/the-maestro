@@ -97,6 +97,8 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
 export interface BotReply { repo: string; pr: number; self: string; rootId: number; text: string; resolve: boolean }
 export type BotOutcome = { ok: true; posted: boolean; resolved: boolean; url?: string; note?: string } | { ok: false; code: 'not-bot' | 'invalid' | 'unknown' | 'uncertain' | 'failed'; message: string };
 
+/** Any `@` before a letter or digit, or an HTML entity that renders as `@`: GitHub may turn it into a mention, and a mention notifies a person. Refused wherever it appears, even in code. */
+const MENTION = /@[A-Za-z0-9]|&#0*64;|&#x0*40;|&commat;/i;
 const RESOLVE = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}';
 
 /**
@@ -109,7 +111,7 @@ const RESOLVE = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thr
  */
 export function postBotReply(file: string, r: BotReply, o: { run?: GhRun; now?: () => Date } = {}): BotOutcome {
   const run = o.run ?? spawnGh;
-  const bad = textProblem(r.text) ?? (/(^|[^\w`])@[A-Za-z0-9]/.test(r.text) ? 'A reply that goes out without approval cannot @-mention a person.' : null);
+  const bad = textProblem(r.text) ?? (MENTION.test(r.text) ? 'A reply that goes out without approval cannot @-mention a person.' : null);
   if (bad) return { ok: false, code: 'invalid', message: bad };
   const out = withLock(join(dirname(file), 'bot-replies'), (): BotOutcome => {
     let pr;
