@@ -29,6 +29,11 @@ test('a compact row hides the priority text from the eye but keeps it for assist
   assert.equal(a?.getAttribute('title'), 'Ship the thing');
   assert.equal(b?.querySelector('a.tag'), null);
   assert.equal(b?.textContent, 'Loose chore');
+  const unk = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data({ items: [{ text: 'Typed by hand', stream: 'Nowhere' }] }) });
+  const t = unk.root.querySelector('ol.priorities li .text');
+  assert.equal(t?.querySelector('a.tag'), null, 'a stream with no tab is not a link back to Home');
+  assert.equal(t?.textContent, 'Typed by hand');
+  unk.cleanup();
   cleanup();
 });
 

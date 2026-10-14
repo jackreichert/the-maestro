@@ -16,7 +16,7 @@ const MAX_TEXT = 200;
 const MAX_STREAM = 40;
 
 const CSS = `${BASE_CSS}${UI_CSS}
-  /* A column: the region fills whatever height the page gives the host (the hero row, on a wide screen) and scrolls inside it; with no height given it is as tall as its content. */
+  /* A column: the region fills whatever height the host is given and scrolls inside it; with no height given (Home today) it is as tall as its content. */
   :host { display: flex; flex-direction: column; }
   .region { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   /* A card scrolled into view by focus lands clear of the sticky header above and the fade below. */
@@ -260,8 +260,9 @@ export class PriorityList extends HTMLElement {
 
   #row(p: Priority, i: number, editable: boolean): HTMLElement {
     const shown = splitStream(p);
-    // Only the stream is drawn; the full text stays in the page for assistive tech and as a tooltip. A priority with no stream has no tab to hold it, so its text is drawn, on one line.
-    const text = shown.stream
+    // Only the stream is drawn; the full text stays in the page for assistive tech and as a tooltip. A priority whose stream has no tab (none, or one nobody has opened) has nowhere else to show its text, so it is drawn, on one line.
+    const hasTab = shown.stream !== '' && this.#data.streams.includes(shown.stream);
+    const text = hasTab
       ? h('span', { class: 'text', title: shown.text }, streamTag(shown.stream), h('span', { class: 'vh' }, `: ${shown.text}`))
       : h('span', { class: 'text untagged', title: shown.text }, shown.text);
     const li = h('li', { 'data-i': String(i) }, text);
