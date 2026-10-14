@@ -71,7 +71,7 @@ test('lists merged and stale rows, prints the done command, and does not write t
         base('aaaa', { kind: 'wip', text: 'follow-ups for acme/widget#12' }),
         base('bbbb', { kind: 'blocked', gate: 'gh:pr:acme/widget#9', text: 'wait on the widget PR' }),
         base('cccc', { kind: 'wip', queued: true, text: 'recent acme/widget#8' }),
-        base('dddd', { kind: 'question', refs: ['acme/widget#7'], text: 'closed unmerged' }),
+        base('dddd', { kind: 'blocked', refs: ['acme/widget#7'], text: 'closed unmerged' }),
         base('eeee', { kind: 'wip', text: 'no pr named' }),
     ]);
     const before = readFileSync(ledger, 'utf8');
@@ -313,6 +313,43 @@ test('usage errors exit 2 and do not need gh', () => {
     const badWindow = spawnSync(process.execPath, [SCRIPT, '--vault', vault, '--project', 'demo', '--stale-days', '7d'], { encoding: 'utf8', env });
     assert.equal(badWindow.status, 2, badWindow.stderr);
     assert.match(badWindow.stderr, /--stale-days/);
+});
+
+test('an open question, ask or pending decision is never matched or closed, even when it cites a merged PR in refs', () => {
+    const { vault, ledger } = ledgerWith([
+        base('zl01', { kind: 'question', refs: ['gh:pr:acme/widget#12'], text: 'should we ship acme/widget#12 early?' }),
+        base('8i01', { kind: 'decision', pending: true, refs: ['gh:pr:acme/widget#12'], text: 'pick after acme/widget#12' }),
+        base('bl01', { kind: 'blocked', refs: ['gh:pr:acme/widget#12'], text: 'waits on acme/widget#12' }),
+    ]);
+    const before = readFileSync(ledger, 'utf8');
+    const r = run(vault, ['--close-ledger', '--json'], fakeGh(VIEWS));
+    const report = JSON.parse(r.stdout) as { autoClosed: unknown[]; merged: { id: string; closable: boolean }[]; skipped: number; actions: number; closedCount: number };
+    assert.deepEqual(report.autoClosed, []);
+    assert.equal(report.skipped, 2);
+    assert.deepEqual(report.merged.map((x) => x.id), ['bl01'], 'a blocked row is listed, never closed');
+    assert.equal(report.merged[0]?.closable, false);
+    assert.equal(report.closedCount, 0);
+    assert.equal(report.actions, 1);
+    assert.equal(readFileSync(ledger, 'utf8'), before, 'nothing was written');
+});
+
+test('--json carries actions and closedCount; exit 0 means actions is 0, and --close-ledger closes like --close', () => {
+    const { vault } = ledgerWith([base('aa01', { kind: 'wip', refs: ['gh:pr:acme/widget#12'], text: 'linked, merged' })]);
+    const r = run(vault, ['--close-ledger', '--json'], fakeGh(VIEWS));
+    assert.equal(r.status, 0, r.stderr);
+    const report = JSON.parse(r.stdout) as { actions: number; closedCount: number; blind: boolean };
+    assert.deepEqual({ actions: report.actions, closedCount: report.closedCount, blind: report.blind }, { actions: 0, closedCount: 1, blind: false });
+    const quiet = ledgerWith([base('bb01', { kind: 'wip', refs: ['gh:pr:acme/widget#12', 'gh:pr:acme/widget#8'], text: 'one still open' })]);
+    const q = run(quiet.vault, ['--json'], fakeGh(VIEWS));
+    assert.equal(q.status, 1);
+    assert.equal((JSON.parse(q.stdout) as { actions: number }).actions, 1);
+});
+
+test('a ledger whose only open rows are questions is clean, not blind', () => {
+    const { vault } = ledgerWith([base('zl01', { kind: 'question', text: 'which way?' })]);
+    const r = run(vault, ['--json'], fakeGh(VIEWS));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal((JSON.parse(r.stdout) as { blind: boolean }).blind, false);
 });
 
 test('the playbook names the exit codes and the close flag', () => {

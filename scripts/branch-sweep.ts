@@ -10,6 +10,8 @@
  * listed ids, re-scanning each repo first and refusing anything that no longer qualifies. Deleting is
  * `git worktree remove` (never --force) and `git push --force-with-lease=refs/heads/<branch>:<listed tip> origin :refs/heads/<branch>` (the lease makes origin refuse
  * a branch someone pushed to after the listing; that item is reported refused and the rest continue); local branches are never deleted.
+ * Before each remote delete `--apply` prints `restore <id>: git push origin <sha>:refs/heads/<branch>`, and it refuses a branch with an open PR
+ * (or one whose open PRs it could not read).
  *
  * A remote branch qualifies when it is the user's own (it has commits of its own, and every one is by one of git_emails,
  * or by the repo's user.email; no commits means not the user's unless a merged PR names the branch and its tip), is not
@@ -669,8 +671,15 @@ export function deleteRemoteBranch(path: string, item: { name: string; kind: str
   return { id, done: false, message: `failed: ${r.err}` };
 }
 
+/** How many open PRs have this branch as their head, or null when gh could not say (the caller refuses on null). */
+function openPrsOn(path: string, branch: string, ctx: SweepContext): number | null {
+  const prs = ctx.gh(path, ['pr', 'list', '--state', 'open', '--head', branch, '--json', 'number,state']);
+  if (!Array.isArray(prs)) return null;
+  return prs.filter((p) => String((p as { state?: unknown })?.state ?? 'OPEN').toUpperCase() === 'OPEN').length;
+}
+
 /** Deletes the listed ids after re-scanning; returns [{ id, done, message }]. Anything no longer qualifying is refused. */
-export function apply(ids: string[], container: string, ctx: SweepContext, only?: string | null): ApplyResult[] {
+export function apply(ids: string[], container: string, ctx: SweepContext, only?: string | null, log: (line: string) => void = () => {}): ApplyResult[] {
   const scans = new Map<string, RepoScan>();
   return ids.map((id) => {
     const repo = id.slice(0, id.lastIndexOf(':'));
@@ -686,7 +695,13 @@ export function apply(ids: string[], container: string, ctx: SweepContext, only?
       const ex = scanned.excluded.find((i) => i.id === id);
       return { id, done: false, message: `refused: no longer qualifies${ex ? ` (${ex.reason})` : ' (or its tip moved since it was listed)'}` };
     }
-    if (item.kind === 'remote-branch') return deleteRemoteBranch(path, item, id);
+    if (item.kind === 'remote-branch') {
+      // Last gate, and the restore line is printed before the delete so the sha survives whatever happens next.
+      const open = openPrsOn(path, item.name, ctx);
+      if (open !== 0) return { id, done: false, message: open === null ? `refused: could not read open PRs on ${item.name}` : `refused: ${item.name} has an open PR` };
+      log(`restore ${id}: git -C ${path} push origin ${item.tip}:refs/heads/${item.name}`);
+      return deleteRemoteBranch(path, item, id);
+    }
     return removeWorktree(path, item, id, ctx.disposableIgnored, ctx.envStoreRoot, ctx.inUse);
   });
 }
@@ -834,7 +849,7 @@ function main(): void {
   if (argv.includes('--apply')) {
     const ids = (val('ids') || '').split(',').map((s) => s.trim()).filter(Boolean);
     if (!ids.length) { console.error('branch-sweep: --apply needs --ids <repo:hash,...> from a read-only run'); process.exit(2); }
-    const results = apply(ids, container, ctx, only);
+    const results = apply(ids, container, ctx, only, console.log);
     for (const r of results) console.log(`${r.done ? 'ok     ' : 'REFUSED'} ${r.id}  ${r.message}`);
     process.exit(results.every((r) => r.done) ? 0 : 1);
   }

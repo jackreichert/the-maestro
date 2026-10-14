@@ -449,7 +449,7 @@ test('a branch literally named refs/heads/develop is protected, and delete uses 
     sh(w.repo, 'fetch', '-q', '--prune', 'origin');
     assert.deepEqual(names(scanRepo(w.repo, ctxFor()), 'remote-branch'), ['feat/x']);
     sh(w.repo, 'tag', 'feat/x'); sh(w.repo, 'push', '-q', 'origin', 'refs/tags/feat/x'); // a tag of the same name makes a bare `--delete feat/x` ambiguous
-    const ctx = ctxFor();
+    const ctx = ctxFor({ gh: () => [] });
     const [res] = apply([scanRepo(w.repo, ctx).items[0].id], w.container, ctx);
     assert.equal(res.done, true, res.message);
     assert.equal(remoteHas(w, 'feat/x'), false);
@@ -460,7 +460,7 @@ test('apply deletes a qualifying branch and worktree, and re-checks before delet
     const w = world(); feature(w, 'feat/ok'); feature(w, 'feat/grew'); feature(w, 'feat/wt');
     for (const b of ['feat/ok', 'feat/grew', 'feat/wt']) mergeInto(w, 'develop', b);
     const wt = join(w.root, 'wt'); sh(w.repo, 'worktree', 'add', '-q', wt, 'feat/wt');
-    const ctx = ctxFor();
+    const ctx = ctxFor({ gh: () => [] });
     const listed = scanRepo(w.repo, ctx).items;
     const id = (n: string, kind = 'remote-branch') => must(listed.find((i) => i.kind === kind && i.name.endsWith(n))).id;
     sh(w.repo, 'checkout', '-q', 'feat/grew'); commit(w.repo, 'more.txt', 'late\n'); sh(w.repo, 'push', '-q', 'origin', 'feat/grew'); sh(w.repo, 'checkout', '-q', 'main');
@@ -471,6 +471,24 @@ test('apply deletes a qualifying branch and worktree, and re-checks before delet
     assert.equal(remoteHas(w, 'feat/grew'), true);
     assert.equal(existsSync(wt), false);
     assert.equal(sh(w.repo, 'branch', '--list', 'feat/wt'), 'feat/wt', 'local branches are never deleted');
+});
+
+test('apply prints a restore line with the sha before deleting, and refuses a branch with an open PR or an unreadable PR list', () => {
+    const w = world(); feature(w, 'feat/ok'); feature(w, 'feat/pr'); feature(w, 'feat/blind');
+    for (const b of ['feat/ok', 'feat/pr', 'feat/blind']) mergeInto(w, 'develop', b);
+    const gh = (_repo: string, args: string[]) => { const h = args[args.indexOf('--head') + 1]; return h === 'feat/pr' ? [{ number: 7, state: 'OPEN' }] : h === 'feat/blind' ? null : []; };
+    const ctx = ctxFor({ gh });
+    const listed = scanRepo(w.repo, ctxFor({ gh: () => [] })).items;
+    const item = (n: string) => must(listed.find((i) => i.name === n));
+    const lines: string[] = [];
+    const res = apply([item('feat/ok').id, item('feat/pr').id, item('feat/blind').id], w.container, ctx, null, (l) => lines.push(l));
+    assert.deepEqual(res.map((r) => r.done), [true, false, false], JSON.stringify(res));
+    assert.match(res[1].message, /has an open PR/);
+    assert.match(res[2].message, /could not read open PRs/);
+    assert.equal(lines.length, 1, 'a restore line only for the branch actually deleted');
+    assert.match(lines[0], new RegExp(`restore .*git .* push origin ${item('feat/ok').tip}:refs/heads/feat/ok`));
+    assert.equal(remoteHas(w, 'feat/pr'), true);
+    assert.equal(remoteHas(w, 'feat/blind'), true);
 });
 
 test('an id is bound to the tip: apply refuses it once the branch has moved, even if it still qualifies', () => {
