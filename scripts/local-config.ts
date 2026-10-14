@@ -129,6 +129,9 @@ export { OVERLAY };
 /** GitHub org the PR board is scoped to. Unset or empty means no org filter. */
 export const GH_ORG = pick('MAESTRO_GH_ORG', 'gh_org');
 
+/** A prefix your repos share (`acme-`), so queue-report reads `tool #5` in a ledger row as the repo `acme-tool` when that checkout exists. Unset means a bare name is only ever itself. */
+export const REPO_PREFIX = pick('MAESTRO_REPO_PREFIX', 'repo_prefix').trim();
+
 /** Your GitHub login. Unset means "whoever `gh` is authenticated as". */
 export const GH_LOGIN = pick('MAESTRO_GH_LOGIN', 'gh_login');
 

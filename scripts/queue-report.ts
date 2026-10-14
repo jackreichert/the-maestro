@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONFIGURED_PROJECT, CONTAINER_ROOT, GH_ORG, LEDGER_ROOT, TRACKER_KEY_PATTERN, VAULT_ROOT } from './local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_ROOT, GH_ORG, LEDGER_ROOT, REPO_PREFIX, TRACKER_KEY_PATTERN, VAULT_ROOT } from './local-config.ts';
 import { fold, isInFlight, isQueued } from './lib/ledger-core.ts';
 import { mergedRows, type PrRef } from './lib/pr-refs.ts';
 import { gitBranches, queueHygiene } from './lib/queue-hygiene.ts';
@@ -46,7 +46,7 @@ export function main(argv: string[]): number {
     const store = openStore({ vault, project, dryRun: true });
     const items = fold(store.readLedger(), store.loadRegistry()).items;
     const open = items.filter((i) => isInFlight(i) || isQueued(i));
-    const merged = mergedRows(open, ownerOf, stateOf);
+    const merged = mergedRows(open, ownerOf, stateOf, REPO_PREFIX);
     const lists = new Map<string, string[]>();
     const branchesOf = (repo: string | undefined): string[] => {
         const dir = repo && CONTAINER_ROOT ? join(CONTAINER_ROOT, repo) : fileURLToPath(new URL('..', import.meta.url));
