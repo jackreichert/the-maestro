@@ -32,7 +32,7 @@ export interface Dropped { index: number; reason: string }
 export type DiffLines = ReadonlyMap<string, ReadonlySet<number>>;
 
 const TOOL_WORDS = /\b(?:as an? (?:ai|assistant|language model|bot)|i(?:'m| am) an? (?:ai|assistant|language model|bot)|an? (?:ai|llm) (?:wrote|generated|reviewed)|claude|anthropic|chatgpt|openai|llm|mithril|language model|auto-?generated|generated (?:by|with)|automated review|(?:review|comment) (?:was )?(?:written|generated) by)\b/i;
-const GENERIC = /\b(?:lgtm|looks? (?:good|great|fine)|ship it|great (?:work|job|pr)|nice (?:work|job|pr)|good (?:work|job|pr)|well done|thanks? for (?:this|the|your)|awesome|amazing|excellent work|solid (?:work|pr))\b/i;
+const GENERIC = /\b(?:lgtm|looks? (?:good|great|fine)|ship it|great (?:work|job|pr)|nice (?:work|job|pr)|good (?:work|job|pr)|well done|thanks? for (?:this|your) (?:pr|work|pull|contribution)|awesome|amazing|excellent work|solid (?:work|pr))\b/i;
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
 /** Why a comment text may not be queued, or null. */

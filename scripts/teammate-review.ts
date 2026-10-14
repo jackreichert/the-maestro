@@ -23,6 +23,7 @@ import type { Finding } from './lib/teammate/bar.ts';
 import { firstPass, installDeps } from './lib/teammate/firstpass.ts';
 import { cleanup, lock, prepare, unlock } from './lib/teammate/worktree.ts';
 import type { Runner } from './lib/teammate/worktree.ts';
+import { printJson } from './lib/json-out.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
 const USAGE = 'Usage: teammate-review.ts prepare --repo <owner/name> --pr <n> | submit [--vault <root>] [--project <name>] < findings.json | cleanup --repo <owner/name> --path <worktree>';
@@ -80,15 +81,15 @@ function main(argv: string[]): number {
     if (!v.repo) { console.error(USAGE); return 2; }
   }
   if (cmd === 'prepare') {
-    console.log(JSON.stringify(prepare({ repo: v.repo as string, pr: Number(v.pr), self: self(), selfRepos: SELF_REVIEW_REPOS, containerRoot: CONTAINER_ROOT, worktreesDir: worktreesDir(), run })));
+    printJson(prepare({ repo: v.repo as string, pr: Number(v.pr), self: self(), selfRepos: SELF_REVIEW_REPOS, containerRoot: CONTAINER_ROOT, worktreesDir: worktreesDir(), run }), { compact: true });
     return 0;
   }
   if (cmd === 'firstpass' || cmd === 'install') {
     const path = reviewPath(v.path ?? '');
     const fp = firstPass({ repo: v.repo as string, pr: Number(v.pr), path, run });
-    if (cmd === 'firstpass') { console.log(JSON.stringify(fp)); return 0; }
+    if (cmd === 'firstpass') { printJson(fp, { compact: true }); return 0; }
     unlock(path);
-    try { console.log(JSON.stringify(installDeps({ path, packages: fp.packages, containerRoot: CONTAINER_ROOT, exec: execIn }))); } finally { lock(path); }
+    try { printJson(installDeps({ path, packages: fp.packages, containerRoot: CONTAINER_ROOT, exec: execIn }), { compact: true }); } finally { lock(path); }
     return 0;
   }
   if (cmd === 'cleanup') {
@@ -101,7 +102,7 @@ function main(argv: string[]): number {
   if (!/^[A-Za-z0-9._\/-]+$/.test(raw.base ?? '') || raw.base.startsWith('-') || !/^[0-9a-f]{40}$/.test(raw.head ?? '')) throw new Error('submission needs a base branch and a full head sha');
   const d = run('git', ['-c', 'core.quotePath=false', 'diff', '--no-color', '--unified=0', `origin/${raw.base}...${raw.head}`], reviewPath(raw.path));
   if (d.status !== 0) throw new Error(`git diff failed: ${d.stderr.split('\n')[0]?.slice(0, 200)}`);
-  console.log(JSON.stringify(submit(draftsPath(vault, v.project || CONFIGURED_PROJECT || CONTAINER_PROJECT), raw, d.stdout)));
+  printJson(submit(draftsPath(vault, v.project || CONFIGURED_PROJECT || CONTAINER_PROJECT), raw, d.stdout), { compact: true });
   return 0;
 }
 
