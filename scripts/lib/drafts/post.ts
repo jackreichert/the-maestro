@@ -11,8 +11,8 @@
 import { spawnSync } from 'node:child_process';
 import { toolCommand } from '../tool-bin.ts';
 import { randomBytes } from 'node:crypto';
-import { appendRow, listDrafts, readRows, refuse, textProblem, withLock } from './queue.ts';
-import type { Draft, Outcome, Row } from './queue.ts';
+import { appendRow, listDrafts, refuse, textProblem, withLock } from './queue.ts';
+import type { Draft, Outcome } from './queue.ts';
 
 export interface GhResult { status: number | null; stdout: string; stderr: string }
 /** Runs `gh` with these arguments. Tests pass a stub; production spawns the real one (through the MAESTRO_GH_BIN seam). */
@@ -61,11 +61,9 @@ export function approveAndPost(file: string, id: string, shownText: string, o: P
     appendRow(file, { op: 'approve', id, ts: ts(), text: d.text });
     const nonce = randomBytes(8).toString('hex');
     appendRow(file, { op: 'posting', id, ts: ts(), nonce });
-    // The lock should make this the only writer; if it ever is not, the first posting row in the file wins and the others stand down.
-    // Only this attempt's rows count: a retry after post-failed starts a new attempt, so rows up to the last post-failed are history.
-    const mine = readRows(file).filter((x) => x.id === id);
-    const firstPosting = mine.slice(mine.map((x) => x.op).lastIndexOf('post-failed') + 1).find((x): x is Extract<Row, { op: 'posting' }> => x.op === 'posting');
-    if (firstPosting?.nonce !== nonce) return refuse('busy', 'Another approval of this draft is already running.');
+    // The lock should make this the only writer; if it ever is not, gh runs only when the fold accepted THIS writer's posting row (the first one of the current attempt),
+    // so what we check is exactly what the fold will honour when it reads our posted/failed row.
+    if (listDrafts(file).find((x) => x.id === id)?.postingNonce !== nonce) return refuse('busy', 'Another approval of this draft is already running.');
     let r: GhResult;
     try { r = run(ghArgs(d, d.text)); } catch { r = { status: null, stdout: '', stderr: '' }; }
     if (r.status === 0) {

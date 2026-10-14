@@ -101,7 +101,8 @@ test('a gh refusal leaves nothing posted and allows a retry; a cut-off call is u
   const again = stub();
   assert.equal(approveAndPost(f, id, draft().text, { run: again.run }).ok, false);
   assert.equal(again.calls.length, 0);
-  assert.equal(rejectDraft(f, id, 'checked, it is there').ok, false, 'uncertain is not rejectable until checked by hand');
+  assert.equal(rejectDraft(f, id, 'checked, it is there').ok, true, 'once checked by hand, an uncertain draft can be cleared');
+  assert.equal(listDrafts(f)[0]?.state, 'rejected');
 });
 
 test('a crash after the posting row, before the result, leaves the draft unpostable', () => {
@@ -172,4 +173,35 @@ test('no code path posts without an approval record: only the approve route reac
   assert.equal(write.match(/approveAndPost\(/g)?.length, 1);
   assert.match(write, /if \(op === 'approve'\) return approveAndPost/);
   assert.equal(/^import .*post\.ts/m.test(readFileSync(join(root, 'lib/drafts/queue.ts'), 'utf8')), false, 'queue.ts does not import post.ts');
+});
+
+test('a rival writer that failed before our posting row landed leaves us standing down, so what gh did always matches the fold', () => {
+  const f = file();
+  const { id } = addDraft(f, draft());
+  let calls = 0;
+  const run = (): GhResult => { calls += 1; return { status: 0, stdout: '{}', stderr: '' }; };
+  let n = 0;
+  const now = (): Date => {
+    n += 1;
+    if (n === 2) {   // just before our posting row: the rival's whole attempt lands first and fails
+      const rows = [{ op: 'approve', text: draft().text }, { op: 'posting', nonce: 'rival' }, { op: 'post-failed', error: 'nope' }];
+      for (const r of rows) appendFileSync(f, `${JSON.stringify({ ...r, id, ts: 't' })}\n`);
+    }
+    return new Date(0);
+  };
+  const out = approveAndPost(f, id, draft().text, { run, now });
+  assert.equal(out.ok, false);
+  assert.equal(calls, 0, 'gh must not run for a posting row the fold ignores');
+  assert.equal(listDrafts(f)[0]?.state, 'failed');
+  assert.equal(approveAndPost(f, id, draft().text, { run }).ok, true, 'a later approve is not locked out');
+  assert.equal(calls, 1);
+});
+
+test('a hand-written add row with a missing or mistyped field is dropped without breaking the queue', () => {
+  const f = file();
+  addDraft(f, draft());
+  for (const bad of [{ target: null }, { target: undefined }, { text: 5 }, { repo: 3 }, { key: 9 }]) {
+    appendFileSync(f, `${JSON.stringify({ op: 'add', id: 'dr-x', ts: 'x', key: 'h', source: 'review', repo: 'a/b', pr: 7, severity: 'suggestion', text: 'hi', target: { kind: 'general' }, ...bad })}\n`);
+  }
+  assert.equal(listDrafts(f).length, 1);
 });
