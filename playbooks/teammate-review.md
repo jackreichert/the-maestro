@@ -8,7 +8,7 @@ Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `install`, `s
 
 1. `prepare --repo <owner/name> --pr <n>` prints `{ path, head, base }`. It refuses the user's own PR, a draft, a closed PR and a self-review repo. The worktree is detached and read-only.
 2. `firstpass --repo <owner/name> --pr <n> --path <path>` prints the PR body, what bots already said, the CI rollup and the test command of each changed package. Hand it to the reviewer as is.
-3. `install --repo <owner/name> --pr <n> --path <path>` only when the reviewer needs to run the package's tests. It runs `npm ci` with browser downloads skipped and prints `git status`: if `dirty` lists files, say so; npm can flip mode bits on tracked files.
+3. `install --repo <owner/name> --pr <n> --path <path>` only when the reviewer needs to run the package's tests. It runs `npm ci --ignore-scripts` (the PR's install scripts never run, and only PATH, HOME and the npm config reach it, no tokens) with browser downloads skipped, and prints `git status`: if `dirty` lists files, say so; npm can flip mode bits on tracked files. If the tests need a build, run it by hand.
 4. Dispatch one review agent with the brief below. Its report is a JSON object, nothing else.
 5. `submit < report.json` with `{ repo, pr, head, base, path, compliment, findings }`. It applies the bar in code, anchors comments to lines in the diff and queues one review. Say what it dropped.
 6. `cleanup --repo <owner/name> --path <path>`.

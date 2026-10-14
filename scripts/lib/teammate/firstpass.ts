@@ -63,19 +63,23 @@ export function firstPass(o: { repo: string; pr: number; path: string; run: Runn
 export type Exec = (cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => { status: number | null; stdout: string; stderr: string };
 
 /**
- * `npm ci` in the package directory of each changed package that has a lockfile, with browser downloads skipped and, when the container folder has an
+ * `npm ci --ignore-scripts` (the PR's install scripts never run; a reviewer who needs a build runs it by hand) in the package directory of each changed package that has a lockfile, with browser downloads skipped and, when the container folder has an
  * `.npmrc`, that file named as the user config (its contents are never read here). Then `git status`: npm can flip file mode bits on tracked files,
  * and the caller must see that before the worktree is removed.
  */
 export function installDeps(o: { path: string; packages: readonly Pkg[]; containerRoot: string; exec: Exec; env?: NodeJS.ProcessEnv }): { installed: string[]; skipped: string[]; failed: { dir: string; error: string }[]; dirty: string[] } {
+  const base = o.env ?? process.env;
   const npmrc = join(resolve(o.containerRoot), '.npmrc');
-  const env: NodeJS.ProcessEnv = { ...(o.env ?? process.env), PUPPETEER_SKIP_DOWNLOAD: '1', ...(existsSync(npmrc) && !(o.env ?? process.env).NPM_CONFIG_USERCONFIG ? { NPM_CONFIG_USERCONFIG: npmrc } : {}) };
+  // The PR's code is someone else's: only what npm needs is passed on (no tokens, no cloud credentials), and lifecycle scripts do not run.
+  const env: NodeJS.ProcessEnv = { PUPPETEER_SKIP_DOWNLOAD: '1' };
+  for (const k of ['PATH', 'HOME', 'LANG', 'TMPDIR', 'NPM_CONFIG_USERCONFIG']) if (base[k] !== undefined) env[k] = base[k];
+  if (existsSync(npmrc) && !env.NPM_CONFIG_USERCONFIG) env.NPM_CONFIG_USERCONFIG = npmrc;
   const installed: string[] = []; const skipped: string[] = []; const failed: { dir: string; error: string }[] = [];
   for (const p of o.packages) {
     const dir = resolve(o.path, p.dir);
     if (dir !== resolve(o.path) && !dir.startsWith(`${resolve(o.path)}/`)) { skipped.push(p.dir); continue; }
     if (!existsSync(join(dir, 'package-lock.json'))) { skipped.push(p.dir); continue; }
-    const r = o.exec('npm', ['ci', '--no-audit', '--no-fund'], dir, env);
+    const r = o.exec('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], dir, env);
     if (r.status === 0) installed.push(p.dir); else failed.push({ dir: p.dir, error: (r.stderr || r.stdout).split('\n').find((l) => l.trim())?.slice(0, 200) ?? 'npm ci failed' });
   }
   const st = o.exec('git', ['status', '--porcelain'], o.path, env);

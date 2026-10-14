@@ -16,7 +16,7 @@ const HEAD = 'a'.repeat(40);
 const text = 'Could we check for an empty list here? It looks like the first item is read without a guard.';
 
 const NICE = 'The ID validation before anything goes into a URL is careful and easy to follow.';
-const DIFF = ['--- a/src/a.ts', '+++ b/src/a.ts', '@@ -3,0 +4,1 @@', '+const first = items[0];'].join('\n');
+const DIFF = ['diff --git a/src/a.ts b/src/a.ts', '--- a/src/a.ts', '+++ b/src/a.ts', '@@ -3,0 +4,1 @@', '+const first = items[0];'].join('\n');
 const sub = (over: object = {}) => ({ repo: 'acme/widgets', pr: 12, head: HEAD, base: 'main', path: '/x/review-widgets-12-aaaaaaa', compliment: NICE, findings: [], ...over });
 
 test('submit queues ONE pending review draft, applies the bar, and posts nothing (no gh is even reachable)', () => {
@@ -118,13 +118,24 @@ test('firstpass reads the PR body, bot findings, CI rollup and each changed pack
   assert.deepEqual(fp.ci, { total: 3, failing: ['test'], pending: 1 });
   assert.deepEqual(fp.packages.map((p) => [p.dir, p.test, p.files]), [['pkg-a', 'node --test', 1], ['pkg-b', null, 1]]);
   const calls: string[] = []; let env: NodeJS.ProcessEnv = {};
-  const res = installDeps({ path: root, packages: fp.packages, containerRoot: root, env: { PATH: '/bin' }, exec: (cmd, args, cwd, e) => { calls.push(`${cmd} ${args[0]} ${cwd.slice(root.length)}`); env = e; return { status: 0, stdout: cmd === 'git' ? ' M bin/x\n' : '', stderr: '' }; } });
-  assert.deepEqual(calls, ['npm ci /pkg-a', 'git status ']);
+  const res = installDeps({ path: root, packages: fp.packages, containerRoot: root, env: { PATH: '/bin', GH_TOKEN: 'x', AWS_SECRET_ACCESS_KEY: 'y' }, exec: (cmd, args, cwd, e) => { calls.push(`${cmd} ${args.join(' ')} ${cwd.slice(root.length)}`); env = e; return { status: 0, stdout: cmd === 'git' ? ' M bin/x\n' : '', stderr: '' }; } });
+  assert.deepEqual(calls, ['npm ci --ignore-scripts --no-audit --no-fund /pkg-a', 'git status --porcelain ']);
   assert.deepEqual(res.skipped, ['pkg-b']);
   assert.deepEqual(res.dirty, [' M bin/x']);
   assert.equal(env.PUPPETEER_SKIP_DOWNLOAD, '1');
+  assert.equal(env.GH_TOKEN, undefined, 'no token reaches the PR\'s code');
+  assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
   assert.equal(env.NPM_CONFIG_USERCONFIG, undefined, 'no .npmrc in the container folder, so none is named');
   writeFileSync(join(root, '.npmrc'), '');
   installDeps({ path: root, packages: fp.packages, containerRoot: root, env: { PATH: '/bin' }, exec: (_c, _a, _d, e) => { env = e; return { status: 0, stdout: '', stderr: '' }; } });
   assert.equal(env.NPM_CONFIG_USERCONFIG, join(root, '.npmrc'));
+});
+
+test('a push retires the earlier review draft that is still waiting, with the reason on record, and leaves nothing posted', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  submit(file, sub({ head: 'a'.repeat(40) }), DIFF);
+  submit(file, sub({ head: 'b'.repeat(40) }), DIFF);
+  const ds = listDrafts(file);
+  assert.deepEqual(ds.map((d) => d.state), ['rejected', 'pending']);
+  assert.match(ds[0]?.rejectReason ?? '', /superseded by a newer push \(bbbbbbb\)/);
 });

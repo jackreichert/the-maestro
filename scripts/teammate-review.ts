@@ -17,7 +17,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, CONTAINER_ROOT, GH_LOGIN, LEDGER_ROOT, SELF_REVIEW_REPOS, VAULT_ROOT } from './local-config.ts';
-import { addDraft, draftsPath, listDrafts } from './lib/drafts/queue.ts';
+import { addDraft, draftsPath, listDrafts, rejectDraft } from './lib/drafts/queue.ts';
 import { parseDiffLines, planReview } from './lib/teammate/bar.ts';
 import type { Finding } from './lib/teammate/bar.ts';
 import { firstPass, installDeps } from './lib/teammate/firstpass.ts';
@@ -56,6 +56,12 @@ export function submit(file: string, s: Submission, diff: string): { queued: { i
   const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head }, s.compliment, s.findings, parseDiffLines(diff));
   if (!plan.draft) return { queued: null, problem: plan.problem, dropped: plan.dropped, downgraded: plan.downgraded };
   const out = addDraft(file, plan.draft);
+  // A push makes an earlier review of this PR stale: approving it would approve an old commit. Retire the ones still waiting, with the reason on record.
+  if (out.created) {
+    for (const d of listDrafts(file)) {
+      if (d.source === 'review' && d.repo === s.repo && d.pr === s.pr && d.id !== out.id && (d.state === 'pending' || d.state === 'failed')) rejectDraft(file, d.id, `superseded by a newer push (${s.head.slice(0, 7)})`);
+    }
+  }
   return { queued: out.created ? { id: out.id } : null, dropped: plan.dropped, downgraded: plan.downgraded };
 }
 
@@ -93,7 +99,7 @@ function main(argv: string[]): number {
   if (!vault) { console.error('Ledger root is not set. Set ledger_root or pass --vault <path>.'); return 2; }
   const raw = JSON.parse(readFileSync(0, 'utf8')) as Submission;
   if (!/^[A-Za-z0-9._\/-]+$/.test(raw.base ?? '') || raw.base.startsWith('-') || !/^[0-9a-f]{40}$/.test(raw.head ?? '')) throw new Error('submission needs a base branch and a full head sha');
-  const d = run('git', ['diff', '--no-color', '--unified=0', `origin/${raw.base}...${raw.head}`], reviewPath(raw.path));
+  const d = run('git', ['-c', 'core.quotePath=false', 'diff', '--no-color', '--unified=0', `origin/${raw.base}...${raw.head}`], reviewPath(raw.path));
   if (d.status !== 0) throw new Error(`git diff failed: ${d.stderr.split('\n')[0]?.slice(0, 200)}`);
   console.log(JSON.stringify(submit(draftsPath(vault, v.project || CONFIGURED_PROJECT || CONTAINER_PROJECT), raw, d.stdout)));
   return 0;

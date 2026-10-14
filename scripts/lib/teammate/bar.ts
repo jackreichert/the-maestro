@@ -21,7 +21,7 @@ export const MAX_SUGGESTIONS = 3;
 export const SECURITY_KINDS = ['secret', 'phi-pii', 'auth', 'tenant-scope', 'injection', 'customer-reference'] as const;
 export const ROLLBACK_KINDS = ['destructive-migration', 'breaking-api-no-fallback'] as const;
 const MIN_EVIDENCE = 8;
-const MIN_COMPLIMENT_WORDS = 6;
+const MIN_COMPLIMENT_WORDS = 8;
 
 /** One finding as an agent reports it. Every field is untrusted. */
 export interface Finding { category?: string; kind?: string; input?: string; failure?: string; path?: string; line?: number; text?: string }
@@ -31,8 +31,8 @@ export interface Dropped { index: number; reason: string }
 /** The lines of each file that are on the RIGHT side of the diff (added or context), by path. */
 export type DiffLines = ReadonlyMap<string, ReadonlySet<number>>;
 
-const TOOL_WORDS = /\b(?:ai|a\.i\.|assistant|claude|anthropic|copilot|llm|chatgpt|gpt|mithril|language model|auto-?generated|generated (?:by|with)|automated review|bot)\b/i;
-const GENERIC = /^\s*(?:great|nice|good|solid|awesome|excellent|amazing|well)\b[\w\s,.!'-]{0,40}$/i;
+const TOOL_WORDS = /\b(?:as an? (?:ai|assistant|language model|bot)|i(?:'m| am) an? (?:ai|assistant|language model|bot)|an? (?:ai|llm) (?:wrote|generated|reviewed)|claude|anthropic|chatgpt|openai|llm|mithril|language model|auto-?generated|generated (?:by|with)|automated review|(?:review|comment) (?:was )?(?:written|generated) by)\b/i;
+const GENERIC = /\b(?:lgtm|looks? (?:good|great|fine)|ship it|great (?:work|job|pr)|nice (?:work|job|pr)|good (?:work|job|pr)|well done|thanks? for (?:this|the|your)|awesome|amazing|excellent work|solid (?:work|pr))\b/i;
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
 /** Why a comment text may not be queued, or null. */
@@ -48,7 +48,7 @@ export function complimentProblem(c: string | undefined): string | null {
   if (!text) return 'a review needs a compliment: name one specific thing done well';
   const bad = voiceProblem(text);
   if (bad) return bad;
-  if (text.split(/\s+/).length < MIN_COMPLIMENT_WORDS || GENERIC.test(text)) return 'the compliment is generic: name the specific thing that was done well';
+  if (text.split(/\s+/).length < MIN_COMPLIMENT_WORDS || GENERIC.test(text.split(/\s+/).slice(0, 8).join(' '))) return 'the compliment is generic: name the specific thing that was done well';
   return null;
 }
 
@@ -71,19 +71,54 @@ export function classify(f: Finding): { severity: 'blocking' | 'suggestion'; dow
   return { severity: 'suggestion' };
 }
 
-/** The RIGHT-side lines of a unified diff, by path: every added line and every context line of each hunk. */
+/** A path as git prints it in a `+++` header: C-quoted (with octal escapes) when it holds unusual bytes, else bare with a trailing tab when it holds a space. */
+function headerPath(raw: string): string | null {
+  let p = raw.replace(/\t.*$/, '');
+  if (p === '/dev/null') return null;
+  if (p.startsWith('"') && p.endsWith('"')) {
+    const bytes: number[] = [];
+    const inner = p.slice(1, -1);
+    const esc: Record<string, number> = { n: 10, t: 9, '"': 34, '\\': 92 };
+    for (let i = 0; i < inner.length; i += 1) {
+      const c = inner[i] as string;
+      if (c !== '\\') { bytes.push(...Buffer.from(c)); continue; }
+      const oct = /^[0-7]{3}/.exec(inner.slice(i + 1));
+      if (oct) { bytes.push(parseInt(oct[0], 8)); i += 3; } else { bytes.push(esc[inner[i + 1] as string] ?? 63); i += 1; }
+    }
+    p = Buffer.from(bytes).toString('utf8');
+  }
+  return p.replace(/^b\//, '');
+}
+
+/**
+ * The RIGHT-side lines of a unified diff, by path: every added line and every context line of each hunk. Hunks are read by their line counts,
+ * not by what a line looks like, so an added line that starts with `++ ` is content, never a file header; the `+++` header is only read between a
+ * `diff --git` line and its first hunk.
+ */
 export function parseDiffLines(diff: string): Map<string, Set<number>> {
   const out = new Map<string, Set<number>>();
   let lines: Set<number> | null = null;
-  let next = 0;
+  let header = false;
+  let next = 0; let oldLeft = 0; let newLeft = 0;
   for (const raw of diff.split('\n')) {
-    if (raw.startsWith('+++ ')) { const p = raw.slice(4); lines = p === '/dev/null' ? null : out.get(p.replace(/^b\//, '')) ?? new Set(); if (lines) out.set(p.replace(/^b\//, ''), lines); continue; }
-    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
-    if (hunk) { next = Number(hunk[1]); continue; }
-    if (!lines || next === 0) continue;
-    if (raw.startsWith('+')) { lines.add(next); next += 1; } else if (raw.startsWith(' ')) { lines.add(next); next += 1; }
-    else if (raw.startsWith('\\') || raw.startsWith('-')) continue;
-    else next = 0;
+    if (oldLeft > 0 || newLeft > 0) {
+      const c = raw[0];
+      if (c === '+') { lines?.add(next); next += 1; newLeft -= 1; continue; }
+      if (c === '-') { oldLeft -= 1; continue; }
+      if (c === ' ') { lines?.add(next); next += 1; oldLeft -= 1; newLeft -= 1; continue; }
+      if (c === '\\') continue;
+      oldLeft = 0; newLeft = 0;
+    }
+    if (raw.startsWith('\\')) continue;
+    if (raw.startsWith('diff --git ')) { header = true; lines = null; continue; }
+    if (header && raw.startsWith('+++ ')) {
+      const p = headerPath(raw.slice(4));
+      lines = null;
+      if (p !== null) { lines = out.get(p) ?? new Set(); out.set(p, lines); }
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(raw);
+    if (hunk) { header = false; oldLeft = hunk[1] === undefined ? 1 : Number(hunk[1]); next = Number(hunk[2]); newLeft = hunk[3] === undefined ? 1 : Number(hunk[3]); }
   }
   return out;
 }
@@ -110,12 +145,17 @@ export function planReview(ctx: PrContext, compliment: string | undefined, findi
   const comments: ReviewComment[] = [];
   let suggestions = 0;
   let downgraded = 0;
+  let lostBlocker: string | null = null;
+  const drop = (index: number, f: Finding, reason: string): void => {
+    dropped.push({ index, reason });
+    if (classify(f).severity === 'blocking') lostBlocker ??= `finding ${index + 1}: ${reason}`;
+  };
   findings.forEach((f, index) => {
     const text = str(f.text);
     const bad = voiceProblem(text);
-    if (bad) { dropped.push({ index, reason: bad }); return; }
+    if (bad) { drop(index, f, bad); return; }
     const path = str(f.path);
-    if (!path || !Number.isSafeInteger(f.line) || !diff.get(path)?.has(f.line as number)) { dropped.push({ index, reason: 'not anchored to a line in the diff' }); return; }
+    if (!path || !Number.isSafeInteger(f.line) || !diff.get(path)?.has(f.line as number)) { drop(index, f, 'not anchored to a line in the diff'); return; }
     const { severity, downgraded: why } = classify(f);
     if (why) downgraded += 1;
     if (severity === 'suggestion') {
@@ -124,6 +164,8 @@ export function planReview(ctx: PrContext, compliment: string | undefined, findi
     }
     comments.push({ path, line: f.line as number, severity, text: `${severity === 'blocking' ? 'Blocking' : 'Suggestion'}: ${text}` });
   });
+  // A blocking finding that cannot be posted must never turn into an approval: the whole review waits until it is fixed and submitted again.
+  if (lostBlocker) return { draft: null, problem: `a blocking finding could not be posted (${lostBlocker}); anchor it to a changed line and word it plainly, then submit again`, dropped, downgraded };
   const blocking = comments.some((c) => c.severity === 'blocking');
   const opening = str(compliment);
   const body = `${opening}\n\n${closing(blocking, comments.length)}`;
