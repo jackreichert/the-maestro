@@ -169,8 +169,10 @@ test('no code path posts without an approval record: only the approve route reac
   walk(root);
   const uses = (needle: string): string[] => sources.filter((p) => readFileSync(p, 'utf8').includes(needle)).map((p) => p.slice(root.length + 1)).sort();
   assert.deepEqual(uses('approveAndPost'), ['lib/drafts/post.ts', 'lib/web/drafts-write.ts']);
-  assert.deepEqual(uses('spawnGh'), ['lib/drafts/post.ts']);
-  assert.deepEqual(uses('drafts/post.ts'), ['lib/web/drafts-write.ts', 'lib/web/server.ts']);
+  // The one other way a comment reaches GitHub is the bot-thread reply, which re-reads the thread and refuses any with a person in it.
+  assert.deepEqual(uses('postBotReply'), ['lib/drafts/post.ts', 'lib/replies/route.ts']);
+  assert.deepEqual(uses('spawnGh'), ['lib/drafts/post.ts', 'reply-drafts.ts']);
+  assert.deepEqual(uses('drafts/post.ts'), ['lib/replies/route.ts', 'lib/replies/threads.ts', 'lib/web/drafts-write.ts', 'lib/web/server.ts', 'reply-drafts.ts']);
   const write = readFileSync(join(root, 'lib/web/drafts-write.ts'), 'utf8');
   assert.equal(write.match(/approveAndPost\(/g)?.length, 1);
   assert.match(write, /if \(op === 'approve'\) return approveAndPost/);

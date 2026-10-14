@@ -13,6 +13,9 @@ import { toolCommand } from '../tool-bin.ts';
 import { randomBytes } from 'node:crypto';
 import { appendRow, eventOf, listDrafts, refuse, revOf, textProblem, withLock } from './queue.ts';
 import type { Draft, Outcome } from './queue.ts';
+import { fetchThreads } from '../replies/threads.ts';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 export interface GhResult { status: number | null; stdout: string; stderr: string }
 /** Runs `gh` with these arguments. Tests pass a stub; production spawns the real one (through the MAESTRO_GH_BIN seam). */
@@ -88,4 +91,62 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
     return refuse('state', `GitHub refused it: ${firstLine(r.stderr) || 'gh failed'}. Nothing was posted.`);
   });
   return out === 'busy' ? refuse('busy', 'The queue is busy. Try again.') : out;
+}
+
+/** What `postBotReply` needs: the person's own PR, the thread to answer, and what to say. */
+export interface BotReply { repo: string; pr: number; self: string; rootId: number; text: string; resolve: boolean }
+export type BotOutcome = { ok: true; posted: boolean; resolved: boolean; url?: string; note?: string } | { ok: false; code: 'not-bot' | 'invalid' | 'unknown' | 'uncertain' | 'failed'; message: string };
+
+/** Any `@` before a letter or digit, or an HTML entity that renders as `@`: GitHub may turn it into a mention, and a mention notifies a person. Refused wherever it appears, even in code. */
+const MENTION = /@[A-Za-z0-9]|&#0*64;|&#x0*40;|&commat;/i;
+const RESOLVE = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}';
+
+/**
+ * The one place a reply is posted WITHOUT approval: to a thread whose every participant besides the person is a bot (Copilot, a security
+ * scanner), fixing or declining with a reason and then resolving it. It does not trust its caller's classification: it reads the thread from
+ * GitHub itself and refuses unless the thread is unresolved, on the person's own open PR, and bot-only. A thread with any human in it is
+ * refused (`not-bot`), whatever was asked, so a person's comment can only ever reach GitHub through approveAndPost.
+ * Idempotent: `<drafts dir>/bot-replies.jsonl` records each attempt (`posting` before gh, then `posted` or `failed`); a thread with the same last
+ * comment is never answered twice, and a `posting` row with no outcome is `uncertain` and is not retried.
+ */
+export function postBotReply(file: string, r: BotReply, o: { run?: GhRun; now?: () => Date } = {}): BotOutcome {
+  const run = o.run ?? spawnGh;
+  const bad = textProblem(r.text) ?? (MENTION.test(r.text) ? 'A reply that goes out without approval cannot @-mention a person.' : null);
+  if (bad) return { ok: false, code: 'invalid', message: bad };
+  const out = withLock(join(dirname(file), 'bot-replies'), (): BotOutcome => {
+    let pr;
+    try { pr = fetchThreads(r.repo, r.pr, r.self, run); } catch (e) { return { ok: false, code: 'unknown', message: (e as Error).message }; }
+    if (pr.author.toLowerCase() !== r.self.toLowerCase() || !pr.open) return { ok: false, code: 'unknown', message: 'That is not your own open PR.' };
+    const t = pr.threads.find((x) => x.rootId === r.rootId);
+    if (!t || !t.waitingOn) return { ok: false, code: 'unknown', message: 'No unresolved thread is waiting on you there.' };
+    if (t.kind !== 'bot') return { ok: false, code: 'not-bot', message: 'A person is part of that thread, so the reply waits for your approval.' };
+    const key = `${r.repo}#${r.pr}:${t.rootId}@${t.waitingOn.id}`;
+    const log = join(dirname(file), 'bot-replies.jsonl');
+    const rows = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l) as { op: string; key: string }]; } catch { return []; } }).filter((x) => x.key === key) : [];
+    const last = rows[rows.length - 1]?.op;
+    const ts = (): string => (o.now?.() ?? new Date()).toISOString();
+    const write = (op: string, extra: object = {}): void => { mkdirSync(dirname(log), { recursive: true }); appendFileSync(log, `${JSON.stringify({ op, key, ts: ts(), ...extra })}\n`); };
+    if (last === 'posting') return { ok: false, code: 'uncertain', message: 'An earlier reply to this thread was cut off; check GitHub before anything else.' };
+    let url: string | undefined;
+    if (last === 'posted') { /* already answered: only the resolve may remain */ } else {
+      write('posting');
+      let g: GhResult;
+      try { g = run(['api', '-X', 'POST', `repos/${r.repo}/pulls/${r.pr}/comments/${t.rootId}/replies`, '-f', `body=${r.text}`]); } catch { g = { status: null, stdout: '', stderr: '' }; }
+      if (g.status !== 0) {
+        if (g.status !== null && REFUSED.test(g.stderr)) { write('failed', { error: firstLine(g.stderr) }); return { ok: false, code: 'failed', message: `GitHub refused it: ${firstLine(g.stderr)}` }; }
+        return { ok: false, code: 'uncertain', message: 'GitHub did not confirm the reply; check the thread before anything else.' };
+      }
+      url = urlOf(g.stdout);
+      write('posted', { ...(url ? { url } : {}) });
+    }
+    let resolved = false;
+    let note: string | undefined;
+    if (r.resolve) {
+      const g = run(['api', 'graphql', '-f', `query=${RESOLVE}`, '-f', `id=${t.nodeId}`]);
+      resolved = g.status === 0;
+      if (!resolved) note = `replied, but the thread could not be resolved: ${firstLine(g.stderr)}`;
+    }
+    return { ok: true, posted: last !== 'posted', resolved, ...(url ? { url } : {}), ...(note ? { note } : {}) };
+  });
+  return out === 'busy' ? { ok: false, code: 'failed', message: 'The reply log is busy. Try again.' } : out;
 }
