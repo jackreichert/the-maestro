@@ -14,7 +14,7 @@ import type { LedgerRow } from '../ledger-core.ts';
 import { describeFindings, scanFields, scanText as scanShared } from '../secret-scan.ts';
 import { COMPOSER, MAX_LINES } from './rules.ts';
 import { MAX_LINE, scanText as scanPage } from './scan.ts';
-import { COMPOSER_ITEM, REJECT_MAX, curatedProblems, pendingLearned } from './composer.ts';
+import { COMPOSER_ITEM, REJECT_MAX, curatedProblems, pendingLearned, pendingRetroLessons } from './composer.ts';
 import { pendingMisses } from '../journal/miss.ts';
 import { WITHHELD, safeLine } from './safe-text.ts';
 
@@ -197,7 +197,7 @@ export function seedLastWrites(env: WriteEnv, holder: string | undefined): Outco
 export interface Marks { model?: string; used?: string[]; tokens?: string }
 
 /**
- * Close one pending learned or miss row: with `page` (the page exists and passes the same checks now; its sha256 is recorded) or with `reject`
+ * Close one pending learned row, miss or agent retro (a retro is closed once its lessons are on pages or rejected, one `curated` row per retro): with `page` (the page exists and passes the same checks now; its sha256 is recorded) or with `reject`
  * (a scanned, one-line reason). The row is checked with the same function `verify` runs, so the writer cannot append what `verify` flags.
  */
 export function curate(env: WriteEnv, holder: string | undefined, learnedId: string, how: { page?: string; reject?: string; refresh?: boolean; acceptHandEdit?: boolean }, marks: Marks = {}): Outcome<{ id: string }> {
@@ -209,7 +209,7 @@ export function curate(env: WriteEnv, holder: string | undefined, learnedId: str
     // A refresh re-records the sha of a page already composed from this learned row, so the next pass compares against the refresh, not the first curate.
     if (how.page === undefined || how.reject !== undefined) return refuse(1, '--refresh needs --page and no --reject');
     if (!rows.some((r) => r.kind === 'curated' && r.closes === learnedId && r.page === how.page)) return refuse(1, 'that id has no curated row for that page: a refresh re-records a page this learned row already composed');
-  } else if (![...pendingLearned(rows), ...pendingMisses(rows)].some((r) => r.id === learnedId)) return refuse(1, 'that id is not a pending learned or miss row (unknown, or already curated)');
+  } else if (![...pendingLearned(rows), ...pendingMisses(rows), ...pendingRetroLessons(rows)].some((r) => r.id === learnedId)) return refuse(1, 'that id is not a pending learned row, miss or agent retro (unknown, or already closed)');
   const row: LedgerRow = { id: env.newId(rows), ts: env.now(), date: env.now().slice(0, 10), kind: 'curated', closes: learnedId, text: `${how.refresh ? 'refreshed' : 'curated'} ${learnedId}`, window: holder as string, ...marks };
   if (how.reject !== undefined) {
     const reason = how.reject.replace(/\s+/g, ' ').trim();
@@ -232,7 +232,7 @@ export function curate(env: WriteEnv, holder: string | undefined, learnedId: str
     row.page = page;
     row.pageSha = sha;
   }
-  const closableIds = new Set(rows.filter((r) => (r.kind === 'learned' || r.kind === 'miss') && typeof r.id === 'string').map((r) => r.id as string));
+  const closableIds = new Set(rows.filter((r) => (r.kind === 'learned' || r.kind === 'miss' || r.kind === 'agent-retro') && typeof r.id === 'string').map((r) => r.id as string));
   const own = curatedProblems(row, closableIds);
   if (own.length) return refuse(1, ...own.map((p) => `curated row: ${p}`));
   env.append(row);
