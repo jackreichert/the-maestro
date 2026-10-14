@@ -61,3 +61,23 @@ test('a redraw keeps the same region element, so its scroll position and focus s
   assert.equal(root.querySelectorAll('ol.priorities li').length, 1);
   cleanup();
 });
+
+test('a full-page redraw puts the region back where the reader had scrolled it, and focus finds its twin by id', async () => {
+  const { keepRegionScroll } = await import('../src/priority-list.ts');
+  const page = document.createElement('div');
+  document.body.append(page);
+  const make = (): List => { const el = document.createElement('priority-list') as List; el.data = data(); page.append(el); return el; };
+  const old = make();
+  const oldRegion = old.shadowRoot?.querySelector('.region') as HTMLElement;
+  oldRegion.scrollTop = 120;
+  const putBack = keepRegionScroll(page);
+  old.remove();
+  const fresh = make();
+  const region = fresh.shadowRoot?.querySelector('.region') as HTMLElement;
+  assert.equal(region.scrollTop, 0, 'a new region starts at the top');
+  putBack();
+  assert.equal(region.scrollTop, 120);
+  assert.equal(region.id, 'pl-region', 'a stable id lets the page return focus to the region');
+  fresh.remove();
+  page.remove();
+});

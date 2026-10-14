@@ -22,6 +22,8 @@ const CSS = `${BASE_CSS}${UI_CSS}
   /* A column: the region fills whatever height the page gives the host (the hero row, on a wide screen) and scrolls inside it; with no height given it is as tall as its content. */
   :host { display: flex; flex-direction: column; }
   .region { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  /* A card scrolled into view by focus lands clear of the sticky header above and the fade below. */
+  .region { scroll-padding-block: 2.5rem 2rem; }
   .region:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
   /* Only while more sits below: a fade over the last lines, pinned to the foot of the region and taking no room of its own. */
   .fade { position: sticky; bottom: 0; block-size: 2rem; margin-block-start: -2rem; pointer-events: none; opacity: 0; background: linear-gradient(to bottom, transparent, var(--surface-page)); transition: opacity var(--dur-fast) var(--ease-out); }
@@ -71,6 +73,16 @@ const CSS = `${BASE_CSS}${UI_CSS}
 `;
 
 /**
+ * A full-page redraw builds a new <priority-list>, so the region's scroll offset is read from the old one first.
+ * Call before the redraw; call the result after it to put the offset back on the new region.
+ */
+export function keepRegionScroll(page: ParentNode): () => void {
+  const region = (): HTMLElement | null => page.querySelector('priority-list')?.shadowRoot?.querySelector<HTMLElement>('.region') ?? null;
+  const top = region()?.scrollTop ?? 0;
+  return () => { const r = region(); if (r && top > 0) r.scrollTop = top; };
+}
+
+/**
  * <priority-list>: today's priorities, and (when the page may edit) the controls to reorder, delete and add them.
  *
  * The server's file is the truth. A change shows at once (optimistic), the request goes out, and the server's own list
@@ -82,7 +94,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
 export class PriorityList extends HTMLElement {
   #root: ShadowRoot;
   /** The one scroll region, made once: redraws replace what is inside it, so its scroll position and focus survive them. */
-  #region: HTMLElement = h('div', { class: 'region', role: 'region', tabindex: '0', 'aria-label': 'Today\'s priorities' });
+  #region: HTMLElement = h('div', { class: 'region', id: 'pl-region', role: 'region', tabindex: '0', 'aria-label': 'Today\'s priorities' });
   #resize: ResizeObserver | null = null;
   #data: PriorityData = { items: [], max: 5, streams: [], editable: false, note: '' };
   #items: Priority[] = [];

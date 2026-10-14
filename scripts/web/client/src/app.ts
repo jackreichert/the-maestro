@@ -1,6 +1,6 @@
 import './stream-board.ts';
 import './podium-chart.ts';
-import './priority-list.ts';
+import { keepRegionScroll } from './priority-list.ts';
 import './local-review.ts';
 import './open-prs.ts';
 import { h, s, shadow } from './dom.ts';
@@ -360,7 +360,9 @@ export class PodiumApp extends HTMLElement {
     if (!this.#ids().includes(this.#active)) this.#active = DASHBOARD;   // the stream behind the open tab is gone
     const focused = this.#focusKey();
     const folds = foldStates(this.#root);
+    const putScrollBack = keepRegionScroll(this.#root);
     this.#safeRender();
+    putScrollBack();   // the new priorities region starts at the top; return it to where the reader had scrolled
     restoreFolds(this.#root, folds);   // the redraw reset every disclosure to its default; put each back as the reader left it
     if (focused) findByKey(this.#root, focused)?.focus?.();   // the redraw destroyed the element that had focus; put it back on its twin
   }
