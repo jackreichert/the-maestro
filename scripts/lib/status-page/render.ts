@@ -24,6 +24,8 @@ import type { StartHere } from '../start/start-here.ts';
 export interface Item { id: string; date: string; ts?: string; stateTs?: string; text: string; model?: string; refs?: string[]; stream?: string; ticket?: string | null; gate?: string; deferredUntil?: string;
   /** An ask's decision fields as the ledger stores them; unchecked here, `askBits` reads each one defensively. */
   recommend?: unknown; default?: unknown; door?: unknown; by?: unknown; class?: unknown;
+  /** An ask's template (ask-template.ts) and what the writer checked, as stored; read defensively by `askTemplateOf`. */
+  blocked?: unknown; context?: unknown; options?: unknown; links?: unknown; searched?: unknown;
   /** A paste ask's block file: set only on `status.paste` rows. */
   paste?: unknown;
   /** The latest answer recorded for an open ask (an `answer` row), and its discuss topic; the page puts the answer in the ask's stub. */

@@ -25,7 +25,12 @@ export interface AskCard {
   class?: string;
   /** A run-this ask: the block file to run, shown and never read by the page. */
   paste?: string;
+  /** An ask written with the template; absent on an older free-text ask (legacy layout). `needed` is then the whole one-line question. */
+  sections?: AskSections;
+  /** What the writer checked before asking. */
+  searched?: string;
 }
+export interface AskSections { blocked: string; context: string[]; options: { option: string; cost: string }[]; links: Ref[] }
 
 export interface WorkItem { id: string; stream: string; text: string; ticket?: Ref; links: AskLinks; model?: string; since: string }
 export interface BlockedItem extends WorkItem { gate?: string }

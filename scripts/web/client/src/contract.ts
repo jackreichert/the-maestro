@@ -26,6 +26,7 @@ const ROW_RULES = {
   asks: {
     id: str, stream: str, needed: str, context: str, date: str, ts: str, ageDays: num, links,
     recommend: opt(str), door: opt(oneOf('one-way', 'two-way')), default: opt(str), by: opt(str), class: opt(oneOf('expedite', 'fixed-date', 'standard', 'intangible')), paste: opt(str),
+    sections: opt(shape({ blocked: str, context: arrOf(str), options: arrOf(shape({ option: str, cost: str })), links: arrOf(ref) })), searched: opt(str),
   } satisfies Shape,
   working: WORK,
   stale: WORK,

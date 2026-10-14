@@ -66,6 +66,13 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .paste { margin: var(--space-3) 0 0; max-width: 70ch; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
   .paste code { font-family: var(--font-mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
   .stale-note { margin: var(--space-1) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--warning); }
+  /* The template's sections, each under its own heading, in a fixed order; an older free-text ask has none of these and keeps the layout above. */
+  .sec { max-width: 70ch; }
+  .sec h4 { margin: 0 0 var(--space-1); font-size: var(--text-xs); line-height: var(--leading-xs); font-weight: var(--weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+  .sec p, .sec ul, .sec ol { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; text-wrap: pretty; }
+  .sec ul, .sec ol { padding-left: 1.25em; display: grid; gap: var(--space-1); }
+  .sec .cost { color: var(--text-secondary); }
+  .sec ul.links { display: grid; padding-left: 0; list-style: none; margin: 0; }
   .links { display: flex; flex-wrap: wrap; gap: 0 var(--space-3); margin: var(--space-2) 0 0; padding: 0; list-style: none; font-size: var(--text-sm); line-height: var(--leading-sm); }
 
   .form { margin-top: var(--space-4); display: grid; gap: var(--space-2); max-width: 70ch; }
@@ -113,10 +120,33 @@ function context(text: string, id: string): HTMLElement {
   return frag;
 }
 
-/** What the ask recommends, how reversible it is, what silence does and by when, as a list of labelled lines; null when it carries none. */
+/** One template section: a heading and its content, tied together for assistive tech. */
+function section(uid: string, key: string, title: string, content: Node): HTMLElement {
+  return h('section', { class: `sec sec-${key}`, 'aria-labelledby': `${uid}-sh-${key}` }, h('h4', { id: `${uid}-sh-${key}` }, title), content);
+}
+
+/**
+ * The template's sections in their fixed order: Question, What is blocked, Context, Options, Recommendation, Links, What I checked.
+ * An empty optional section (no context, nothing checked) is left out; the required ones are always there.
+ */
+function templateSections(a: AskCard, uid: string, links: { label: string; url?: string }[]): HTMLElement[] {
+  const t = a.sections;
+  if (!t) return [];
+  return [
+    section(uid, 'question', 'Question', h('p', {}, a.needed)),
+    section(uid, 'blocked', 'What is blocked', h('p', {}, t.blocked)),
+    ...(t.context.length ? [section(uid, 'context', 'Context', h('ul', {}, ...t.context.map((c) => h('li', {}, c))))] : []),
+    section(uid, 'options', 'Options', h('ol', {}, ...t.options.map((o) => h('li', {}, o.option, o.cost ? h('span', { class: 'cost' }, ` (cost: ${o.cost})`) : null)))),
+    ...(a.recommend ? [section(uid, 'recommendation', 'Recommendation', h('p', {}, a.recommend))] : []),
+    section(uid, 'links', 'Links', h('ul', { class: 'links', role: 'list' }, ...links.map((r) => h('li', {}, refLink(r))))),
+    ...(a.searched ? [section(uid, 'checked', 'What I checked', h('p', {}, a.searched))] : []),
+  ];
+}
+
+/** What the ask recommends, how reversible it is, what silence does and by when, as a list of labelled lines; null when it carries none. The templated card shows the recommendation in its own section. */
 function decisionFields(a: AskCard): HTMLElement | null {
   const rows: [string, string][] = [
-    ...(a.recommend ? [['Recommend', a.recommend] as [string, string]] : []),
+    ...(a.recommend && !a.sections ? [['Recommend', a.recommend] as [string, string]] : []),
     ...(a.door ? [['Door', a.door === 'one-way' ? 'one-way (silence never decides it)' : 'two-way (reversible)'] as [string, string]] : []),
     ...(a.default ? [['If silent', a.default] as [string, string]] : []),
     ...(a.by ? [['Decide by', a.by] as [string, string]] : []),
@@ -176,7 +206,10 @@ export class AskCardElement extends HTMLElement {
     if (!a) { this.#root.replaceChildren(); return; }
     const uid = `a-${a.id}`;
     const stale = a.ageDays > STALE_DAYS;
-    const links = [...(a.links.note ? [a.links.note] : []), ...a.links.tracker, ...a.links.prs];
+    const derived = [...(a.links.note ? [a.links.note] : []), ...a.links.tracker, ...a.links.prs];
+    // A templated ask lists its own links first; the ones the page works out from the text follow, unless the same URL is already there.
+    const own = a.sections?.links ?? [];
+    const links = [...own, ...derived.filter((r) => !r.url || !own.some((o) => o.url === r.url))];
     const toggle = h('button', { type: 'button', class: 'ask-toggle', id: `${uid}-h`, 'aria-expanded': 'false', 'aria-controls': `${uid}-b` }, a.needed);
     // Every ask has a "Your answer" field and its buttons; tie each to its decision so a controls list tells them apart.
     const answer = h('textarea', { id: `${uid}-t`, rows: '3', 'aria-describedby': [`${uid}-h`, a.context ? `${uid}-c` : ''].filter(Boolean).join(' ') });
@@ -196,12 +229,14 @@ export class AskCardElement extends HTMLElement {
         answer,
         error,
         h('div', { class: 'actions' }, ...buttons));
+    const structured = templateSections(a, uid, links);
     const body = h('div', { class: 'body', id: `${uid}-b`, hidden: true },
+      ...(structured.length ? structured : []),
       decisionFields(a),
-      a.context ? context(a.context, `${uid}-c`) : null,
+      structured.length ? null : (a.context ? context(a.context, `${uid}-c`) : null),
       a.paste ? h('p', { class: 'paste' }, 'Run this block, then answer with what it printed: ', h('code', {}, a.paste)) : null,
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
-      links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null,
+      structured.length ? null : (links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null),
       form);
     const savedMark = h('span', { class: 'saved-mark', hidden: true }, finalBar(), 'saved');
     const days = Math.floor(a.ageDays);
