@@ -1027,6 +1027,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `projects_dir` | `MAESTRO_PROJECTS_DIR` | `~/.claude/projects/<container_root, else the working directory, with separators as dashes>` | Claude Code transcript directory read by `token-metrics.ts`. Unset, it follows `container_root` so the roll nudge works from any directory. With neither set it is a guess from the working directory, and an empty result says so instead of reading it silently |
 | `ledger_root` | `LEDGER_ROOT` | none | Where `Journal/` lives; falls back to `vault_root` |
 | `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
+| `repo_prefix` | `MAESTRO_REPO_PREFIX` | none | A prefix your repos share. `queue-report.ts` then reads `tool #5` in a ledger row as the repo `<prefix>tool` when that checkout exists. Unset, a bare name is only ever itself |
 | `podium_trusted_atlassian_hosts` | `PODIUM_TRUSTED_ATLASSIAN_HOSTS` | none | Comma-separated `<label>.atlassian.net` hosts whose ticket links in the Podium reuse one tab per ticket. Unset, every ticket link opens a fresh tab |
 | `podium_series` | `PODIUM_SERIES` | none | Comma-separated `name=class` pairs (class `s1` to `s8`, or `so`) giving a stream a fixed colour in the Podium. Streams not listed get a stable hashed colour; the tool's own streams have built-in colours |
 | `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.ts resume` checks |

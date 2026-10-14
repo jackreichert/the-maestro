@@ -21,6 +21,7 @@ The scripts read one small file. It is markdown, so it can sit inside an overlay
 ```maestro-config
 overlay: <skill>            # or <plugin>:<skill>; omit for no overlay
 gh_org: <github-org>        # PR board scope; the Podium PR list shows only repos owned by this org, and is empty with a warning when unset
+repo_prefix: <prefix->         # queue-report: a row saying `tool #5` may mean the repo <prefix->tool; default none
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
