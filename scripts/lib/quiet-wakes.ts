@@ -74,7 +74,12 @@ function leftOpenSet(e: Ev, deps: QuietDeps): QuietVerdict | null {
 
 /** The first rule that has an opinion on this event, or null. `deps` undefined leaves only the rule that needs none (continuity). */
 export function quietVerdict(e: Ev, deps?: QuietDeps): QuietVerdict | null {
-  return continuity(e) ?? (deps ? mergeSweep(e, deps) ?? leftOpenSet(e, deps) : null);
+  const c = continuity(e);
+  if (c || !deps) return c;
+  try { return mergeSweep(e, deps) ?? leftOpenSet(e, deps); } catch (err) {
+    // A dep that throws (gh or the sweep could not even start) must wake the event, never stop the tick or drop it.
+    return { action: 'wake', rule: 'quiet-rule-error', reason: `a quiet-wake rule failed (${oneLine(err instanceof Error ? err.message : String(err), 80)}); waking instead` };
+  }
 }
 
 const MERGE_SWEEP = fileURLToPath(new URL('../merge-sweep.ts', import.meta.url));
