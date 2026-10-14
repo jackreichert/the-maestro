@@ -53,7 +53,9 @@ export function validate(target: string, { now, ttlMs }: { now: number; ttlMs?: 
 export const defaultTtlMs = (target: string, now: number): number => (parseRecurring(target) ? RECURRING_TTL_MS : parseTarget(target) - now + GRACE_MS);
 
 /** A recurring reminder is a standing watch (its expiry renews); a one-shot is not. */
-export const renewsFor = (target: string): boolean => Boolean(parseRecurring(target));
+export function renewsFor(target: string): boolean {
+  try { return Boolean(parseRecurring(target)); } catch { return false; } // a bad hand-edited target fails in its own check, not in the loop
+}
 
 export function check(target: string, ctx: CheckContext): ReminderState {
   const text = ctx.watch?.report ?? '';

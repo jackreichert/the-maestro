@@ -64,14 +64,14 @@ test('fall back (2026-11-01): the wall clock holds at 08:30, so the UTC instant 
   assert.equal(fires(s, '2026-11-02T13:29:00Z'), 0, 'Monday 08:29 EST');
   assert.equal(fires(s, '2026-11-02T13:31:00Z'), 1, 'Monday 08:31 EST: 13:30Z');
   const d = setup();
-  add(d.dir, '2026-10-31T11:00:00Z', { target: 'daily@08:30 America/New_York' });
+  add(d.dir, '2026-10-31T14:00:00Z', { target: 'daily@08:30 America/New_York' });
   assert.equal(fires(d, '2026-11-01T12:31:00Z'), 0, 'the change day itself: 07:31 EST');
   assert.equal(fires(d, '2026-11-01T13:31:00Z'), 1);
 });
 
 test('spring forward (2027-03-14): 08:30 is 12:30Z in EDT', () => {
   const d = setup();
-  add(d.dir, '2027-03-13T11:00:00Z', { target: 'daily@08:30 America/New_York' });
+  add(d.dir, '2027-03-13T14:00:00Z', { target: 'daily@08:30 America/New_York' });
   assert.equal(fires(d, '2027-03-14T12:29:00Z'), 0);
   assert.equal(fires(d, '2027-03-14T12:31:00Z'), 1);
 });
@@ -138,4 +138,22 @@ test('add through the CLI refuses a bad zone and registers a good one as standin
   assert.notEqual(cli('add', '--id', 'bad', '--type', 'reminder', '--target', 'weekdays@08:30 Mars/Olympus').status, 0);
   assert.equal(cli('add', '--id', 'ok', '--type', 'reminder', '--target', TARGET, '--report', 'prep').status, 0);
   assert.equal(listWatches(dir)[0].renew, true);
+});
+
+test('a slot inside quiet hours that ends before local midnight still fires the next morning, once', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'recurring-quiet-'));
+  const s = { dir, types: { reminder, wake }, config: { quietHours: '20:00-07:00', quietMode: 'stop', tz: 'America/New_York' }, ctx: { run: () => { throw new Error('no commands'); } } };
+  addWatch(dir, { id: 'late', type: 'reminder', target: 'daily@21:00 America/New_York', report: 'x', ttlMs: 7 * DAY, renew: true }, z('2026-10-12T22:00:00Z'));
+  assert.equal(fires(s, '2026-10-13T01:30:00Z'), 0, '21:30 EDT is quiet');
+  assert.equal(fires(s, '2026-10-13T11:05:00Z'), 1, '07:05 EDT: the held slot');
+  assert.equal(fires(s, '2026-10-13T12:00:00Z'), 0);
+});
+
+test('a hand-edited bad zone fails in its own watch, not in the loop, and does not stand', () => {
+  const s = setup();
+  addWatch(s.dir, { id: 'bad', type: 'reminder', target: 'weekdays@08:30 America/New_Yrok', report: 'x', renew: true }, z('2026-10-12T10:00:00Z'));
+  addWatch(s.dir, { id: 'ok', type: 'reminder', target: '2026-10-12T11:00:00Z', report: 'y' }, z('2026-10-12T10:00:00Z'));
+  const out = tick({ ...s, now: z('2026-10-12T12:00:00Z') });
+  assert.deepEqual(out.events.map((e) => e.summary), ['reminder: y']);
+  assert.equal(reminder.renewsFor('weekdays@08:30 America/New_Yrok'), false);
 });

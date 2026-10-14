@@ -44,16 +44,29 @@ export function localParts(ms: number, zone: string): LocalParts {
   return { day: `${p.year}-${p.month}-${p.day}`, dow: WEEKDAY[p.weekday as keyof typeof WEEKDAY], minutes: Number(p.hour) * 60 + Number(p.minute) };
 }
 
+const DAY_MS = 24 * 3600 * 1000;
+
+/** The calendar day before `day` (`YYYY-MM-DD`) and its weekday, by date arithmetic (no instants, so a 23 or 25 hour day is no special case). */
+function dayBefore(day: string): { day: string; dow: number } {
+  const d = new Date(Date.parse(`${day}T00:00:00Z`) - DAY_MS);
+  return { day: d.toISOString().slice(0, 10), dow: d.getUTCDay() };
+}
+
 /**
- * Whether the recurring slot is due at `now`: today matches the days, today's slot time has passed in the zone, the slot is later than the
- * watch's creation (adding a watch at 10:00 does not fire the 08:30 that already passed), and it has not fired today (`firedDay`).
- * A loop that was down fires the slot once when it returns the same day; a missed day is never replayed. Returns the day to remember as fired.
+ * Whether the recurring slot is due at `now`. The slot is the newest one that has passed: today's if today matches the days and its time
+ * has passed in the zone, else yesterday's if yesterday matched (so a slot that quiet hours held across local midnight still fires the next
+ * morning, as a one-shot would). It is due when it has not fired (`firedDay` is older) and is later than the watch's creation (adding a watch
+ * at 10:00 does not fire the 08:30 that already passed). A loop that was down fires the newest slot once when it returns; older ones are never
+ * replayed. Returns the slot day to remember as fired.
  */
 export function recurringDue(rec: Recurring, now: number, createdMs: number, firedDay: string | undefined): { due: boolean; fired: string | undefined } {
   const today = localParts(now, rec.zone);
-  const matches = rec.days === 'daily' || (today.dow >= 1 && today.dow <= 5);
+  const matches = (dow: number): boolean => rec.days === 'daily' || (dow >= 1 && dow <= 5);
+  const yesterday = dayBefore(today.day);
+  const slotDay = matches(today.dow) && today.minutes >= rec.minutes ? today.day : matches(yesterday.dow) ? yesterday.day : undefined;
+  if (!slotDay) return { due: false, fired: firedDay };
   const created = localParts(createdMs, rec.zone);
-  const afterCreated = created.day < today.day || (created.day === today.day && created.minutes < rec.minutes);
-  const due = matches && today.minutes >= rec.minutes && afterCreated && firedDay !== today.day;
-  return { due, fired: due ? today.day : firedDay };
+  const afterCreated = created.day < slotDay || (created.day === slotDay && created.minutes < rec.minutes);
+  const due = afterCreated && (firedDay === undefined || firedDay < slotDay);
+  return { due, fired: due ? slotDay : firedDay };
 }

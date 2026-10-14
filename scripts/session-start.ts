@@ -31,7 +31,6 @@ import type { Watch } from './lib/types.ts';
 import { digestDir, drainDigests } from './lib/digest-store.ts';
 import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { LABEL } from './lib/supervisor-state.ts';
-import { isStanding } from './lib/standing-watch.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 /** The watches a session needs, keyed by the id used when one is missing. retro-due is here so the periodic retro review never depends on someone remembering to register it. */
@@ -122,7 +121,7 @@ export function sessionStart(statusDir: string, deps: StartDeps): StartReport {
  * the flag existed, so it is marked too: a standing type is meant to stand. Returns the ids marked.
  */
 export function repairStandingWatches(dir: string, types: TypeRegistry, now: number = Date.now()): string[] {
-  return listWatches(dir).filter((w) => !w.renew && isStanding(types[w.type], w.target) && markStanding(dir, w.id, now)).map((w) => w.id);
+  return listWatches(dir).filter((w) => !w.renew && types[w.type]?.renews && markStanding(dir, w.id, now)).map((w) => w.id);
 }
 
 /** True when something accepts a TCP connection at the URL's host and port within `timeoutMs`. Runs a child so the check stays synchronous and can never hang the caller: the child is killed at the timeout. */

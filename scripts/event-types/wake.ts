@@ -62,7 +62,9 @@ export function validate(target: string, { now, ttlMs }: { now: number; ttlMs?: 
 export const defaultTtlMs = (target: string, now: number): number => (parseHourly(target) || parseRecurring(target) ? DEFAULT_TTL_MS : parseTarget(target) - now + 3 * DEFAULT_TTL_MS);
 
 /** A recurring local-time wake is a standing watch (its expiry renews); an hourly or one-shot wake is not. */
-export const renewsFor = (target: string): boolean => Boolean(parseRecurring(target));
+export function renewsFor(target: string): boolean {
+  try { return Boolean(parseRecurring(target)); } catch { return false; } // a bad hand-edited target fails in its own check, not in the loop
+}
 
 export function check(target: string, ctx: CheckContext): WakeState {
   const text = ctx.watch?.report ?? '';
