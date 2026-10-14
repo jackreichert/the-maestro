@@ -21,6 +21,7 @@ The scripts read one small file. It is markdown, so it can sit inside an overlay
 ```maestro-config
 overlay: <skill>            # or <plugin>:<skill>; omit for no overlay
 gh_org: <github-org>        # PR board scope; the Podium PR list shows only repos owned by this org, and is empty with a warning when unset
+repo_prefix: <prefix->         # queue-report: a row saying `tool #5` may mean the repo <prefix->tool; default none
 gh_login: <github-login>    # omit to use `gh api user`
 project: <container-name>   # ledger paths Projects/<name>/Journal/
 projects_dir: /path/to/claude/projects/<container>   # omit to follow container_root (else the working directory)
@@ -65,6 +66,7 @@ one_pr_per_ticket: on         # on (default) or off: pr-open.ts refuses a second
 one_pr_exempt_heads: release/*  # head-branch globs (comma-separated) the one-PR-per-ticket rule skips; default release/*; file-only
 review_pool_owners: example-org # GitHub owners (or owner/name globs, comma-separated) whose PRs other people review; every repo outside the pool counts as self-review, so personal repos never fill review_queue_cap; default none
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
+teammate_review_minutes: 15   # minutes a teammate's ready PR may wait with no human review before pr-watch reports REVIEW-WAIT (the teammate review playbook); scope is gh_org plus the owners in review_pool_owners; default 0, off
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
 stack_max_depth: 3           # most PRs in one stack; the PR board flags a deeper stack; default 3
@@ -89,6 +91,7 @@ sweep_protect_symlink_dirs: ~/code/skills  # extra dirs whose symlinks mark a wo
 sweep_disposable_ignored: node_modules, .venv, dist, __pycache__  # ignored paths that do not keep a worktree; any other ignored file does (default shown)
 env_store_root: ~/dev-env/.env-store  # where environment files live outside worktrees, as <root>/<repo>/<project>/; a worktree whose env files are symlinks into it is safe for the sweep to remove; default shown
 podium_trusted_atlassian_hosts: example.atlassian.net  # Podium: Atlassian tenants whose ticket links reuse one tab per ticket (comma-separated); default none
+podium_series: ClientA=s1, ClientB=s2  # Podium: fixed colour class (s1..s8, so) per stream name (comma-separated name=class); default none, other streams get a hashed colour
 event_dir: /path/to/events     # event loop: registry, state, digest; default <ledger_root>/Events, else ~/.local/state/the-maestro/events
 wake_launch_command: ["node", "/path/to/scripts/wake-terminal.ts"]  # event loop: argv (JSON array) the supervisor runs when an actionable event has waited 3+ minutes with no waiter and no live session; the fixed wake prompt is appended as the last argument; max 4 a day, 30 minutes apart; omit to keep launching off (with notify_command set, one rate-limited fixed text is sent instead, only for events the text alerts do not cover)
 notify_command: ["my-notifier", "--to-me"]  # event loop: argv (JSON array); the one-line summary is appended as the last argument; used only for watches added with --notify (reminders by default); omit for no notifications

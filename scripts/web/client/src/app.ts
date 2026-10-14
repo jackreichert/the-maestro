@@ -1,11 +1,12 @@
 import './stream-board.ts';
 import './podium-chart.ts';
-import './priority-list.ts';
+import { keepRegionScroll } from './priority-list.ts';
 import './local-review.ts';
 import './open-prs.ts';
+import './draft-queue.ts';
 import { h, s, shadow } from './dom.ts';
 import { BOARD_CSS, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
+import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadSeries, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
 import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
@@ -13,8 +14,11 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, OPEN_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { DASHBOARD, OPEN_PRS, OTHERS_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
+import { DraftsStore } from './drafts-store.ts';
+import { waiting } from './drafts-model.ts';
+import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
@@ -139,6 +143,8 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .stream-title .projects-line { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
   .stream-page { display: grid; gap: var(--space-7); }
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
+  /* Side by side, the headline column sets the row's height: the priorities panel contributes no height of its own (size containment), is stretched to the row, never shorter than a floor, and scrolls inside. */
+  @media (min-width: 901px) { .cue-grid > priority-list { align-self: stretch; contain: size; min-height: 22rem; } }
   @media (max-width: 900px) { .cue-grid { grid-template-columns: minmax(0, 1fr); } header.topbar .bar { gap: var(--space-3); } }
 
   @media (forced-colors: active) {
@@ -245,6 +251,8 @@ export class PodiumApp extends HTMLElement {
     post: async () => (await this.#poster.post('/api/prs/refresh', {}))?.status ?? null,
     delay: (ms) => new Promise((ok) => { setTimeout(ok, ms); }),
   });
+  // The draft queue's data and what is being typed live here too (see drafts-store.ts); every decision goes to the server, which alone posts.
+  readonly #drafts = new DraftsStore({ load: () => loadDrafts(), send: (op, payload, comments) => createDraftActions().send(op, payload, comments) });
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -277,7 +285,7 @@ export class PodiumApp extends HTMLElement {
     window.addEventListener('pointerup', this.#onRelease);
     window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
-    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts(), loadCost()]).then(([s, c, e, lr, , co]) => {
+    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts(), loadSeries(), loadCost()]).then(([s, c, e, lr, , , co]) => {
       if (!this.isConnected) return;   // removed while loading: start nothing that disconnectedCallback has already missed
       this.#state = s.data;
       this.#charts = c.data;
@@ -286,6 +294,7 @@ export class PodiumApp extends HTMLElement {
       this.#local = s.source === 'server' ? lr : null;
       this.#sources = { state: s.source, charts: c.source };
       this.#dropped = s.dropped + c.dropped;
+      if (s.source === 'server') void this.#drafts.load();   // the tab's count; the queue's own file is watched, so later changes come through the live load below
       this.#active = parseFragment(location.hash, this.#ids());
       this.#filter = parseFilter(location.hash);
       this.#safeRender();
@@ -327,6 +336,7 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
+        void this.#drafts.load();   // a decision or a new draft changes drafts.jsonl, not the board, so the board's own seq may not move
         const [s, c, e, lr, p, co] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true), loadCost()]);
         return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, cost: co, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
       },
@@ -358,7 +368,9 @@ export class PodiumApp extends HTMLElement {
     if (!this.#ids().includes(this.#active)) this.#active = DASHBOARD;   // the stream behind the open tab is gone
     const focused = this.#focusKey();
     const folds = foldStates(this.#root);
+    const putScrollBack = keepRegionScroll(this.#root);
     this.#safeRender();
+    putScrollBack();   // the new priorities region starts at the top; return it to where the reader had scrolled
     restoreFolds(this.#root, folds);   // the redraw reset every disclosure to its default; put each back as the reader left it
     if (focused) findByKey(this.#root, focused)?.focus?.();   // the redraw destroyed the element that had focus; put it back on its twin
   }
@@ -445,9 +457,9 @@ export class PodiumApp extends HTMLElement {
     const tabs = ids.flatMap((id, i) => {
       const on = id === this.#active;
       const stream = tabStream(id);
-      const n = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.asks, id);
+      const n = isAllStreams(id) ? 0 : count(st.asks, id);
       const prs = id === OPEN_PRS ? st.prs.length : 0;
-      const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : stream ?? id;
+      const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : id === OTHERS_PRS ? 'Others\' PRs' : stream ?? id;
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
@@ -455,6 +467,8 @@ export class PodiumApp extends HTMLElement {
       stream ? h('span', { class: `stream-dot ${seriesClass(stream)}`, 'aria-hidden': 'true' }) : null,
       label,
       prs > 0 ? h('span', { class: 'count' }, String(prs)) : null,
+      id === OTHERS_PRS && this.#waitingDrafts('review') > 0 ? h('span', { class: 'count' }, String(this.#waitingDrafts('review')), h('span', { class: 'vh' }, ' awaiting')) : null,
+      id === OPEN_PRS && this.#waitingDrafts('reply') > 0 ? h('span', { class: 'count' }, String(this.#waitingDrafts('reply')), h('span', { class: 'vh' }, ' replies awaiting')) : null,
       n > 0 ? h('span', { class: 'count' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null);
       tab.addEventListener('click', () => this.#select(id, true));
       tab.addEventListener('keydown', (e) => {
@@ -464,13 +478,13 @@ export class PodiumApp extends HTMLElement {
         e.preventDefault();
         this.#select(next, true);
       });
-      const sep = i === 1 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
+      const sep = i === 2 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
       return [tab, sep];
     });
     const stream = tabStream(this.#active);
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap page' },
-      this.#active === OPEN_PRS ? null : this.#pageHead(st, stream),
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#board(st, stream ?? ''),
+      this.#active === OPEN_PRS || this.#active === OTHERS_PRS ? null : this.#pageHead(st, stream),
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#active === OTHERS_PRS ? this.#othersPrs() : this.#board(st, stream ?? ''),
       fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Podium' }, ...tabs);
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Podium' }, tablist);
@@ -671,7 +685,37 @@ export class PodiumApp extends HTMLElement {
       el.model = this.#prs.model;
     });
     if (this.#sources.state === 'server') void this.#prs.load();   // each draw asks again, so the tab never shows older data than the cache holds
+    return h('div', {}, el, this.#replyDrafts());
+  }
+
+  /** Drafts still waiting for a decision, for the tab's count. */
+  #waitingDrafts(source: 'review' | 'reply'): number { return (this.#drafts.model.data?.drafts ?? []).filter((d) => d.source === source && waiting(d)).length; }
+
+  /** The draft queue as an element wired to the page's store; each draw asks the server again, so the tab never shows older drafts than the file holds. */
+  #draftQueue(sources: ReadonlyArray<'review' | 'reply'>, empty: string): HTMLElementTagNameMap['draft-queue'] {
+    const el = h('draft-queue');
+    const s = this.#drafts;
+    el.sources = sources;
+    el.emptyText = empty;
+    el.actions = { startEdit: (id) => s.startEdit(id), startReject: (id) => s.startReject(id), cancel: (id) => s.cancel(id), setBuffer: (id, t) => s.setBuffer(id, t), setComment: (id, i, t) => s.setComment(id, i, t), saveEdit: (id) => { void s.saveEdit(id); }, approve: (id) => { void s.approve(id); }, reject: (id) => { void s.reject(id); } };
+    el.model = s.model;
+    const unsubscribe = s.subscribe(() => { if (!el.isConnected) { unsubscribe(); return; } el.model = s.model; });
+    if (this.#sources.state === 'server') void s.load();
     return el;
+  }
+
+  /** Under the Open PRs table: drafted replies to other people's comments on your own PRs, one section per PR. Approve posts the reply as you; nothing posts before that. */
+  #replyDrafts(): Node {
+    return h('section', { 'aria-label': 'Drafted replies' }, h('h2', { class: 'tab-title' }, 'Drafted replies'),
+      h('p', { class: 'section-hint' }, 'Replies drafted to people\'s comments on your PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
+      this.#draftQueue(['reply'], 'No replies are waiting for your approval.'));
+  }
+
+  /** The Others' PRs tab: drafted review comments on teammates' PRs. Approve posts as you; Reject records why and posts nothing. */
+  #othersPrs(): Node {
+    return h('div', {}, h('h2', { class: 'tab-title' }, 'Others\' PRs'),
+      h('p', { class: 'section-hint' }, 'Review comments drafted on teammates\' PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
+      this.#draftQueue(['review'], 'No review comments are waiting for your approval.'));
   }
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */

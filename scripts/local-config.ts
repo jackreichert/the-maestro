@@ -129,6 +129,9 @@ export { OVERLAY };
 /** GitHub org the PR board is scoped to. Unset or empty means no org filter. */
 export const GH_ORG = pick('MAESTRO_GH_ORG', 'gh_org');
 
+/** A prefix your repos share (`acme-`), so queue-report reads `tool #5` in a ledger row as the repo `acme-tool` when that checkout exists. Unset means a bare name is only ever itself. */
+export const REPO_PREFIX = pick('MAESTRO_REPO_PREFIX', 'repo_prefix').trim();
+
 /** Your GitHub login. Unset means "whoever `gh` is authenticated as". */
 export const GH_LOGIN = pick('MAESTRO_GH_LOGIN', 'gh_login');
 
@@ -162,6 +165,17 @@ export const LEDGER_ROOT = expandHome(pick('LEDGER_ROOT', 'ledger_root').trim())
 
 /** Atlassian tenant hosts the Podium may reuse a tab for (comma-separated `<label>.atlassian.net`). Empty means none: every ticket link opens a fresh tab. */
 export const PODIUM_TRUSTED_ATLASSIAN_HOSTS = pick('PODIUM_TRUSTED_ATLASSIAN_HOSTS', 'podium_trusted_atlassian_hosts').split(',').map((s) => s.trim()).filter(Boolean);
+
+/** Fixed Podium colours for streams: `Name=s1, Other=s2` (classes s1..s8 or so). Entries that are not `name=class` with a known class are dropped; empty means none, and every other stream gets a hashed colour. */
+export function parseSeries(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of raw.split(',')) {
+    const [name, cls, ...rest] = entry.split('=').map((s) => s.trim());
+    if (name && cls && rest.length === 0 && /^s(?:[1-8]|o)$/.test(cls)) out[name] = cls;
+  }
+  return out;
+}
+export const PODIUM_SERIES = parseSeries(pick('PODIUM_SERIES', 'podium_series'));
 
 /** The vault holding tickets, CONTEXT.md and the rest. Empty means "not set". */
 export const VAULT_ROOT = expandHome(pick('VAULT_ROOT', 'vault_root').trim());
@@ -490,6 +504,11 @@ export const WAIVE_SIZE_GATE_OWNERS = repoGlobs(globListFile('waive_size_gate_ow
 export const REVIEW_POOL_OWNERS = repoGlobs(globList('MAESTRO_REVIEW_POOL_OWNERS', 'review_pool_owners'));
 /** The self-review list every caller reads: self_review_repos, plus the review pool as `!`-prefixed entries (see lib/self-review.ts). */
 export const SELF_REVIEW_REPOS = [...repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS', 'self_review_repos')), ...REVIEW_POOL_OWNERS.map((g) => `!${g}`)];
+
+/** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
+export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));
+/** The owners the helper searches: gh_org plus the plain owners in review_pool_owners. With none, it searches nothing: it is never unscoped. */
+export const TEAMMATE_REVIEW_OWNERS = [...new Set([GH_ORG, ...REVIEW_POOL_OWNERS.map((g) => g.split('/')[0] ?? '')].filter((o) => o !== '' && !o.includes('*')))];
 
 /** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. User config file only. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pickUserFile('pr_body_check_private'));

@@ -40,7 +40,7 @@ const NO_WRITES: ReadonlySet<string> = new Set();
 export interface Refusal { status: number; headers?: Record<string, string> }
 
 /** The checks only a write needs, on top of the shared ones: this page's own origin, a JSON body of a declared small size. */
-function refuseWrite(req: IncomingMessage, port: number, path: string): Refusal | null {
+function refuseWrite(req: IncomingMessage, port: number, path: string, limit: number): Refusal | null {
   const origin = req.headers.origin;
   if (origin === undefined || !originAllowed(origin, port)) return { status: 403 };   // a write must say where it came from; no Origin is not good enough
   if (req.headers['sec-fetch-site'] !== undefined && req.headers['sec-fetch-site'] !== 'same-origin') return { status: 403 };
@@ -49,15 +49,15 @@ function refuseWrite(req: IncomingMessage, port: number, path: string): Refusal 
   if (req.headers['transfer-encoding'] !== undefined) return { status: 400, headers: { connection: 'close' } };
   const length = req.headers['content-length'];
   if (length === undefined || !/^\d{1,6}$/.test(length) || Number(length) === 0) return { status: 400, headers: { connection: 'close' } };
-  if (Number(length) > MAX_BODY_BYTES) return { status: 413, headers: { connection: 'close' } };
+  if (Number(length) > limit) return { status: 413, headers: { connection: 'close' } };
   return null;
 }
 
 /**
  * The first check that fails, in a fixed order (host, origin, method, url, body), or null. `writePaths` are the exact
- * paths that accept POST; everything else, including GET on a write path, is refused with the method it does take.
+ * paths that accept POST (`bodyLimits` raises the body limit for a path that carries prose); everything else, including GET on a write path, is refused with the method it does take.
  */
-export function refuse(req: IncomingMessage, port: number, writePaths: ReadonlySet<string> = NO_WRITES): Refusal | null {
+export function refuse(req: IncomingMessage, port: number, writePaths: ReadonlySet<string> = NO_WRITES, bodyLimits: ReadonlyMap<string, number> = new Map()): Refusal | null {
   if (!hostAllowed(req.headers.host, port)) return { status: 403 };
   const origin = req.headers.origin;
   if (origin !== undefined && !originAllowed(origin, port)) return { status: 403 };
@@ -65,7 +65,7 @@ export function refuse(req: IncomingMessage, port: number, writePaths: ReadonlyS
   if (site !== undefined && site !== 'same-origin' && site !== 'none') return { status: 403 };
   const url = req.url ?? '';
   const path = url.split('?')[0] ?? url;
-  if (req.method === 'POST' && writePaths.has(path)) return refuseWrite(req, port, path);
+  if (req.method === 'POST' && writePaths.has(path)) return refuseWrite(req, port, path, bodyLimits.get(path) ?? MAX_BODY_BYTES);
   if (req.method !== 'GET' || writePaths.has(path)) return { status: 405, headers: { allow: writePaths.has(path) ? 'POST' : 'GET' } };
   if (url.length > MAX_URL_LENGTH) return { status: 414 };
   if (!url.startsWith('/') || url.startsWith('//') || url.includes('\\')) return { status: 400 };   // origin-form only: `//host/x` and `http://host/x` would be re-read as another host

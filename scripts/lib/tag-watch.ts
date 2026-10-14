@@ -107,10 +107,23 @@ export function findSkillFile(skill: string, rel: string, env: NodeJS.ProcessEnv
   return found;
 }
 
+/**
+ * Loads an adapter with require(), which is synchronous and so cannot run a module that has a top-level await (even one inside an
+ * `if (import.meta.main)` block). Say so by name instead of Node's generic message: the failure is the adapter's, not PATH's or the token's.
+ */
+export function requireAdapter(skill: string, file: string): TagAdapter {
+  try {
+    return createRequire(import.meta.url)(file) as TagAdapter;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ERR_REQUIRE_ASYNC_MODULE') throw new Error(`the ${skill} adapter ${file} has a top-level await, so the loop cannot require() it; remove the await (import the module statically)`, { cause: e });
+    throw e;
+  }
+}
+
 /** An event type over a lazily loaded adapter, so a missing skill fails one check loudly instead of breaking the loop at import. */
 export function tagWatchType(skill: string, adapterFile: string, defaults: { interval: number }): Required<Pick<EventType<TagWatchState>, 'check' | 'diff' | 'validate' | 'defaultTtlMs'>> & { interval: number; network: true; notifies: 'default'; backoff: false; slowInQuiet: true } {
   let adapter: TagAdapter | null = null;
-  const load = (): TagAdapter => (adapter ??= createRequire(import.meta.url)(findSkillFile(skill, adapterFile)) as TagAdapter);
+  const load = (): TagAdapter => (adapter ??= requireAdapter(skill, findSkillFile(skill, adapterFile)));
   return {
     interval: defaults.interval,
     network: true,

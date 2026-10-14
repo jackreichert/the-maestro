@@ -46,3 +46,16 @@ test('an editable list keeps its epics under the priority through a reorder rend
   assert.equal(root.querySelectorAll('ol.priorities > li epic-lines').length, 1);
   cleanup();
 });
+
+test('a long next-ticket link is clamped to two lines, with the whole text as the paragraph title and still in the page', async () => {
+  const title = 'Make the exporter retry with exponential backoff when the upstream sample service answers 503 during the nightly window';
+  const long = [epicLine('a-1', { next: { id: 'a-1-051', title, ref: { label: 'n', url: 'https://example.test/n' } } }) as unknown as EpicLine];
+  const { root, cleanup } = await mount<Lines>('../src/epic-lines.ts', 'epic-lines', { epics: long });
+  const next = root.querySelector('p.clamp') as HTMLElement;
+  assert.equal(next.getAttribute('title'), `Next: a-1-051 ${title}`);
+  assert.equal(next.querySelector('a')?.textContent, title, 'the link keeps its full text; only the paint is clamped');
+  assert.equal(root.querySelectorAll('p.clamp').length, 1, 'PRs and progress lines are not clamped');
+  const css = [...(root as ShadowRoot).adoptedStyleSheets].flatMap((s) => [...s.cssRules].map((r) => r.cssText)).join('\n');
+  assert.match(css, /\.clamp\b[^}]*line-clamp:\s*2/);
+  cleanup();
+});

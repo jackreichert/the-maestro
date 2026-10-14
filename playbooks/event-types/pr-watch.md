@@ -10,9 +10,10 @@ Every line is actionable.
 
 | Digest line starts with | What to report |
 |---|---|
-| `THREAD`, `REPLY`, `COMMENT`, `REVIEW` | The PR key, who, and the link. Do not summarize the comment text. |
+| `THREAD`, `REPLY`, `COMMENT`, `REVIEW` | The PR key, who, and the link. Do not summarize the comment text. To answer them, run [the reply drafts playbook](../reply-drafts.md): replies to people wait for your approval on the Podium, replies to bots are posted directly. |
 | `DECISION` | The PR and the move (for example into `APPROVED` or `CHANGES_REQUESTED`). |
 | `CONFLICT` | `CONFLICT <PR key> <base> <- <head> <url>`: an open PR now conflicts with its base, once per conflict (the line is not repeated while it stays conflicted, and GitHub's `UNKNOWN` while it computes changes nothing). Report it. Merging the base in and pushing is a merge, so it waits for an explicit ask or a standing approval for that repo; this loop does not do it. When it clears there is no line. |
+| `REVIEW-WAIT` | `REVIEW-WAIT <PR key> <url> waiting <m> min, head <sha7>`: someone else's PR in a repo you do not review alone has waited the configured time for a review (`teammate_review_minutes`; off at 0), once per head sha. Run [the teammate review playbook](../teammate-review.md). Nothing is posted: the review lands in the Podium's Others' PRs tab as a draft for you to approve, edit or reject. |
 | `LEFT-OPEN-SET` | The PR was merged or closed. |
 | `APPROVED-UNMERGED` | An approved PR is waiting. Reported once per approval or moved head. |
 

@@ -77,7 +77,6 @@ export const ALLOW: Allow[] = [
   { label: 'person-name', path: RETRO_FILES, text: new RegExp(`\`${OWNER}\`|["']${OWNER}:|'${OWNER}'|\\b${OWNER}: |\\b${OWNER} \\d`, 'g'), reason: 'The retro lesson source is a stored value next to code and process; renaming it needs a migration.' },
   { label: 'person-name', path: /^scripts\/lib\/journal\/guidance\.ts$/, text: new RegExp(`\\((?:${OWNER}\\|him|${OWNER}\\|a decision)`, 'g'), reason: 'A regex of wordings that mark an item as parked; changing it changes which items are offered as work.' },
   { label: 'person-name', path: /^scripts\/lib\/boxes\.ts$/, text: new RegExp(`${OWNER} runs`, 'g'), reason: 'One alternative in the regex that tells a paste-block question from a decision; behaviour, not prose.' },
-  { label: 'org-term', path: /^scripts\/lib\/pr-refs(?:\.test)?\.ts$/, text: new RegExp(`${ORG}-(?:<name>|\\$\\{word\\}|tool)`, 'g'), reason: 'A repo-name prefix convention in the PR ref resolver; making it a setting is tracked separately.' },
   { label: 'personal-root', path: /^(?:README\.md|reference\/(?:brief|local-config)\.md|playbooks\/event-types\/(?:notion|slack)-watch\.md|scripts\/(?:local-config|env-store-move|lib\/tag-watch)\.ts)$/, text: /~\/dev-env\/(?:\.env-store|skills\/)/g, reason: 'The default env_store_root and the default skill search roots; both are configurable and the rename is tracked separately.' },
 ];
 

@@ -19,17 +19,25 @@ const MAX_TEXT = 200;
 const MAX_STREAM = 40;
 
 const CSS = `${BASE_CSS}${UI_CSS}
-  :host { display: block; }
-  .bar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: var(--hairline-strong); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
+  /* A column: the region fills whatever height the page gives the host (the hero row, on a wide screen) and scrolls inside it; with no height given it is as tall as its content. */
+  :host { display: flex; flex-direction: column; }
+  .region { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  /* A card scrolled into view by focus lands clear of the sticky header above and the fade below. */
+  .region { scroll-padding-block: 2.5rem 2rem; }
+  .region:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  /* Only while more sits below: a fade over the last lines, pinned to the foot of the region and taking no room of its own. */
+  .fade { position: sticky; bottom: 0; block-size: 2rem; margin-block-start: -2rem; pointer-events: none; opacity: 0; background: linear-gradient(to bottom, transparent, var(--surface-page)); transition: opacity var(--dur-fast) var(--ease-out); }
+  .region[data-more] .fade { opacity: 1; }
+  .bar { position: sticky; top: 0; z-index: 1; background: var(--surface-page); display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-2); padding-bottom: var(--space-2); border-bottom: var(--hairline-strong); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
   .bar h2 { margin: 0; font-size: var(--text-sm); line-height: var(--leading-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); }
   .cap { font-variant-numeric: tabular-nums; }
   .warn { color: var(--warning); }
   ol.priorities { list-style: none; margin: 0; padding: 0; counter-reset: p; }
-  ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; align-items: start; gap: 0 var(--space-2); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+  ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; align-items: start; gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
   ol.priorities li::before { content: counter(p, upper-roman); font-family: var(--font-serif); font-size: 1.25rem; line-height: 1.3; color: var(--text-muted); }
   ol.priorities li.has-tag .text .tag { display: block; margin: var(--space-1) 0 0; }
   @media (hover: hover) { ol.priorities li:not(:hover):not(:focus-within) .tools { opacity: 0; } }
-  ol.priorities li > epic-lines { grid-column: 2 / -1; padding-bottom: var(--space-1); }
+  ol.priorities li > epic-lines { grid-column: 2 / -1; }
   ol.priorities li.over { background: var(--surface-2); }
   ol.priorities li.target { box-shadow: inset 0 2px 0 var(--accent); }
   ol.priorities li.dragging { opacity: 0.5; }
@@ -46,7 +54,7 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); font-size: var(--text-sm); }
   .confirm button { min-height: 28px; padding: 0 var(--space-3); }
   button.danger { border: 1px solid var(--critical); background: var(--critical); color: var(--on-accent); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-semibold); border-radius: var(--radius-sm); cursor: pointer; }
-  button.open-add { font: inherit; font-size: var(--text-sm); color: var(--accent); background: none; border: 0; padding: var(--space-3) 0 0; min-height: 36px; cursor: pointer; text-align: left; }
+  button.open-add { font: inherit; font-size: var(--text-sm); color: var(--accent); background: none; border: 0; padding: var(--space-2) 0 0; min-height: 32px; cursor: pointer; text-align: left; }
   button.open-add[disabled] { background: none; color: var(--text-muted); }
   @media (hover: hover) { button.open-add:hover:not([disabled]) { text-decoration: underline; } }
   form.add { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding-top: var(--space-3); }
@@ -60,9 +68,19 @@ const CSS = `${BASE_CSS}${UI_CSS}
   .msg { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); min-height: var(--leading-sm); }
   .msg.err { color: var(--critical); }
   .hint { margin: var(--space-2) 0 0; font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-muted); }
-  @media (forced-colors: active) { .tools button, .grip { border: 1px solid ButtonText; } ol.priorities li.target { box-shadow: inset 0 2px 0 Highlight; } }
+  @media (forced-colors: active) { .fade { display: none; } .tools button, .grip { border: 1px solid ButtonText; } ol.priorities li.target { box-shadow: inset 0 2px 0 Highlight; } }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 `;
+
+/**
+ * A full-page redraw builds a new <priority-list>, so the region's scroll offset is read from the old one first.
+ * Call before the redraw; call the result after it to put the offset back on the new region.
+ */
+export function keepRegionScroll(page: ParentNode): () => void {
+  const region = (): HTMLElement | null => page.querySelector('priority-list')?.shadowRoot?.querySelector<HTMLElement>('.region') ?? null;
+  const top = region()?.scrollTop ?? 0;
+  return () => { const r = region(); if (r && top > 0) r.scrollTop = top; };
+}
 
 /**
  * <priority-list>: today's priorities, and (when the page may edit) the controls to reorder, delete and add them.
@@ -75,6 +93,9 @@ const CSS = `${BASE_CSS}${UI_CSS}
  */
 export class PriorityList extends HTMLElement {
   #root: ShadowRoot;
+  /** The one scroll region, made once: redraws replace what is inside it, so its scroll position and focus survive them. */
+  #region: HTMLElement = h('div', { class: 'region', id: 'pl-region', role: 'region', tabindex: '0', 'aria-label': 'Today\'s priorities' });
+  #resize: ResizeObserver | null = null;
   #data: PriorityData = { items: [], max: 5, streams: [], editable: false, note: '' };
   #items: Priority[] = [];
   #max = 5;
@@ -93,6 +114,8 @@ export class PriorityList extends HTMLElement {
   constructor() {
     super();
     this.#root = shadow(this, CSS);
+    this.#root.append(this.#region);
+    this.#region.addEventListener('scroll', () => this.#syncFade(), { passive: true });
   }
 
   set data(d: PriorityData) {
@@ -102,7 +125,19 @@ export class PriorityList extends HTMLElement {
     if (this.isConnected) this.#render();
   }
 
-  connectedCallback(): void { this.#render(); }
+  connectedCallback(): void {
+    this.#render();
+    // The host's height follows the page (the hero row), so whether more sits below changes without any redraw.
+    if (typeof ResizeObserver === 'function') { this.#resize = new ResizeObserver(() => this.#syncFade()); this.#resize.observe(this); }
+  }
+
+  disconnectedCallback(): void { this.#resize?.disconnect(); this.#resize = null; }
+
+  /** Show the bottom fade only while there is more to scroll to. */
+  #syncFade(): void {
+    const r = this.#region;
+    r.toggleAttribute('data-more', r.scrollHeight - r.scrollTop - r.clientHeight > 1);
+  }
 
   /** Tell the page to hold its live redraws (or stop holding them): the same signal an ask card sends while it works. */
   #busy(on: boolean): void {
@@ -219,7 +254,8 @@ export class PriorityList extends HTMLElement {
       if (blocked) frag.push(h('p', { class: 'hint', id: 'pl-hint' }, blocked));
       frag.push(h('div', { class: `msg${this.#message.error ? ' err' : ''}`, role: this.#message.error ? 'alert' : 'status' }, this.#message.text));
     }
-    this.#root.replaceChildren(...frag);
+    this.#region.replaceChildren(...frag, h('div', { class: 'fade', 'aria-hidden': 'true' }));
+    this.#syncFade();
     if (want) (this.#root.getElementById(want) as HTMLElement | null)?.focus();
   }
 
