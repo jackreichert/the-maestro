@@ -27,9 +27,10 @@ A builder's brief says to review locally before any push, and that a fix is chec
 
 ### The review brief
 
-A reviewer's brief carries three rules that the "concrete failure only" filter would otherwise drop.
+A reviewer's brief carries four rules that the "concrete failure only" filter would otherwise drop.
 
 - **Naming pass.** The reviewer reads the name of every function, variable, type, file and flag in every touched file, scripts, fixtures and one-offs included, and flags a name that misleads or does not say what the thing is. In team repos a reader's trouble with a name is a finding, not a nitpick, so a "no nitpicks" loop never filters it out. The result goes in the review note's `## Naming pass` section.
+- **Customer names and references.** Always check the diff for customer names, org names, people's names, or references that identify a client; any hit is a blocking finding. This is mandatory in every review, whatever else the brief narrows, and it is a read, not only the machine check: the [leak gate](git.md#leak-gate) catches the configured terms and the built-in shapes, but a client named by a nickname, a site, a product or an id only a person recognises gets through it. The result goes in the review note's findings, as a line saying what was checked, even when nothing was found.
 - **Skim-safe is for humans.** A Reviewer guide may tell the human reviewer which files to skim. That label never removes a file from our own review: every file in the diff gets the naming pass and the read.
 - **Org checklist.** When `reviewer_checklist` names a file, the brief names that path, tells the reviewer to read it and to walk each item against the diff, and requires the review note's `## Reviewer checklist` section. The note and the push gate are in [git.md](git.md#review-note-gate).
 
