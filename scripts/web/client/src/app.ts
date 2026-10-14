@@ -575,7 +575,7 @@ export class PodiumApp extends HTMLElement {
       rule,
       buckets.asks.length ? h('p', { class: 'lede' }, 'The oldest ask has waited ', h('strong', {}, `${oldest} ${oldest === 1 ? 'day' : 'days'}`), stale ? `, and ${stale} ${stale === 1 ? 'is' : 'are'} past the 3 day mark` : '', '. ', oneWay ? `${oneWay} ${oneWay === 1 ? 'is a one-way door' : 'are one-way doors'}. ` : '', `${queued} ${queued === 1 ? 'task is' : 'tasks are'} queued behind your answers.`) : null);
     if (this.#filter) return lead;
-    return h('section', { class: 'cue-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream, this.#epics?.streams.find((g) => g.stream === stream)?.epics ?? []));
+    return h('section', { class: 'cue-grid' }, lead, stream === null ? this.#priorities(st) : todayPanel(st.priorities.state === 'ok' ? st.priorities.items : [], this.#projects.state === 'ok' ? this.#projects.data : null, stream));
   }
 
   /** The project names a stream's rows cover, as one mono line; empty until the projects payload has loaded or when it lists none. */

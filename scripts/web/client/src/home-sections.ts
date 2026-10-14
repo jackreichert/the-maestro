@@ -9,8 +9,7 @@ import { scoreTable } from './home-model.ts';
 import type { AskOrder, CiKey, EpicCard, Score, ScoreRow } from './home-model.ts';
 import { seriesClass } from './series.ts';
 import { OPEN_PRS, formatFragment } from './tabs.ts';
-import './epic-lines.ts';
-import type { ChartsData, EpicLine, EpicsData, ProjectsData, HomeLink, PodiumState } from './types.ts';
+import type { ChartsData, EpicsData, ProjectsData, HomeLink, PodiumState } from './types.ts';
 
 /** Asks listed before "Show all N", and shipped items before the same. */
 const ASK_CAP = 6;
@@ -133,7 +132,6 @@ export const HOME_SECTIONS_CSS = `
   .tally { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: center; }
   .today-panel h2 { margin: 0 0 var(--space-3); padding-bottom: var(--space-2); border-bottom: var(--hairline-strong); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); }
   .today-panel p { margin: 0 0 var(--space-3); font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--text-secondary); }
-  .today-panel epic-lines { margin: 0 0 var(--space-3); }
   .today-panel .rk { color: var(--text-muted); }
   .today-panel i { font-family: var(--font-serif); font-size: 1.04em; }
   .ecard-top .nm { display: inline-flex; white-space: nowrap; align-items: center; gap: var(--space-2); }
@@ -351,18 +349,10 @@ export function streamScore(st: PodiumState, charts: ChartsData | null, stream: 
     h('div', { class: 'tally', 'aria-hidden': 'true' }, ...row.days.map((n) => h('span', {}, String(n)))));
 }
 
-/** The stream's open epics as one <epic-lines> block (progress, blocked, next ticket, PRs), or nothing when it has none. */
-function epicList(epics: EpicLine[]): HTMLElement | null {
-  if (epics.length === 0) return null;
-  const lines = h('epic-lines');
-  lines.epics = epics;
-  return lines;
-}
-
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
-/** The right-hand panel of a stream tab: where today's priorities put this stream (or that none does), the stream's open epics with what is next, and its notes. Home shows only the stream; this is where the rest lives. */
-export function todayPanel(priorities: { text: string; stream?: string }[], projects: ProjectsData | null, stream: string, epics: EpicLine[] = []): HTMLElement {
+/** The right-hand panel of a stream tab: where today's priorities put this stream (or that none does), and its notes. Home shows only the stream; the priority's text is here, and the stream's epics are in Where it stands below. */
+export function todayPanel(priorities: { text: string; stream?: string }[], projects: ProjectsData | null, stream: string): HTMLElement {
   const ranked = priorities.flatMap((p, i) => { const s = splitStream(p); return s.stream === stream ? [{ rank: i + 1, text: s.text }] : []; });
   const li = (l: HomeLink): HTMLElement[] => { const a = linkAttrs(l.url); return a ? [h('li', {}, h('a', { ...a, title: LINK_KIND[l.kind] }, l.label))] : []; };
   const mine = (projects?.links ?? []).filter((l) => l.stream === stream);
@@ -373,7 +363,6 @@ export function todayPanel(priorities: { text: string; stream?: string }[], proj
     ...(ranked.length
       ? ranked.map((m) => h('p', {}, h('span', { class: 'rk' }, `Priority ${ROMAN[m.rank - 1] ?? m.rank} · `), m.text))
       : [h('p', {}, 'Not in today\'s priorities. ', h('i', { lang: 'la' }, 'tacet'))]),
-    epicList(epics),
     notes.length ? h('ul', { class: 'notes-row', role: 'list', 'aria-label': 'Notes' }, ...notes) : null,
     // Shown once the projects payload has loaded, so a stream is never called empty while the answer is still on its way.
     projects ? (library.length ? h('ul', { class: 'notes-row', role: 'list', 'aria-label': 'Library' }, h('li', {}, 'Library'), ...library) : h('p', { class: 'library-none' }, 'No library yet.')) : null);
