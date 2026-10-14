@@ -680,7 +680,7 @@ export class PodiumApp extends HTMLElement {
     localList.review = this.#local;
     return h('div', { class: 'home-plus' },
       homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, redraw: () => this.#redrawKeepingFocus() }),
-      section({ title: 'Waiting for local review', n: this.#local?.units.length ?? 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
+      section({ title: 'Waiting for local review', n: this.#local ? this.#local.units.length + this.#local.more : 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
 }
 

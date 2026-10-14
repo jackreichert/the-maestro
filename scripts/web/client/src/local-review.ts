@@ -1,6 +1,6 @@
 import { BASE_CSS, h, shadow } from './dom.ts';
 import { ago } from './glance.ts';
-import type { LocalReview, LocalUnit } from './types.ts';
+import type { LocalCleanup, LocalReview, LocalUnit } from './types.ts';
 
 const CSS = `${BASE_CSS}
   :host { display: block; }
@@ -13,6 +13,9 @@ const CSS = `${BASE_CSS}
   .verdict { font-weight: var(--weight-semibold); }
   .verdict.ok { color: var(--success); }
   .verdict.warn { color: var(--warning); }
+  details { margin-top: var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }
+  summary { cursor: pointer; }
+  pre { margin: var(--space-1) 0 0; overflow-x: auto; user-select: all; }
   .note { font-size: var(--text-xs); color: var(--text-muted); }
 `;
 
@@ -24,6 +27,12 @@ export function verdictWords(u: LocalUnit): { glyph: string; text: string; tone:
     case 'stale': return { glyph: '⚠', text: 'Reviewed an earlier commit; review again', tone: 'warn' };
     case 'none': return { glyph: '○', text: 'Not reviewed yet', tone: 'none' };
   }
+}
+
+/** The one line that says what the queue leaves out, or '' when it leaves out nothing. */
+export function leftOut(c: LocalCleanup): string {
+  const parts = [[c.landed, 'already on the base'], [c.superseded, 'superseded by a ticket key on the base'], [c.special, 'local overlay']].filter(([n]) => (n as number) > 0).map(([n, w]) => `${n} ${w}`);
+  return parts.length ? `${parts.join(', ')} (not counted)` : '';
 }
 
 /**
@@ -47,7 +56,10 @@ export class LocalReviewList extends HTMLElement {
     const r = this.#review;
     if (!r) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'The local review queue is not available from this page.')); return; }
     if (!r.available) { this.#root.replaceChildren(h('p', { class: 'empty' }, r.reason ?? 'The local review queue could not be read.')); return; }
-    if (r.units.length === 0) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'No local branches are waiting for review.')); return; }
+    const out = leftOut(r.cleanup);
+    const folded = out ? [h('details', {}, h('summary', {}, out),
+      ...(r.cleanup.commands.length ? [h('p', { class: 'note' }, 'Clean up: these landed branches are yours and are not checked out. Paste to delete them.'), h('pre', {}, h('code', {}, r.cleanup.commands.join('\n')))] : []))] : [];
+    if (r.units.length === 0) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'No live local branches are waiting for review.'), ...folded, ...r.notes.map((n) => h('p', { class: 'note' }, n))); return; }
     this.#root.replaceChildren(
       h('ul', { role: 'list' }, ...r.units.map((u) => {
         const v = verdictWords(u);
@@ -59,6 +71,7 @@ export class LocalReviewList extends HTMLElement {
           h('p', { class: 'cmd' }, 'Diff: ', h('code', {}, u.command)));
       })),
       ...(r.more > 0 ? [h('p', { class: 'note' }, `and ${r.more} more`)] : []),
+      ...folded,
       ...r.notes.map((n) => h('p', { class: 'note' }, n)));
   }
 }

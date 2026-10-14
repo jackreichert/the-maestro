@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalCleanup, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -287,6 +287,9 @@ export function sanitizeEpics(x: unknown): { data: EpicsData; dropped: number } 
   return { data: { streams, unfiled: lines(x.unfiled) }, dropped };
 }
 
+const LOCAL_CLEANUP: Shape = { landed: count, superseded: count, special: count, commands: arrOf(str) };
+const NO_CLEANUP: LocalCleanup = { landed: 0, superseded: 0, special: 0, commands: [] };
+
 const LOCAL_UNIT: Shape = {
   id: str, repo: str, branch: str, head: str, ahead: count, at: str, subject: str, where: str, checkedOut: bool, base: str, command: str,
   verdict: shape({ state: oneOf('ship-it', 'needs-work', 'stale', 'none'), at: opt(str) }),
@@ -302,7 +305,7 @@ export function sanitizeLocalReview(x: unknown): { data: LocalReview; dropped: n
   const units = validRows(x.units, LOCAL_UNIT) as LocalUnit[];
   const notes = Array.isArray(x.notes) ? x.notes.filter((n): n is string => typeof n === 'string') : [];
   const reason = str(x.reason) ? { reason: x.reason as string } : {};
-  return { data: { generatedAt: x.generatedAt as string, available: x.available as boolean, ...reason, units, more: count(x.more) ? x.more as number : 0, notes }, dropped: lost(x.units, units) };
+  return { data: { generatedAt: x.generatedAt as string, available: x.available as boolean, ...reason, units, more: count(x.more) ? x.more as number : 0, notes, cleanup: isObj(x.cleanup) && validRows([x.cleanup], LOCAL_CLEANUP).length === 1 ? x.cleanup as unknown as LocalCleanup : NO_CLEANUP }, dropped: lost(x.units, units) };
 }
 
 const PROJECT_ROW: Shape = {

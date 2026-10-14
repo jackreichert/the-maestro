@@ -171,7 +171,10 @@ export interface LocalUnit {
 }
 
 /** `GET /api/local-review`. `available: false` carries the reason, so "not read" never looks like "nothing waiting". */
-export interface LocalReview { generatedAt: string; available: boolean; reason?: string; units: LocalUnit[]; more: number; notes: string[] }
+export interface LocalReview { generatedAt: string; available: boolean; reason?: string; units: LocalUnit[]; more: number; notes: string[]; cleanup: LocalCleanup }
+
+/** What the queue leaves out: branches already on their base, branches sharing a ticket key with a base commit, `local/*` overlays, and the paste block that deletes the landed ones. */
+export interface LocalCleanup { landed: number; superseded: number; special: number; commands: string[] }
 
 /** What one stream is doing, in a word, from its counts: an ask open, then anything blocked, then work in flight or shipped this week. Never a score. */
 export type ProjectStateWord = 'waiting on you' | 'blocked' | 'moving' | 'quiet';
