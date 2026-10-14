@@ -167,7 +167,7 @@ export function toUnits(list: Drawn[]): Unit[] {
 }
 
 const needsFix = (p: OpenPrRow): boolean => p.ci === 'FAILURE' || p.ci === 'ERROR' || p.mergeable === 'conflicting' || p.unresolved > 0 || p.review === 'changes-requested';
-const moveOf = (p: OpenPrRow & { selfReview?: boolean }): Move => (readyToMerge(p) ? 'ready' : p.isDraft ? 'drafts' : needsFix(p) ? 'orchestra' : 'yours');
+const moveOf = (p: OpenPrRow): Move => (readyToMerge(p) ? 'ready' : p.isDraft ? 'drafts' : needsFix(p) ? 'orchestra' : 'yours');
 /** The band of a card: the most urgent move among its PRs, so a pair never reads Ready while one side needs fixing. */
 const unitMove = (u: Unit): Move => members(u).map(moveOf).sort((a, b) => MOVE_URGENCY.indexOf(a) - MOVE_URGENCY.indexOf(b))[0]!;
 const lensOn = (p: OpenPrRow, lens: Lens): boolean => {

@@ -66,7 +66,7 @@ function row(p: PrCard, mine: PrCard[], page: PageConfig, now: Date): OpenPrRow 
   return {
     number: p.number, title: p.title, url: p.url, base: p.base, head: p.head, isDraft: p.isDraft, review: reviewOf(p.review, p.approvers, p.changesBy),
     unresolved: p.unresolved, mergeable: mergeableOf(p.mergeable), twins: twinsOf(p, mine), ...(sides ? { sides } : {}),
-    ...(p.ci ? { ci: p.ci } : {}), ...(p.approvers ? { approvers: p.approvers } : {}), ...(p.stackedOn !== undefined ? { stackedOn: p.stackedOn } : {}), ...(p.waitsOnDevelop ? { waitsOnDevelop: p.waitsOnDevelop } : {}),
+    ...(p.ci ? { ci: p.ci } : {}), ...(p.readyOnChecks ? { readyOnChecks: true } : {}), ...(p.approvers ? { approvers: p.approvers } : {}), ...(p.stackedOn !== undefined ? { stackedOn: p.stackedOn } : {}), ...(p.waitsOnDevelop ? { waitsOnDevelop: p.waitsOnDevelop } : {}),
     ...(age !== undefined ? { ageDays: age } : {}),
     ...(key ? { ticket: (({ label, url }) => (url === undefined ? { label } : { label, url }))(trackerRef(page, key)) } : {}),
   };

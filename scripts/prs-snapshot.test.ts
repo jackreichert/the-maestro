@@ -352,6 +352,15 @@ test('a self-review PR with pending, failing or missing checks, or a conflict, i
     assert.equal(why({ mergeable: 'UNKNOWN' }), '', 'a mergeable state still computing is not a conflict');
 });
 
+test('a repo that is self-review only for sitting outside the review pool is not ready on checks alone', () => {
+    const pooled = ['me/*', '!acme'];
+    const stray = (o: Partial<StoredPr> = {}) => mine(1, { repo: 'upstream/lib', key: 'upstream/lib#1', ci: 'SUCCESS', mergeable: 'MERGEABLE', reviewDecision: 'NONE', isDraft: true, ...o });
+    const r = readiness(stray(), [], [], [], pooled);
+    assert.equal(r.ready, false);
+    assert.match(r.reasons.join('|'), /not approved/, 'the org rule applies');
+    assert.equal(readiness(mine(1, { ci: 'SUCCESS', mergeable: 'MERGEABLE', reviewDecision: 'NONE' }), [], [], [], pooled).ready, true, 'an explicit match still follows the checks rule');
+});
+
 test('an org PR with green checks and no approval is not ready; the self-review rule does not leak to it', () => {
     const org = good({ reviewDecision: 'NONE', ci: 'SUCCESS' });
     assert.match(readiness(org, [], [], [], SELF).reasons.join('|'), /not approved/);

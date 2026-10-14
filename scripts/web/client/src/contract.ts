@@ -36,7 +36,7 @@ const ROW_RULES = {
   deferred: { ...WORK, until: str },
   prs: {
     repo: str, short: str, number: num, title: str, url: str, stream: str, base: str, head: str, isDraft: bool, ci: str,
-    mergeable: str, mergeStateStatus: str, unresolved: num, review: str, flags: arrOf(str), twinOf: opt(num), stackedOn: opt(num), selfReview: opt(bool), createdAt: opt(str), approvers: opt(arrOf(str)), changesBy: opt(arrOf(str)),
+    mergeable: str, mergeStateStatus: str, unresolved: num, review: str, flags: arrOf(str), twinOf: opt(num), stackedOn: opt(num), selfReview: opt(bool), readyOnChecks: opt(bool), createdAt: opt(str), approvers: opt(arrOf(str)), changesBy: opt(arrOf(str)),
   } satisfies Shape,
   footer: { stream: str, asks: num, working: num, stale: opt(num), queued: num, blocked: num, done: num } satisfies Shape,
 };
@@ -329,7 +329,7 @@ export function sanitizeProjects(x: unknown): { data: ProjectsData; dropped: num
 const OPEN_PR: Shape = {
   number: count, title: str, url: str, base: str, head: str, isDraft: bool, review: oneOf('approved', 'changes-requested', 'none'), unresolved: count,
   mergeable: oneOf('mergeable', 'conflicting', 'unknown'), twins: arrOf(count), approvers: opt(arrOf(str)), ageDays: opt(num), ticket: opt(ref),
-  waitsOnDevelop: opt(shape({ number: opt(count), url: opt(str) })),
+  waitsOnDevelop: opt(shape({ number: opt(count), url: opt(str) })), readyOnChecks: opt(bool),
   sides: opt(shape({ develop: opt(shape({ number: count, url: str, merged: opt(bool) })), staging: opt(shape({ number: count, url: str })) })),
 };
 const OPEN_PRS_REPO: Shape = { repo: str, count, prs: arrOf(shape(OPEN_PR)) };

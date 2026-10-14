@@ -235,6 +235,8 @@ test('the Open PRs section lists self-review PRs under their own heading, outsid
   assert.deepEqual(own.filter((l) => l.startsWith('| ')).slice(1).map((l) => cells(l)[1]), ['new comments', 'draft for you', 'ready to merge', 'awaiting your review']);
   assert.match(own.join('\n'), /\[tool#2[^\]]*\]\(https:\/\/example\.test\/me\/tool\/pull\/2\)/, 'each is linked, named with its repo');
   assert.doesNotMatch(section(on.join('\n'), '## Open PRs (1)').join('\n'), /thing [2345]/, 'none of them in the org list');
+  const pooled = section(render({ ...CONFIG, reviewQueueCap: 2, selfReviewRepos: ['!acme'] }).join('\n'), '## Maestro PRs (self-review) (4)');
+  assert.ok(!pooled.some((l) => /ready to merge/.test(l)), 'outside the review pool is not the same as named by self_review_repos');
   const off = render({ ...CONFIG, reviewQueueCap: 2 });
   assert.ok(off.includes('## Open PRs (5)'), 'unconfigured, every PR is listed together');
   assert.ok(!off.some((l) => l.startsWith('## Maestro PRs')));

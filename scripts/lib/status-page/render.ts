@@ -11,7 +11,7 @@ import type { DevelopTwin } from './twin.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
 import { reviewQueue } from '../review-queue.ts';
-import { selfReviewNotReady, splitSelfReview } from '../self-review.ts';
+import { isOwnerMerged, selfReviewNotReady, splitSelfReview } from '../self-review.ts';
 import type { ReviewQueue } from '../review-queue.ts';
 import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
@@ -269,8 +269,8 @@ function prFlags(p: Pr): string {
 const queueSentence = (q: ReviewQueue): string => `**Review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}**${q.full ? ': hold pushes of new PRs (keep working locally) until it drops; fixes to open PRs still go out.' : ' non-draft PRs awaiting review.'}`;
 
 /** Where a self-review PR stands for its one reviewer, first match: ready to merge (checks pass, no conflict: `selfReviewNotReady`), new comments, draft, approved but held, awaiting review. The same buckets as `prs-snapshot.ts --ready`. */
-export function selfReviewState(p: Pr): string {
-  if (selfReviewNotReady(p.ci, p.mergeable === 'CONFLICTING').length === 0) return 'ready to merge';
+export function selfReviewState(p: Pr, globs: readonly string[] = []): string {
+  if (isOwnerMerged(p.repo, globs) && selfReviewNotReady(p.ci, p.mergeable === 'CONFLICTING').length === 0) return 'ready to merge';
   if (p.unresolved > 0) return 'new comments';
   if (p.isDraft) return 'draft for you';
   if (p.reviewDecision === 'APPROVED') return 'approved, not ready';
@@ -298,7 +298,7 @@ function prSection(cfg: PageConfig, all: Pr[], streams: string[]): string[] {
     }
     out.push('');
   }
-  return [...out, ...stackDiagram(prs), ...selfReviewSection(self, all)];
+  return [...out, ...stackDiagram(prs), ...selfReviewSection(self, all, cfg.selfReviewRepos ?? [])];
 }
 
 /** One line per stream: links to the library INDEX of each of its projects, or a quiet "no library yet". Empty when the page cannot say (no vault name, no note lookup or no stream-to-project map). */
@@ -314,10 +314,10 @@ function librarySection(cfg: PageConfig, streams: string[]): string[] {
 }
 
 /** The Maestro PRs (self-review) section: PRs only their owner reviews, with where each stands. Empty when there are none. */
-function selfReviewSection(self: Pr[], all: Pr[]): string[] {
+function selfReviewSection(self: Pr[], all: Pr[], globs: readonly string[]): string[] {
   if (!self.length) return [];
   return [`## Maestro PRs (self-review) (${self.length})`, '', 'Not counted in the review queue. Only you review these.', '', '| PR | State | TL;DR |', '|---|---|---|',
-    ...self.sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number).map((p) => `| ${[mdLink(prRef(p, all, true)), prFlags(p)].filter(Boolean).join(' ')} | ${selfReviewState(p)} | ${cell(oneLine(p.title.replace(typePrefix, '').replace(twinSuffix, ''), 70))} |`), ''];
+    ...self.sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number).map((p) => `| ${[mdLink(prRef(p, all, true)), prFlags(p)].filter(Boolean).join(' ')} | ${selfReviewState(p, globs)} | ${cell(oneLine(p.title.replace(typePrefix, '').replace(twinSuffix, ''), 70))} |`), ''];
 }
 
 function stackDiagram(prs: Pr[]): string[] {

@@ -47,7 +47,7 @@ import { loadVerdicts, verdictFor, type VerdictRow } from './review-verdict.ts';
 import { stackLines } from './lib/stack-cap.ts';
 import { searchAllPages } from './lib/gh-search.ts';
 import type { Run } from './lib/types.ts';
-import { isSelfReview, selfReviewNotReady, splitSelfReview } from './lib/self-review.ts';
+import { isOwnerMerged, isSelfReview, selfReviewNotReady, splitSelfReview } from './lib/self-review.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from './lib/draft-promotion.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
@@ -233,7 +233,7 @@ const RELEASE_BRANCH = 'staging';
 /**
  * Why a PR is not ready to merge, from data alone: { ready, reasons }. The one place "ready" is decided; the board, `status`, the
  * footer and the Podium's self-review buckets all read it.
- * A PR in a self-review repo (`selfReview` globs, `self_review_repos`) is ready when its checks pass and it does not conflict
+ * A PR in a repo named by `self_review_repos` itself (`selfReview` globs; a repo that is self-review only for being outside the review pool does not count) is ready when its checks pass and it does not conflict
  * (`selfReviewNotReady`): draft state, approvals, threads and verdicts do not gate it, because only its owner reviews it.
  * Any other PR: ready means not a draft, approved, zero unresolved
  * review threads (and all threads read), GitHub says MERGEABLE, and, in a twin-flow repo, a release-candidate PR has no open
@@ -242,7 +242,7 @@ const RELEASE_BRANCH = 'staging';
  * for its current head commit (`verdicts`, from review-verdict.ts): whoever fixed the threads does not judge the fix.
  */
 export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = [], selfReview: readonly string[] = SELF_REVIEW_REPOS): { ready: boolean; reasons: string[] } {
-    if (isSelfReview(pr.repo, selfReview)) {
+    if (isOwnerMerged(pr.repo, selfReview)) {
         const reasons = selfReviewNotReady(pr.ci, pr.mergeable === 'CONFLICTING');
         return { ready: reasons.length === 0, reasons };
     }

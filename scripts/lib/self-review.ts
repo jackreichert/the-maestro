@@ -19,6 +19,12 @@ export function isSelfReview(repo: string | undefined, globs: readonly string[])
   return globs.some((g) => !g.startsWith('!') && matches(g)) || (pool.length > 0 && !pool.some(matches));
 }
 
+/**
+ * True only when `repo` matches a positive glob of `self_review_repos` itself. A repo that is self-review merely because it sits outside
+ * the review pool (the `!` globs) is not: its owners, not the user, decide when it merges, so checks alone never make it ready.
+ */
+export const isOwnerMerged = (repo: string | undefined, globs: readonly string[]): boolean => !!repo && isSelfReview(repo, globs.filter((g) => !g.startsWith('!')));
+
 /** Splits PRs into the ones other reviewers see (`org`) and the self-review ones, order kept. */
 export function splitSelfReview<T extends { repo?: string }>(prs: readonly T[], globs: readonly string[]): { org: T[]; self: T[] } {
   const org: T[] = [];
