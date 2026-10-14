@@ -447,3 +447,47 @@ test('seed records the latest curated sha of a pre-record page only where it mat
   assert.equal(lw.get(other), undefined);
   assert.equal(f.cli('seed').code, 3, 'seed needs the composer lock like the other writers');
 });
+
+const retroRow = (id: string, lessons: { source: string; text: string }[] = [{ source: 'code', text: 'The orchard sync runs nightly.' }]): LedgerRow => ({ id, ts: '2026-10-10T11:00:00.000Z', date: '2026-10-10', kind: 'agent-retro', retros: 'item', text: `retro: ${lessons.length} lessons`, lessons });
+
+test('retros lists the lessons waiting for the composer, and a curated row closes the retro', () => {
+  const f = fixture();
+  const store = openStore({ vault: f.root, project: PROJECT, dryRun: false });
+  store.append({ id: 'item', ts: '2026-10-10T09:00:00.000Z', date: '2026-10-10', kind: 'wip', text: 'work' });
+  store.append(retroRow('rt01'));
+  store.append({ id: 'rt02', ts: '2026-10-10T11:01:00.000Z', date: '2026-10-10', kind: 'agent-retro', retros: 'item', text: 'retro: nothing to learn', nothing: 'a plain rename' });
+  const listed = f.cli('retros');
+  assert.equal(listed.code, 0, listed.err);
+  assert.match(listed.out, /1 retro waiting for the composer/);
+  assert.match(listed.out, /rt01 .* item item/);
+  assert.match(listed.out, /\[code\] The orchard sync runs nightly\./);
+  assert.doesNotMatch(listed.out, /rt02/);
+  const holder = holderOf(f.cli('begin').out);
+  assert.equal(f.cli('write', PAGE, '--from', f.stage(GOOD), '--holder', holder).code, 0);
+  const closed = f.cli('curate', 'rt01', '--page', PAGE, '--holder', holder, ...MARKS);
+  assert.equal(closed.code, 0, closed.err);
+  assert.match(f.cli('retros').out, /0 retros waiting/);
+  assert.deepEqual(verifyLedger({ ledgerPath: f.ledgerPath, approvals: new Set(), approvableKinds: new Set(), autocommit: false, dryRun: false, vault: f.root }).problems, []);
+});
+
+test('a retro closed by a retro review is not offered to the composer, and curate refuses it', () => {
+  const f = fixture();
+  const store = openStore({ vault: f.root, project: PROJECT, dryRun: false });
+  store.append(retroRow('rt01'));
+  store.append({ id: 'rv01', ts: '2026-10-10T12:00:00.000Z', date: '2026-10-10', kind: 'retro-reviewed', reviews: 'rt01', text: 'promoted' });
+  assert.match(f.cli('retros').out, /0 retros waiting/);
+  const holder = holderOf(f.cli('begin').out);
+  const res = f.cli('curate', 'rt01', '--reject', 'already reviewed', '--holder', holder, ...MARKS);
+  assert.equal(res.code, 1);
+  assert.match(res.err, /not a pending learned row, miss or agent retro/);
+});
+
+test('retros --json prints the same list as data, and a lesson can be rejected with a reason', () => {
+  const f = fixture();
+  openStore({ vault: f.root, project: PROJECT, dryRun: false }).append(retroRow('rt01', [{ source: 'process', text: 'A one-off about this item.' }]));
+  const j = JSON.parse(f.cli('retros', '--json').out) as { id: string; lessons: { source: string }[] }[];
+  assert.deepEqual(j.map((r) => [r.id, r.lessons[0]?.source]), [['rt01', 'process']]);
+  const holder = holderOf(f.cli('begin').out);
+  assert.equal(f.cli('curate', 'rt01', '--reject', 'a one-off, not a fact about the project', '--holder', holder, ...MARKS).code, 0);
+  assert.match(f.cli('retros').out, /0 retros waiting/);
+});

@@ -26,6 +26,20 @@ export function pendingLearned(rows: readonly LedgerRow[]): LedgerRow[] {
   return rows.filter((r) => r.kind === 'learned' && typeof r.id === 'string' && !composed.has(r.id));
 }
 
+/** One retro waiting for the composer: the item it came from and each lesson with its source (`code`, `jack` or `process`). */
+export interface RetroIntake { id: string; item: string; date: string; lessons: { source: string; text: string }[] }
+
+/**
+ * The agent retros with at least one lesson that no `curated` row has closed, oldest first: the composer's retro inbox. A retro a
+ * `retro-reviewed` row already closed is the reviewer's, not the composer's, so a lesson is never composed twice. A "nothing to learn" retro has no lesson and is skipped.
+ */
+export function pendingRetroLessons(rows: readonly LedgerRow[]): RetroIntake[] {
+  const done = new Set(rows.filter((r) => (r.kind === 'curated' && typeof r.closes === 'string') || (r.kind === 'retro-reviewed' && typeof r.reviews === 'string')).map((r) => (r.closes ?? r.reviews) as string));
+  return rows
+    .filter((r) => r.kind === 'agent-retro' && typeof r.id === 'string' && !done.has(r.id) && Array.isArray(r.lessons) && r.lessons.length > 0)
+    .map((r) => ({ id: r.id as string, item: String(r.retros ?? ''), date: String(r.date ?? ''), lessons: (r.lessons as { source: string; text: string }[]).map((l) => ({ source: String(l.source), text: String(l.text) })) }));
+}
+
 /** The live composer lease at `nowMs`, and the time of the newest lease row on the item (when the last pass began or renewed), whether or not it has lapsed. */
 export function composerLease(rows: readonly LedgerRow[], nowMs: number): { live?: Lease; lastPassAt?: string } {
   const live = liveLease(foldLeases(rows), COMPOSER_ITEM, nowMs);
@@ -34,14 +48,14 @@ export function composerLease(rows: readonly LedgerRow[], nowMs: number): { live
 }
 
 /**
- * Problems with one stored `curated` row, for `verify`: it must close an existing learned or miss row, carry exactly one of `page` (a library page
+ * Problems with one stored `curated` row, for `verify`: it must close an existing learned row, miss row or agent retro, carry exactly one of `page` (a library page
  * path, with the sha256 of the bytes written) or `rejected` (one plain line), and nothing the write path does not set. Every free-text field
  * is scanned, so a hand-edited row cannot carry a value onto the ledger. A message never echoes a field's value.
  */
 export function curatedProblems(row: LedgerRow, closableIds: ReadonlySet<string>): string[] {
   const out: string[] = [];
   const str = (k: string): string | undefined => (typeof row[k] === 'string' ? (row[k] as string) : undefined);
-  if (typeof row.closes !== 'string' || !closableIds.has(row.closes)) out.push('closes must name a learned row or a miss row');
+  if (typeof row.closes !== 'string' || !closableIds.has(row.closes)) out.push('closes must name a learned row, a miss row or an agent retro');
   const page = str('page');
   const rejected = str('rejected');
   if ((page === undefined) === (rejected === undefined)) out.push('needs exactly one of page and rejected');

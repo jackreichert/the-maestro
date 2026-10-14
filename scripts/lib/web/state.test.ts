@@ -159,6 +159,20 @@ test('paste asks reach the state as asks that carry their block path and no deci
   assert.ok(buildState(inputs()).asks.every((a) => a.paste === undefined));
 });
 
+test('an ask written with the template carries its sections, with the whole question as the headline; an older ask has none', () => {
+  const ask = (over: object, text = 'Ship Friday? Or Monday?') => buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'tp01', date: '2026-10-06', text, stream: 'Alpha', ...over }] } })).asks[0];
+  const t = ask({ blocked: 'the release waits', context: ['CI is green'], options: ['Friday -- risks a weekend fix', 'Monday'], links: ['[PR 7](https://example.test/pull/7)', 'not a link'], searched: 'the README', recommend: 'Monday' });
+  assert.equal(t?.needed, 'Ship Friday? Or Monday?', 'not cut at the first question mark');
+  assert.equal(t?.context, '');
+  assert.deepEqual(t?.sections, {
+    blocked: 'the release waits', context: ['CI is green'],
+    options: [{ option: 'Friday', cost: 'risks a weekend fix' }, { option: 'Monday', cost: '' }], links: [{ label: 'PR 7', url: 'https://example.test/pull/7' }],
+  });
+  assert.equal(t?.searched, 'the README');
+  assert.equal(ask({})?.sections, undefined);
+  assert.equal(ask({ blocked: 'x', options: ['a -- b', 'c -- d'], paste: '/tmp/fake.sh' })?.sections, undefined, 'a run-this ask has no template');
+});
+
 test('an ask carries its recommendation, door, decide-by and class, and a default only on a two-way door', () => {
   const ask = (over: object) => buildState(inputs({ status: { ...inputs().status, awaiting: [{ id: 'df01', date: '2026-10-06', text: 'Go?', stream: 'Alpha', ...over }] } })).asks[0];
   const two = ask({ recommend: 'yes, ship it', door: 'two-way', default: 'ship Friday', by: '2026-10-09T14:00:00Z', class: 'expedite' });

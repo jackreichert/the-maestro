@@ -42,7 +42,7 @@ export function verifyLedger(ctx: VerifyContext): { rows: number; problems: Prob
         else seen.set(row.id, line);
     }
     const learnedIds = new Set(rows.filter((r) => r.row.kind === 'learned' && typeof r.row.id === 'string').map((r) => r.row.id as string));
-    const closableIds = new Set(rows.filter((r) => (r.row.kind === 'learned' || r.row.kind === 'miss') && typeof r.row.id === 'string').map((r) => r.row.id as string));
+    const closableIds = new Set(rows.filter((r) => (r.row.kind === 'learned' || r.row.kind === 'miss' || r.row.kind === 'agent-retro') && typeof r.row.id === 'string').map((r) => r.row.id as string));
     const missing = (line: number, row: LedgerRow, field: string, id: unknown): void => { if (id && !seen.has(id)) problems.push({ line, id: row.id, problem: `${field} refers to ${id}, which does not exist` }); };
     for (const { row, line } of rows) {
         if (row.approval !== undefined && !APPROVALS.has(row.approval)) problems.push({ line, id: row.id, problem: `approval "${row.approval}" is not one of: ${[...APPROVALS].join(', ')}` });

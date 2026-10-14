@@ -28,3 +28,10 @@ test('an unavailable queue needs its reason, so "not read" is never an empty lis
 test('a body that is not a queue is refused', () => {
   for (const bad of [null, [], 'x', {}, body({ available: 'yes' }), body({ units: 'none' }), body({ generatedAt: 5 })]) assert.equal(sanitizeLocalReview(bad), null);
 });
+
+test('the clean-up counts and commands pass through; a body without them (an old snapshot) reads as nothing left out', () => {
+  const cleanup = { landed: 2, superseded: 1, special: 0, commands: ["git -C 'a' update-ref -d 'refs/heads/b' abc"] };
+  assert.deepEqual(sanitizeLocalReview(body({ cleanup }))!.data.cleanup, cleanup);
+  assert.deepEqual(sanitizeLocalReview(body())!.data.cleanup, { landed: 0, superseded: 0, special: 0, commands: [] });
+  assert.deepEqual(sanitizeLocalReview(body({ cleanup: { landed: -1, commands: 'x' } }))!.data.cleanup.commands, []);
+});

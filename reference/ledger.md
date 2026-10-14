@@ -11,7 +11,7 @@ M=(--model "<your model>" --used "skill:the-maestro,tool:journal.ts")
 
 node $J start "Port the calendar fix onto the feature branch" --repo billing-api --ticket billing-api-014 "${M[@]}"
 node $J done  "Port the calendar fix" "${M[@]}"  # id or a unique substring
-node $J ask   "Split the calendar change into a follow-up PR?" --searched "reference/ledger.md, the PR diff" "${M[@]}"
+node $J ask   "Split the calendar change into a follow-up PR?" --blocked "the PR waits" --option "Split -- two reviews" --option "Keep -- one large diff" --recommend "Split: smaller to review" --link "https://github.com/example/repo/pull/7" --searched "reference/ledger.md, the PR diff" "${M[@]}"
 node $J resolve "calendar change" --answer "Yes — no consumer yet" "${M[@]}"
 node $J status                            # what is open + done today, with usage marks
 node $J status --footer                   # the reply-footer Ledger lines (below)
@@ -92,6 +92,28 @@ stateDiagram-v2
 Both id forms are idempotent (an item already in the target state is reported and nothing is written) and refuse a closed item or one that is not an in-flight `wip` item. A single 4-character token that has a digit and matches no item is rejected as a probable mistyped id; pass `--text "<word>"` to queue it as text. `queue` and `promote` are event rows, not items; the latest one for an item wins, and `verify` checks that each points at an existing id.
 
 Queued items stay **open**: `done`, `drop`, `defer`, `tag`, `carry` and `archive`'s blocker check treat them like any open item, and `roll` leaves them on the board (its summary names the count). `status`, `CURRENT.md`, `standup` and `prime` list them under **Queued**, after In flight, and the handoff tags them `queued`. The triage box is still 7 (In flight), but a queued item is never stale, since it has not started. The `to run` count (paste blocks) is unrelated and unchanged.
+
+## The ask template
+
+Every ask that reaches the user fills a template, like the fields of a ticket. `ask` checks it when the row is written and refuses with every missing field named, writing nothing.
+
+| Field | Flag | Rule |
+|---|---|---|
+| Question | the text after `ask` | one line |
+| What is blocked | `--blocked "<what waits>"` | required |
+| Context | `--context "<bullet>"`, repeatable | optional |
+| Options | `--option "<option> -- <its cost>"`, repeatable | at least 2, each with a cost after ` -- ` |
+| Recommendation | `--recommend "<what and why>"` | required |
+| Links | `--link <url>`, repeatable | at least 1 that opens: `https://` or `obsidian://` |
+| What I checked | `--searched` | required (the ask gate below) |
+
+The same fields can come from `--body-file <file.md>` with the headings `## Question`, `## What is blocked`, `## Context`, `## Options`, `## Recommendation`, `## Links`, `## What I checked` and `## Door` (bullets under the list sections). A flag wins over the file, field by field; an unknown heading is refused.
+
+```bash
+node $J ask "Ship the calendar change Friday or Monday?" --blocked "the release waits on the date" --context "CI is green" --context "two reviewers are out Friday" --option "Friday -- a weekend fix if it breaks" --option "Monday -- one more day on the old behaviour" --recommend "Monday: nothing is lost and a reviewer is back" --link "https://github.com/example/repo/pull/7" --searched "the PR checks, the release notes" "${M[@]}"
+```
+
+Exempt by design: `--paste` asks (the block file is the content) and a two-way ask with a `--default` (acted on as a note, never queued). Asks the tooling raises itself (the roll's env-store ask, the continuity decision scan) carry a fixed template that points at the README, through the same validator. Older asks keep the free-text layout on the Podium.
 
 ## The ask gate
 

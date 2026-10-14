@@ -94,6 +94,8 @@ is in the block (measured with `scripts/token-metrics.ts`):
   it never loops on a full suite.
   An agent that must pause for anything else keeps every gap under 4 minutes or writes its note and
   exits.
+- **The rule is checked, not just written.** `node scripts/cache-lint.ts` fails when the brief's Suites line
+  loses its rule, or a doc asks for a `sleep` over 270 s or a full suite in a playbook.
 - **Reviewers run targeted tests plus tsc only.** The full suite is the job's, not the reviewer's.
 - **Re-reviews go to Sonnet.** Opus does the first review of a change; every re-review or fresh-review
   round after it runs on Sonnet. A suite run that only needs numbers goes to Haiku.

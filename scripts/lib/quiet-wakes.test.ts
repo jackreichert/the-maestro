@@ -143,3 +143,36 @@ test('a clean merge-sweep that closed rows says so in its ledger note', () => {
   assert.equal(quietVerdict(ev('merge-sweep-hourly', 'wake', 'wake: x'), f.deps)?.action, 'suppress');
   assert.match(f.calls.notes[0] ?? '', /closed on merge: ab12, cd34/);
 });
+
+test('triageEvents: every must-wake class stays actionable and never reaches gh, the sweep or the ledger', () => {
+  const dir = tmp();
+  const f = fakes();
+  const events = [
+    ev('prs', 'pr-watch', `THREAD org/repo#7 by alice (human): needs a guard ${U}`),
+    ev('prs', 'pr-watch', `REVIEW org/repo#7 by alice (CHANGES_REQUESTED) ${U}`),
+    ev('prs', 'pr-watch', `REVIEW-REQUESTED org/repo#7 by alice ${U}`),
+    ev('prs', 'pr-checks', `CHECKS-FAILING org/repo#7 ${U}`),
+    ev('status', 'status-watch', 'status-watch: jack answered ask abc123'),
+    ev('texts', 'inbox', '2 new messages'),
+    ev('continuity', 'continuity', 'check keeps failing: boom'),
+    ev('merge-sweep-hourly', 'wake', 'watch expired before it finished (wake hourly:20)'),
+  ];
+  triageEvents(events, { dir, quiet: f.deps });
+  assert.deepEqual(events.map((e) => e.actionable), events.map(() => true));
+  assert.deepEqual([f.calls.state, f.calls.sweep, f.calls.notes], [[], 0, []]);
+});
+
+test('triageEvents: a left-open-set line wakes when gh says closed or open, or fails, and is suppressed only when merged', () => {
+  for (const [state, actionable] of [['MERGED', false], ['CLOSED', true], ['OPEN', true], [undefined, true]] as const) {
+    const events = [ev('prs', 'pr-watch', LEFT)];
+    triageEvents(events, { dir: tmp(), quiet: fakes({ state }).deps });
+    assert.equal(events[0]?.actionable, actionable, String(state));
+  }
+});
+
+test('triageEvents: a throwing gh or sweep wakes instead of dropping the event', () => {
+  const boom = { ...fakes().deps, prState: () => { throw new Error('gh missing'); }, sweep: () => { throw new Error('spawn failed'); } };
+  const events = [ev('prs', 'pr-watch', LEFT), ev('merge-sweep-hourly', 'wake', 'wake: sweep')];
+  triageEvents(events, { dir: tmp(), quiet: boom });
+  assert.deepEqual(events.map((e) => e.actionable), [true, true]);
+});

@@ -179,6 +179,8 @@ import { chosenClosing, planClosing, planRefusal, applyClosing } from './lib/jou
 import { planSettle, settleItems } from './lib/journal/settle.ts';
 import { parseAskFields } from './lib/journal/ask-fields.ts';
 import { gateConflicts, parseAskGate, routeAsk } from './lib/journal/ask-gate.ts';
+import { mergeTemplate, parseAskBody, validateAskTemplate } from './lib/journal/ask-template.ts';
+import type { AskTemplateInput, ParsedBody } from './lib/journal/ask-template.ts';
 import type { AskGate } from './lib/journal/ask-gate.ts';
 import { parseLearned, relearn } from './lib/journal/learned.ts';
 import { parseMiss, seenMiss, missGroups, pendingMisses, MISS_SOURCES } from './lib/journal/miss.ts';
@@ -208,7 +210,7 @@ import { yesterday, handoffText as handoffTextIn, handoffDeltaText, handoffSerie
 import { isoWeek, isDate, approvalsWindow, collectApprovals, approvalsText, approvalMap } from './lib/journal/approvals.ts';
 import { defaultContext, keptCounts, sweepWorktrees, worktreeSweepLines } from './branch-sweep.ts';
 import type { EnvAsk } from './branch-sweep.ts';
-import { envAsksToRaise } from './lib/journal/env-asks.ts';
+import { envAskTemplate, envAsksToRaise } from './lib/journal/env-asks.ts';
 import { sessionStatus } from './token-metrics.ts';
 import { RULE_SCOPES, isRuleScope, parseRuleScope, ruleFooter, ruleLines } from './lib/journal/scope.ts';
 import type { RuleScope } from './lib/journal/scope.ts';
@@ -554,9 +556,11 @@ function transitionedFlag(): string[] | undefined {
  * rule tables in ask-fields.ts. Refusals exit 1 before anything is written; warnings go to stderr and the ask is written.
  * Any other command that is given one of these flags refuses rather than ignore it.
  */
-function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
+function askFieldsFromArgs(ask: boolean, paste: boolean, file: ParsedBody | null = null): AskFields {
+    const fromFile: Record<string, string | undefined> = { recommend: file?.recommend, door: file?.door };
     const flag = (names: string[]): RawFlag => {
         const name = names.find((n) => has(n));
+        if (!name && names[0] && fromFile[names[0]]) return { given: true, value: fromFile[names[0]] ?? null };   // a --body-file section stands in for the flag
         return { given: name !== undefined, value: name ? arg(name) : null };
     };
     const flags: RawAskFlags = { recommend: flag(['recommend']), default: flag(['default']), door: flag(['door']), 'decide-by': flag(['decide-by', 'by']), class: flag(['class']) };
@@ -575,15 +579,39 @@ function askFieldsFromArgs(ask: boolean, paste: boolean): AskFields {
  * The gate of an `ask` (--searched, --outward), checked by the rule table in ask-gate.ts. A refusal exits 1 before anything is
  * written. Any other command that is given the flag refuses rather than ignore it.
  */
-function askGateFromArgs(ask: boolean): AskGate {
+function askGateFromArgs(ask: boolean, file: ParsedBody | null = null): AskGate {
     if (!ask) {
         const stray = ['searched', 'outward'].filter((f) => has(f));
         if (stray.length) die(`--${stray.join(', --')} only go on \`ask\`.`);
         return {};
     }
-    const { gate, errors } = parseAskGate({ searched: { given: has('searched'), value: arg('searched') }, outward: has('outward') });
+    const searched = has('searched') ? { given: true, value: arg('searched') } : { given: Boolean(file?.searched), value: file?.searched ?? null };
+    const { gate, errors } = parseAskGate({ searched, outward: has('outward') });
     if (errors.length) die(errors.join('\n'));
     return gate;
+}
+
+/**
+ * The template flags of an `ask` (--blocked, --context, --option, --link, --body-file), with the parsed `--body-file` when given.
+ * Any other command that is given one refuses rather than ignore it. A body file that is missing or has a heading this
+ * tool does not know exits 1 before anything is written.
+ */
+function askTemplateFlags(ask: boolean): { flags: AskTemplateInput; file: ParsedBody | null } {
+    const names = ['blocked', 'context', 'option', 'link', 'body-file'];
+    if (!ask) {
+        const stray = names.filter((f) => has(f));
+        if (stray.length) die(`--${stray.join(', --')} only go on \`ask\`.`);
+        return { flags: {}, file: null };
+    }
+    const bad = names.filter((f) => has(f) && !arg(f));
+    if (bad.length) die(`--${bad.join(', --')} needs a value.`);
+    let file: ParsedBody | null = null;
+    if (has('body-file')) {
+        const path = resolveRefFile(arg('body-file') ?? '') || die(`--body-file ${arg('body-file')} is not an existing file.`);
+        file = parseAskBody(readFileSync(path, 'utf8'));
+        if (file.unknown.length) die(`--body-file has headings ask does not know: ${file.unknown.join(', ')}. Use Question, What is blocked, Context, Options, Recommendation, Links, What I checked, Door.`);
+    }
+    return { flags: { blocked: arg('blocked') ?? undefined, context: repeatedFlag('context'), options: repeatedFlag('option'), links: repeatedFlag('link') }, file };
 }
 
 /** `log <id> [note] --kind rework`: the item id the row names. It may be done or dropped (rework is found after use), so it is looked up among all item rows, by id or unique prefix; an unknown or ambiguous id exits 1. */
@@ -596,9 +624,18 @@ function reworkTarget(text: string): string {
     return hit[0] as string;
 }
 
+/** The stored template of an ask, or exit 1 naming every missing or malformed field. Nothing has been written when this runs. */
+function askTemplate(text: string, fields: AskFields, given: { flags: AskTemplateInput; file: ParsedBody | null }) {
+    const merged = mergeTemplate({ ...given.flags, question: text, recommend: fields.recommend }, given.file ?? {});
+    const { errors, template } = validateAskTemplate({ ...merged, question: text, recommend: fields.recommend ?? merged.recommend });
+    if (errors.length) die(`ask refused, nothing written. The template needs:\n${errors.map((e) => `  - ${e}`).join('\n')}\nSee \`journal.ts ask --help\` for the template.`);
+    return template;
+}
+
 function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = false, lease = false } = {}) {
-    const text = arg('text') || positional.join(' ');
-    if (!text) { console.error(`Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
+    const tplFlags = askTemplateFlags(ask);
+    const text = arg('text') || positional.join(' ') || tplFlags.file?.question || '';
+    if (!text) { console.error(ask ? 'Needs the question: journal.ts ask "<question>" (or "## Question" in --body-file). `ask --help` shows the template.' : `Needs text: journal.ts ${queued ? 'queue' : rule ? 'rule' : 'log'} "what happened"`); process.exit(1); }
     const kind = rule ? 'decision' : arg('kind', kindDefault);
     if (!KINDS.includes(kind)) { console.error(`kind must be one of: ${KINDS.join(', ')}`); process.exit(1); }
     if (kind === 'curated') die('A curated row is written only by `library-write.ts curate`, which holds the composer lease and checks the page.');
@@ -609,13 +646,16 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
     if (ask && !['question', 'decision'].includes(kind)) die('ask takes --kind question (default) or decision.');
     const reworked = kind === 'rework' ? reworkTarget(text) : undefined;
     const refs = rule ? ruleRefs() : refsFromArgs();
-    const askGate = askGateFromArgs(ask);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
+    const askGate = askGateFromArgs(ask, tplFlags.file);   // before anything that reads the filesystem, so a missing --searched is always the first refusal
     const paste = ask ? pasteFile(kind) : undefined;
     const gate = gateFlag(kind, ask || queued);
-    const askFields = askFieldsFromArgs(ask, Boolean(paste));
+    const askFields = askFieldsFromArgs(ask, Boolean(paste), tplFlags.file);
     if (ask) { const conflicts = gateConflicts(askFields, askGate); if (conflicts.length) die(conflicts.join('\n')); }
     // The door routes: a two-way ask with a default is acted on and logged as a note, so it never reaches the board.
     const routed = ask && !paste ? routeAsk(text, askFields, askGate) : { acted: null };
+    // The template: an ask that will reach the user must fill every required field, or nothing is written. A run-this ask (--paste) has its own
+    // rule (the block file must exist) and a two-way ask acted on its default never reaches the user, so neither is a question to answer.
+    const template = ask && !paste && routed.acted === null ? askTemplate(text, askFields, tplFlags) : {};
 
     // --settles closes the named items once the note is written; check the ids first so a typo writes nothing.
     const settles = parseList('settles');
@@ -662,7 +702,7 @@ function cmdLog(kindDefault = 'note', { ask = false, rule = false, queued = fals
         paste,
         gate,
         transitioned: transitionedFlag(),
-        ...(routed.acted === null ? { ...askFields, ...askGate } : { searched: askGate.searched }),
+        ...(routed.acted === null ? { ...askFields, ...askGate, ...template } : { searched: askGate.searched }),
         ...ruleScopeFor(kind),
         ...approvalFor(kind),
         ...usageFromArgs(),
@@ -1469,9 +1509,14 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
     const entries = readLedger();
     const open = fold(entries).items.filter((i) => i.kind === 'question' && isOpen(i)).map((i) => i.text ?? '');
     for (const { ask, text } of envAsksToRaise(asks, open)) {
+        const recommend = 'Move them now; the next roll then removes the worktree and the files stay in the env store.';
+        // Raised by the roll, not by the CLI, so the template is checked here with the same rules: it throws rather than write an ask that lacks a field.
+        const { errors, template } = validateAskTemplate(envAskTemplate(ask, recommend));
+        if (errors.length) throw new Error(`env-store ask is missing template fields: ${errors.join(' ')}`);
         append({
             id: newId(readLedger()), ts: now(), date: today(), kind: 'question', text, repo: ask.repo, refs: [],
-            recommend: 'Move them now; the next roll then removes the worktree and the files stay in the env store.', door: 'two-way',
+            recommend, door: 'two-way',
+            ...template,
             searched: 'the roll worktree scan (branch-sweep) and the open asks',
             model: 'unrecorded', used: ['skill:the-maestro', 'tool:branch-sweep'],
         });

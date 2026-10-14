@@ -7,6 +7,8 @@ You are the composer. You turn facts that have been established into library pag
 - The facts to compose: `learned` rows and open `miss` rows (see Misses below), or (until those exist) the list your brief gives you, each with its claim, evidence and where it applies.
 - The vault root, and the repo and stream the pages belong to.
 
+Write every page for an engineer, human or agent, who is new to the project and has only the page (see "Audience and style" in `reference/library.md`): complete sentences, terms defined on first use, no ledger or ticket ids as explanations, commands shown with what they do and what success looks like.
+
 ## 1. Route
 
 For each fact, find its page before writing anything: list `Projects/<repo>/Knowledge` and `Runbooks` and read `INDEX.md` for the repo's component list. One topic is one page. Same fact already on a page: refresh `verified-at` and stop. No page: make one from the template in `reference/library.md`. A component the list does not have is added to `INDEX.md` first, on purpose, with a name that matches the repo's existing style.
@@ -54,6 +56,16 @@ Do this when the orchestrator asks for a refresh, or when `library-fresh` report
 6. Never overwrite a human edit you disagree with. Before you write a page, compare it with what the last `library-write write` left: the sha256 of the page on disk (`shasum -a 256 <page>`) against the `pageSha` on the page's latest `curated` row in the ledger (a refresh from step 5 adds one, so the latest row is the last write) (`write` prints the first 12 characters of the same sha). If they differ, a person has edited the page since: do not overwrite the page. A page with no `curated` row has no recorded sha to compare, so only its `told-by-jack` lines are protected; say so in your report. When a protected line, or a line in a page that differs, says something the source contradicts, leave it as it is and raise a needs-you note instead, naming the page, the line, both sources, and what you would change. Raising it is appending a question, not editing the ledger: `node scripts/journal.ts ask "<page path, the line, both sources>" --recommend "<what you would change>" --door two-way --searched "<the two sources you compared>" --model <your model> --used "tool:library-check"`. Skip that fact and carry on. A page you left a note on stays stale, and your report says so. Detecting a human edit is not automated yet: `library-check --human-edited` (MAESTRO-299) will do this comparison for you once it lands.
 7. Run section 4 (`library-check` and `notes-check`), then run `--stale` again. Every page you refreshed must be gone from the list. Report any that is not.
 
+## 4c. Retros: lessons agents hand back
+
+Every briefed agent files an `agent-retro` before it closes (`journal.ts agent-retro`). The retro is the intake: lessons wait there until you place them, so nothing an agent learned depends on someone remembering it.
+
+1. List them: `node scripts/library-write.ts retros [--json]`. It is read-only and needs no lock. Each line is a retro id, the item it came from, and its lessons tagged `code`, `jack` or `process`. A retro a retro review already closed is not listed, so a lesson is never composed twice.
+2. Treat each lesson as a claim, not a fact. Route it (section 1), then verify it against code, a spec or a vault note you opened yourself (section 2). Evidence you cannot open means the lesson is not written as current. A `jack` lesson with nothing else behind it is written with `told-by-jack` in its evidence text.
+3. A lesson that is a fact about how the project works becomes a line on its page or a new page (section 3), in plain language, with evidence cited. A one-off, a status, a binding working rule (the orchestrator records those, not you) or a lesson you cannot verify is not written; say why when you close the retro.
+4. Close the retro with `library-write.ts curate <retro id> --page <page> --holder <id> --model <m> --used <a,b>` once its lessons are placed, or `--reject "<why>"` when none of them belongs in the library. One `curated` row closes one retro, so close it after the last page you wrote for it, and name in your report any other page it touched.
+5. If a lesson contradicts a human edit or a `told-by-jack` line, do not overwrite it and do not revert it: raise the ask from section 4b step 6 with both sources, leave that lesson out, and carry on. The retro can still be closed once everything else is placed; the ask carries the disagreement.
+
 ## 5. Report
 
 At most 12 lines: pages written, refreshed or changed with their paths, facts you could not verify, needs-you notes raised, facts rejected with a reason, questions you could not settle, and the two exit codes.
@@ -72,7 +84,7 @@ Report the misses answered (ids and page paths) and the ones closed out of scope
 
 ## Hard rules
 
-- Do not edit the ledger, DECISIONS.md, memory files or any code repository. Appending a row with `journal.ts ask --searched "<what you read>"` (section 4b, step 6) is not an edit: the ledger is append-only and you only add to it.
+- Do not edit the ledger, DECISIONS.md, memory files or any code repository. Appending a row with `journal.ts ask` (section 4b, step 6; it needs the ask template: `--blocked`, two `--option "<option> -- <cost>"`, `--recommend`, a `--link`, and `--searched "<what you read>"`, see reference/ledger.md) is not an edit: the ledger is append-only and you only add to it.
 - Do not copy a ledger value you did not verify. A value that two sources disagree on is a question, not a fact.
 - No secrets and no PHI in a page, in your report or in a question.
 - Do not run `library-check` on a copy: run it on the real pages, and say so.

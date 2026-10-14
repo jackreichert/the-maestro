@@ -5,6 +5,7 @@
  *   library-write.ts begin                                       take the composer lock (a ledger lease), print the holder id
  *   library-write.ts write <page> --from <staged> [--accept-hand-edit] --holder <id>  replace one page after every check passes
  *   library-write.ts curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model M --used a,b
+ *   library-write.ts retros [--json]                             list the agent retros waiting for the composer (read-only, no lock): each lesson with its source
  *   library-write.ts seed --holder <id>                          one time: record the sha of pages composed before the write record existed
  *   library-write.ts end --holder <id>                           free the lock
  *
@@ -20,19 +21,21 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { openStore } from './lib/journal/store.ts';
+import { pendingRetroLessons } from './lib/library/composer.ts';
+import { withholdJson } from './lib/json-out.ts';
 import { begin, curate, seedLastWrites, end, fileLastWrites, writePage } from './lib/library/write.ts';
 import type { Marks, Outcome, WriteEnv } from './lib/library/write.ts';
 
-const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> [--accept-hand-edit] --holder <id> | curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model <m> --used <a,b> | seed --holder <id> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
+const USAGE = 'Usage: library-write.ts begin | write <page> --from <staged> [--accept-hand-edit] --holder <id> | curate <learned id> (--page <page> [--refresh] [--accept-hand-edit] | --reject "<why>") --holder <id> --model <m> --used <a,b> | retros [--json] | seed --holder <id> | end --holder <id>   [--vault <root>] [--ledger-root <root>] [--project <name>]';
 
 interface Args { cmd: string; positional: string[]; flags: Map<string, string> }
 
 const VALUE_FLAGS = new Set(['vault', 'ledger-root', 'project', 'holder', 'from', 'page', 'reject', 'model', 'used', 'tokens']);
-const BOOL_FLAGS = new Set(['allow-unmarked', 'refresh', 'accept-hand-edit']);
+const BOOL_FLAGS = new Set(['json', 'allow-unmarked', 'refresh', 'accept-hand-edit']);
 
 export function parseArgs(argv: string[]): Args | string {
   const [cmd, ...rest] = argv;
-  if (!cmd || !['begin', 'write', 'curate', 'end', 'seed'].includes(cmd)) return 'first argument must be begin, write, curate, end or seed';
+  if (!cmd || !['begin', 'write', 'curate', 'end', 'seed', 'retros'].includes(cmd)) return 'first argument must be begin, write, curate, end, seed or retros';
   const flags = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < rest.length; i += 1) {
@@ -76,6 +79,16 @@ export function run(argv: string[], io: { out: (s: string) => void; err: (s: str
   store.ensureDir();
   switch (a.cmd) {
     case 'begin': return finish(begin(env), (r) => `holder ${r.holder} (lock until ${r.until.slice(11, 16)}Z)`);
+    case 'retros': {
+      const waiting = pendingRetroLessons(store.readLedger());
+      if (a.flags.has('json')) { io.out(JSON.stringify(withholdJson(waiting), null, 2)); return 0; }
+      io.out(`${waiting.length} retro${waiting.length === 1 ? '' : 's'} waiting for the composer`);
+      for (const r of waiting) {
+        io.out(`  ${r.id}  ${r.date}  item ${r.item}`);
+        r.lessons.forEach((l) => io.out(`      [${l.source}] ${l.text}`));
+      }
+      return 0;
+    }
     case 'seed': return finish(seedLastWrites(env, holder), (r) => `seeded ${r.seeded.length} page(s)${r.skipped.length ? `; left unrecorded (disk differs from the latest curated sha, or the page is gone): ${r.skipped.join(', ')}` : ''}`);
     case 'end': return holder ? finish(end(env, holder), (r) => (r.freed ? 'composer lock freed' : 'no live composer lock (already ended)')) : (io.err('library-write: end needs --holder'), 2);
     case 'write': {

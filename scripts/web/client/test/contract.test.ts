@@ -153,6 +153,17 @@ test('an ask may carry decision fields and a paste path, and a wrongly typed one
   }
 });
 
+test('an ask may carry template sections, and a malformed section drops the row', () => {
+  const good = state();
+  Object.assign(good.asks[0], { searched: 'the README', sections: { blocked: 'x', context: ['c'], options: [{ option: 'a', cost: 'b' }], links: [{ label: 'PR', url: 'https://example.test/1' }] } });
+  assert.equal(sanitizeState(good)?.dropped, 0);
+  for (const sections of [{ blocked: 1, context: [], options: [], links: [] }, { blocked: 'x', context: [1], options: [], links: [] }, { blocked: 'x', context: [], options: ['a'], links: [] }, { blocked: 'x', context: [], options: [], links: [{ url: 'u' }] }, 'text']) {
+    const bad = state();
+    Object.assign(bad.asks[0], { sections });
+    assert.equal(sanitizeState(bad)?.state.asks.length, 2, JSON.stringify(sections));
+  }
+});
+
 test('prioritiesMax is the server number when it is a whole number of at least 1, else 5', () => {
   for (const [given, want] of [[3, 3], [12, 12], [undefined, 5], [0, 5], [-1, 5], [2.5, 5], ['4', 5], [null, 5]] as [unknown, number][]) {
     const s = state();
