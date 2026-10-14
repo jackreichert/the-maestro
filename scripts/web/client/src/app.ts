@@ -3,6 +3,7 @@ import './podium-chart.ts';
 import './priority-list.ts';
 import './local-review.ts';
 import './open-prs.ts';
+import './draft-queue.ts';
 import { h, s, shadow } from './dom.ts';
 import { BOARD_CSS, section } from './stream-board.ts';
 import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
@@ -13,8 +14,10 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, OPEN_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { DASHBOARD, OPEN_PRS, OTHERS_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
+import { DraftsStore } from './drafts-store.ts';
+import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
@@ -245,6 +248,8 @@ export class PodiumApp extends HTMLElement {
     post: async () => (await this.#poster.post('/api/prs/refresh', {}))?.status ?? null,
     delay: (ms) => new Promise((ok) => { setTimeout(ok, ms); }),
   });
+  // The draft queue's data and what is being typed live here too (see drafts-store.ts); every decision goes to the server, which alone posts.
+  readonly #drafts = new DraftsStore({ load: () => loadDrafts(), send: (op, payload) => createDraftActions().send(op, payload) });
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -286,6 +291,7 @@ export class PodiumApp extends HTMLElement {
       this.#local = s.source === 'server' ? lr : null;
       this.#sources = { state: s.source, charts: c.source };
       this.#dropped = s.dropped + c.dropped;
+      if (s.source === 'server') void this.#drafts.load();   // the tab's count; the queue's own file is watched, so later changes come through the live load below
       this.#active = parseFragment(location.hash, this.#ids());
       this.#filter = parseFilter(location.hash);
       this.#safeRender();
@@ -327,6 +333,7 @@ export class PodiumApp extends HTMLElement {
     this.#liveUpdates = new LiveUpdates<Fresh>({
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
+        void this.#drafts.load();   // a decision or a new draft changes drafts.jsonl, not the board, so the board's own seq may not move
         const [s, c, e, lr, p, co] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true), loadCost()]);
         return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, cost: co, local: lr, projects: p, dropped: s.dropped + c.dropped } : null;
       },
@@ -445,9 +452,9 @@ export class PodiumApp extends HTMLElement {
     const tabs = ids.flatMap((id, i) => {
       const on = id === this.#active;
       const stream = tabStream(id);
-      const n = id === DASHBOARD || id === OPEN_PRS ? 0 : count(st.asks, id);
+      const n = isAllStreams(id) ? 0 : count(st.asks, id);
       const prs = id === OPEN_PRS ? st.prs.length : 0;
-      const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : stream ?? id;
+      const label = id === DASHBOARD ? 'Home' : id === OPEN_PRS ? 'Open PRs' : id === OTHERS_PRS ? 'Others\' PRs' : stream ?? id;
       const tab = h('button', {
         type: 'button', role: 'tab', id: tabDomId(id), 'aria-selected': String(on), 'aria-controls': 'panel',
         tabindex: on ? '0' : '-1',
@@ -455,6 +462,7 @@ export class PodiumApp extends HTMLElement {
       stream ? h('span', { class: `stream-dot ${seriesClass(stream)}`, 'aria-hidden': 'true' }) : null,
       label,
       prs > 0 ? h('span', { class: 'count' }, String(prs)) : null,
+      id === OTHERS_PRS && this.#waitingDrafts() > 0 ? h('span', { class: 'count' }, String(this.#waitingDrafts()), h('span', { class: 'vh' }, ' awaiting')) : null,
       n > 0 ? h('span', { class: 'count' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null);
       tab.addEventListener('click', () => this.#select(id, true));
       tab.addEventListener('keydown', (e) => {
@@ -464,13 +472,13 @@ export class PodiumApp extends HTMLElement {
         e.preventDefault();
         this.#select(next, true);
       });
-      const sep = i === 1 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
+      const sep = i === 2 ? h('span', { class: 'nav-sep', 'aria-hidden': 'true' }) : null;
       return [tab, sep];
     });
     const stream = tabStream(this.#active);
     const panel = h('div', { role: 'tabpanel', id: 'panel', 'aria-labelledby': tabDomId(this.#active), tabindex: '0', class: 'wrap page' },
-      this.#active === OPEN_PRS ? null : this.#pageHead(st, stream),
-      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#board(st, stream ?? ''),
+      this.#active === OPEN_PRS || this.#active === OTHERS_PRS ? null : this.#pageHead(st, stream),
+      this.#filter ? this.#filtered(st, this.#filter) : this.#active === DASHBOARD ? this.#home(st) : this.#active === OPEN_PRS ? this.#openPrs(st) : this.#active === OTHERS_PRS ? this.#othersPrs() : this.#board(st, stream ?? ''),
       fine());
     const tablist = h('div', { role: 'tablist', 'aria-label': 'Podium' }, ...tabs);
     const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Podium' }, tablist);
@@ -672,6 +680,29 @@ export class PodiumApp extends HTMLElement {
     });
     if (this.#sources.state === 'server') void this.#prs.load();   // each draw asks again, so the tab never shows older data than the cache holds
     return el;
+  }
+
+  /** Drafts still waiting for a decision, for the tab's count. */
+  #waitingDrafts(): number { return (this.#drafts.model.data?.drafts ?? []).filter((d) => d.state === 'pending' || d.state === 'failed').length; }
+
+  /** The draft queue as an element wired to the page's store; each draw asks the server again, so the tab never shows older drafts than the file holds. */
+  #draftQueue(sources: ReadonlyArray<'review' | 'reply'>, empty: string): HTMLElementTagNameMap['draft-queue'] {
+    const el = h('draft-queue');
+    const s = this.#drafts;
+    el.sources = sources;
+    el.emptyText = empty;
+    el.actions = { startEdit: (id) => s.startEdit(id), startReject: (id) => s.startReject(id), cancel: (id) => s.cancel(id), setBuffer: (id, t) => s.setBuffer(id, t), saveEdit: (id) => { void s.saveEdit(id); }, approve: (id) => { void s.approve(id); }, reject: (id) => { void s.reject(id); } };
+    el.model = s.model;
+    const unsubscribe = s.subscribe(() => { if (!el.isConnected) { unsubscribe(); return; } el.model = s.model; });
+    if (this.#sources.state === 'server') void s.load();
+    return el;
+  }
+
+  /** The Others' PRs tab: drafted review comments on teammates' PRs. Approve posts as you; Reject records why and posts nothing. */
+  #othersPrs(): Node {
+    return h('div', {}, h('h2', { class: 'tab-title' }, 'Others\' PRs'),
+      h('p', { class: 'section-hint' }, 'Review comments drafted on teammates\' PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
+      this.#draftQueue(['review'], 'No review comments are waiting for your approval.'));
   }
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */

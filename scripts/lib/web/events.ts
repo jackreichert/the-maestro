@@ -30,7 +30,7 @@ export function boardFiles(vault: string, project: string, statusDir: string): s
   let fragments: string[] = [];
   try { fragments = readdirSync(join(statusDir, 'fragments')).filter((n) => n.endsWith('.md')).sort().map((n) => join(statusDir, 'fragments', n)); } catch { /* no fragments directory yet */ }
   return [
-    join(root, 'Journal', 'ledger.jsonl'), join(root, 'streams.json'),
+    join(root, 'Journal', 'ledger.jsonl'), join(root, 'Journal', 'drafts.jsonl'), join(root, 'streams.json'),
     ...['priorities.md', PRS_CACHE, DIRTY_PRS, PODIUM_FILE, 'ticket-map.json', 'stream-overrides.json', HOMES_FILE].map((n) => join(statusDir, n)),
     ...fragments,
   ];
