@@ -36,6 +36,8 @@ export interface WebServerOptions {
   clientDir: string;
   /** Atlassian tenant hosts (`<label>.atlassian.net`) whose ticket links may reuse a tab. Empty by default; the client re-validates each one. */
   trustedAtlassianHosts?: string[];
+  /** Stream name to colour class (`s1`..`s8`, `so`) from the `podium_series` setting. Empty by default; the client re-validates each class. */
+  namedSeries?: Record<string, string>;
   now?: () => Date;
   /** Where a handler's real error goes (the response only says "internal error"). */
   log?: (message: string) => void;
@@ -99,6 +101,7 @@ export function dataRoutes(o: WebServerOptions): Route[] {
     { method: 'GET', pattern: /^\/api\/local-review$/, handler: () => containerRoot
       ? withVerdicts(localReview.read(), o.web.vault)
       : { generatedAt: now().toISOString(), available: false, reason: 'No container folder is configured (set container_root), so local branches are not read.', units: [], more: 0, notes: [] } },
+    { method: 'GET', pattern: /^\/api\/series$/, handler: () => ({ named: o.namedSeries ?? {} }) },
     { method: 'GET', pattern: /^\/api\/link-hosts$/, handler: () => ({ atlassian: o.trustedAtlassianHosts ?? [] }) },
     { method: 'GET', pattern: /^\/api\/charts$/, handler: (u) => buildCharts(o.web, daysParam(u), now()) },
   ];

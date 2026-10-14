@@ -163,6 +163,17 @@ export const LEDGER_ROOT = expandHome(pick('LEDGER_ROOT', 'ledger_root').trim())
 /** Atlassian tenant hosts the Podium may reuse a tab for (comma-separated `<label>.atlassian.net`). Empty means none: every ticket link opens a fresh tab. */
 export const PODIUM_TRUSTED_ATLASSIAN_HOSTS = pick('PODIUM_TRUSTED_ATLASSIAN_HOSTS', 'podium_trusted_atlassian_hosts').split(',').map((s) => s.trim()).filter(Boolean);
 
+/** Fixed Podium colours for streams: `Name=s1, Other=s2` (classes s1..s8 or so). Entries that are not `name=class` with a known class are dropped; empty means none, and every other stream gets a hashed colour. */
+export function parseSeries(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of raw.split(',')) {
+    const [name, cls, ...rest] = entry.split('=').map((s) => s.trim());
+    if (name && cls && rest.length === 0 && /^s(?:[1-8]|o)$/.test(cls)) out[name] = cls;
+  }
+  return out;
+}
+export const PODIUM_SERIES = parseSeries(pick('PODIUM_SERIES', 'podium_series'));
+
 /** The vault holding tickets, CONTEXT.md and the rest. Empty means "not set". */
 export const VAULT_ROOT = expandHome(pick('VAULT_ROOT', 'vault_root').trim());
 
