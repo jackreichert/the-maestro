@@ -11,7 +11,7 @@ import type { DevelopTwin } from './twin.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
 import { reviewQueue } from '../review-queue.ts';
-import { splitSelfReview } from '../self-review.ts';
+import { selfReviewNotReady, splitSelfReview } from '../self-review.ts';
 import type { ReviewQueue } from '../review-queue.ts';
 import { sessionText } from '../session-text.ts';
 import type { SessionStatus } from '../session-text.ts';
@@ -268,11 +268,12 @@ function prFlags(p: Pr): string {
 /** `Review queue: 3 of 4 ...`: the non-draft PRs waiting on a review against the cap, and what a full queue means for pushes. */
 const queueSentence = (q: ReviewQueue): string => `**Review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}**${q.full ? ': hold pushes of new PRs (keep working locally) until it drops; fixes to open PRs still go out.' : ' non-draft PRs awaiting review.'}`;
 
-/** Where a self-review PR stands for its one reviewer, first match: new comments, draft, ready to merge, approved but held, awaiting review. The same buckets as `prs-snapshot.ts --ready`. */
+/** Where a self-review PR stands for its one reviewer, first match: ready to merge (checks pass, no conflict: `selfReviewNotReady`), new comments, draft, approved but held, awaiting review. The same buckets as `prs-snapshot.ts --ready`. */
 export function selfReviewState(p: Pr): string {
+  if (selfReviewNotReady(p.ci, p.mergeable === 'CONFLICTING').length === 0) return 'ready to merge';
   if (p.unresolved > 0) return 'new comments';
   if (p.isDraft) return 'draft for you';
-  if (p.reviewDecision === 'APPROVED') return p.mergeable === 'MERGEABLE' ? 'ready to merge' : 'approved, not ready';
+  if (p.reviewDecision === 'APPROVED') return 'approved, not ready';
   return 'awaiting your review';
 }
 

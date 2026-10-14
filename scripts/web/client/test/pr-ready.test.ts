@@ -26,3 +26,17 @@ test('a staging PR waits on its develop twin: unmerged or not found is never rea
   assert.equal(readyToMerge({ ...base }), true, 'twin merged (no wait) and the other checks pass');
   assert.equal(readyToMerge({ ...base, review: 'none' }), false, 'a merged twin does not excuse the other checks');
 });
+
+test('a self-review PR is ready on passing checks and no conflict alone; a draft, no review or open threads do not gate it', () => {
+  const mine = { ...base, review: 'none', isDraft: true, unresolved: 2, selfReview: true, ci: 'SUCCESS' } as const;
+  assert.equal(readyToMerge(mine), true);
+  assert.equal(readyToMerge({ ...mine, ci: 'PENDING' }), false, 'a pending check is not ready');
+  assert.equal(readyToMerge({ ...mine, ci: 'FAILURE' }), false);
+  assert.equal(readyToMerge({ ...mine, ci: undefined }), false, 'no check result fails closed');
+  assert.equal(readyToMerge({ ...mine, mergeable: 'conflicting' }), false);
+  assert.equal(readyToMerge({ ...mine, mergeable: 'unknown' }), true, 'still computing is not a conflict');
+});
+
+test('an org PR with green checks and no approval is not ready', () => {
+  assert.equal(readyToMerge({ ...base, review: 'none', ci: 'SUCCESS', selfReview: false }), false);
+});

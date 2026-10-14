@@ -313,14 +313,15 @@ test('stacks <snapshot> flags a stack over the depth cap offline, and a missing 
 const mine = (n: number, o: Partial<StoredPr> = {}): StoredPr => good({ key: `me/tool#${n}`, repo: 'me/tool', number: n, url: `https://github.com/me/tool/pull/${n}`, ...o });
 const SELF = ['me/*'];
 
-test('self-review PRs are bucketed like the rest, first match wins, and never reach the org ready or held lists', () => {
+test('self-review PRs bucket ready first, then like the rest, and never reach the org ready or held lists', () => {
+    const pending = { ci: 'PENDING' };
     const all = [
         good({ key: 'o/r#1', number: 1 }),
-        mine(2, { threads: [thread('t', false)] }),
-        mine(3, { isDraft: true, reviewDecision: 'NONE' }),
-        mine(4, { reviewDecision: 'REVIEW_REQUIRED' }),
-        mine(5),
-        mine(6, { mergeable: 'CONFLICTING' }),
+        mine(2, { ...pending, threads: [thread('t', false)] }),
+        mine(3, { ...pending, isDraft: true, reviewDecision: 'NONE' }),
+        mine(4, { ...pending, reviewDecision: 'REVIEW_REQUIRED' }),
+        mine(5, { ci: 'SUCCESS' }),
+        mine(6, { ci: 'SUCCESS', mergeable: 'CONFLICTING' }),
     ];
     const b = selfReviewBuckets(all, SELF, []);
     assert.deepEqual(Object.fromEntries(Object.entries(b).map(([k, v]) => [k, v.map((p: StoredPr) => p.number)])), { threads: [2], drafts: [3], awaiting: [4], ready: [5], held: [6] });
@@ -329,8 +330,34 @@ test('self-review PRs are bucketed like the rest, first match wins, and never re
     assert.match(lines, /Approved but not ready \(0\):/);
     assert.match(lines, /Maestro PRs \(self-review\) \(5\), not counted in the review queue:/);
     assert.match(lines, /New comments \(1\):\n    me\/tool#2 — https:\/\/github.com\/me\/tool\/pull\/2/);
-    assert.match(lines, /Approved and ready to merge \(1\):\n    me\/tool#5 /);
+    assert.match(lines, /Ready to merge \(1\):\n    me\/tool#5 /);
     assert.doesNotMatch(lines.split('Maestro PRs')[0] ?? '', /me\/tool/, 'no self-review PR above its own section');
+});
+
+test('a self-review PR is ready on passing checks alone: no review, a draft or open threads do not gate it', () => {
+    const ok = { ci: 'SUCCESS', mergeable: 'MERGEABLE', reviewDecision: 'NONE' };
+    assert.deepEqual(readiness(mine(1, ok), [], [], [], SELF), { ready: true, reasons: [] });
+    assert.equal(readiness(mine(1, { ...ok, isDraft: true, threads: [thread('t', false)], reviewDecision: 'CHANGES_REQUESTED' }), [], [], [], SELF).ready, true);
+});
+
+test('a self-review PR with pending, failing or missing checks, or a conflict, is not ready, and says why', () => {
+    const why = (o: Partial<StoredPr>) => readiness(mine(1, { ci: 'SUCCESS', mergeable: 'MERGEABLE', ...o }), [], [], [], SELF).reasons.join('|');
+    assert.match(why({ ci: 'PENDING' }), /checks pending/);
+    assert.match(why({ ci: 'EXPECTED' }), /checks pending/);
+    assert.match(why({ ci: 'FAILURE' }), /checks failing/);
+    assert.match(why({ ci: 'ERROR' }), /checks failing/);
+    assert.match(why({ ci: undefined }), /no check result/, 'an older snapshot without checks fails closed');
+    assert.match(why({ ci: 'NONE' }), /no check result/);
+    assert.match(why({ mergeable: 'CONFLICTING' }), /merge conflict/);
+    assert.equal(why({ mergeable: 'UNKNOWN' }), '', 'a mergeable state still computing is not a conflict');
+});
+
+test('an org PR with green checks and no approval is not ready; the self-review rule does not leak to it', () => {
+    const org = good({ reviewDecision: 'NONE', ci: 'SUCCESS' });
+    assert.match(readiness(org, [], [], [], SELF).reasons.join('|'), /not approved/);
+    assert.equal(readiness(org, [], [], [], SELF).ready, false);
+    assert.equal(readiness(good({ ci: 'FAILURE' }), [], [], [], SELF).ready, true, 'org readiness ignores checks, as before');
+    assert.equal(readiness(mine(1, { ci: 'SUCCESS', reviewDecision: 'NONE' }), [], [], [], []).ready, false, 'with no self_review_repos the same PR is an org PR');
 });
 
 test('with no self_review_repos nothing changes: no section, every PR in the org lists', () => {
@@ -342,13 +369,13 @@ test('with no self_review_repos nothing changes: no section, every PR in the org
 });
 
 test('the one-line summary counts each bucket and omits the empty ones', () => {
-    assert.equal(selfReviewSummary([mine(1, { threads: [thread('t', false)] }), mine(2, { isDraft: true }), mine(3), mine(4)], SELF, []), '4 open: 1 with new comments, 1 draft, 2 ready to merge');
+    assert.equal(selfReviewSummary([mine(1, { ci: 'PENDING', threads: [thread('t', false)] }), mine(2, { ci: 'PENDING', isDraft: true }), mine(3, { ci: 'SUCCESS' }), mine(4, { ci: 'SUCCESS' })], SELF, []), '4 open: 2 ready to merge, 1 with new comments, 1 draft');
 });
 
 test('ready <snapshot> prints the self-review section when the setting names the repo, and diff labels its changes', () => {
     const dir = mkdtempSync(join(tmpdir(), 'prs-snap-test-'));
     const env = { ...process.env, MAESTRO_SELF_REVIEW_REPOS: 'me/tool' };
-    const r = runWith(env, 'ready', fixture(dir, 's.json', { prs: [good(), mine(5)] }));
+    const r = runWith(env, 'ready', fixture(dir, 's.json', { prs: [good(), mine(5, { ci: 'SUCCESS' })] }));
     assert.match(r.out, /Ready to merge \(1\):\n  org\/repo#1 /);
     assert.match(r.out, /Maestro PRs \(self-review\) \(1\)/);
     const oldSnap = { takenAt: 't', prs: [pr(), mine(5, { reviews: [] })] };

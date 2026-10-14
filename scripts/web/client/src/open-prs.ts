@@ -124,7 +124,7 @@ const CSS = `${BASE_CSS}
 `;
 
 const MOVES: { id: Move; word: string; title: string; note: string; empty: [string, string] }[] = [
-  { id: 'ready', word: 'ready to merge', title: 'Ready to merge', note: 'Approved, no open threads and no conflicts; a staging PR also needs its develop twin merged. Pinned here until merged.', empty: ['Nothing is ready to merge.', 'tacet'] },
+  { id: 'ready', word: 'ready to merge', title: 'Ready to merge', note: 'Approved, no open threads and no conflicts; a staging PR also needs its develop twin merged. A self-review PR needs only passing checks and no conflict. Pinned here until merged.', empty: ['Nothing is ready to merge.', 'tacet'] },
   { id: 'yours', word: 'your move', title: 'Your move', note: 'Clean and out of draft. These wait on your review or your merge.', empty: ['Nothing waits on your review.', 'tacet'] },
   { id: 'orchestra', word: 'orchestra fixing', title: 'The orchestra is fixing', note: 'Failing CI, conflicts, open threads or changes requested. Fixes still go out without a new review.', empty: ['Nothing needs fixing.', 'a tempo'] },
   { id: 'drafts', word: 'drafts', title: 'Drafts', note: 'Still being written. They join your move when they leave draft.', empty: ['No drafts open.', 'rest'] },
@@ -167,7 +167,7 @@ export function toUnits(list: Drawn[]): Unit[] {
 }
 
 const needsFix = (p: OpenPrRow): boolean => p.ci === 'FAILURE' || p.ci === 'ERROR' || p.mergeable === 'conflicting' || p.unresolved > 0 || p.review === 'changes-requested';
-const moveOf = (p: OpenPrRow): Move => (p.isDraft ? 'drafts' : readyToMerge(p) ? 'ready' : needsFix(p) ? 'orchestra' : 'yours');
+const moveOf = (p: OpenPrRow & { selfReview?: boolean }): Move => (readyToMerge(p) ? 'ready' : p.isDraft ? 'drafts' : needsFix(p) ? 'orchestra' : 'yours');
 /** The band of a card: the most urgent move among its PRs, so a pair never reads Ready while one side needs fixing. */
 const unitMove = (u: Unit): Move => members(u).map(moveOf).sort((a, b) => MOVE_URGENCY.indexOf(a) - MOVE_URGENCY.indexOf(b))[0]!;
 const lensOn = (p: OpenPrRow, lens: Lens): boolean => {

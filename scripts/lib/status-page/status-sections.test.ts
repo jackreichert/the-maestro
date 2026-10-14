@@ -226,7 +226,7 @@ test('the Open PRs section lists self-review PRs under their own heading, outsid
     number, title: `feat: thing ${number}`, url: `https://example.test/${repo}/pull/${number}`, isDraft: false, baseRefName: 'develop', headRefName: `b${number}`,
     mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo, short: repo.split('/')[1] as string, owner: repo.split('/')[0] as string, unresolved: 0, ci: 'SUCCESS', stream: 'Narnia', ...over,
   });
-  const prs = [pr(1, 'acme/widgets'), pr(2, 'me/tool', { unresolved: 2 }), pr(3, 'me/tool', { isDraft: true }), pr(4, 'me/tool', { reviewDecision: 'APPROVED' }), pr(5, 'me/tool')];
+  const prs = [pr(1, 'acme/widgets'), pr(2, 'me/tool', { unresolved: 2, ci: 'PENDING' }), pr(3, 'me/tool', { isDraft: true, ci: 'PENDING' }), pr(4, 'me/tool', { reviewDecision: null }), pr(5, 'me/tool', { ci: 'PENDING' })];
   const render = (config: PageConfig): string[] => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page.split('\n');
   const on = render({ ...CONFIG, reviewQueueCap: 2, selfReviewRepos: ['me/tool'] });
   assert.ok(on.includes('## Open PRs (1)'), 'the org count leaves the self-review PRs out');
