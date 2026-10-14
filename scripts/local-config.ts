@@ -446,6 +446,17 @@ export const PR_MECHANICAL_GLOBS = globList('MAESTRO_PR_MECHANICAL_GLOBS', 'pr_m
 /** Smells gate (pr-open.ts, pr-smells.ts): GitHub `owner/name` globs of repos where a PR needs a recorded smells run, comma-separated. Default none, so the gate is off until a repo is named. User config file only. */
 export const PR_SMELLS_REPOS = globListFile('pr_smells_repos');
 
+/** Leak gate (pr-leaks.ts, pr-open.ts): GitHub `owner/name` globs of repos, besides this skill's own, where pr-open.ts refuses a PR that adds an org term, a personal path or a configured name. Default none. User config file only. */
+export const LEAK_GATE_REPOS = globListFile('leak_gate_repos');
+
+/**
+ * Leak gate: org, person and customer names the diff must not contain, comma-separated, matched case-insensitively.
+ * From the user config file or the overlay's config.md, never the environment, and never printed: the settings
+ * listing shows `(set, hidden)` instead of the value, because the list is itself the sensitive part. CI reads LEAK_TERMS from a secret.
+ */
+export const LEAK_TERMS = (user.leak_terms ?? overlay.leak_terms ?? '').trim();
+picked.set('leak_terms', { key: 'leak_terms', envName: '', value: LEAK_TERMS ? '(set, hidden)' : '', source: user.leak_terms !== undefined ? userPath : overlay.leak_terms !== undefined ? overlayPath : 'default' });
+
 /** Review-note gate (review-note.ts, git-guard.ts, pr-open.ts): GitHub `owner/name` globs of repos where a push needs a vault Reviews note for the head commit, comma-separated. Default none, so the gate is off until a repo is named. User config file only. */
 export const REVIEW_NOTE_REPOS = globListFile('review_note_repos');
 
