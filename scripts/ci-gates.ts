@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CI GATES: the size, body, and smells checks, run where a writing agent cannot loosen them.
+ * CI GATES: the size, body, smells, and leak checks, run where a writing agent cannot loosen them.
  *
  *   node scripts/ci-gates.ts --repo <path> --base <ref> --body-file <path> (--title <text> | --title-file <path>) [--head <ref>] [--base-name <branch>]
  *
@@ -8,6 +8,9 @@
  * reads process.env at import. This script deletes the gate overrides first, then imports those
  * modules, so a caller cannot raise a limit, reclassify code out of the budget, turn a body check
  * off, or point MAESTRO_LOCAL_CONFIG at a looser file. There is no flag that skips a gate.
+ *
+ * The leak check (pr-leaks.ts) runs strict here: customer names come from the LEAK_TERMS environment variable (the workflow
+ * passes it from a secret). Unset, it fails unless LEAK_GATE_BUILTIN_ONLY=1, and then the log says names were not checked.
  *
  * The user config file at its default path is still read. That is the only remaining waiver:
  * waive_size_gate_owners, the list pr-open.ts already honours. An environment variable cannot
@@ -100,7 +103,8 @@ async function run(argv: string[], stripped: string[]): Promise<number> {
   if (stripped.length) console.error(`ci-gates: ignored environment overrides: ${stripped.join(', ')}`);
   process.env.GIT_TERMINAL_PROMPT ??= '0';
   // Import only after the overrides are gone. A static import would load local-config first.
-  const [{ assess, makeClassifier, parseNumstat, resolveBase, globToRegExp }, { bodyProblems }, { smellsProblems }, { sizeGateWaiver }, config] = await Promise.all([
+  const [{ leakCheck, report: leaksReport }, { assess, makeClassifier, parseNumstat, resolveBase, globToRegExp }, { bodyProblems }, { smellsProblems }, { sizeGateWaiver }, config] = await Promise.all([
+    import('./pr-leaks.ts'),
     import('./pr-size.ts'),
     import('./pr-body.ts'),
     import('./pr-smells.ts'),
@@ -122,6 +126,7 @@ async function run(argv: string[], stripped: string[]): Promise<number> {
   const bodyProblemsFound = bodyProblems(body, undefined, { stacked, codeFiles: size.code.files, title: args.title });
   let smellProblems: string[];
   try { smellProblems = smellsProblems(args.repo, args.head, body, size.code.files); } catch (e) { smellProblems = [(e as Error).message]; }
+  const leaks = leakCheck({ repo: args.repo, base: resolved, head: args.head, title: args.title, body, termsRaw: [config.LEAK_TERMS, process.env.LEAK_TERMS ?? ''].join('\n'), strict: true });
   const limit = size.limits.wideMaxFiles === undefined
     ? `${size.limits.maxFiles} files, ${size.limits.maxLines} lines`
     : `${size.limits.maxFiles} files, ${size.limits.maxLines} lines, or up to ${size.limits.wideMaxFiles} files under ${size.limits.wideMaxLines} lines`;
@@ -132,7 +137,8 @@ async function run(argv: string[], stripped: string[]): Promise<number> {
   for (const f of bodyProblemsFound) console.error(`body: ${f}`);
   console.log(`smells: ${smellProblems.length ? 'FAIL' : 'PASS'}`);
   for (const f of smellProblems) console.error(`smells: ${f}`);
-  return sizeProblems.length || bodyProblemsFound.length || smellProblems.length ? 1 : 0;
+  const leakFailures = leaksReport(leaks);
+  return sizeProblems.length || bodyProblemsFound.length || smellProblems.length || leakFailures ? 1 : 0;
 }
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };

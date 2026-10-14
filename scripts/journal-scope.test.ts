@@ -191,7 +191,7 @@ test('status --full in another window does not list a window-scoped note', () =>
 
 const decisionsPath = (): string => join(vault, 'Projects', 'test-proj', 'DECISIONS.md');
 test('decide --binds window records a window-scoped rule: no DECISIONS.md entry, binding here, absent from another window', () => {
-    const r = runAs('winA', 'decide', 'PAUSE-X ignore maestro tickets today', '--why', 'Jack said so in this window', '--binds', 'window', '--tickets-vault', vault, ...MARK);
+    const r = runAs('winA', 'decide', 'PAUSE-X ignore maestro tickets today', '--why', 'The user said so in this window', '--binds', 'window', '--tickets-vault', vault, ...MARK);
     assert.equal(r.code, 0, r.err);
     assert.equal(existsSync(decisionsPath()), false, 'a window rule is temporary and must not reach the shared decisions file');
     const [row] = ledger();

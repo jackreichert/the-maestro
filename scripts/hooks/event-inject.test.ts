@@ -18,8 +18,8 @@ const okHealth = { state: 'ok' as const, line: '**Loop:** ok 2 min' };
 
 test('headline is built from kind and fields only', () => {
   assert.equal(headline(entry({ fields: { repo: 'a/b', number: 5, who: 'human' } })), 'thread a/b#5 (human) [aaaaaaaaaaaa]');
-  assert.equal(headline(entry({ kind: 'message', fields: { count: 3 } })), '3 new texts from Jack (read with claude-inbox --new)');
-  assert.equal(headline(entry({ kind: 'message', fields: { count: 1 } })), '1 new text from Jack (read with claude-inbox --new)');
+  assert.equal(headline(entry({ kind: 'message', fields: { count: 3 } })), '3 new texts from the user (read with claude-inbox --new)');
+  assert.equal(headline(entry({ kind: 'message', fields: { count: 1 } })), '1 new text from the user (read with claude-inbox --new)');
 });
 
 test('inject prints nothing when there is nothing unseen and the loop is healthy, except a loop line at session start', () => {

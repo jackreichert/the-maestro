@@ -13,6 +13,8 @@
  *
  * In a repo listed in pr_smells_repos it also refuses unless a smells run is recorded for the head commit
  * (pr-smells.ts record) and the body carries its `Smells:` line; docs-only diffs are exempt.
+ * In this skill's own repo, and in any repo listed in leak_gate_repos, it also refuses a PR whose added lines, title or body carry an org
+ * term, a personal path or a configured name (pr-leaks.ts); it reports file:line and never the matched text.
  * In a repo listed in review_note_repos it also refuses unless a vault Reviews note exists for the head commit (review-note.ts).
  *
  * Over budget: prints the pr-size summary and a split hint, exits 1, never calls gh, unless the
@@ -39,11 +41,15 @@ import { fileURLToPath } from 'node:url';
 import { openStore } from './lib/journal/store.ts';
 import { itemFor, linkRowToPr, parsePrUrl } from './lib/row-prs.ts';
 import { bodyProblems, type BodyContext } from './pr-body.ts';
-import { CONFIGURED_PROJECT, LEDGER_ROOT, ONE_PR_EXEMPT_HEADS, ONE_PR_KEY_PATTERN, ONE_PR_PER_TICKET, PROTECTED_BRANCHES, VAULT_ROOT, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
+import { CONFIGURED_PROJECT, LEAK_GATE_REPOS, LEAK_TERMS, LEDGER_ROOT, ONE_PR_EXEMPT_HEADS, ONE_PR_KEY_PATTERN, ONE_PR_PER_TICKET, PROTECTED_BRANCHES, VAULT_ROOT, WAIVE_SIZE_GATE_OWNERS } from './local-config.ts';
 import { checkOnePerTicket, listOpenPrs, ticketKey } from './pr-ticket-key.ts';
 import { globToRegExp, resolveBase } from './pr-size.ts';
 import { linkPr, tokenPaths, tokenProblems, hasLooseToken } from './pr-links.ts';
 import { smellsProblems } from './pr-smells.ts';
+import { gateApplies as leaksApply, leakCheck, report as leaksReport } from './pr-leaks.ts';
+
+/** This skill's own repo: the leak gate always applies here. */
+const LEAK_SELF_REPO = ['jackreichert', 'the-maestro'].join('/');
 import { gate as reviewNoteGate, refusal as reviewNoteRefusal } from './review-note.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
@@ -124,6 +130,19 @@ function smellsGate(o: OpenArgs, body: string, ctx: BodyContext): string[] {
   try { return smellsProblems(o.repo, headOf(o), body, ctx.codeFiles); } catch (e) { return [(e as Error).message]; }
 }
 
+/**
+ * The leak gate (reference/git.md#leak-gate): where it applies, a hit refuses before gh is called. Terms come from local-config only;
+ * with none configured the run says that customer names were not checked, and carries on with the built-in checks.
+ */
+function leaksGate(o: OpenArgs, body: string): void {
+  if (!leaksApply(o.repo, [LEAK_SELF_REPO, ...LEAK_GATE_REPOS])) return;
+  const t = flagIndex(o.pass, '--title');
+  const res = leakCheck({ repo: o.repo, base: resolveBase(o.repo, o.base), head: headOf(o) || 'HEAD', title: t >= 0 ? o.pass[t + 1] : '', body, termsRaw: LEAK_TERMS, strict: false });
+  if (!leaksReport(res, (s) => console.log(`pr-open: ${s}`), (s) => console.error(`pr-open: ${s}`))) return;
+  console.error('pr-open: refused, the PR adds text that must not be in a public skill (file:line and kind above). Genericise it; a stored name that cannot change goes in the narrow allowlist in pr-leaks.ts, with a reason.');
+  process.exit(1);
+}
+
 /** The review-note gate (reference/git.md#review-note-gate): in a `review_note_repos` repo a PR opens only for a head commit with a vault Reviews note. */
 function reviewNoteProblems(o: OpenArgs): string[] {
   try { const r = reviewNoteGate(o.repo, headOf(o)); return r.ok ? [] : [reviewNoteRefusal(r, o.repo)]; } catch (e) { return [(e as Error).message]; }
@@ -164,6 +183,7 @@ function sizeMix(o: OpenArgs): SizeMix {
 function main(): void {
   const o = parseArgs(process.argv.slice(2));
   const body = checkBody(o);
+  leaksGate(o, body);
   onePerTicket(o, body);
   const gate = spawnSync(process.execPath, [PR_SIZE, '--repo', o.repo, '--base', o.base, ...(headOf(o) ? ['--head', headOf(o)] : [])], { encoding: 'utf8' });
   process.stdout.write(gate.stdout || '');

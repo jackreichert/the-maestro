@@ -352,8 +352,8 @@ test('ready <snapshot> prints the self-review section when the setting names the
     assert.match(r.out, /Ready to merge \(1\):\n  org\/repo#1 /);
     assert.match(r.out, /Maestro PRs \(self-review\) \(1\)/);
     const oldSnap = { takenAt: 't', prs: [pr(), mine(5, { reviews: [] })] };
-    const newSnap = { takenAt: 't2', prs: [pr({ reviews: [{ author: 'alice', state: 'APPROVED', submittedAt: 'a' }] }), mine(5, { reviews: [{ author: 'jack', state: 'COMMENTED', submittedAt: 'b' }] })] };
+    const newSnap = { takenAt: 't2', prs: [pr({ reviews: [{ author: 'alice', state: 'APPROVED', submittedAt: 'a' }] }), mine(5, { reviews: [{ author: 'bob', state: 'COMMENTED', submittedAt: 'b' }] })] };
     const d = runWith(env, 'diff', fixture(dir, 'o.json', oldSnap), fixture(dir, 'n.json', newSnap));
     assert.match(d.out, /^ {2}- org\/repo#1 new review: alice APPROVED/m);
-    assert.match(d.out, /^ {2}- \[self-review\] me\/tool#5 new review: jack COMMENTED/m);
+    assert.match(d.out, /^ {2}- \[self-review\] me\/tool#5 new review: bob COMMENTED/m);
 });

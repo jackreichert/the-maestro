@@ -6,7 +6,7 @@
  *
  * The loop supervisor appends one argument, the fixed wake prompt (lib/session-wake.ts). Usage: wake-terminal.ts [--cwd <dir>] [--claude <bin>] <prompt>
  *
- * The session runs in Jack's normal settings and permission mode, so this script refuses every permission flag and any option it does not
+ * The session runs in the user's normal settings and permission mode, so this script refuses every permission flag and any option it does not
  * know, rather than passing it on: a launched session can never be made more permissive from config or argv. It writes a short `.command`
  * file (mode 700, in a fresh temp directory) and `open -a Terminal`s it, which needs no Accessibility permission.
  */

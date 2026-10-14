@@ -55,7 +55,7 @@ export function stallThresholdHours(items: LedgerItem[], nowMs: number): number 
 /**
  * The guidance for the next session, derived from ledger data alone: what stalled (in flight far longer than finished items
  * usually take), what was reworked today (any item with a `rework` row dated today, finished or open), what cost most (the biggest `--tokens` item and stream among items started or finished today
- * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (an item whose gate has cleared, else one that answers one of today's priorities, else the first blocked item, else the first in flight, in board order; never an item whose gate is still waiting, parked on purpose or waiting on Jack).
+ * and everything still open; a count recorded on `done` wins over the one on the opening row), and what to do first (an item whose gate has cleared, else one that answers one of today's priorities, else the first blocked item, else the first in flight, in board order; never an item whose gate is still waiting, parked on purpose or waiting on the user).
  * Empty when there is nothing to say; never a model call.
  */
 export function guidanceLines(items: LedgerItem[], entries: LedgerRow[], inflight: LedgerItem[], blocked: LedgerItem[], d: string, nowMs: number, ctx: GuidanceContext = {}): string[] {

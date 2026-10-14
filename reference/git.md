@@ -161,6 +161,7 @@ Diagram: <a mermaid block, or "n/a, <reason>">
 | Attribution, key, token and PHI-shaped content | Enforced, best effort | regexes for attribution lines, private keys, cloud and GitHub tokens, credential assignments, SSN and MRN shapes; the match is named, never printed. A pass is not a guarantee | `pr_body_check_forbidden` |
 | Private references | Enforced, best effort | no wiki-links, `obsidian://` links or private-workspace words in the title or body; extra install-specific id patterns from config. Cannot catch every private reference | `pr_body_check_private`, `pr_body_private_patterns` |
 | Smells run | Enforced in repos listed in `pr_smells_repos` | a smells run recorded for the head commit (`pr-smells.ts record`) and its `Smells:` line in the body; exempt when the diff has no code files. Cannot tell whether the run was real | `pr_smells_repos` |
+| Leaks | Enforced in this skill's repo and in repos listed in `leak_gate_repos`, and in CI | no org term, personal path, owner name or configured customer name on a line the PR adds, in its title or its body. Matches shapes and listed names, not every way a client can be identified | `leak_gate_repos`, `leak_terms` |
 | Review note | Enforced in repos listed in `review_note_repos` | a vault Reviews note for the head commit with a Naming pass (and the Reviewer checklist when configured); checked by `pr-open.ts`, `review-note.ts push` and git-guard. Cannot tell whether the review was real | `review_note_repos`, `reviewer_checklist` |
 | Derivable counts | Enforced, best effort | refuses `N commits`, `N files (changed)`, `N lines` and `+A -B` outside code; a code span is the escape. Cannot tell a legitimate count in prose | `pr_body_check_counts` |
 | First-person voice | Enforced, best effort | refuses assistant self-references, AI-generated wording and the author's own name in the third person, outside code. Voice cannot be fully machine-checked | `pr_body_check_voice`, `pr_body_voice_names` |
@@ -218,6 +219,22 @@ and paste the line it prints (`Smells: ...`) into the PR body on a line of its o
 - Enforced: the record exists for exactly the head commit being opened, so a later commit invalidates it and the run is repeated; and the body carries the recorded `Smells:` line. A diff with no code files (docs, config, tests only) is exempt. Advisory findings never block; only a missing run does.
 - Not enforced: that the run really happened or was any good. The record is an attestation kept in the repo's git directory, and the reviewer still reads the findings line.
 - Layer two, `mithril-gates` (lint, complexity, function length, duplication) as a CI check, needs the team and is not part of this.
+
+### Leak gate
+
+This skill is public and generic, so a PR that adds an org term, a personal path, the owner's name or a customer name is refused, in both places a PR can pass: `pr-open.ts` before `gh` is called, and the `gates` workflow in CI (`ci-gates.ts`). `pr-leaks.ts` reads the lines the diff adds, plus the PR title and body, and prints `file:line` and a kind for each hit, never the matched text, so a hit on a customer name cannot put that name in a public log.
+
+```bash
+node <scripts dir>/pr-leaks.ts --repo <repo> --base <branch> [--tree] [--terms-file <path>] [--strict]   # --tree scans every tracked file; terms also come from LEAK_TERMS; --strict fails without any
+```
+
+- **Built in, no setup.** An absolute home path (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>`; placeholders such as `me`, `user` and `<name>` pass), a home-relative dev container directory, the org term and its common typo (at a word start in any case, or as a camelCase part, so a repo or vault name that carries it is caught), and the owner's first name. These terms are already public through the repository URL, so they are in the repo rather than in config.
+- **Customer names are configuration, never committed.** Set `leak_terms` (comma separated, matched case-insensitively as a substring; every non-alphanumeric character is ignored on both sides) in the user config file or the overlay's `config.md`. In CI the same list is the `LEAK_TERMS` repository secret, newline or comma separated. A term shorter than three characters is refused, because it would match nearly every line.
+- **Where it applies.** `pr-open.ts` runs it in this skill's repo and in any repo named in `leak_gate_repos` (GitHub `owner/name` globs, user config file only). CI runs it on every PR to this repo, from the base ref's copy of the script, so a PR cannot loosen the gate it is judged by.
+- **Missing terms never pass silently.** Locally, with no `leak_terms`, `pr-open.ts` says customer names were not checked and carries on with the built-ins. In CI the job fails with `LEAK_TERMS is not set`; a repository variable `LEAK_GATE_BUILTIN_ONLY=1` accepts the built-ins alone, and the log then says customer names were not checked. Pull requests from forks get no secrets, so they hit the same failure.
+- **Allowlist.** A short table in `pr-leaks.ts`, each entry with a reason, blanking only its own text so another hit on the same line still fails: names that are stored in ledger and library pages already written (the box names, the retro lesson source, the told-by kind), and two default paths. A configured term is never allowlisted. When review removes the last entry, remove the table.
+- **Portable.** `pr-leaks.ts` imports only node built-ins and takes the term list as an argument, so a sibling repo copies it with `pr-leaks.test.ts` and a CI step that passes the secret as `LEAK_TERMS`. The allowlist table is this repo's; a port starts it empty.
+- Enforced: added lines, title and body, in both places, and a git failure or an unusable term list fails rather than passes. Not enforced: that the term list is complete, or that a client named by a nickname, a site or an id is caught; the reviewer's [customer names and references check](brief.md#the-review-brief) covers that by reading.
 
 ### Review-note gate
 

@@ -1,6 +1,6 @@
 # Playbook: triage the open in-progress ledger rows once (for a cheap runner)
 
-This runbook lists every open in-progress ledger row with its evidence, closes the ones with hard evidence, and puts the rest into one batch question. It is read-only until step 3. You never close a row without evidence or an answer from Jack.
+This runbook lists every open in-progress ledger row with its evidence, closes the ones with hard evidence, and puts the rest into one batch question. It is read-only until step 3. You never close a row without evidence or an answer from the user.
 
 ## 1. List the rows
 

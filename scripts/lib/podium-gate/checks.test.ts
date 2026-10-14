@@ -85,7 +85,7 @@ test('shared docs: a filled projects[].docs.shared list passes', async () => {
 });
 
 test('shared docs: an absolute /Users path in an item ref fails', async () => {
-  const bad = { ...SPEC, ref: { label: 'spec', url: '/Users/x/spec.md' } };
+  const bad = { ...SPEC, ref: { label: 'spec', url: '/Users/me/spec.md' } };
   const r = await runGate(podium({}, 'works', { projects: [tab({ docs: docsWith([bad]) })] }));
   assert.equal(r[2]?.verdict, 'fail');
   assert.match(r[2]?.detail ?? '', /absolute path/);

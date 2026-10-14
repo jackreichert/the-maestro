@@ -31,13 +31,17 @@ jobs:
         with:
           node-version: 24
 
-      - name: Run size, body, and smells gates from the base ref
+      - name: Run size, body, smells, and leak gates from the base ref
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           REPO_OWNER: ${{ github.repository_owner }}
+          # Customer and org names the diff must not carry. A secret, so the list is never committed.
+          # Unset, the leak gate fails; LEAK_GATE_BUILTIN_ONLY=1 (a repository variable) accepts built-in checks alone and says so in the log.
+          LEAK_TERMS: ${{ secrets.LEAK_TERMS }}
+          LEAK_GATE_BUILTIN_ONLY: ${{ vars.LEAK_GATE_BUILTIN_ONLY }}
         run: |
           if [ ! -f scripts/ci-gates.ts ]; then
             echo "scripts/ci-gates.ts is not on the base ref. Refusing to run a copy from the pull request."
@@ -55,11 +59,14 @@ jobs:
             --body-file "$RUNNER_TEMP/pr-body.md" | tee "$RUNNER_TEMP/gates.out"
           code=${PIPESTATUS[0]}
           set -e
-          # Size limits are waived for this owner's repos. Body and smells still fail the job.
-          if [ "$code" != 0 ] && [ "$REPO_OWNER" = "jackreichert" ]; then
-            if grep -E -q '^(body|smells): FAIL' "$RUNNER_TEMP/gates.out"; then
-              exit 1
-            fi
+          # Size limits are waived for this owner's repos, and only for a plain size failure: exit code 1, every
+          # other gate printed no FAIL (ci-gates only exits 1 after printing every gate), and the size line says FAIL. A crash or git error (exit 2, or a gate that
+          # never printed) is not waived, so it can never pass the leak check silently.
+          if [ "$code" = 1 ] && [ "$REPO_OWNER" = "jackreichert" ] \
+            && grep -q '^size: .*FAIL$' "$RUNNER_TEMP/gates.out" \
+            && grep -q '^body: PASS$' "$RUNNER_TEMP/gates.out" \
+            && grep -q '^smells: PASS$' "$RUNNER_TEMP/gates.out" \
+            && ! grep -q '^leaks: FAIL$' "$RUNNER_TEMP/gates.out"; then
             echo "size: waived for jackreichert repos"
             exit 0
           fi

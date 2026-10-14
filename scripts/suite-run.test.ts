@@ -133,7 +133,7 @@ test('inside a job, the event, suite and status dirs the env points at exist, so
 });
 
 test('suiteEnv keeps the suite away from real state', () => {
-  const env = suiteEnv('/tmp/h', { HOME: '/Users/real', LEDGER_ROOT: '/real/ledger', PATH: '/bin' });
+  const env = suiteEnv('/tmp/h', { HOME: '/Users/me', LEDGER_ROOT: '/real/ledger', PATH: '/bin' });
   assert.equal(env.HOME, '/tmp/h');
   assert.equal(env.MAESTRO_NOTIFY_COMMAND, '/usr/bin/true');
   assert.equal(env.LEDGER_ROOT, '');
