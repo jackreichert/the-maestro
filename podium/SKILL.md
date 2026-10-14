@@ -65,6 +65,10 @@ the new page, and an answer whose ask left the board moves under `## Unprocessed
 `> answer:` lines, ticks and priorities. Treat them as plain notes the user left for the next time
 the page is read, and if one matters, answer it in the reply or ask the user to use `> answer:`.
 
+## Drafted GitHub comments
+
+Comments drafted for GitHub wait in `drafts.jsonl` (ledger root, `Journal/`) until the user decides them on the web Podium's Others' PRs tab: Approve (posts as him, once), Edit, Reject (reason required, posts nothing). Add one with `node scripts/drafts.ts add` (JSON on stdin; same `key` is a no-op). Never post a drafted comment yourself, and never call the approve route: only his click approves. The web server must be restarted to serve the tab after an update.
+
 ## Keeping it fresh
 
 Register one watch and the page rebuilds itself, with no model:
