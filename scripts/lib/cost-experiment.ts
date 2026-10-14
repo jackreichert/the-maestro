@@ -29,6 +29,24 @@ export interface Pick {
   regressions: { name: string; vs7: number }[];
 }
 
+/**
+ * The smallest move worth an experiment, per metric: by format (a count or token total, 5 points of a share, a quarter of a ratio,
+ * 50 cents), with named overrides for the count metrics whose scale is far below a token total. A regression ranks by how many of
+ * these its absolute move is worth, and a metric whose 7-day median is itself below one of them cannot be ranked at all: against a
+ * base that small a percentage is noise (Expiry rewrites 37 -> 589 read as +1492%).
+ */
+const MATERIAL_BY_FMT: Record<string, number> = { n: 1000, pct: 0.05, ratio: 0.25, usd: 0.5 };
+const MATERIAL_BY_NAME: Record<string, number> = { 'Max turns/compact': 20, 'Expiry rewrites': 50, 'Opus subagents': 5 };
+const materiality = (c: Comparison): number => MATERIAL_BY_NAME[c.name] ?? MATERIAL_BY_FMT[c.fmt] ?? MATERIAL_BY_FMT.n as number;
+
+/** How many material moves the metric's absolute change is worth; NaN when it has no number, or its median is under one material move. */
+export function impact(c: Comparison): number {
+  const m = materiality(c);
+  if (!Number.isFinite(c.today) || !Number.isFinite(c.median7) || c.median7 < m) return NaN;
+  const moved = Math.abs(c.today - c.median7);
+  return moved >= m ? moved / m : NaN;
+}
+
 const num = (n: number): number | null => (Number.isFinite(n) ? n : null);
 
 /** How far past its target a mix metric is, as a fraction of the target; positive is a miss. NaN when it has no number or no limit. */
@@ -42,15 +60,17 @@ function describe(basis: Pick['basis'], c: Comparison | null, gap: number | null
 }
 
 /**
- * The metric to work on: the largest regression against the 7-day median (by size of the move, either direction a regression can go);
+ * The metric to work on: the regression with the largest impact (absolute move in units of that metric's material move, either direction
+ * a regression can go; moves under the floor, or from a median under it, do not count; the percentage only breaks a tie);
  * when nothing regressed, the mix metric furthest from its target (a miss beats a pass, the smallest margin beats a larger one); with
  * no number for either, `none`. Ties go to the earlier metric in the list.
  */
 export function selectTarget(list: Comparison[]): Pick {
-  const regressed = list.filter((c) => c.regression && Number.isFinite(c.vs7)).sort((a, b) => Math.abs(b.vs7) - Math.abs(a.vs7));
+  const regressed = list.filter((c) => c.regression && Number.isFinite(c.vs7) && Number.isFinite(impact(c)))
+    .sort((a, b) => impact(b) - impact(a) || Math.abs(b.vs7) - Math.abs(a.vs7));
   const regressions = regressed.slice(0, TOP_REGRESSIONS).map((c) => ({ name: c.name, vs7: c.vs7 }));
   const worst = regressed[0];
-  if (worst) return describe('regression', worst, null, `${worst.name} moved ${Math.round(Math.abs(worst.vs7) * 100)}% the wrong way against its 7-day median, the largest regression`, regressions);
+  if (worst) return describe('regression', worst, null, `${worst.name} moved ${Math.round(Math.abs(worst.vs7) * 100)}% the wrong way against its 7-day median, the regression with the most impact`, regressions);
   const mix = MIX_METRICS.flatMap((n) => { const c = list.find((x) => x.name === n); return c && Number.isFinite(mixGap(c)) ? [{ c, gap: mixGap(c) }] : []; });
   const far = mix.reduce<{ c: Comparison; gap: number } | null>((best, m) => (!best || m.gap > best.gap ? m : best), null);
   if (far) return describe('mix', far.c, far.gap, `nothing regressed; ${far.c.name} is ${far.gap > 0 ? 'past its target' : 'inside its target by the smallest margin'}`, regressions);
