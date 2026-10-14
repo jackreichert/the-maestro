@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkTags, findSkillFile, tagEvents } from './lib/tag-watch.ts';
+import { checkTags, findSkillFile, requireAdapter, tagEvents } from './lib/tag-watch.ts';
 import type { ProbeResult, RefreshResult, TagAdapter, TagWatchState } from './lib/tag-watch.ts';
 import type { Run } from './lib/types.ts';
 
@@ -139,4 +139,18 @@ test('findSkillFile honours the override variable and names where it looked when
   writeFileSync(join(dir, 'scripts', 'a.ts'), 'export const label = "X";\n');
   assert.equal(findSkillFile('demo-skill', 'scripts/a.ts', { DEMO_SKILL_DIR: dir }), join(dir, 'scripts', 'a.ts'));
   assert.throws(() => findSkillFile('no-such-skill-xyz', 'scripts/a.ts', {}), /skill is not installed.*NO_SUCH_SKILL_XYZ_DIR/);
+});
+
+test('an adapter with a top-level await is refused by name, not with the generic require() error', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tla-adapter-'));
+  const file = join(dir, 'adapter.ts');
+  writeFileSync(file, "export const label = 'X';\nif (import.meta.main) { await import('node:fs'); }\n");
+  assert.throws(() => requireAdapter('slack-sync', file), /slack-sync adapter .* top-level await/);
+});
+
+test('an adapter without one loads', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ok-adapter-'));
+  const file = join(dir, 'adapter.ts');
+  writeFileSync(file, "export const label = 'X';\n");
+  assert.equal(requireAdapter('slack-sync', file).label, 'X');
 });
