@@ -123,16 +123,6 @@ export function addedLines(diff: string): { path: string; line: number; text: st
   return out;
 }
 
-/** New-side paths of every file in a unified diff (added, modified or renamed), each once. */
-export function touchedPaths(diff: string): string[] {
-  const out = new Set<string>();
-  for (const text of diff.split('\n')) {
-    if (text.startsWith('rename to ')) out.add(text.slice(10));
-    else if (text.startsWith('diff --git ')) { const m = /^diff --git a\/.* b\/(.*)$/.exec(text); if (m) out.add(m[1]!); }
-  }
-  return [...out];
-}
-
 export interface LeakInput { repo: string; base: string; head: string; tree?: boolean; title?: string; body?: string; termsRaw: string; strict: boolean }
 export interface LeakResult { problems: string[]; notes: string[]; hits: Hit[] }
 
@@ -155,8 +145,11 @@ export function leakCheck(i: LeakInput): LeakResult {
   const hits: Hit[] = [];
   // A NUL byte or UTF-16 content makes git call a file binary; --text reads it anyway and the NULs are dropped so UTF-16 text is still text.
   for (const l of addedLines(r.stdout)) for (const label of scanLine(l.path, l.text.replaceAll('\0', ''), parsed.terms)) hits.push({ path: l.path, line: l.line, label });
-  // A path is published too: scan the new-side path of every touched file (line 0), renames included.
-  for (const path of touchedPaths(r.stdout)) for (const label of scanLine(path, path, parsed.terms, [])) hits.push({ path, line: 0, label });
+  // A path is published too: scan the new-side path of every added, modified or renamed file (line 0). Deletions are skipped so a
+  // leaked file name can be removed. -z gives raw names; header parsing would miss the quoted form git uses for odd characters.
+  const names = spawnSync('git', ['-C', i.repo, '-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '-M', '--diff-filter=d', ...range.slice(range.indexOf('-M') + 1)], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  if (names.status !== 0) return { problems: [`git diff failed: ${(names.stderr || '').trim()}`], notes, hits: [] };
+  for (const path of names.stdout.split('\0').filter(Boolean)) for (const label of scanLine(path, path, parsed.terms, [])) hits.push({ path, line: 0, label });
   for (const [name, text] of [['PR title', i.title], ['PR body', i.body]] as const) {
     (text ?? '').split('\n').forEach((t, n) => { for (const label of scanLine(name, t, parsed.terms, [])) hits.push({ path: name, line: n + 1, label }); });
   }

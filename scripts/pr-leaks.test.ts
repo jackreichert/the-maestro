@@ -314,3 +314,20 @@ test('a path is published too: a new file or a rename whose path carries a name 
   const r = check(repo, { termsRaw: 'Acme Care' });
   assert.deepEqual(r.problems.sort(), [`${Org}-notes.md:0 org-term`, 'dir/acme-care notes.md:0 configured-term']);
 });
+
+test('paths: deleting a file whose name carries a term passes, and a quoted file name carrying a term fails', () => {
+  const repo = repoWith({ 'old acme care.md': 'clean\n' }, { 'x.md': 'x\n' });
+  git(repo, 'checkout', '-q', 'main');
+  git(repo, 'checkout', '-q', '-b', 'del');
+  git(repo, 'rm', '-q', 'old acme care.md');
+  put(repo, 'say "acme care".md', 'clean\n');
+  put(repo, 'fine.md', 'clean\n');
+  git(repo, 'add', '--all');
+  git(repo, 'commit', '-q', '-m', 'del and add');
+  assert.deepEqual(check(repo, { head: 'del', termsRaw: 'Acme Care' }).problems, ['say "acme care".md:0 configured-term']);
+  git(repo, 'checkout', '-q', 'main');
+  git(repo, 'checkout', '-q', '-b', 'only-del');
+  git(repo, 'rm', '-q', 'old acme care.md');
+  git(repo, 'commit', '-q', '-m', 'only delete');
+  assert.deepEqual(check(repo, { head: 'only-del', termsRaw: 'Acme Care' }).problems, []);
+});
