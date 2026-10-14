@@ -21,12 +21,17 @@
  * been asked to review (once per PR), and follows Copilot per head sha on every open PR in such an owner
  * (lib/copilot-follow.ts): a push that Copilot does not re-review is requested once for that sha, then COPILOT-REVIEW
  * (with the unresolved bot thread count) when the review lands, or COPILOT-LATE when nothing came 15 minutes after the trigger.
+ * The teammate PR helper (lib/teammate/wait.ts, off unless teammate_review_minutes is set) adds one more kind of line: REVIEW-WAIT, once per head, for
+ * a ready PR by someone else, in a repo other people review, that has had no review for that many minutes. It is a report, not an action: the
+ * orchestrator drafts comments for the person's approval (playbooks/teammate-review.md). Its search failing never fails the check.
  * A failed fetch, or a search that lost more than half the open set, throws: the loop keeps the
  * last good snapshot and the next tick compares against it. Cadence and quiet hours are the loop's (lib/cadence.ts).
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH, SELF_REVIEW_REPOS } from '../local-config.ts';
+import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, TEAMMATE_REVIEW_OWNERS } from '../local-config.ts';
+import { advanceHelper, selectWaiting, teammateQuery, teammateSearch } from '../lib/teammate/wait.ts';
+import type { WaitNode } from '../lib/teammate/wait.ts';
 import { isSelfReview } from '../lib/self-review.ts';
 import { FAILING_CHECK_PHRASE, STEER_PREFIX } from '../lib/steer-line.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from '../lib/draft-promotion.ts';
@@ -84,6 +89,8 @@ export interface Snapshot {
   copilot?: Tracks;
   /** PRs missing from the search but not confirmed closed, keyed `owner/repo#n`, with when each was first missed (ms). Their Copilot tracks stay in `copilot`. */
   absent?: Record<string, Absent>;
+  /** Teammate PRs already reported as waiting, `owner/repo#n` -> the head sha told. Absent until the helper has run once (then the first run adopts what is waiting silently). */
+  helper?: Record<string, string>;
 }
 
 /** When a PR was first missed and whether it is a self-review repo's (so a later LEFT-OPEN-SET keeps its tag). Its repo and number come from the key. */
@@ -99,6 +106,8 @@ export interface PrWatchState extends Snapshot {
   silent: boolean;
   /** Copilot follow-up lines raised by this check (see lib/copilot-follow.ts). */
   copilotEvents?: { summary: string; actionable: boolean }[];
+  /** REVIEW-WAIT lines raised by this check (see lib/teammate/wait.ts). */
+  helperEvents?: { summary: string }[];
   /** Steering summary when the next concrete fix changed. Absent when there is nothing new to fix. */
   steering?: string;
   /** The snapshot adopted from an older pr-review file, when this check compared against it. */
@@ -352,8 +361,27 @@ export function check(target: string, ctx: Ctx): PrWatchState {
   const steering = silent ? undefined : steeringEvent(comparedBoard(prev?.board, board), board)[0]?.summary;
   // Last: it asks gh for reviews, and a throw above must not leave a request made that the saved state does not know.
   const { copilot, events: copilotEvents } = followCopilot(board, prev, ctx, held);
-  const state: PrWatchState = { board, reported: reportedNow(board), copilot, absent, copilotEvents, left, silent, ...(steering ? { steering } : {}) };
+  const helper = followTeammates(ctx, selfLogin(ctx), prev, silent);
+  const state: PrWatchState = { board, reported: reportedNow(board), copilot, absent, copilotEvents, left, silent, ...(steering ? { steering } : {}), ...(helper ? { helper: helper.told, helperEvents: helper.events } : prev?.helper ? { helper: prev.helper } : {}) };
   return prev && !hasBoard(ctx.prev) ? { ...state, carried: prev } : state;
+}
+
+/**
+ * The teammate helper's step: search other people's ready PRs, pick the ones waiting long enough, and say each once per head. Null when the helper is
+ * off or has no owners to search (never an unscoped search), or when its search failed: the last record then stands and the check goes on.
+ */
+function followTeammates(ctx: Ctx, self: string, prev: Snapshot | null, silent: boolean): { told: Record<string, string>; events: { summary: string }[] } | null {
+  const minutes = ctx.config?.teammateMinutes ?? TEAMMATE_REVIEW_MINUTES;
+  const search = teammateSearch(ctx.config?.teammateOwners ?? TEAMMATE_REVIEW_OWNERS);
+  if (!(minutes > 0) || !search) return null;
+  try {
+    const nodes = searchAllPages<WaitNode>(teammateQuery(search), ctx.run);
+    const waiting = selectWaiting(nodes, { self, minutes, now: ctx.now ?? Date.now(), selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS });
+    return advanceHelper(prev?.helper, waiting, silent);
+  } catch (e) {
+    console.error(`teammate helper search failed: ${firstLine(e instanceof Error ? e.message : e)}`);
+    return null;
+  }
 }
 
 /** The board a diff compares against. A first check has no previous mergeability, so a conflict already there can speak once. */
@@ -448,7 +476,7 @@ function changes(prev: unknown, next: PrWatchState): WatchEvent[] {
   for (const event of steeringEvent(before, next.board)) {
     if (!steerAlreadyLined(lines, event.summary)) lines.push(event.summary);
   }
-  return [...lines.map((summary) => ({ summary })), ...(next.copilotEvents ?? [])];
+  return [...lines.map((summary) => ({ summary })), ...(next.copilotEvents ?? []), ...(next.helperEvents ?? [])];
 }
 
 /** The loop calls this when the watch retires or is removed: drop the state file an older pr-review kept. */
