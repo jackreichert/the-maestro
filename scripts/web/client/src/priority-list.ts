@@ -2,14 +2,11 @@ import { BASE_CSS, UI_CSS, h, shadow, streamTag } from './dom.ts';
 import { createEditor } from './priorities-api.ts';
 import type { EditOutcome, EditRequest } from './priorities-api.ts';
 import { GENERIC_FAILURE, actionLabel, addBlockedReason, counter, moveItem, refuseDraft, removeItem } from './priority-edit.ts';
-import type { AskBusyDetail, EpicLine, Priority } from './types.ts';
-import './epic-lines.ts';
+import type { AskBusyDetail, Priority } from './types.ts';
 
 /** What the Overview hands the list: today's items, the cap, the stream names to suggest, and whether this page may edit at all. */
 export interface PriorityData {
   items: Priority[]; max: number; streams: string[]; editable: boolean; note: string;
-  /** Open epics by stream. A stream's epics sit under the first priority that names it, so a stream with two priorities does not repeat them. */
-  epics?: Record<string, EpicLine[]>;
 }
 
 import { splitStream } from './glance.ts';
@@ -35,9 +32,11 @@ const CSS = `${BASE_CSS}${UI_CSS}
   ol.priorities { list-style: none; margin: 0; padding: 0; counter-reset: p; }
   ol.priorities li { counter-increment: p; display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; align-items: start; gap: 0 var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
   ol.priorities li::before { content: counter(p, upper-roman); font-family: var(--font-serif); font-size: 1.25rem; line-height: 1.3; color: var(--text-muted); }
-  ol.priorities li.has-tag .text .tag { display: block; margin: var(--space-1) 0 0; }
+  /* Compact: one line per priority, the stream's tag (a link to its tab). The priority's text and epics live on that tab; the text stays here for assistive tech. */
+  ol.priorities li { padding: var(--space-1) 0; align-items: center; }
+  ol.priorities li::before { font-size: 1.05rem; line-height: 1.5; }
+  .text.untagged { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); color: var(--text-secondary); }
   @media (hover: hover) { ol.priorities li:not(:hover):not(:focus-within) .tools { opacity: 0; } }
-  ol.priorities li > epic-lines { grid-column: 2 / -1; }
   ol.priorities li.over { background: var(--surface-2); }
   ol.priorities li.target { box-shadow: inset 0 2px 0 var(--accent); }
   ol.priorities li.dragging { opacity: 0.5; }
@@ -261,12 +260,12 @@ export class PriorityList extends HTMLElement {
 
   #row(p: Priority, i: number, editable: boolean): HTMLElement {
     const shown = splitStream(p);
-    const text = h('span', { class: 'text' }, shown.text, shown.stream ? streamTag(shown.stream) : null);
-    const li = h('li', { 'data-i': String(i), class: shown.stream ? 'has-tag' : undefined }, text);
-    const epics = p.stream && this.#items.findIndex((x) => x.stream === p.stream) === i ? this.#data.epics?.[p.stream] : undefined;
-    const lines = epics?.length ? h('epic-lines') : null;
-    if (lines && epics) lines.epics = epics;
-    if (!editable) { if (lines) li.append(lines); return li; }
+    // Only the stream is drawn; the full text stays in the page for assistive tech and as a tooltip. A priority with no stream has no tab to hold it, so its text is drawn, on one line.
+    const text = shown.stream
+      ? h('span', { class: 'text', title: shown.text }, streamTag(shown.stream), h('span', { class: 'vh' }, `: ${shown.text}`))
+      : h('span', { class: 'text untagged', title: shown.text }, shown.text);
+    const li = h('li', { 'data-i': String(i) }, text);
+    if (!editable) return li;
     if (this.#confirm === i) {
       const yes = h('button', { type: 'button', class: 'danger', id: `pl-yes-${i}`, 'aria-label': actionLabel('Confirm delete', p) }, 'Delete');
       const no = h('button', { type: 'button', class: 'secondary', id: `pl-no-${i}` }, 'Keep');
@@ -274,7 +273,6 @@ export class PriorityList extends HTMLElement {
       no.addEventListener('click', () => { this.#confirm = -1; this.#focus = `pl-del-${i}`; this.#render(); });
       li.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this.#confirm = -1; this.#focus = `pl-del-${i}`; this.#render(); } });
       li.append(h('span', { class: 'confirm', role: 'group', 'aria-label': actionLabel('Delete', p) }, 'Delete this?', yes, no));
-      if (lines) li.append(lines);
       queueMicrotask(() => no.focus());
       return li;
     }
@@ -321,7 +319,6 @@ export class PriorityList extends HTMLElement {
       endDrag();
     });
     li.append(h('span', { class: 'tools' }, grip, up, down, del));
-    if (lines) li.append(lines);
     return li;
   }
 }
