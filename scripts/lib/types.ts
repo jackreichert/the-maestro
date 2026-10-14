@@ -69,6 +69,8 @@ export interface EventType<State = unknown> {
   singleton?: boolean;
   /** True for a standing type: a watch added without --ttl-hours is marked `renew`, and the loop pushes its expiry out by the type's default TTL once less than half is left, instead of retiring it. */
   renews?: boolean;
+  /** Like `renews`, decided per target: a reminder is standing only when its target recurs. Consulted when `renews` is unset. */
+  renewsFor?(target: string): boolean;
   slowInQuiet?: boolean;
   /** True for a type whose watches run through quiet hours at their normal pace: a result that lands overnight must be reported, not expire unseen. */
   quietExempt?: boolean;

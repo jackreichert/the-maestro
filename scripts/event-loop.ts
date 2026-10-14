@@ -75,6 +75,7 @@ import type { CheckContext, DigestEvent, EventType, LoopContext, Run, RunResult,
 import type { NotifyRun } from './lib/notify.ts';
 import { resolveWindowId, windowEnv } from './lib/window-id.ts';
 import { printJson } from './lib/json-out.ts';
+import { isStanding } from './lib/standing-watch.ts';
 import { notify, notifyChoice, oneLine, watchNotifies } from './lib/notify.ts';
 import { DEFAULT_TTL_MS, acquireLock, paths, addWatch, appendDigest, listWatches, loadState, readDigest, removeWatch, renewWatch, saveState } from './lib/watch-registry.ts';
 import { toolCommand } from './lib/tool-bin.ts';
@@ -156,7 +157,7 @@ function checkWatch(watch: Watch, prev: WatchState | undefined, { types, ctx }: 
  * a loop that was down for a day must not retire the watches it exists to run. Returns the watch with its new expiry, or the same one.
  */
 function renewed(dir: string, watch: Watch, type: EventType | undefined, now: number): Watch {
-  if (!watch.renew || !type?.renews) return watch;
+  if (!watch.renew || !type || !isStanding(type, watch.target)) return watch;
   const asked = type.defaultTtlMs?.(watch.target, now);
   const ttl = asked !== undefined && Number.isFinite(asked) && asked > 0 ? asked : DEFAULT_TTL_MS;
   if (Date.parse(watch.expires) - now >= ttl / 2) return watch;
@@ -477,7 +478,7 @@ async function main(argv: string[]): Promise<number> {
       if (type?.singleton) {
         for (const w of listWatches(dir)) if ((await typeNamed(w.type)) === type) throw new Error(`watch "${w.id}" already runs ${v.type}${w.type === v.type ? '' : ` (as ${w.type})`}; keep exactly one`);
       }
-      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target as string, now), notify_overnight: v['notify-overnight'], interval: v.interval, notify: notifyChoice(type, { notify: v.notify, noNotify: v['no-notify'] }), renew: Boolean(type?.renews) && ttl === undefined }, now);
+      const w = addWatch(dir, { id: v.id, type: v.type, target: v.target, done_when: v['done-when'], report: v.report, ttlMs: ttl ?? type?.defaultTtlMs?.(v.target as string, now), notify_overnight: v['notify-overnight'], interval: v.interval, notify: notifyChoice(type, { notify: v.notify, noNotify: v['no-notify'] }), renew: isStanding(type, v.target as string) && ttl === undefined }, now);
       console.log(`added ${w.id} (${w.type} ${w.target}), expires ${w.expires}`);
     } else if (cmd === 'list') {
       const ws = listWatches(dir);
