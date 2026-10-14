@@ -14,6 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { isBotLogin } from '../github-bots.ts';
 
 export const MAX_TEXT = 4000;
 export const MAX_REASON = 500;
@@ -183,6 +184,7 @@ export function draftProblem(d: NewDraft): string | null {
   if (!['review', 'reply'].includes(d.source)) return 'Bad source.';
   if (d.source === 'reply' && d.severity !== 'reply') return 'A reply has severity reply.';
   if (d.source === 'review' && d.severity === 'reply') return 'A reply has severity reply, and only a reply does.';
+  if (d.source === 'reply' && (typeof d.replyTo !== 'string' || !d.replyTo || isBotLogin(d.replyTo))) return 'A reply waits for approval only when it answers a person: a bot thread is answered directly, never queued.';
   if ((d.source === 'review' && d.target.kind === 'reply') || (d.source === 'reply' && d.target.kind === 'inline')) return 'A review comment cannot be a reply, and a reply cannot be inline.';
   return textProblem(d.text) ?? targetProblem(d.target);
 }
