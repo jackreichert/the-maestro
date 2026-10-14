@@ -50,7 +50,7 @@ function propose(research: string, date: string): void {
   const note = join(research, NOTE);
   const registry = existsSync(note) ? parseRegistry(readFileSync(note, 'utf8')) : [];
   const has = rows.has(date);
-  const pick = selectTarget(has ? compare(date, rows, '0000-00-00', { targets: COST_TARGETS, prices: MODEL_PRICES }) : []);
+  const pick = selectTarget(has ? compare(date, rows, '0000-00-00', { targets: COST_TARGETS, prices: MODEL_PRICES }) : [], MODEL_PRICES);
   printJson({
     date, id: experimentId(date), hasRow: has,
     ...(has ? {} : { missing: `the token table has no row for ${date}; run: node scripts/token-metrics.ts --date ${date} --write` }),
