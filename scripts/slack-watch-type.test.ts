@@ -1,9 +1,10 @@
 // Run: node --test scripts/slack-watch-type.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tick } from './event-loop.ts';
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import * as slack from './event-types/slack-watch.ts';
@@ -74,4 +75,23 @@ test('other labels keep the CHANGED wording', () => {
   const state = { tags: { plan: { status: 'ok' as const, reason: '', fails: 0, error: '', change: { id: 'h', note: '/n.md', diff: '/n.diff', added: 2, removed: 1 } } }, retryAt: 0 };
   assert.deepEqual(tagEvents('NOTION', null, state).map((e) => e.summary), ['NOTION-CHANGED tag=plan note=/n.md diff=/n.diff summary=+2/-1 lines']);
   assert.deepEqual(tagEvents('SLACK', null, state).map((e) => e.summary), ['SLACK-NEW tag=plan note=/n.md new=2 file=/n.diff']);
+});
+
+// The fake skill above cannot catch a real adapter that the loop is unable to load, so this runs the installed one the way launchd does:
+// a fresh process, a bare PATH, no token and no login shell variables. An empty registry means no Slack call, but the adapter is still required and run.
+const realSkill = [process.env.SLACK_SYNC_DIR, join(process.env.HOME ?? '', 'dev-env', 'skills', 'slack-sync')].find((d) => d && existsSync(join(d, 'scripts', 'slack-watch-adapter.ts')));
+
+test('the installed slack-sync adapter loads and ticks in a bare launchd-like environment', { skip: realSkill ? false : 'slack-sync is not installed here' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'slack-bare-'));
+  const registry = join(dir, 'slack-tags.json');
+  writeFileSync(registry, JSON.stringify({ version: 1, source: 'slack', tags: {} }));
+  const script = `import { check } from ${JSON.stringify(join(import.meta.dirname, 'event-types', 'slack-watch.ts'))};
+    const s = check(${JSON.stringify(registry)}, { run: () => ({ status: 1, stdout: '', stderr: 'not called' }), now: Date.now(), prev: null });
+    console.log(JSON.stringify(s));`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8',
+    env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: process.env.HOME ?? '', SLACK_SYNC_DIR: realSkill as string },
+  });
+  assert.equal(r.status, 0, r.stderr.slice(0, 400));
+  assert.deepEqual(JSON.parse(r.stdout.trim().split('\n').pop() as string).tags, {});
 });
