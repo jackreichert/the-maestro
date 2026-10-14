@@ -86,3 +86,9 @@ test('an uncertain or in-flight draft stays in the open list with Reject only: t
     cleanup();
   }
 });
+
+test('a draft left approved shows Approve and Reject (no Edit), so it is never stuck without a control', async () => {
+  const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([row({ state: 'approved' })]), actions: noop, sources: ['review'] });
+  assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Reject']);
+  cleanup();
+});

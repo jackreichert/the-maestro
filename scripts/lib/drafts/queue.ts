@@ -7,8 +7,8 @@
  * approve route in post.ts, after the person pressed Approve) and the rows post.ts writes around its single gh call.
  *
  * A row written by hand that `addDraft` would have refused (a bad repo, path, line or target) is dropped by the fold, so it is never shown and never posted.
- * States: pending -> approved -> posting -> posted | failed | uncertain; pending|failed|uncertain|stuck posting -> rejected.
- * `approved` with no `posting` row means the process died before gh was called, so approving again is safe. `failed` means gh said no, so nothing was posted and the person may approve again. `uncertain` means gh was cut off mid-call: the comment
+ * States: pending -> approved -> posting -> posted | failed | uncertain; pending|failed|approved|uncertain|stuck posting -> rejected.
+ * `approved` with no `posting` row means the process died before gh was called, so approving again is safe. `failed` means GitHub definitely refused it (an HTTP 4xx), so nothing was posted and the person may approve again; any other gh failure is `uncertain`. `uncertain` means gh was cut off mid-call: the comment
  * may or may not exist, so it is never retried automatically (check GitHub, then reject it: reject is allowed from `uncertain`).
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -111,7 +111,7 @@ export function fold(rows: readonly Row[]): Draft[] {
     else if (r.op === 'uncertain' && d.state === 'posting') d.state = 'uncertain';
     else if (r.op === 'posted' && d.state === 'posting') { d.state = 'posted'; if (r.url) d.postedUrl = r.url; }
     else if (r.op === 'post-failed' && d.state === 'posting') { d.state = 'failed'; d.error = r.error; delete d.postingNonce; }
-    else if (r.op === 'reject' && (editable || d.state === 'uncertain' || (d.state === 'posting' && stuck(d, r.ts)))) { d.state = 'rejected'; d.rejectReason = r.reason; }
+    else if (r.op === 'reject' && (editable || d.state === 'approved' || d.state === 'uncertain' || (d.state === 'posting' && stuck(d, r.ts)))) { d.state = 'rejected'; d.rejectReason = r.reason; }
     else continue;
     d.updatedAt = r.ts;
   }
@@ -205,7 +205,7 @@ export function rejectDraft(file: string, id: string, reason: string, o: QueueOp
     const d = find(file, id);
     if (!d) return refuse('unknown', 'No such draft.');
     if (d.state === 'posting' && !stuck(d, stamp(o))) return refuse('state', 'That draft is being posted right now. If it is still here in a couple of minutes, reject it then.');
-    if (d.state !== 'pending' && d.state !== 'failed' && d.state !== 'uncertain' && d.state !== 'posting') return refuse('state', `That draft is ${d.state}; it cannot be rejected.`);
+    if (d.state !== 'pending' && d.state !== 'failed' && d.state !== 'approved' && d.state !== 'uncertain' && d.state !== 'posting') return refuse('state', `That draft is ${d.state}; it cannot be rejected.`);
     append(file, { op: 'reject', id, ts: stamp(o), reason: why });
     return { ok: true };
   });

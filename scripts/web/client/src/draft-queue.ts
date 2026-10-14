@@ -131,7 +131,7 @@ export class DraftQueue extends HTMLElement {
     } else {
       body = [h('p', { class: 'body' }, d.text),
         h('div', { class: 'actions' },
-          ...(unresolved(d) ? [] : [btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)), btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id))]),
+          ...(unresolved(d) ? [] : [btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)), ...(d.state === 'approved' ? [] : [btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id))])]),
           btn('secondary', 'Reject', `Reject comment on ${what}`, () => a?.startReject(d.id)))];
     }
     return h('li', { class: 'draft', 'data-id': d.id }, this.#head(d), d.context ? h('p', { class: 'quote' }, d.context) : null, ...body, live);

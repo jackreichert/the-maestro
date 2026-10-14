@@ -222,3 +222,25 @@ test('addDraft refuses what the page would drop: an over-long reply-to or path, 
   assert.throws(() => addDraft(f, { ...draft(), target: { kind: 'inline', path: `${'p/'.repeat(200)}a.ts`, line: 3, commitId: 'a'.repeat(40) } }), /refused/);
   assert.throws(() => addDraft(f, { ...draft(), key: 5 as unknown as string }), /refused/);
 });
+
+test('only a definite HTTP 4xx refusal allows a retry; a 5xx or a dropped connection is uncertain, so a comment that may exist is never posted twice', () => {
+  for (const stderr of ['HTTP 502: Bad Gateway (https://api.github.com/x)', 'error connecting to api.github.com', '']) {
+    const f = file();
+    const { id } = addDraft(f, draft());
+    const first = stub({ status: 1, stdout: '', stderr });
+    assert.equal(approveAndPost(f, id, draft().text, { run: first.run }).ok, false);
+    assert.equal(listDrafts(f)[0]?.state, 'uncertain', stderr);
+    const second = stub();
+    assert.equal(approveAndPost(f, id, draft().text, { run: second.run }).ok, false);
+    assert.equal(second.calls.length, 0);
+  }
+});
+
+test('a draft left approved (the process died before the posting row) can be rejected or approved again', () => {
+  const f = file();
+  const { id } = addDraft(f, draft());
+  appendFileSync(f, `${JSON.stringify({ op: 'approve', id, ts: 't', text: draft().text })}\n`);
+  assert.equal(listDrafts(f)[0]?.state, 'approved');
+  assert.equal(rejectDraft(f, id, 'changed my mind').ok, true);
+  assert.equal(listDrafts(f)[0]?.state, 'rejected');
+});

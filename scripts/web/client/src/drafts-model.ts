@@ -29,7 +29,7 @@ export function sanitizeDrafts(x: unknown): { data: DraftsData; dropped: number 
 }
 
 /** A draft still waits on the person when it is pending, or failed (gh refused it, so it may be approved again). */
-export const waiting = (d: DraftRow): boolean => d.state === 'pending' || d.state === 'failed' || unresolved(d);
+export const waiting = (d: DraftRow): boolean => d.state === 'pending' || d.state === 'failed' || d.state === 'approved' || unresolved(d);
 
 /** An uncertain or in-flight draft cannot be approved or edited; the person checks GitHub and can only reject it. */
 export const unresolved = (d: DraftRow): boolean => d.state === 'uncertain' || d.state === 'posting';

@@ -35,6 +35,7 @@ export function ghArgs(d: Draft, text: string): string[] {
   return ['api', '-X', 'POST', `${base}/issues/${d.pr}/comments`, ...body];
 }
 
+const REFUSED = /\bHTTP 4\d\d\b/;
 const firstLine = (s: string): string => s.split('\n')[0]?.slice(0, 200) ?? '';
 function urlOf(stdout: string): string | undefined {
   try {
@@ -71,9 +72,10 @@ export function approveAndPost(file: string, id: string, shownText: string, o: P
       appendRow(file, { op: 'posted', id, ts: ts(), ...(url ? { url } : {}) });
       return { ok: true, ...(url ? { url } : {}) };
     }
-    if (r.status === null) {
+    // Only a definite refusal (an HTTP 4xx from GitHub) proves nothing was created. A timeout, a 5xx or a dropped connection may have created the comment after the request was sent, so retrying could post it twice.
+    if (r.status === null || !REFUSED.test(r.stderr)) {
       appendRow(file, { op: 'uncertain', id, ts: ts() });
-      return refuse('state', 'GitHub did not answer in time. The comment may or may not have posted; check the PR.');
+      return refuse('state', 'GitHub did not confirm it. The comment may or may not have posted; check the PR.');
     }
     appendRow(file, { op: 'post-failed', id, ts: ts(), error: firstLine(r.stderr) || 'gh failed' });
     return refuse('state', `GitHub refused it: ${firstLine(r.stderr) || 'gh failed'}. Nothing was posted.`);
