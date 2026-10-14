@@ -23,7 +23,7 @@ mkdirSync(container, { recursive: true });
 
 const HEAD = 'a'.repeat(40);
 const unit = (): LocalUnit => ({ id: localUnitId('alpha', 'feat/x'), repo: 'alpha', branch: 'feat/x', head: HEAD, ahead: 2, at: '2026-10-11T10:00:00Z', subject: 's', where: 'alpha', checkedOut: false, base: 'origin/staging', command: 'git difftool', verdict: { state: 'none' } });
-const snapshot = (at: Date): LocalReview => ({ generatedAt: at.toISOString(), available: true, units: [unit()], more: 0, notes: ['n'] });
+const snapshot = (at: Date): LocalReview => ({ generatedAt: at.toISOString(), available: true, units: [unit()], more: 0, notes: ['n'], cleanup: { landed: 0, superseded: 0, special: 0, commands: [] } });
 const sleep = (ms: number): Promise<void> => new Promise((ok) => setTimeout(ok, ms));
 
 let scans = 0;
