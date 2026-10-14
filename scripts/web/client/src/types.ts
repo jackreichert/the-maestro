@@ -43,6 +43,8 @@ export interface PrCard {
   unresolved: number; review: string; flags: string[]; twinOf?: number; stackedOn?: number;
   /** The repo is in `self_review_repos`: only the user reviews it, so the board lists it apart from the org's PRs. Older servers omit it. */
   selfReview?: boolean;
+  /** Checks alone make a PR here ready to merge (the repo is named by `self_review_repos`). Older servers omit it. */
+  readyOnChecks?: boolean;
   /** When the PR was opened; absent when the server has no date for it. */
   createdAt?: string;
 }
@@ -228,6 +230,8 @@ export interface OpenPrRow {
   twins: number[]; sides?: OpenPrSides; ageDays?: number; ticket?: { label: string; url?: string };
   /** CI conclusion from the PR cache. Absent on a server that predates the redesigned board. */
   ci?: string;
+  /** Checks alone make this PR ready to merge (`self_review_repos` names its repo). */
+  readyOnChecks?: boolean;
   /** Logins whose latest review is an approval; absent on a server without review history. */
   approvers?: string[];
   /** The parent PR this one is stacked on, when both are open. */

@@ -47,7 +47,7 @@ import { loadVerdicts, verdictFor, type VerdictRow } from './review-verdict.ts';
 import { stackLines } from './lib/stack-cap.ts';
 import { searchAllPages } from './lib/gh-search.ts';
 import type { Run } from './lib/types.ts';
-import { isSelfReview, splitSelfReview } from './lib/self-review.ts';
+import { isOwnerMerged, isSelfReview, selfReviewNotReady, splitSelfReview } from './lib/self-review.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from './lib/draft-promotion.ts';
 import { toolCommand } from './lib/tool-bin.ts';
 
@@ -58,13 +58,13 @@ export interface SnapshotThread { id: string; isResolved: boolean; isOutdated: b
 export interface SnapshotPr {
     key: string; repo: string; number: number; title: string; url: string; isDraft: boolean;
     headRefName: string; baseRefName: string; createdAt?: string; updatedAt: string; reviewDecision: string; mergeable: string;
-    headSha?: string; threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
+    headSha?: string; ci?: string; threadsComplete: boolean; reviewers: string[]; reviews: SnapshotReview[]; threads: SnapshotThread[]; commentTotal: number;
 }
 export interface Snapshot { takenAt?: string; prs: SnapshotPr[] }
 /** A PR in the older snapshot being diffed against: it may predate the reviews and threads fields. */
 export type PrevPr = Omit<SnapshotPr, 'reviews' | 'threads'> & Partial<Pick<SnapshotPr, 'reviews' | 'threads'>>;
 /** A PR as an older snapshot file may hold it: readiness and the sibling re-query tolerate a missing mergeable, threads or threadsComplete. */
-export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'> & Partial<Pick<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete' | 'headSha'>>;
+export type StoredPr = Omit<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete'> & Partial<Pick<SnapshotPr, 'mergeable' | 'threads' | 'threadsComplete' | 'headSha' | 'ci'>>;
 
 /** The fields QUERY selects. gh's JSON is not validated against this; it is only as right as the query. */
 interface SearchNodePr {
@@ -74,6 +74,7 @@ interface SearchNodePr {
     latestReviews: { nodes: { author?: { login?: string } | null; state: string; submittedAt: string }[] };
     reviewThreads: { pageInfo?: { hasNextPage?: boolean }; nodes: { id: string; isResolved: boolean; isOutdated: boolean; comments: { nodes: { author?: { login?: string } | null }[] } }[] };
     comments: { totalCount: number };
+    commits?: { nodes: { commit?: { statusCheckRollup?: { state?: string | null } | null } | null }[] };
 }
 
 /** The pure diff: actionable lines, and a count of everything bot-authored. */
@@ -133,6 +134,7 @@ const QUERY = `query($after: String) {
           nodes { id isResolved isOutdated comments(first: 1) { nodes { author { login } } } }
         }
         comments(last: 5) { totalCount nodes { author { login } createdAt } }
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
       }
     }
   }
@@ -153,6 +155,7 @@ const toSnapshotPr = (n: SearchNodePr): SnapshotPr => ({
     reviewDecision: n.reviewDecision || 'NONE',
     mergeable: n.mergeable || 'UNKNOWN',
     headSha: n.headRefOid,
+    ci: n.commits?.nodes[0]?.commit?.statusCheckRollup?.state ?? 'NONE',
     threadsComplete: !n.reviewThreads.pageInfo?.hasNextPage,
     reviewers: n.reviewRequests.nodes.map((r) => r.requestedReviewer?.login ?? r.requestedReviewer?.name).filter((x) => x != null),
     reviews: n.latestReviews.nodes.map((r) => ({ author: r.author?.login, state: r.state, submittedAt: r.submittedAt })),
@@ -228,13 +231,21 @@ function diffSnapshots(prev: { prs: PrevPr[] } | null, curr: Snapshot, selfRevie
 const RELEASE_BRANCH = 'staging';
 
 /**
- * Why a PR is not ready to merge, from data alone: { ready, reasons }. Ready means not a draft, approved, zero unresolved
+ * Why a PR is not ready to merge, from data alone: { ready, reasons }. The one place "ready" is decided; the board, `status`, the
+ * footer and the Podium's self-review buckets all read it.
+ * A PR in a repo named by `self_review_repos` itself (`selfReview` globs; a repo that is self-review only for being outside the review pool does not count) is ready when its checks pass and it does not conflict
+ * (`selfReviewNotReady`): draft state, approvals, threads and verdicts do not gate it, because only its owner reviews it.
+ * Any other PR: ready means not a draft, approved, zero unresolved
  * review threads (and all threads read), GitHub says MERGEABLE, and, in a twin-flow repo, a release-candidate PR has no open
  * integration twin (same repo and head branch, another base). A conflict or open thread never reads as ready.
  * With the re-review gate on, a PR holding a resolved review-bot thread also needs a SHIP IT from a fresh agent recorded
  * for its current head commit (`verdicts`, from review-verdict.ts): whoever fixed the threads does not judge the fix.
  */
-export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): { ready: boolean; reasons: string[] } {
+export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = [], selfReview: readonly string[] = SELF_REVIEW_REPOS): { ready: boolean; reasons: string[] } {
+    if (isOwnerMerged(pr.repo, selfReview)) {
+        const reasons = selfReviewNotReady(pr.ci, pr.mergeable === 'CONFLICTING');
+        return { ready: reasons.length === 0, reasons };
+    }
     const reasons: string[] = [];
     if (pr.isDraft) reasons.push('draft');
     if (pr.reviewDecision !== 'APPROVED') reasons.push(`not approved (${pr.reviewDecision})`);
@@ -260,16 +271,16 @@ export function readiness(pr: StoredPr, all: StoredPr[] = [], twinRepos: string[
 export interface SelfReviewBuckets { threads: StoredPr[]; drafts: StoredPr[]; awaiting: StoredPr[]; ready: StoredPr[]; held: StoredPr[] }
 
 /**
- * The self-review PRs (repos in `selfReview`) in the first bucket each matches, in prs.md order: unresolved threads (new comments to read),
- * drafts waiting on you, ready to merge (`readiness`, so the same twin and re-review rules), approved but held, and the rest awaiting your review.
+ * The self-review PRs (repos in `selfReview`) in the first bucket each matches: ready to merge (`readiness`: checks pass, no conflict), then unresolved
+ * threads (new comments to read), drafts waiting on you, approved but held, and the rest awaiting your review.
  * `all` is the whole snapshot, which twin detection needs.
  */
 export function selfReviewBuckets(all: StoredPr[], selfReview: readonly string[] = SELF_REVIEW_REPOS, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): SelfReviewBuckets {
     const out: SelfReviewBuckets = { threads: [], drafts: [], awaiting: [], ready: [], held: [] };
     for (const p of splitSelfReview(all, selfReview).self) {
-        if ((p.threads || []).some((t) => !t.isResolved)) out.threads.push(p);
+        if (readiness(p, all, twinRepos, verdicts, selfReview).ready) out.ready.push(p);
+        else if ((p.threads || []).some((t) => !t.isResolved)) out.threads.push(p);
         else if (p.isDraft) out.drafts.push(p);
-        else if (readiness(p, all, twinRepos, verdicts).ready) out.ready.push(p);
         else if (p.reviewDecision === 'APPROVED') out.held.push(p);
         else out.awaiting.push(p);
     }
@@ -283,14 +294,14 @@ export function selfReviewLines(all: StoredPr[], selfReview: readonly string[] =
     if (!total) return [];
     const bucket = (title: string, prs: StoredPr[]): string[] => (prs.length ? [`  ${title} (${prs.length}):`, ...prs.map((p) => `    ${p.key} — ${p.url}`)] : []);
     return [`Maestro PRs (self-review) (${total}), not counted in the review queue:`,
-        ...bucket('New comments', b.threads), ...bucket('Drafts ready for you', b.drafts), ...bucket('Awaiting your review', b.awaiting),
-        ...bucket('Approved and ready to merge', b.ready), ...bucket('Approved but not ready', b.held)];
+        ...bucket('Ready to merge', b.ready), ...bucket('New comments', b.threads), ...bucket('Drafts ready for you', b.drafts), ...bucket('Awaiting your review', b.awaiting),
+        ...bucket('Approved but not ready', b.held)];
 }
 
 /** The one-line count for the status board and footer: `3 open: 1 with new comments, 1 draft, 1 ready to merge`; '' when there are none. */
 export function selfReviewSummary(all: StoredPr[], selfReview: readonly string[] = SELF_REVIEW_REPOS, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = []): string {
     const b = selfReviewBuckets(all, selfReview, twinRepos, verdicts);
-    const parts: [number, string][] = [[b.threads.length, 'with new comments'], [b.drafts.length, b.drafts.length === 1 ? 'draft' : 'drafts'], [b.awaiting.length, 'awaiting your review'], [b.ready.length, 'ready to merge'], [b.held.length, 'approved but held']];
+    const parts: [number, string][] = [[b.ready.length, 'ready to merge'], [b.threads.length, 'with new comments'], [b.drafts.length, b.drafts.length === 1 ? 'draft' : 'drafts'], [b.awaiting.length, 'awaiting your review'], [b.held.length, 'approved but held']];
     const total = parts.reduce((n, [c]) => n + c, 0);
     return total ? `${total} open: ${parts.filter(([c]) => c).map(([c, l]) => `${c} ${l}`).join(', ')}` : '';
 }
@@ -300,7 +311,7 @@ export function selfReviewSummary(all: StoredPr[], selfReview: readonly string[]
  * (`self_review_repos`) are not in those two buckets: they follow as their own section (selfReviewLines).
  */
 export function readyLines(snapshot: { prs: StoredPr[] }, twinRepos: string[] = TWIN_FLOW_REPOS, verdicts: VerdictRow[] = [], selfReview: readonly string[] = SELF_REVIEW_REPOS): string[] {
-    const rows = splitSelfReview(snapshot.prs, selfReview).org.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos, verdicts) }));
+    const rows = splitSelfReview(snapshot.prs, selfReview).org.map((p) => ({ p, ...readiness(p, snapshot.prs, twinRepos, verdicts, selfReview) }));
     const ready = rows.filter((r) => r.ready);
     const held = rows.filter((r) => !r.ready && r.p.reviewDecision === 'APPROVED');
     return [
