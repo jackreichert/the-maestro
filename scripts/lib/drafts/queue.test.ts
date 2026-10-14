@@ -113,6 +113,38 @@ test('a crash after the posting row, before the result, leaves the draft unposta
   assert.equal(g.calls.length, 0);
 });
 
+test('a hand-written row that addDraft would refuse never becomes a draft, so it can never reach gh', () => {
+  const f = file();
+  const bad = { op: 'add', id: 'dr-0000000a', ts: 't', ...draft(), repo: '{owner}/{repo}', target: { kind: 'inline', path: '-p', line: '@/etc/hosts', commitId: 'zz' } };
+  appendFileSync(f, `${JSON.stringify(bad)}\n`);
+  assert.equal(listDrafts(f).length, 0);
+  const g = stub();
+  assert.equal(approveAndPost(f, 'dr-0000000a', draft().text, { run: g.run }).ok, false);
+  assert.equal(g.calls.length, 0);
+});
+
+test('a crash between the approve and posting rows leaves the draft approvable again, and gh was never called', () => {
+  const f = file(); const g = stub();
+  const { id } = addDraft(f, draft());
+  appendFileSync(f, `${JSON.stringify({ op: 'approve', id, ts: 't', text: draft().text })}\n`);
+  assert.equal(listDrafts(f)[0]?.state, 'approved');
+  assert.equal(approveAndPost(f, id, draft().text, { run: g.run }).ok, true);
+  assert.equal(g.calls.length, 1);
+});
+
+test('if two writers both got through the lock, only the one whose posting row is first calls gh', () => {
+  const f = file();
+  const { id } = addDraft(f, draft());
+  // The other writer's rows are already in the file when ours runs its re-read: simulate by having gh's first call be preceded by a rival posting row.
+  let calls = 0;
+  const run = (): GhResult => { calls += 1; return { status: 0, stdout: '{}', stderr: '' }; };
+  const rival = (): void => appendFileSync(f, `${JSON.stringify({ op: 'approve', id, ts: 't', text: draft().text })}\n${JSON.stringify({ op: 'posting', id, ts: 't', nonce: 'rival' })}\n`);
+  rival();
+  const out = approveAndPost(f, id, draft().text, { run });
+  assert.equal(out.ok, false);
+  assert.equal(calls, 0);
+});
+
 test('target kinds map to the right gh endpoint', () => {
   const f = file();
   const base = { ...listDrafts(f)[0], id: 'x', state: 'pending' as const, createdAt: '', updatedAt: '', ...draft() };

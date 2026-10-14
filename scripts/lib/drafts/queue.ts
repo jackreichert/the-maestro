@@ -6,8 +6,9 @@
  * always starts `pending`: no caller can hand in a state. The only rows that move a draft toward GitHub are `approve` (written by the
  * approve route in post.ts, after the person pressed Approve) and the rows post.ts writes around its single gh call.
  *
+ * A row written by hand that `addDraft` would have refused (a bad repo, path, line or target) is dropped by the fold, so it is never shown and never posted.
  * States: pending -> approved -> posting -> posted | failed | uncertain; pending|failed -> rejected.
- * `failed` means gh said no, so nothing was posted and the person may approve again. `uncertain` means gh was cut off mid-call: the comment
+ * `approved` with no `posting` row means the process died before gh was called, so approving again is safe. `failed` means gh said no, so nothing was posted and the person may approve again. `uncertain` means gh was cut off mid-call: the comment
  * may or may not exist, so it is never retried automatically (check GitHub, then reject it).
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -47,7 +48,8 @@ export type Row =
   | ({ op: 'add'; id: string; ts: string } & NewDraft)
   | { op: 'edit'; id: string; ts: string; text: string }
   | { op: 'approve'; id: string; ts: string; text: string }
-  | { op: 'posting' | 'uncertain'; id: string; ts: string }
+  | { op: 'uncertain'; id: string; ts: string }
+  | { op: 'posting'; id: string; ts: string; nonce?: string }
   | { op: 'posted'; id: string; ts: string; url?: string }
   | { op: 'post-failed'; id: string; ts: string; error: string }
   | { op: 'reject'; id: string; ts: string; reason: string };
@@ -85,6 +87,7 @@ export function fold(rows: readonly Row[]): Draft[] {
     if (r.op === 'add') {
       if (byId.has(r.id)) continue;
       const { op: _op, id, ts, ...rest } = r;
+      if (draftProblem(rest)) continue;   // a row written by hand that add would have refused never becomes a draft
       byId.set(id, { ...rest, id, state: 'pending', createdAt: ts, updatedAt: ts });
       continue;
     }
@@ -92,7 +95,7 @@ export function fold(rows: readonly Row[]): Draft[] {
     if (!d) continue;
     const editable = d.state === 'pending' || d.state === 'failed';
     if (r.op === 'edit' && editable) { d.text = r.text; d.state = 'pending'; delete d.error; }
-    else if (r.op === 'approve' && editable) { d.state = 'approved'; d.approvedText = r.text; delete d.error; }
+    else if (r.op === 'approve' && (editable || d.state === 'approved')) { d.state = 'approved'; d.approvedText = r.text; delete d.error; }
     else if (r.op === 'posting' && d.state === 'approved') d.state = 'posting';
     else if (r.op === 'uncertain' && d.state === 'posting') d.state = 'uncertain';
     else if (r.op === 'posted' && d.state === 'posting') { d.state = 'posted'; if (r.url) d.postedUrl = r.url; }
