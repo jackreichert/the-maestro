@@ -1,6 +1,7 @@
 import { handoffFresh, unledgeredDecisions, userMessages } from './continuous-roll.ts';
 import { acquireLock, processAlive } from './status-page/lock.ts';
 import type { LedgerRow } from './ledger-core.ts';
+import { SYSTEM_LINK } from './journal/ask-template.ts';
 
 /**
  * The three continuity steps, shared by the PreCompact hook (which runs them just before a compaction) and the continuity
@@ -54,12 +55,21 @@ export const marks = (used: string): string[] => ['--model', 'unrecorded', '--us
 /** What the decision scan looked at before it raised an ask: `ask` refuses a row that does not say where it searched. */
 const SEARCHED = 'the session transcript and the ledger (unledgered-decision scan)';
 
+/** The template a raised decision ask fills, so `ask` accepts it: the scan raises these itself and they pass the same required-field check as any other ask. */
+const DECISION_SCAN_TEMPLATE = [
+  '--blocked', 'Nothing yet, but a decision made only in chat is lost to the next session unless it is recorded.',
+  '--option', 'Record each real decision with journal.ts decide -- a minute of work, and it is then findable and not raised again',
+  '--option', 'Drop this ask as not a decision -- the chat remains the only record, so a real one would be lost',
+  '--recommend', 'Record the real decisions with journal.ts decide and drop the rest.',
+  '--link', SYSTEM_LINK,
+];
+
 /** Raises every unhandled decision-like message of one transcript's text as ask rows, 20 per row. Throws when an ask fails. */
 export function raiseDecisionsFromText(text: string, deps: Pick<ContinuityDeps, 'journal' | 'readLedger'>, used: string): { raised: number; count: number } {
   const found = unledgeredDecisions(userMessages(text), deps.readLedger());
   let raised = 0;
   for (const q of found.raise) {
-    const r = deps.journal(['ask', q, '--searched', SEARCHED, ...marks(used)]);
+    const r = deps.journal(['ask', q, '--searched', SEARCHED, ...DECISION_SCAN_TEMPLATE, ...marks(used)]);
     if (!r.ok) throw new Error(r.out || 'journal.ts ask failed');
     raised++;
   }

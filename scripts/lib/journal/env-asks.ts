@@ -7,6 +7,8 @@
  */
 import { fileURLToPath } from 'node:url';
 import type { EnvAsk } from '../../branch-sweep.ts';
+import { SYSTEM_LINK } from './ask-template.ts';
+import type { AskTemplateInput } from './ask-template.ts';
 
 const MOVER = fileURLToPath(new URL('../../env-store-move.ts', import.meta.url));
 /** One shell word, single-quoted, so a path or file name with spaces or metacharacters pastes safely. */
@@ -32,4 +34,19 @@ export function envAsksToRaise(asks: EnvAsk[], openTexts: Iterable<string>): { a
     seen.add(text);
     return true;
   });
+}
+
+/**
+ * The fixed template of this system-generated ask: the roll raises it itself, so it carries the same sections a person's ask must
+ * (what is blocked, two options with a cost, a recommendation, a link) and journal.ts checks them with the shared validator before it writes.
+ */
+export function envAskTemplate(ask: EnvAsk, recommend: string): AskTemplateInput {
+  return {
+    question: `Move ${ask.files.length === 1 ? 'the env file' : 'the env files'} in ${ask.repo} worktree ${ask.worktree} into the env store?`,
+    blocked: `The roll cannot remove worktree ${ask.worktree}, so its disk space and branch stay until the real env files in it are moved.`,
+    context: ['The question above carries the exact move command for each file; it prints names only, never contents.'],
+    options: ['Move them now with the command in the question -- the next roll removes the worktree and the files stay in the env store', 'Leave them -- the worktree and its copy of the secrets stay on disk and the roll asks again'],
+    recommend,
+    links: [SYSTEM_LINK],
+  };
 }
