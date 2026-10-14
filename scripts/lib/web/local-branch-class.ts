@@ -16,12 +16,14 @@ const KEY = /[A-Za-z]{2,10}-\d+/g;
 
 /** Every touched file already has the base's content: the branch adds nothing even when its commits were squashed or reworded. */
 function touchesNothingNew(run: Run, base: string, branch: string): boolean {
-  const files = run('diff', '--name-only', `${base}...${branch}`);
+  const files = run('diff', '--name-only', '-z', `${base}...${branch}`);
   if (!files.ok) return false;
-  return files.out.split('\n').filter(Boolean).every((f) => {
+  // Fail closed: a file counts as unchanged only when both lookups succeed with the same object. Two failures (a refused call,
+  // a file gone on both sides) never read as equal, so an unreadable branch stays live.
+  return files.out.split('\0').filter(Boolean).every((f) => {
     const onBase = run('rev-parse', '-q', '--verify', `${base}:${f}`);
     const onBranch = run('rev-parse', '-q', '--verify', `${branch}:${f}`);
-    return onBase.ok === onBranch.ok && onBase.out === onBranch.out;
+    return onBase.ok && onBranch.ok && onBase.out !== '' && onBase.out === onBranch.out;
   });
 }
 

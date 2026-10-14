@@ -134,9 +134,14 @@ function candidatesIn(container: string, folder: string, budget: Budget, cache: 
     const tree = trees.get(branch);
     const where = (tree && inside(container, tree)) || folder;
     const id = localUnitId(name, branch);
-    const cls = classifyCached(cache, `${folder}\0${branch}`, run, `origin/${base}`, baseSha, branch, head);
-    if (budget.spent) delete cache[`${folder}\0${branch}`];
-    const mine = (): boolean => me !== '' && run('log', '--format=%ae', `origin/${base}..${branch}`).out.split('\n').filter(Boolean).every((a) => a === me);
+    let cls = classifyCached(cache, `${folder}\0${branch}`, run, `origin/${base}`, baseSha, branch, head);
+    // A scan that ran dry mid-branch cannot vouch for its answer: keep it live and out of the cache.
+    if (budget.spent) { delete cache[`${folder}\0${branch}`]; if (cls === 'landed') cls = 'live'; }
+    const mine = (): boolean => {
+      if (me === '') return false;
+      const log = run('log', '--format=%ae', `origin/${base}..${branch}`);
+      return log.ok && log.out.split('\n').filter(Boolean).every((a) => a === me);
+    };
     out.push({ folder, cls, mine, unit: { id, repo: name, branch, head, ahead: 1, at, subject, where, checkedOut: tree !== undefined, base: `origin/${base}`, command: `git -C ${quote(folder)} difftool ${quote(`origin/${base}...${branch}`)}`, verdict: { state: 'none' } } });
   }
   return out;

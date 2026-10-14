@@ -39,6 +39,8 @@ fromBase('feat/in-a-tree');        // landed but checked out: counted, never in 
 commit(delta, 'w.txt');
 fromBase('feat/ABC-12-rework');    // superseded: base carries a commit naming ABC-12, with different content
 commit(delta, 'a.txt', 'branch version');
+fromBase('feat/café-éclair');      // live: a non-ASCII file name must not read as "unchanged"
+commit(delta, 'café.md');
 fromBase('feat/live-work');        // live
 commit(delta, 'live.txt');
 fromBase('local/overlay');         // special
@@ -49,12 +51,11 @@ commit(delta, 'a.txt', 'base version', 'feat(ABC-12): the landed version');
 sh(delta, 'push', '-q', 'origin', 'staging');
 sh(delta, 'worktree', 'add', '-q', join(container, '.tree-delta'), 'feat/in-a-tree');
 
-console.log("DBG", container);
 const scan = (classCache?: Record<string, never>): ReturnType<typeof scanLocalReview> => scanLocalReview({ containerRoot: container, vault: '', now: NOW, ...(classCache ? { classCache } : {}) });
 
 test('the queue holds live work only; every other class is behind a count', () => {
   const r = scan();
-  assert.deepEqual(r.units.map((u) => u.branch), ['feat/live-work']);
+  assert.deepEqual(r.units.map((u) => u.branch).sort(), ['feat/café-éclair', 'feat/live-work']);
   assert.deepEqual({ ...r.cleanup, commands: [] }, { landed: 4, superseded: 1, special: 1, commands: [] });
 });
 
@@ -70,9 +71,9 @@ test('a branch that moves is classified again; one that did not is read from the
   const key = `delta\0feat/live-work`;
   assert.equal((cache as Record<string, { cls: string }>)[key]?.cls, 'live');
   (cache as Record<string, { cls: string }>)[key] = { ...(cache as Record<string, { head: string; base: string; cls: string }>)[key] as { head: string; base: string; cls: string }, cls: 'landed' };
-  assert.equal(scan(cache).units.length, 0, 'a cache hit is trusted without asking git again');
+  assert.equal(scan(cache).units.some((u) => u.branch === 'feat/live-work'), false, 'a cache hit is trusted without asking git again');
   sh(delta, 'switch', '-q', 'feat/live-work'); commit(delta, 'live-2.txt'); sh(delta, 'switch', '-q', 'staging');
-  assert.deepEqual(scan(cache).units.map((u) => u.branch), ['feat/live-work'], 'a new tip invalidates the entry');
+  assert.ok(scan(cache).units.some((u) => u.branch === 'feat/live-work'), 'a new tip invalidates the entry');
 });
 
 test('the cache drops branches that are gone and survives a round trip through its file', () => {
@@ -85,4 +86,10 @@ test('the cache drops branches that are gone and survives a round trip through i
   writeClassCache(file, cache);
   assert.deepEqual(readClassCache(file), JSON.parse(readFileSync(file, 'utf8')));
   assert.deepEqual(readClassCache(join(tmp, 'missing.json')), {});
+});
+
+test('a scan that runs out of time keeps everything live and offers nothing for deletion', () => {
+  const r = scanLocalReview({ containerRoot: container, vault: '', now: NOW, budgetMs: 1 });
+  assert.deepEqual(r.cleanup.commands, []);
+  assert.equal(r.cleanup.landed, 0);
 });
