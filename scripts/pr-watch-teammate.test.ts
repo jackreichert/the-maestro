@@ -49,17 +49,26 @@ test('off by default: zero minutes selects nothing, and an empty owner list buil
   assert.match(teammateSearch(['acme']) ?? '', /^is:pr is:open draft:false -author:@me org:acme$/);
 });
 
-test('advanceHelper speaks once per head, again for a new head, and adopts silently with no record', () => {
+test('advanceHelper adopts silently with no record, speaks once for a newly waiting PR, and gives a push its own wait', () => {
+  const MIN = 15; const T0 = 1_000_000_000_000;
   const w = selectWaiting([node()], O);
-  const first = advanceHelper(undefined, w, false);
+  const first = advanceHelper(undefined, w, false, T0, MIN);
   assert.deepEqual(first.events, [], 'the first run adopts what is already waiting');
-  const same = advanceHelper(first.told, w, false);
-  assert.deepEqual(same.events, []);
-  const fresh = advanceHelper({}, w, false);
+  assert.deepEqual(advanceHelper(first.told, w, false, T0 + 60_000, MIN).events, []);
+  const fresh = advanceHelper({}, w, false, T0, MIN);
   assert.match(fresh.events[0]?.summary ?? '', /^REVIEW-WAIT acme\/widgets#12 https:\/\/github\.com\/acme\/widgets\/pull\/12 waiting 20 min, head aaaaaaa$/);
-  const pushed = selectWaiting([node({ headRefOid: 'b'.repeat(40) })], O);
-  assert.equal(advanceHelper(fresh.told, pushed, false).events.length, 1, 'a push is a new head');
-  assert.deepEqual(advanceHelper({}, w, true).events, [], 'a silent baseline says nothing');
+  assert.deepEqual(advanceHelper(fresh.told, w, false, T0 + 3_600_000, MIN).events, [], 'told once per head');
+  assert.deepEqual(advanceHelper({}, w, true, T0, MIN).events, [], 'a silent baseline says nothing');
+  // A push starts a new wait: three pushes in a row say nothing until the last head has stood for the whole wait.
+  let rec = fresh.told;
+  for (const [i, sha] of ['b', 'c', 'd'].entries()) {
+    const r = advanceHelper(rec, selectWaiting([node({ headRefOid: sha.repeat(40) })], O), false, T0 + (i + 1) * 120_000, MIN);
+    assert.deepEqual(r.events, [], `push ${sha} is not reported at once`);
+    rec = r.told;
+  }
+  const stood = advanceHelper(rec, selectWaiting([node({ headRefOid: 'd'.repeat(40) })], O), false, T0 + 3 * 120_000 + 16 * 60_000, MIN);
+  assert.match(stood.events[0]?.summary ?? '', /waiting 16 min, head ddddddd$/);
+  assert.deepEqual(advanceHelper(stood.told, selectWaiting([node({ headRefOid: 'd'.repeat(40) })], O), false, T0 + 3_600_000 * 5, MIN).events, []);
 });
 
 /** A fake gh: the teammate search (recognised by its draft:false term) answers `waiting`; any other search is the user's own board, empty. */

@@ -55,19 +55,27 @@ export const teammateQuery = (search: string): string => `query($after: String) 
   timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { ... on ReadyForReviewEvent { createdAt } } }
 } } } }`;
 
+/** What is remembered of one waiting PR: the head last seen, when it was first seen, and whether it has been reported. */
+export interface HelperEntry { head: string; seen: number; told: boolean }
+
 /**
- * The events for what is waiting, and the record of what has been told (PR key -> head sha). Told once per PR head: a push is a new head and may
- * speak again after the wait. With no earlier record (the helper was just switched on, or first run) everything waiting is adopted silently, so
- * switching it on does not start a review of every old PR at once.
+ * The events for what is waiting, and the record of it (PR key -> entry). A PR is reported once per head. A PR that newly qualifies is reported at
+ * once (it has already waited the whole time). A push gives the PR a new head that starts its own wait: it is reported only when that head has stood
+ * for `minutes` without a review, so an author pushing every few minutes does not start a review run per push. With no earlier record (the helper
+ * was just switched on, or first run) everything waiting is adopted silently, so switching it on does not review every old PR at once.
  */
-export function advanceHelper(told: Record<string, string> | undefined, waiting: readonly Waiting[], silent: boolean): { told: Record<string, string>; events: { summary: string }[] } {
-  const next: Record<string, string> = {};
+export function advanceHelper(told: Record<string, HelperEntry> | undefined, waiting: readonly Waiting[], silent: boolean, now: number, minutes: number): { told: Record<string, HelperEntry>; events: { summary: string }[] } {
+  const next: Record<string, HelperEntry> = {};
   const events: { summary: string }[] = [];
+  const say = (w: Waiting, waited: number): void => { events.push({ summary: `REVIEW-WAIT ${w.key} ${w.url} waiting ${waited} min, head ${w.head.slice(0, 7)}` }); };
   for (const w of waiting) {
-    if (told === undefined || told[w.key] === w.head) { next[w.key] = w.head; continue; }
-    next[w.key] = w.head;
-    if (!silent) events.push({ summary: `REVIEW-WAIT ${w.key} ${w.url} waiting ${w.waitedMin} min, head ${w.head.slice(0, 7)}` });
+    const e = told?.[w.key];
+    if (told === undefined || silent) { next[w.key] = { head: w.head, seen: now, told: true }; continue; }
+    if (!e) { next[w.key] = { head: w.head, seen: now, told: true }; say(w, w.waitedMin); continue; }
+    if (e.head !== w.head) { next[w.key] = { head: w.head, seen: now, told: false }; continue; }
+    if (!e.told && now - e.seen >= minutes * 60_000) { next[w.key] = { ...e, told: true }; say(w, Math.floor((now - e.seen) / 60_000)); continue; }
+    next[w.key] = e;
   }
-  // A PR that is no longer waiting (reviewed, merged, drafted) drops out, so a later wait on a new head can speak.
+  // A PR that is no longer waiting (reviewed, merged, drafted) drops out, so a later wait can speak again.
   return { told: next, events };
 }

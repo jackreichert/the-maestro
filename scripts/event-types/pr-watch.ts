@@ -31,7 +31,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { COPILOT_ORGS, GH_LOGIN, PR_SEARCH, SELF_REVIEW_REPOS, TEAMMATE_REVIEW_MINUTES, TEAMMATE_REVIEW_OWNERS } from '../local-config.ts';
 import { advanceHelper, selectWaiting, teammateQuery, teammateSearch } from '../lib/teammate/wait.ts';
-import type { WaitNode } from '../lib/teammate/wait.ts';
+import type { HelperEntry, WaitNode } from '../lib/teammate/wait.ts';
 import { isSelfReview } from '../lib/self-review.ts';
 import { FAILING_CHECK_PHRASE, STEER_PREFIX } from '../lib/steer-line.ts';
 import { DRAFT_PROMOTED, isDraftPromoted } from '../lib/draft-promotion.ts';
@@ -89,8 +89,8 @@ export interface Snapshot {
   copilot?: Tracks;
   /** PRs missing from the search but not confirmed closed, keyed `owner/repo#n`, with when each was first missed (ms). Their Copilot tracks stay in `copilot`. */
   absent?: Record<string, Absent>;
-  /** Teammate PRs already reported as waiting, `owner/repo#n` -> the head sha told. Absent until the helper has run once (then the first run adopts what is waiting silently). */
-  helper?: Record<string, string>;
+  /** Teammate PRs already reported as waiting, `owner/repo#n` -> the head last seen, when, and whether it was told. Absent until the helper has run once (then the first run adopts what is waiting silently). */
+  helper?: Record<string, HelperEntry>;
 }
 
 /** When a PR was first missed and whether it is a self-review repo's (so a later LEFT-OPEN-SET keeps its tag). Its repo and number come from the key. */
@@ -370,14 +370,15 @@ export function check(target: string, ctx: Ctx): PrWatchState {
  * The teammate helper's step: search other people's ready PRs, pick the ones waiting long enough, and say each once per head. Null when the helper is
  * off or has no owners to search (never an unscoped search), or when its search failed: the last record then stands and the check goes on.
  */
-function followTeammates(ctx: Ctx, self: string, prev: Snapshot | null, silent: boolean): { told: Record<string, string>; events: { summary: string }[] } | null {
+function followTeammates(ctx: Ctx, self: string, prev: Snapshot | null, silent: boolean): { told: Record<string, HelperEntry>; events: { summary: string }[] } | null {
   const minutes = ctx.config?.teammateMinutes ?? TEAMMATE_REVIEW_MINUTES;
   const search = teammateSearch(ctx.config?.teammateOwners ?? TEAMMATE_REVIEW_OWNERS);
   if (!(minutes > 0) || !search) return null;
   try {
     const nodes = searchAllPages<WaitNode>(teammateQuery(search), ctx.run);
-    const waiting = selectWaiting(nodes, { self, minutes, now: ctx.now ?? Date.now(), selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS });
-    return advanceHelper(prev?.helper, waiting, silent);
+    const now = ctx.now ?? Date.now();
+    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS });
+    return advanceHelper(prev?.helper, waiting, silent, now, minutes);
   } catch (e) {
     console.error(`teammate helper search failed: ${firstLine(e instanceof Error ? e.message : e)}`);
     return null;
