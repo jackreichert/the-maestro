@@ -17,6 +17,7 @@ import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, long
 import { DASHBOARD, OPEN_PRS, OTHERS_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
 import { DraftsStore } from './drafts-store.ts';
+import { waiting } from './drafts-model.ts';
 import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
@@ -462,7 +463,8 @@ export class PodiumApp extends HTMLElement {
       stream ? h('span', { class: `stream-dot ${seriesClass(stream)}`, 'aria-hidden': 'true' }) : null,
       label,
       prs > 0 ? h('span', { class: 'count' }, String(prs)) : null,
-      id === OTHERS_PRS && this.#waitingDrafts() > 0 ? h('span', { class: 'count' }, String(this.#waitingDrafts()), h('span', { class: 'vh' }, ' awaiting')) : null,
+      id === OTHERS_PRS && this.#waitingDrafts('review') > 0 ? h('span', { class: 'count' }, String(this.#waitingDrafts('review')), h('span', { class: 'vh' }, ' awaiting')) : null,
+      id === OPEN_PRS && this.#waitingDrafts('reply') > 0 ? h('span', { class: 'count' }, String(this.#waitingDrafts('reply')), h('span', { class: 'vh' }, ' replies awaiting')) : null,
       n > 0 ? h('span', { class: 'count' }, String(n), h('span', { class: 'vh' }, ' awaiting')) : null);
       tab.addEventListener('click', () => this.#select(id, true));
       tab.addEventListener('keydown', (e) => {
@@ -683,7 +685,7 @@ export class PodiumApp extends HTMLElement {
   }
 
   /** Drafts still waiting for a decision, for the tab's count. */
-  #waitingDrafts(): number { return (this.#drafts.model.data?.drafts ?? []).filter((d) => d.source === 'review' && (d.state === 'pending' || d.state === 'failed')).length; }
+  #waitingDrafts(source: 'review' | 'reply'): number { return (this.#drafts.model.data?.drafts ?? []).filter((d) => d.source === source && waiting(d)).length; }
 
   /** The draft queue as an element wired to the page's store; each draw asks the server again, so the tab never shows older drafts than the file holds. */
   #draftQueue(sources: ReadonlyArray<'review' | 'reply'>, empty: string): HTMLElementTagNameMap['draft-queue'] {

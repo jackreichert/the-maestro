@@ -21,10 +21,10 @@ export interface Thread {
 }
 export interface PrThreads { author: string; open: boolean; threads: Thread[] }
 
-const QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state author{login} reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved isOutdated path line comments(first:50){nodes{databaseId body author{login __typename}}}}}}}}';
+const QUERY = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state author{login} reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved isOutdated path line comments(first:50){pageInfo{hasNextPage} nodes{databaseId body author{login __typename}}}}}}}}';
 
 interface RawComment { databaseId?: number; body?: string; author?: { login?: string; __typename?: string } | null }
-interface RawThread { id?: string; isResolved?: boolean; isOutdated?: boolean; path?: string; line?: number | null; comments?: { nodes?: RawComment[] } }
+interface RawThread { id?: string; isResolved?: boolean; isOutdated?: boolean; path?: string; line?: number | null; comments?: { pageInfo?: { hasNextPage?: boolean }; nodes?: RawComment[] } }
 
 /** Reads the unresolved threads that wait on `self`. Throws when GitHub cannot be read or the PR has more threads than one page holds. */
 export function fetchThreads(repo: string, pr: number, self: string, run: GhRun): PrThreads {
@@ -39,6 +39,8 @@ export function fetchThreads(repo: string, pr: number, self: string, run: GhRun)
   const threads: Thread[] = [];
   for (const t of pull.reviewThreads?.nodes ?? []) {
     if (t.isResolved || typeof t.id !== 'string') continue;
+    // A comment past the page would be invisible, and it could be a person's: such a thread is refused rather than classed from a part of it.
+    if (t.comments?.pageInfo?.hasNextPage) throw new Error('a review thread has too many comments to read in one page');
     const comments: ThreadComment[] = (t.comments?.nodes ?? []).filter((c) => Number.isSafeInteger(c.databaseId)).map((c) => ({ id: c.databaseId as number, author: c.author?.login ?? '', bot: isBotAuthor(c.author), body: (c.body ?? '').slice(0, 2000) }));
     const root = comments[0];
     if (!root) continue;

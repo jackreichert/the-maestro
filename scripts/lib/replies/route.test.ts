@@ -164,3 +164,20 @@ test('the helper has exactly one direct-post path, and it is the bot one', () =>
   }
   assert.match(readFileSync(join(root, 'lib/replies/route.ts'), 'utf8'), /postBotReply/);
 });
+
+test('a thread with more comments than one page is refused, never classed from the part that was read', () => {
+  const run: GhRun = () => ok(JSON.stringify({ data: { repository: { pullRequest: { state: 'OPEN', author: { login: 'me' }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [{ id: 'long', isResolved: false, isOutdated: false, path: 'a.ts', line: 1, comments: { pageInfo: { hasNextPage: true }, nodes: [{ databaseId: 300, body: 'x', author: { login: 'dependabot[bot]', __typename: 'Bot' } }] } }] } } } } }));
+  const writes: string[][] = [];
+  assert.throws(() => routeReplies(file(), { repo: 'acme/widgets', pr: 7, self: 'me', replies: [{ commentId: 300, kind: 'decline', text: 'Keeping it as is: order matters here.' }], run: (a, i) => { writes.push(a); return run(a, i); } }), /too many comments/);
+  assert.equal(writes.length, 1, 'only the read happened');
+});
+
+test('a reply that goes out without approval cannot @-mention a person, but a code span or an email-like word is fine', () => {
+  const f = file();
+  const r = rig([bot]);
+  const out = postBotReply(f, { repo: 'acme/widgets', pr: 7, self: 'me', rootId: 201, text: 'Fixed; @jane can you re-check the cache path?', resolve: false }, { run: r.run });
+  assert.equal(out.ok, false);
+  assert.equal(out.ok === false && out.code, 'invalid');
+  assert.equal(r.writes.length, 0);
+  assert.equal(postBotReply(file(), { repo: 'acme/widgets', pr: 7, self: 'me', rootId: 201, text: 'Fixed in the decorator `@cached` and in a@b.example.', resolve: false }, { run: rig([bot]).run }).ok, true);
+});

@@ -109,7 +109,7 @@ const RESOLVE = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thr
  */
 export function postBotReply(file: string, r: BotReply, o: { run?: GhRun; now?: () => Date } = {}): BotOutcome {
   const run = o.run ?? spawnGh;
-  const bad = textProblem(r.text);
+  const bad = textProblem(r.text) ?? (/(^|[^\w`])@[A-Za-z0-9]/.test(r.text) ? 'A reply that goes out without approval cannot @-mention a person.' : null);
   if (bad) return { ok: false, code: 'invalid', message: bad };
   const out = withLock(join(dirname(file), 'bot-replies'), (): BotOutcome => {
     let pr;
