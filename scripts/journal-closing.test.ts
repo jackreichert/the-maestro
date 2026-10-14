@@ -1,6 +1,7 @@
 // Run: node --test scripts/journal-closing.test.ts
 // Hermetic: a temp vault, status dir and memory dir. Never the live ledger or DECISIONS.md.
 import { test, beforeEach, afterEach } from 'node:test';
+import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -51,7 +52,7 @@ const idOf = (r: Run): string => /^\S+\s+(\w{4})\s/.exec(r.out)?.[1] ?? '';
 const closer = (id: string): Row | undefined => ledger().find((r) => r.closes === id);
 
 test('--resolves closes an awaiting ask and a queued to-do in one command, citing the new row', () => {
-    const ask = idOf(run(['ask', 'which store?', '--searched', 'ledger', ...MARK]));
+    const ask = idOf(run(['ask', 'which store?', '--searched', 'ledger', ...ASK_TEMPLATE, ...MARK]));
     const todo = idOf(run(['queue', 'wire the store', ...MARK]));
     const note = run(['note', 'store chosen: sqlite', '--resolves', `${ask},${todo}`, ...MARK]);
     assert.equal(note.code, 0, note.err);
@@ -67,7 +68,7 @@ test('queue --supersedes and --folds drop the older rows with a note pointing at
     assert.equal(sup.code, 0, sup.err);
     assert.equal(closer(a)?.kind, 'dropped');
     assert.match(closer(a)?.text ?? '', /superseded by \w{4}/);
-    const fold = run(['ask', 'fold question', '--folds', b, '--searched', 'ledger', ...MARK]);
+    const fold = run(['ask', 'fold question', '--folds', b, '--searched', 'ledger', ...ASK_TEMPLATE, ...MARK]);
     assert.equal(fold.code, 0, fold.err);
     assert.match(closer(b)?.text ?? '', /folded into \w{4}/);
 });

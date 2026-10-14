@@ -105,6 +105,6 @@ test('cli add marks a standing type renew unless --ttl-hours is given, and a one
 });
 
 test('the standing built-in types opt in; one-shot types do not', () => {
-  for (const name of ['pr-watch', 'inbox', 'status-watch', 'status-refresh', 'notion-watch']) assert.equal(BUILTIN_TYPES[name].renews, true, name);
+  for (const name of ['pr-watch', 'inbox', 'status-watch', 'status-refresh', 'notion-watch', 'slack-watch']) assert.equal(BUILTIN_TYPES[name].renews, true, name);
   for (const name of ['pr-checks', 'pr-merged', 'gh-run', 'reminder']) assert.notEqual(BUILTIN_TYPES[name].renews, true, name);
 });

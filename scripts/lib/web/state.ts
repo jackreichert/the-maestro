@@ -7,6 +7,7 @@ import { askRefs, keysIn, noteEnv, pairTwins, prFlagNames, stackParent, streamOr
 import type { BoardStatus, FooterData, Item, PageConfig, PageInput, Pr, Ref } from '../status-page/render.ts';
 import { askBy, askClass, askDoor, autoDefault, byLabel, hasAskFields, TEXT_MAX } from '../journal/ask-fields.ts';
 import type { AskClass, Door } from '../journal/ask-fields.ts';
+import { askTemplateOf, parseLink, splitOption } from '../journal/ask-template.ts';
 import { askMarkdown } from '../status-page/ask-format.ts';
 import { linkAskRefs } from '../status-page/links.ts';
 import { localDate } from '../status-page/priorities.ts';
@@ -32,7 +33,12 @@ export interface AskLinks { note?: LinkData; tracker: LinkData[]; prs: LinkData[
 export interface AskCard {
   id: string; stream: string; needed: string; context: string; ageDays: number; date: string; ts?: string; links: AskLinks;
   recommend?: string; door?: Door; default?: string; by?: string; class?: AskClass; paste?: string;
+  /** An ask written with the template (journal.ts ask): what is blocked, the context bullets, the options with their costs and the links as data. Absent on an older free-text ask, which renders in the legacy layout. `needed` is then the whole one-line question. */
+  sections?: AskSections;
+  /** What the writer checked before asking (the row's `searched`), when it says. */
+  searched?: string;
 }
+export interface AskSections { blocked: string; context: string[]; options: { option: string; cost: string }[]; links: LinkData[] }
 export interface WorkItem { id: string; stream: string; text: string; ticket?: string; links: LinkData[]; model?: string; since?: string }
 export interface BlockedItem extends WorkItem { gate?: string }
 export interface DoneItem extends WorkItem { closedAt?: string }
@@ -163,6 +169,18 @@ function decisionFields(a: Item): Pick<AskCard, 'recommend' | 'door' | 'default'
   };
 }
 
+/** The template of a row as card data: each link is checked to hold an https or obsidian URL (the client checks the scheme again); an entry with none is dropped. A run-this ask or an older ask has none. */
+function askSections(a: Item): AskSections | undefined {
+  if (a.paste !== undefined) return undefined;
+  const t = askTemplateOf(a);
+  if (!t) return undefined;
+  return {
+    blocked: t.blocked, context: t.context,
+    options: t.options.map((o) => { const { option, cost } = splitOption(o); return { option, cost: cost ?? '' }; }),
+    links: t.links.flatMap((l) => parseLink(l) ?? []),
+  };
+}
+
 /** `#N (not open)` made a link when the ask's own text names that pull request by its github.com URL; no GitHub call is made. */
 function withPullUrls(text: string, prs: Ref[]): Ref[] {
   const urls = new Map<number, string>();
@@ -177,10 +195,12 @@ function withPullUrls(text: string, prs: Ref[]): Ref[] {
 /** The decision, its context and its links, with the age in whole page days (`askAgeDays`, the same figure the age chart buckets). */
 function askCard(config: PageConfig, a: Item, prs: Pr[], ticket: string | undefined, stream: string, now: Date): AskCard {
   const refs = askRefs(config, a, prs, ticket);
-  const { needed, context } = splitAskBody(a.text);
+  const sections = askSections(a);
+  const { needed, context } = sections ? { needed: a.text.replace(/\s+/g, ' ').trim(), context: '' } : splitAskBody(a.text);
   return {
     id: a.id, stream, needed, context: askMarkdown(linkAskRefs(context, noteEnv(config, a, ticket))), ageDays: askAgeDays(a, now, config.tz), date: a.date, ...(a.ts ? { ts: a.ts } : {}),
     ...decisionFields(a), ...(typeof a.paste === 'string' && a.paste ? { paste: a.paste } : {}),
+    ...(sections ? { sections } : {}), ...(typeof a.searched === 'string' && a.searched.trim() ? { searched: a.searched.trim().slice(0, TEXT_MAX) } : {}),
     links: { ...(refs.note ? { note: link(refs.note) } : {}), tracker: refs.tracker.map(link), prs: withPullUrls(a.text, refs.prs).map(link) },
   };
 }

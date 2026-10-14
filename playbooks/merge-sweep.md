@@ -1,44 +1,79 @@
 # Playbook: merge-sweep standing pickup (for a cheap runner)
 
-You are the runner. The `merge-sweep` standing pickup is due. You run one script with `--close` and copy its lists into your report. The script itself closes a row whose linked PRs have all merged. You never close a ledger row yourself, and you do not run the `journal.ts done` command the script prints for the rows it left open.
+You are the runner. The `merge-sweep` standing pickup is due. The sweep has three steps and each is its own command, so each can be allowed or refused on its own. Run them in order, copy the lists into your report, and never close a ledger row or delete a branch by any other route.
 
-## 1. Run it
+| Step | Command | Writes | Reversible |
+|---|---|---|---|
+| 1. Read | `merge-sweep.ts --json` | nothing | n/a |
+| 2. Close ledger rows | `merge-sweep.ts --close-ledger` | appends `done` to local ledger rows whose linked PRs all merged | yes (the ledger is append-only and local) |
+| 3. Delete branches | `branch-sweep.ts --apply --ids ...` | deletes remote branches from a fresh listing | no, but each deletion prints a `restore` line first |
+
+## 1. Read
 
 From the skill root:
 
 ```bash
-node scripts/merge-sweep.ts --close [--vault <ledger root>] [--project <name>]
+node scripts/merge-sweep.ts --json [--vault <ledger root>] [--project <name>]
 ```
 
-It needs `gh` logged in. It reads open ledger rows that name a pull request as `gh:pr:owner/repo#N`, `owner/repo#N`, a github.com pull URL, or `repo#N` for a repo whose owner is configured, asks `gh` for each PR's state, and prints the lists below. With `--close` it appends `done` to a row that is linked to a PR through its refs (`pr-open.ts` writes the link) once every PR on the row is MERGED, and it lists those rows under `Closed on merge`. A row that only mentions a PR in its text, or has another PR still open or unreadable, is not closed. A PR it cannot read is unknown, never merged. Without `--close` it is read-only. Add `--json` only if the orchestrator asks for machine output. `--stale-days` defaults to 7 (whole UTC days since the PR's `updatedAt`). `--today YYYY-MM-DD` is for a fixed clock; omit it.
+It needs `gh` logged in. It reads open ledger rows of kind `wip` or `blocked` that name a pull request as `gh:pr:owner/repo#N`, `owner/repo#N`, a github.com pull URL, or `repo#N` for a repo whose owner is configured, and asks `gh` for each PR's state. A `question` or a pending `decision` is never matched, however it cites a PR: a merge does not answer it (the JSON counts them as `skipped`). A PR it cannot read is unknown, never merged.
 
-Run it in the foreground. Do not call `gh` yourself, and do not read the ledger to decide which rows are merged.
+Read the JSON by these fields only: `actions` (rows left for a decision, plus 1 for a blind sweep), `closedCount`, `blind`, and the lists `merged`, `stale`, `unknown`, `closed`, `autoClosed` (each row has `id` and `text`). `--stale-days` defaults to 7. `--today YYYY-MM-DD` is for a fixed clock; omit it. Run it in the foreground. Do not call `gh` yourself, and do not read the ledger to decide which rows are merged.
 
 | Exit | Meaning | You do |
 |---|---|---|
-| 0 | Every named PR was read. None is merged, stale, or closed without merging. | Report `merge-sweep: clean`, plus the `Closed on merge` rows if any. |
-| 1 | At least one merged, stale, or closed-without-merging row. Unknown rows may be listed too. | Step 2. Do not close anything. |
+| 0 | `actions` is 0: every named PR was read, and none is merged-but-open, stale, or closed without merging. | Step 2 only if a row in `merged` has `closable: true` (with exit 0 there is none, so skip to step 3). |
+| 1 | At least one merged, stale, or closed-without-merging row. Unknown rows may be listed too. | Step 2, then step 3. |
 | 2 | Usage or read error (no ledger, bad flag, ledger root unset). | Report the stderr line. Fix the arguments once; if it fails again, stop. |
-| 3 | No merged, stale, or closed-without-merging rows, but at least one PR could not be read, or the output starts with `WARNING` because the sweep parsed 0 PRs from the open rows. | Step 2, unknown only. Those PRs are not merged. Report a WARNING as `merge-sweep: BLIND, not clean`. |
+| 3 | No merged, stale, or closed-without-merging rows, but a PR could not be read, or `blind` is true because the sweep parsed 0 PRs from the open rows. | Report. A blind sweep is `merge-sweep: BLIND, not clean`. Do step 3 only if it is not blind. |
 
-## 2. Report back
+## 2. Close ledger rows
 
-Copy the heading and the rows of each non-empty list. Do not paraphrase `MERGED`, `OPEN`, `CLOSED`, or `UNKNOWN`.
+```bash
+node scripts/merge-sweep.ts --close-ledger --json [--vault <ledger root>] [--project <name>]
+```
 
-Report at most 12 lines:
+This is the only ledger write the sweep makes, and it closes only a `wip` row linked to its PR through refs (`pr-open.ts` writes the link) once every PR on the row is MERGED. A row that only mentions a PR in its text, a `blocked` row, or a row with another PR still open or unreadable is listed and left open. It never touches a branch. Rows it closed are in `autoClosed`. `--close` is the old name for the same flag. If the command is refused or fails, report it and go on to step 3; do not retry with other flags.
 
-1. the exit code, then one line per row under `Closed on merge`: `<id> -> closed by the script`
-2. one line per merged row: `<id> -> journal.ts done <id>, not run` — if the script printed `(other PRs on this row are not merged)`, add `not ready to close`
-3. one line per stale row: `<id> -> <owner/repo#N> open, idle`
-4. one line per unknown row: `<id> -> could not read, not merged`
-5. one line per closed-without-merging row: `<id> -> closed unmerged, not closed`
+## 3. Delete merged branches
 
-If a list has more rows than fit, end with `+N more` and stop. Do not paste raw JSON, `gh` stderr, or logs.
+Standing approval covers a remote feature branch that passes all of these: every commit on it is by one of the configured `git_emails` (or the repo's own `user.email`), it is merged into the base (ancestry or a merged PR, not patch-equivalence alone), and no PR on it is open. `branch-sweep.ts` applies exactly this rule; you do not re-judge it.
+
+`<container_root>` is the `container_root` setting (the directory that holds the repos); the dispatch brief gives it, and if you do not have it, report that and skip this step.
+
+List first, read-only:
+
+```bash
+node scripts/branch-sweep.ts --json --container <container_root>
+```
+
+Take the `id` of each item in `items` whose `kind` is `remote-branch`. Ignore worktrees (the roll handles them), everything under `review` (patch-equivalent only) and everything under `excluded`. If there are none, skip the delete. Otherwise:
+
+```bash
+node scripts/branch-sweep.ts --apply --ids <id,id,...> --container <container_root>
+```
+
+For each branch it prints `restore <id>: git -C <repo> push origin <sha>:refs/heads/<branch>` before deleting, then `ok` or `REFUSED` with a reason. It re-scans first and refuses a branch that moved, no longer qualifies, has an open PR, or whose PRs it could not read. Copy every `restore` line into your report. Never pass an id from an older listing or one you made up. If the command is refused by a permission prompt or a classifier, report that and stop: do not try another way to delete.
+
+## 4. Report back
+
+Report at most 14 lines, then stop:
+
+1. `merge-sweep: <clean | N actions | BLIND>`, the step 1 exit code, and `closedCount`
+2. one line per row in `autoClosed`: `<id> -> closed by --close-ledger`
+3. one line per merged row left open: `<id> -> not closed` plus its reason (`other PRs on this row are not merged`, `not linked through refs`, or `not a wip row`)
+4. one line per stale row: `<id> -> <owner/repo#N> open, idle`
+5. one line per unknown row: `<id> -> could not read, not merged`
+6. one line per closed-without-merging row: `<id> -> closed unmerged, not closed`
+7. one line per deleted branch: its `restore` line; one line per `REFUSED`: `<id> -> <reason>`
+
+Do not paraphrase `MERGED`, `OPEN`, `CLOSED`, or `UNKNOWN`. If a list has more rows than fit, end with `+N more`. Do not paste raw JSON, `gh` stderr, or logs. If `actions` is 0, nothing was closed and nothing was deleted, the whole report is `merge-sweep: clean`.
 
 ## Hard rules
 
-- Never run a `close if you agree:` line. Never run `journal.ts done`. Never close, drop, or resolve a ledger row by hand; the only close is the script's own `--close`. Never edit `ledger.jsonl` or `standing.jsonl`.
+- The only ledger write is `merge-sweep.ts --close-ledger`. Never run `journal.ts done`, never close, drop or resolve a row by hand, never edit `ledger.jsonl` or `standing.jsonl`. Never close a `question`, `decision` or ask row.
+- The only deletion is `branch-sweep.ts --apply --ids` from a listing you just made. No `git push --delete`, no `git branch -D`, no `--force`.
 - Never treat `UNKNOWN` as merged, and never treat a PR the script did not list as merged. A missing read is not a merge.
-- Do not delete branches, sync an overlay, merge, comment, or push. This playbook is the read. Branch deletion is a separate sweep and needs approval.
-- Do not record `journal.ts standing done` yourself. The orchestrator records the standing run after reading your report.
+- Do not sync an overlay, merge, comment, or push. Do not record `journal.ts standing done` yourself; the orchestrator does that after reading your report.
+- Any recursive `grep` or `rg` carries `--exclude='.env*' --exclude='ssm-*.json'`, and you never open those files. You should not need to search at all.
 - A clean exit is not permission to mark a row done.
