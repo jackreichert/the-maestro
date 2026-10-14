@@ -64,7 +64,7 @@ const WIDE_BODY = [
 ].join('\n');
 
 const envFor = (dir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
-  PATH: process.env.PATH, HOME: dir, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file', ...extra,
+  PATH: process.env.PATH, HOME: dir, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file', LEAK_GATE_BUILTIN_ONLY: '1', ...extra,
 });
 
 const run = (script: string, args: string[], env: NodeJS.ProcessEnv) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', env, timeout: 20_000 });
