@@ -1,16 +1,22 @@
 /**
  * wake-schedule.ts: the wake schedule a fresh session sees at start, and the session-cron calls that mirror it while no loop is running.
- * A wake is a watch of type `wake` whose target is an ISO time (one-shot) or `hourly:7,37` (recurring) and whose `report` is the prompt.
+ * A wake is a watch of type `wake` whose target is an ISO time (one-shot), `hourly:7,37` or `weekdays@08:30 America/New_York` (recurring) and whose `report` is the prompt.
  * SEAM: `parseWakeTarget` is a minimal local reader of that grammar, so this file stands alone; when the `wake` type lands its own parser
  * replaces this one and nothing else here changes.
  */
+import { parseRecurring } from './recurring-time.ts';
+import type { Recurring } from './recurring-time.ts';
 import type { Watch } from './types.ts';
 import { withhold } from './withhold.ts';
 
-export type WakeTarget = { kind: 'once'; at: number } | { kind: 'hourly'; minutes: number[] };
+export type WakeTarget = { kind: 'once'; at: number } | { kind: 'hourly'; minutes: number[] } | ({ kind: 'local' } & Recurring);
 
-/** `hourly:7,37` or an ISO time; null for anything else. */
+/** `hourly:7,37`, `weekdays@08:30 America/New_York` (or `daily@...`), or an ISO time; null for anything else, including a bad zone or time. */
 export function parseWakeTarget(target: string): WakeTarget | null {
+  try {
+    const rec = parseRecurring(target);
+    if (rec) return { kind: 'local', ...rec };
+  } catch { return null; }
   const hourly = /^hourly:(\d{1,2}(?:,\d{1,2})*)$/.exec(target);
   if (hourly) {
     const minutes = hourly[1].split(',').map(Number);
@@ -30,8 +36,19 @@ export function wakeScheduleLines(watches: Watch[], now: number): string[] {
   return lines.length ? ['Wake schedule (the event loop fires these):', ...lines.map((l) => `- ${l}`)] : [];
 }
 
-/** The cron expression for a target in the machine's local time (what session crons use), or '' when a one-shot is already past. */
-export function cronFor(target: WakeTarget, now: number): string {
+const machineZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/**
+ * The cron expression for a target in the machine's local time (what session crons use), or '' when a one-shot is already past.
+ * A `weekdays@`/`daily@` target mirrors as a local-time cron (`30 8 * * 1-5`) only when its zone is the machine's own zone: cron has no zone,
+ * so a different zone would drift from the loop at every daylight-saving change, and a day boundary would shift the weekday range. Such a target
+ * gets no mirror line; the event loop is the only thing that fires it.
+ */
+export function cronFor(target: WakeTarget, now: number, machine: string = machineZone()): string {
+  if (target.kind === 'local') {
+    if (target.zone !== machine) return '';
+    return `${target.minutes % 60} ${Math.floor(target.minutes / 60)} * * ${target.days === 'weekdays' ? '1-5' : '*'}`;
+  }
   if (target.kind === 'hourly') return `${target.minutes.join(',')} * * * *`;
   if (target.at <= now) return '';
   const d = new Date(target.at);
