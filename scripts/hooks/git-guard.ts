@@ -21,7 +21,7 @@
  * Protected branches default to main, staging, develop; set GIT_GUARD_PROTECTED (comma separated) to change them.
  *
  * Scope: the guard exists for the shared work repos. A repo whose `origin` is under github.com/jackreichert/ is personal, so
- * the guard passes silently there (decided by Jack, 2026-10-13). An unreadable or missing origin keeps the guard on, per the
+ * the guard passes silently there (decided by the owner, 2026-10-13). An unreadable or missing origin keeps the guard on, per the
  * inconclusive-means-protected rule. The check follows `git -C` and `--git-dir`, so a command aimed at another repo is judged by that repo.
  */
 import { execFileSync } from 'node:child_process';

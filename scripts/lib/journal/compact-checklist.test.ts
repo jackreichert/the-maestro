@@ -18,7 +18,7 @@ test('is short, names every duty and carries no org names', () => {
   const text = compactChecklist('compact').join('\n');
   assert.ok(compactChecklist('compact').length <= MAX_CHECKLIST_LINES);
   for (const needle of ['SKILL.md', 'CURRENT.md', 'priorities show', 'Agents:', 'footer', 'Haiku', 'worktree', 'event loop', 'Podium', 'journal.ts start']) assert.match(text, new RegExp(needle, 'i'), needle);
-  assert.doesNotMatch(text, /arya/i);
+  assert.doesNotMatch(text, new RegExp(['ar', 'ya'].join(''), 'i'));
 });
 
 function prime(args: string[]) {

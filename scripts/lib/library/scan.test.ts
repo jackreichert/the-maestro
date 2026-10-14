@@ -79,7 +79,7 @@ test('ordinary evidence is not mistaken for a token: shas, digests, uuids, ledge
     'md5 9e107d9d372bb6826bd81d3542a419d6',
     'uuid 3f2b8c1e-5d4a-4b7e-9c10-a1b2c3d4e5f6',
     'ledger id k7q2 and ticket AV-149',
-    'src/lib/library/scan.ts:24 and /home/someone/src/skills/the-maestro/scripts/library-check.ts#L40',
+    'src/lib/library/scan.ts:24 and /home/me/src/skills/the-maestro/scripts/library-check.ts#L40',
     'https://github.com/example-org/avonlea-api/blob/0123456789abcdef0123456789abcdef01234567/packages/orchard/src/sync.ts#L40-L52',
     'packages/orchard/src/harvest-export/HarvestExportHandler',
     'decision-orchard-row-id-column-added-before-the-harvest-sync-slug',

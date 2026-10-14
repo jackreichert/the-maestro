@@ -10,8 +10,8 @@ test('classify: first matching rule wins, approvals before the generic rule', ()
     assert.equal(classify({ kind: 'decision', text: 'x' }, 'standing'), BOX.STANDING);
     assert.equal(classify({ kind: 'decision', text: 'x' }, 'one-off'), BOX.ONE_OFF);
     assert.equal(classify({ kind: 'decision', text: 'x', pending: true }, 'standing'), BOX.NEEDS_USER);
-    assert.equal(classify({ kind: 'question', text: 'Jack rule: always squash' }), BOX.NEEDS_USER, 'wording alone never makes a question a record');
-    assert.equal(classify({ kind: 'question', text: 'Jack: pick a branch' }, 'standing'), BOX.STANDING);
+    assert.equal(classify({ kind: 'question', text: 'User rule: always squash' }), BOX.NEEDS_USER, 'wording alone never makes a question a record');
+    assert.equal(classify({ kind: 'question', text: 'User: pick a branch' }, 'standing'), BOX.STANDING);
     assert.equal(classify({ kind: 'question', text: 'run the read-only SQL' }), BOX.PASTE);
     assert.equal(classify({ kind: 'question', text: 'should I run it?' }), BOX.NEEDS_USER);
     assert.equal(classify({ kind: 'question', text: 'anything', paste: '/x' }), BOX.PASTE);

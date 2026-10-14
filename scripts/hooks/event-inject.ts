@@ -37,10 +37,10 @@ export interface InjectDeps {
   adoption?: (loop: LoopHealth) => string;
 }
 
-/** `thread avonlea-api#542 (human)`, or `3 new texts from Jack (read with claude-inbox --new)` for the inbox type. Fields only. */
+/** `thread avonlea-api#542 (human)`, or `3 new texts from the user (read with claude-inbox --new)` for the inbox type. Fields only. */
 export function headline(e: InboxEntry): string {
   const { repo, number, who, count } = e.fields;
-  if (e.kind === 'message') return `${count ?? 'new'} new text${count === 1 ? '' : 's'} from Jack (read with claude-inbox --new)`;
+  if (e.kind === 'message') return `${count ?? 'new'} new text${count === 1 ? '' : 's'} from the user (read with claude-inbox --new)`;
   const target = repo && number ? ` ${repo}#${number}` : repo ? ` ${repo}` : '';
   return `${e.kind}${target}${who ? ` (${who})` : ''} [${e.id}]`;
 }

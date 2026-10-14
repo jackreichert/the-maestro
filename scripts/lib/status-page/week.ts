@@ -15,7 +15,7 @@ import type { Priority } from './priorities.ts';
 export const WEEK_FILE = 'week.md';
 /** The most goals a week may hold: a week of more than this has no goals, only a list. */
 export const WEEK_MAX = 7;
-export const WEEK_UNSET_LINE = 'Week goals not set: ask Jack, then `journal.ts week set "<goal> | <Stream>" ...`';
+export const WEEK_UNSET_LINE = 'Week goals not set: ask the user, then `journal.ts week set "<goal> | <Stream>" ...`';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export type WeekState = { state: 'ok'; start: string; items: Priority[] } | { state: 'missing' } | { state: 'stale'; start: string };

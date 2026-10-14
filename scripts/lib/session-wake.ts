@@ -1,10 +1,10 @@
 /**
- * Session launcher policy: when nothing is listening to the loop, start a session so an actionable event is not left waiting for Jack to type.
+ * Session launcher policy: when nothing is listening to the loop, start a session so an actionable event is not left waiting for the user to type.
  * `decideWake` is pure: it takes the inbox, whether a waiter or an interactive transcript is live, and the saved launch history, and returns what to do.
  * `runWakeTick` is the thin shell around it. The supervisor calls it on its alert timer.
  *
  * A launch needs ALL of: an unseen actionable event older than GRACE_MS (a waiter or a hook usually reads it first), no live waiter (lib/waiters.ts),
- * no interactive transcript written in TRANSCRIPT_WINDOW_MS (a session is open and Jack is probably in it), at least MIN_GAP_MS since the last launch,
+ * no interactive transcript written in TRANSCRIPT_WINDOW_MS (a session is open and the user is probably in it), at least MIN_GAP_MS since the last launch,
  * fewer than MAX_PER_DAY launches in 24 hours, and a configured `wake_launch_command`. Launching is off until the install opts in. With no launch
  * command but a `notify_command`, one fixed line (WAKE_NOTIFY_LINE, no event text) goes out, under the same limits as a launch (MIN_GAP_MS apart, MAX_PER_DAY a day), and only when no pending
  * event is one the alert policy (lib/alert-policy.ts `alertable`) would text itself: allowed kinds already get exactly one text from the alerts,
