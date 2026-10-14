@@ -1,6 +1,6 @@
 import { BASE_CSS, UI_CSS, h, shadow } from './dom.ts';
 import { linkAttrs } from './link-policy.ts';
-import { waiting } from './drafts-model.ts';
+import { unresolved, waiting } from './drafts-model.ts';
 import type { DraftRow } from './drafts-model.ts';
 import type { DraftsModel } from './drafts-store.ts';
 
@@ -114,7 +114,7 @@ export class DraftQueue extends HTMLElement {
       b.addEventListener('click', on);
       return b;
     };
-    const live = h('p', { class: `msg${ui.message && !/^(Posted|Saved|Rejected)/.test(ui.message) ? ' bad' : ''}`, role: 'status', 'aria-live': 'polite' }, ui.message ?? (d.state === 'failed' && d.error ? `GitHub refused the last attempt: ${d.error}. Nothing was posted.` : ''));
+    const live = h('p', { class: `msg${ui.message && !/^(Posted|Saved|Rejected)/.test(ui.message) ? ' bad' : ''}`, role: 'status', 'aria-live': 'polite' }, ui.message ?? (unresolved(d) ? (STATE_WORDS[d.state] ?? '') : d.state === 'failed' && d.error ? `GitHub refused the last attempt: ${d.error}. Nothing was posted.` : ''));
     let body: Node[];
     if (ui.mode === 'edit') {
       const ta = h('textarea', { 'aria-label': `Edit comment on ${what}`, maxlength: '4000' });
@@ -131,8 +131,7 @@ export class DraftQueue extends HTMLElement {
     } else {
       body = [h('p', { class: 'body' }, d.text),
         h('div', { class: 'actions' },
-          btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)),
-          btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id)),
+          ...(unresolved(d) ? [] : [btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)), btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id))]),
           btn('secondary', 'Reject', `Reject comment on ${what}`, () => a?.startReject(d.id)))];
     }
     return h('li', { class: 'draft', 'data-id': d.id }, this.#head(d), d.context ? h('p', { class: 'quote' }, d.context) : null, ...body, live);

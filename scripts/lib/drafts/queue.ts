@@ -7,7 +7,7 @@
  * approve route in post.ts, after the person pressed Approve) and the rows post.ts writes around its single gh call.
  *
  * A row written by hand that `addDraft` would have refused (a bad repo, path, line or target) is dropped by the fold, so it is never shown and never posted.
- * States: pending -> approved -> posting -> posted | failed | uncertain; pending|failed|uncertain -> rejected.
+ * States: pending -> approved -> posting -> posted | failed | uncertain; pending|failed|uncertain|stuck posting -> rejected.
  * `approved` with no `posting` row means the process died before gh was called, so approving again is safe. `failed` means gh said no, so nothing was posted and the person may approve again. `uncertain` means gh was cut off mid-call: the comment
  * may or may not exist, so it is never retried automatically (check GitHub, then reject it: reject is allowed from `uncertain`).
  */
@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 
 export const MAX_TEXT = 4000;
 export const MAX_REASON = 500;
+export const MAX_REPLY_TO = 100;
+export const MAX_PATH = 300;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -80,6 +82,10 @@ export function readRows(file: string): Row[] {
   return rows;
 }
 
+/** A `posting` draft whose last row is older than the lock's stale age belongs to a process that died mid-call: its outcome is unknown, like `uncertain`. */
+export const STUCK_MS = 120_000;
+export const stuck = (d: { state: string; updatedAt: string }, now: string): boolean => d.state === 'posting' && Date.parse(now) - Date.parse(d.updatedAt) >= STUCK_MS;
+
 /** True when a hand-written add row is a well-typed draft that addDraft would accept; anything that throws while being checked is not. */
 function validRow(rest: unknown): boolean {
   try { return isObj(rest) && typeof rest.text === 'string' && typeof rest.key === 'string' && typeof rest.repo === 'string' && isObj(rest.target) && draftProblem(rest as unknown as NewDraft) === null; } catch { return false; }
@@ -105,7 +111,7 @@ export function fold(rows: readonly Row[]): Draft[] {
     else if (r.op === 'uncertain' && d.state === 'posting') d.state = 'uncertain';
     else if (r.op === 'posted' && d.state === 'posting') { d.state = 'posted'; if (r.url) d.postedUrl = r.url; }
     else if (r.op === 'post-failed' && d.state === 'posting') { d.state = 'failed'; d.error = r.error; delete d.postingNonce; }
-    else if (r.op === 'reject' && (editable || d.state === 'uncertain')) { d.state = 'rejected'; d.rejectReason = r.reason; }
+    else if (r.op === 'reject' && (editable || d.state === 'uncertain' || (d.state === 'posting' && stuck(d, r.ts)))) { d.state = 'rejected'; d.rejectReason = r.reason; }
     else continue;
     d.updatedAt = r.ts;
   }
@@ -124,13 +130,14 @@ function targetProblem(t: unknown): string | null {
   if (!isObj(t)) return 'No target.';
   if (t.kind === 'general') return null;
   if (t.kind === 'reply') return Number.isSafeInteger(t.commentId) && (t.commentId as number) > 0 ? null : 'Bad comment id.';
-  if (t.kind === 'inline') return typeof t.path === 'string' && t.path && !t.path.startsWith('/') && !t.path.includes('..') && Number.isSafeInteger(t.line) && (t.line as number) > 0 && typeof t.commitId === 'string' && /^[0-9a-f]{7,64}$/.test(t.commitId) ? null : 'Bad inline target.';
+  if (t.kind === 'inline') return typeof t.path === 'string' && t.path && t.path.length <= MAX_PATH && !t.path.startsWith('/') && !t.path.includes('..') && Number.isSafeInteger(t.line) && (t.line as number) > 0 && typeof t.commitId === 'string' && /^[0-9a-f]{7,64}$/.test(t.commitId) ? null : 'Bad inline target.';
   return 'Unknown target.';
 }
 
 /** The reason a new draft is refused, or null. */
 export function draftProblem(d: NewDraft): string | null {
-  if (!d.key || d.key.length > 300) return 'Bad key.';
+  if (typeof d.key !== 'string' || !d.key || d.key.length > 300) return 'Bad key.';
+  if (d.replyTo !== undefined && (typeof d.replyTo !== 'string' || d.replyTo.length > MAX_REPLY_TO)) return 'Bad reply-to.';
   if (!REPO.test(d.repo) || !Number.isSafeInteger(d.pr) || d.pr <= 0) return 'Bad repo or PR number.';
   if (!['blocking', 'suggestion', 'reply'].includes(d.severity)) return 'Bad severity.';
   if (!['review', 'reply'].includes(d.source)) return 'Bad source.';
@@ -197,7 +204,8 @@ export function rejectDraft(file: string, id: string, reason: string, o: QueueOp
   const out = withLock(file, (): Outcome => {
     const d = find(file, id);
     if (!d) return refuse('unknown', 'No such draft.');
-    if (d.state !== 'pending' && d.state !== 'failed' && d.state !== 'uncertain') return refuse('state', `That draft is ${d.state}; it cannot be rejected.`);
+    if (d.state === 'posting' && !stuck(d, stamp(o))) return refuse('state', 'That draft is being posted right now. If it is still here in a couple of minutes, reject it then.');
+    if (d.state !== 'pending' && d.state !== 'failed' && d.state !== 'uncertain' && d.state !== 'posting') return refuse('state', `That draft is ${d.state}; it cannot be rejected.`);
     append(file, { op: 'reject', id, ts: stamp(o), reason: why });
     return { ok: true };
   });

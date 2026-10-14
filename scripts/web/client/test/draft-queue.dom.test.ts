@@ -77,3 +77,12 @@ test('text from a draft is set as text, never as markup', async () => {
   assert.equal(root.querySelector('img'), null);
   cleanup();
 });
+
+test('an uncertain or in-flight draft stays in the open list with Reject only: the person checks GitHub, and cannot approve or edit it', async () => {
+  for (const state of ['uncertain', 'posting'] as const) {
+    const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([row({ state })]), actions: noop, sources: ['review'] });
+    assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Reject'], state);
+    assert.equal(root.querySelector('details.finished'), null, state);
+    cleanup();
+  }
+});

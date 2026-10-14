@@ -205,3 +205,20 @@ test('a hand-written add row with a missing or mistyped field is dropped without
   }
   assert.equal(listDrafts(f).length, 1);
 });
+
+test('a draft stuck in posting (the process died mid-call) can be rejected after two minutes, not before', () => {
+  const f = file();
+  const { id } = addDraft(f, draft());
+  const at = (s: number) => ({ now: () => new Date(Date.UTC(2026, 9, 14, 12, 0, s)) });
+  appendFileSync(f, [{ op: 'approve', text: draft().text }, { op: 'posting', nonce: 'n' }].map((r) => `${JSON.stringify({ ...r, id, ts: at(0).now().toISOString() })}\n`).join(''));
+  assert.equal(rejectDraft(f, id, 'checked, not there', at(30)).ok, false);
+  assert.equal(rejectDraft(f, id, 'checked, not there', at(121)).ok, true);
+  assert.equal(listDrafts(f)[0]?.state, 'rejected');
+});
+
+test('addDraft refuses what the page would drop: an over-long reply-to or path, and a key that is not a string', () => {
+  const f = file();
+  assert.throws(() => addDraft(f, { ...draft(), replyTo: 'r'.repeat(101) }), /refused/);
+  assert.throws(() => addDraft(f, { ...draft(), target: { kind: 'inline', path: `${'p/'.repeat(200)}a.ts`, line: 3, commitId: 'a'.repeat(40) } }), /refused/);
+  assert.throws(() => addDraft(f, { ...draft(), key: 5 as unknown as string }), /refused/);
+});
