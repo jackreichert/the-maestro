@@ -34,7 +34,7 @@ Score is passes out of graded questions; the target is 8 of 10 passes at 2 hops 
 
 ## Where the result goes
 
-A dated review note under `Projects/the-maestro/Reviews/` (frontmatter `ticket: the-maestro-121`), holding the score, the per-question table and the missing-pages list. Then, in the library plan note, one line with the date and the score. The go or no-go on Bayada and Options follows the plan's success metrics: a pass is 8 of 10, and the re-derived-fact rate against the baseline needs two weeks of data, so a first run can say "pages exist and are findable" but not "the rate fell".
+A dated review note under `Projects/the-maestro/Reviews/` (frontmatter `ticket: the-maestro-121`), holding the score, the per-question table and the missing-pages list. Then, in the library plan note, one line with the date and the score. The go or no-go on the pilot clients follows the plan's success metrics: a pass is 8 of 10, and the re-derived-fact rate against the baseline needs two weeks of data, so a first run can say "pages exist and are findable" but not "the rate fell".
 
 ## Re-verify before you run
 

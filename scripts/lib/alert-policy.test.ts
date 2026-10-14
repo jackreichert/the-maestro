@@ -14,11 +14,11 @@ const NOON = Date.parse('2026-10-09T12:00:00Z');
 const ok = { state: 'ok' as const, line: '**Loop:** ok' };
 const started: AlertState = emptyState();
 let n = 0;
-const ev = (over: Partial<InboxEntry> = {}): InboxEntry => ({ id: (++n).toString(16).padStart(12, '0'), watch: 'prs', type: 'pr-watch', kind: 'conflict', at: new Date(NOON - 11 * 60_000).toISOString(), actionable: true, fields: { repo: 'a/scraper', number: 542 }, seen: false, handled: false, seenWindows: [], ...over });
+const ev = (over: Partial<InboxEntry> = {}): InboxEntry => ({ id: (++n).toString(16).padStart(12, '0'), watch: 'prs', type: 'pr-watch', kind: 'conflict', at: new Date(NOON - 11 * 60_000).toISOString(), actionable: true, fields: { repo: 'a/app', number: 542 }, seen: false, handled: false, seenWindows: [], ...over });
 const go = (entries: InboxEntry[], over: Partial<Parameters<typeof decide>[0]> = {}) => decide({ now: NOON, entries, health: ok, state: started, config: CFG, ...over });
 
 test('an allowlisted event unseen for 10 minutes is texted as repo, number and kind', () => {
-  assert.equal(go([ev()]).text, 'maestro: scraper#542 conflict');
+  assert.equal(go([ev()]).text, 'maestro: app#542 conflict');
 });
 
 test('away rule: a young, seen or handled event is not texted', () => {
@@ -36,14 +36,14 @@ test('kind allowlist: bot and unknown-author threads, info events and other kind
 });
 
 test('several events batch into one line with +N', () => {
-  const d = go([ev(), ev({ kind: 'changes-requested', fields: { repo: 'a/dtr', number: 3934 } }), ev({ fields: { repo: 'a/x', number: 1 } }), ev({ fields: { repo: 'a/y', number: 2 } })]);
-  assert.equal(d.text, 'maestro: 4 PR events: scraper#542 conflict, dtr#3934 changes-requested, x#1 conflict, +1');
+  const d = go([ev(), ev({ kind: 'changes-requested', fields: { repo: 'a/svc', number: 4207 } }), ev({ fields: { repo: 'a/x', number: 1 } }), ev({ fields: { repo: 'a/y', number: 2 } })]);
+  assert.equal(d.text, 'maestro: 4 PR events: app#542 conflict, svc#4207 changes-requested, x#1 conflict, +1');
 });
 
 test('rate limit: nothing within 20 minutes of the last text, and what waited goes out as one line after', () => {
   const state = { ...started, lastSentAt: NOON - RATE_MS + 1000 };
   assert.equal(go([ev()], { state }).text, null);
-  assert.equal(go([ev()], { state: { ...started, lastSentAt: NOON - RATE_MS } }).text, 'maestro: scraper#542 conflict');
+  assert.equal(go([ev()], { state: { ...started, lastSentAt: NOON - RATE_MS } }).text, 'maestro: app#542 conflict');
 });
 
 test('an event already texted is not texted again', () => {
@@ -82,7 +82,7 @@ test('health: a check that keeps failing is not a text, and its watch name never
 test('a PR event still texts while the loop is down, and the phone line does not mention the loop', () => {
   const down = { state: 'down' as const, line: '**Loop:** DOWN' };
   const d = go([ev()], { health: down, state: { ...started, badSince: NOON - HEALTH_AFTER_MS * 2 } });
-  assert.equal(d.text, 'maestro: scraper#542 conflict');
+  assert.equal(d.text, 'maestro: app#542 conflict');
   assert.doesNotMatch(d.text ?? '', /DOWN|STALLED|recovered|check failing/i);
 });
 
@@ -198,14 +198,14 @@ test('SENTINEL: free text in a summary never reaches the notifier argv', () => {
   try {
     const at = new Date(NOON - 30 * 60_000).toISOString();
     appendEvents(dir, [
-      { watch: 'prs', type: 'pr-watch', at, actionable: true, report: SENTINEL, summary: `CONFLICT a/scraper#9 by ${SENTINEL}: ${SENTINEL} title ${SENTINEL}` },
-      { watch: 'prs', type: 'pr-watch', at, actionable: true, report: '', summary: `DECISION a/dtr#4 by human-person -> CHANGES_REQUESTED ${SENTINEL}` },
+      { watch: 'prs', type: 'pr-watch', at, actionable: true, report: SENTINEL, summary: `CONFLICT a/app#9 by ${SENTINEL}: ${SENTINEL} title ${SENTINEL}` },
+      { watch: 'prs', type: 'pr-watch', at, actionable: true, report: '', summary: `DECISION a/svc#4 by human-person -> CHANGES_REQUESTED ${SENTINEL}` },
       { watch: 'notion', type: 'notion-watch', at, actionable: true, report: '', summary: `NOTION-CHANGED ${SENTINEL} Acme Customer Org` },
       { watch: 'r', type: 'reminder', at, actionable: true, report: '', summary: `reminder ${SENTINEL}` },
     ]);
     const argvs: string[][] = [];
     const line = runAlerts({ eventDir: dir, command: ['notify'], now: NOON, entries: readInbox(dir), health: ok, config: CFG, run: (c, a) => { argvs.push([c, ...a]); return { status: 0 }; } });
-    assert.ok(line && line.includes('scraper#9'), 'something was sent');
+    assert.ok(line && line.includes('app#9'), 'something was sent');
     assert.ok(!argvs.flat().join('\n').includes(SENTINEL), 'no sentinel in argv');
     assert.ok(!line.includes(SENTINEL));
   } finally { rmSync(dir, { recursive: true, force: true }); }
