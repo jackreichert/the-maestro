@@ -1,5 +1,6 @@
 // Run: node --test scripts/standing.test.ts
 import { test } from 'node:test';
+import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -305,7 +306,7 @@ test('cli: prime prints conditions first, once each, inside its 40 lines; handof
   const { vault, events } = setup();
   for (let i = 0; i < 30; i += 1) assert.equal(cli(vault, events, 'log', `open item number ${i}`, '--kind', 'wip', '--stream', 'S', '--new-stream', ...MARK).code, 0);
   assert.equal(cli(vault, events, 'standing', 'add', 'proxy-first', '--trigger', 'before prod, Bruno-1987!', '--action', 'work out the proxy, admin / hunter2', '--who', 'orchestrator', '--every-hours', '24').code, 0);
-  assert.equal(cli(vault, events, 'ask', 'ship the proxy with Mithril-2026! on Friday?', '--kind', 'decision', '--stream', 'S', '--searched', 'test fixture', ...MARK).code, 0);
+  assert.equal(cli(vault, events, 'ask', 'ship the proxy with Mithril-2026! on Friday?', '--kind', 'decision', '--stream', 'S', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK).code, 0);
   const prime = cli(vault, events, 'prime');
   assert.equal(prime.code, 0, prime.err);
   const lines = prime.out.trimEnd().split('\n');

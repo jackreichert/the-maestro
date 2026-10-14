@@ -1,5 +1,6 @@
 // Run: node --test scripts/status-page.test.ts
 import { test } from 'node:test';
+import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -20,7 +21,7 @@ function setup() {
     LEDGER_ROOT: '', VAULT_ROOT: '', MAESTRO_STATUS_REPO_STREAMS: 'repo=Alpha', MAESTRO_STATUS_STREAMS: 'Alpha', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_GH_ORG: 'org', MAESTRO_CONTAINER_ROOT: '',
   };
   const run = (...args: string[]) => spawnSync(process.execPath, [JOURNAL, ...args, '--vault', ledger, '--project', 'proj', '--status-dir', statusDir], { encoding: 'utf8', cwd, env });
-  assert.equal(run('ask', 'Merge widgets #12?', '--stream', 'Alpha', '--new-stream', '--searched', 'test fixture', ...MARK).status, 0);
+  assert.equal(run('ask', 'Merge widgets #12?', '--stream', 'Alpha', '--new-stream', '--searched', 'test fixture', ...ASK_TEMPLATE, ...MARK).status, 0);
   assert.equal(run('start', 'build a thing', '--stream', 'Alpha', ...MARK).status, 0);
   return { run, statusDir, env };
 }

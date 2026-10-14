@@ -1,6 +1,7 @@
 // Run: node --test scripts/journal-ask-gate.test.ts
 // Hermetic: a temp vault and a temp HOME; nothing is sent anywhere.
 import { test } from 'node:test';
+import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
@@ -48,7 +49,7 @@ test('ask without --searched exits 1 saying why and writes nothing', () => {
 
 test('ask with --searched writes the row with the text, paste asks included', () => {
   const f = fixture();
-  const r = f.run('ask', 'which way?', '--searched', 'README ask row, reference/ledger.md', ...MARKS);
+  const r = f.run('ask', 'which way?', '--searched', 'README ask row, reference/ledger.md', ...ASK_TEMPLATE, ...MARKS);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(f.rows()[0]?.searched, 'README ask row, reference/ledger.md');
   const noSearch = f.run('ask', 'run this', '--paste', join(tmpdir(), 'nope'), ...MARKS);
@@ -64,7 +65,7 @@ test('--searched only goes on ask', () => {
   assert.deepEqual(f.rows(), []);
 });
 
-const SEARCHED = ['--searched', 'test fixture'];
+const SEARCHED = ['--searched', 'test fixture', ...ASK_TEMPLATE];
 const TWO_WAY = ['--door', 'two-way', '--default', 'use the nightly window', '--recommend', 'nightly'];
 
 test('the rule table parses --outward and routeAsk acts only on a two-way default that is not outward', () => {

@@ -49,6 +49,8 @@ It is safe to run twice: the second run prints `already recorded`. A `proposed` 
 node scripts/journal.ts ask "Cost experiment cx-<date>: <practice>?" --kind decision --door two-way --recommend "run it for 5 working days" --default "do not start it" --searched "cost-experiment.ts propose output for <date>"
 ```
 
+This ask is two-way with a `--default`, so it is acted on as a note and is exempt from the ask template; any ask the user must see needs the template (`reference/ledger.md`).
+
 Skip the ask for a `running` row (an approved habit).
 
 ## 5. Record the run

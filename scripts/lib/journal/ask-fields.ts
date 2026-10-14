@@ -9,6 +9,8 @@
  * Rows written before these fields existed carry none of them and read exactly as before.
  */
 
+import { askTemplateProblems } from './ask-template.ts';
+
 export const DOORS = ['one-way', 'two-way'] as const;
 export const CLASSES = ['expedite', 'fixed-date', 'standard', 'intangible'] as const;
 export type Door = (typeof DOORS)[number];
@@ -185,6 +187,7 @@ export function askFieldProblems(r: AskRow): string[] {
         const v = r[f];
         if (v !== undefined && (typeof v !== 'string' || v.trim().length > TEXT_MAX || CONTROL.test(v))) out.push(`${f} is not plain text of ${TEXT_MAX} characters or fewer`);
     }
+    out.push(...askTemplateProblems(r as Record<string, unknown>));
     if (r.outward !== undefined && r.outward !== true) out.push('outward is not true');
     if (r.default !== undefined && askDoor(r) !== 'two-way') out.push('carries a default but is not a two-way door: the default will never fire');
     else if (r.default !== undefined && r.outward === true) out.push('carries a default but is outward: it always asks, so the default will never fire');
@@ -193,12 +196,20 @@ export function askFieldProblems(r: AskRow): string[] {
 
 export const ASK_USAGE = [
     'journal.ts ask "<question>" [--kind question|decision] [--stream S] [--ticket T] --model "<name>" --used "skill:x,tool:y"',
-    '    --searched "<where I looked>"           required: the docs, code, library page or ledger rows checked first; refused without it',
-    '    [--recommend "<what you would do>"]   a position the user can accept; without one the ask is not ready (warns)',
+    '    THE TEMPLATE (an ask that reaches the user is refused, nothing written, while any of these is missing; the message names each one):',
+    '    "<question>"                           one line: the text after `ask`',
+    '    --blocked "<what waits on the answer>"',
+    '    [--context "<one fact>" ...]           repeatable, one bullet each',
+    '    --option "<option> -- <its cost>" ...  repeat it: at least 2, each naming its cost or tradeoff after " -- "',
+    '    --recommend "<what you would do, and why>"   required',
+    '    --link <https or obsidian:// url> ...  repeat it: at least 1 (a PR, a ticket, a note)',
+    '    --body-file <md>                       the same fields as "## Question", "## What is blocked", "## Context", "## Options", "## Recommendation", "## Links", "## What I checked", "## Door" (flags win over the file)',
+    '    --searched "<where I looked>"           required: the docs, code, library page or ledger rows checked first; refused without it (the "What I checked" section)',
     '    [--door one-way|two-way]               two-way = reversible. Missing is treated as one-way',
     '    [--default "<what happens if silent>"] two-way asks only; a one-way ask can never carry one (refused)',
     '    [--outward]                            anything another person sees (Slack, Jira, email): always asks, never acted on a default',
     '    [--decide-by 2026-10-09|2d|6h|1w]      an ISO date, an ISO time with a zone, or relative; not in the past (alias: --by)',
     '    [--class expedite|fixed-date|standard|intangible]   default standard',
-    'journal.ts ask "<what to run>" --paste <block-file>      a run-this ask; takes none of the fields above',
+    'journal.ts ask "<what to run>" --paste <block-file>      a run-this ask; takes none of the fields above, and no template (the block file is the content)',
+    'A two-way ask with a --default is acted on and logged as a note, never shown to the user, so it needs no template.',
 ];
