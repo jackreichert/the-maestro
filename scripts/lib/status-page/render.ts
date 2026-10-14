@@ -273,7 +273,7 @@ export function selfReviewState(p: Pr, globs: readonly string[] = []): string {
   if (isOwnerMerged(p.repo, globs) && selfReviewNotReady(p.ci, p.mergeable === 'CONFLICTING').length === 0) return 'ready to merge';
   if (p.unresolved > 0) return 'new comments';
   if (p.isDraft) return 'draft for you';
-  if (p.reviewDecision === 'APPROVED') return 'approved, not ready';
+  if (p.reviewDecision === 'APPROVED') return p.mergeable === 'MERGEABLE' ? 'ready to merge' : 'approved, not ready';
   return 'awaiting your review';
 }
 

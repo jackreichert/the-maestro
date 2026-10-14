@@ -237,6 +237,9 @@ test('the Open PRs section lists self-review PRs under their own heading, outsid
   assert.doesNotMatch(section(on.join('\n'), '## Open PRs (1)').join('\n'), /thing [2345]/, 'none of them in the org list');
   const pooled = section(render({ ...CONFIG, reviewQueueCap: 2, selfReviewRepos: ['!acme'] }).join('\n'), '## Maestro PRs (self-review) (4)');
   assert.ok(!pooled.some((l) => /ready to merge/.test(l)), 'outside the review pool is not the same as named by self_review_repos');
+  const approved = [pr(7, 'me/tool', { reviewDecision: 'APPROVED', ci: 'PENDING' })];
+  const pooledApproved = renderPage({ now: NOW, status: board(), triage: { items: [] }, prs: approved, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config: { ...CONFIG, selfReviewRepos: ['!acme'] }, command: 'x' }).page;
+  assert.match(pooledApproved, /\| ready to merge \|/, 'an approved, mergeable out-of-pool PR keeps the org rule and reads ready');
   const off = render({ ...CONFIG, reviewQueueCap: 2 });
   assert.ok(off.includes('## Open PRs (5)'), 'unconfigured, every PR is listed together');
   assert.ok(!off.some((l) => l.startsWith('## Maestro PRs')));
