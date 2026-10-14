@@ -106,3 +106,14 @@ test('a draft left approved shows Approve and Reject (no Edit), so it is never s
   assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent), ['Approve', 'Reject']);
   cleanup();
 });
+
+test('on the Open PRs tab the queue shows only replies, one section per PR, each naming the person it answers', async () => {
+  const reply = (over: Partial<DraftRow>): DraftRow => row({ source: 'reply', severity: 'reply', where: undefined, replyTo: 'jane', text: 'Fixed in the next commit.', ...over });
+  const drafts = [reply({ id: 'dr-00000001' }), reply({ id: 'dr-00000002', pr: 9, prUrl: 'https://github.com/acme/widgets/pull/9', text: 'I would keep it: order matters.' }), row({ id: 'dr-00000003' })];
+  const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model(drafts), actions: noop, sources: ['reply'] });
+  assert.deepEqual([...root.querySelectorAll('section.pr h3')].map((h) => h.textContent), ['acme/widgets#7', 'acme/widgets#9']);
+  assert.equal(root.querySelectorAll('li.draft').length, 2, 'the review draft is not shown here');
+  assert.match(root.textContent ?? '', /answering jane/);
+  assert.match(root.textContent ?? '', /Reply/);
+  cleanup();
+});

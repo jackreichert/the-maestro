@@ -679,11 +679,11 @@ export class PodiumApp extends HTMLElement {
       el.model = this.#prs.model;
     });
     if (this.#sources.state === 'server') void this.#prs.load();   // each draw asks again, so the tab never shows older data than the cache holds
-    return el;
+    return h('div', {}, el, this.#replyDrafts());
   }
 
   /** Drafts still waiting for a decision, for the tab's count. */
-  #waitingDrafts(): number { return (this.#drafts.model.data?.drafts ?? []).filter((d) => d.state === 'pending' || d.state === 'failed').length; }
+  #waitingDrafts(): number { return (this.#drafts.model.data?.drafts ?? []).filter((d) => d.source === 'review' && (d.state === 'pending' || d.state === 'failed')).length; }
 
   /** The draft queue as an element wired to the page's store; each draw asks the server again, so the tab never shows older drafts than the file holds. */
   #draftQueue(sources: ReadonlyArray<'review' | 'reply'>, empty: string): HTMLElementTagNameMap['draft-queue'] {
@@ -696,6 +696,13 @@ export class PodiumApp extends HTMLElement {
     const unsubscribe = s.subscribe(() => { if (!el.isConnected) { unsubscribe(); return; } el.model = s.model; });
     if (this.#sources.state === 'server') void s.load();
     return el;
+  }
+
+  /** Under the Open PRs table: drafted replies to other people's comments on your own PRs, one section per PR. Approve posts the reply as you; nothing posts before that. */
+  #replyDrafts(): Node {
+    return h('section', { 'aria-label': 'Drafted replies' }, h('h2', { class: 'tab-title' }, 'Drafted replies'),
+      h('p', { class: 'section-hint' }, 'Replies drafted to people\'s comments on your PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
+      this.#draftQueue(['reply'], 'No replies are waiting for your approval.'));
   }
 
   /** The Others' PRs tab: drafted review comments on teammates' PRs. Approve posts as you; Reject records why and posts nothing. */
