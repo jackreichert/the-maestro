@@ -17,8 +17,8 @@
  *
  * Configured checks: customer names. They are deployment-specific and must never be committed, so they come from
  * `leak_terms` (user config file or overlay config.md) locally and from the `LEAK_TERMS` secret in CI. Comma or
- * newline separated; a term matches case-insensitively as a substring, with spaces, hyphens and underscores
- * interchangeable (`Acme Care` also finds `acme-care` and `AcmeCare`).
+ * newline separated; a term matches case-insensitively as a substring with every non-alphanumeric character ignored on both
+ * sides (`Acme Care` also finds `acme-care`, `acme.care` and `AcmeCare`; `widgetco` finds `Widget Co`).
  *
  * Missing terms: locally the run says so and checks built-ins only. In CI (`strict`) it fails unless
  * `LEAK_GATE_BUILTIN_ONLY=1` is set, and then it says in the log that customer names were not checked. It never
@@ -82,16 +82,17 @@ export const ALLOW: Allow[] = [
 ];
 
 /** The compiled configured terms, or the reason the list cannot be used. A term shorter than MIN_TERM would match almost anything. */
-export function parseTerms(raw: string): { terms: RegExp[]; error: string } {
+const squash = (t: string): string => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+export function parseTerms(raw: string): { terms: string[]; error: string } {
   const entries = raw.split(/[\n,]/).map((t) => t.trim()).filter((t) => t && !t.startsWith('#'));
   const short = entries.filter((t) => t.replace(/[\s_-]+/g, '').length < MIN_TERM);
   if (short.length) return { terms: [], error: `${short.length} configured term(s) are shorter than ${MIN_TERM} characters, which would match almost every line. Remove or lengthen them.` };
-  const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return { terms: entries.map((t) => new RegExp(t.split(/[\s_-]+/).map(esc).join('[\\s_-]*'), 'i')), error: '' };
+  return { terms: entries.map(squash), error: '' };
 }
 
 /** Labels hit on one line of `path`, after blanking allowlisted text. Configured terms are checked against the unblanked line. */
-export function scanLine(path: string, text: string, terms: RegExp[], allow: Allow[] = ALLOW): Label[] {
+export function scanLine(path: string, text: string, terms: string[], allow: Allow[] = ALLOW): Label[] {
   const found = new Set<Label>();
   for (const p of BUILTIN) {
     let line = text;
@@ -99,7 +100,8 @@ export function scanLine(path: string, text: string, terms: RegExp[], allow: All
     const re = new RegExp(p.re.source, `${p.re.flags.replace('g', '')}g`);
     for (let m = re.exec(line); m; m = re.exec(line)) if (!p.ok || p.ok(m[1] ?? '')) { found.add(p.label); break; }
   }
-  if (terms.some((t) => t.test(text))) found.add('configured-term');
+  const flat = squash(text);
+  if (terms.some((t) => flat.includes(t))) found.add('configured-term');
   return [...found];
 }
 
@@ -121,6 +123,16 @@ export function addedLines(diff: string): { path: string; line: number; text: st
   return out;
 }
 
+/** New-side paths of every file in a unified diff (added, modified or renamed), each once. */
+export function touchedPaths(diff: string): string[] {
+  const out = new Set<string>();
+  for (const text of diff.split('\n')) {
+    if (text.startsWith('rename to ')) out.add(text.slice(10));
+    else if (text.startsWith('diff --git ')) { const m = /^diff --git a\/.* b\/(.*)$/.exec(text); if (m) out.add(m[1]!); }
+  }
+  return [...out];
+}
+
 export interface LeakInput { repo: string; base: string; head: string; tree?: boolean; title?: string; body?: string; termsRaw: string; strict: boolean }
 export interface LeakResult { problems: string[]; notes: string[]; hits: Hit[] }
 
@@ -137,11 +149,14 @@ export function leakCheck(i: LeakInput): LeakResult {
       ? 'LEAK_GATE_BUILTIN_ONLY=1: built-in checks only; customer names were NOT checked.'
       : 'no leak_terms configured: built-in checks only; customer names were NOT checked. Set leak_terms in the user config file or the overlay config.md.');
   }
-  const range = i.tree ? ['diff', '-U0', '--no-color', '-M', EMPTY_TREE, i.head] : ['diff', '-U0', '--no-color', '-M', `${i.base}...${i.head}`];
+  const range = i.tree ? ['diff', '-U0', '--no-color', '--text', '--no-textconv', '--no-ext-diff', '-M', EMPTY_TREE, i.head] : ['diff', '-U0', '--no-color', '--text', '--no-textconv', '--no-ext-diff', '-M', `${i.base}...${i.head}`];
   const r = spawnSync('git', ['-C', i.repo, '-c', 'core.quotePath=false', ...range], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) return { problems: [`git diff failed: ${(r.stderr || '').trim()}`], notes, hits: [] };
   const hits: Hit[] = [];
-  for (const l of addedLines(r.stdout)) for (const label of scanLine(l.path, l.text, parsed.terms)) hits.push({ path: l.path, line: l.line, label });
+  // A NUL byte or UTF-16 content makes git call a file binary; --text reads it anyway and the NULs are dropped so UTF-16 text is still text.
+  for (const l of addedLines(r.stdout)) for (const label of scanLine(l.path, l.text.replaceAll('\0', ''), parsed.terms)) hits.push({ path: l.path, line: l.line, label });
+  // A path is published too: scan the new-side path of every touched file (line 0), renames included.
+  for (const path of touchedPaths(r.stdout)) for (const label of scanLine(path, path, parsed.terms, [])) hits.push({ path, line: 0, label });
   for (const [name, text] of [['PR title', i.title], ['PR body', i.body]] as const) {
     (text ?? '').split('\n').forEach((t, n) => { for (const label of scanLine(name, t, parsed.terms, [])) hits.push({ path: name, line: n + 1, label }); });
   }

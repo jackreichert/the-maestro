@@ -59,11 +59,14 @@ jobs:
             --body-file "$RUNNER_TEMP/pr-body.md" | tee "$RUNNER_TEMP/gates.out"
           code=${PIPESTATUS[0]}
           set -e
-          # Size limits are waived for this owner's repos. Body, smells and leaks still fail the job.
-          if [ "$code" != 0 ] && [ "$REPO_OWNER" = "jackreichert" ]; then
-            if grep -E -q '^(body|smells|leaks): FAIL' "$RUNNER_TEMP/gates.out"; then
-              exit 1
-            fi
+          # Size limits are waived for this owner's repos, and only for a plain size failure: exit code 1, every
+          # other gate printed PASS, and the size line says FAIL. A crash or git error (exit 2, or a gate that
+          # never printed) is not waived, so it can never pass the leak check silently.
+          if [ "$code" = 1 ] && [ "$REPO_OWNER" = "jackreichert" ] \
+            && grep -q '^size: .*FAIL$' "$RUNNER_TEMP/gates.out" \
+            && grep -q '^body: PASS$' "$RUNNER_TEMP/gates.out" \
+            && grep -q '^smells: PASS$' "$RUNNER_TEMP/gates.out" \
+            && grep -q '^leaks: PASS$' "$RUNNER_TEMP/gates.out"; then
             echo "size: waived for jackreichert repos"
             exit 0
           fi

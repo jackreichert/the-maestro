@@ -50,8 +50,13 @@ test('personal root: a home-relative dev container directory hits', () => {
 
 test('configured terms: case-insensitive substring, spaces, hyphens and underscores interchangeable, comments ignored', () => {
   const raw = 'Acme Care, Zed Health\n# a comment line\n\nQuux-Co';
-  for (const hit of ['Acme Care visit', 'acme-care', 'AcmeCare', 'ACME_CARE_ID', 'zed health', 'quux co', 'xQuuxCoy']) assert.deepEqual(labels(hit, raw), ['configured-term'], hit);
+  for (const hit of ['Acme Care visit', 'acme-care', 'AcmeCare', 'ACME_CARE_ID', 'acme.care', 'host=acme_care.example', 'zed health', 'quux co', 'xQuuxCoy', 'Quux.Co']) assert.deepEqual(labels(hit, raw), ['configured-term'], hit);
   for (const clean of ['acme', 'a comment line', 'care for acme']) assert.deepEqual(labels(clean, raw), [], clean);
+});
+
+test('configured terms: a term without separators finds the spaced form too', () => {
+  assert.deepEqual(labels('Widget Co ships', 'widgetco'), ['configured-term']);
+  assert.deepEqual(labels('widget-co', 'widgetco'), ['configured-term']);
 });
 
 test('configured terms: a term too short to mean anything is refused, not matched everywhere', () => {
@@ -288,4 +293,24 @@ test('the CLI reads terms from --terms-file and LEAK_TERMS, and --strict fails c
   assert.equal(strict.status, 1);
   assert.match(strict.stderr, /LEAK_TERMS is not set/);
   assert.equal(run(['--terms-file', '/nonexistent/x']).status, 2);
+});
+
+test('a file git calls binary (a NUL byte, or UTF-16) is still scanned', () => {
+  const repo = repoWith({}, { 'a.txt': 'x\n' });
+  git(repo, 'checkout', '-q', 'main');
+  git(repo, 'checkout', '-q', '-b', 'bin');
+  writeFileSync(join(repo, 'nul.txt'), Buffer.concat([Buffer.from('Acme Care\n'), Buffer.from([0])]));
+  writeFileSync(join(repo, 'wide.txt'), Buffer.from('\ufeffAcme Care\n', 'utf16le'));
+  git(repo, 'add', '--all');
+  git(repo, 'commit', '-q', '-m', 'bin');
+  const r = check(repo, { head: 'bin', termsRaw: 'Acme Care' });
+  assert.deepEqual(r.problems.sort(), ['nul.txt:1 configured-term', 'wide.txt:1 configured-term']);
+});
+
+test('a path is published too: a new file or a rename whose path carries a name hits at line 0', () => {
+  const repo = repoWith({ 'old.md': 'clean\n' }, { 'dir/acme-care notes.md': 'clean\n' });
+  git(repo, 'mv', 'old.md', `${Org}-notes.md`);
+  git(repo, 'commit', '-q', '-m', 'rename');
+  const r = check(repo, { termsRaw: 'Acme Care' });
+  assert.deepEqual(r.problems.sort(), [`${Org}-notes.md:0 org-term`, 'dir/acme-care notes.md:0 configured-term']);
 });
