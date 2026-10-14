@@ -75,7 +75,7 @@ test('page text is data, not markup: a hostile subject stays text and nothing is
 });
 
 test('landed, superseded and overlay branches fold into one line with the clean-up block; the block is text to paste', async () => {
-  const commands = ["git -C 'alpha' branch -D 'feat/old'", "git -C 'alpha' branch -D 'feat/older'"];
+  const commands = ["git -C 'alpha' update-ref -d 'refs/heads/feat/old' abc", "git -C 'alpha' update-ref -d 'refs/heads/feat/older' def"];
   const { root, cleanup } = await mount<El>('../src/local-review.ts', 'local-review', { review: review({ cleanup: { landed: 2, superseded: 1, special: 1, commands } }) });
   assert.match(root.querySelector('summary')?.textContent ?? '', /2 already on the base, 1 superseded by a ticket key on the base, 1 local overlay \(not counted\)/);
   assert.equal(root.querySelector('pre code')?.textContent, commands.join('\n'));

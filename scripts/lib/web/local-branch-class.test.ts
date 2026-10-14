@@ -3,7 +3,7 @@ process.env.MAESTRO_LOCAL_CONFIG ??= '';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { classCacheFile, readClassCache, writeClassCache } from './local-review-cache.ts';
@@ -61,7 +61,8 @@ test('the queue holds live work only; every other class is behind a count', () =
 
 test('the clean-up block names only landed, own, not-checked-out branches, one command a line, no comments', () => {
   const { commands } = scan().cleanup;
-  assert.deepEqual(commands, ["git -C 'delta' branch -D 'feat/cancelled'", "git -C 'delta' branch -D 'feat/cherried'"]);
+  const tip = (b: string): string => sh(delta, 'rev-parse', b);
+  assert.deepEqual(commands, [`git -C 'delta' update-ref -d 'refs/heads/feat/cancelled' ${tip('feat/cancelled')}`, `git -C 'delta' update-ref -d 'refs/heads/feat/cherried' ${tip('feat/cherried')}`]);
   for (const c of commands) assert.ok(!c.includes('#') && !c.includes('\n'));
 });
 
@@ -92,4 +93,45 @@ test('a scan that runs out of time keeps everything live and offers nothing for 
   const r = scanLocalReview({ containerRoot: container, vault: '', now: NOW, budgetMs: 1 });
   assert.deepEqual(r.cleanup.commands, []);
   assert.equal(r.cleanup.landed, 0);
+});
+
+// Fail-open cases from review: content git cherry or a blob-only compare cannot see.
+const put = (cwd: string, f: string, body: string): void => { writeFileSync(join(cwd, f), body); sh(cwd, 'add', f); };
+const origin2 = join(tmp, 'o2.git');
+const container2 = join(tmp, 'c2');
+mkdirSync(container2, { recursive: true });
+sh(tmp, 'init', '-q', '--bare', '-b', 'staging', origin2);
+const r = join(container2, 'repo');
+sh(tmp, 'clone', '-q', origin2, r);
+sh(r, 'config', 'user.email', ME);
+put(r, 'base.txt', 'b\n'); put(r, 'old.ts', 'code\n'); put(r, 'run.sh', 'echo\n'); sh(r, 'commit', '-qm', 'base');
+sh(r, 'push', '-q', 'origin', 'staging');
+const from = (n: string): void => { sh(r, 'switch', '-q', 'staging'); sh(r, 'switch', '-q', '-c', n); };
+
+// 1. Evil merge: the only new content is inside a merge commit; git cherry skips merges.
+from('feat/side'); put(r, 'side.txt', 's\n'); sh(r, 'commit', '-qm', 'side');
+from('feat/evil-merge');
+sh(r, 'merge', '-q', '--no-ff', '--no-commit', 'feat/side');
+put(r, 'secret-work.txt', 'unmerged work\n'); sh(r, 'commit', '-qm', 'merge side plus my work');
+// 2. Rename whose deletion half is unmerged: base gained a copy at the new path but kept the old one.
+from('feat/move'); sh(r, 'mv', 'old.ts', 'new.ts'); sh(r, 'commit', '-qm', 'move old.ts to new.ts');
+// 3. Mode-only change: chmod +x is the whole branch.
+from('feat/chmod'); chmodSync(join(r, 'run.sh'), 0o755); sh(r, 'add', 'run.sh'); sh(r, 'commit', '-qm', 'make run.sh executable');
+sh(r, 'switch', '-q', 'staging');
+put(r, 'side.txt', 's\n'); sh(r, 'commit', '-qm', 'land side');
+put(r, 'new.ts', 'code\n'); sh(r, 'commit', '-qm', 'copy old.ts to new.ts, keep old.ts for now');
+sh(r, 'push', '-q', 'origin', 'staging');
+sh(r, 'branch', '-q', '-D', 'feat/side');
+
+const deleted = (): string[] => scanLocalReview({ containerRoot: container2, vault: '', now: new Date() }).cleanup.commands;
+
+for (const b of ['feat/evil-merge', 'feat/move', 'feat/chmod']) {
+  test(`${b} has content not on the base (merge, rename or mode only), so it is never in the delete block`, () => {
+    assert.ok(!deleted().some((c) => c.includes(`'${b}'`)), deleted().join('\n'));
+  });
+}
+
+test('a landed branch is deleted by tip: update-ref refuses once the branch has moved', () => {
+  const [cmd] = scan().cleanup.commands;
+  assert.match(cmd ?? '', /update-ref -d 'refs\/heads\/[^']+' [0-9a-f]{40}$/);
 });

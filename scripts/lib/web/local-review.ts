@@ -25,7 +25,7 @@ export interface LocalUnit {
 /**
  * What the queue leaves out and why. `landed` branches are already on their base, `superseded` ones share a ticket key with a base
  * commit (a guess, never offered for deletion), `special` are `local/*` overlays. `commands` is the paste block that deletes the
- * landed ones that are the user's own and not checked out anywhere: one command per line, no comments. Nothing here ever runs.
+ * landed ones that are the user's own, each as `update-ref -d <ref> <scanned tip>` so git refuses it if the branch has moved since the scan and not checked out anywhere: one command per line, no comments. Nothing here ever runs.
  */
 export interface Cleanup { landed: number; superseded: number; special: number; commands: string[] }
 export const NO_CLEANUP: Cleanup = { landed: 0, superseded: 0, special: 0, commands: [] };
@@ -182,7 +182,7 @@ function cleanupOf(found: Candidate[]): Cleanup {
     .filter((c) => c.cls === 'landed' && !c.unit.checkedOut && c.mine())
     .sort((a, b) => `${a.folder}\0${a.unit.branch}`.localeCompare(`${b.folder}\0${b.unit.branch}`))
     .slice(0, MAX_CLEANUP)
-    .map((c) => `git -C ${quote(c.folder)} branch -D ${quote(c.unit.branch)}`);
+    .map((c) => `git -C ${quote(c.folder)} update-ref -d ${quote(`refs/heads/${c.unit.branch}`)} ${c.unit.head}`);
   return { landed: count('landed'), superseded: count('superseded'), special: count('special'), commands };
 }
 

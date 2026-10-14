@@ -58,7 +58,7 @@ export class LocalReviewList extends HTMLElement {
     if (!r.available) { this.#root.replaceChildren(h('p', { class: 'empty' }, r.reason ?? 'The local review queue could not be read.')); return; }
     const out = leftOut(r.cleanup);
     const folded = out ? [h('details', {}, h('summary', {}, out),
-      ...(r.cleanup.commands.length ? [h('p', { class: 'note' }, 'Clean up: these landed branches are yours and are not checked out. Paste to delete them.'), h('pre', {}, h('code', {}, r.cleanup.commands.join('\n')))] : []))] : [];
+      ...(r.cleanup.commands.length ? [h('p', { class: 'note' }, 'Clean up: these landed branches are yours and are not checked out. Paste to delete them; git refuses any that has moved since the scan.'), h('pre', {}, h('code', {}, r.cleanup.commands.join('\n')))] : []))] : [];
     if (r.units.length === 0) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'No live local branches are waiting for review.'), ...folded, ...r.notes.map((n) => h('p', { class: 'note' }, n))); return; }
     this.#root.replaceChildren(
       h('ul', { role: 'list' }, ...r.units.map((u) => {

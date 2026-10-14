@@ -16,13 +16,14 @@ const KEY = /[A-Za-z]{2,10}-\d+/g;
 
 /** Every touched file already has the base's content: the branch adds nothing even when its commits were squashed or reworded. */
 function touchesNothingNew(run: Run, base: string, branch: string): boolean {
-  const files = run('diff', '--name-only', '-z', `${base}...${branch}`);
+  const files = run('diff', '--no-renames', '--name-only', '-z', `${base}...${branch}`);
   if (!files.ok) return false;
   // Fail closed: a file counts as unchanged only when both lookups succeed with the same object. Two failures (a refused call,
   // a file gone on both sides) never read as equal, so an unreadable branch stays live.
   return files.out.split('\0').filter(Boolean).every((f) => {
-    const onBase = run('rev-parse', '-q', '--verify', `${base}:${f}`);
-    const onBranch = run('rev-parse', '-q', '--verify', `${branch}:${f}`);
+    // ls-tree prints mode, type and object, so a mode-only change (chmod +x) differs too. Literal pathspecs: a name is never a glob.
+    const onBase = run('--literal-pathspecs', 'ls-tree', base, '--', f);
+    const onBranch = run('--literal-pathspecs', 'ls-tree', branch, '--', f);
     return onBase.ok && onBranch.ok && onBase.out !== '' && onBase.out === onBranch.out;
   });
 }
@@ -38,7 +39,10 @@ export function classifyBranch(run: Run, base: string, branch: string): BranchCl
   if (branch.startsWith('local/')) return 'special';
   const ahead = run('rev-list', '--count', `${base}..${branch}`);
   if (ahead.ok && ahead.out === '0') return 'landed';
-  const cherry = run('cherry', base, branch);
+  // git cherry skips merge commits, so content that lives only in a merge (a conflict resolution, edits made with --no-commit) is
+  // invisible to it: such a branch is judged on its files alone.
+  const merges = run('rev-list', '--merges', '--count', `${base}..${branch}`);
+  const cherry = merges.ok && merges.out === '0' ? run('cherry', base, branch) : { ok: false, out: '' };
   if (cherry.ok && cherry.out.split('\n').filter(Boolean).every((l) => l.startsWith('-')) && ahead.ok) return 'landed';
   if (touchesNothingNew(run, base, branch)) return 'landed';
   return keyLandedOnBase(run, base, branch) ? 'superseded' : 'live';
