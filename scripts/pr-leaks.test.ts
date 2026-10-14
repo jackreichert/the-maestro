@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ALLOW, addedLines, leakCheck, parseTerms, scanLine, type Allow } from './pr-leaks.ts';
@@ -269,4 +269,23 @@ test('the CLI scans a tree and exits non-zero on a hit', () => {
   assert.equal(r.status, 1);
   assert.match(r.stderr, /old\.md:1 org-term/);
   assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' }).status, 2);
+});
+
+test('portable: the scanner imports only node built-ins, so a sibling repo can copy it with this test', () => {
+  const imports = [...readFileSync(SCRIPT, 'utf8').matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1]);
+  assert.ok(imports.length > 0 && imports.every((i) => i!.startsWith('node:')), imports.join(', '));
+});
+
+test('the CLI reads terms from --terms-file and LEAK_TERMS, and --strict fails closed without either', () => {
+  const repo = repoWith({}, { 'src/a.ts': "const c = 'Acme Care';\n" });
+  const run = (extra: string[], e: Record<string, string> = {}) => spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'main', '--head', 'feature', ...extra], { encoding: 'utf8', env: env(repo, e) });
+  const file = join(tmp('terms'), 'terms.txt');
+  writeFileSync(file, 'Acme Care\n');
+  assert.equal(run(['--terms-file', file]).status, 1);
+  assert.equal(run([], { LEAK_TERMS: 'Acme Care' }).status, 1);
+  assert.equal(run([]).status, 0, 'loose mode with no terms passes with a note');
+  const strict = run(['--strict']);
+  assert.equal(strict.status, 1);
+  assert.match(strict.stderr, /LEAK_TERMS is not set/);
+  assert.equal(run(['--terms-file', '/nonexistent/x']).status, 2);
 });

@@ -5,7 +5,7 @@
  * for each hit. It never prints the matched text, because a hit on a configured name would put that name in a
  * public log.
  *
- *   node scripts/pr-leaks.ts --repo <path> --base <ref> [--head <ref>] [--tree]
+ *   node scripts/pr-leaks.ts --repo <path> --base <ref> [--head <ref>] [--tree] [--terms-file <path>] [--strict]
  *
  * Runs in two places, so a writer cannot skip it: `pr-open.ts` (a repo that is this skill, or listed in
  * `leak_gate_repos`) and `ci-gates.ts` (the `gates` workflow). `--tree` scans every tracked file at --head instead
@@ -24,19 +24,22 @@
  * `LEAK_GATE_BUILTIN_ONLY=1` is set, and then it says in the log that customer names were not checked. It never
  * passes silently as if it had.
  *
+ * Portable: this file imports only node built-ins, so a sibling repo copies it (and pr-leaks.test.ts) as is. The term list is the
+ * `termsRaw` argument; the CLI reads it from the LEAK_TERMS environment variable or `--terms-file <path>`. Callers in the-maestro
+ * (pr-open.ts, ci-gates.ts) pass it from local-config. The ALLOW table below is this repo's; a port starts it empty. The CI step
+ * passes the LEAK_TERMS secret and LEAK_GATE_BUILTIN_ONLY variable as env, then runs
+ * `node scripts/pr-leaks.ts --repo . --base $BASE_SHA --head <head> --strict` from a checkout of the base ref.
+ *
  * This file builds its own search terms from fragments so the gate does not trip on itself.
  * Exit 0 clean, 1 a hit or an unusable term list, 2 bad usage or a git error.
  */
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { LEAK_GATE_REPOS, LEAK_TERMS } from './local-config.ts';
-import { globToRegExp, resolveBase } from './pr-size.ts';
 
 const ORG = ['ar', 'ya'].join('');
 const TYPO = ['ay', 'ra'].join('');
 const OWNER = ['ja', 'ck'].join('');
-const SELF_SLUG = ['jackreichert', 'the-maestro'].join('/');
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MIN_TERM = 3;
 
@@ -145,11 +148,21 @@ export function leakCheck(i: LeakInput): LeakResult {
   return { problems: hits.map((h) => `${h.path}:${h.line} ${h.label}`), notes, hits };
 }
 
-/** True when the repo's origin is this skill or matches `leak_gate_repos`. An origin that cannot be read as a GitHub repo is not gated; the CI gate is the backstop. */
-export function gateApplies(repo: string, globs: string[] = LEAK_GATE_REPOS): boolean {
+/** `owner/name` glob match, case-insensitive; `*` matches any run of characters. */
+const globMatch = (glob: string, slug: string): boolean => new RegExp(`^${glob.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i').test(slug);
+
+/** True when the repo's origin slug matches one of `globs` (`owner/name`, `*` allowed). An origin that cannot be read as a GitHub repo is not gated; the CI gate is the backstop. */
+export function gateApplies(repo: string, globs: string[]): boolean {
   const url = spawnSync('git', ['-C', repo, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8' }).stdout || '';
-  const slug = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim())?.[1]?.toLowerCase() ?? '';
-  return slug !== '' && [SELF_SLUG, ...globs].some((g) => globToRegExp(g.toLowerCase()).test(slug));
+  const slug = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim())?.[1] ?? '';
+  return slug !== '' && globs.some((g) => globMatch(g, slug));
+}
+
+/** `origin/<base>` after a quiet fetch when it exists, else `base` as given (a sha or a local branch). */
+export function resolveBase(repo: string, base: string): string {
+  const git = (...a: string[]) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  git('fetch', '--quiet', 'origin', base);
+  return git('rev-parse', '--verify', '--quiet', `origin/${base}^{commit}`).status === 0 ? `origin/${base}` : base;
 }
 
 /** Prints the result in the gate's `leaks: PASS|FAIL` shape; hit lines and notes go to stderr. Returns the failure count. */
@@ -165,8 +178,11 @@ function main(argv: string[]): number {
   const repo = get('--repo');
   const base = get('--base');
   const tree = argv.includes('--tree');
-  if (!repo || (!base && !tree)) { console.error('usage: node scripts/pr-leaks.ts --repo <path> --base <ref> [--head <ref>] [--tree]'); return 2; }
-  const res = leakCheck({ repo, base: tree ? '' : resolveBase(repo, base), head: get('--head') || 'HEAD', tree, termsRaw: [LEAK_TERMS, process.env.LEAK_TERMS ?? ''].join('\n'), strict: false });
+  if (!repo || (!base && !tree)) { console.error('usage: node scripts/pr-leaks.ts --repo <path> --base <ref> [--head <ref>] [--tree] [--terms-file <path>] [--strict]'); return 2; }
+  const file = get('--terms-file');
+  let fromFile = '';
+  try { fromFile = file ? readFileSync(file, 'utf8') : ''; } catch (e) { console.error(`pr-leaks: cannot read --terms-file: ${(e as Error).message}`); return 2; }
+  const res = leakCheck({ repo, base: tree ? '' : resolveBase(repo, base), head: get('--head') || 'HEAD', tree, termsRaw: [fromFile, process.env.LEAK_TERMS ?? ''].join('\n'), strict: argv.includes('--strict') });
   return report(res) ? 1 : 0;
 }
 

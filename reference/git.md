@@ -225,7 +225,7 @@ and paste the line it prints (`Smells: ...`) into the PR body on a line of its o
 This skill is public and generic, so a PR that adds an org term, a personal path, the owner's name or a customer name is refused, in both places a PR can pass: `pr-open.ts` before `gh` is called, and the `gates` workflow in CI (`ci-gates.ts`). `pr-leaks.ts` reads the lines the diff adds, plus the PR title and body, and prints `file:line` and a kind for each hit, never the matched text, so a hit on a customer name cannot put that name in a public log.
 
 ```bash
-node <scripts dir>/pr-leaks.ts --repo <repo> --base <branch> [--tree]   # --tree scans every tracked file instead of a diff
+node <scripts dir>/pr-leaks.ts --repo <repo> --base <branch> [--tree] [--terms-file <path>] [--strict]   # --tree scans every tracked file; terms also come from LEAK_TERMS; --strict fails without any
 ```
 
 - **Built in, no setup.** An absolute home path (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>`; placeholders such as `me`, `user` and `<name>` pass), a home-relative dev container directory, the org term and its common typo (at a word start in any case, or as a camelCase part, so a repo or vault name that carries it is caught), and the owner's first name. These terms are already public through the repository URL, so they are in the repo rather than in config.
@@ -233,6 +233,7 @@ node <scripts dir>/pr-leaks.ts --repo <repo> --base <branch> [--tree]   # --tree
 - **Where it applies.** `pr-open.ts` runs it in this skill's repo and in any repo named in `leak_gate_repos` (GitHub `owner/name` globs, user config file only). CI runs it on every PR to this repo, from the base ref's copy of the script, so a PR cannot loosen the gate it is judged by.
 - **Missing terms never pass silently.** Locally, with no `leak_terms`, `pr-open.ts` says customer names were not checked and carries on with the built-ins. In CI the job fails with `LEAK_TERMS is not set`; a repository variable `LEAK_GATE_BUILTIN_ONLY=1` accepts the built-ins alone, and the log then says customer names were not checked. Pull requests from forks get no secrets, so they hit the same failure.
 - **Allowlist.** A short table in `pr-leaks.ts`, each entry with a reason, blanking only its own text so another hit on the same line still fails: names that are stored in ledger and library pages already written (the box names, the retro lesson source, the told-by kind), and two default paths. A configured term is never allowlisted. When review removes the last entry, remove the table.
+- **Portable.** `pr-leaks.ts` imports only node built-ins and takes the term list as an argument, so a sibling repo copies it with `pr-leaks.test.ts` and a CI step that passes the secret as `LEAK_TERMS`. The allowlist table is this repo's; a port starts it empty.
 - Enforced: added lines, title and body, in both places, and a git failure or an unusable term list fails rather than passes. Not enforced: that the term list is complete, or that a client named by a nickname, a site or an id is caught; the reviewer's [customer names and references check](brief.md#the-review-brief) covers that by reading.
 
 ### Review-note gate
