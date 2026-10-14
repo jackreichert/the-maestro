@@ -491,6 +491,11 @@ export const REVIEW_POOL_OWNERS = repoGlobs(globList('MAESTRO_REVIEW_POOL_OWNERS
 /** The self-review list every caller reads: self_review_repos, plus the review pool as `!`-prefixed entries (see lib/self-review.ts). */
 export const SELF_REVIEW_REPOS = [...repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS', 'self_review_repos')), ...REVIEW_POOL_OWNERS.map((g) => `!${g}`)];
 
+/** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
+export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));
+/** The owners the helper searches: gh_org plus the plain owners in review_pool_owners. With none, it searches nothing: it is never unscoped. */
+export const TEAMMATE_REVIEW_OWNERS = [...new Set([GH_ORG, ...REVIEW_POOL_OWNERS.map((g) => g.split('/')[0] ?? '')].filter((o) => o !== '' && !o.includes('*')))];
+
 /** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. User config file only. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pickUserFile('pr_body_check_private'));
 

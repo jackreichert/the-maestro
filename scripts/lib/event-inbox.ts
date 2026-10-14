@@ -76,6 +76,7 @@ const KIND_RULES: [RegExp, string][] = [
   [/^THREAD\b/, 'thread'],
   [/^REPLY\b/, 'reply'],
   [/^COMMENT\b/, 'comment'],
+  [/^REVIEW-WAIT\b/, 'review-wait'],
   [/^REVIEW\b/, 'review'],
   [/^READY\b/, 'ready'],
   [/^LEFT-OPEN-SET\b/, 'left-open-set'],

@@ -16,13 +16,13 @@ export async function loadDrafts(fetchFn: Fetch = (u, i) => fetch(u, i)): Promis
   } catch { return null; }
 }
 
-/** Sends one decision. `payload` is `{ id, text }` for approve and edit, `{ id, reason }` for reject. */
-export function createDraftActions(fetchFn: Fetch = (u, i) => fetch(u, i)): { send(op: DraftOp, payload: Record<string, string>): Promise<DraftOutcome> } {
+/** Sends one decision. `payload` is `{ id, rev }` for approve, `{ id, text }` for edit (with `comments` for a review's inline texts), `{ id, reason }` for reject. */
+export function createDraftActions(fetchFn: Fetch = (u, i) => fetch(u, i)): { send(op: DraftOp, payload: Record<string, string>, comments?: string[]): Promise<DraftOutcome> } {
   const poster = createPoster(fetchFn);
   return {
-    async send(op, payload) {
+    async send(op, payload, comments) {
       try {
-        const res = await poster.post(`/api/drafts/${op}`, payload);
+        const res = await poster.post(`/api/drafts/${op}`, comments ? { ...payload, comments } : payload);
         if (!res) return { ok: false, message: 'Could not get permission to save from the server. Reload the page.' };
         const body: unknown = await res.json().catch(() => null);
         if (res.ok && isObj(body) && body.ok === true) return { ok: true, ...(typeof body.url === 'string' ? { url: body.url } : {}) };

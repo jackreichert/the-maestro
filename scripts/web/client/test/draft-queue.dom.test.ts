@@ -8,9 +8,9 @@ import type { DraftActions } from '../src/draft-queue.ts';
 
 installDom();
 type El = HTMLElement & { model: DraftsModel; sources: string[]; actions: DraftActions; emptyText: string };
-const row = (over: Partial<DraftRow> = {}): DraftRow => ({ id: 'dr-0000000a', source: 'review', repo: 'acme/widgets', pr: 7, prUrl: 'https://github.com/acme/widgets/pull/7', severity: 'suggestion', text: 'Could this guard an empty list?', where: 'src/a.ts:3', context: 'Reads items[0] without a check', state: 'pending', createdAt: '2026-10-14T10:00:00Z', ...over });
+const row = (over: Partial<DraftRow> = {}): DraftRow => ({ rev: '0123456789ab', id: 'dr-0000000a', source: 'review', repo: 'acme/widgets', pr: 7, prUrl: 'https://github.com/acme/widgets/pull/7', severity: 'suggestion', text: 'Could this guard an empty list?', where: 'src/a.ts:3', context: 'Reads items[0] without a check', state: 'pending', createdAt: '2026-10-14T10:00:00Z', ...over });
 const model = (drafts: DraftRow[], ui: DraftsModel['ui'] = {}): DraftsModel => ({ data: { generatedAt: '2026-10-14T11:00:00Z', drafts }, loaded: true, ui });
-const noop: DraftActions = { startEdit() {}, startReject() {}, cancel() {}, setBuffer() {}, saveEdit() {}, approve() {}, reject() {} };
+const noop: DraftActions = { startEdit() {}, startReject() {}, cancel() {}, setBuffer() {}, setComment() {}, saveEdit() {}, approve() {}, reject() {} };
 
 test('a draft shows repo, PR link, file:line, severity in words, the text, and the three buttons', async () => {
   const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([row()]), actions: noop, sources: ['review'] });
@@ -76,6 +76,20 @@ test('text from a draft is set as text, never as markup', async () => {
   const { root, cleanup } = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([row({ text: '<img src=x onerror=alert(1)>' })]), actions: noop, sources: ['review'] });
   assert.equal(root.querySelector('img'), null);
   cleanup();
+});
+
+test('a review shows its event in words, its compliment-first body and each inline comment with file:line; edit has a box per comment', async () => {
+  const review = row({ severity: 'review', text: 'The ID validation before anything goes into a URL is exactly right.\n\nResolve these however you think best.', review: { event: 'REQUEST_CHANGES', compliment: 'The ID validation before anything goes into a URL is exactly right.', comments: [{ path: 'src/a.ts', line: 3, text: 'This crashes on an empty cart.', severity: 'blocking' }, { path: 'src/b.ts', line: 8, text: 'Could we name this once?', severity: 'suggestion' }] } });
+  const view = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([review]), actions: noop, sources: ['review'] });
+  const text = view.root.textContent ?? '';
+  assert.match(text, /Review: request changes/);
+  assert.match(text, /src\/a\.ts:3/);
+  assert.match(text, /Blocking/);
+  assert.match(text, /ID validation before anything goes into a URL/);
+  view.cleanup();
+  const edit = await mount<El>('../src/draft-queue.ts', 'draft-queue', { model: model([review], { 'dr-0000000a': { mode: 'edit', buffer: review.text, comments: ['This crashes on an empty cart.', 'Could we name this once?'], busy: false } }), actions: noop, sources: ['review'] });
+  assert.equal(edit.root.querySelectorAll('textarea').length, 3);
+  edit.cleanup();
 });
 
 test('an uncertain or in-flight draft stays in the open list with Reject only: the person checks GitHub, and cannot approve or edit it', async () => {

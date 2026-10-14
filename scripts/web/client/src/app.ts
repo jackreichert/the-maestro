@@ -249,7 +249,7 @@ export class PodiumApp extends HTMLElement {
     delay: (ms) => new Promise((ok) => { setTimeout(ok, ms); }),
   });
   // The draft queue's data and what is being typed live here too (see drafts-store.ts); every decision goes to the server, which alone posts.
-  readonly #drafts = new DraftsStore({ load: () => loadDrafts(), send: (op, payload) => createDraftActions().send(op, payload) });
+  readonly #drafts = new DraftsStore({ load: () => loadDrafts(), send: (op, payload, comments) => createDraftActions().send(op, payload, comments) });
   #liveUpdates: LiveUpdates<Fresh> | null = null;
   #liveStatus: LiveStatus | null = null;
   // Newer data is held while a press is in flight or an answer is being typed, and shown when that ends. Drafts and settled
@@ -691,7 +691,7 @@ export class PodiumApp extends HTMLElement {
     const s = this.#drafts;
     el.sources = sources;
     el.emptyText = empty;
-    el.actions = { startEdit: (id) => s.startEdit(id), startReject: (id) => s.startReject(id), cancel: (id) => s.cancel(id), setBuffer: (id, t) => s.setBuffer(id, t), saveEdit: (id) => { void s.saveEdit(id); }, approve: (id) => { void s.approve(id); }, reject: (id) => { void s.reject(id); } };
+    el.actions = { startEdit: (id) => s.startEdit(id), startReject: (id) => s.startReject(id), cancel: (id) => s.cancel(id), setBuffer: (id, t) => s.setBuffer(id, t), setComment: (id, i, t) => s.setComment(id, i, t), saveEdit: (id) => { void s.saveEdit(id); }, approve: (id) => { void s.approve(id); }, reject: (id) => { void s.reject(id); } };
     el.model = s.model;
     const unsubscribe = s.subscribe(() => { if (!el.isConnected) { unsubscribe(); return; } el.model = s.model; });
     if (this.#sources.state === 'server') void s.load();

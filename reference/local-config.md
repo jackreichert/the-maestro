@@ -65,6 +65,7 @@ one_pr_per_ticket: on         # on (default) or off: pr-open.ts refuses a second
 one_pr_exempt_heads: release/*  # head-branch globs (comma-separated) the one-PR-per-ticket rule skips; default release/*; file-only
 review_pool_owners: example-org # GitHub owners (or owner/name globs, comma-separated) whose PRs other people review; every repo outside the pool counts as self-review, so personal repos never fill review_queue_cap; default none
 self_review_repos: example-owner/tool # GitHub owners (or owner/name globs, comma-separated) whose PRs only you review: not counted toward review_queue_cap, listed apart from the rest on the PR board; a bare owner means owner/*; default none, so every PR is counted and listed together
+teammate_review_minutes: 15   # minutes a teammate's ready PR may wait with no human review before pr-watch reports REVIEW-WAIT (the teammate review playbook); scope is gh_org plus the owners in review_pool_owners; default 0, off
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on
 stack_max_depth: 3           # most PRs in one stack; the PR board flags a deeper stack; default 3

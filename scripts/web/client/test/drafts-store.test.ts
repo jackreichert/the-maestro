@@ -6,7 +6,7 @@ import type { DraftRow, DraftsData } from '../src/drafts-model.ts';
 import { DraftsStore } from '../src/drafts-store.ts';
 import type { DraftOp, DraftOutcome } from '../src/drafts-api.ts';
 
-const row = (over: Partial<DraftRow> = {}): DraftRow => ({ id: 'dr-0000000a', source: 'review', repo: 'acme/widgets', pr: 7, prUrl: 'https://github.com/acme/widgets/pull/7', severity: 'suggestion', text: 'Could this guard an empty list?', state: 'pending', createdAt: '2026-10-14T10:00:00Z', ...over });
+const row = (over: Partial<DraftRow> = {}): DraftRow => ({ rev: '0123456789ab', id: 'dr-0000000a', source: 'review', repo: 'acme/widgets', pr: 7, prUrl: 'https://github.com/acme/widgets/pull/7', severity: 'suggestion', text: 'Could this guard an empty list?', state: 'pending', createdAt: '2026-10-14T10:00:00Z', ...over });
 const data = (...drafts: DraftRow[]): DraftsData => ({ generatedAt: '2026-10-14T11:00:00Z', drafts });
 
 function rig(outcome: DraftOutcome = { ok: true }) {
@@ -24,12 +24,12 @@ test('sanitizeDrafts keeps well-formed rows and drops the rest', () => {
   assert.equal(sanitizeDrafts('nope'), null);
 });
 
-test('approve sends the text the card shows, then reloads for the server state', async () => {
+test('approve names the revision the card shows, then reloads for the server state', async () => {
   const { store, sent, set } = rig();
   await store.load();
   set(data(row({ state: 'posted' })));
   await store.approve('dr-0000000a');
-  assert.deepEqual(sent, [{ op: 'approve', payload: { id: 'dr-0000000a', text: 'Could this guard an empty list?' } }]);
+  assert.deepEqual(sent.map(({ op, payload }) => ({ op, payload })), [{ op: 'approve', payload: { id: 'dr-0000000a', rev: '0123456789ab' } }]);
   assert.equal(store.model.data?.drafts[0]?.state, 'posted');
   assert.equal(store.model.ui['dr-0000000a']?.message, 'Posted.');
 });
@@ -71,4 +71,16 @@ test('a double press while a decision is in flight makes one request', async () 
   release();
   await first;
   assert.equal(calls, 1);
+});
+
+test('a review card edits its inline comments through the store and sends them with the edit', async () => {
+  const review: DraftRow = row({ severity: 'review', rev: 'abcdef012345', review: { event: 'APPROVE', compliment: 'Nice validation.', comments: [{ path: 'a.ts', line: 3, text: 'One.', severity: 'suggestion' }, { path: 'b.ts', line: 9, text: 'Two.', severity: 'suggestion' }] } });
+  const seen: (string[] | undefined)[] = [];
+  const store = new DraftsStore({ load: async () => data(review), send: async (_op, _p, comments) => { seen.push(comments); return { ok: true }; } });
+  await store.load();
+  store.startEdit('dr-0000000a');
+  assert.deepEqual(store.model.ui['dr-0000000a']?.comments, ['One.', 'Two.']);
+  store.setComment('dr-0000000a', 1, '');
+  await store.saveEdit('dr-0000000a');
+  assert.deepEqual(seen, [['One.', '']]);
 });

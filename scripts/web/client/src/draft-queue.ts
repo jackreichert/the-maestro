@@ -6,7 +6,7 @@ import type { DraftsModel } from './drafts-store.ts';
 
 /** What the card's buttons call; the app wires them to the store. */
 export interface DraftActions {
-  startEdit(id: string): void; startReject(id: string): void; cancel(id: string): void; setBuffer(id: string, text: string): void;
+  startEdit(id: string): void; startReject(id: string): void; cancel(id: string): void; setBuffer(id: string, text: string): void; setComment(id: string, index: number, text: string): void;
   saveEdit(id: string): void; approve(id: string): void; reject(id: string): void;
 }
 
@@ -23,6 +23,8 @@ const CSS = `${BASE_CSS}${UI_CSS}
   label { display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--text-secondary); }
   textarea, input[type=text] { font: inherit; color: var(--text-primary); background: var(--surface-1); border: var(--hairline-strong); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); width: 100%; }
   textarea { min-height: 7em; resize: vertical; }
+  ul.inline { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+  ul.inline li { padding-left: var(--space-3); border-left: 2px solid var(--border-strong); display: grid; gap: 2px; }
   .msg { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
   .msg.bad { color: var(--critical); }
   .done { color: var(--text-muted); }
@@ -35,6 +37,7 @@ const SEVERITY: Record<DraftRow['severity'], { glyph: string; word: string; tone
   blocking: { glyph: '!', word: 'Blocking', tone: 'bad' },
   suggestion: { glyph: '~', word: 'Suggestion', tone: '' },
   reply: { glyph: '>', word: 'Reply', tone: '' },
+  review: { glyph: '>', word: 'Review', tone: '' },
 };
 const STATE_WORDS: Partial<Record<DraftRow['state'], string>> = {
   approved: 'Approved, posting', posting: 'Posting', posted: 'Posted', rejected: 'Rejected',
@@ -88,16 +91,23 @@ export class DraftQueue extends HTMLElement {
 
   #head(d: DraftRow): HTMLElement {
     const sev = SEVERITY[d.severity];
+    const blocks = d.review?.event === 'REQUEST_CHANGES';
     return h('div', { class: 'meta' },
-      h('span', { class: `chip ${sev.tone}` }, h('span', { 'aria-hidden': 'true' }, `${sev.glyph} `), sev.word),
+      h('span', { class: `chip ${d.review ? (blocks ? 'bad' : 'good') : sev.tone}` }, h('span', { 'aria-hidden': 'true' }, `${d.review ? (blocks ? '!' : '+') : sev.glyph} `), d.review ? (blocks ? 'Review: request changes' : 'Review: approve') : sev.word),
       d.where ? h('code', {}, d.where) : null,
       d.replyTo ? h('span', {}, `answering ${d.replyTo}`) : null);
   }
 
   #decided(d: DraftRow): HTMLElement {
     return h('li', { class: 'draft done' }, this.#head(d),
-      h('p', { class: 'body' }, d.text),
+      h('p', { class: 'body' }, d.text), this.#inline(d),
       h('p', { class: 'msg' }, `${STATE_WORDS[d.state] ?? d.state}${d.rejectReason ? `: ${d.rejectReason}` : ''}`, ' ', this.#postedLink(d)));
+  }
+
+  /** A review's inline comments, each with its file:line and a word for blocking or suggestion. */
+  #inline(d: DraftRow): Node {
+    const cs = d.review?.comments ?? [];
+    return cs.length ? h('ul', { class: 'inline', role: 'list', 'aria-label': 'Inline comments' }, ...cs.map((c) => h('li', {}, h('span', { class: 'meta' }, h('code', {}, `${c.path}:${c.line}`), h('span', { class: `chip ${c.severity === 'blocking' ? 'bad' : ''}` }, c.severity === 'blocking' ? 'Blocking' : 'Suggestion')), h('p', { class: 'body' }, c.text)))) : document.createDocumentFragment();
   }
 
   #postedLink(d: DraftRow): Node | null {
@@ -120,16 +130,22 @@ export class DraftQueue extends HTMLElement {
       const ta = h('textarea', { 'aria-label': `Edit comment on ${what}`, maxlength: '4000' });
       ta.value = ui.buffer;
       ta.addEventListener('input', () => a?.setBuffer(d.id, ta.value));
-      body = [h('label', {}, 'Your wording (posted exactly as written once you approve it)', ta),
+      const boxes = (d.review?.comments ?? []).map((c, i) => {
+        const box = h('textarea', { 'aria-label': `Edit inline comment on ${c.path}:${c.line}` });
+        box.value = ui.comments?.[i] ?? c.text;
+        box.addEventListener('input', () => a?.setComment(d.id, i, box.value));
+        return h('label', {}, `${c.path}:${c.line} (empty it to drop this comment)`, box);
+      });
+      body = [h('label', {}, 'Your wording (posted exactly as written once you approve it)', ta), ...boxes,
         h('div', { class: 'actions' }, btn('primary', 'Save', `Save edit to comment on ${what}`, () => a?.saveEdit(d.id)), btn('secondary', 'Cancel', 'Cancel edit', () => a?.cancel(d.id)))];
     } else if (ui.mode === 'reject') {
       const input = h('input', { type: 'text', 'aria-label': `Why reject the comment on ${what}`, maxlength: '500' });
       input.value = ui.buffer;
       input.addEventListener('input', () => a?.setBuffer(d.id, input.value));
-      body = [h('p', { class: 'body' }, d.text), h('label', {}, 'Why? (kept on record; nothing is posted)', input),
+      body = [h('p', { class: 'body' }, d.text), this.#inline(d), h('label', {}, 'Why? (kept on record; nothing is posted)', input),
         h('div', { class: 'actions' }, btn('secondary', 'Reject', `Confirm reject of comment on ${what}`, () => a?.reject(d.id)), btn('secondary', 'Cancel', 'Cancel reject', () => a?.cancel(d.id)))];
     } else {
-      body = [h('p', { class: 'body' }, d.text),
+      body = [h('p', { class: 'body' }, d.text), this.#inline(d),
         h('div', { class: 'actions' },
           ...(unresolved(d) ? [] : [btn('primary', 'Approve', `Approve and post comment on ${what}`, () => a?.approve(d.id)), ...(d.state === 'approved' ? [] : [btn('secondary', 'Edit', `Edit comment on ${what}`, () => a?.startEdit(d.id))])]),
           btn('secondary', 'Reject', `Reject comment on ${what}`, () => a?.startReject(d.id)))];

@@ -4,7 +4,7 @@
  * reject only append a row. Every error body is a code and a message built here.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { draftsPath, listDrafts, editDraft, rejectDraft, MAX_REASON, MAX_TEXT } from '../drafts/queue.ts';
+import { draftsPath, listDrafts, editDraft, rejectDraft, eventOf, revOf, MAX_REASON, MAX_TEXT } from '../drafts/queue.ts';
 import type { Draft, Outcome, Refusal } from '../drafts/queue.ts';
 import { approveAndPost } from '../drafts/post.ts';
 import type { GhRun } from '../drafts/post.ts';
@@ -28,9 +28,10 @@ const RECENT_DONE = 30;
 export interface DraftsWriteOptions extends WriteOptions { ghRun?: GhRun }
 
 /** The wire shape of one draft. */
-export interface DraftView { id: string; source: Draft['source']; repo: string; pr: number; prUrl: string; severity: Draft['severity']; text: string; where?: string; context?: string; replyTo?: string; state: Draft['state']; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string }
+export interface DraftView { rev: string; review?: { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }; id: string; source: Draft['source']; repo: string; pr: number; prUrl: string; severity: Draft['severity']; text: string; where?: string; context?: string; replyTo?: string; state: Draft['state']; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string }
 
 const view = (d: Draft): DraftView => ({
+  rev: revOf(d), ...(d.review ? { review: { event: eventOf(d.review), compliment: d.review.compliment, comments: d.review.comments } } : {}),
   id: d.id, source: d.source, repo: d.repo, pr: d.pr, prUrl: `https://github.com/${d.repo}/pull/${d.pr}`, severity: d.severity, text: d.text,
   ...(d.target.kind === 'inline' ? { where: `${d.target.path}:${d.target.line}` } : {}),
   ...(d.context ? { context: d.context } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}),
@@ -45,23 +46,27 @@ export function buildDrafts(o: { vault: string; project: string }, now: Date): {
   return { generatedAt: now.toISOString(), drafts: [...open, ...done].map(view) };
 }
 
-type Body = { id: string; text?: string; reason?: string };
-/** The body as `{ id, text }` (approve, edit) or `{ id, reason }` (reject); null when it has any other shape. */
+type Body = { id: string; rev?: string; text?: string; comments?: string[]; reason?: string };
+const SHAPES: Record<Op, string> = { approve: 'id,rev', edit: 'id,text', reject: 'id,reason' };
+/** The body in the exact shape its route takes (`edit` may also carry `comments`, one text per inline comment); null for any other shape. */
 export function parseDraftBody(op: Op, body: unknown): Body | null {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
   const rec = body as Record<string, unknown>;
-  const field = op === 'reject' ? 'reason' : 'text';
-  if (Object.keys(rec).sort().join(',') !== [field, 'id'].sort().join(',')) return null;
-  const v = rec[field];
-  if (typeof rec.id !== 'string' || !ID.test(rec.id) || typeof v !== 'string' || v.length > (op === 'reject' ? MAX_REASON : MAX_TEXT) * 2) return null;
-  return { id: rec.id, [field]: v };
+  const keys = Object.keys(rec).filter((k) => !(op === 'edit' && k === 'comments')).sort().join(',');
+  if (keys !== SHAPES[op].split(',').sort().join(',') || typeof rec.id !== 'string' || !ID.test(rec.id)) return null;
+  if (op === 'approve') return typeof rec.rev === 'string' && /^[0-9a-f]{12}$/.test(rec.rev) ? { id: rec.id, rev: rec.rev } : null;
+  if (op === 'reject') return typeof rec.reason === 'string' && rec.reason.length <= MAX_REASON * 2 ? { id: rec.id, reason: rec.reason } : null;
+  const comments = rec.comments;
+  if (typeof rec.text !== 'string' || rec.text.length > MAX_TEXT * 2) return null;
+  if (comments !== undefined && (!Array.isArray(comments) || comments.length > 30 || comments.some((c) => typeof c !== 'string' || c.length > MAX_TEXT * 2))) return null;
+  return { id: rec.id, text: rec.text, ...(comments ? { comments: comments as string[] } : {}) };
 }
 
 function run(o: DraftsWriteOptions, op: Op, b: Body): Outcome<{ url?: string }> {
   const file = draftsPath(o.web.vault, o.web.project);
   const now = o.now;
-  if (op === 'approve') return approveAndPost(file, b.id, b.text ?? '', { run: o.ghRun, now });
-  if (op === 'edit') return editDraft(file, b.id, b.text ?? '', { now });
+  if (op === 'approve') return approveAndPost(file, b.id, b.rev ?? '', { run: o.ghRun, now });
+  if (op === 'edit') return editDraft(file, b.id, b.text ?? '', { now }, b.comments);
   return rejectDraft(file, b.id, b.reason ?? '', { now });
 }
 
