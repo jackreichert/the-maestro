@@ -12,7 +12,7 @@
  * may or may not exist, so it is never retried automatically (check GitHub, then reject it: reject is allowed from `uncertain`).
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 
 export const MAX_TEXT = 4000;
@@ -22,11 +22,21 @@ export const MAX_PATH = 300;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
-export type Severity = 'blocking' | 'suggestion' | 'reply';
+export type Severity = 'blocking' | 'suggestion' | 'reply' | 'review';
 export type Target =
   | { kind: 'inline'; path: string; line: number; commitId: string }
   | { kind: 'general' }
-  | { kind: 'reply'; commentId: number };
+  | { kind: 'reply'; commentId: number }
+  /** A whole GitHub review (a summary plus inline comments) posted as one, on this head commit. */
+  | { kind: 'review'; commitId: string };
+
+/** One inline comment of a review: a line on the RIGHT side of the diff of the head commit. */
+export interface ReviewComment { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }
+/** The inline half of a review draft. `compliment` is the opening the text must start with: a specific thing done well, never generic. */
+export interface ReviewBundle { compliment: string; comments: ReviewComment[] }
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES';
+/** What the review says to GitHub: it requests changes when a comment still blocks, and approves otherwise. Derived, never stored, so an edit cannot leave it stale. */
+export const eventOf = (b: ReviewBundle): ReviewEvent => (b.comments.some((c) => c.severity === 'blocking') ? 'REQUEST_CHANGES' : 'APPROVE');
 export type DraftState = 'pending' | 'approved' | 'posting' | 'posted' | 'failed' | 'uncertain' | 'rejected';
 
 /** What a producer supplies. There is no state field: a draft is always created pending. */
@@ -44,11 +54,13 @@ export interface NewDraft {
   context?: string;
   /** Who wrote the comment a reply answers. */
   replyTo?: string;
+  /** Present exactly on a review draft (severity `review`, target kind `review`). */
+  review?: ReviewBundle;
 }
 
 export type Row =
   | ({ op: 'add'; id: string; ts: string } & NewDraft)
-  | { op: 'edit'; id: string; ts: string; text: string }
+  | { op: 'edit'; id: string; ts: string; text: string; comments?: string[] }
   | { op: 'approve'; id: string; ts: string; text: string }
   | { op: 'uncertain'; id: string; ts: string }
   | { op: 'posting'; id: string; ts: string; nonce?: string }
@@ -82,6 +94,15 @@ export function readRows(file: string): Row[] {
   return rows;
 }
 
+/** An edit's comment texts, one per comment in order; an emptied text removes that comment. Ignored when the count does not match. */
+function applyComments(d: Draft, texts: string[] | undefined): void {
+  if (!d.review || !texts || texts.length !== d.review.comments.length) return;
+  d.review = { ...d.review, comments: d.review.comments.flatMap((c, i) => (texts[i]?.trim() ? [{ ...c, text: texts[i] as string }] : [])) };
+}
+
+/** What the person is shown and approves: the text and every inline comment. Approve names this, so a draft edited since is refused. */
+export const revOf = (d: Pick<NewDraft, 'text' | 'review'>): string => createHash('sha1').update(JSON.stringify([d.text, d.review?.comments.map((c) => [c.path, c.line, c.severity, c.text]) ?? null])).digest('hex').slice(0, 12);
+
 /** A `posting` draft whose last row is older than the lock's stale age belongs to a process that died mid-call: its outcome is unknown, like `uncertain`. */
 export const STUCK_MS = 120_000;
 export const stuck = (d: { state: string; updatedAt: string }, now: string): boolean => d.state === 'posting' && Date.parse(now) - Date.parse(d.updatedAt) >= STUCK_MS;
@@ -105,7 +126,7 @@ export function fold(rows: readonly Row[]): Draft[] {
     const d = byId.get(r.id);
     if (!d) continue;
     const editable = d.state === 'pending' || d.state === 'failed';
-    if (r.op === 'edit' && editable) { d.text = r.text; d.state = 'pending'; delete d.error; }
+    if (r.op === 'edit' && editable) { d.text = r.text; applyComments(d, r.comments); d.state = 'pending'; delete d.error; }
     else if (r.op === 'approve' && (editable || d.state === 'approved')) { d.state = 'approved'; d.approvedText = r.text; delete d.error; }
     else if (r.op === 'posting' && d.state === 'approved') { d.state = 'posting'; d.postingNonce = r.nonce; }
     else if (r.op === 'uncertain' && d.state === 'posting') d.state = 'uncertain';
@@ -126,7 +147,24 @@ export function textProblem(text: string): string | null {
   return null;
 }
 
+const MAX_COMMENTS = 30;
+function reviewProblem(d: NewDraft): string | null {
+  const r = d.review as ReviewBundle;
+  if (typeof r !== 'object' || r === null || typeof r.compliment !== 'string' || !Array.isArray(r.comments)) return 'Bad review.';
+  if (d.source !== 'review') return 'Only a review comment can be a review.';
+  if (!r.compliment.trim() || !d.text.startsWith(r.compliment)) return 'A review must open with its compliment.';
+  if (!Array.isArray(r.comments) || r.comments.length > MAX_COMMENTS) return `A review has at most ${MAX_COMMENTS} inline comments.`;
+  for (const c of r.comments) {
+    if (!['blocking', 'suggestion'].includes(c.severity)) return 'Bad inline severity.';
+    if (!c.path || c.path.startsWith('/') || c.path.startsWith('-') || c.path.includes('..') || !Number.isSafeInteger(c.line) || c.line <= 0) return 'Bad inline anchor.';
+    const p = textProblem(c.text);
+    if (p) return p;
+  }
+  return null;
+}
+
 function targetProblem(t: unknown): string | null {
+  if (isObj(t) && t.kind === 'review') return typeof t.commitId === 'string' && /^[0-9a-f]{7,64}$/.test(t.commitId) ? null : 'Bad review target.';
   if (!isObj(t)) return 'No target.';
   if (t.kind === 'general') return null;
   if (t.kind === 'reply') return Number.isSafeInteger(t.commentId) && (t.commentId as number) > 0 ? null : 'Bad comment id.';
@@ -139,9 +177,12 @@ export function draftProblem(d: NewDraft): string | null {
   if (typeof d.key !== 'string' || !d.key || d.key.length > 300) return 'Bad key.';
   if (d.replyTo !== undefined && (typeof d.replyTo !== 'string' || d.replyTo.length > MAX_REPLY_TO)) return 'Bad reply-to.';
   if (!REPO.test(d.repo) || !Number.isSafeInteger(d.pr) || d.pr <= 0) return 'Bad repo or PR number.';
-  if (!['blocking', 'suggestion', 'reply'].includes(d.severity)) return 'Bad severity.';
+  if (!['blocking', 'suggestion', 'reply', 'review'].includes(d.severity)) return 'Bad severity.';
+  if ((d.severity === 'review') !== (d.target.kind === 'review') || (d.severity === 'review') !== (d.review !== undefined)) return 'A review draft has severity review, a review target and a review body, and only it does.';
+  if (d.review) { const p = reviewProblem(d); if (p) return p; }
   if (!['review', 'reply'].includes(d.source)) return 'Bad source.';
-  if ((d.source === 'reply') !== (d.severity === 'reply')) return 'A reply has severity reply, and only a reply does.';
+  if (d.source === 'reply' && d.severity !== 'reply') return 'A reply has severity reply.';
+  if (d.source === 'review' && d.severity === 'reply') return 'A reply has severity reply, and only a reply does.';
   if ((d.source === 'review' && d.target.kind === 'reply') || (d.source === 'reply' && d.target.kind === 'inline')) return 'A review comment cannot be a reply, and a reply cannot be inline.';
   return textProblem(d.text) ?? targetProblem(d.target);
 }
@@ -159,7 +200,7 @@ export function addDraft(file: string, d: NewDraft, o: { now?: () => Date } = {}
   const existing = readRows(file).find((r): r is Extract<Row, { op: 'add' }> => r.op === 'add' && r.key === d.key);
   if (existing) return { id: existing.id, created: false };
   const id = `dr-${randomBytes(4).toString('hex')}`;
-  append(file, { op: 'add', id, ts: stamp(o), key: d.key, source: d.source, repo: d.repo, pr: d.pr, severity: d.severity, text: d.text, target: d.target, ...(d.context ? { context: d.context.slice(0, 500) } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}) });
+  append(file, { op: 'add', id, ts: stamp(o), key: d.key, source: d.source, repo: d.repo, pr: d.pr, severity: d.severity, text: d.text, target: d.target, ...(d.context ? { context: d.context.slice(0, 500) } : {}), ...(d.replyTo ? { replyTo: d.replyTo } : {}), ...(d.review ? { review: d.review } : {}) });
   return { id, created: true };
 }
 
@@ -183,14 +224,15 @@ export function withLock<T>(file: string, fn: () => T): T | 'busy' {
 function find(file: string, id: string): Draft | undefined { return listDrafts(file).find((d) => d.id === id); }
 
 /** Replaces a pending (or failed) draft's text. */
-export function editDraft(file: string, id: string, text: string, o: QueueOptions = {}): Outcome {
-  const problem = textProblem(text);
+export function editDraft(file: string, id: string, text: string, o: QueueOptions = {}, comments?: string[]): Outcome {
+  const problem = textProblem(text) ?? (comments?.map((c) => (c.trim() ? textProblem(c) : null)).find((p) => p !== null) ?? null);
   if (problem) return refuse('invalid', problem);
   const out = withLock(file, (): Outcome => {
     const d = find(file, id);
     if (!d) return refuse('unknown', 'No such draft.');
     if (d.state !== 'pending' && d.state !== 'failed') return refuse('state', `That draft is ${d.state}; it can no longer be edited.`);
-    append(file, { op: 'edit', id, ts: stamp(o), text });
+    if (comments && comments.length !== (d.review?.comments.length ?? 0)) return refuse('invalid', 'The comments changed since you opened it. Reload.');
+    append(file, { op: 'edit', id, ts: stamp(o), text, ...(comments ? { comments } : {}) });
     return { ok: true };
   });
   return out === 'busy' ? refuse('busy', 'The queue is busy. Try again.') : out;

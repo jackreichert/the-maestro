@@ -11,28 +11,35 @@
 import { spawnSync } from 'node:child_process';
 import { toolCommand } from '../tool-bin.ts';
 import { randomBytes } from 'node:crypto';
-import { appendRow, listDrafts, refuse, textProblem, withLock } from './queue.ts';
+import { appendRow, eventOf, listDrafts, refuse, revOf, textProblem, withLock } from './queue.ts';
 import type { Draft, Outcome } from './queue.ts';
 
 export interface GhResult { status: number | null; stdout: string; stderr: string }
 /** Runs `gh` with these arguments. Tests pass a stub; production spawns the real one (through the MAESTRO_GH_BIN seam). */
-export type GhRun = (args: string[]) => GhResult;
+export type GhRun = (args: string[], input?: string) => GhResult;
 
 const GH_TIMEOUT_MS = 30_000;
-export const spawnGh: GhRun = (args) => {
+export const spawnGh: GhRun = (args, input) => {
   const [cmd, argv] = toolCommand('gh', args);
-  const r = spawnSync(cmd, argv, { encoding: 'utf8', timeout: GH_TIMEOUT_MS });
+  const r = spawnSync(cmd, argv, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, ...(input === undefined ? {} : { input }) });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 };
 
-/** The `gh api` call that posts this draft's text: an inline review comment, a reply in a review thread, or a plain PR comment. */
-export function ghArgs(d: Draft, text: string): string[] {
+/** A `gh api` call: its arguments, and the JSON body it reads from stdin when it has one (a review, whose inline comments are an array). */
+export interface GhCall { args: string[]; input?: string }
+
+/** The call that posts this draft's text: an inline review comment, a reply in a review thread, a plain PR comment, or a whole review. */
+export function ghCall(d: Draft, text: string): GhCall {
   const base = `repos/${d.repo}`;
   const t = d.target;
   const body = ['-f', `body=${text}`];
-  if (t.kind === 'inline') return ['api', '-X', 'POST', `${base}/pulls/${d.pr}/comments`, ...body, '-f', `commit_id=${t.commitId}`, '-f', `path=${t.path}`, '-F', `line=${t.line}`, '-f', 'side=RIGHT'];
-  if (t.kind === 'reply') return ['api', '-X', 'POST', `${base}/pulls/${d.pr}/comments/${t.commentId}/replies`, ...body];
-  return ['api', '-X', 'POST', `${base}/issues/${d.pr}/comments`, ...body];
+  if (t.kind === 'review' && d.review) {
+    const input = JSON.stringify({ commit_id: t.commitId, event: eventOf(d.review), body: text, comments: d.review.comments.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: c.text })) });
+    return { args: ['api', '-X', 'POST', `${base}/pulls/${d.pr}/reviews`, '--input', '-'], input };
+  }
+  if (t.kind === 'inline') return { args: ['api', '-X', 'POST', `${base}/pulls/${d.pr}/comments`, ...body, '-f', `commit_id=${t.commitId}`, '-f', `path=${t.path}`, '-F', `line=${t.line}`, '-f', 'side=RIGHT'] };
+  if (t.kind === 'reply') return { args: ['api', '-X', 'POST', `${base}/pulls/${d.pr}/comments/${t.commentId}/replies`, ...body] };
+  return { args: ['api', '-X', 'POST', `${base}/issues/${d.pr}/comments`, ...body] };
 }
 
 const REFUSED = /\bHTTP 4\d\d\b/;
@@ -47,7 +54,7 @@ function urlOf(stdout: string): string | undefined {
 export interface PostOptions { run?: GhRun; now?: () => Date }
 
 /** Approve this draft as the text shown and post it. The one posting path. */
-export function approveAndPost(file: string, id: string, shownText: string, o: PostOptions = {}): Outcome<{ url?: string }> {
+export function approveAndPost(file: string, id: string, shownRev: string, o: PostOptions = {}): Outcome<{ url?: string }> {
   const run = o.run ?? spawnGh;
   const ts = (): string => (o.now?.() ?? new Date()).toISOString();
   const out = withLock(file, (): Outcome<{ url?: string }> => {
@@ -56,7 +63,7 @@ export function approveAndPost(file: string, id: string, shownText: string, o: P
     if (d.state !== 'pending' && d.state !== 'failed' && d.state !== 'approved') {
       return refuse('state', d.state === 'posted' ? 'That draft is already posted.' : d.state === 'uncertain' ? 'GitHub did not confirm the last attempt. Check the PR before doing anything else.' : `That draft is ${d.state}.`);
     }
-    if (shownText !== d.text) return refuse('changed', 'The draft changed since you opened it. Reload and approve what you see.');
+    if (shownRev !== revOf(d)) return refuse('changed', 'The draft changed since you opened it. Reload and approve what you see.');
     const bad = textProblem(d.text);
     if (bad) return refuse('invalid', bad);
     appendRow(file, { op: 'approve', id, ts: ts(), text: d.text });
@@ -66,7 +73,7 @@ export function approveAndPost(file: string, id: string, shownText: string, o: P
     // so what we check is exactly what the fold will honour when it reads our posted/failed row.
     if (listDrafts(file).find((x) => x.id === id)?.postingNonce !== nonce) return refuse('busy', 'Another approval of this draft is already running.');
     let r: GhResult;
-    try { r = run(ghArgs(d, d.text)); } catch { r = { status: null, stdout: '', stderr: '' }; }
+    try { const call = ghCall(d, d.text); r = run(call.args, call.input); } catch { r = { status: null, stdout: '', stderr: '' }; }
     if (r.status === 0) {
       const url = urlOf(r.stdout);
       appendRow(file, { op: 'posted', id, ts: ts(), ...(url ? { url } : {}) });

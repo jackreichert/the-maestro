@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWebServer } from './server.ts';
-import { addDraft, draftsPath, listDrafts } from '../drafts/queue.ts';
+import { addDraft, draftsPath, listDrafts, revOf } from '../drafts/queue.ts';
 import type { GhResult } from '../drafts/post.ts';
 
 const NOW = new Date('2026-10-14T15:00:00Z');
@@ -34,6 +34,7 @@ async function rig(name: string, gh: Partial<GhResult> = {}): Promise<Rig> {
   servers.push(server);
   return { port: (server.address() as AddressInfo).port, file: draftsPath(vault, 'p'), calls };
 }
+const rev = (r: Rig): string => revOf(listDrafts(r.file)[0] as never);
 const seed = (r: Rig, text = 'Could this guard an empty list?', key = 'k1'): string => addDraft(r.file, { key, source: 'review', repo: 'acme/widgets', pr: 7, severity: 'suggestion', text, target: { kind: 'general' } }, { now: () => NOW }).id;
 
 function call(r: Rig, path: string, o: { method?: string; body?: unknown; token?: string | null } = {}): Promise<{ status: number; json: Record<string, any> }> {
@@ -64,9 +65,9 @@ test('GET /api/drafts lists the queue and writes nothing', async () => {
 test('approve over HTTP posts once through the stub gh; a second approve is refused and posts nothing', async () => {
   const r = await rig('approve'); const id = seed(r);
   const text = 'Could this guard an empty list?';
-  const a = await call(r, '/api/drafts/approve', { body: { id, text } });
+  const a = await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } });
   assert.deepEqual([a.status, a.json.ok, a.json.url], [200, true, 'https://github.com/acme/widgets/pull/7#r1']);
-  const b = await call(r, '/api/drafts/approve', { body: { id, text } });
+  const b = await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } });
   assert.equal(b.status, 409);
   assert.equal(r.calls.length, 1);
   assert.equal(listDrafts(r.file)[0]?.state, 'posted');
@@ -74,10 +75,11 @@ test('approve over HTTP posts once through the stub gh; a second approve is refu
 
 test('edit then approve posts the edited text', async () => {
   const r = await rig('edit'); const id = seed(r);
+  const staleRev = rev(r);
   assert.equal((await call(r, '/api/drafts/edit', { body: { id, text: 'Softer wording.' } })).status, 200);
-  assert.equal((await call(r, '/api/drafts/approve', { body: { id, text: 'Could this guard an empty list?' } })).status, 409, 'the shown text is stale');
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id, rev: staleRev } })).status, 409, 'the shown text is stale');
   assert.equal(r.calls.length, 0);
-  assert.equal((await call(r, '/api/drafts/approve', { body: { id, text: 'Softer wording.' } })).status, 200);
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } })).status, 200);
   assert.ok(r.calls[0]?.includes('body=Softer wording.'));
 });
 
@@ -85,14 +87,14 @@ test('reject records the reason and never posts', async () => {
   const r = await rig('reject'); const id = seed(r);
   assert.equal((await call(r, '/api/drafts/reject', { body: { id, reason: '' } })).status, 422);
   assert.equal((await call(r, '/api/drafts/reject', { body: { id, reason: 'not worth a comment' } })).status, 200);
-  assert.equal((await call(r, '/api/drafts/approve', { body: { id, text: 'Could this guard an empty list?' } })).status, 409);
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } })).status, 409);
   assert.equal(r.calls.length, 0);
   assert.equal(listDrafts(r.file)[0]?.rejectReason, 'not worth a comment');
 });
 
 test('a gh failure surfaces as a refusal with nothing marked posted', async () => {
   const r = await rig('fail', { status: 1, stdout: '', stderr: 'HTTP 422: nope' }); const id = seed(r);
-  const a = await call(r, '/api/drafts/approve', { body: { id, text: 'Could this guard an empty list?' } });
+  const a = await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } });
   assert.equal(a.status, 409);
   assert.match(a.json.message, /Nothing was posted/);
   assert.equal(listDrafts(r.file)[0]?.state, 'failed');
@@ -100,13 +102,13 @@ test('a gh failure surfaces as a refusal with nothing marked posted', async () =
 
 test('the write routes need the token, the right method and an exact body shape', async () => {
   const r = await rig('guards'); const id = seed(r);
-  const body = { id, text: 'Could this guard an empty list?' };
+  const body = { id, rev: rev(r) };
   assert.equal((await call(r, '/api/drafts/approve', { body, token: null })).status, 403);
   assert.equal((await call(r, '/api/drafts/approve', { body, token: 'wrong' })).status, 403);
   assert.equal((await call(r, '/api/drafts/approve', { method: 'GET' })).status, 405);
   assert.equal((await call(r, '/api/drafts/approve', { body: { ...body, extra: 1 } })).status, 400);
-  assert.equal((await call(r, '/api/drafts/approve', { body: { id: 'nope', text: 'x' } })).status, 400);
-  assert.equal((await call(r, '/api/drafts/approve', { body: { id: 'dr-00000000', text: 'x' } })).status, 404);
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id: 'nope', rev: '0123456789ab' } })).status, 400);
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id: 'dr-00000000', rev: '0123456789ab' } })).status, 404);
   assert.equal(r.calls.length, 0);
   assert.equal(listDrafts(r.file)[0]?.state, 'pending');
 });
@@ -116,4 +118,19 @@ test('a long draft passes the larger body limit; the same body on another write 
   const id = seed(r, long, 'long');
   assert.equal((await call(r, '/api/drafts/edit', { body: { id, text: `${long}!` } })).status, 200);
   assert.equal((await call(r, '/api/priorities/add', { body: { text: long } })).status, 413);
+});
+
+test('a review draft over HTTP: the view carries the event and rev, edit takes comment texts, approve posts one review through stdin JSON', async () => {
+  const r = await rig('review');
+  const compliment = 'The ID validation before anything goes into a URL is exactly right.';
+  const id = addDraft(r.file, { key: 'rv1', source: 'review', repo: 'acme/widgets', pr: 7, severity: 'review', text: `${compliment}\n\nResolve these however you think best.`, target: { kind: 'review', commitId: 'abcdef1' }, review: { compliment, comments: [{ path: 'a.ts', line: 3, text: 'Could this guard an empty list?', severity: 'suggestion' }] } }, { now: () => NOW }).id;
+  const list = await call(r, '/api/drafts', { method: 'GET' });
+  assert.equal(list.json.drafts[0].review.event, 'APPROVE');
+  const first = list.json.drafts[0].rev as string;
+  assert.equal((await call(r, '/api/drafts/edit', { body: { id, text: `${compliment}\n\nOk.`, comments: ['Softer inline note.'] } })).status, 200);
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id, rev: first } })).status, 409, 'the earlier revision is stale');
+  assert.equal((await call(r, '/api/drafts/edit', { body: { id, text: 'x', comments: ['a', 'b'] } })).status, 422, 'wrong comment count');
+  assert.equal((await call(r, '/api/drafts/approve', { body: { id, rev: rev(r) } })).status, 200);
+  assert.equal(r.calls.length, 1);
+  assert.ok(r.calls[0]?.includes('repos/acme/widgets/pulls/7/reviews'));
 });
