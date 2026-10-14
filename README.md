@@ -1014,6 +1014,7 @@ Each setting resolves as: **environment variable, then the user file, then the o
 | `ledger_root` | `LEDGER_ROOT` | none | Where `Journal/` lives; falls back to `vault_root` |
 | `vault_root` | `VAULT_ROOT` | none | The vault holding tickets, `CONTEXT.md` and the rest |
 | `podium_trusted_atlassian_hosts` | `PODIUM_TRUSTED_ATLASSIAN_HOSTS` | none | Comma-separated `<label>.atlassian.net` hosts whose ticket links in the Podium reuse one tab per ticket. Unset, every ticket link opens a fresh tab |
+| `podium_series` | `PODIUM_SERIES` | none | Comma-separated `name=class` pairs (class `s1` to `s8`, or `so`) giving a stream a fixed colour in the Podium. Streams not listed get a stable hashed colour; the tool's own streams have built-in colours |
 | `loop_patterns` | `MAESTRO_LOOP_PATTERNS` | none | Comma-separated `pgrep -f` patterns `journal.ts resume` checks |
 | `update_check` | `MAESTRO_UPDATE_CHECK` | on | `off`, `false`, `no` or `0` stops `prime` from fetching the skill's own repo and reporting when it is behind, ahead, diverged or dirty. A checkout that is not a git repository, is on a detached HEAD or has no upstream is never reported |
 | `loop_supervisor` | `MAESTRO_LOOP_SUPERVISOR` | optional | `required` (or `on`, `true`, `yes`, `1`) makes the `Loop:` line say `NOT INSTALLED` or `DOWN` when no supervisor is set up or alive, instead of staying silent |

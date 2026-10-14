@@ -5,7 +5,7 @@ import './local-review.ts';
 import './open-prs.ts';
 import { h, s, shadow } from './dom.ts';
 import { BOARD_CSS, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
+import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadSeries, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
 import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
@@ -277,7 +277,7 @@ export class PodiumApp extends HTMLElement {
     window.addEventListener('pointerup', this.#onRelease);
     window.addEventListener('pointercancel', this.#onRelease);
     this.#root.replaceChildren(skeleton());
-    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts(), loadCost()]).then(([s, c, e, lr, , co]) => {
+    Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), loadLinkHosts(), loadSeries(), loadCost()]).then(([s, c, e, lr, , , co]) => {
       if (!this.isConnected) return;   // removed while loading: start nothing that disconnectedCallback has already missed
       this.#state = s.data;
       this.#charts = c.data;

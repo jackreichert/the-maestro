@@ -139,6 +139,13 @@ test('GET /api/link-hosts is empty by default', async () => {
   assert.deepEqual(dataRoutes({ ...options, trustedAtlassianHosts: ['example.atlassian.net'] }).find((x) => x.pattern.test('/api/link-hosts'))?.handler(new URL('http://x/'), [] as unknown as RegExpMatchArray), { atlassian: ['example.atlassian.net'] });
 });
 
+test('GET /api/series is empty by default and carries the configured stream colours', async () => {
+  const r = await hit('/api/series');
+  assert.equal(r.status, 200);
+  assert.deepEqual(JSON.parse(r.body), { named: {} });
+  assert.deepEqual(dataRoutes({ ...options, namedSeries: { Alpha: 's2' } }).find((x) => x.pattern.test('/api/series'))?.handler(new URL('http://x/'), [] as unknown as RegExpMatchArray), { named: { Alpha: 's2' } });
+});
+
 test('GET /api/streams/:name filters one stream; an unknown, malformed or traversal name is 404', async () => {
   assert.equal((await hit('/api/streams/widgets')).status, 200);
   for (const bad of ['nope', '%E0%A4%A', '..%2F..%2Fsecret', '%2e%2e', 'widgets%2Fx']) {

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig, trustedConfigFile, numberMap, parseModelPrices, DEFAULT_COST_TARGETS } from './local-config.ts';
+import { parseConfig, trustedConfigFile, numberMap, parseModelPrices, parseSeries, DEFAULT_COST_TARGETS } from './local-config.ts';
 
 const SCRIPT = new URL('./local-config.ts', import.meta.url).pathname;
 const block = (body: string): string => `# prose\n\n\`\`\`maestro-config\n${body}\n\`\`\`\n\nmore prose\n`;
@@ -42,6 +42,12 @@ test('parseConfig reads only the maestro-config block, strips comments and quote
     const c = parseConfig(block('overlay: my-skill   # trailing\ngh_org: "my-org"\nempty:\nledger_root: /a b/c'));
     assert.deepEqual(c, { overlay: 'my-skill', gh_org: 'my-org', ledger_root: '/a b/c' });
     assert.deepEqual(parseConfig('gh_org: nope\n'), {});
+});
+
+test('parseSeries keeps name=class pairs with a known class and drops the rest', () => {
+    assert.deepEqual(parseSeries('Alpha=s1, Beta = s8,Gamma=so'), { Alpha: 's1', Beta: 's8', Gamma: 'so' });
+    assert.deepEqual(parseSeries('Alpha=s9, =s1, Beta, Gamma=s1=s2, Delta=<b>'), {});
+    assert.deepEqual(parseSeries(''), {});
 });
 
 test('no config anywhere: everything unset, no overlay', () => {

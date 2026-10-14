@@ -1,5 +1,6 @@
 import { sanitizeCharts, sanitizeCost, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
+import { configureSeries } from './series.ts';
 import type { ChartsData, CostData, EpicsData, LocalReview, OpenPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
@@ -17,6 +18,16 @@ export async function loadLinkHosts(): Promise<void> {
     configureTrustedTenants(typeof body === 'object' && body !== null ? (body as { atlassian?: unknown }).atlassian : undefined);
   } catch {
     configureTrustedTenants([]);
+  }
+}
+
+/** Tell the series palette which streams the operator gave a fixed colour. Any failure leaves the defaults, and the rest hash to a colour. */
+export async function loadSeries(): Promise<void> {
+  try {
+    const body = await getJson('/api/series');
+    configureSeries(typeof body === 'object' && body !== null ? (body as { named?: unknown }).named : undefined);
+  } catch {
+    configureSeries(undefined);
   }
 }
 
