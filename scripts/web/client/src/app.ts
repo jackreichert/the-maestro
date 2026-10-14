@@ -139,6 +139,8 @@ const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
   .stream-title .projects-line { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
   .stream-page { display: grid; gap: var(--space-7); }
   .stream-title .mark { width: 12px; height: 12px; border-radius: 3px; }
+  /* Side by side, the headline column sets the row's height: the priorities panel contributes no height of its own (size containment), is stretched to the row, never shorter than a floor, and scrolls inside. */
+  @media (min-width: 901px) { .cue-grid > priority-list { align-self: stretch; contain: size; min-height: 22rem; } }
   @media (max-width: 900px) { .cue-grid { grid-template-columns: minmax(0, 1fr); } header.topbar .bar { gap: var(--space-3); } }
 
   @media (forced-colors: active) {

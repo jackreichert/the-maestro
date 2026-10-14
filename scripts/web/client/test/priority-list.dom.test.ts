@@ -41,3 +41,23 @@ test('a page that may not edit offers no add control and no move or delete butto
   assert.equal(root.querySelectorAll('.tools').length, 0);
   cleanup();
 });
+
+test('the list is one keyboard-focusable, named region that holds the header, the cards and the add control', async () => {
+  const { root, cleanup } = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data() });
+  const region = root.querySelector('[role="region"]') as HTMLElement;
+  assert.equal(region.getAttribute('aria-label'), "Today's priorities");
+  assert.equal(region.getAttribute('tabindex'), '0');
+  assert.equal(root.querySelectorAll('[role="region"]').length, 1);
+  for (const sel of ['.bar h2', 'ol.priorities', '#pl-open']) assert.ok(region.querySelector(sel), `${sel} is inside the scroll region`);
+  assert.equal(region.querySelector('.fade')?.getAttribute('aria-hidden'), 'true', 'the fade is decoration');
+  cleanup();
+});
+
+test('a redraw keeps the same region element, so its scroll position and focus survive it', async () => {
+  const { el, root, cleanup } = await mount<List>('../src/priority-list.ts', 'priority-list', { data: data() });
+  const before = root.querySelector('[role="region"]');
+  el.data = data({ items: [{ text: 'Only one now' }] });
+  assert.equal(root.querySelector('[role="region"]'), before);
+  assert.equal(root.querySelectorAll('ol.priorities li').length, 1);
+  cleanup();
+});
