@@ -3,18 +3,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { askBlocks, askMarkdown, sentences } from './ask-format.ts';
 
-const DENSE = 'Options: (1) ask Team Select via Anand; (2) you already know it and tell me; (3) skip the check. Recommend (1). Stakes: a different hostname may also mean a host-guard change, which would need a PR. Checklist: see the note. Ticket fake-114.';
+const DENSE = 'Options: (1) ask Acme Care via Marilla; (2) you already know it and tell me; (3) skip the check. Recommend (1). Stakes: a different hostname may also mean a host-guard change, which would need a PR. Checklist: see the note. Ticket fake-114.';
 
 test('a dense context becomes a lead, a numbered list, and short paragraphs with their labels set apart', () => {
   assert.deepEqual(askBlocks(DENSE), [
     { kind: 'p', text: 'Options:' },
-    { kind: 'list', marks: ['1', '2', '3'], items: ['ask Team Select via Anand', 'you already know it and tell me', 'skip the check.'] },
+    { kind: 'list', marks: ['1', '2', '3'], items: ['ask Acme Care via Marilla', 'you already know it and tell me', 'skip the check.'] },
     { kind: 'p', text: 'Recommend (1).' },
     { kind: 'p', label: 'Stakes', text: 'a different hostname may also mean a host-guard change, which would need a PR.' },
     { kind: 'p', label: 'Checklist', text: 'see the note. Ticket fake-114.' },
   ]);
   assert.equal(askMarkdown(DENSE), [
-    'Options:', '1. ask Team Select via Anand\n2. you already know it and tell me\n3. skip the check.', 'Recommend (1).',
+    'Options:', '1. ask Acme Care via Marilla\n2. you already know it and tell me\n3. skip the check.', 'Recommend (1).',
     '**Stakes:** a different hostname may also mean a host-guard change, which would need a PR.', '**Checklist:** see the note. Ticket fake-114.',
   ].join('\n\n'));
 });
