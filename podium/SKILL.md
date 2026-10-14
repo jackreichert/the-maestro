@@ -34,7 +34,7 @@ run again. A failed GitHub read still writes the page from cached PR data under 
 3. **Working on now**: in-flight ledger items grouped by stream, with age.
 4. **Needs attention now**: grouped by stream, one list item per ask (id, the decision needed in
    bold, context, ticket and PR links), with its `> answer:` stub on the line directly under it.
-   The ask is shown in full, never clipped.
+   The ask is shown in full, never clipped. An ask written with the template shows under fixed headings (Question, What is blocked, Context, Options, Recommendation, Links, What I checked), answer box last; an older ask keeps the plain layout.
 5. **Open PRs**: one table per stream (ticket, develop PR and base, staging twin, tl;dr; a merged develop twin
    stays in its column, marked merged, until the staging PR merges) and a stack diagram.
 6. **Other status and findings**: in flight, blocked, recent done, deferred.

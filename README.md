@@ -167,6 +167,10 @@ A read-only scout is dispatched first, so the dispatcher never greps the repos i
 
 `ledger.jsonl` is the only source of truth. `CURRENT.md`, the dated archives, per-stream pages and the standup are generated from it and safe to read or edit. Items fold by id: `start` opens one, `done`, `resolve` or `drop` closes it, and `ask` puts a question on the awaiting-you board. Work can be grouped into **streams** (named workstreams, usually epics). Ids are four lowercase characters, are not ticket ids, and are always quoted with their one-liner, never bare.
 
+### Asks have a template
+
+An ask is a gate, not a note. `journal.ts ask` needs a one-line question, what is blocked, two or more options each with its cost (`--option "<option> -- <cost>"`), a recommendation, at least one openable link and what was checked, and it exits non-zero naming every missing field, writing nothing. The Podium shows an ask under fixed headings (Question, What is blocked, Context, Options, Recommendation, Links, What I checked) with the answer box last; asks written before the template keep a plain layout. Run-this (`--paste`) asks and two-way asks with a default are exempt. See [reference/ledger.md](reference/ledger.md).
+
 ### Tickets
 
 A ticket is a problem with evidence, kept by [xenophon](https://github.com/jackreichert/xenophon) under `$VAULT_ROOT/Projects/<repo>/Tickets/`. A ledger line is a record that work happened, linked to the ticket by id. Closing one does not close the other. Without xenophon the maestro still dispatches and still journals; it just has nowhere durable to put a bug.

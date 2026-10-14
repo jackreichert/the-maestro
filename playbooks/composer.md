@@ -72,7 +72,7 @@ Report the misses answered (ids and page paths) and the ones closed out of scope
 
 ## Hard rules
 
-- Do not edit the ledger, DECISIONS.md, memory files or any code repository. Appending a row with `journal.ts ask --searched "<what you read>"` (section 4b, step 6) is not an edit: the ledger is append-only and you only add to it.
+- Do not edit the ledger, DECISIONS.md, memory files or any code repository. Appending a row with `journal.ts ask` (section 4b, step 6; it needs the ask template: `--blocked`, two `--option "<option> -- <cost>"`, `--recommend`, a `--link`, and `--searched "<what you read>"`, see reference/ledger.md) is not an edit: the ledger is append-only and you only add to it.
 - Do not copy a ledger value you did not verify. A value that two sources disagree on is a question, not a fact.
 - No secrets and no PHI in a page, in your report or in a question.
 - Do not run `library-check` on a copy: run it on the real pages, and say so.
