@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mergeTemplate, parseAskBody, parseLink, splitOption, validateAskTemplate } from './lib/journal/ask-template.ts';
 import { envAskTemplate } from './lib/journal/env-asks.ts';
+import { unledgeredDecisions } from './lib/continuous-roll.ts';
 import { ASK_TEMPLATE } from './lib/ask-template-fixture.ts';
 
 process.env.MAESTRO_LOCAL_CONFIG = '';
@@ -155,4 +156,14 @@ test('the roll-raised env-store ask passes the same validator', () => {
 test('the shared fixture flags are themselves a valid template', () => {
   const f = fixture();
   assert.equal(f.run('ask', 'fixture q?', ...ASK_TEMPLATE, ...SEARCHED, ...MARKS).status, 0);
+});
+
+test('a full batch of the decision scan (20 long messages) is accepted, not refused for length', () => {
+  const msgs = Array.from({ length: 20 }, (_, n) => ({ ts: `2026-10-13T10:${String(n).padStart(2, '0')}:00Z`, text: `from now on rule number ${n} applies ${'x'.repeat(200)}` }));
+  const q = unledgeredDecisions(msgs, []).raise[0] ?? '';
+  assert.ok(q.length > 3000, `the batch is long (${q.length})`);
+  const f = fixture();
+  const r = f.run('ask', q, ...ASK_TEMPLATE, ...SEARCHED, ...MARKS);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(f.rows().length, 1);
 });

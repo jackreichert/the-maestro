@@ -18,7 +18,8 @@ export interface AskTemplateInput extends AskTemplate { question?: string; recom
 
 export interface AskTemplateCheck { errors: string[]; template: AskTemplate }
 
-export const QUESTION_MAX = 3000;
+/** Room for the decision scan's batched text (20 messages and its hint, about 3300 characters at the worst), which a person never types. */
+export const QUESTION_MAX = 5000;
 export const ITEM_MAX = 600;
 export const LIST_MAX = 10;
 /** A link the Podium can open: https, or an obsidian note. Anything else is text, not a link. */
