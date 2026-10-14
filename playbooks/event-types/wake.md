@@ -8,6 +8,8 @@ Register one time: `node scripts/event-loop.ts add --id wake-<n> --type wake --t
 
 Register a recurring wake: `node scripts/event-loop.ts add --id wake-hourly --type wake --target hourly:7,37 --report "<the queue to work>"`. The minutes are past every hour, UTC. It lives until its TTL (24 hours unless you pass `--ttl-hours`), so re-add it at roll.
 
+Register a recurring local-time wake: `--target 'weekdays@08:30 America/New_York'` (or `daily@...`). Same rules as the recurring reminder (wall clock in the zone, once per matching day, one same-day catch-up, never a backlog), and it renews its lifetime. The session-cron mirror covers it only when the zone is the machine's own, since cron has no zone; otherwise the event loop is the only thing that fires it.
+
 Quiet hours hold a wake until they end; add `--notify-overnight` to fire through the night. Slots that pass while it is held, or while the loop is down, fold into one event that says how many passed.
 
 ## What the loop reports
