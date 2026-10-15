@@ -140,6 +140,16 @@ test('a privileged role is noted, and refused outright when it is the restricted
   assert.doesNotMatch(ok(['-c', 'select 1']).stderr, /best-effort/);
 });
 
+test('LOCAL_DB_RO_URL fails closed when the role check cannot be completed', () => {
+  const bad = join(root, 'psql-bad'); writeFileSync(bad, '#!/bin/sh\necho garbage\nexit 1\n'); chmodSync(bad, 0o755);
+  const garbage = join(root, 'psql-garbage'); writeFileSync(garbage, '#!/bin/sh\necho maybe\nexit 0\n'); chmodSync(garbage, 0o755);
+  for (const psqlPath of [bad, garbage, join(root, 'does-not-exist')]) {
+    const r = run({ args: ['-c', 'select 1'] }, { envFile: envFile([`LOCAL_DB_RO_URL=${URL_OK}`]), psqlPath });
+    assert.equal(r.status, 2, psqlPath);
+    assert.match(r.stderr, /could not verify/);
+  }
+});
+
 test('read-only calls prefer LOCAL_DB_RO_URL when set; --write and --var keep their own variable', () => {
   const vars = [`LOCAL_DB_URL=${mk('localhost:5432', { user: 'rw_user' })}`, `LOCAL_DB_RO_URL=${mk('localhost:5432', { user: 'ro_user' })}`];
   assert.match(ok(['-c', 'select 1'], {}, vars).stdout, /PGUSER=ro_user/);
