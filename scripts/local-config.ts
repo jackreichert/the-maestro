@@ -520,8 +520,8 @@ export const REPOST_NUDGE_START = clockTime(pick('MAESTRO_REPOST_NUDGE_START', '
 export const REPOST_NUDGE_END = clockTime(pick('MAESTRO_REPOST_NUDGE_END', 'repost_nudge_end'), '18:00');
 /** Repost nudge: no nudge within this many minutes of you asking for reviews yourself (a Slack line by you with a PR link, or a review re-request by you on GitHub); it is held, not dropped. Default 60. */
 export const REPOST_NUDGE_ASKED_MINUTES = positiveInt(pick('MAESTRO_REPOST_NUDGE_ASKED_MINUTES', 'repost_nudge_asked_minutes'), 60);
-/** Repost nudge: the name your lines carry in the Slack notes (`**Jack**`), case-insensitive. Default Jack. */
-export const REPOST_NUDGE_AUTHOR = pick('MAESTRO_REPOST_NUDGE_AUTHOR', 'repost_nudge_author').trim() || 'Jack';
+/** Repost nudge: the name your lines carry in the Slack notes (`**Sam**`), case-insensitive. Default your `gh_login`; with neither set, Slack asks are not read. */
+export const REPOST_NUDGE_AUTHOR = pick('MAESTRO_REPOST_NUDGE_AUTHOR', 'repost_nudge_author').trim() || GH_LOGIN;
 /** IANA time zone of the repost nudge's working hours. Unset or invalid means America/New_York. */
 export const REPOST_NUDGE_TZ = validZone(pick('MAESTRO_REPOST_NUDGE_TZ', 'repost_nudge_tz').trim()) || 'America/New_York';
 

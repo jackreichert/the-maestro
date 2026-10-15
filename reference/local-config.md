@@ -73,7 +73,7 @@ repost_nudge_start: "08:30"   # nudge working hours on weekdays (HH:MM in repost
 repost_nudge_end: "18:00"     # default 18:00
 repost_nudge_tz: America/New_York  # default America/New_York
 repost_nudge_asked_minutes: 60  # no nudge within this long of you asking for reviews yourself in Slack (a line by repost_nudge_author with a PR link) or by re-requesting a review on GitHub; default 60
-repost_nudge_author: Jack     # your name in the Slack notes (**Jack**); default Jack
+repost_nudge_author: Sam      # your name in the Slack notes (**Sam**); default gh_login; with neither, Slack asks are not read
 review_queue_orgs: example-org # comma-separated GitHub owner logins (letters, digits, hyphens; no spaces inside an entry, no ! or *; a bad entry is an error) the review queue counts; any other owner's PRs never count and are not searched; default gh_org, else no owner filter
 review_queue_cap: 4           # most open non-draft PRs awaiting review before a finished branch waits as ready to push instead of being pushed as a draft; default 4
 rereview_gate: on             # prs-snapshot.ts --ready holds a PR with resolved review-bot threads until review-verdict.ts recorded a fresh-agent SHIP IT for its head; default on

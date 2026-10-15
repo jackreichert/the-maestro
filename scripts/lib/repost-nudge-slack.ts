@@ -1,6 +1,6 @@
 /**
  * Reads when the user last asked for PR reviews in Slack, from the notes slack-watch keeps (`<vault>/Projects/<project>/Slack/*.md`).
- * A line `- 2026-10-15 17:46 ET **Jack**: ... https://github.com/<owner>/<repo>/pull/<n> ...` written by the user and carrying a PR link in one of
+ * A line `- 2026-10-15 17:46 ET **Sam**: ... https://github.com/<owner>/<repo>/pull/<n> ...` written by the user and carrying a PR link in one of
  * the given owners counts as an ask. Pure over text, plus one reader that only looks at notes touched recently. The line's clock is Eastern
  * (`ET`, `EST`, `EDT`) or UTC; a line with any other zone is skipped rather than guessed.
  */

@@ -229,19 +229,19 @@ test('a review re-request the user made on GitHub holds it too, and the window i
 
 const NOTE = [
   '# Slack',
-  '- 2026-10-15 17:46 ET **Jack**: could someone look at https://github.com/example-org/rest-api/pull/12 please',
+  '- 2026-10-15 17:46 ET **Sam**: could someone look at https://github.com/example-org/rest-api/pull/12 please',
   '- 2026-10-15 17:50 ET **Dana**: https://github.com/example-org/rest-api/pull/13',
-  '- 2026-10-15 17:55 ET **Jack**: lunch? https://example.com/pull/1',
-  '- 2026-10-15 18:05 ET **Jack**: see https://github.com/other-org/repo/pull/4',
-  '- 2026-10-15 14:00 PT **Jack**: https://github.com/example-org/rest-api/pull/14',
+  '- 2026-10-15 17:55 ET **Sam**: lunch? https://example.com/pull/1',
+  '- 2026-10-15 18:05 ET **Sam**: see https://github.com/other-org/repo/pull/4',
+  '- 2026-10-15 14:00 PT **Sam**: https://github.com/example-org/rest-api/pull/14',
 ].join('\n');
 
 test('a Slack line by the user with an owner PR link is an ask, in Eastern time; other authors, links, owners and zones are not', () => {
-  assert.equal(latestAsk(NOTE, 'Jack', ['example-org']), Date.parse('2026-10-15T21:46:00Z'));
-  assert.equal(latestAsk(NOTE, 'jack', []), Date.parse('2026-10-15T22:05:00Z'), 'no owner filter: any PR link counts');
+  assert.equal(latestAsk(NOTE, 'Sam', ['example-org']), Date.parse('2026-10-15T21:46:00Z'));
+  assert.equal(latestAsk(NOTE, 'sam', []), Date.parse('2026-10-15T22:05:00Z'), 'no owner filter: any PR link counts');
   assert.equal(latestAsk(NOTE, 'Dana', ['example-org']), Date.parse('2026-10-15T21:50:00Z'));
   assert.equal(latestAsk(NOTE, 'Nobody', []), 0);
-  assert.equal(latestAsk('- 2026-01-15 17:46 ET **Jack**: https://github.com/example-org/a/pull/1', 'Jack', []), Date.parse('2026-01-15T22:46:00Z'), 'EST in winter');
+  assert.equal(latestAsk('- 2026-01-15 17:46 ET **Sam**: https://github.com/example-org/a/pull/1', 'Sam', []), Date.parse('2026-01-15T22:46:00Z'), 'EST in winter');
 });
 
 test('the Slack folder reader takes recent notes only and survives a missing folder', () => {
@@ -249,9 +249,9 @@ test('the Slack folder reader takes recent notes only and survives a missing fol
   writeFileSync(join(dir, 'a.md'), NOTE);
   writeFileSync(join(dir, 'b.txt'), NOTE.replace('17:46', '23:59'));
   const now = Date.now();
-  assert.equal(latestAskInDir(dir, 'Jack', ['example-org'], now, 60_000), Date.parse('2026-10-15T21:46:00Z'));
-  assert.equal(latestAskInDir(dir, 'Jack', ['example-org'], now + 3 * HOUR, HOUR), 0, 'a note untouched past the look-back is skipped');
-  assert.equal(latestAskInDir(join(dir, 'missing'), 'Jack', [], now, HOUR), 0);
+  assert.equal(latestAskInDir(dir, 'Sam', ['example-org'], now, 60_000), Date.parse('2026-10-15T21:46:00Z'));
+  assert.equal(latestAskInDir(dir, 'Sam', ['example-org'], now + 3 * HOUR, HOUR), 0, 'a note untouched past the look-back is skipped');
+  assert.equal(latestAskInDir(join(dir, 'missing'), 'Sam', [], now, HOUR), 0);
 });
 
 test('the draft reader sees a queued teammate review and a post of it, and ignores a reply draft', () => {
