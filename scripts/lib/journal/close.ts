@@ -23,6 +23,12 @@ export function matchTarget(items: LedgerItem[], needle: string | undefined): Ta
     return matches.length > 1 ? { kind: 'ambiguous', matches } : { kind: 'not-found' };
 }
 
+/** A pull request named in text: `owner/repo#123` or a bare `#123` (two digits or more, so `#1` in prose is not one). The first one wins. */
+export function prRef(text: string | null | undefined): string | null {
+    const m = /(?<![\w/#.:-])(?:[\w.-]+\/[\w.-]+)?#(\d{2,})\b/.exec(text ?? '');
+    return m ? m[0] : null;
+}
+
 export interface CloseRequest {
     /** The row kind to append: `done`, `dropped` or `resolved`. */
     kind: string;
@@ -35,13 +41,15 @@ export interface CloseRequest {
     extras?: () => object;
     /** Report an item that is already closed instead of appending a second closing row. The CLI appends; the web app skips. */
     skipIfClosed?: boolean;
+    /** On a `resolved` close of an ask that names a PR (in its text or the answer): queue a follow-up item carrying the answer and the PR, so the answer is acted on and not only recorded. Automatic closers leave it off. */
+    followUp?: boolean;
     /** A refusal for this open target (the reason), or null to close it. The CLI's `done` passes the retro gate; automatic closers pass none, so they are never blocked. */
     guard?: (target: LedgerItem, entries: LedgerRow[]) => string | null;
 }
 
 export type CloseResult =
     /** `parent` is set when this close left the target's parent open with no other open child: the caller offers to close it. */
-    | { kind: 'closed'; target: LedgerItem; row: LedgerRow; note: string | null; parent?: LedgerItem }
+    | { kind: 'closed'; target: LedgerItem; row: LedgerRow; note: string | null; parent?: LedgerItem; followUp?: LedgerRow }
     | { kind: 'already-closed'; target: LedgerItem }
     | { kind: 'not-closable'; target: LedgerItem; reason: string }
     | { kind: 'ambiguous'; matches: LedgerItem[] }
@@ -71,5 +79,28 @@ export function closeItem(ctx: CloseContext, req: CloseRequest): CloseResult {
         ...req.extras?.(),
     });
     const parent = orphanedParent(ctx.fold(ctx.readLedger()).items, target);
-    return { kind: 'closed', target, row, note, ...(parent ? { parent } : {}) };
+    const followUp = req.followUp && req.kind === 'resolved' && target.kind === 'question' ? queueFollowUp(ctx, target, note) : null;
+    return { kind: 'closed', target, row, note, ...(parent ? { parent } : {}), ...(followUp ? { followUp } : {}) };
+}
+
+/** The queued to-do for an answered ask that names a PR; null when it names none, or an open item already carries that PR and ask. */
+function queueFollowUp(ctx: CloseContext, ask: LedgerItem, answer: string | null): LedgerRow | null {
+    const ref = prRef(`${ask.text ?? ''}\n${answer ?? ''}`);
+    if (!ref) return null;
+    const entries = ctx.readLedger();
+    const marker = `(ask ${ask.id})`;
+    if (ctx.fold(entries).items.some((i) => isOpen(i) && i.text?.includes(marker))) return null;
+    const clipped = (answer ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    return ctx.append({
+        id: ctx.newId(entries),
+        ts: ctx.now(),
+        date: ctx.today(),
+        kind: 'wip',
+        queued: true,
+        text: `Follow up on ${ref} ${marker}${clipped ? `: ${clipped}` : ''}`,
+        stream: ask.stream,
+        repo: ask.repo,
+        ticket: ask.ticket,
+        refs: [ref],
+    });
 }
