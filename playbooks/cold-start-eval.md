@@ -17,7 +17,7 @@ Give it only the context file and these eight questions, and ask for short answe
 1. What are today's priorities?
 2. What is in flight, and where (stream, worktree or branch when shown)?
 3. For one in-flight id you pick, what is the next step to continue it? (Where the context points at `journal.ts recover <id>`, say what you would run.)
-4. Which asks are open and waiting on Jack?
+4. Which asks are open and waiting on the user?
 5. What did the last session decide?
 6. How do you run the-maestro's tests?
 7. What is blocked, and on what?
@@ -27,7 +27,7 @@ Give it only the context file and these eight questions, and ask for short answe
 
 Give it the eight questions, the answerer's answers, and the ground truth read straight from the ledger (`journal.ts status`, `journal.ts priorities show`, `journal.ts standing list`, and the library page for how to run the tests). It never sees the context file. Score each answer 1 (correct and specific, ids included), 0.5 (right area, vague) or 0 (wrong or absent). A question whose fact is not yet on the page (decisions, recover) scores 0 and is named: that is the gap, not an error in the eval.
 
-Pass is 7 of 8 (a proposal; Jack has not set the number).
+Pass is 7 of 8 (a proposal; the number is not yet settled).
 
 ## 4. Record
 
