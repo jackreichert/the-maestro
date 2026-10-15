@@ -17,6 +17,8 @@ export type Verdict = { ok: true } | { ok: false; refusals: Refusal[] };
 
 const TEMPLATE = /\.(?:example|sample|template)|^example\./i;
 /** A path part that names a secret file: `.env`, `.env.local`, `.env*`, `prod.env`, `ssm-params.json`, `ssm-*`. */
+/** A dot-file or `ssm*` word built with a glob or an expansion (`.e*`, `.en?`, `.[e]nv`, `.$(printf e)nv`, `ssm?params`): it can name a secret file without ever spelling it. */
+const GLOBBED = /^\.[^\s]*[*?[$`]|^ssm[^\s]*[*?[$`]/i;
 const PROTECTED = /^\.env|\.env(?:\.|$)|^ssm-/i;
 
 /** The words of the text that name a protected file, found as written and again with quotes and backslashes removed (`.e"nv"`, `.en\v`). */
@@ -26,7 +28,7 @@ export function secretFileRefs(text: string): string[] {
     for (const word of view.split(/[\s;&|<>(){}=,:]+/)) {
       for (const part of word.split('/')) {
         if (!part || TEMPLATE.test(part)) continue;
-        if (PROTECTED.test(part)) hits.add(part);
+        if (PROTECTED.test(part) || GLOBBED.test(part)) hits.add(part);
       }
     }
   }
@@ -35,6 +37,7 @@ export function secretFileRefs(text: string): string[] {
 
 /** Commands that print the whole environment, where the secrets are. */
 const ENV_DUMP = [
+  /(?:^|[\s;&|(`{])(?:printenv|compgen|environ)(?![\w-])|(?:^|[\s;&|(`{])env\s*(?:$|[;&|)`}<>]|-[u0i]\b)|process\.env\b|os\.environ\b|ENV\[/,
   /(?:^|[;&|(]|\$\()\s*(?:\/usr\/bin\/)?(?:env|printenv)\s*(?:$|[;&|)<>]|-0\b|--null\b)/,
   /(?:^|[;&|(]|\$\()\s*(?:export|declare|typeset)\s+-[A-Za-z]*[xp][A-Za-z]*\s*(?:$|[;&|)])/,
   /(?:^|[;&|(]|\$\()\s*(?:export|set|declare|typeset)\s*(?:$|[;&|)])/,
@@ -42,7 +45,7 @@ const ENV_DUMP = [
 ];
 
 function envDump(block: string): Refusal[] {
-  return toLines(block).flatMap((l) => (ENV_DUMP.some((re) => re.test(l.code)) ? [{ rule: 'env-dump', line: l.n, message: 'This line prints the environment, which holds secrets. Name the one variable you need.' }] : []));
+  return toLines(block).flatMap((l) => (ENV_DUMP.some((re) => re.test(l.code) || (re === ENV_DUMP[0] && re.test(l.raw))) ? [{ rule: 'env-dump', line: l.n, message: 'This line prints the environment, which holds secrets. Name the one variable you need.' }] : []));
 }
 
 /** The user's own secret-file hook, when it exists: asked in addition to the built-in matcher, never instead of it. */

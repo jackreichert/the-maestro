@@ -16,7 +16,7 @@ test('paste-lint findings refuse the block', () => {
 });
 
 test('a block that names a secret file is refused, in every spelling the matcher knows', () => {
-  for (const b of ['cat .env', 'source ./.env.local', 'cat ~/dev-env/.env', 'grep KEY .env*', 'cat ssm-params-production.json', 'cat "ssm-*.json"', 'cat .e"nv"', 'cat prod.env', 'cat ./app/.env.production']) {
+  for (const b of ['cat .env', 'source ./.env.local', 'cat ~/dev-env/.env', 'grep KEY .env*', 'cat ssm-params-production.json', 'cat "ssm-*.json"', 'cat .e"nv"', 'cat prod.env', 'cat ~/x/.en?', 'cat ~/x/.[e]nv', 'cat ~/x/.e*', 'cat "$HOME/.$(printf e)nv"', 'cat ~/x/ssm?params.json', 'cat ./app/.env.production']) {
     assert.ok(rules(b).includes('secret-file'), b);
   }
 });
@@ -27,8 +27,8 @@ test('templates are not secret files', () => {
 });
 
 test('environment dumps are refused, a named variable is not', () => {
-  for (const b of ['env', 'printenv', 'echo hi && env', 'export -p', 'set', 'cat /proc/self/environ', 'env | sort']) assert.ok(rules(b).includes('env-dump'), b);
-  assert.deepEqual(rules('echo "$HOME"\nenv FOO=1 true'), []);
+  for (const b of ['env', 'printenv', 'echo hi && env', 'export -p', 'set', 'cat /proc/self/environ', 'env | sort', '{ env; }', '`env`', 'compgen -e', 'env -u FOO', 'python3 -c "import os;print(os.environ)"']) assert.ok(rules(b).includes('env-dump'), b);
+  assert.deepEqual(rules('echo "$HOME"\nls -la'), []);
 });
 
 test('a secret-shaped line is refused, so what is shown is what runs', () => {
