@@ -153,11 +153,16 @@ function ctxWithIds(rows: LedgerRow[]): CloseContext {
     return { ...ctxFor(rows).ctx, newId: () => `id${(n += 1)}` };
 }
 
-test('prRef finds owner/repo#N and a bare #NN, and ignores a lone #1, a url fragment and plain words', () => {
+test('prRef prefers a qualified reference, then a PR-worded one, then a bare four or five digit number', () => {
     assert.equal(prRef('see org/api#4071 please'), 'org/api#4071');
-    assert.equal(prRef('PR #4071 waits'), '#4071');
-    assert.equal(prRef('step #1 then step 2'), null);
-    assert.equal(prRef('https://x.example/page#123'), null);
+    assert.equal(prRef('issue #12 and org/api#99'), 'org/api#99');
+    assert.equal(prRef('https://github.com/org/api/pull/812 is stuck'), 'org/api#812');
+    assert.equal(prRef('PR #7 waits'), '#7');
+    assert.equal(prRef('the pull request #123 waits'), '#123');
+    assert.equal(prRef('rest-api #4071 needs a rebase'), '#4071');
+    assert.equal(prRef('recolour to #123456 and #fff and #123'), null);
+    assert.equal(prRef('step #1 then step #12'), null);
+    assert.equal(prRef('https://x.example/page#4071'), null);
     assert.equal(prRef('no reference here'), null);
     assert.equal(prRef(undefined), null);
 });
