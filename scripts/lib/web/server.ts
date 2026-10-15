@@ -1,7 +1,7 @@
 /**
  * The Podium server: GET endpoints over buildState/buildCharts and the client's static files, plus one narrow write surface.
  * `GET /api/events` is the one streaming route: Server-Sent Events from a shared watcher (events.ts), so the page updates without a reload.
- * The write surface is thirteen POST routes (the five `/api/run/*` ones run a reviewed command; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts).
+ * The write surface is fourteen POST routes (the six `/api/run/*` ones run a reviewed command or list the script catalog; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts).
  * They need a per-start token the page reads from `GET /api/edit-token`, and guard.ts only lets them through from the page's own origin.
  * Every request goes through guard.refuse first; every response is written by guard.send, so the security headers
  * are on 404s and 500s too. Every GET is read-only: nothing on a GET path writes the ledger, the priorities file or the page.
@@ -31,6 +31,7 @@ import { REFRESH_PATH, REFRESH_STATE_PATH, createRefresher, handleRefresh, spawn
 import type { Rebuild } from './prs-refresh.ts';
 import { DEFAULT_PRIORITIES_MAX } from '../status-page/priorities.ts';
 import { RUN_WRITE_PATHS, handleRun, recordRun } from './run-write.ts';
+import { CATALOG_FILE, listCatalog, resolveScript } from './run-script.ts';
 import type { ExtraGuard } from '../run/command-guard.ts';
 import { createRunner } from '../run/runner.ts';
 import { homedir } from 'node:os';
@@ -68,6 +69,8 @@ export interface WebServerOptions {
   /** The run endpoints' child processes: the directory a block runs in (default: the home directory) and the shell (default /bin/zsh; tests pass /bin/sh). */
   home?: string;
   runShell?: string;
+  /** The script catalog file (default: podium/scripts.json in this repo). Tests pass their own. */
+  catalogFile?: string;
 }
 
 const DEFAULT_DAYS = 14;
@@ -128,7 +131,8 @@ export function createWebServer(o: WebServerOptions): Server {
   const token = o.token ?? randomBytes(32).toString('hex');
   const writes = { web: o.web, max: o.web.prioritiesMax ?? DEFAULT_PRIORITIES_MAX, token, now: (): Date => o.now?.() ?? new Date(), log, ghRun: o.ghRun };
   const runner = createRunner({ home: o.home ?? homedir(), shell: o.runShell, onDone: (r) => recordRun(writes, r), log });
-  const runs = { ...writes, runner, extraGuard: o.extraGuard };
+  const catalogFile = o.catalogFile ?? CATALOG_FILE;
+  const runs = { ...writes, runner, extraGuard: o.extraGuard, resolveOther: (b: Record<string, unknown>) => resolveScript(o.web, b, catalogFile), listCatalog: () => listCatalog(catalogFile) };
   const refresher = createRefresher({ statusDir: o.web.statusDir, rebuild: o.prsRebuild ?? spawnRebuild({ statusDir: o.web.statusDir, vault: o.web.vault, project: o.web.project }), now: writes.now, log });
   const files = buildRoutes(o.clientDir);   // a whitelist taken at start: a request path is only ever looked up, never joined onto a path
   const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES, requestTimeout: o.requestTimeoutMs ?? 10_000, headersTimeout: o.headersTimeoutMs ?? 5_000, connectionsCheckingInterval: 1000 }, (req, res) => {

@@ -1,5 +1,5 @@
 /**
- * Running a reviewed command from the page: five POST routes, `/api/run/{preview,start,poll,kill,resolve}`.
+ * Running a reviewed command from the page: six POST routes, `/api/run/{preview,start,poll,kill,resolve,catalog}`.
  *
  * guard.ts has already refused anything that is not this page's own same-origin JSON POST. Each route here then checks the per-start edit token before it
  * reads the body, and takes only ids and hashes from the page, never command text: the server re-reads the command from the ledger (an ask's block file) or
@@ -23,7 +23,8 @@ export const RUN_START_PATH = '/api/run/start';
 export const RUN_POLL_PATH = '/api/run/poll';
 export const RUN_KILL_PATH = '/api/run/kill';
 export const RUN_RESOLVE_PATH = '/api/run/resolve';
-export const RUN_WRITE_PATHS: ReadonlySet<string> = new Set([RUN_PREVIEW_PATH, RUN_START_PATH, RUN_POLL_PATH, RUN_KILL_PATH, RUN_RESOLVE_PATH]);
+export const RUN_CATALOG_PATH = '/api/run/catalog';
+export const RUN_WRITE_PATHS: ReadonlySet<string> = new Set([RUN_PREVIEW_PATH, RUN_START_PATH, RUN_POLL_PATH, RUN_KILL_PATH, RUN_RESOLVE_PATH, RUN_CATALOG_PATH]);
 export const RUN_BODY_LIMIT = 2048;
 
 export interface RunDeps extends WriteOptions {
@@ -31,6 +32,8 @@ export interface RunDeps extends WriteOptions {
   extraGuard?: ExtraGuard;
   /** Resolves a source other than an ask (the script catalog). Absent: only asks run. */
   resolveOther?: (body: Record<string, unknown>) => Lookup | null;
+  /** The catalog the Scripts tab lists. Absent: an empty one. */
+  listCatalog?: () => { scripts: object[]; problems: string[] };
 }
 
 type Body = Record<string, unknown>;
@@ -38,7 +41,7 @@ const ID = /^[a-z0-9]{4,6}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const RUN_ID = /^[0-9a-f]{24}$/;
 const KEYS: Record<string, string[]> = {
-  [RUN_PREVIEW_PATH]: [], [RUN_START_PATH]: ['sha256', 'confirm'], [RUN_POLL_PATH]: ['runId', 'since'], [RUN_KILL_PATH]: ['runId'], [RUN_RESOLVE_PATH]: ['runId'],
+  [RUN_PREVIEW_PATH]: [], [RUN_START_PATH]: ['sha256', 'confirm'], [RUN_POLL_PATH]: ['runId', 'since'], [RUN_KILL_PATH]: ['runId'], [RUN_RESOLVE_PATH]: ['runId'], [RUN_CATALOG_PATH]: [],
 };
 const SOURCE_KEYS = ['source', 'id', 'name', 'args'];
 
@@ -119,6 +122,7 @@ export async function handleRun(d: RunDeps, path: string, req: IncomingMessage, 
       if (!found) return bad(res);
       return found.ok ? sendJson(res, 200, previewOf(found.item)) : fail(res, found.status, found.error, found.message);
     }
+    if (path === RUN_CATALOG_PATH) return sendJson(res, 200, { ok: true, ...(d.listCatalog?.() ?? { scripts: [], problems: [] }) });
     if (path === RUN_START_PATH) return await start(d, b, res);
     const runId = b.runId;
     if (typeof runId !== 'string' || !RUN_ID.test(runId)) return bad(res);
