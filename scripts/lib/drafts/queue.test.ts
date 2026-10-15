@@ -13,16 +13,18 @@ import type { GhResult } from './post.ts';
 const file = (): string => { const d = mkdtempSync(join(tmpdir(), 'drafts-')); mkdirSync(join(d, 'J')); return join(d, 'J', 'drafts.jsonl'); };
 const R = (f: string, id: string): string => { const d = listDrafts(f).find((x) => x.id === id); return d ? revOf(d) : '000000000000'; };
 const draft = (over: Partial<NewDraft> = {}): NewDraft => ({ key: 'acme/widgets#7@abc:a.ts:3:x', source: 'review', repo: 'acme/widgets', pr: 7, severity: 'suggestion', text: 'Could this guard against an empty list?', target: { kind: 'inline', path: 'src/a.ts', line: 3, commitId: 'abcdef1' }, ...over });
-interface Stub { calls: string[][]; run: (a: string[]) => GhResult }
+interface Stub { calls: string[][]; run: (a: string[], input?: string) => GhResult; postedInput?: string }
 const HEAD = `abcdef1${'0'.repeat(33)}`;
 /** A gh stand-in. The live-head read a review makes before posting is answered with `head` and not counted in `calls`; every other call gets `result`. */
-const stub = (result: Partial<GhResult> = {}, head: Partial<GhResult> = { stdout: `${HEAD}\n` }): Stub => {
+const stub = (result: Partial<GhResult> = {}, head: Partial<GhResult> = { stdout: `${HEAD}\n` }, files?: Partial<GhResult>): Stub => {
   const calls: string[][] = [];
-  return { calls, run: (a) => {
-    if (a.includes('--jq')) return { status: 0, stdout: '', stderr: '', ...head };
+  const out: Stub = { calls, run: (a, input) => {
+    out.postedInput = input ?? out.postedInput;
+    if (a.includes('--jq')) return a[1]?.includes('/compare/') ? { status: 0, stdout: '["README.md"]', stderr: '', ...(files ?? {}) } : { status: 0, stdout: '', stderr: '', ...head };
     calls.push(a);
     return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#discussion_r1"}', stderr: '', ...result };
   } };
+  return out;
 };
 
 test('a new draft is pending and the same key is added once, even after it was rejected', () => {
@@ -305,7 +307,7 @@ test('a draft left approved (the process died before the posting row) can be rej
 });
 
 test('a review is refused when the PR head moved since it was written, and stays pending; an unreadable head is refused too', () => {
-  const f = file(); const moved = stub({}, { stdout: `${'9'.repeat(40)}\n` });
+  const f = file(); const moved = stub({}, { stdout: `${'9'.repeat(40)}\n` }, { stdout: '["src/a.ts"]' });
   const { id } = addDraft(f, review());
   const out = approveAndPost(f, id, R(f, id), { run: moved.run });
   assert.deepEqual([out.ok, out.ok ? '' : out.code, out.ok ? '' : out.message], [false, 'changed', 'PR moved since this draft; re-prepare it. Nothing was posted.']);
@@ -330,4 +332,13 @@ test('a refusal carries GitHub\'s own reason from the JSON body, not only the ba
   assert.match(msg, /outside the diff/);
   assert.match(listDrafts(f)[0]?.error ?? '', /line must be part of the diff/);
   assert.equal(listDrafts(f)[0]?.state, 'failed');
+});
+
+test('when the PR moved but the push touched none of the files the review comments on, the review is re-pinned to the live head', () => {
+  const f = file(); const newHead = '9'.repeat(40);
+  const g = stub({}, { stdout: `${newHead}\n` });   // the compare answers with README.md only; the review comments on src/a.ts
+  const { id } = addDraft(f, review());
+  assert.equal(approveAndPost(f, id, R(f, id), { run: g.run }).ok, true);
+  assert.equal(JSON.parse(g.postedInput ?? '{}').commit_id, newHead);
+  assert.deepEqual(listDrafts(f)[0]?.target, { kind: 'review', commitId: 'abcdef1' }, 'the stored draft keeps the commit it was written against');
 });
