@@ -6,6 +6,7 @@ import type { RunApi, Preview, Progress } from '../src/run-api.ts';
 import type { AskCard } from '../src/types.ts';
 
 installDom();
+const { clearSavedRuns } = await import('../src/run-panel.ts');
 type Panel = HTMLElement & { source: unknown; api: RunApi; locked: boolean; load(): Promise<void> };
 const wait = (ms = 10): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const SHA = 'a'.repeat(64);
@@ -25,7 +26,8 @@ function fake(p: Preview, polls: Progress[], opts: { startOutcome?: unknown } = 
   } as unknown as RunApi;
   return { api, calls };
 }
-const mountPanel = async (api: RunApi, source: unknown = { source: 'ask', id: 'ab12' }) => {
+const mountPanel = async (api: RunApi, source: unknown = { source: 'ask', id: 'ab12' }, keep = false) => {
+  if (!keep) clearSavedRuns();
   const m = await mount<Panel>('../src/run-panel.ts', 'run-panel', { source, api });
   await m.el.load();
   return m;
@@ -121,4 +123,25 @@ test('an ask card with a paste block carries the panel, sample data does not', a
   const sample = await mount<HTMLElement & { ask: AskCard; locked: boolean }>('../src/ask-card.ts', 'ask-card', { locked: true, ask });
   assert.equal(sample.root.querySelector('run-panel'), null);
   sample.cleanup();
+});
+
+test('a live update that rebuilds the panel keeps the output and keeps following a run in progress', async () => {
+  const { api, calls } = fake(preview(), [progress({ status: 'running', exitCode: null, durationMs: null, chunks: [{ seq: 0, stream: 'out', text: 'first\n' }], next: 1 }), progress({ status: 'running', exitCode: null, durationMs: null, next: 1 }), progress({ chunks: [{ seq: 1, stream: 'out', text: 'second\n' }], next: 2 })]);
+  const one = await mountPanel(api);
+  q<HTMLButtonElement>(one.root, 'button.primary').click();
+  await wait(50);
+  one.cleanup();   // the board redraws: the old card goes, a new one is made for the same ask
+  const two = await mountPanel(api, { source: 'ask', id: 'ab12' }, true);
+  assert.equal(q(two.root, 'pre.out').textContent, 'first\n');
+  assert.equal(q<HTMLButtonElement>(two.root, 'button.primary').hasAttribute('disabled'), true, 'still running: Run stays off');
+  await wait(600);
+  assert.equal(q(two.root, 'pre.out').textContent, 'first\nsecond\n');
+  assert.match(q(two.root, '.status').textContent ?? '', /Finished/);
+  assert.equal(calls.start.length, 1, 'it did not start a second run');
+  assert.deepEqual(calls.poll.map((c) => c[1]), [0, 1, 1], 'the new panel resumes from what was shown');
+  two.cleanup();
+  const three = await mountPanel(api, { source: 'ask', id: 'ab12' }, true);
+  assert.equal(q(three.root, 'pre.out').textContent, 'first\nsecond\n');
+  assert.match(q(three.root, '.status').textContent ?? '', /Finished: exit 0/);
+  three.cleanup();
 });

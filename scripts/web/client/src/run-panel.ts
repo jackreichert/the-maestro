@@ -17,6 +17,12 @@ const CSS = `${BASE_CSS}${UI_CSS}
 `;
 
 const POLL_MS = 400;
+/** What a run has shown so far, kept for the page's life: a live update rebuilds the card or the tab, and the output and the run's id must survive it. */
+interface Saved { runId: string; chunks: Chunk[]; progress: Progress | null }
+const saved = new Map<string, Saved>();
+export const runKey = (s: RunSource): string => (s.source === 'ask' ? `ask:${s.id}` : `script:${s.name}:${JSON.stringify(s.args ?? {})}`);
+/** Forget every saved run (tests). */
+export const clearSavedRuns = (): void => saved.clear();
 const secs = (ms: number | null): string => `${((ms ?? 0) / 1000).toFixed(1)}s`;
 const END_WORDS: Record<string, string> = { done: 'Finished', failed: 'Could not run', killed: 'Stopped', timeout: 'Timed out' };
 
@@ -78,13 +84,20 @@ export class RunPanelElement extends HTMLElement {
       h('div', { class: 'actions' }, run, stop, resolve),
       status, out));
 
+    const key = runKey(source);
     let since = 0;
-    const add = (chunks: Chunk[]): void => {
+    const show = (chunks: Chunk[]): void => {
       for (const c of chunks) out.append(c.stream === 'err' ? h('span', { class: 'err' }, c.text) : c.text);
-      since += chunks.length;
       if (chunks.length) out.scrollTop = out.scrollHeight;
     };
+    const add = (chunks: Chunk[]): void => {
+      show(chunks);
+      since += chunks.length;
+      saved.get(key)?.chunks.push(...chunks);
+    };
     const finish = (pr: Progress): void => {
+      const mine = saved.get(key);
+      if (mine) mine.progress = pr;
       stop.hidden = true;
       run.removeAttribute('disabled');
       run.textContent = 'Run again';
@@ -105,6 +118,7 @@ export class RunPanelElement extends HTMLElement {
       run.setAttribute('disabled', '');
       resolve.hidden = true;
       out.replaceChildren(); since = 0;
+      saved.delete(key);
       status.textContent = 'Starting...';
       const started = await this.#client.start(source, p.sha256, confirmBox.checked);
       if (!started.ok) {
@@ -114,10 +128,20 @@ export class RunPanelElement extends HTMLElement {
         return;
       }
       this.#runId = started.value;
+      saved.set(key, { runId: started.value, chunks: [], progress: null });
       stop.hidden = false;
       status.textContent = 'Running...';
       void tick();
     })(); });
+    // Rebuilt by a live update: put back what this run had shown, and keep following it if it is still going.
+    const before = saved.get(key);
+    if (before) {
+      this.#runId = before.runId;
+      show(before.chunks);
+      since = before.chunks.length;
+      if (before.progress) finish(before.progress);
+      else { run.setAttribute('disabled', ''); stop.hidden = false; status.textContent = 'Running...'; void tick(); }
+    }
     stop.addEventListener('click', () => { if (this.#runId) void this.#client.kill(this.#runId); status.textContent = 'Stopping...'; });
     resolve.addEventListener('click', () => { void (async () => {
       if (!this.#runId) return;
