@@ -7,6 +7,7 @@
  * readRegistry(). The registry is passed in, never read from a global.
  */
 import { readFileSync, existsSync } from 'node:fs';
+import { normaliseUsed, tableModel } from './ledger-tags.ts';
 
 /** One line of ledger.jsonl. The named fields are the ones the fold reads; rows carry others (text, date, ref, gate...) it passes through. */
 export interface LedgerRow {
@@ -181,14 +182,13 @@ export const mapStreamWith = (reg: RegistryLookup | null | undefined, s: string 
 
 // ── model names ─────────────────────────────────────────────────────────────
 
-/** Canonical model id for a canonical id or alias (case-insensitive); null when the registry has no models section or does not know it. */
+/**
+ * Canonical model id for a canonical id or alias (case-insensitive). The registry's `models` section is asked first, so it can
+ * override the built-in table (lib/ledger-tags.ts); null when neither knows the name.
+ */
 export function canonicalModel(reg: RegistryLookup | null | undefined, name: unknown): string | null {
-    if (!reg?.models || typeof name !== 'string') return null;
-    const k = name.trim().toLowerCase();
-    for (const [canon, meta] of Object.entries(reg.models)) {
-        if (canon.toLowerCase() === k || (meta?.aliases || []).some((a) => String(a).toLowerCase() === k)) return canon;
-    }
-    return null;
+    if (typeof name !== 'string') return null;
+    return (reg?.models ? tableModel(name, reg.models) : null) ?? tableModel(name);
 }
 
 /** Read-time mapping: a registered spelling becomes the canonical id; anything else is left alone. */
@@ -225,7 +225,8 @@ export function withStamp<E extends LedgerRow>(entry: E, stamped: Map<string, Us
  */
 export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefined) {
     const mapStream = (s: string | undefined) => mapStreamWith(reg, s);
-    const mapModel = <E extends LedgerRow>(e: E): E => (e && e.model ? { ...e, model: mapModelWith(reg, e.model) } : e);
+    /** Read-time tag normalisation: the model through the tables and registry, `used` through the tool aliases. The stored row is untouched. */
+    const mapMarks = <E extends LedgerRow>(e: E): E => (e ? { ...e, ...(e.model ? { model: mapModelWith(reg, e.model) } : {}), ...(e.used ? { used: normaliseUsed(e.used) } : {}) } : e);
     const byId = new Map<string, LedgerRow>();
     const stamped = new Map<string, UsageMark>();
     for (const e of entries) {
@@ -255,7 +256,7 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
         }
         if (e.kind === 'queue' && e.queues) moves.set(e.queues, { queued: true, ts: e.ts });
         if (e.kind === 'promote' && e.promotes) moves.set(e.promotes, { queued: false, ts: e.ts });
-        if (e.closes) closed.set(e.closes, mapModel(withStamp(e, stamped)));
+        if (e.closes) closed.set(e.closes, mapMarks(withStamp(e, stamped)));
         if (e.kind === 'tag' && e.tags) streams.set(e.tags, e.stream || undefined);
         if (e.kind === 'carry' && e.carries) streams.set(e.carries, e.stream || undefined);
         // A stream that maps to undefined is the reserved `none` ("no stream"): there is nothing to archive, so skip the row.
@@ -266,7 +267,7 @@ export function fold(entries: LedgerRow[], reg: RegistryLookup | null | undefine
     const items: LedgerItem[] = [];
     for (const e of entries) {
         if (!e.id || e.closes || e.annotates || (e.kind !== undefined && NON_ITEM_KINDS.includes(e.kind))) continue;
-        const base = mapModel(withStamp(e, stamped));
+        const base = mapMarks(withStamp(e, stamped));
         const close = closed.get(e.id) || null;
         const stream = mapStream(streams.has(e.id) ? streams.get(e.id) : base.stream);
         const move = moves.get(e.id);

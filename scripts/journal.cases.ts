@@ -733,17 +733,27 @@ test('usage counts a numeric mark and its string form as one row', () => {
 });
 
 test('read-time mapping heals old rows without touching the ledger; models check is a dry run', () => {
-    run('start', 'legacy', '--model', 'Claude Opus 5.5', ...usedFlags);
     run('start', 'modern', '--model', 'claude-opus-5-5', ...usedFlags);
+    const hand = (id: string, model: string, used: string[]) => JSON.stringify({ id, kind: 'wip', ts: '2026-10-03T09:00:00Z', date: '2026-10-03', text: `hand ${id}`, model, used }) + '\n';
+    writeFileSync(ledgerFile(), readFileSync(ledgerFile(), 'utf8') + hand('h001', 'Claude Opus 5.5', ['tool:journal.mjs']) + hand('h002', 'House Model', ['tool:journal.ts']));
     const before = readFileSync(ledgerFile(), 'utf8');
-    assert.deepEqual(parse(run('usage', '--json').out).model, { 'Claude Opus 5.5': 1, 'claude-opus-5-5': 1 });   // no models section: nothing enforced
+    const first = parse<{ model: Record<string, number>; used: Record<string, number> }>(run('usage', '--json').out);
+    assert.deepEqual(first.model, { 'claude-opus-5-5': 2, 'House Model': 1 });   // the built-in table folds the old spelling; an unknown model is left alone
+    assert.equal(first.used['tool:journal'], 2);
     seedModels();
-    assert.deepEqual(parse(run('usage', '--json').out).model, { 'claude-opus-5-5': 2 });
     const c = parse(run('models', 'check', '--json').out);
     assert.equal(c.rows, 1);
-    assert.deepEqual(c.models.map((m) => [m.model, m.status]).sort(), [['Claude Opus 5.5', 'alias'], ['claude-opus-5-5', 'canonical']]);
+    assert.deepEqual(c.models.map((m) => [m.model, m.status]).sort(), [['Claude Opus 5.5', 'alias'], ['House Model', 'unknown'], ['claude-opus-5-5', 'canonical']]);
     assert.match(run('models', 'check').out, /1 row\(s\) would show under a different model name; nothing appended/);
     assert.equal(readFileSync(ledgerFile(), 'utf8'), before);
+});
+
+test('--used tool marks are written canonical, and usage reports the unrecorded share', () => {
+    run('start', 'one', '--model', 'sonnet-5.5', '--used', 'skill:the-maestro,tool:journal.mjs,tool:journal.ts');
+    run('start', 'two', '--model', 'unrecorded', '--used', 'unrecorded');
+    assert.deepEqual(ledger().map((e) => [e.model, e.used]), [['claude-sonnet-5-5', ['skill:the-maestro', 'tool:journal']], ['unrecorded', ['unrecorded']]]);
+    assert.deepEqual(parse(run('usage', '--json').out).unrecorded, { model: 1, used: 1 });
+    assert.match(run('usage').out, /unrecorded: model 1 \(50\.0%\), used 1 \(50\.0%\)/);
 });
 
 test('models add is idempotent, refuses alias collisions, and coexists with streams in the one file', () => {
