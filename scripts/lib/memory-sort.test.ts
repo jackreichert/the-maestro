@@ -29,7 +29,7 @@ test('a project file that records a decision or a dated status is neither fact n
 });
 
 test('a project file worded as a rule is left to the user', () => {
-    assert.equal(sortMemory(file('x', 'project', 'Jack decided not to install it for the-maestro')).kind, 'unsure');
+    assert.equal(sortMemory(file('x', 'project', 'The user decided not to install it for the-maestro')).kind, 'unsure');
 });
 
 test('a project file with no project is unsure, or a rule when worded as one', () => {
