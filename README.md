@@ -269,7 +269,7 @@ A fresh session should not hunt for facts nobody wrote down. `journal.ts handoff
 
 ## Scripts and commands
 
-Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips the types itself; the table names each file). Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies.
+Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips the types itself; the table names each file). Every script reads its settings through [scripts/local-config.ts](scripts/local-config.ts) and takes no dependencies. A tool that no protocol step, playbook, event type or hook uses is moved to [archive/](archive/README.md) with a one-line reason, not deleted.
 
 | Script | Purpose |
 |---|---|
