@@ -131,8 +131,8 @@ test('the supervisor refuses to start without a ledger root and writes nothing',
 });
 
 test('the plist PATH names the home bin directories, so a watcher under launchd finds with-env', () => {
-  const dirs = supervisorPath('/opt/node/bin/node', '/home/u').split(':');
-  assert.deepEqual(dirs.slice(0, 3), ['/opt/node/bin', '/home/u/bin', '/home/u/.local/bin']);
+  const dirs = supervisorPath('/opt/node/bin/node', '/home/user').split(':');
+  assert.deepEqual(dirs.slice(0, 3), ['/opt/node/bin', '/home/user/bin', '/home/user/.local/bin']);
   assert.ok(dirs.includes('/usr/bin'), 'the system directories stay');
   assert.equal(new Set(dirs).size, dirs.length, 'no directory twice');
   const ledger = tempDir();
