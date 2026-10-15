@@ -1069,6 +1069,18 @@ Prints the standing brief block from [reference/brief.md](reference/brief.md) wi
 - It is idempotent: a path that is already a link into the store only refreshes the manifest. A link to a different project or file is refused, not re-pointed.
 - `<store root>/manifest.json` is names only (mode 600): for each store file, its repo, project and file name, and the worktrees that link to it. No values, ever.
 
+### local-db.ts
+
+`local-db [--var NAME] [--db NAME] [--write] [--info] -c "SQL" [-A -t -x -q -H --csv -F SEP]` (or `node scripts/local-db.ts ...`) runs `psql` against your local Postgres so a worker never sees the connection URL. It reads `LOCAL_DB_URL` (or `--var NAME`) from the dev-env env file inside its own process, parses it as data (nothing is sourced), and hands psql the connection as `PG*` environment variables, never as an argument. The limits are enforced in code and covered by `scripts/local-db.test.ts`:
+
+- The host must be `localhost` or `127.0.0.1`. Ports 5438 and 5439 (the prod and staging proxy ports) are refused even on localhost, as are variable names that look like prod, staging or shared databases, and URLs that carry anything but `sslmode` or `connect_timeout` in the query (`host=`, `port=`, `options=` and `service=` would redirect the connection). The caller's own `PG*` variables are dropped.
+- `--db NAME` swaps the database in the URL's path (psql ignores `-d` beside a URI). `--info` prints host, port, database and mode only.
+- The session is read-only (`default_transaction_read_only=on`) unless you pass `--write`. In read-only mode, statements that name the setting, `set_config`, `read write`, `set role` or `reset all` are refused. This is a guardrail against mistakes, not a security boundary; a database role without write grants is the real boundary.
+- psql arguments are an allowlist: `-c`, `-f` (the script is read here and fed on stdin), `-v` and output-shape flags. Connection flags, URIs, `-o`, `-L` and `-P` are refused. Backslash commands other than the `\d` family, `\l`, `\x` and `\timing` (`\c`, `\!`, `\i`, `\o`, `\copy`, `\set` and the like) and backticks outside quotes are refused, since they could reconnect, run a shell command or write a file.
+- Output is scrubbed of the URL, the password and the user:password pair, raw and percent-encoded, on stdout and stderr, and a refusal never quotes the URL. Exit 2 means refused.
+
+The secret-file guard is unchanged: it blocks reading env files and lets this command through, because the command line never names one (the test runs the installed guard when it is present). The standing brief block carries a rule telling workers to use it for local verification.
+
 ### local-config.ts
 
 `node scripts/local-config.ts` prints each resolved setting and which files it came from. The rest of the scripts import it.
