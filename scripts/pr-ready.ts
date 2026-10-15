@@ -10,6 +10,7 @@
  * open develop PR, or a PR waiting on its author). A queue that cannot be read refuses too. Personal and self-review repos are never gated.
  * `--over-cap "<reason>"` marks it ready anyway; the reason is required, printed, and appended to `over-cap.jsonl` beside the PR snapshot.
  * Exit 0 marked ready (or dry run, or allowed), 1 refused by the cap, 2 bad usage or a git/gh error. The gh binary is `gh`, or MAESTRO_GH_BIN (tests use a stand-in).
+ * The repo is identified by the checkout's origin remote, so origin must be the upstream repo: a fork or mirror as origin is a different owner and is not gated.
  * The one gap: nothing stops a hand-typed `gh pr ready` or the GitHub button; this script is the maestro path, not a GitHub-side rule.
  */
 import { spawnSync } from 'node:child_process';
@@ -46,24 +47,22 @@ export function parseArgs(argv: string[]): ReadyArgs {
   return o;
 }
 
-/** The PR's head and base branch, review decision and mergeable state, from gh: what the gate needs to tell whether promoting it adds to the queue. */
-function candidateOf(slug: string, pr: number): Omit<QueuePr, 'isDraft' | 'repo'> {
-  const [cmd, argv] = toolCommand('gh', ['pr', 'view', String(pr), '--repo', `github.com/${slug}`, '--json', 'headRefName,baseRefName,reviewDecision,mergeable']);
+/** The PR's head and base branch, from gh: what the gate needs to tell whether it is a staging twin and so adds nothing to the queue. */
+function candidateOf(slug: string, pr: number): Pick<QueuePr, 'headRefName' | 'baseRefName'> {
+  const [cmd, argv] = toolCommand('gh', ['pr', 'view', String(pr), '--repo', `github.com/${slug}`, '--json', 'headRefName,baseRefName']);
   const r = spawnSync(cmd, argv, { encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`gh pr view failed: ${(r.stderr || '').split('\n')[0]}`);
-  return JSON.parse(r.stdout) as Omit<QueuePr, 'isDraft' | 'repo'>;
+  return JSON.parse(r.stdout) as Pick<QueuePr, 'headRefName' | 'baseRefName'>;
 }
 
 function main(): void {
   const o = parseArgs(process.argv.slice(2));
   const slug = githubSlug(spawnSync('git', ['-C', o.repo, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout || '');
   if (!slug) usage(`${o.repo} has no github.com origin, so the repo cannot be identified`);
-  let live: { prs: readonly QueuePr[] } | undefined;
-  const reading: QueueReading = readQueue({ fetchLive: () => (live = fetchLive()), readStored: () => readSnapshotPrs(freshestSnapshotPath(o.vault)) }, REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, REVIEW_QUEUE_ORGS);
-  let candidate: Omit<QueuePr, 'isDraft' | 'repo'> = {};
+  const reading: QueueReading = readQueue({ fetchLive, readStored: () => readSnapshotPrs(freshestSnapshotPath(o.vault)) }, REVIEW_QUEUE_CAP, new Date(), SELF_REVIEW_REPOS, REVIEW_QUEUE_ORGS);
+  let candidate: Pick<QueuePr, 'headRefName' | 'baseRefName'> = {};
   try { candidate = candidateOf(slug, o.pr); } catch (e) { console.error(`pr-ready: ${(e as Error).message}; counting the PR as one more waiting on reviewers`); }
-  const prs = live?.prs ?? (reading.ok ? readSnapshotPrs(freshestSnapshotPath(o.vault))?.prs ?? [] : []);
-  const v = readyGate({ repo: slug, candidate, reading, prs, cap: REVIEW_QUEUE_CAP, selfReview: SELF_REVIEW_REPOS, owners: REVIEW_QUEUE_ORGS, overCapReason: o.overCap });
+  const v = readyGate({ repo: slug, candidate, reading, cap: REVIEW_QUEUE_CAP, selfReview: SELF_REVIEW_REPOS, owners: REVIEW_QUEUE_ORGS, overCapReason: o.overCap });
   if (!v.allow) { console.error(`pr-ready: refused, ${v.message}`); process.exit(1); }
   console.log(`pr-ready: ${v.message}`);
   if (v.overridden && !o.dryRun) logOverride(o, slug);

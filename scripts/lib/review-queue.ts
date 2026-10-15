@@ -85,7 +85,7 @@ export interface QueueSources {
 }
 
 export type QueueReading =
-  | { ok: true; queue: ReviewQueue; source: 'live' | 'snapshot'; takenAt?: string; liveError?: string }
+  | { ok: true; queue: ReviewQueue; prs: readonly QueuePr[]; source: 'live' | 'snapshot'; takenAt?: string; liveError?: string }
   | { ok: false; error: string };
 
 /** A fallback snapshot older than this is no answer: a stale count must not let new PR work through. */
@@ -97,12 +97,12 @@ const MAX_FALLBACK_AGE_MS = 6 * 36e5;
  */
 export function readQueue(src: QueueSources, cap: number, now: Date = new Date(), selfReview: readonly string[] = [], owners: readonly string[] = []): QueueReading {
   let liveError: string;
-  try { return { ok: true, queue: reviewQueue(src.fetchLive().prs, cap, selfReview, owners), source: 'live' }; } catch (e) { liveError = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? ''; }
+  try { const prs = src.fetchLive().prs; return { ok: true, queue: reviewQueue(prs, cap, selfReview, owners), prs, source: 'live' }; } catch (e) { liveError = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? ''; }
   const stored = src.readStored();
   if (!stored) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and there is no usable snapshot` };
   const ageMs = stored.takenAt ? now.getTime() - Date.parse(stored.takenAt) : Number.NaN;
   if (!(ageMs <= MAX_FALLBACK_AGE_MS)) return { ok: false, error: `cannot read the review queue: GitHub read failed (${liveError}) and the stored snapshot is ${stored.takenAt ? `from ${stored.takenAt}, over ${MAX_FALLBACK_AGE_MS / 36e5} hours old` : 'of unknown age'}` };
-  return { ok: true, queue: reviewQueue(stored.prs, cap, selfReview, owners), source: 'snapshot', takenAt: stored.takenAt, liveError };
+  return { ok: true, queue: reviewQueue(stored.prs, cap, selfReview, owners), prs: stored.prs, source: 'snapshot', takenAt: stored.takenAt, liveError };
 }
 
 /** Exit code for the gate: 0 room to dispatch, 1 full, 2 unknown. */

@@ -9,11 +9,10 @@ import { isSelfReview } from './self-review.ts';
 /** What the gate is told: the PR's repo (`owner/name`), the queue as read, and the settings that decide whether the repo is gated at all. */
 export interface GateInput {
   repo: string;
-  /** The PR being promoted, as it will look once ready; its repo is filled in from `repo`. */
-  candidate: Omit<QueuePr, 'isDraft' | 'repo'>;
+  /** The PR being promoted; only its head and base branch are used (to see whether it is a staging twin). Its current review state is ignored: a conflict or a change request today is gone tomorrow. */
+  candidate: Pick<QueuePr, 'headRefName' | 'baseRefName'>;
+  /** The reading, which carries the PR list it counted: the gate re-counts that same list with the candidate added, never a second read. */
   reading: QueueReading;
-  /** The other open PRs the reading was made from; the gate re-counts them with the candidate added to see whether it raises the count. */
-  prs: readonly QueuePr[];
   cap: number;
   selfReview: readonly string[];
   owners: readonly string[];
@@ -30,7 +29,7 @@ export const isGatedRepo = (repo: string, selfReview: readonly string[], owners:
 
 /**
  * Allow or refuse promoting one draft. An ungated repo (personal, self-review, another owner) is always allowed. Otherwise the promotion is allowed
- * while the queue has room, or when the PR would not add to it (a staging twin of an open develop PR, or a PR that waits on its author). At or over
+ * while the queue has room, or when the PR would not add to it (a staging twin of an open develop PR; its own conflict or review state does not count, since that clears). At or over
  * the cap it is refused with the reading and the way out. A queue that cannot be read is refused too, never treated as empty. `overCapReason` lets a
  * refused promotion through with the reason carried in the message, which the caller logs.
  */
@@ -42,7 +41,8 @@ export function readyGate(i: GateInput): GateVerdict {
     return reason ? { allow: true, gated: true, overridden: true, message: `${why} Marking ready anyway: --over-cap "${reason}"` } : { allow: false, message: `${why} Retry when it can be read, or pass --over-cap "<reason>".` };
   }
   const q = i.reading.queue;
-  const adds = reviewQueue([...i.prs, { ...i.candidate, repo: i.repo, isDraft: false }], i.cap, i.selfReview, i.owners).count > q.count;
+  const waiting: QueuePr = { headRefName: i.candidate.headRefName, baseRefName: i.candidate.baseRefName, repo: i.repo, isDraft: false };
+  const adds = reviewQueue([...i.reading.prs, waiting], i.cap, i.selfReview, i.owners).count > q.count;
   if (!q.full || !adds) return { allow: true, gated: true, overridden: false, message: `review queue: ${queueCount(q)}${q.full ? '; this PR adds nothing to it' : ''}` };
   const state = `review queue: ${queueCount(q)}`;
   if (reason) return { allow: true, gated: true, overridden: true, message: `${state}. Marking ready over the cap: --over-cap "${reason}"` };

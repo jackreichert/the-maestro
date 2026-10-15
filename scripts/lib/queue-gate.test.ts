@@ -10,7 +10,7 @@ const { reviewQueue } = await import('./review-queue.ts');
 const open = (n: number, o: Partial<QueuePr> = {}): QueuePr[] => Array.from({ length: n }, () => ({ isDraft: false, repo: 'org/a', reviewDecision: 'REVIEW_REQUIRED', mergeable: 'MERGEABLE', ...o }));
 const gate = (prs: QueuePr[], over: Record<string, unknown> = {}) => {
   const queue = reviewQueue(prs, 4, [], ['org']);
-  return readyGate({ repo: 'org/a', candidate: {}, reading: { ok: true, queue, source: 'live' }, prs, cap: 4, selfReview: [], owners: ['org'], ...over });
+  return readyGate({ repo: 'org/a', candidate: {}, reading: { ok: true, queue, prs, source: 'live' }, cap: 4, selfReview: [], owners: ['org'], ...over });
 };
 
 test('a promotion is allowed while the queue has room and refused at or over the cap', () => {
@@ -42,7 +42,7 @@ test('a staging PR whose develop twin is already ready adds nothing to the queue
   assert.ok(v.allow);
   assert.match(v.message, /adds nothing to it/);
   assert.equal(gate(prs, { candidate: { headRefName: 'feat/y', baseRefName: 'staging' } }).allow, false, 'an unrelated staging PR does add');
-  assert.ok(gate(prs, { candidate: { reviewDecision: 'CHANGES_REQUESTED' } }).allow, 'a PR waiting on its author adds nothing');
+  assert.equal(gate(open(4), { candidate: { reviewDecision: 'CHANGES_REQUESTED', mergeable: 'CONFLICTING' } }).allow, false, 'a conflict or change request today does not exempt the PR: it clears and the PR joins the queue');
 });
 
 test('an unreadable queue refuses (never empty), and the override still needs a reason', () => {
@@ -58,6 +58,6 @@ test('personal, self-review and other-owner repos are never gated', () => {
   assert.equal(isGatedRepo('me/tool', ['me/tool'], ['org', 'me']), false, 'self-review');
   assert.equal(isGatedRepo('jackreichert/the-maestro', [], ['org']), false, 'owner outside review_queue_orgs');
   const reading = { ok: false as const, error: 'cannot read the review queue: x' };
-  const v = readyGate({ repo: 'jackreichert/the-maestro', candidate: {}, reading, prs: [], cap: 4, selfReview: [], owners: ['org'] });
+  const v = readyGate({ repo: 'jackreichert/the-maestro', candidate: {}, reading, cap: 4, selfReview: [], owners: ['org'] });
   assert.ok(v.allow && !v.gated, 'not gated even when the queue cannot be read');
 });
