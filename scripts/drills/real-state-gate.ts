@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { CONTAINER_PROJECT, LEDGER_ROOT, VAULT_ROOT } from '../local-config.ts';
 import { fold, isOpen, parseLedger, readRegistry } from '../lib/ledger-core.ts';
 import type { LedgerRow } from '../lib/ledger-core.ts';
+import { dryRunJson } from '../lib/json-out.ts';
 import { SOURCES, runHook } from './lib.ts';
 import type { Fact, Scratch, Source } from './lib.ts';
 
@@ -136,7 +137,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     for (const n of r.notes) console.log(`  ${n}`);
     for (const m of r.missing) console.log(`  MISSING ${m}`);
     for (const m of r.pending) console.log(`  PENDING ${m}`);
-    console.log(`gate-result ${JSON.stringify({ ok: r.ok, checked: r.checked, missing: r.missing.length, pending: r.pending.length })}`);
+    console.log(`gate-result ${dryRunJson({ ok: r.ok, checked: r.checked, missing: r.missing.length, pending: r.pending.length })}`);
     process.exit(r.ok ? 0 : 1);
   } catch (e) {
     console.error(`real-state gate: ${e instanceof Error ? e.message : String(e)}`);
