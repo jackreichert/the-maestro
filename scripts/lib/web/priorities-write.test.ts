@@ -323,7 +323,7 @@ test('an edit made on a list still dated yesterday carries the container-only it
     clientDir: client, now: () => NOW, log: (m) => logged.push(m), token: TOKEN,
   });
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
-  const r = { server, port: (server.address() as AddressInfo).port } as Rig;
+  const r: Rig = { server, port: (server.address() as AddressInfo).port, vault, statusDir, file: join(statusDir, 'priorities.md'), ledger: join(vault, 'Projects', 'p', 'Journal', 'ledger.jsonl'), logged };
   rigs.push(r);
   const res = await post(r, 'add', { text: 'a-new', stream: 'Alpha' });
   assert.equal(res.status, 200);
