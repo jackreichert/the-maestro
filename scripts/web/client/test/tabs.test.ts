@@ -1,24 +1,26 @@
 // Run: node --test scripts/web/client/test/tabs.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CUE_KEYS, DASHBOARD, OPEN_PRS, OVERVIEW, formatFragment, isAllStreams, nextTab, parseFilter, parseFragment, parseStreamFilter, streamTabId, tabIds, tabStream } from '../src/tabs.ts';
+import { CUE_KEYS, DASHBOARD, OPEN_PRS, OVERVIEW, SCRIPTS, formatFragment, isAllStreams, nextTab, parseFilter, parseFragment, parseStreamFilter, streamTabId, tabIds, tabStream } from '../src/tabs.ts';
 
 const ids = tabIds(['acme-widgets', 'ops', 'other']);
 
-test('tabIds puts Home first, then Open PRs, then each stream, and does not include the retired Board tab', () => {
-  assert.deepEqual(ids, ['dashboard', 'open-prs', 'others-prs', 'acme-widgets', 'ops', 'other']);
+test('tabIds puts Home first, then Open PRs, Others PRs, Scripts, then each stream, and does not include the retired Board tab', () => {
+  assert.deepEqual(ids, ['dashboard', 'open-prs', 'others-prs', 'scripts', 'acme-widgets', 'ops', 'other']);
   assert.equal(ids.includes(OVERVIEW), false);
 });
 
 test('a stream named like a built-in tab gets a prefixed id, and the id maps back to the stream', () => {
-  const odd = ['dashboard', 'overview', 'open-prs', 'others-prs', 'flow', 'ops'];
+  const odd = ['dashboard', 'overview', 'open-prs', 'others-prs', 'scripts', 'flow', 'ops'];
   const all = tabIds(odd);
-  assert.deepEqual(all, ['dashboard', 'open-prs', 'others-prs', 'stream:dashboard', 'stream:overview', 'stream:open-prs', 'stream:others-prs', 'stream:flow', 'ops']);
+  assert.deepEqual(all, ['dashboard', 'open-prs', 'others-prs', 'scripts', 'stream:dashboard', 'stream:overview', 'stream:open-prs', 'stream:others-prs', 'stream:scripts', 'stream:flow', 'ops']);
   assert.equal(new Set(all).size, all.length, 'no two tabs share an id');
   for (const name of odd) assert.equal(tabStream(streamTabId(name)), name);
   assert.equal(tabStream(DASHBOARD), null);
   assert.equal(tabStream(OPEN_PRS), null);
   assert.equal(isAllStreams(OPEN_PRS), true);
+  assert.equal(isAllStreams(SCRIPTS), true);
+  assert.equal(tabStream(SCRIPTS), null);
   assert.equal(isAllStreams(OVERVIEW), false);
   assert.equal(isAllStreams('ops'), false);
 });

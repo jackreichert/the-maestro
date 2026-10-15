@@ -7,7 +7,7 @@
  *   --port N          listen on 127.0.0.1:N (default 0: the OS picks a free port; the URL is printed)
  *   --status-dir DIR  where priorities.md, .now-prs.json, ticket-map.json and fragments/ live (default as for `podium`)
  *
- * Binds 127.0.0.1 only. It answers GET, plus three POST routes that edit today's priorities (priorities.md) and, for each, append
+ * Binds 127.0.0.1 only. It answers GET, plus six POST routes that run a reviewed command (run-write.ts), plus three POST routes that edit today's priorities (priorities.md) and, for each, append
  * one closed note to the ledger, and one that answers an ask (closes it in the ledger, as `journal.ts resolve --answer` does, and fills its stub in the note). Nothing else is written, and it never calls GitHub.
  * The page itself is built by `npm run build:web`; without that build the server still answers /api/* and says so.
  */
@@ -19,10 +19,11 @@ import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, CONTAINER_ROOT, LEDGER_ROOT, PODIUM_SERIES, PODIUM_TRUSTED_ATLASSIAN_HOSTS, PRIORITIES_MAX, STALE_WIP_DAYS, VAULT_ROOT, statusDirFor } from './local-config.ts';
 import { pageConfig } from './status-page.ts';
 import { createWebServer } from './lib/web/server.ts';
+import { loadHookGuard } from './lib/run/hook-guard.ts';
 
 const CLIENT = fileURLToPath(new URL('./web/client/', import.meta.url));
 
-function main(argv: string[]): void {
+async function main(argv: string[]): Promise<void> {
   const { values: v } = parseArgs({ args: argv, options: { port: { type: 'string', default: '0' }, 'status-dir': { type: 'string' }, vault: { type: 'string' }, project: { type: 'string' }, help: { type: 'boolean', short: 'h' } } });
   if (v.help) { console.log('Usage: web.ts [--port <n>] [--status-dir <dir>] [--vault <ledger root>] [--project <name>]'); return; }
   const port = Number(v.port);
@@ -32,7 +33,10 @@ function main(argv: string[]): void {
   const statusDir = v['status-dir'] || statusDirFor(project);
   if (!vault) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
-  const server = createWebServer({ web: { vault, project, statusDir, page: pageConfig(project, statusDir), prioritiesMax: PRIORITIES_MAX, staleWipDays: STALE_WIP_DAYS, containerProject: CONTAINER_PROJECT, ...(CONTAINER_ROOT ? { containerRoot: CONTAINER_ROOT } : {}), ...(VAULT_ROOT ? { vaultRoot: VAULT_ROOT } : {}) }, clientDir: CLIENT, trustedAtlassianHosts: PODIUM_TRUSTED_ATLASSIAN_HOSTS, namedSeries: PODIUM_SERIES });
+  const extraGuard = await loadHookGuard();   // the user's secret-file hook, when installed: an extra check on every block, never the only one
+  const server = createWebServer({ extraGuard, web: { vault, project, statusDir, page: pageConfig(project, statusDir), prioritiesMax: PRIORITIES_MAX, staleWipDays: STALE_WIP_DAYS, containerProject: CONTAINER_PROJECT, ...(CONTAINER_ROOT ? { containerRoot: CONTAINER_ROOT } : {}), ...(VAULT_ROOT ? { vaultRoot: VAULT_ROOT } : {}) }, clientDir: CLIENT, trustedAtlassianHosts: PODIUM_TRUSTED_ATLASSIAN_HOSTS, namedSeries: PODIUM_SERIES });
+  process.once('exit', () => server.killRuns());   // a run is in its own process group and would outlive the server
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.once(sig, () => process.exit(0));
   server.once('error', (e) => { console.error(`web: ${e.message.split('\n')[0]}`); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => {
     console.log(`Podium web: http://127.0.0.1:${(server.address() as AddressInfo).port}/  (Ctrl-C to stop)`);
@@ -42,5 +46,5 @@ function main(argv: string[]): void {
 
 const isMain = (): boolean => { try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); } catch { return false; } };
 if (isMain()) {
-  try { main(process.argv.slice(2)); } catch (e) { console.error(`web: ${(e instanceof Error ? e.message : String(e)).split('\n')[0]}`); process.exitCode = 1; }
+  main(process.argv.slice(2)).catch((e: unknown) => { console.error(`web: ${(e instanceof Error ? e.message : String(e)).split('\n')[0]}`); process.exitCode = 1; });
 }

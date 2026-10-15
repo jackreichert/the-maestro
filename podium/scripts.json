@@ -1,0 +1,42 @@
+{
+  "scripts": [
+    {
+      "id": "journal-status",
+      "name": "Journal status",
+      "description": "The board: what is in flight, queued, blocked, awaiting you and done.",
+      "group": "ledger",
+      "command": ["{node}", "scripts/journal.ts", "status", "--vault", "{ledger}"],
+      "args": [],
+      "readOnly": true,
+      "tier": "haiku",
+      "timeoutSeconds": 60
+    },
+    {
+      "id": "ticket-list",
+      "name": "Ticket list",
+      "description": "Tickets of one project, open by default.",
+      "group": "tickets",
+      "command": ["{node}", "{home}/.claude/skills/xenophon/scripts/ticket.mjs", "list", "--vault", "{vault}"],
+      "args": [
+        { "name": "project", "type": "string", "flag": "--project", "pattern": "^[A-Za-z0-9._-]{1,48}$", "default": "the-maestro", "description": "Project name" },
+        { "name": "status", "type": "enum", "flag": "--status", "values": ["open", "closed", "all"], "default": "open" }
+      ],
+      "readOnly": true,
+      "tier": "haiku",
+      "timeoutSeconds": 60
+    },
+    {
+      "id": "event-loop-events",
+      "name": "Event loop events",
+      "description": "Events the loop has recorded that nobody has handled yet.",
+      "group": "events",
+      "command": ["{node}", "scripts/event-loop.ts", "events", "list"],
+      "args": [
+        { "name": "all", "type": "boolean", "flag": "--all", "description": "Include events that were already handled" }
+      ],
+      "readOnly": true,
+      "tier": "haiku",
+      "timeoutSeconds": 60
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { canSkip, createAnswerer } from './answer-api.ts';
 import type { AnswerRequest } from './answer-api.ts';
 import { askState } from './ask-state.ts';
 import './md-fragment.ts';
+import './run-panel.ts';
 import type { AskBusyDetail, AskCard, AskResolveDetail } from './types.ts';
 
 /** Older than this many days an ask is flagged, matching the Markdown page's 3 day threshold. */
@@ -230,11 +231,15 @@ export class AskCardElement extends HTMLElement {
         error,
         h('div', { class: 'actions' }, ...buttons));
     const structured = templateSections(a, uid, links);
+    // A run-this ask: the server reads the block and runs it on request (run-panel.ts). Sample data has nothing to run.
+    const panel = a.paste && !this.#locked ? document.createElement('run-panel') : null;
+    if (panel) panel.source = { source: 'ask', id: a.id };
     const body = h('div', { class: 'body', id: `${uid}-b`, hidden: true },
       ...(structured.length ? structured : []),
       decisionFields(a),
       structured.length ? null : (a.context ? context(a.context, `${uid}-c`) : null),
-      a.paste ? h('p', { class: 'paste' }, 'Run this block, then answer with what it printed: ', h('code', {}, a.paste)) : null,
+      a.paste ? h('p', { class: 'paste' }, this.#locked ? 'Run this block, then answer with what it printed: ' : 'Review the block, then run it here. It is read from: ', h('code', {}, a.paste)) : null,
+      panel,
       stale ? h('p', { class: 'stale-note' }, `Waiting ${a.ageDays} days: past the ${STALE_DAYS} day mark.`) : null,
       structured.length ? null : (links.length ? h('ul', { class: 'links', role: 'list', 'aria-label': 'Links' }, ...links.map((r) => h('li', {}, refLink(r)))) : null),
       form);
@@ -269,6 +274,7 @@ export class AskCardElement extends HTMLElement {
       this.toggleAttribute('open', open);
       // One answer form at a time: the list around this card folds the others (a restored open card on a redraw does not announce itself).
       if (open && focusField) this.dispatchEvent(new CustomEvent('ask-open', { bubbles: true, composed: true }));
+      if (open) void panel?.load();
       if (open && focusField && form?.isConnected) answer.focus();
     };
     this.#fold = () => { if (isOpen) setOpen(false, false); };
@@ -316,6 +322,12 @@ export class AskCardElement extends HTMLElement {
       busy(false);
       if (!out.ok && out.closed) for (const b of buttons) b.setAttribute('disabled', '');   // nothing to retry: the board drops it on the next update
     };
+    // The run resolved the ask server-side: settle the card exactly as a typed answer does.
+    panel?.addEventListener('run-resolved', (e) => {
+      const answer = (e as CustomEvent<{ answer: string }>).detail.answer;
+      if (askState.resolve(a.id, answer)) this.dispatchEvent(new CustomEvent<AskResolveDetail>('ask-resolve', { detail: { id: a.id, answer }, bubbles: true, composed: true }));
+      showStatus(answer);
+    });
     const submit = (): void => {
       if (this.#locked || !form?.isConnected) return;
       const text = answer.value.trim();
