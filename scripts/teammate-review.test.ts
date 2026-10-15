@@ -139,3 +139,15 @@ test('a push retires the earlier review draft that is still waiting, with the re
   assert.deepEqual(ds.map((d) => d.state), ['rejected', 'pending']);
   assert.match(ds[0]?.rejectReason ?? '', /superseded by a newer push \(bbbbbbb\)/);
 });
+
+test('the PR author prepare printed is kept on the draft, so the needs-you list can name them; a bad login is left off, not allowed to lose the review', () => {
+  const file = join(tmp(), 'J', 'drafts.jsonl');
+  assert.ok(submit(file, sub({ author: 'robin-r' }), DIFF).queued);
+  assert.equal(listDrafts(file)[0]?.author, 'robin-r');
+  const other = join(tmp(), 'J', 'drafts.jsonl');
+  assert.ok(submit(other, sub({ author: 'not a login; rm -rf' }), DIFF).queued, 'a display field never costs the review');
+  assert.equal(listDrafts(other)[0]?.author, undefined);
+  const none = join(tmp(), 'J', 'drafts.jsonl');
+  assert.ok(submit(none, sub({ author: '' }), DIFF).queued);
+  assert.equal(listDrafts(none)[0]?.author, undefined, 'an unknown author is left off, not stored empty');
+});

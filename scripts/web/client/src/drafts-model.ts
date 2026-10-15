@@ -5,7 +5,7 @@ export type DraftStatus = 'pending' | 'approved' | 'posting' | 'posted' | 'faile
 export interface ReviewView { event: 'APPROVE' | 'REQUEST_CHANGES'; compliment: string; comments: { path: string; line: number; text: string; severity: 'blocking' | 'suggestion' }[] }
 export interface DraftRow {
   rev: string; review?: ReviewView; id: string; source: 'review' | 'reply'; repo: string; pr: number; prUrl: string; severity: DraftSeverity; text: string;
-  where?: string; context?: string; replyTo?: string; state: DraftStatus; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string;
+  where?: string; context?: string; replyTo?: string; author?: string; state: DraftStatus; error?: string; postedUrl?: string; rejectReason?: string; createdAt: string;
 }
 export interface DraftsData { generatedAt: string; drafts: DraftRow[] }
 
@@ -24,7 +24,7 @@ function row(x: unknown): DraftRow | null {
   if (!isObj(x)) return null;
   const ok = str(x.id, 20) && /^dr-[0-9a-f]{8}$/.test(x.id) && (x.source === 'review' || x.source === 'reply') && str(x.repo, 200) && Number.isSafeInteger(x.pr)
     && str(x.prUrl, 300) && ['blocking', 'suggestion', 'reply', 'review'].includes(String(x.severity)) && /^[0-9a-f]{12}$/.test(String(x.rev)) && review(x.review) && (x.severity === 'review') === (x.review !== undefined) && str(x.text) && STATES.includes(String(x.state)) && str(x.createdAt, 40)
-    && opt(x.where, 400) && opt(x.context, 600) && opt(x.replyTo, 100) && opt(x.error, 300) && opt(x.postedUrl, 400) && opt(x.rejectReason, 600);
+    && opt(x.where, 400) && opt(x.context, 600) && opt(x.replyTo, 100) && opt(x.author, 100) && opt(x.error, 300) && opt(x.postedUrl, 400) && opt(x.rejectReason, 600);
   return ok ? (x as unknown as DraftRow) : null;
 }
 
