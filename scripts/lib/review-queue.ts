@@ -21,7 +21,7 @@ export interface QueuePr { isDraft: boolean; repo?: string; reviewDecision?: str
  */
 export interface ReviewQueue { count: number; cap: number; full: boolean; selfReview: number; waitingOnYou: number; twins: number }
 
-/** The branch a staging twin targets; its develop twin is the same head branch aimed at any other base (the same rule `prs-snapshot.ts` uses for twin flow). */
+/** The branch a staging twin targets; its develop twin is the same head branch (or the one the staging branch is named after) aimed at any other base. */
 const TWIN_BASE = 'staging';
 
 /**
@@ -30,8 +30,8 @@ const TWIN_BASE = 'staging';
  */
 export const waitingOnAuthor = (p: QueuePr): boolean => p.reviewDecision === 'CHANGES_REQUESTED' || p.reviewDecision === 'APPROVED' || p.mergeable === 'CONFLICTING';
 
-/** The key two PRs share when they are the same change aimed at two bases: repo and head branch, case-insensitive. */
-const twinKey = (p: QueuePr): string => `${(p.repo ?? '').toLowerCase()}|${p.headRefName ?? ''}`;
+/** The key two PRs share when they are the same change aimed at two bases: repo and head branch, case-insensitive; a twin's branch may carry a `-staging` suffix (`fix/X` for develop, `fix/X-staging` for staging). */
+const twinKey = (p: QueuePr): string => `${(p.repo ?? '').toLowerCase()}|${(p.headRefName ?? '').replace(/-staging$/, '')}`;
 
 /** Drops each staging twin that has an open develop twin (same repo and head branch, another base), so one change is one place in the queue. A stacked child is not a twin and stays. */
 function foldTwins<T extends QueuePr>(prs: readonly T[]): { kept: T[]; twins: number } {

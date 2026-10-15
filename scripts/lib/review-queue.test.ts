@@ -216,8 +216,10 @@ test('a staging twin with an open develop twin counts once; a lone staging PR an
     pr({ repo: 'Org/dtr', headRefName: 'feat/x', baseRefName: 'staging' }),
     pr({ repo: 'org/dtr', headRefName: 'feat/lone', baseRefName: 'staging' }),
     pr({ repo: 'org/dtr', headRefName: 'feat/child', baseRefName: 'feat/parent' }),
+    pr({ repo: 'org/dtr', headRefName: 'fix/y', baseRefName: 'develop' }),
+    pr({ repo: 'org/dtr', headRefName: 'fix/y-staging', baseRefName: 'staging' }),
   ];
-  assert.deepEqual(reviewQueue(list, 4), { count: 3, cap: 4, full: false, selfReview: 0, waitingOnYou: 0, twins: 1 });
+  assert.deepEqual(reviewQueue(list, 4), { count: 4, cap: 4, full: true, selfReview: 0, waitingOnYou: 0, twins: 2 }, 'both twin spellings fold: the same branch, and the branch with a -staging suffix');
   const draftDev = [pr({ repo: 'org/dtr', headRefName: 'feat/x', baseRefName: 'develop', isDraft: true }), pr({ repo: 'org/dtr', headRefName: 'feat/x', baseRefName: 'staging' })];
   assert.equal(reviewQueue(draftDev, 4).count, 1, 'a draft develop twin is not in the queue, so the staging PR is the one reviewers read');
 });
