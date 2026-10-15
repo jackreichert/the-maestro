@@ -51,7 +51,8 @@ test('guard: a clean env carries no maestro setting from the outer environment',
     assert.equal(env.MAESTRO_LOCAL_CONFIG, '');
     assert.notEqual(env.MAESTRO_EVENT_DIR, '/real/events');
     assert.notEqual(env.HOME, '/real/home');
-    assert.deepEqual(Object.keys(env).filter((k) => k.startsWith('MAESTRO_') || k === 'LEDGER_ROOT' || k === 'VAULT_ROOT').sort(), ['MAESTRO_EVENT_DIR', 'MAESTRO_LOCAL_CONFIG', 'MAESTRO_NOTIFY_COMMAND', NOTIFY_LOG_VAR].sort());
+    assert.deepEqual(Object.keys(env).filter((k) => k.startsWith('MAESTRO_') || k === 'LEDGER_ROOT' || k === 'VAULT_ROOT').sort(), ['MAESTRO_EVENT_DIR', 'MAESTRO_LOCAL_CONFIG', 'MAESTRO_NOTIFY_COMMAND', 'MAESTRO_TRIAGE', NOTIFY_LOG_VAR].sort());
+    assert.equal(env.MAESTRO_TRIAGE, 'off', 'a spawned script never calls a model');
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in before)) delete process.env[k];
     Object.assign(process.env, before);

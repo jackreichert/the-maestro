@@ -81,3 +81,14 @@ test('install-hooks prints a SessionStart and UserPromptSubmit entry and writes 
     assert.deepEqual(spawnSync('ls', ['-A', dir], { encoding: 'utf8' }).stdout.trim(), '', 'nothing written');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('the hook does nothing inside a triage child: no output and the inbox is untouched', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'inject-'));
+  try {
+    appendEvents(dir, [{ watch: 'prs', type: 'pr-watch', at: '2026-10-09T12:00:00.000Z', actionable: true, report: '', summary: 'THREAD a/b#7 by someone: x' }]);
+    const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: 'triage-child', hook_event_name: 'SessionStart' }), encoding: 'utf8', env: { ...process.env, MAESTRO_EVENT_DIR: dir, MAESTRO_WINDOW: '', CLAUDE_CODE_SESSION_ID: '', MAESTRO_TRIAGE_CHILD: '1' }, timeout: 20_000 });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '');
+    assert.equal(readInbox(dir)[0].seen, false, 'a throwaway session must not take real events');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

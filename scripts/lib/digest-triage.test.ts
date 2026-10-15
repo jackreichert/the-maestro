@@ -68,7 +68,7 @@ test('a tick triages its events and an empty tick writes no log', () => {
 
 const ev = (summary: string, type = 'pr-watch', actionable = true): DigestEvent => ({ watch: 'w', type, at: AT, summary, actionable, report: 'r' });
 const tmp = () => mkdtempSync(join(tmpdir(), 'triage-seam-'));
-const COMMENT = `COMMENT org/repo#7 by alice: ${U}`;
+const COMMENT = `COMMENT org/repo#7 by dependabot[bot]: ${U}`;
 
 test('the rules-only default is unsure, so an ambiguous line wakes', () => {
   assert.equal(rulesOnlyTriage({ watch: 'w', type: 'pr-watch', kind: 'comment', summary: COMMENT }).verdict, 'unsure');
@@ -108,7 +108,7 @@ test('unsure, actionable, a throw, a bad answer and noise without a reason all w
 test('the sweep lists suppressed lines once an hour, and only once', () => {
   const dir = tmp();
   const t0 = Date.parse(AT);
-  triageEvents([ev(COMMENT), ev(`REPLY org/repo#7 by bob: ${U}`)], { dir, triage: () => ({ verdict: 'noise', reason: 'bot chatter' }) });
+  triageEvents([ev(COMMENT), ev(`REPLY org/repo#7 by github-actions[bot]: ${U}`)], { dir, triage: () => ({ verdict: 'noise', reason: 'bot chatter' }) });
   const first = sweepSuppressed(dir, t0 + 1000);
   assert.ok(first && !first.actionable);
   assert.match(first.summary, /^TRIAGE-SWEEP 2 lines suppressed as noise .*bot chatter/);
@@ -195,4 +195,26 @@ test('a check-failing line from a real tick stays actionable under a noise triag
   const out = readDigest(dir).filter((e) => /^check keeps failing/.test(e.summary));
   assert.deepEqual(out.map((e) => e.actionable), [true]);
   assert.equal(suppressedSince(dir).length, 0);
+});
+
+test('a tick has a total triage budget: lines after it are not sent to the seam, wake as unsure, and the tick ends within budget plus one call', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-'));
+  let clock = 0;
+  let calls = 0;
+  const slow: Triage = () => { calls += 1; clock += 60_000; return { verdict: 'noise', reason: 'bot chatter' }; };
+  const events = Array.from({ length: 10 }, (_, i) => ev(`COMMENT org/repo#${i} by dependabot[bot]: ${U}`));
+  triageEvents(events, { dir, triage: slow, budgetMs: 90_000, now: () => clock });
+  assert.equal(calls, 2, 'a call starts only while budget remains');
+  assert.ok(clock <= 90_000 + 60_000, 'ends within the budget plus one call');
+  assert.deepEqual(events.map((e) => e.actionable), [false, false, ...Array(8).fill(true)], 'lines past the budget wake');
+  const late = rows(dir).slice(2);
+  assert.equal(late.length, 8);
+  assert.ok(late.every((r) => r.decision === 'wake' && /budget/.test(r.reason)), 'each says the budget ran out');
+});
+
+test('a noise answer on a line by a person never suppresses it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-'));
+  const [e] = triageEvents([ev(`COMMENT org/repo#7 by alice: ${U}`)], { dir, triage: () => ({ verdict: 'noise', reason: 'bare thanks' }) });
+  assert.equal(e?.actionable, true);
+  assert.equal(rows(dir)[0]?.decision, 'wake');
 });

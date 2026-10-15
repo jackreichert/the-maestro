@@ -76,6 +76,8 @@ export function waiterLine(window: string | undefined, eventDir: string = EVENT_
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  // A triage child (haiku-triage.ts) is a throwaway session: it must not claim the real inbox events.
+  if (process.env.MAESTRO_TRIAGE_CHILD) process.exit(0);
   try {
     const input = JSON.parse(readFileSync(0, 'utf8') || '{}') as { session_id?: unknown; hook_event_name?: unknown };
     const window = resolveWindowId({ session: typeof input.session_id === 'string' ? input.session_id : undefined, ...windowEnv() });

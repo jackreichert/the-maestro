@@ -63,6 +63,8 @@ function autocompactWarnings(): string[] {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  // A triage child (haiku-triage.ts) is a throwaway session: no board or ledger priming for it.
+  if (process.env.MAESTRO_TRIAGE_CHILD) process.exit(0);
   try {
     const forward = ['project', 'vault'].flatMap((f) => { const k = process.argv.indexOf(`--${f}`); return k >= 0 && process.argv[k + 1] ? [`--${f}`, process.argv[k + 1]] : []; });
     const input: { source?: string } = JSON.parse(readFileSync(0, 'utf8') || '{}');

@@ -291,3 +291,11 @@ test('a throwing watch check fails open and is named, never aborts the hook', ()
   const { d } = deps({ watchProblem: () => { throw new Error('registry unreadable'); } });
   assert.match(precompact({ transcript_path: '/t.jsonl', trigger: 'auto' }, d), /^precompact incomplete: continuity watch: registry unreadable/);
 });
+
+test('session-start-compact does nothing inside a triage child', () => {
+  const hook = fileURLToPath(new URL('./session-start-compact.ts', import.meta.url));
+  const r = spawnSync(process.execPath, [hook], { input: JSON.stringify({ source: 'startup' }), encoding: 'utf8', env: { ...process.env, MAESTRO_TRIAGE_CHILD: '1' }, timeout: 20_000 });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, '');
+});
