@@ -120,7 +120,9 @@ export function dataRoutes(o: WebServerOptions): Route[] {
 }
 
 /** Create the server (not yet listening). Bind it to 127.0.0.1 only; the Host check needs the bound port. */
-export function createWebServer(o: WebServerOptions): Server {
+export type WebServer = Server & { /** Stops every command the run routes started (called on process exit, since children run in their own process groups). */ killRuns: () => void };
+
+export function createWebServer(o: WebServerOptions): WebServer {
   const log = o.log ?? ((m: string) => console.error(`web: ${m}`));
   // Ledger and registry warnings (a malformed line) go to the log once each, not once per request.
   const warned = new Set<string>();
@@ -166,5 +168,5 @@ export function createWebServer(o: WebServerOptions): Server {
     socket.end(rawError(err.code === 'HPE_HEADER_OVERFLOW' ? 431 : err.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? 408 : 400));
   });
   server.on('close', () => runner.killAll());
-  return server;
+  return Object.assign(server, { killRuns: () => runner.killAll() });
 }

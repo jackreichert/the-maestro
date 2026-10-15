@@ -35,6 +35,8 @@ async function main(argv: string[]): Promise<void> {
   if (!statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
   const extraGuard = await loadHookGuard();   // the user's secret-file hook, when installed: an extra check on every block, never the only one
   const server = createWebServer({ extraGuard, web: { vault, project, statusDir, page: pageConfig(project, statusDir), prioritiesMax: PRIORITIES_MAX, staleWipDays: STALE_WIP_DAYS, containerProject: CONTAINER_PROJECT, ...(CONTAINER_ROOT ? { containerRoot: CONTAINER_ROOT } : {}), ...(VAULT_ROOT ? { vaultRoot: VAULT_ROOT } : {}) }, clientDir: CLIENT, trustedAtlassianHosts: PODIUM_TRUSTED_ATLASSIAN_HOSTS, namedSeries: PODIUM_SERIES });
+  process.once('exit', () => server.killRuns());   // a run is in its own process group and would outlive the server
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => process.exit(0));
   server.once('error', (e) => { console.error(`web: ${e.message.split('\n')[0]}`); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => {
     console.log(`Podium web: http://127.0.0.1:${(server.address() as AddressInfo).port}/  (Ctrl-C to stop)`);
