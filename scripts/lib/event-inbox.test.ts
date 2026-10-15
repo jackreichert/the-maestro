@@ -212,3 +212,19 @@ test('a mark that names no window counts as seen by every window, and a windowle
   const [a2, b2] = readInbox(dir);
   assert.deepEqual([a2.seenAnonymous, a2.seenWindows, b2.seenAnonymous, b2.seenWindows], [true, [], undefined, ['w1']]);
 });
+
+test('tag-watch lines (slack, notion) get a kind and keep their tag and count; nothing else leaks', () => {
+  const e = (s: string) => toInboxEvent(ev(s, { type: 'slack-watch', watch: 'slack' }));
+  const added = e('SLACK-NEW tag=ops-room note=/tmp/notes/ops.md new=4 file=/tmp/notes/ops.new.md');
+  assert.equal(added?.kind, 'tag-new');
+  assert.deepEqual(added?.fields, { tag: 'ops-room', count: 4 });
+  assert.equal(e('SLACK-UNSHARED tag=ops-room reason=not_in_channel')?.kind, 'tag-unshared');
+  assert.deepEqual(e('SLACK-UNSHARED tag=ops-room reason=not_in_channel')?.fields, { tag: 'ops-room' });
+  assert.equal(e(`SLACK-CHECK-FAILING tag=ops-room ${SENTINEL}`)?.kind, 'check-failing');
+  assert.equal(e('NOTION-NEW tag=spec note=/n new=2 file=/f')?.kind, 'tag-new');
+  assert.equal(e('NOTION-UNSHARED tag=spec reason=404')?.kind, 'tag-unshared');
+  assert.equal(e('NOTION-CHANGED tag=spec note=/n diff=/d summary=+1/-0 lines')?.kind, 'notion-changed');
+  // A tag that is not a plain token is dropped, never stored.
+  assert.deepEqual(e('SLACK-NEW tag=a/b;rm note=/n new=1 file=/f')?.fields, { count: 1 });
+  assert.doesNotMatch(JSON.stringify(added), /\/tmp\/notes/);
+});

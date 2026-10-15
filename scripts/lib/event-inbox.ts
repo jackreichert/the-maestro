@@ -20,7 +20,7 @@ import type { DigestEvent } from './types.ts';
 import { cleanWindowId } from './window-id.ts';
 
 /** The extracted facts an alert or hook line may use. */
-export interface EventFields { repo?: string; number?: number; who?: 'bot' | 'human'; count?: number }
+export interface EventFields { repo?: string; number?: number; who?: 'bot' | 'human'; count?: number; tag?: string }
 
 /** An event row as stored. */
 export interface InboxEvent {
@@ -43,6 +43,8 @@ export const inboxPath = (eventDir: string): string => join(eventDir, 'events.js
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const KIND = /^[a-z][a-z0-9-]{0,39}$/;
+/** A tag-watch tag: a short plain token, so a name that is free text or a path never passes. */
+const TAG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 /** A time as canonical ISO text, or null. Re-serialised, never passed through: the date parser accepts trailing free text such as "(note)", so a check alone would let it into the file. */
 const isoTime = (v: unknown): string | null => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null; };
@@ -54,6 +56,7 @@ const FIELD_RULES: Record<keyof EventFields, (v: unknown) => boolean> = {
   number: (v) => isCount(v) && v > 0,
   who: (v) => v === 'bot' || v === 'human',
   count: isCount,
+  tag: (v) => typeof v === 'string' && TAG.test(v),
 };
 
 /** The allowlisted subset of `raw`; anything not in FIELD_RULES, or failing its rule, is dropped. */
@@ -81,6 +84,9 @@ const KIND_RULES: [RegExp, string][] = [
   [/^READY\b/, 'ready'],
   [/^LEFT-OPEN-SET\b/, 'left-open-set'],
   [/^NOTION-CHANGED\b/, 'notion-changed'],
+  [/^(SLACK|NOTION)-NEW\b/, 'tag-new'],
+  [/^(SLACK|NOTION)-UNSHARED\b/, 'tag-unshared'],
+  [/^(SLACK|NOTION)-CHECK-FAILING\b/, 'check-failing'],
   [/^reminder\b/, 'reminder'],
   [/^\d+ new message/, 'message'],
   [/^check keeps failing\b/, 'check-failing'],
@@ -92,6 +98,8 @@ const FIELD_EXTRACTORS: ((summary: string) => Record<string, unknown>)[] = [
   (s) => { const m = s.match(/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#(\d+)/); return m ? { repo: m[1], number: Number(m[2]) } : {}; },
   (s) => { const m = s.match(/ by (\S+?)[ :(]/); return m ? { who: /\[bot\]$|-bot$|^copilot/i.test(m[1]) ? 'bot' : 'human' } : {}; },
   (s) => { const m = s.match(/^(\d+) new message/); return m ? { count: Number(m[1]) } : {}; },
+  (s) => { const m = s.match(/^[A-Z]+-(?:NEW|UNSHARED|CHECK-FAILING|CHANGED) tag=(\S+)/); return m ? { tag: m[1] } : {}; },
+  (s) => { const m = s.match(/^[A-Z]+-NEW .*? new=(\d+)/); return m ? { count: Number(m[1]) } : {}; },
 ];
 
 /** pr-watch prefixes a line for a self-review repo with this tag; the kind is the same with or without it. */
