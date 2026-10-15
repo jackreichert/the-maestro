@@ -44,10 +44,12 @@ export function parseZone(raw: string, fallback: string, valid: (name: string) =
   return valid(t) ? ok(t) : bad(fallback, 'must be an IANA time zone such as America/New_York');
 }
 
+/** Minutes since midnight of an `HH:MM` clock time. */
+export const clockMinutes = (hhmm: string): number => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+
 /** The window's start and end together: an end at or before the start is an empty day, so both fall back. */
 export function checkWindow(start: string, end: string, fallback: { start: string; end: string }): Parsed<{ start: string; end: string }> {
-  const m = (h: string): number => Number(h.slice(0, 2)) * 60 + Number(h.slice(3, 5));
-  return m(end) > m(start) ? ok({ start, end }) : bad(fallback, `end ${end} must be after start ${start}`);
+  return clockMinutes(end) > clockMinutes(start) ? ok({ start, end }) : bad(fallback, `end ${end} must be after start ${start}`);
 }
 
 /** A comma list drawn from TRIGGERS. Unknown names are dropped with a problem; nothing left means every trigger. */
@@ -80,6 +82,9 @@ export function parseRepos(raw: string): Parsed<string[]> {
   }
   return dropped.length ? bad(good, `dropped ${dropped.join(', ')} (use owner, owner/name or owner/*)`) : ok(good);
 }
+
+/** The default working week, Monday to Friday, as day numbers (0 is Sunday). */
+export const DEFAULT_DAYS: readonly number[] = [1, 2, 3, 4, 5];
 
 const DAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 

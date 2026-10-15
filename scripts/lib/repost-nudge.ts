@@ -1,13 +1,14 @@
 /**
  * The repost nudge, pure: when the user should be nudged to repost their PRs in Slack, and which PRs to name.
  * Two triggers feed it: an approval on one of the user's open PRs (the nudge is due `minutes` later) and a teammate review draft
- * queued or posted (due at once). A due nudge goes out only in working hours (weekdays between start and end, in a zone), at most one
- * an hour; a nudge due outside them is held, and one is sent when the hours open. Reads no clock, no config and no network:
+ * queued or posted (due at once). A due nudge goes out only in working hours (the configured days between start and end, in a zone), at most one
+ * per gap (`gapMinutes`); a nudge due outside them is held, and one is sent when the hours open. Reads no clock, no config and no network:
  * event-types/repost-nudge.ts hands it the PRs, the trigger times and the settings.
  */
 import { isSelfReview } from './self-review.ts';
 import { inQueueOwners } from './review-queue.ts';
 import { localParts } from './recurring-time.ts';
+import { clockMinutes, DEFAULT_DAYS } from './repost-nudge-config.ts';
 import type { Trigger } from './repost-nudge-config.ts';
 
 export const HOUR_MS = 3600_000;
@@ -53,12 +54,13 @@ export interface Nudge { reason: string; prs: { key: string; url: string; waited
 
 export const EMPTY_STATE: NudgeState = { approvedAt: 0, approvedHandled: 0, draftAt: 0, draftHandled: 0, lastNudgeAt: 0, emitSeq: 0, emptyHeldSince: 0, nudge: null };
 
-const clockMinutes = (hhmm: string): number => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+/** Whether the nudge runs at all: switched on and with a nonzero delay (`repost_nudge_minutes: 0` is off). */
+export const nudgeOn = (s: Pick<NudgeSettings, 'enabled' | 'minutes'>): boolean => s.enabled && s.minutes > 0;
 
 /** True on one of `days` (0 is Sunday; default Monday to Friday) between `start` (inclusive) and `end` (exclusive) on the wall clock of `zone`. */
 export function inWorkingHours(now: number, s: Pick<NudgeSettings, 'start' | 'end' | 'zone'> & { days?: readonly number[] }): boolean {
   const p = localParts(now, s.zone);
-  return (s.days ?? [1, 2, 3, 4, 5]).includes(p.dow) && p.minutes >= clockMinutes(s.start) && p.minutes < clockMinutes(s.end);
+  return (s.days ?? DEFAULT_DAYS).includes(p.dow) && p.minutes >= clockMinutes(s.start) && p.minutes < clockMinutes(s.end);
 }
 
 /**
@@ -75,8 +77,7 @@ export const approvalTime = (prs: readonly NudgePr[], s: Pick<NudgeSettings, 're
   Math.max(0, ...prs.filter((p) => repoAllowed(p.repo, s)).map((p) => p.approvedAt).filter(Number.isFinite));
 
 /**
- * The PRs to repost: ready, waiting on reviewers (reviewDecision REVIEW_REQUIRED), not conflicting (GitHub's UNKNOWN, while it computes, passes), with no unresolved thread, in a repo other people
- * review and an owner the review queue counts; oldest-waiting first, at most `count`. A PR changes-requested or approved is not waiting on a
+ * The PRs to repost: ready, waiting on reviewers (reviewDecision REVIEW_REQUIRED), not conflicting (GitHub's UNKNOWN, while it computes, passes), with no unresolved thread, in a repo `repoAllowed` accepts; oldest-waiting first, at most `count`. A PR changes-requested or approved is not waiting on a
  * reviewer, a conflicting one or one with open threads is not worth a reviewer's time yet.
  */
 export function selectRepost(prs: readonly NudgePr[], now: number, s: Pick<NudgeSettings, 'count' | 'repos' | 'selfReview' | 'owners'>): Nudge['prs'] {
@@ -103,8 +104,8 @@ export function advance(prev: NudgeState | null, seen: { approvedAt: number; dra
   if (!prev) return { ...EMPTY_STATE, approvedAt, approvedHandled: approvedAt, draftAt, draftHandled: draftAt };
   const st: NudgeState = { ...prev, approvedAt, draftAt };
   // A trigger that is switched off, or the whole nudge being off, answers what it sees, so switching it back on does not replay old news.
-  const approvalOn = s.enabled && s.minutes > 0 && s.triggers.includes('approval');
-  const draftOn = s.enabled && s.minutes > 0 && s.triggers.includes('teammate-review');
+  const approvalOn = nudgeOn(s) && s.triggers.includes('approval');
+  const draftOn = nudgeOn(s) && s.triggers.includes('teammate-review');
   const quiet: NudgeState = { ...st, approvedHandled: approvalOn ? st.approvedHandled : approvedAt, draftHandled: draftOn ? st.draftHandled : draftAt };
   const approvalDue = approvalOn && approvedAt > st.approvedHandled && now >= approvedAt + s.minutes * 60_000;
   const draftDue = draftOn && draftAt > st.draftHandled;
@@ -116,7 +117,7 @@ export function advance(prev: NudgeState | null, seen: { approvedAt: number; dra
   const named = selectRepost(prs, now, s);
   const heldSince = st.emptyHeldSince || now;
   if (!named.length) return s.holdEmpty && now - heldSince <= HOLD_EMPTY_MAX_MS ? { ...quiet, emptyHeldSince: heldSince } : answered;
-  // Held for a day with nobody to name: by now it is old news.
+  // It was held empty for over a day: drop it even though PRs have turned up, it is old news.
   if (st.emptyHeldSince && now - st.emptyHeldSince > HOLD_EMPTY_MAX_MS) return answered;
   const reason = draftDue ? 'a teammate review is queued' : `${s.minutes} min since the last approval`;
   return { ...answered, lastNudgeAt: now, emitSeq: st.emitSeq + 1, nudge: { reason, prs: named, message: slackMessage(named) } };

@@ -17,7 +17,7 @@ import { isBotLogin } from '../lib/github-bots.ts';
 import { draftsPath, readRows } from '../lib/drafts/queue.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { latestAskInDir } from '../lib/repost-nudge-slack.ts';
-import { advance, approvalTime, HOUR_MS, nudgeLine } from '../lib/repost-nudge.ts';
+import { advance, approvalTime, HOUR_MS, nudgeLine, nudgeOn } from '../lib/repost-nudge.ts';
 import type { NudgePr, NudgeSettings, NudgeState } from '../lib/repost-nudge.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
@@ -95,7 +95,7 @@ const settings = (): NudgeSettings => ({ enabled: REPOST_NUDGE_ENABLED, triggers
 
 export function check(_target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 'run'>, io: NudgeIo = realIo, s: NudgeSettings = settings()): NudgeState {
   const prev = (ctx.prev as NudgeState | null | undefined) ?? null;
-  if (!s.enabled || !(s.minutes > 0)) return advance(prev, { approvedAt: 0, draftAt: io.latestDraftAt() }, [], ctx.now, s);
+  if (!nudgeOn(s)) return advance(prev, { approvedAt: 0, draftAt: io.latestDraftAt() }, [], ctx.now, s);
   const prs = io.fetchPrs(ctx.run);
   const approvedAt = approvalTime(prs, s);
   const askedAt = Math.max(io.latestSlackAskAt(ctx.now), ...prs.map((p) => p.rerequestedAt).filter(Number.isFinite));
