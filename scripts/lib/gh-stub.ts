@@ -4,15 +4,15 @@
  * `installGhStub(config)` writes the fake's script into a temp dir and returns the env (MAESTRO_GH_BIN and
  * MAESTRO_GH_BIN_ARGS point at it through node) to run a script with. `config`: { pages: [nodes[], ...], prState?: 'OPEN' | 'MERGED', failOnPage?: n }. Page i is served
  * for the cursor `p<i>` the stub itself hands out as endCursor, so a script that ignores
- * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view`, `pr edit`.
- * `delayMs: n` makes `api graphql` sleep n ms before answering; `callLog: path` records each `api graphql` call. `editLog: path` records each `pr edit` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
+ * `pageInfo` only ever sees page 0. It answers `api user`, `api graphql`, `pr view` (with `--json`: `prView`), `pr edit`, `pr ready`.
+ * `delayMs: n` makes `api graphql` sleep n ms before answering; `callLog: path` records each `api graphql` call. `editLog: path` records each `pr edit` argv line; `readyLog: path` each `pr ready` argv line. `failOnPage: n` makes the request for page n exit 1, as a gateway error mid-pagination would.
  */
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { stubEnv, writeStub } from './stub-bin.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export interface GhStubConfig { pages: unknown[][]; prState?: 'OPEN' | 'MERGED' | 'CLOSED'; failOnPage?: number; editLog?: string; delayMs?: number; callLog?: string }
+export interface GhStubConfig { pages: unknown[][]; prState?: 'OPEN' | 'MERGED' | 'CLOSED'; failOnPage?: number; editLog?: string; delayMs?: number; callLog?: string; prView?: unknown; readyLog?: string }
 
 const STUB = `#!${process.execPath}
 const { appendFileSync, readFileSync } = require('node:fs');
@@ -34,6 +34,8 @@ else if (argv[0] === 'api' && cfg.delayMs) {
     nodes: pages[page],
   } } }));
 } else if (argv[0] === 'pr' && argv[1] === 'edit') { if (cfg.editLog) appendFileSync(cfg.editLog, argv.join(' ') + '\\n'); }
+else if (argv[0] === 'pr' && argv[1] === 'ready') { if (cfg.readyLog) appendFileSync(cfg.readyLog, argv.join(' ') + '\\n'); }
+else if (argv[0] === 'pr' && argv[1] === 'view' && cfg.prView && argv.includes('--json') && !argv.includes('--jq')) console.log(JSON.stringify(cfg.prView));
 else if (argv[0] === 'pr' && argv[1] === 'view') console.log(cfg.prState || 'OPEN');
 `;
 

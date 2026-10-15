@@ -333,6 +333,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [flow-report.ts](#flow-reportts) | Cycle time, throughput, WIP and open-item age from the ledger |
 | [pr-size.ts](#pr-sizets) | PR size budget gate |
 | [pr-open.ts](#pr-opents) | The only way to open a PR: gate, then a draft assigned to you |
+| [pr-ready.ts](#pr-readyts) | The way to mark a draft ready: refuses at or over the review queue cap, `--over-cap "<reason>"` overrides and is logged |
 | [pr-state.ts](#pr-statets) | The real review and merge state of a PR: reviewer verdicts, threads, checks, push warning, ready-for-review and ready-to-merge |
 | [merge-sweep.ts](#merge-sweepts) | Ledger rows whose pull requests merged, or are open and quiet; `--close-ledger` closes the merged ones |
 | [queue-report.ts](#merge-sweepts) | Read-only: open rows that name a merged PR (with the `done` command to close each), and queued rows that already have a built branch |
@@ -967,6 +968,10 @@ The size budget gate: `pr-size.ts --repo <path> --base <ref> [--json] [--head <r
 The only way agents and the orchestrator open a PR: `pr-open.ts --repo <path> --base <branch> --title <t> --body-file <f> [--head <branch>] [--dry-run]`. It first checks that the body file exists and passes the body rules (required sections with real content, a Risk line, a fenced verify command, a diagram on stacked or wide PRs, no forbidden content; all configurable), and refuses (exit 1) otherwise. It then runs the size gate, refuses with a split hint (exit 1) when it fails, and otherwise runs `gh pr create --draft --assignee @me`. Draft and assignee are always added and cannot be turned off; no other `gh` flag passes through. `--dry-run` prints the command. Exit 0 opened, 1 refused by the body check or the gate, 2 usage, an unreadable body file, or a git or `gh` error, 3 the PR opened but its file links could not be expanded.
 
 **Ledger link.** Once the PR exists, `pr-open.ts` records `gh:pr:owner/repo#N` and the branch on the ledger row it was opened for (a `ref` row, so nothing is rewritten). The row is `--item <id>`, else the `MAESTRO_ITEM` environment variable, else a ledger id in the branch name (`feat/MAESTRO-6tq3-...`); `--vault` and `--project` override the configured ledger. A link that cannot be written is a warning, never a failed PR.
+
+### pr-ready.ts
+
+The way agents and the orchestrator mark a draft ready for review: `pr-ready.ts --repo <path> --pr <number> [--over-cap "<reason>"] [--dry-run] [--vault <ledger root>]`. `pr-open.ts` only ever opens drafts and drafts are not counted, so the [review queue cap](reference/dispatch.md#review-queue-cap) is enforced here, where a PR actually joins the queue. In a repo whose owner is in `review_queue_orgs` (and that is not a `self_review_repos` repo) it reads the queue (live, else a fresh stored snapshot) and refuses with exit 1 when the PRs waiting on reviewers are at or over `review_queue_cap`; a queue it cannot read refuses too. A PR that would add nothing to the count (a staging twin of an open develop PR, or a PR waiting on its author) is let through. Personal and self-review repos are never gated. `--over-cap "<reason>"` marks it ready anyway: the reason is required, printed, and appended with the repo, PR and cap to `over-cap.jsonl` beside the PR snapshot (a dry run logs nothing). Exit 0 marked ready, 1 refused by the cap, 2 usage or a git or `gh` error. The gap: this is the maestro path, so a hand-typed `gh pr ready` or the GitHub button is not stopped.
 
 ### The PR gate scripts
 

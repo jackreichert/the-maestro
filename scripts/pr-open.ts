@@ -25,6 +25,8 @@
  * for it. When it applies, gh is pinned to the origin repo with --repo. Within budget: runs gh in <path>. --draft
  * and --assignee @me are always added and cannot be turned off; no other gh flag passes through.
  * --dry-run prints the gh command instead of running it.
+ * The review queue cap is not checked here: this script only ever opens drafts, which the cap never counts. It is enforced where a draft joins the queue,
+ * by `pr-ready.ts` (reference/dispatch.md#review-queue-cap).
  * Exit 0 opened (or dry run), 1 refused (body, size gate or file token), 2 bad usage or a git/gh error, 3 the PR
  * opened but its file links could not be expanded (run pr-guide-links.ts).
  * The gh binary is `gh`, or the path in MAESTRO_GH_BIN (tests use a fake).

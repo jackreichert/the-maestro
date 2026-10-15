@@ -132,6 +132,8 @@ The count is the same PR search the PR scripts share (open, authored by you, sco
 - **Waiting on reviewers** (what the cap applies to): no decision or review required, and mergeable. A PR stacked on your own branch counts here, because reviewers still read it. A staging twin (same repo and head branch as an open develop PR, base `staging`) counts once, as its develop twin; a staging PR with no open develop twin counts on its own.
 - **Waiting on you** (reported beside it, never capped): changes requested, a merge conflict, or approved and only waiting to be merged. A source that does not carry the review fields (an old snapshot) is read as waiting on reviewers, so a missing field never hides a PR from the count.
 
+**Enforced at ready.** `pr-open.ts` only opens drafts, which the cap never counts, so the hard stop is where a draft joins the queue: `node scripts/pr-ready.ts --repo <path> --pr <n>` refuses (exit 1) at or over the cap in a gated repo, and `--over-cap "<reason>"` overrides it with the reason logged. Use it instead of a bare `gh pr ready`. Drafts, personal repos and self-review repos are never gated.
+
 The footer reads `Review queue: 11 of 4 waiting on reviewers (7 over) · 4 waiting on you`; the `waiting on you` part is left out when it is zero. `status` shows `review queue: N of 4` from the stored snapshot, and the Podium from its own PR cache. The footer does the same while the snapshot is under 30 minutes old, reads GitHub live when it is older, and prints `unknown` rather than an old number when that read fails; the gate itself reads GitHub live, so on a stale board the gate is the authority.
 
 ## Picking the next item
