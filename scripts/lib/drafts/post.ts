@@ -47,6 +47,30 @@ export function ghCall(d: Draft, text: string): GhCall {
 
 const REFUSED = /\bHTTP 4\d\d\b/;
 const firstLine = (s: string): string => s.split('\n')[0]?.slice(0, 200) ?? '';
+const MAX_DETAIL = 280;
+
+/**
+ * Why GitHub refused, in its own words. `gh api` prints the error body as JSON on stdout and only "gh: <status text> (HTTP 422)" on stderr, so the
+ * reason (`message`, and `errors[]` as strings or { resource, field, code, message }) is read from stdout. Falls back to stderr's first line.
+ */
+export function refusalDetail(r: { stdout: string; stderr: string }): string {
+  let detail = '';
+  try {
+    const j = JSON.parse(r.stdout) as { message?: unknown; errors?: unknown };
+    const errs = Array.isArray(j.errors) ? j.errors.map((e) => (typeof e === 'string' ? e : typeof e === 'object' && e !== null ? Object.values(e as Record<string, unknown>).filter((v) => typeof v === 'string').join(' ') : '')).filter(Boolean) : [];
+    detail = [typeof j.message === 'string' ? j.message : '', ...errs].filter(Boolean).join(': ');
+  } catch { /* not JSON: stderr alone */ }
+  const head = firstLine(r.stderr);
+  return (detail ? (head ? `${head} (${detail})` : detail) : head).replace(/\s+/g, ' ').slice(0, MAX_DETAIL);
+}
+
+/** The PR's live head commit, or null when it cannot be read. */
+function liveHead(run: GhRun, repo: string, pr: number): string | null {
+  let r: GhResult;
+  try { r = run(['api', `repos/${repo}/pulls/${pr}`, '--jq', '.head.sha']); } catch { return null; }
+  const sha = r.stdout.trim().toLowerCase();
+  return r.status === 0 && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
 function urlOf(stdout: string): string | undefined {
   try {
     const u = (JSON.parse(stdout) as { html_url?: unknown }).html_url;
@@ -69,6 +93,13 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
     if (shownRev !== revOf(d)) return refuse('changed', 'The draft changed since you opened it. Reload and approve what you see.');
     const bad = textProblem(d.text);
     if (bad) return refuse('invalid', bad);
+    // A review is pinned to the commit it was written against: once the PR has moved its line numbers may mean something else, so it is not posted, and the draft stays pending.
+    if (d.target.kind === 'review') {
+      const head = liveHead(run, d.repo, d.pr);
+      if (head === null) return refuse('changed', 'Could not read the PR\'s current head from GitHub, so nothing was posted. Try again.');
+      const pinned = d.target.commitId.toLowerCase();
+      if (!head.startsWith(pinned)) return refuse('changed', 'PR moved since this draft; re-prepare it. Nothing was posted.');
+    }
     appendRow(file, { op: 'approve', id, ts: ts(), text: d.text });
     const nonce = randomBytes(8).toString('hex');
     appendRow(file, { op: 'posting', id, ts: ts(), nonce });
@@ -87,8 +118,9 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
       appendRow(file, { op: 'uncertain', id, ts: ts() });
       return refuse('state', 'GitHub did not confirm it. The comment may or may not have posted; check the PR.');
     }
-    appendRow(file, { op: 'post-failed', id, ts: ts(), error: firstLine(r.stderr) || 'gh failed' });
-    return refuse('state', `GitHub refused it: ${firstLine(r.stderr) || 'gh failed'}. Nothing was posted.`);
+    const why = refusalDetail(r) || 'gh failed';
+    appendRow(file, { op: 'post-failed', id, ts: ts(), error: why });
+    return refuse('state', `GitHub refused it: ${why}. Nothing was posted.`);
   });
   return out === 'busy' ? refuse('busy', 'The queue is busy. Try again.') : out;
 }

@@ -28,7 +28,7 @@ async function rig(name: string, gh: Partial<GhResult> = {}): Promise<Rig> {
   mkdirSync(join(vault, 'Projects', 'p', 'Journal'), { recursive: true });
   mkdirSync(join(vault, 'Status'), { recursive: true });
   const calls: string[][] = [];
-  const ghRun = (a: string[]): GhResult => { calls.push(a); return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#r1"}', stderr: '', ...gh }; };
+  const ghRun = (a: string[]): GhResult => { if (a.includes('--jq')) return { status: 0, stdout: `abcdef1${'0'.repeat(33)}\n`, stderr: '' }; calls.push(a); return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#r1"}', stderr: '', ...gh }; };
   const server = createWebServer({ web: { vault, project: 'p', statusDir: join(vault, 'Status'), page: PAGE }, clientDir: client, now: () => NOW, log: () => {}, token: TOKEN, ghRun });
   await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
   servers.push(server);

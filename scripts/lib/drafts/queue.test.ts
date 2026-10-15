@@ -14,7 +14,16 @@ const file = (): string => { const d = mkdtempSync(join(tmpdir(), 'drafts-')); m
 const R = (f: string, id: string): string => { const d = listDrafts(f).find((x) => x.id === id); return d ? revOf(d) : '000000000000'; };
 const draft = (over: Partial<NewDraft> = {}): NewDraft => ({ key: 'acme/widgets#7@abc:a.ts:3:x', source: 'review', repo: 'acme/widgets', pr: 7, severity: 'suggestion', text: 'Could this guard against an empty list?', target: { kind: 'inline', path: 'src/a.ts', line: 3, commitId: 'abcdef1' }, ...over });
 interface Stub { calls: string[][]; run: (a: string[]) => GhResult }
-const stub = (result: Partial<GhResult> = {}): Stub => { const calls: string[][] = []; return { calls, run: (a) => { calls.push(a); return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#discussion_r1"}', stderr: '', ...result }; } }; };
+const HEAD = `abcdef1${'0'.repeat(33)}`;
+/** A gh stand-in. The live-head read a review makes before posting is answered with `head` and not counted in `calls`; every other call gets `result`. */
+const stub = (result: Partial<GhResult> = {}, head: Partial<GhResult> = { stdout: `${HEAD}\n` }): Stub => {
+  const calls: string[][] = [];
+  return { calls, run: (a) => {
+    if (a.includes('--jq')) return { status: 0, stdout: '', stderr: '', ...head };
+    calls.push(a);
+    return { status: 0, stdout: '{"html_url":"https://github.com/acme/widgets/pull/7#discussion_r1"}', stderr: '', ...result };
+  } };
+};
 
 test('a new draft is pending and the same key is added once, even after it was rejected', () => {
   const f = file();
@@ -293,4 +302,32 @@ test('a draft left approved (the process died before the posting row) can be rej
   assert.equal(listDrafts(f)[0]?.state, 'approved');
   assert.equal(rejectDraft(f, id, 'changed my mind').ok, true);
   assert.equal(listDrafts(f)[0]?.state, 'rejected');
+});
+
+test('a review is refused when the PR head moved since it was written, and stays pending; an unreadable head is refused too', () => {
+  const f = file(); const moved = stub({}, { stdout: `${'9'.repeat(40)}\n` });
+  const { id } = addDraft(f, review());
+  const out = approveAndPost(f, id, R(f, id), { run: moved.run });
+  assert.deepEqual([out.ok, out.ok ? '' : out.code, out.ok ? '' : out.message], [false, 'changed', 'PR moved since this draft; re-prepare it. Nothing was posted.']);
+  assert.equal(moved.calls.length, 0, 'nothing was posted');
+  assert.equal(listDrafts(f)[0]?.state, 'pending');
+  const blind = stub({}, { status: 1, stdout: '', stderr: 'gh: Bad credentials' });
+  assert.equal(approveAndPost(f, id, R(f, id), { run: blind.run }).ok, false);
+  assert.equal(listDrafts(f)[0]?.state, 'pending');
+  assert.equal(approveAndPost(f, id, R(f, id), { run: stub().run }).ok, true, 'the same draft posts once the head matches');
+});
+
+test('a refusal carries GitHub\'s own reason from the JSON body, not only the bare status line', () => {
+  const f = file();
+  const body = JSON.stringify({ message: 'Unprocessable Entity', errors: ['Pull request review thread line must be part of the diff', { resource: 'PullRequestReviewComment', code: 'custom', message: 'line is outside the diff' }] });
+  const g = stub({ status: 1, stdout: body, stderr: 'gh: Unprocessable Entity (HTTP 422)' });
+  const { id } = addDraft(f, review());
+  const out = approveAndPost(f, id, R(f, id), { run: g.run });
+  assert.equal(out.ok, false);
+  const msg = out.ok ? '' : out.message;
+  assert.match(msg, /HTTP 422/);
+  assert.match(msg, /line must be part of the diff/);
+  assert.match(msg, /outside the diff/);
+  assert.match(listDrafts(f)[0]?.error ?? '', /line must be part of the diff/);
+  assert.equal(listDrafts(f)[0]?.state, 'failed');
 });
