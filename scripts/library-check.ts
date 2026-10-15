@@ -7,6 +7,7 @@
  *   node scripts/library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]
  *   node scripts/library-check.ts --coverage [--vault <root>] [--repo <name>] [--json]
  *   node scripts/library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]
+ *   node scripts/library-check.ts --human-edited [--ledger-root <dir>] [--project <name>] [--vault <root>] [--repo <name>] [--json]
  *
  * With no page arguments it reads every page under Projects/<repo>/Knowledge (all of it) and Projects/<repo>/Runbooks (only files whose
  * frontmatter says `type: library`), one subfolder deep. Named pages (absolute, or relative to the vault) are checked instead.
@@ -14,13 +15,14 @@
  * `--stale` is a separate report, not a rule: for each page it asks git whether a file the facts cite as evidence changed after `verified-at`
  * (lib/library/stale.ts), looking in <code-root>/<repo> (default $MAESTRO_CONTAINER_ROOT). It lists stale pages, then those it could not check and why,
  * and always exits 0 (a stale page never fails a roll); 2 on a usage error.
+ * `--human-edited` is a report too (lib/library/human-edit.ts): it compares each page's sha256 with the `pageSha` on the page's latest `curated` ledger row and lists the pages that differ (a person edited them since the composer wrote them), then the pages with no recorded sha. It always exits 0; 2 on a usage error.
  * It prints each finding as `path:line  rule  message`; a secret hit names the shape and the line, never the matched text. It writes nothing.
  * Exit codes: 0 every page passes; 1 any finding; 2 a usage or read error (no vault, a named page that cannot be read, a --repo that does not exist, or no pages found at all), never a silent pass.
  */
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VAULT_ROOT } from './local-config.ts';
+import { CONFIGURED_PROJECT, LEDGER_ROOT, VAULT_ROOT } from './local-config.ts';
 import { linkTarget, list, parsePage } from './lib/library/page.ts';
 import { checkPage } from './lib/library/rules.ts';
 import type { Finding } from './lib/library/rules.ts';
@@ -30,39 +32,46 @@ import { checkStaleness, realGit } from './lib/library/stale.ts';
 import type { PageStaleness } from './lib/library/stale.ts';
 import { readLibrary } from './lib/library/pages.ts';
 import { coverage, renderCoverage } from './lib/library/coverage.ts';
+import { humanEdits, renderHumanEdits, sha256 } from './lib/library/human-edit.ts';
+import { openStore } from './lib/journal/store.ts';
 import { printJson } from './lib/json-out.ts';
 
-const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]\n       library-check.ts --coverage [--vault <root>] [--repo <name>] [--json]\n       library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]';
+const USAGE = 'Usage: library-check.ts [--vault <root>] [--repo <name>] [--json] [<page.md> ...]\n       library-check.ts --coverage [--vault <root>] [--repo <name>] [--json]\n       library-check.ts --stale [--code-root <dir>] [--vault <root>] [--repo <name>] [--json]\n       library-check.ts --human-edited [--ledger-root <dir>] [--project <name>] [--vault <root>] [--repo <name>] [--json]';
 const LIBRARY_FOLDERS = ['Knowledge', 'Runbooks'] as const;
 
-interface Options { vault: string; repo?: string; json: boolean; pages: string[]; stale: boolean; coverage: boolean; codeRoot?: string }
+interface Options { vault: string; repo?: string; json: boolean; pages: string[]; stale: boolean; coverage: boolean; humanEdited: boolean; vaultGiven: boolean; codeRoot?: string; ledgerRoot?: string; project?: string }
 export interface PageReport { path: string; findings: Finding[] }
 
 export function parseOptions(argv: string[]): Options | string {
   let vault = VAULT_ROOT;
+  let vaultGiven = false;
   let repo: string | undefined;
   let json = false;
   let stale = false;
   let cover = false;
+  let humanEdited = false;
   let codeRoot: string | undefined;
+  let ledgerRoot: string | undefined;
+  let project: string | undefined;
   const pages: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i] as string;
     if (a === '--json') json = true;
     else if (a === '--stale') stale = true;
     else if (a === '--coverage') cover = true;
-    else if (a === '--vault' || a === '--repo' || a === '--code-root') {
+    else if (a === '--human-edited') humanEdited = true;
+    else if (a === '--vault' || a === '--repo' || a === '--code-root' || a === '--ledger-root' || a === '--project') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return `${a} needs a value`;
-      if (a === '--vault') vault = v; else if (a === '--repo') repo = v; else codeRoot = v;
+      if (a === '--vault') { vault = v; vaultGiven = true; } else if (a === '--repo') repo = v; else if (a === '--ledger-root') ledgerRoot = v; else if (a === '--project') project = v; else codeRoot = v;
       i += 1;
     } else if (a.startsWith('--')) return `unknown argument ${a}`;
     else pages.push(a);
   }
   if (!vault) return 'vault root is not set; set VAULT_ROOT (or vault_root in the local config) or pass --vault <path>';
-  if (stale && cover) return '--stale and --coverage are separate reports; pick one';
-  if ((stale || cover) && pages.length) return '--stale and --coverage check the whole library; they take no page arguments';
-  return { vault, repo, json, pages, stale, coverage: cover, ...(codeRoot ? { codeRoot } : {}) };
+  if ([stale, cover, humanEdited].filter(Boolean).length > 1) return '--stale, --coverage and --human-edited are separate reports; pick one';
+  if ((stale || cover || humanEdited) && pages.length) return '--stale, --coverage and --human-edited check the whole library; they take no page arguments';
+  return { vault, repo, json, pages, stale, coverage: cover, humanEdited, vaultGiven, ...(codeRoot ? { codeRoot } : {}), ...(ledgerRoot ? { ledgerRoot } : {}), ...(project ? { project } : {}) };
 }
 
 /** Real directories and files only: a symlink is skipped, so a link in a library folder cannot lead the check outside the vault. */
@@ -169,6 +178,21 @@ function mainStale(o: Options): number {
   return 0;
 }
 
+function mainHumanEdited(o: Options): number {
+  const ledgerRoot = o.ledgerRoot ?? (o.vaultGiven ? o.vault : LEDGER_ROOT || o.vault);
+  const project = o.project ?? CONFIGURED_PROJECT;
+  if (!project) { console.error('library-check: --human-edited reads the ledger; set the project (local config) or pass --project <name>'); return 2; }
+  const pages = readLibrary(o.vault, o.repo);
+  if (!pages.length) { console.error('library-check: no library pages found; nothing was checked'); return 2; }
+  const rows = openStore({ vault: ledgerRoot, project, dryRun: true }).readLedger();
+  const read = pages.flatMap((p) => {
+    try { const text = readFileSync(join(o.vault, p.path)); return [{ path: p.path, sha: sha256(text), told: text.toString('utf8').split('\n').filter((l) => /told-by-jack/.test(l)).length }]; } catch { return []; }
+  });
+  const report = humanEdits(read, rows);
+  if (o.json) printJson(report); else renderHumanEdits(report).forEach((l) => console.log(l));
+  return 0;
+}
+
 function mainCoverage(o: Options): number {
   if (o.repo && !existsSync(join(o.vault, 'Projects', o.repo))) { console.error(`library-check: no project "${o.repo}" under ${join(o.vault, 'Projects')}`); return 2; }
   const pages = readLibrary(o.vault, o.repo);
@@ -184,8 +208,9 @@ function main(argv: string[]): number {
   const o = parseOptions(argv);
   if (typeof o === 'string') { console.error(`library-check: ${o}\n${USAGE}`); return 2; }
   if (!existsSync(join(o.vault, 'Projects'))) { console.error(`library-check: no Projects folder under ${o.vault}`); return 2; }
-  if ((o.stale || o.coverage) && o.repo && !/^[\w.-]+$/.test(o.repo)) { console.error('library-check: --repo must be a plain project folder name'); return 2; }
+  if ((o.stale || o.coverage || o.humanEdited) && o.repo && !/^[\w.-]+$/.test(o.repo)) { console.error('library-check: --repo must be a plain project folder name'); return 2; }
   if (o.stale) return mainStale(o);
+  if (o.humanEdited) return mainHumanEdited(o);
   if (o.coverage) return mainCoverage(o);
   const named = o.pages.map((p) => (isAbsolute(p) ? relative(o.vault, p) : p));
   const unreadable = named.filter((p) => !insideVault(o.vault, p));
