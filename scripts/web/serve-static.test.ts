@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildRoutes, createStaticServer, fileLookup } from './serve-static.ts';
@@ -121,4 +121,13 @@ test('fileLookup rescans at most once per gap, so a flood of misses does not bec
   assert.equal(lookup('/dist/a.js'), undefined, 'inside the gap: no rescan yet');
   t += 1000;
   assert.equal(lookup('/dist/a.js'), join(live, 'dist', 'a.js'), 'after the gap: found');
+});
+
+test('fileLookup keeps its last list when a rescan cannot read the client directory', () => {
+  const live = mkdtempSync(join(tmpdir(), 'serve-static-gone-'));
+  writeFileSync(join(live, 'index.html'), 'x');
+  const lookup = fileLookup(live, 0);
+  rmSync(live, { recursive: true });
+  assert.equal(lookup('/index.html'), join(live, 'index.html'));
+  assert.equal(lookup('/dist/nope.js'), undefined);
 });

@@ -52,8 +52,8 @@ export function fileLookup(clientDir: string, gapMs = RESCAN_GAP_MS, now: () => 
   return (pathname) => {
     const hit = routes.get(pathname);
     if (hit !== undefined || now() - scanned < gapMs) return hit;
-    routes = buildRoutes(clientDir);
     scanned = now();
+    try { routes = buildRoutes(clientDir); } catch { /* the client directory is briefly absent during a rebuild: keep the last list */ }
     return routes.get(pathname);
   };
 }
