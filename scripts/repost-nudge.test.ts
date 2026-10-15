@@ -144,14 +144,15 @@ test('only PRs waiting on a reviewer are named, oldest first, at most the count'
     pr(3, { reviewDecision: 'CHANGES_REQUESTED' }),
     pr(4, { reviewDecision: 'APPROVED' }),
     pr(5, { mergeable: 'CONFLICTING' }),
+    pr(11, { mergeable: 'UNKNOWN', readySince: now - 20 * HOUR }),
     pr(6, { unresolvedThreads: 1 }),
     pr(7, { repo: 'me/personal' }),
     pr(8, { repo: 'org/tool', readySince: now - 9 * HOUR }),
     pr(9, { readySince: now - 5 * HOUR }),
     pr(10, { readySince: now - 3 * HOUR }),
   ], now, { count: 3, selfReview: ['org/tool'], owners: ['org'] });
-  assert.deepEqual(named.map((p) => p.key), ['org/api#9', 'org/api#10', 'org/api#1']);
-  assert.equal(named[0]?.waitedMin, 300);
+  assert.deepEqual(named.map((p) => p.key), ['org/api#11', 'org/api#9', 'org/api#10']);
+  assert.equal(named[1]?.waitedMin, 300);
 });
 
 test('with nobody waiting the trigger is answered silently and nothing is held for later', () => {
@@ -263,4 +264,16 @@ test('the draft reader sees a queued teammate review and a post of it, and ignor
   assert.equal(nudge.latestReviewDraftAt(file), 0);
   addDraft(file, { ...base, key: 'rev', source: 'review', severity: 'suggestion' } as NewDraft, at('2026-10-14T14:00:00Z'));
   assert.equal(nudge.latestReviewDraftAt(file), Date.parse('2026-10-14T14:00:00Z'));
+});
+
+test('toPr counts a re-request of a person by the user, not Copilot, a team or someone else\'s request', () => {
+  const at = (h: number) => `2026-10-14T0${h}:00:00Z`;
+  const node = (requests: { createdAt: string; actor: { login: string }; requestedReviewer: { __typename: string; login?: string } }[]) =>
+    nudge.toPr({ number: 1, url: 'u', isDraft: false, repository: { nameWithOwner: 'org/api' }, requests: { nodes: requests } }, 'me');
+  assert.ok(Number.isNaN(node([
+    { createdAt: at(5), actor: { login: 'me' }, requestedReviewer: { __typename: 'Bot', login: 'copilot-pull-request-reviewer' } },
+    { createdAt: at(6), actor: { login: 'me' }, requestedReviewer: { __typename: 'Team' } },
+    { createdAt: at(7), actor: { login: 'other' }, requestedReviewer: { __typename: 'User', login: 'dana' } },
+  ]).rerequestedAt));
+  assert.equal(node([{ createdAt: at(4), actor: { login: 'ME' }, requestedReviewer: { __typename: 'User', login: 'dana' } }]).rerequestedAt, Date.parse(at(4)));
 });

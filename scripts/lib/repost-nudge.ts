@@ -50,13 +50,13 @@ export function inWorkingHours(now: number, s: Pick<NudgeSettings, 'start' | 'en
 }
 
 /**
- * The PRs to repost: ready, waiting on reviewers (reviewDecision REVIEW_REQUIRED), mergeable, with no unresolved thread, in a repo other people
+ * The PRs to repost: ready, waiting on reviewers (reviewDecision REVIEW_REQUIRED), not conflicting (GitHub's UNKNOWN, while it computes, passes), with no unresolved thread, in a repo other people
  * review and an owner the review queue counts; oldest-waiting first, at most `count`. A PR changes-requested or approved is not waiting on a
  * reviewer, a conflicting one or one with open threads is not worth a reviewer's time yet.
  */
 export function selectRepost(prs: readonly NudgePr[], now: number, s: Pick<NudgeSettings, 'count' | 'selfReview' | 'owners'>): Nudge['prs'] {
   return prs
-    .filter((p) => !p.isDraft && p.reviewDecision === 'REVIEW_REQUIRED' && p.mergeable === 'MERGEABLE' && p.unresolvedThreads === 0
+    .filter((p) => !p.isDraft && p.reviewDecision === 'REVIEW_REQUIRED' && p.mergeable !== 'CONFLICTING' && p.unresolvedThreads === 0
       && !isSelfReview(p.repo, s.selfReview) && inQueueOwners(p.repo, s.owners))
     .sort((a, b) => (Number.isFinite(a.readySince) ? a.readySince : now) - (Number.isFinite(b.readySince) ? b.readySince : now))
     .slice(0, s.count)

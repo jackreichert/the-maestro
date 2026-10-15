@@ -13,6 +13,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, GH_LOGIN, LEDGER_ROOT, PR_SEARCH, REPOST_NUDGE_ASKED_MINUTES, REPOST_NUDGE_AUTHOR, REPOST_NUDGE_COUNT, REPOST_NUDGE_END, REPOST_NUDGE_MINUTES, REPOST_NUDGE_START, REPOST_NUDGE_TZ, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, VAULT_ROOT } from '../local-config.ts';
+import { isBotLogin } from '../lib/github-bots.ts';
 import { draftsPath, readRows } from '../lib/drafts/queue.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { latestAskInDir } from '../lib/repost-nudge-slack.ts';
@@ -47,7 +48,7 @@ interface Node {
   latestReviews?: { nodes: { state?: string; submittedAt?: string | null }[] };
   reviewThreads?: { nodes: { isResolved: boolean }[] };
   timelineItems?: { nodes: { createdAt?: string }[] };
-  requests?: { nodes: { createdAt?: string; actor?: { login?: string } | null }[] };
+  requests?: { nodes: { createdAt?: string; actor?: { login?: string } | null; requestedReviewer?: { __typename?: string; login?: string } | null }[] };
 }
 
 export const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
@@ -55,12 +56,12 @@ export const QUERY = `query($after: String) { search(query: "${PR_SEARCH}", type
   latestReviews(first: 20) { nodes { state submittedAt } }
   reviewThreads(first: 100) { nodes { isResolved } }
   timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { ... on ReadyForReviewEvent { createdAt } } }
-  requests: timelineItems(last: 10, itemTypes: [REVIEW_REQUESTED_EVENT]) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } } } }
+  requests: timelineItems(last: 10, itemTypes: [REVIEW_REQUESTED_EVENT]) { nodes { ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { __typename ... on User { login } } } } }
 } } } }`;
 
 /** One search node as the nudge reads it. */
 export function toPr(n: Node, me = ''): NudgePr {
-  const mine = (n.requests?.nodes ?? []).filter((r) => me && (r.actor?.login ?? '').toLowerCase() === me.toLowerCase()).map((r) => Date.parse(r.createdAt ?? '')).filter(Number.isFinite);
+  const mine = (n.requests?.nodes ?? []).filter((r) => me && (r.actor?.login ?? '').toLowerCase() === me.toLowerCase() && r.requestedReviewer?.__typename === 'User' && !isBotLogin(r.requestedReviewer.login ?? '')).map((r) => Date.parse(r.createdAt ?? '')).filter(Number.isFinite);
   const approvals = (n.latestReviews?.nodes ?? []).filter((r) => r.state === 'APPROVED').map((r) => Date.parse(r.submittedAt ?? '')).filter(Number.isFinite);
   return {
     repo: n.repository.nameWithOwner, number: n.number, url: n.url, isDraft: n.isDraft,
