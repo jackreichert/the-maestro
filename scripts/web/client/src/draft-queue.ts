@@ -13,7 +13,7 @@ export interface DraftActions {
 const CSS = `${BASE_CSS}${UI_CSS}
   :host { display: block; }
   section.pr { margin-top: var(--space-6); }
-  section.pr h3 { margin: 0 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+  section.pr h3, section.pr h4 { margin: 0 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
   ul.drafts { list-style: none; margin: 0; padding: 0; border-top: var(--hairline); }
   li.draft { display: grid; gap: var(--space-2); padding: var(--space-4) 0; border-bottom: var(--hairline); min-width: 0; }
   .meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; font-size: var(--text-sm); color: var(--text-secondary); }
@@ -92,7 +92,8 @@ export class DraftQueue extends HTMLElement {
   }
 
   #group(key: string, ds: DraftRow[], m: DraftsModel): HTMLElement {
-    return h('section', { class: 'pr', 'aria-label': key }, h('h3', {}, this.#link(ds[0] as DraftRow, key)), h('ul', { class: 'drafts', role: 'list' }, ...ds.map((d) => this.#card(d, m))));
+    // Inside a PR's own row (quiet) the row already names the PR, so the card's heading drops a level and nothing sits at the row's level.
+    return h('section', { class: 'pr', 'aria-label': key }, h(this.#quiet ? 'h4' : 'h3', {}, this.#link(ds[0] as DraftRow, key)), h('ul', { class: 'drafts', role: 'list' }, ...ds.map((d) => this.#card(d, m))));
   }
 
   #head(d: DraftRow): HTMLElement {

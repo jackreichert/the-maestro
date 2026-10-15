@@ -2,7 +2,7 @@
  * Every open teammate PR, for the Podium's Others' PRs tab: one scoped GitHub search, reduced to the fields the tab shows and remembered in
  * `<statusDir>/.now-others-prs.json`. The status-page rebuild (the loop's status-refresh cadence, and the Open PRs Refresh button) writes it; the
  * web server only reads it, so a page load never reaches GitHub. A failed read keeps the last good set and records why.
- * The search is scoped to the review-queue owners and never runs unscoped. Own PRs, bots, drafts and self-review repos are left out here and again on read.
+ * The search is scoped to the review-queue owners and never runs unscoped. Own PRs, bots, drafts and self-review repos are left out here; the web read applies the owner, own-PR and self-review scope again (the cache holds only what passed here). Threads and requested reviewers are read from the first 100 and 20, so larger counts are capped.
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

@@ -363,7 +363,7 @@ export class PodiumApp extends HTMLElement {
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
         // A decision or a new draft changes drafts.jsonl, and a PR refresh the PR cache, not the board, so the board's own seq may not move: `needsSig` stands in for them.
-        await Promise.all([this.#drafts.load(), this.#prs.load()]);
+        await Promise.all([this.#drafts.load(), this.#prs.load(), this.#others.load()]);
         const [s, c, e, lr, p, co] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true), loadCost()]);
         return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, cost: co, local: lr, projects: p, dropped: s.dropped + c.dropped, needsSig: this.#needsSig(s.data) } : null;
       },

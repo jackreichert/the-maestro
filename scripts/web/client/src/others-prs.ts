@@ -39,6 +39,8 @@ export class OthersPrs extends HTMLElement {
   #model: OthersPrsModel | null = null;
   #drafts: OthersDrafts | null = null;
   #now = '';
+  #sig = '';
+  readonly #status = h('p', { class: 'status', role: 'status' });
 
   constructor() { super(); this.#root = shadow(this, CSS); }
 
@@ -48,6 +50,10 @@ export class OthersPrs extends HTMLElement {
 
   #render(): void {
     const m = this.#model;
+    // Only a change in what the rows say redraws them: the draft cards inside follow the store on their own, so a keystroke-level or button-state change never rebuilds 340 rows under the person's focus.
+    const sig = `${m?.loaded ? m.data?.generatedAt ?? 'none' : 'loading'}|${(this.#drafts?.rows ?? []).filter(waiting).map((d) => d.id).sort().join(',')}|${this.#drafts ? 'q' : ''}`;
+    if (sig === this.#sig && this.#root.childElementCount > 0) return;
+    this.#sig = sig;
     if (!m || !m.loaded) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'Loading teammates\' PRs.')); return; }
     if (!m.data) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'The list of teammates\' PRs is not available from this page.')); return; }
     this.#now = m.data.generatedAt;
@@ -58,9 +64,16 @@ export class OthersPrs extends HTMLElement {
     const when = d.prData.fetchedAt ? `List read ${ago(d.prData.fetchedAt, d.generatedAt)} ago${d.prData.stale ? ' (older than expected)' : ''}.` : 'The list has not been read yet. It fills in when the next page refresh runs.';
     const hasOrphans = [...byPr].some(([k, rows]) => !listed.has(k) && rows.some(waiting));
     this.#root.replaceChildren(
-      h('p', { class: `status${d.prData.failure ? ' bad' : ''}`, role: 'status' }, `${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}`, d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''),
+      this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
       d.prs.length ? h('ul', { class: 'prs', role: 'list', 'aria-label': 'Open teammate PRs' }, ...d.prs.map((p) => this.#row(p, byPr.get(key(p.repo, p.number)) ?? []))) : h('p', { class: 'empty' }, 'No teammate PR is open.'),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false)] : []));
+  }
+
+  /** One live region kept across redraws, its text set only when it changes, so a screen reader hears a change and not every redraw. */
+  #statusLine(text: string, bad: boolean): HTMLElement {
+    if (this.#status.textContent !== text) this.#status.textContent = text;
+    this.#status.className = `status${bad ? ' bad' : ''}`;
+    return this.#status;
   }
 
   #row(p: OthersPrRow, drafts: DraftRow[]): HTMLElement {
@@ -72,14 +85,14 @@ export class OthersPrs extends HTMLElement {
       ? h('span', { class: 'chip good' }, h('span', { 'aria-hidden': 'true' }, '> '), `Draft ready${open.length > 1 ? ` (${open.length})` : ''}`)
       : h('span', { class: 'chip' }, 'No draft yet');
     return h('li', { class: 'pr', 'data-pr': ref },
-      h('h3', {}, link ? h('a', { ...link, class: 'ref', 'aria-label': `${ref}, open on GitHub` }, ref) : h('span', { class: 'ref' }, ref), p.title),
+      h('h3', {}, link ? h('a', { ...link, class: 'ref' }, ref) : h('span', { class: 'ref' }, ref), p.title),
       h('div', { class: 'meta' },
         h('span', {}, `Author ${p.author}`), h('span', {}, `Into ${p.base || 'unknown'}`),
         h('span', {}, `Updated ${ago(p.updatedAt, this.#now) || 'at an unknown time'}${ago(p.updatedAt, this.#now) ? ' ago' : ''}`),
         ...(p.ageDays !== undefined ? [h('span', {}, `Open ${p.ageDays} d`)] : [])),
       h('div', { class: 'chips' },
         h('span', { class: `chip ${p.youAsked ? 'good' : ''}` }, p.youAsked ? 'You are a requested reviewer' : 'You are not a requested reviewer'),
-        h('span', { class: `chip ${rv.tone}` }, h('span', { 'aria-hidden': 'true' }, `${rv.glyph} `), rv.word),
+        h('span', { class: `chip ${rv.tone}` }, h('span', { 'aria-hidden': 'true' }, `${rv.glyph} `), h('span', { class: 'vh' }, 'Review: '), rv.word),
         h('span', { class: `chip ${p.copilotThreads > 0 ? 'bad' : ''}` }, `Copilot threads open: ${p.copilotThreads}`),
         h('span', { class: 'chip' }, `Threads open: ${p.unresolved}`),
         draftChip),
