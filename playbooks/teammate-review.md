@@ -4,12 +4,22 @@ Trigger: a `REVIEW-WAIT <PR key> <url> waiting <m> min, head <sha7>` line from `
 
 Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `install`, `submit`, `cleanup`). Model: Haiku runs the commands; the review itself is one fresh Sonnet agent (Opus only when the diff touches auth, migrations or tenant scoping).
 
+## Before prepare: the wait gate
+
+`pr-watch` already enforces the base wait in code ([lib/teammate/wait.ts](../scripts/lib/teammate/wait.ts)): the PR is ready, someone else's, has no human review or decision yet, and has waited `teammate_review_minutes` (15) since it was opened or marked ready. The rest below is judgement the run applies by hand before `prepare`; none of it is enforced in `prepare` (it needs review-thread, mention and twin data that `REVIEW-WAIT` does not carry), so say in the report which rule you applied.
+
+- Wait the 15 minutes from the latest of opened, marked ready, or re-requested. If a teammate reviewed in that window, draft only for a blocking issue.
+- Skip a PR another teammate is clearly reviewing: they submitted a review on the current head, or have open review threads or comments from the last day. Exceptions: the user is requested or @-mentioned, or there is a blocking issue they have not raised.
+- Step in anyway when the author has acted since that reviewer's last activity (a push, a reply or a re-request) and two working hours (default 120 minutes) have passed with no reviewer response.
+- These skip the wait entirely: staging twins of a develop PR, backmerges, follow-ups to the user's PRs, PRs where the user is requested or @-mentioned, P0 or hotfix PRs, and re-reviews after the author addressed our comments.
+
 ## Steps
 
 1. `prepare --repo <owner/name> --pr <n>` prints `{ path, head, base, author }`. It refuses the user's own PR, a draft, a closed PR and a self-review repo. The worktree is detached and read-only.
 2. `firstpass --repo <owner/name> --pr <n> --path <path>` prints the PR body, what bots already said, the CI rollup and the test command of each changed package. Hand it to the reviewer as is.
 3. `install --repo <owner/name> --pr <n> --path <path>` only when the reviewer needs to run the package's tests. It runs `npm ci --ignore-scripts` (the PR's install scripts never run, and only PATH, HOME and the npm config reach it, no tokens) with browser downloads skipped, and prints `git status`: if `dirty` lists files, say so; npm can flip mode bits on tracked files. If the tests need a build, run it by hand.
 4. Dispatch the review agent with the brief below and, in the same message, `mithril-smells` in diff mode with `<path>` as its working directory. The reviewer's report is a JSON object, nothing else; the smells agent's report is read, not forwarded (see "The smells pass").
+4a. Triage the PR's open bot threads (Copilot and other bots) from the first pass. For each important one (correctness, security, PHI, data loss, a deploy break), post one short reply in that thread saying it is important and the concrete consequence; bot-thread replies are pre-approved. Skip minor ones. Never resolve a thread. `submit` has no COMMENT event (it queues APPROVE or REQUEST_CHANGES only, see "Not enforced"), so when important bot threads are open do not queue an approving review: report them to the user and queue only a review that blocks.
 5. Merge the two into one `report.json` and `submit < report.json` with `{ repo, pr, head, base, path, author, compliment, findings }` (`author` is the login `prepare` printed; the Podium's needs-you list names them). It applies the bar in code, anchors comments to lines in the diff and queues one review. Say what it dropped.
 6. `cleanup --repo <owner/name> --path <path>`.
 
@@ -30,6 +40,12 @@ Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `install`, `s
 - Each smell becomes `{ "source": "smell", "category": "other", "path": "...", "line": N, "cost": "...", "text": "..." }`. `cost` is the concrete maintenance cost the agent named (the next edit touches N places, or the bug a reader will plausibly write); a smell without one is not forwarded. `text` is the suggestion in the user's first person, naming the smell's catalog move ("could we pull this into a helper?"), friendly, never mentioning a tool.
 - Leave out `[LINT]` lines (CI already runs the project's linter) and anything the reviewer reported on the same file within 3 lines. `submit` drops those duplicates itself, but do not rely on that.
 - Smells never block and never change an APPROVE. `submit` enforces it: a `source: "smell"` finding is always a suggestion, whatever category or kind it claims, and it has its own cap of 2 so it cannot push out the reviewer's 3.
+
+**Later rounds.** The smells pass runs on the first round of a PR only. On any review after our first one, keep only follow-ups on our earlier items and blocking findings in the new commits, and drop every new suggestion. `submit` enforces the smell half (a `source: "smell"` finding is dropped once another review of the PR is on record); keeping only follow-ups and blockers is on you.
+
+## Not enforced in code
+
+The wait-gate exceptions, the bot-thread triage and the COMMENT event for open important bot threads are described here only. Supporting a COMMENT review event means a third `ReviewEvent` through the queue, the Others' PRs tab and the post path, which is a separate change.
 
 ## What the user sees
 
