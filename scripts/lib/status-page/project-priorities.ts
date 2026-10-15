@@ -212,7 +212,7 @@ export function carriedInto(input: CarriedInput): { carriedFrom: string; carried
  * Starts today's file for each project that had priorities before, written by roll: yesterday's Today items (the project's own previous
  * file plus the container list fanned out to it) become `Carried from <date>` with each stream's status, and Today says `not set yet`
  * until a person confirms. When the container list is already dated today, it is today's list. A project whose file for today exists
- * is left alone. Problems are per project and never stop the others.
+ * is left alone, except that a `priorities set` file with an empty Carried section (written ahead of the carry) gets it filled and keeps its Today. Problems are per project and never stop the others.
  */
 export function carryPriorities(input: CarryInput): { written: string[]; problems: string[] } {
   const { vault, today, rows, registry, homes, repoStreams, containerProject, container } = input;
@@ -231,8 +231,11 @@ export function carryPriorities(input: CarryInput): { written: string[]; problem
       const { carriedFrom, carried } = carriedInto({ vault, project, today, rows, registry, fromContainer, containerDate: useContainer ? container?.date : undefined });
       if (!carried.length && !todayItems.length) continue;
       const projectStreams = streams.filter((s) => route(s).includes(project));
+      // A day `priorities set` wrote ahead of the carry (a future date, or today before the roll ran) has a Today and no Carried section; fill that section in rather than skip the file.
+      const early = readProjectFile(join(prioritiesDir(vault, project), `${today}.md`));
+      const fill = early?.writtenBy === 'priorities set' && early.carriedCount === 0 && carried.length > 0 ? early : null;
       const result = writeProjectPriorities(vault, project, today, {
-        project, date: today, carriedFrom, writtenBy: 'roll-maintenance', today: todayItems,
+        project, date: today, carriedFrom, writtenBy: fill ? 'priorities set' : 'roll-maintenance', today: fill ? fill.today : todayItems,
         carried,
         next: nextItems(rows, registry, projectStreams),
       });
