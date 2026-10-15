@@ -14,6 +14,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -26,6 +27,14 @@ const TEMPLATE = fileURLToPath(new URL(`./launchd/${LABEL}.plist.template`, impo
 /** The checkout launchd will run the supervisor from: this one. MAESTRO_INSTALL_REPO is a test hook. */
 const REPO = process.env.MAESTRO_INSTALL_REPO || dirname(dirname(fileURLToPath(import.meta.url)));
 const BASE_PATH = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+
+/**
+ * The PATH written into the plist. launchd gives a job no login PATH, so the user's own tool directories have to be named here:
+ * `with-env` (how the notion and slack watchers reach their tokens) lives in ~/bin, and a check that cannot find it reads as failing.
+ */
+export function supervisorPath(nodeBinary: string = process.execPath, home: string = homedir()): string {
+  return [...new Set([dirname(nodeBinary), join(home, 'bin'), join(home, '.local', 'bin'), ...BASE_PATH])].join(':');
+}
 
 const xml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -76,7 +85,7 @@ function main(argv: string[]): number {
   const branch = checkedOutBranch(REPO);
   if (branch && !v['allow-branch']) return fail(`${REPO} is on branch ${branch}, and launchd would run whatever that branch holds after every relaunch. Install from a runtime worktree detached at origin/main: git worktree add --detach <path> origin/main (or pass --allow-branch).`);
   const log = v.log ?? supervisorLogPath(LEDGER_ROOT, CONTAINER_PROJECT);
-  const path = [...new Set([dirname(process.execPath), ...BASE_PATH])].join(':');
+  const path = supervisorPath();
   const plist = fillTemplate(readFileSync(TEMPLATE, 'utf8'), { NODE: realpathSync(process.execPath), REPO, LEDGER_ROOT, PROJECT: CONTAINER_PROJECT, LOG: log, PATH: path });
   if (!v.force && existsSync(out)) {
     const existing = readFileSync(out, 'utf8');
