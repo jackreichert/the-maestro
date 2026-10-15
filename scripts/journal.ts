@@ -163,6 +163,7 @@ import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { setAutoPull } from './lib/config-write.ts';
 import { checkForUpdate } from './lib/self-update.ts';
 import { fileURLToPath } from 'node:url';
+import { formatFindings, lintText } from './lib/paste-lint.ts';
 import { scratchReport } from './lib/scratch.ts';
 import { parseArgs } from './lib/journal/args.ts';
 import { helpFor, isCommand, wantsHelp, listText } from './lib/journal/help.ts';
@@ -520,7 +521,10 @@ function pasteFile(kind: string): string | undefined {
     const given = arg('paste');
     if (!given) die('--paste needs a block file: journal.ts ask "<what to run>" --paste <file>');
     if (kind !== 'question') die('--paste only goes on a question.');
-    return resolveRefFile(given) || die(`--paste ${given} is not an existing file. Write the block to a file first.`);
+    const file = resolveRefFile(given) || die(`--paste ${given} is not an existing file. Write the block to a file first.`);
+    const findings = lintText(readFileSync(file, 'utf8'));
+    if (findings.length) die(`--paste ${given} breaks the paste-block rules; nothing was written.\n${formatFindings(findings, given)}`);
+    return file;
 }
 
 /**

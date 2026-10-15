@@ -354,6 +354,8 @@ Blockers are what `roll --strict` refuses on: a box 1-3 item with no `--ref` tha
 
 `ask "<what to run>" --paste <block-file>` records a run-this ask. The file must exist (checked before the write); the row carries `box: paste` and the absolute path. `status`, `CURRENT.md`, the footer ("N to run") and the handoff show these apart from the questions, so "awaiting you" means decisions only.
 
+The block is linted first: `ask --paste` runs `scripts/paste-lint.ts` over the file and, on any finding, exits 1 naming the rule and the fix and writes nothing. Run `node scripts/paste-lint.ts <file>` (or pipe a block to it) on any command block before it goes to the user, in a reply as well as in an ask. The rules are the user's zsh habits: no inline `#` comments, command variables as functions, `${X:r}` not `$X:r`, an absolute `node` for `.ts`, no `gh pr merge` or approve, and psql never takes a URI together with `-d` (psql ignores `-d` then and hits the URI's database). The right form puts the database in the URI path: `psql "postgres://user@host:5432/<db>" -c "select 1"`.
+
 ## Prime, gates and defer
 
 ```bash
