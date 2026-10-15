@@ -195,10 +195,15 @@ const workText = (cfg: PageConfig, i: Item, ticket: string | undefined): string 
   return linked.trim() || '-';
 };
 
-/** Stream names in display order. */
-export function streamOrder(cfg: PageConfig, seen: (string | undefined)[]): string[] {
+/**
+ * Stream names in display order: the configured streams, then repo streams, then streams seen on the board, `other` last.
+ * Streams named in today's priorities (matched ignoring case) move to the front in priority order; the rest keep their order.
+ */
+export function streamOrder(cfg: PageConfig, seen: (string | undefined)[], priorityStreams: (string | undefined)[] = []): string[] {
   const all = [...cfg.streams, ...Object.values(cfg.repoStreams), ...seen.filter((s): s is string => !!s && s !== 'none')];
-  return [...new Set(all.filter((s) => s !== OTHER)), OTHER];
+  const base = [...new Set(all.filter((s) => s !== OTHER))];
+  const first = [...new Set(priorityStreams.flatMap((p) => base.find((s) => s.toLowerCase() === p?.toLowerCase()) ?? []))];
+  return [...first, ...base.filter((s) => !first.includes(s)), OTHER];
 }
 
 // ── PR rendering ────────────────────────────────────────────────────────────
@@ -489,7 +494,7 @@ export function renderPage(input: PageInput): { page: string; date: string } {
   const blocked: Item[] = status.blocked.map((b) => ({ ...b, gate: meta.get(b.id)?.gate }));
   const deferred = triage.items.filter((i) => i.deferredUntil);
   const prPriorityStreams = priorities.state === 'ok' ? priorities.items.map((p) => p.stream) : [];
-  const streams = streamOrder(cfg, [...asks.map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...prPriorityStreams]);
+  const streams = streamOrder(cfg, [...asks.map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...prPriorityStreams], prPriorityStreams);
   const t = zonedParts(now, cfg.tz);
   const age = (i: Item): string => ageLabel(i.ts, now);
   const withAge = (i: Item, extra: string): string => `${li(i)}${extra} · ${age(i) || 'age unknown'}`;

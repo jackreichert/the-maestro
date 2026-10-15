@@ -99,7 +99,7 @@ export function buildState(input: GatheredInputs): PodiumState {
   for (const [t, list] of Object.entries(ticketMap)) for (const id of list) tickets.set(id, t);
   const meta = new Map(triage.items.map((i) => [i.id, i]));
   const priorityStreams = priorities.state === 'ok' ? priorities.items.map((p) => p.stream) : [];
-  const streams = streamOrder(config, [...status.awaiting.map((a) => a.stream), ...(status.paste ?? []).map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...(status.stale ?? []).map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...priorityStreams]);
+  const streams = streamOrder(config, [...status.awaiting.map((a) => a.stream), ...(status.paste ?? []).map((a) => a.stream), ...status.inflight.map((i) => i.stream), ...(status.stale ?? []).map((i) => i.stream), ...status.queued.map((i) => i.stream), ...prs.map((p) => p.stream), ...priorityStreams], priorityStreams);
   const streamOf = (i: { stream?: string }): string => (streams.includes(i.stream ?? '') ? i.stream! : OTHER);
   const noteOf = (i: Item): string | undefined => i.ticket || meta.get(i.id)?.ticket || tickets.get(i.id) || undefined;
   const work = (i: Item): WorkItem => {
