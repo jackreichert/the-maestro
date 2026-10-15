@@ -13,7 +13,7 @@
  *   - stdout and stderr are scrubbed of the URL, the password and the user:password pair before anything is printed
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -78,8 +78,7 @@ export function parseLocalUrl(name: string, url: string, dbOverride?: string): L
 /** Every string that must never reach the output: the URL, the user:password pair and the password, each raw and percent-encoded. */
 export function secretsOf(t: LocalTarget): string[] {
   const out = new Set<string>([t.url]);
-  if (t.password.length >= 4) { out.add(t.password); out.add(encodeURIComponent(t.password)); }
-  if (t.password) { out.add(`${t.user}:${t.password}`); out.add(`${encodeURIComponent(t.user)}:${encodeURIComponent(t.password)}`); }
+  if (t.password) { out.add(t.password); out.add(encodeURIComponent(t.password)); out.add(`${t.user}:${t.password}`); out.add(`${encodeURIComponent(t.user)}:${encodeURIComponent(t.password)}`); }
   return [...out].filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
 }
 
@@ -121,7 +120,7 @@ export function unsafeMeta(text: string): string | undefined {
       i++; continue;
     }
     if (c === '"') { i++; while (i < n && !(text[i] === '"' && text[i + 1] !== '"')) i += text[i] === '"' ? 2 : 1; i++; continue; }
-    if (c === '$') {
+    if (c === '$' && !/[A-Za-z0-9_$\u0080-\uffff]/.test(text[i - 1] ?? ' ')) {
       const tag = /^\$[A-Za-z_]*\$/.exec(text.slice(i))?.[0];
       if (tag) { const end = text.indexOf(tag, i + tag.length); i = end === -1 ? n : end + tag.length; continue; }
     }
@@ -174,7 +173,13 @@ export function plan(req: Request, deps: Deps = {}): Planned {
       else {
         if (input !== undefined) throw new LocalDbRefused('only one -f file or stdin script per call');
         if (v === '-') input = (deps.stdin ?? (() => readFileSync(0, 'utf8')))();
-        else { if (!existsSync(v)) throw new LocalDbRefused('the -f file does not exist'); input = readFileSync(v, 'utf8'); }
+        else {
+          if (!/\.sql$/i.test(v)) throw new LocalDbRefused('refused: -f takes a .sql file only (or - for stdin)');
+          if (!existsSync(v)) throw new LocalDbRefused('the -f file does not exist');
+          const real = realpathSync(v);
+          if (/(^|\/)(\.[^/]*|ssm-[^/]*)$/.test(real)) throw new LocalDbRefused('refused: -f will not read dotfiles or ssm-* files');
+          input = readFileSync(v, 'utf8');
+        }
         texts.push(input); argv.push('-f', '-');
       }
     } else throw new LocalDbRefused(`refused: argument ${flag.startsWith('-') ? flag : '(positional)'} is not allowed; pass -c SQL, -f FILE or output flags, and use --db to pick the database`);

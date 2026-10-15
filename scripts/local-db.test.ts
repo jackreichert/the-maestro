@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -96,6 +96,11 @@ test('the URL and password never reach stdout or stderr, even when psql prints t
   assert.match(r.stderr, /pw=\*\*\*/);
 });
 
+test('a short password is still scrubbed', () => {
+  const r = ok(['-c', 'select 1'], {}, withUrl(mk('localhost:5432', { pw: 'ab' })));
+  assert.ok(!/pw=ab\b/.test(r.stderr) && /pw=\*\*\*/.test(r.stderr));
+});
+
 test('a percent-encoded password is scrubbed in both forms', () => {
   const fancy = 'p@ss/w:rd!9';
   const r = ok(['-c', 'select 1'], {}, withUrl(mk('localhost:5432', { pw: encodeURIComponent(fancy) })));
@@ -146,7 +151,7 @@ test('connection arguments and URIs are refused', () => {
 });
 
 test('backslash commands that reconnect, shell out or include files are refused', () => {
-  for (const sql of ['\\c prod', '\\connect host=prod', '\\! env', '\\i /tmp/x.sql', '\\ir x', "\\copy t to program 'sh'", '\\setenv A b', '\\set X `id`', 'select 1; \\c prod', '\\dt \\! id', '\\o /tmp/leak', '\\g |sh', 'select `id`']) {
+  for (const sql of ['\\c prod', '\\connect host=prod', '\\! env', '\\i /tmp/x.sql', '\\ir x', "\\copy t to program 'sh'", '\\setenv A b', '\\set X `id`', 'select 1; \\c prod', '\\dt \\! id', '\\o /tmp/leak', '\\g |sh', 'select `id`', 'select 1 as a$x$ \\! id', 'select a$$ \\! id']) {
     assert.match(refusedMessage(['-c', sql]), /not allowed/, sql);
   }
 });
@@ -160,6 +165,12 @@ test('catalog and display commands, and backslashes inside quotes, are allowed',
 
 test('-f and stdin scripts are scanned, and fed to psql on stdin', () => {
   const f = join(root, 's.sql'); writeFileSync(f, 'select 1;\n');
+  const notSql = join(root, 'creds.txt'); writeFileSync(notSql, 'x');
+  assert.match(refusedMessage(['-f', notSql]), /\.sql file only/);
+  const dot = join(root, '.hidden.sql'); writeFileSync(dot, 'select 1;');
+  assert.match(refusedMessage(['-f', dot]), /dotfiles/);
+  const link = join(root, 'link.sql'); symlinkSync(dot, link);
+  assert.match(refusedMessage(['-f', link]), /dotfiles/);
   assert.match(ok(['-f', f]).stdout, /ARGV:.*-f -[\s\S]*STDIN:select 1;/);
   writeFileSync(f, 'select 1;\n\\c prod\n');
   assert.match(refusedMessage(['-f', f]), /not allowed/);
