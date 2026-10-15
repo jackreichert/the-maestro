@@ -1,5 +1,5 @@
 /**
- * LOCAL DB: the logic behind `local-db`, a sanctioned way for an agent to query Jack's LOCAL Postgres without ever seeing its URL.
+ * LOCAL DB: the logic behind `local-db`, a sanctioned way for an agent to query a LOCAL Postgres without ever seeing its URL.
  *
  * The named URL variable is read from the env file in this process and parsed here; it is never exported to a shell, put on a command
  * line, or printed. Every limit below is enforced in code (see local-db.test.ts), not described:
@@ -22,7 +22,7 @@ export class LocalDbRefused extends Error {}
 export const DEFAULT_VAR = 'LOCAL_DB_URL';
 /** Preferred for read-only calls when set: a login role without superuser or server file/program roles, which is the real read-only boundary. */
 export const RO_VAR = 'LOCAL_DB_RO_URL';
-/** Ports Jack's cloud-sql-proxy listens on: 5438 is the PROD interim proxy, 5439 the staging interim proxy. */
+/** Ports the cloud-sql-proxy listens on: 5438 is the PROD interim proxy, 5439 the staging interim proxy. */
 export const FORBIDDEN_PORTS: readonly number[] = [5438, 5439];
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 const FORBIDDEN_NAME = /PROD|PRD|STAGING|STG|SHARED/i;

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * LOCAL DB: run psql against Jack's LOCAL Postgres without seeing its URL.
+ * LOCAL DB: run psql against a LOCAL Postgres without seeing its URL.
  *
  *   local-db [--var NAME] [--db NAME] [--write] [--info] -c "SQL" [-A -t -x -q -H --csv -F SEP ...]
  *
- * Reads LOCAL_DB_URL (or --var NAME) from ~/dev-env/.env inside this process. Refuses unless the host is localhost or 127.0.0.1, the
+ * Reads LOCAL_DB_URL (or --var NAME) from the dev-env env file inside this process. Refuses unless the host is localhost or 127.0.0.1, the
  * port is not a prod or staging proxy port (5438, 5439), and the variable is not a prod, staging or shared one. `--db` replaces the URL's
  * database (psql ignores -d beside a URI). The session is read-only unless `--write`. Nothing prints the URL or password; `--info`
  * prints host, port and database only. Logic and tests: scripts/lib/local-db.ts, scripts/local-db.test.ts.

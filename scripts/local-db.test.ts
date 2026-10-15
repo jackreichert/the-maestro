@@ -246,6 +246,6 @@ test('CLI: refuses a non-local host with exit 2 and no URL in the output; --info
 const GUARD = join(homedir(), '.claude/hooks/secret-file-guard.mjs');
 test('the secret-file guard still blocks reading env files and lets the helper through', { skip: !existsSync(GUARD) }, () => {
   const verdict = (command: string): number => spawnSync(process.execPath, [GUARD], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }), encoding: 'utf8' }).status ?? -1;
-  for (const blocked of ['cat ~/dev-env/.env', 'grep LOCAL_DB_URL ~/dev-env/.env', 'source ~/dev-env/.env && psql "$LOCAL_DB_URL"', 'cat ssm-prod.json']) assert.equal(verdict(blocked), 2, blocked);
+  for (const blocked of ['cat .env', 'grep LOCAL_DB_URL .env', 'source .env && psql "$LOCAL_DB_URL"', 'cat ssm-prod.json']) assert.equal(verdict(blocked), 2, blocked);
   for (const allowed of ['local-db -c "select count(*) from t"', 'local-db --db fake_db --write -c "update t set a = 1"', 'local-db --info']) assert.equal(verdict(allowed), 0, allowed);
 });
