@@ -216,8 +216,8 @@ test('the Open PRs section shows the review queue against the cap, and says what
   });
   const render = (prs: ReturnType<typeof pr>[], config: PageConfig): string => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page;
   const withCap = { ...CONFIG, reviewQueueCap: 2 };
-  assert.match(render([pr(1, false), pr(2, true)], withCap), /\*\*Review queue: 1 of 2\*\* non-draft PRs awaiting review\./);
-  assert.match(render([pr(1, false), pr(2, false), pr(3, true)], withCap), /\*\*Review queue: 2 of 2 \(full\)\*\*: hold pushes of new PRs \(keep working locally\) until it drops/);
+  assert.match(render([pr(1, false), pr(2, true)], withCap), /\*\*Review queue: 1 of 2 waiting on reviewers\*\*\./);
+  assert.match(render([pr(1, false), pr(2, false), pr(3, true)], withCap), /\*\*Review queue: 2 of 2 waiting on reviewers \(full\)\*\*: hold pushes of new PRs \(keep working locally\) and do not mark drafts ready until it drops/);
   assert.doesNotMatch(render([pr(1, false)], CONFIG), /Review queue/, 'no cap configured, no line');
 });
 
@@ -230,7 +230,7 @@ test('the Open PRs section lists self-review PRs under their own heading, outsid
   const render = (config: PageConfig): string[] => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page.split('\n');
   const on = render({ ...CONFIG, reviewQueueCap: 2, selfReviewRepos: ['me/tool'] });
   assert.ok(on.includes('## Open PRs (1)'), 'the org count leaves the self-review PRs out');
-  assert.ok(on.some((l) => /Review queue: 1 of 2\*\* non-draft/.test(l)));
+  assert.ok(on.some((l) => /Review queue: 1 of 2 waiting on reviewers\*\*\./.test(l)));
   const own = section(on.join('\n'), '## Maestro PRs (self-review) (4)');
   assert.deepEqual(own.filter((l) => l.startsWith('| ')).slice(1).map((l) => cells(l)[1]), ['new comments', 'draft for you', 'ready to merge', 'awaiting your review']);
   assert.match(own.join('\n'), /\[tool#2[^\]]*\]\(https:\/\/example\.test\/me\/tool\/pull\/2\)/, 'each is linked, named with its repo');

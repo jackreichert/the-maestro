@@ -10,7 +10,7 @@ import type { NoteLinkEnv } from './links.ts';
 import type { DevelopTwin } from './twin.ts';
 import { PRIORITIES_UNSET_LINE } from './priorities.ts';
 import type { PrioritiesState } from './priorities.ts';
-import { reviewQueue } from '../review-queue.ts';
+import { queueCount, reviewQueue } from '../review-queue.ts';
 import { isOwnerMerged, selfReviewNotReady, splitSelfReview } from '../self-review.ts';
 import type { ReviewQueue } from '../review-queue.ts';
 import { sessionText } from '../session-text.ts';
@@ -272,8 +272,8 @@ function prFlags(p: Pr): string {
   return prFlagNames(p).map((f) => `**${f}**`).join(' ');
 }
 
-/** `Review queue: 3 of 4 ...`: the non-draft PRs waiting on a review against the cap, and what a full queue means for pushes. */
-const queueSentence = (q: ReviewQueue): string => `**Review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}**${q.full ? ': hold pushes of new PRs (keep working locally) until it drops; fixes to open PRs still go out.' : ' non-draft PRs awaiting review.'}`;
+/** `Review queue: 3 of 4 waiting on reviewers`: the non-draft PRs waiting on a reviewer against the cap, the author's own backlog beside it, and what a full queue means for pushes and for marking drafts ready. */
+const queueSentence = (q: ReviewQueue): string => `**Review queue: ${queueCount(q)}**${q.full ? ': hold pushes of new PRs (keep working locally) and do not mark drafts ready until it drops; fixes to open PRs still go out.' : '.'}`;
 
 /** Where a self-review PR stands for its one reviewer, first match: ready to merge (checks pass, no conflict: `selfReviewNotReady`), new comments, draft, approved but held, awaiting review. The same buckets as `prs-snapshot.ts --ready`. */
 export function selfReviewState(p: Pr, globs: readonly string[] = []): string {
