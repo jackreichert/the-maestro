@@ -279,6 +279,8 @@ The Podium is the board you glance at. `journal.ts web` serves it as a local pag
 
 The page can write in four places, each behind a per-start token, a same-origin check and an exact request shape: today's priorities (add, reorder, delete), an answer to an ask, the Approve, Edit and Reject buttons on drafted GitHub comments, and the Open PRs Refresh button. Everything else is read-only, and GitHub is called only by Approve and Refresh. Endpoints, guards and the design system are under [web.ts](#webts).
 
+For a little delight, every minute or two a small line-art music character (a walking eighth note, a waddling metronome, a baton leading a parade of notes, a cello on wheels, a dancing treble clef, a self-drumming drum, a piano-key caterpillar, a rolling record) walks in from one page edge, crosses behind the content in soft pastel strokes, and leaves by the other. It is decoration only: it takes no clicks, takes no space, is hidden from screen readers, stays still under reduced motion and in a background tab, and a small music-note toggle in the corner switches it off for good (remembered in the browser). `?walker=<note|metronome|baton|cello|clef|drum|keys|record>` repeats one walker for previewing.
+
 ### Reviewing PRs, and what the Podium holds back
 
 `pr-state.ts` reads a PR's real state (reviewer verdicts, unresolved threads, checks, mergeability) instead of trusting `reviewDecision`, and `prs-snapshot.ts` builds the bucketed PR board from it. A fresh agent re-reviews a fix and records SHIP IT or NEEDS WORK for the exact head commit (`review-verdict.ts`); a PR with resolved bot threads is held until one exists. `merge-sweep.ts` closes ledger rows whose PRs merged.
