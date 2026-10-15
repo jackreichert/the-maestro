@@ -297,6 +297,7 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [suite-summary.ts](#suite-summaryts) | Run a suite (node, jest or pytest) and print a compact summary with timing and regressions against a baseline |
 | [token-metrics.ts](#token-metricsts) | Token and cost metrics from transcripts |
 | [cost-experiment.ts](#cost-experimentts) | The daily cost experiment: picks the metric to work on from yesterday's numbers and records the proposal |
+| [paste-lint.ts](#paste-lintts) | Lint a command block handed to the user for their zsh |
 | [brief-block.ts](#brief-blockts) | The standing brief block, filled from config |
 | [local-config.ts](#local-configts) | Print the resolved configuration |
 
@@ -983,6 +984,12 @@ The daily cost experiment, in two mechanical steps. The `cost-experiment` standi
 `cost-experiment.ts propose [--date YYYY-MM-DD] [--vault <notes vault>] [--project <name>]` prints, as JSON and without writing anything, the input a proposal is written from. The date defaults to yesterday in `watch_tz`. The metric to work on is the largest regression against the 7-day median (a metric more than 20% worse; the size of the move decides, whichever way that metric gets worse). When nothing regressed it is the model-mix metric furthest from its target: Opus share against `opus_share_max`, Haiku share against `haiku_share_min`, scored as a fraction of the target, so a miss beats a pass and, when both pass, the smaller margin wins. With no number for either, the basis is `none`. The output also lists the experiments already running on that metric, whether today's id is already in the registry, and the approved habits. A day with no row says which `token-metrics.ts` command to run.
 
 `cost-experiment.ts write --date YYYY-MM-DD --practice "<text>" --hypothesis "<text>" --metric "<name>" --threshold "<text>" [--habit <key>] [--dry-run]` adds one row, id `cx-<date>`, to the experiment registry table in `token-usage-strategies.md` beside the token table. Running it again for the same date changes nothing, so a retried run cannot leave two rows for a day. A row that applies an approved habit (`--habit`, one of the keys `propose` lists) starts as `running`; any other starts as `proposed`, and the playbook then raises an ask with a recommendation. Cells are kept to one line with no pipe, and a note with no registry table is refused rather than written blind. The Podium's Cost section shows today's row.
+
+### paste-lint.ts
+
+`node scripts/paste-lint.ts [<file>] [--json]` checks a command block meant for an interactive zsh, from a file or stdin. A file with code fences is read as markdown and only its `bash`, `sh`, `zsh` and `shell` fences are checked; with no fence the whole input is one block. It prints each finding with its line, rule, message and a fix hint, and exits 0 clean, 1 on findings, 2 on bad usage. `journal.ts ask --paste` runs it and refuses a block with findings.
+
+Rules (a table in `scripts/lib/paste-lint.ts`): `psql-uri-dbname` (psql ignores `-d` when given a URI, so the database must go in the URI path), `inline-comment` (zsh has interactive comments off), `string-command-var` (`M="uv run x"` then `$M`; use a function), `modifier-needs-braces` (`"$X:r"` should be `"${X:r}"`), `bare-node-ts` (a bare `node` on a `.ts` file; call the absolute node), `github-merge-approve` (no `gh pr merge` or approve in a block). It is deliberately conservative: it flags only patterns it can recognise on one logical line, so a clean result is not proof. "Prod writes chained with `&&` on their guard" is not checked, because telling a write from a read needs more than the text shows.
 
 ### brief-block.ts
 
