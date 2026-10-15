@@ -151,3 +151,15 @@ test('the PR author prepare printed is kept on the draft, so the needs-you list 
   assert.ok(submit(none, sub({ author: '' }), DIFF).queued);
   assert.equal(listDrafts(none)[0]?.author, undefined, 'an unknown author is left off, not stored empty');
 });
+
+test('smell findings are kept on the first round of a PR and dropped on every later round', () => {
+  const file = join(tmp(), 'r.jsonl');
+  const smell = { source: 'smell', category: 'other', cost: 'the next edit has to touch both copies', text, path: 'src/a.ts', line: 4 };
+  assert.equal(submit(file, sub({ findings: [smell] }), DIFF).queued !== null, true);
+  assert.equal(listDrafts(file)[0]?.review?.comments.length, 1);
+  const NEW = 'b'.repeat(40);
+  const again = submit(file, sub({ head: NEW, findings: [smell, { category: 'other', text: `${text} again`, path: 'src/a.ts', line: 4 }] }), DIFF);
+  assert.ok(again.queued);
+  const latest = listDrafts(file).find((d) => d.id === again.queued?.id);
+  assert.equal(latest?.review?.comments.length, 1, 'only the reviewer finding is kept');
+});
