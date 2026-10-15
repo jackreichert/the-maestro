@@ -1,7 +1,7 @@
 /** What the Home tab shows, worked out from the state, charts and projects payloads. Pure and DOM-free: home-tab only draws it. */
 import type { ChartData } from './chart-math.ts';
-import { oldestFirst } from './glance.ts';
-import type { ChartDoneItem, ChartsData, EpicLine, EpicsData, PodiumState, ProjectRow, ProjectsData } from './types.ts';
+import { byPriority, oldestFirst } from './glance.ts';
+import type { AskCard, ChartDoneItem, ChartsData, EpicLine, EpicsData, PodiumState, Priority, ProjectRow, ProjectsData } from './types.ts';
 
 const DAY_MS = 86_400_000;
 /** The age buckets the server uses for asks (charts.ts), so the two series on the age chart line up. */
@@ -131,6 +131,17 @@ export function byStreamName<T extends { stream: string }>(rows: T[]): T[] {
 export function orderAsks<T extends { ageDays: number; ts: string; door?: string }>(asks: T[], order: AskOrder): T[] {
   const rank = (a: T): number => (order === 'oneway' && a.door !== 'one-way' ? 1 : 0);
   return oldestFirst(asks).map((a, i) => ({ a, i })).sort((x, y) => rank(x.a) - rank(y.a) || x.i - y.i).map((x) => x.a);
+}
+
+/**
+ * The "Needs you" order. Today's priorities group the asks (oldest first inside a group); the one-way order then pulls every one-way door
+ * ahead of the two-way ones across all groups, keeping that priority order inside each door group; the stream order groups by stream last.
+ */
+export function orderNeedsYou<T extends Pick<AskCard, 'id' | 'stream' | 'links' | 'ageDays' | 'ts'> & { door?: string }>(asks: T[], order: AskOrder, priorities: Priority[]): T[] {
+  const ranked = byPriority(orderAsks(asks, 'oldest'), priorities);
+  if (order === 'stream') return byStreamName(ranked);
+  if (order !== 'oneway') return ranked;
+  return [...ranked.filter((a) => a.door === 'one-way'), ...ranked.filter((a) => a.door !== 'one-way')];
 }
 
 /** Open asks per age bucket (the same four labels the server uses), with the last two flagged as past the stale mark. */
