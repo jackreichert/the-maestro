@@ -14,7 +14,7 @@ import type { FocusKey } from './keep-view.ts';
 import { LiveUpdates, liveLabel } from './live.ts';
 import type { LiveStatus } from './live.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
-import { DASHBOARD, OPEN_PRS, OTHERS_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, tabIds } from './tabs.ts';
+import { DASHBOARD, OPEN_PRS, OTHERS_PRS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
 import { DraftsStore } from './drafts-store.ts';
 import { waiting } from './drafts-model.ts';
@@ -24,7 +24,7 @@ import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
 import { seriesClass } from './series.ts';
 import type { ProjectsLoad } from './home-tab.ts';
-import { filteredView } from './filter-view.ts';
+import { chipId, filteredView } from './filter-view.ts';
 import type { CueKey } from './tabs.ts';
 import type { Source } from './api.ts';
 import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, PodiumState, StreamHome } from './types.ts';
@@ -238,6 +238,8 @@ export class PodiumApp extends HTMLElement {
   #projects: ProjectsLoad = { state: 'loading' };
   // The summary tile pressed, if any: the board shows only that bucket. It lives in the fragment beside the tab.
   #filter: CueKey | null = null;
+  // The stream chip pressed on the asks view, if any; it lives in the fragment too, so a reload keeps it.
+  #stream: string | null = null;
   #tick: number | undefined;
   #tabsObserver: ResizeObserver | null = null;
   #tempoOpen = false;
@@ -263,9 +265,14 @@ export class PodiumApp extends HTMLElement {
   readonly #onHash = (): void => {
     const id = parseFragment(location.hash, this.#ids());
     const filter = parseFilter(location.hash);
-    if (id === this.#active && filter === this.#filter) return;
-    if (id === this.#active) { this.#setFilter(filter, null); return; }   // only the filter moved: stay where the reader is
+    const stream = filter === 'asks' ? parseStreamFilter(location.hash) : null;
+    if (id === this.#active && filter === this.#filter && stream === this.#stream) return;
+    if (id === this.#active) {   // only the filter moved: stay where the reader is
+      if (filter === this.#filter) this.#setStream(stream, false); else this.#setFilter(filter, null, stream);
+      return;
+    }
     this.#filter = filter;
+    this.#stream = stream;
     this.#select(id, true);
     window.scrollTo({ top: 0 });
   };
@@ -297,6 +304,7 @@ export class PodiumApp extends HTMLElement {
       if (s.source === 'server') void this.#drafts.load();   // the tab's count; the queue's own file is watched, so later changes come through the live load below
       this.#active = parseFragment(location.hash, this.#ids());
       this.#filter = parseFilter(location.hash);
+      this.#stream = this.#filter === 'asks' ? parseStreamFilter(location.hash) : null;
       this.#safeRender();
       // The data is loaded once; re-say its age every minute so a page left open shows when it has gone stale.
       this.#tick = window.setInterval(() => this.#updateFreshness(), 60_000);
@@ -418,18 +426,31 @@ export class PodiumApp extends HTMLElement {
   }
 
   #writeFragment(id: string): void {
-    const next = formatFragment(id, this.#filter);
+    const next = formatFragment(id, this.#filter, this.#stream);
     if (location.hash !== next) history.replaceState(null, '', next);
   }
 
   /** Show only one tile's items, or everything for null. A redraw destroys the tile, so focus goes back to `refocus`'s tile. */
-  #setFilter(key: CueKey | null, refocus: CueKey | null): void {
+  #setFilter(key: CueKey | null, refocus: CueKey | null, stream: string | null = null): void {
     if (key === this.#filter) return;
     this.#release({ busy: false });   // this render replaces any card still saving
     this.#filter = key;
+    this.#stream = key === 'asks' ? stream : null;
     this.#writeFragment(this.#active);
     this.#safeRender();
     if (refocus) this.#root.querySelector<HTMLElement>(`button.tile[data-key="${refocus}"]`)?.focus();
+  }
+
+  /** Narrow the asks view to one stream, or back to All for null. Focus returns to the same chip, which the redraw replaced. */
+  #setStream(stream: string | null, refocus = true): void {
+    if (stream === this.#stream) return;
+    this.#release({ busy: false });   // this render replaces any card still saving
+    this.#stream = stream;
+    this.#writeFragment(this.#active);
+    this.#safeRender();
+    if (!refocus) return;
+    const chips = [...this.#root.querySelectorAll<HTMLElement>('button.fchip')];
+    (chips.find((b) => b.id === chipId(this.#stream)) ?? chips.find((b) => b.id === chipId(null)))?.focus();
   }
 
   /** Redraw after a Home board control changed. Focus returns to the same control, which the redraw replaced. */
@@ -671,6 +692,8 @@ export class PodiumApp extends HTMLElement {
       live: this.#sources.state === 'server',
       ctx: { now: st.generatedAt, tz: st.tz, showStream: stream === null, prs: st.prs },
       clear: () => this.#setFilter(null, key),
+      stream: this.#stream,
+      setStream: (s) => this.#setStream(s),
     });
   }
 

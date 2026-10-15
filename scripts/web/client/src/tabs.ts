@@ -47,6 +47,13 @@ export function parseFilter(hash: string): CueKey | null {
   return CUE_KEYS.find((k) => k === value) ?? null;
 }
 
+/** The `stream=` value of a fragment (the stream chip pressed on the needs-you view), or null for none or an undecodable one. */
+export function parseStreamFilter(hash: string): string | null {
+  const value = hash.replace(/^#/, '').split('&').find((part) => part.startsWith('stream='))?.slice(7);
+  if (!value) return null;
+  try { return decodeURIComponent(value) || null; } catch { return null; }
+}
+
 /** Read the active tab from a `location.hash` value. The retired Board id opens Home. Anything else unknown falls back to Home. */
 export function parseFragment(hash: string, ids: string[]): string {
   let raw = hash.replace(/^#/, '').split('&')[0];
@@ -56,9 +63,10 @@ export function parseFragment(hash: string, ids: string[]): string {
   return ids.includes(raw) ? raw : DASHBOARD;
 }
 
-/** The fragment (with the leading #) that selects a tab, and a tile filter when there is one: `#tab=ops&show=blocked`. */
-export function formatFragment(id: string, filter: CueKey | null = null): string {
-  return `#tab=${encodeURIComponent(id)}${filter ? `&show=${filter}` : ''}`;
+/** The fragment (with the leading #) that selects a tab, a tile filter when there is one, and a stream chip on the asks view: `#tab=dashboard&show=asks&stream=ops`. */
+export function formatFragment(id: string, filter: CueKey | null = null, stream: string | null = null): string {
+  const chip = filter === 'asks' && stream ? `&stream=${encodeURIComponent(stream)}` : '';
+  return `#tab=${encodeURIComponent(id)}${filter ? `&show=${filter}` : ''}${chip}`;
 }
 
 /** The tab an arrow/Home/End key moves to, or null for any other key. Wraps at the ends. */
