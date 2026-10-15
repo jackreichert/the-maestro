@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { parseLedger, readRegistry } from '../ledger-core.ts';
 import type { LedgerRow, Registry } from '../ledger-core.ts';
 import { normaliseUsed } from '../ledger-tags.ts';
+import { dryRunJson } from '../json-out.ts';
 
 /**
  * The ledger and stream-registry store for one run: paths, reads, appends and the registry cache.
@@ -64,7 +65,7 @@ export function openStore({ vault, project, dryRun, warn = (m) => console.error(
     function append<E>(entry: E): E {
         ensureDir();
         const row = stamped(entry);
-        if (dryRun) { console.log('[dry-run]', JSON.stringify(row)); return row; }
+        if (dryRun) { console.log('[dry-run]', dryRunJson(row)); return row; }
         appendFileSync(ledgerPath, JSON.stringify(row) + '\n');
         return row;
     }
@@ -73,7 +74,7 @@ export function openStore({ vault, project, dryRun, warn = (m) => console.error(
     function appendMany<E>(entries: E[]): E[] {
         ensureDir();
         const rows = entries.map(stamped);
-        if (dryRun) { rows.forEach((e) => console.log('[dry-run]', JSON.stringify(e))); return rows; }
+        if (dryRun) { rows.forEach((e) => console.log('[dry-run]', dryRunJson(e))); return rows; }
         if (rows.length) appendFileSync(ledgerPath, rows.map((e) => JSON.stringify(e) + '\n').join(''));
         return rows;
     }
