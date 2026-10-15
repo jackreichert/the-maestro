@@ -13,7 +13,7 @@ import type { LoopResult } from './loop-supervisor.ts';
 import { NO_OWNER_LOG } from './lib/digest-queue.ts';
 import { digestBody, digestDir, saveDigest, unseenDigests } from './lib/digest-store.ts';
 import { appendEvents, readInbox } from './lib/event-inbox.ts';
-import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq } from './install-loop-supervisor.ts';
+import { checkedOutBranch, commands, fillTemplate, LABEL, otherLoopPlists, shq, supervisorPath } from './install-loop-supervisor.ts';
 import { WAKE_PROMPT } from './lib/session-wake.ts';
 import { supervisorLogPath } from './lib/supervisor-state.ts';
 import { cleanEnv, notifyCalls } from './lib/test-env.ts';
@@ -128,6 +128,19 @@ test('the supervisor refuses to start without a ledger root and writes nothing',
   const r = spawnSync(process.execPath, [SUPERVISOR], { encoding: 'utf8', env: { ...envFor('x'), LEDGER_ROOT: '', ...stubEnv('MAESTRO_LOOP_BIN', fakeLoop(tempDir())), MAESTRO_SUPERVISOR_MAX_RUNS: '1' } });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /no ledger root/);
+});
+
+test('the plist PATH names the home bin directories, so a watcher under launchd finds with-env', () => {
+  const dirs = supervisorPath('/opt/node/bin/node', '/home/u').split(':');
+  assert.deepEqual(dirs.slice(0, 3), ['/opt/node/bin', '/home/u/bin', '/home/u/.local/bin']);
+  assert.ok(dirs.includes('/usr/bin'), 'the system directories stay');
+  assert.equal(new Set(dirs).size, dirs.length, 'no directory twice');
+  const ledger = tempDir();
+  const out = join(tempDir(), 'path.plist');
+  const env = envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir() });
+  const ok = spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch'], { encoding: 'utf8', env });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.ok(readFileSync(out, 'utf8').includes(`<string>${dirname(process.execPath)}:${join(String(env.HOME), 'bin')}:`), 'the installed plist carries the home bin');
 });
 
 test('install fills every placeholder, prints the launchctl commands, never runs them, and refuses while a loop holds the lock', () => {
@@ -331,7 +344,9 @@ test('the installer refuses while another maestro-loop plist is installed, but n
   const agents = tempDir();
   const out = join(agents, `${LABEL}.plist`);
   writeFileSync(join(agents, 'com.example.maestro-loop-old.plist'), '<plist/>');
-  const run = () => spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch'], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: agents }) });
+  // One env for every run: the plist carries the home bin directories, so a new HOME per run would make an unchanged install look different.
+  const env = envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: agents });
+  const run = () => spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch'], { encoding: 'utf8', env });
   const refused = run();
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /com\.example\.maestro-loop-old\.plist/);
@@ -364,7 +379,8 @@ test('the installer refuses a checkout that is on a branch unless told otherwise
 test('the installer will not replace an existing plist that points at a different checkout, unless --force', () => {
   const ledger = tempDir();
   const out = join(tempDir(), `${LABEL}.plist`);
-  const install = (repoPath: string, ...flags: string[]) => spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch', ...flags], { encoding: 'utf8', env: envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir(), MAESTRO_INSTALL_REPO: repoPath }) });
+  const baseEnv = envFor(ledger, { MAESTRO_LAUNCH_AGENTS_DIR: tempDir() });
+  const install = (repoPath: string, ...flags: string[]) => spawnSync(process.execPath, [INSTALL, '--out', out, '--allow-branch', ...flags], { encoding: 'utf8', env: { ...baseEnv, MAESTRO_INSTALL_REPO: repoPath } });
   const runtime = join(tempDir(), 'runtime');
   const scratch = join(tempDir(), 'scratch');
   assert.equal(install(runtime).status, 0);
