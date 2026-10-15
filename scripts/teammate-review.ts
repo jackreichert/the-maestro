@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CONFIGURED_PROJECT, CONTAINER_PROJECT, CONTAINER_ROOT, GH_LOGIN, LEDGER_ROOT, SELF_REVIEW_REPOS, VAULT_ROOT } from './local-config.ts';
 import { addDraft, draftsPath, listDrafts, rejectDraft } from './lib/drafts/queue.ts';
-import { parseDiffLines, planReview } from './lib/teammate/bar.ts';
+import { isSmell, parseDiffLines, planReview } from './lib/teammate/bar.ts';
 import type { Finding } from './lib/teammate/bar.ts';
 import { firstPass, installDeps } from './lib/teammate/firstpass.ts';
 import { cleanup, lock, prepare, unlock } from './lib/teammate/worktree.ts';
@@ -54,7 +54,10 @@ const reviewPath = (path: string): string => {
 /** Queues the one review draft for this head, or says why not. `diff` is the head's unified diff (what GitHub will accept inline comments on). */
 export function submit(file: string, s: Submission, diff: string): { queued: { id: string } | null; problem?: string; dropped: { index: number; reason: string }[]; downgraded: number } {
   if (!/^[0-9a-f]{7,40}$/.test(s.head) || !Array.isArray(s.findings)) throw new Error('submission needs repo, pr, a hex head and findings[]');
-  const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head, ...(s.author ? { author: s.author } : {}) }, s.compliment, s.findings, parseDiffLines(diff));
+  // The smells pass is for the first round only: once a review of this PR for another head is on record (queued, posted or rejected), smell findings are dropped.
+  const later = listDrafts(file).some((d) => d.source === 'review' && d.repo === s.repo && d.pr === s.pr && !d.key.includes(`@${s.head.slice(0, 12)}:`));
+  const findings = later ? s.findings.filter((f) => !isSmell(f)) : s.findings;
+  const plan = planReview({ repo: s.repo, pr: s.pr, head: s.head, ...(s.author ? { author: s.author } : {}) }, s.compliment, findings, parseDiffLines(diff));
   if (!plan.draft) return { queued: null, problem: plan.problem, dropped: plan.dropped, downgraded: plan.downgraded };
   const out = addDraft(file, plan.draft);
   // A push makes an earlier review of this PR stale: approving it would approve an old commit. Retire the ones still waiting, with the reason on record.

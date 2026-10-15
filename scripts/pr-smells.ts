@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * PR SMELLS: the record behind the pr-open.ts smells gate (reference/git.md, "Smells gate").
- * After a report-only smells run (mithril-lite-review or mithril smells) on the branch, record it here; pr-open.ts
+ * After a report-only smells run (the mithril-smells agent, or /mithril smells) on the branch, record it here; pr-open.ts
  * then refuses to open a PR for a repo in `pr_smells_repos` unless the run is recorded for the exact head commit
  * and the PR body carries the same one-line summary.
  *
@@ -77,7 +77,7 @@ export const smellsLine = (rec: SmellsRecord): string => `Smells: ${rec.summary}
 export function smellsProblems(repo: string, head: string, body: string, codeFiles: number, globs: string[] = PR_SMELLS_REPOS): string[] {
   if (codeFiles === 0 || !gateApplies(repo, globs)) return [];
   const rec = recordFor(repo, head);
-  if (!rec) return [`needs a recorded smells run and none is recorded for this head commit. Run a report-only smells review (mithril-lite-review or /mithril smells) on the diff, fix what is worth fixing, then: node scripts/pr-smells.ts record --repo ${repo} --summary "<findings, fixed, deliberately left>"`];
+  if (!rec) return [`needs a recorded smells run and none is recorded for this head commit. Run a report-only smells review (the mithril-smells agent, or /mithril smells) on the diff, fix what is worth fixing, then: node scripts/pr-smells.ts record --repo ${repo} --summary "<findings, fixed, deliberately left>"`];
   return body.split('\n').some((l) => l.trim() === smellsLine(rec)) ? [] : [`must carry the recorded run on a line of its own: ${smellsLine(rec)}`];
 }
 

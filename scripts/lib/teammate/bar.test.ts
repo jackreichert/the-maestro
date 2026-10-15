@@ -2,7 +2,7 @@
 process.env.MAESTRO_LOCAL_CONFIG ??= '';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_SUGGESTIONS, classify, complimentProblem, parseDiffLines, planReview, voiceProblem } from './bar.ts';
+import { MAX_SMELL_SUGGESTIONS, MAX_SUGGESTIONS, classify, complimentProblem, parseDiffLines, planReview, voiceProblem } from './bar.ts';
 import type { Finding } from './bar.ts';
 
 const CTX = { repo: 'acme/widgets', pr: 12, head: 'a'.repeat(40) };
@@ -133,4 +133,38 @@ test('a legitimate finding that mentions a bot, an AI feature or an assistant sc
 test('stock praise is refused as a compliment, even when it is long enough', () => {
   for (const c of ['LGTM, looks good to me, ship it now please', 'Really nice work here, thanks for doing this.', 'Thanks for this PR, it looks really good overall.', 'Great work on this one, it all reads well to me.']) assert.notEqual(complimentProblem(c), null, c);
   assert.equal(complimentProblem(NICE), null);
+});
+
+const smell = (over: Partial<Finding> = {}): Finding => ({ source: 'smell', category: 'other', path: 'a.ts', line: 2, cost: 'the next edit has to touch both copies', text: 'This block repeats the one above; could we pull it into a helper?', ...over });
+
+test('a smell never blocks, whatever category, kind or evidence it carries, and an approval stays an approval', () => {
+  for (const claim of [{ category: 'security', kind: 'secret' }, { category: 'correctness', input: 'an empty cart', failure: 'throws TypeError reading items[0]' }, { category: 'rollback', kind: 'destructive-migration' }]) {
+    assert.equal(classify(smell(claim)).severity, 'suggestion', JSON.stringify(claim));
+    const plan = planReview(CTX, NICE, [smell(claim)], DIFF);
+    assert.equal(plan.draft?.review?.comments[0]?.severity, 'suggestion');
+    assert.match(plan.draft?.context ?? '', /^Approves: 0 blocking, 1 suggestion/);
+  }
+});
+
+test('a smell without a stated cost, or off the diff, is dropped and does not stop the review', () => {
+  const plan = planReview(CTX, NICE, [smell({ cost: '' }), smell({ line: 99 }), smell({ path: 'nope.ts' })], DIFF);
+  assert.equal(plan.draft?.review?.comments.length, 0);
+  assert.equal(plan.dropped.length, 3);
+  assert.match(plan.dropped[0]?.reason ?? '', /maintenance cost/);
+});
+
+test('a smell within 3 lines of a reviewer finding in the same file is the same finding and is dropped', () => {
+  const reviewer: Finding = { category: 'other', path: 'a.ts', line: 4, text: ok };
+  const plan = planReview(CTX, NICE, [smell({ line: 1 }), reviewer, smell({ line: 23 }), smell({ line: 22, path: 'other.ts' })], DIFF);
+  assert.deepEqual(plan.draft?.review?.comments.map((c) => `${c.path}:${c.line}`).sort(), ['a.ts:23', 'a.ts:4']);
+  assert.match(plan.dropped[0]?.reason ?? '', /already raised/);
+  assert.equal(plan.dropped.length, 2);
+});
+
+test('smells have their own cap and can never crowd out the reviewer, even when they are listed first', () => {
+  const smells = [2, 3, 22, 23].map((line) => smell({ line }));
+  const reviewers: Finding[] = Array.from({ length: MAX_SUGGESTIONS + 1 }, (_, i) => ({ category: 'other', path: 'a.ts', line: [1, 22, 23, 4][i], text: ok }));
+  const comments = planReview(CTX, NICE, [...smells, ...reviewers], DIFF).draft?.review?.comments ?? [];
+  assert.equal(comments.length, MAX_SUGGESTIONS);
+  assert.equal(planReview(CTX, NICE, smells, DIFF).draft?.review?.comments.length, MAX_SMELL_SUGGESTIONS);
 });
