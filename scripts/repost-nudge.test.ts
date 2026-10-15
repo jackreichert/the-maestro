@@ -1,14 +1,17 @@
 // Run: node --test scripts/repost-nudge.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
+import { sessionStart } from './session-start.ts';
+import type { WatchEvent } from './lib/types.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BUILTIN_TYPES } from './event-types/index.ts';
 import * as nudge from './event-types/repost-nudge.ts';
 import type { NudgeIo } from './event-types/repost-nudge.ts';
 import { latestAsk, latestAskInDir } from './lib/repost-nudge-slack.ts';
-import { advance, inWorkingHours, selectRepost, slackMessage } from './lib/repost-nudge.ts';
+import { advance, approvalTime, inWorkingHours, repoAllowed, selectRepost, slackMessage } from './lib/repost-nudge.ts';
 import type { NudgePr, NudgeSettings, NudgeState } from './lib/repost-nudge.ts';
 import { addDraft, draftsPath } from './lib/drafts/queue.ts';
 import type { NewDraft } from './lib/drafts/queue.ts';
@@ -17,7 +20,7 @@ import type { NewDraft } from './lib/drafts/queue.ts';
 const WED_9AM = Date.parse('2026-10-14T13:00:00Z');
 const MIN = 60_000;
 const HOUR = 60 * MIN;
-const S: NudgeSettings = { minutes: 60, askedMinutes: 60, count: 3, start: '08:30', end: '18:00', zone: 'America/New_York', selfReview: [], owners: ['org'] };
+const S: NudgeSettings = { enabled: true, triggers: ['approval', 'teammate-review'], minutes: 60, askedMinutes: 60, gapMinutes: 60, count: 3, start: '08:30', end: '18:00', zone: 'America/New_York', days: [1, 2, 3, 4, 5], repos: [], holdEmpty: false, selfReview: [], owners: ['org'] };
 
 const pr = (n: number, over: Partial<NudgePr> = {}): NudgePr => ({ repo: 'org/api', number: n, url: `https://github.com/org/api/pull/${n}`, isDraft: false, reviewDecision: 'REVIEW_REQUIRED', mergeable: 'MERGEABLE', unresolvedThreads: 0, readySince: WED_9AM - n * HOUR, approvedAt: Number.NaN, rerequestedAt: Number.NaN, ...over });
 
@@ -150,7 +153,7 @@ test('only PRs waiting on a reviewer are named, oldest first, at most the count'
     pr(8, { repo: 'org/tool', readySince: now - 9 * HOUR }),
     pr(9, { readySince: now - 5 * HOUR }),
     pr(10, { readySince: now - 3 * HOUR }),
-  ], now, { count: 3, selfReview: ['org/tool'], owners: ['org'] });
+  ], now, { count: 3, repos: [], selfReview: ['org/tool'], owners: ['org'] });
   assert.deepEqual(named.map((p) => p.key), ['org/api#11', 'org/api#9', 'org/api#10']);
   assert.equal(named[1]?.waitedMin, 300);
 });
@@ -276,4 +279,118 @@ test('toPr counts a re-request of a person by the user, not Copilot, a team or s
     { createdAt: at(7), actor: { login: 'other' }, requestedReviewer: { __typename: 'User', login: 'dana' } },
   ]).rerequestedAt));
   assert.equal(node([{ createdAt: at(4), actor: { login: 'ME' }, requestedReviewer: { __typename: 'User', login: 'dana' } }]).rerequestedAt, Date.parse(at(4)));
+});
+
+// ---- one test group per setting -----------------------------------------------------------------------------------------------
+
+test('repost_nudge_enabled off: it never reads GitHub, never speaks, and a draft queued meanwhile is not replayed when it is turned back on', () => {
+  let reads = 0;
+  const prs = [pr(1)];
+  let draftAt = 0;
+  const io: NudgeIo = { fetchPrs: () => { reads++; return prs; }, latestDraftAt: () => draftAt, latestSlackAskAt: () => 0 };
+  const run = () => ({ status: 0, stdout: '', stderr: '' });
+  let state: NudgeState | null = null;
+  const tick = (now: number, s: NudgeSettings): WatchEvent[] => { const next = nudge.check('d', { now, prev: state, run }, io, s); const ev = nudge.diff(state, next); state = next; return ev; };
+  tick(WED_9AM, { ...S, enabled: false });
+  draftAt = WED_9AM + MIN;
+  assert.deepEqual(tick(WED_9AM + 2 * MIN, { ...S, enabled: false }), []);
+  assert.equal(reads, 0);
+  assert.deepEqual(tick(WED_9AM + 3 * HOUR, S), [], 'the draft queued while off is old news');
+  assert.equal(reads, 1);
+});
+
+test('repost_nudge_triggers: each trigger can be turned off alone', () => {
+  const onlyDrafts = rig(WED_9AM, { ...S, triggers: ['teammate-review'] });
+  onlyDrafts.tick();
+  onlyDrafts.approve(WED_9AM + MIN); onlyDrafts.advanceBy(2 * HOUR); onlyDrafts.tick();
+  assert.equal(onlyDrafts.lines.length, 0, 'an approval does not nudge');
+  onlyDrafts.draft(WED_9AM + 2 * HOUR); onlyDrafts.tick();
+  assert.equal(onlyDrafts.lines.length, 1);
+
+  const onlyApprovals = rig(WED_9AM, { ...S, triggers: ['approval'] });
+  onlyApprovals.tick();
+  onlyApprovals.advanceBy(MIN); onlyApprovals.draft(WED_9AM + MIN); onlyApprovals.tick();
+  assert.equal(onlyApprovals.lines.length, 0, 'a teammate draft does not nudge');
+  onlyApprovals.approve(WED_9AM + 2 * MIN); onlyApprovals.advanceBy(HOUR + 2 * MIN); onlyApprovals.tick();
+  assert.equal(onlyApprovals.lines.length, 1);
+});
+
+test('repost_nudge_repos: only listed repos start the clock and get named; the default is the review pool', () => {
+  const now = WED_9AM;
+  const s = { repos: ['org/api', 'other/*'], selfReview: ['org/tool'], owners: ['org'] };
+  assert.equal(repoAllowed('org/api', s), true);
+  assert.equal(repoAllowed('other/anything', s), true, 'owner/* matches any repo of the owner');
+  assert.equal(repoAllowed('org/web', s), false, 'not in the list, even in the pool');
+  const pool = { repos: [], selfReview: ['org/tool'], owners: ['org'] };
+  assert.equal(repoAllowed('org/web', pool), true);
+  assert.equal(repoAllowed('org/tool', pool), false, 'self-review repos are not in the pool');
+  assert.equal(repoAllowed('me/personal', pool), false, 'outside the review queue owners');
+  const approved = [pr(1, { repo: 'org/tool', approvedAt: now }), pr(2, { repo: 'me/personal', approvedAt: now - MIN })];
+  assert.equal(approvalTime(approved, pool), 0, 'an approval in a self-review or personal repo does not start the clock');
+  assert.equal(approvalTime(approved, { ...pool, repos: ['org/tool'] }), now, 'listing it makes it count');
+  assert.deepEqual(selectRepost([pr(3, { repo: 'org/web' }), pr(4, { repo: 'other/x' })], now, { count: 3, ...s }).map((p) => p.key), ['other/x#4']);
+});
+
+test('repost_nudge_days: a day outside the list is held, a listed weekend day is not', () => {
+  const sat = Date.parse('2026-10-17T15:00:00Z'); // Saturday 11:00 ET
+  assert.equal(inWorkingHours(sat, S), false);
+  assert.equal(inWorkingHours(sat, { ...S, days: [0, 6] }), true);
+  assert.equal(inWorkingHours(WED_9AM, { ...S, days: [0, 6] }), false, 'Wednesday is not listed');
+  const r = rig(sat, { ...S, days: [6] });
+  r.tick();
+  r.advanceBy(MIN); r.draft(sat + MIN); r.tick();
+  assert.equal(r.lines.length, 1);
+});
+
+test('repost_nudge_gap_minutes: the time between two nudges is the setting, not a fixed hour', () => {
+  const r = rig(WED_9AM, { ...S, gapMinutes: 10 });
+  r.tick();
+  r.advanceBy(MIN); r.draft(WED_9AM + MIN); r.tick();
+  r.advanceBy(5 * MIN); r.draft(WED_9AM + 6 * MIN); r.tick();
+  assert.equal(r.lines.length, 1, 'inside the gap');
+  r.advanceBy(6 * MIN); r.tick();
+  assert.equal(r.lines.length, 2, 'after the gap');
+  const long = rig(WED_9AM, { ...S, gapMinutes: 180 });
+  long.tick();
+  long.advanceBy(MIN); long.draft(WED_9AM + MIN); long.tick();
+  long.advanceBy(2 * HOUR); long.draft(WED_9AM + 2 * HOUR); long.tick();
+  assert.equal(long.lines.length, 1, 'a longer gap holds past an hour');
+});
+
+test('repost_nudge_hold_empty: off drops a due nudge with nobody to name; on holds it, for a day at most', () => {
+  const dropping = rig();
+  dropping.prs([]);
+  dropping.tick();
+  dropping.advanceBy(MIN); dropping.draft(WED_9AM + MIN); dropping.tick();
+  dropping.prs([pr(1)]); dropping.advanceBy(HOUR); dropping.tick();
+  assert.equal(dropping.lines.length, 0, 'dropped');
+
+  const holding = rig(WED_9AM, { ...S, holdEmpty: true });
+  holding.prs([]);
+  holding.tick();
+  holding.advanceBy(MIN); holding.draft(WED_9AM + MIN); holding.tick();
+  holding.prs([pr(1)]); holding.advanceBy(HOUR); holding.tick();
+  assert.equal(holding.lines.length, 1, 'sent once a PR is waiting');
+
+  const stale = rig(WED_9AM, { ...S, holdEmpty: true });
+  stale.prs([]);
+  stale.tick();
+  stale.advanceBy(MIN); stale.draft(WED_9AM + MIN); stale.tick();
+  stale.prs([pr(1)]); stale.advanceBy(25 * HOUR); stale.tick();
+  assert.equal(stale.lines.length, 0, 'a day later it is no longer news');
+});
+
+test('repost_nudge_check_seconds: the type checks at the configured pace', () => {
+  assert.equal(nudge.interval, 300, 'the default, when nothing is configured');
+  const r = spawnSync(process.execPath, ['-e', "import('./scripts/event-types/repost-nudge.ts').then((m) => console.log(m.interval))"], { encoding: 'utf8', env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_REPOST_NUDGE_CHECK_SECONDS: '600' } });
+  assert.equal(r.stdout.trim(), '600', r.stderr);
+});
+
+test('session start does not register the watch while repost_nudge_enabled is off', () => {
+  const added: string[] = [];
+  const deps = { now: WED_9AM, tz: 'UTC', watches: () => [], removeWatch: () => {}, addWatch: (id: string) => { added.push(id); return { ok: true, message: 'added' }; }, lockHolder: () => null, waitCommand: 'w', pageWrittenAt: () => WED_9AM, disabledTypes: ['repost-nudge'] };
+  const r = sessionStart('/s', deps);
+  assert.equal(added.includes('repost-nudge'), false);
+  assert.equal(added.includes('retro-due'), true);
+  assert.match(r.lines.join('\n'), /repost-nudge: off in the settings, not registered/);
 });

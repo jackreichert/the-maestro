@@ -12,16 +12,16 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { CONFIGURED_PROJECT, CONTAINER_PROJECT, GH_LOGIN, LEDGER_ROOT, PR_SEARCH, REPOST_NUDGE_ASKED_MINUTES, REPOST_NUDGE_AUTHOR, REPOST_NUDGE_COUNT, REPOST_NUDGE_END, REPOST_NUDGE_MINUTES, REPOST_NUDGE_START, REPOST_NUDGE_TZ, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, VAULT_ROOT } from '../local-config.ts';
+import { CONFIGURED_PROJECT, CONTAINER_PROJECT, GH_LOGIN, LEDGER_ROOT, PR_SEARCH, REPOST_NUDGE_ASKED_MINUTES, REPOST_NUDGE_AUTHOR, REPOST_NUDGE_CHECK_SECONDS, REPOST_NUDGE_COUNT, REPOST_NUDGE_DAYS, REPOST_NUDGE_ENABLED, REPOST_NUDGE_END, REPOST_NUDGE_GAP_MINUTES, REPOST_NUDGE_HOLD_EMPTY, REPOST_NUDGE_MINUTES, REPOST_NUDGE_REPOS, REPOST_NUDGE_START, REPOST_NUDGE_TRIGGERS, REPOST_NUDGE_TZ, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, VAULT_ROOT } from '../local-config.ts';
 import { isBotLogin } from '../lib/github-bots.ts';
 import { draftsPath, readRows } from '../lib/drafts/queue.ts';
 import { searchAllPages } from '../lib/gh-search.ts';
 import { latestAskInDir } from '../lib/repost-nudge-slack.ts';
-import { advance, HOUR_MS, nudgeLine } from '../lib/repost-nudge.ts';
+import { advance, approvalTime, HOUR_MS, nudgeLine } from '../lib/repost-nudge.ts';
 import type { NudgePr, NudgeSettings, NudgeState } from '../lib/repost-nudge.ts';
 import type { CheckContext, Run, WatchEvent } from '../lib/types.ts';
 
-export const interval = 300;
+export const interval = REPOST_NUDGE_CHECK_SECONDS;
 export const renews = true;
 export const network = true;
 export const singleton = true;
@@ -91,13 +91,13 @@ export const realIo: NudgeIo = {
   latestDraftAt: () => latestReviewDraftAt(draftsFile()),
 };
 
-const settings = (): NudgeSettings => ({ minutes: REPOST_NUDGE_MINUTES, askedMinutes: REPOST_NUDGE_ASKED_MINUTES, count: REPOST_NUDGE_COUNT, start: REPOST_NUDGE_START, end: REPOST_NUDGE_END, zone: REPOST_NUDGE_TZ, selfReview: SELF_REVIEW_REPOS, owners: REVIEW_QUEUE_ORGS });
+const settings = (): NudgeSettings => ({ enabled: REPOST_NUDGE_ENABLED, triggers: REPOST_NUDGE_TRIGGERS, minutes: REPOST_NUDGE_MINUTES, askedMinutes: REPOST_NUDGE_ASKED_MINUTES, gapMinutes: REPOST_NUDGE_GAP_MINUTES, count: REPOST_NUDGE_COUNT, start: REPOST_NUDGE_START, end: REPOST_NUDGE_END, zone: REPOST_NUDGE_TZ, days: REPOST_NUDGE_DAYS, repos: REPOST_NUDGE_REPOS, holdEmpty: REPOST_NUDGE_HOLD_EMPTY, selfReview: SELF_REVIEW_REPOS, owners: REVIEW_QUEUE_ORGS });
 
 export function check(_target: string, ctx: Pick<CheckContext, 'now' | 'prev' | 'run'>, io: NudgeIo = realIo, s: NudgeSettings = settings()): NudgeState {
   const prev = (ctx.prev as NudgeState | null | undefined) ?? null;
-  if (!(s.minutes > 0)) return advance(prev, { approvedAt: 0, draftAt: 0 }, [], ctx.now, s);
+  if (!s.enabled || !(s.minutes > 0)) return advance(prev, { approvedAt: 0, draftAt: io.latestDraftAt() }, [], ctx.now, s);
   const prs = io.fetchPrs(ctx.run);
-  const approvedAt = Math.max(0, ...prs.map((p) => p.approvedAt).filter(Number.isFinite));
+  const approvedAt = approvalTime(prs, s);
   const askedAt = Math.max(io.latestSlackAskAt(ctx.now), ...prs.map((p) => p.rerequestedAt).filter(Number.isFinite));
   return advance(prev, { approvedAt, draftAt: io.latestDraftAt(), askedAt }, prs, ctx.now, s);
 }
