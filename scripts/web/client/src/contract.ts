@@ -3,7 +3,7 @@
  * every row is checked against a rule table, rows that fail are dropped (the rest of the payload still renders), and
  * only a payload with no usable shape at all is refused. Pure and DOM-free so node:test covers it.
  */
-import type { SharedDoc, CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalCleanup, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
+import type { SharedDoc, CostData, CostMetric, CostExperiment, Block, DocItem, EpicBrief, EpicDocs, EpicLine, EpicsData, LocalCleanup, LocalReview, LocalUnit, OpenPrsData, OpenPrsGroup, OthersPrRow, OthersPrsData, PrsRefreshStatus, AskCard, BlockedItem, ChartDoneItem, ChartsData, PrAge, PrRef, DeferredItem, DoneItem, FooterRow, HomeEpic, HomeLink, HomeTicket, HomeUnknown, PodiumState, ProjectRow, ProjectsData, WeekCount, PrCard, PrioritiesState, RailGroup, RailLink, StreamHome, WorkItem } from './types.ts';
 
 type Check = (v: unknown) => boolean;
 type Shape = Record<string, Check>;
@@ -356,6 +356,21 @@ export function sanitizeOpenPrs(x: unknown): { data: OpenPrsData; dropped: numbe
   }
   const failure = str(pd.failure) ? { failure: pd.failure as string } : {};
   return { data: { generatedAt: x.generatedAt as string, prData: { fetchedAt: pd.fetchedAt as string | null, stale: pd.stale as boolean, ...failure }, total: groups.reduce((n, g) => n + g.count, 0), groups }, dropped };
+}
+
+const OTHERS_PR: Shape = {
+  repo: str, number: count, title: str, url: str, author: str, authorName: opt(str), base: str, updatedAt: str, ageDays: opt(num), youAsked: bool, handsOff: opt(bool),
+  review: oneOf('review-required', 'approved', 'changes-requested'), unresolved: count, copilotThreads: count,
+};
+
+/** OthersPrsData from an untrusted `GET /api/others-prs` body, or null when it has no usable shape. A row that fails its rules is dropped and counted; the total follows the rows kept. */
+export function sanitizeOthersPrs(x: unknown): { data: OthersPrsData; dropped: number } | null {
+  if (!isObj(x) || !str(x.generatedAt) || !Array.isArray(x.prs)) return null;
+  const pd = isObj(x.prData) ? x.prData : null;
+  if (!pd || !(pd.fetchedAt === null || str(pd.fetchedAt)) || !bool(pd.stale)) return null;
+  const prs = validRows(x.prs, OTHERS_PR) as OthersPrRow[];
+  const failure = str(pd.failure) ? { failure: pd.failure as string } : {};
+  return { data: { generatedAt: x.generatedAt as string, prData: { fetchedAt: pd.fetchedAt as string | null, stale: pd.stale as boolean, ...failure }, total: prs.length, prs }, dropped: lost(x.prs, prs) };
 }
 
 /** A refresh status from an untrusted body, or null when its state is not one of the five. The message is shown as text only. */

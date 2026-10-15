@@ -251,6 +251,14 @@ export interface OpenPrsData {
   prData: { fetchedAt: string | null; stale: boolean; failure?: string };
   total: number; groups: OpenPrsGroup[];
 }
+/** One open teammate PR in the Others' PRs tab (`GET /api/others-prs`). `youAsked` is true when the user is a requested reviewer. */
+export interface OthersPrRow {
+  repo: string; number: number; title: string; url: string; author: string; authorName?: string; base: string; updatedAt: string; ageDays?: number;
+  youAsked: boolean; handsOff?: boolean; review: 'review-required' | 'approved' | 'changes-requested'; unresolved: number; copilotThreads: number;
+}
+/** `prData.fetchedAt` is null until the first read; `failure` says why the last read did not refresh the list. Rows run newest activity first. */
+export interface OthersPrsData { generatedAt: string; prData: { fetchedAt: string | null; stale: boolean; failure?: string }; total: number; prs: OthersPrRow[] }
+
 /** Where the PR refresh stands: `locked` means another rebuild held the page lock. */
 export interface PrsRefreshStatus { state: 'idle' | 'running' | 'done' | 'failed' | 'locked'; startedAt?: string; finishedAt?: string; message?: string }
 

@@ -13,7 +13,7 @@ export interface DraftActions {
 const CSS = `${BASE_CSS}${UI_CSS}
   :host { display: block; }
   section.pr { margin-top: var(--space-6); }
-  section.pr h3 { margin: 0 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+  section.pr h3, section.pr h4 { margin: 0 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
   ul.drafts { list-style: none; margin: 0; padding: 0; border-top: var(--hairline); }
   li.draft { display: grid; gap: var(--space-2); padding: var(--space-4) 0; border-bottom: var(--hairline); min-width: 0; }
   .meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; font-size: var(--text-sm); color: var(--text-secondary); }
@@ -57,12 +57,21 @@ export class DraftQueue extends HTMLElement {
   #sources: ReadonlyArray<DraftRow['source']> = ['review', 'reply'];
   #actions: DraftActions | null = null;
   #empty = 'Nothing is waiting for your approval.';
+  #match: (d: DraftRow) => boolean = () => true;
+  #quiet = false;
+  #authorOf: (d: DraftRow) => string | undefined = (d) => d.author;
 
   constructor() { super(); this.#root = shadow(this, CSS); }
 
   set model(m: DraftsModel | null) { this.#model = m; if (this.isConnected) this.#render(); }
   set sources(s: ReadonlyArray<DraftRow['source']>) { this.#sources = s; }
   set actions(a: DraftActions) { this.#actions = a; }
+  /** Which waiting drafts this instance shows (default all). Decided drafts are not filtered. */
+  set match(f: (d: DraftRow) => boolean) { this.#match = f; }
+  /** Leave out the Decided list: for a card shown inside a PR's own row. */
+  /** Whose PR a card is on, as the person's name or login; the default is the draft's own `author`. */
+  set authorOf(f: (d: DraftRow) => string | undefined) { this.#authorOf = f; }
+  set quiet(q: boolean) { this.#quiet = q; }
   set emptyText(t: string) { this.#empty = t; }
   connectedCallback(): void { this.#render(); }
 
@@ -71,12 +80,12 @@ export class DraftQueue extends HTMLElement {
     if (!m || !m.loaded) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'Loading drafts.')); return; }
     if (!m.data) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'The draft queue is not available from this page.')); return; }
     const mine = m.data.drafts.filter((d) => this.#sources.includes(d.source));
-    const open = mine.filter(waiting);
-    const decided = mine.filter((d) => !waiting(d));
+    const open = mine.filter((d) => waiting(d) && this.#match(d));
+    const decided = this.#quiet ? [] : mine.filter((d) => !waiting(d));
     const groups = new Map<string, DraftRow[]>();
     for (const d of open) groups.set(groupKey(d), [...(groups.get(groupKey(d)) ?? []), d]);
     this.#root.replaceChildren(
-      ...(groups.size === 0 ? [h('p', { class: 'empty' }, this.#empty)] : [...groups].map(([key, ds]) => this.#group(key, ds, m))),
+      ...(groups.size === 0 ? (this.#empty ? [h('p', { class: 'empty' }, this.#empty)] : []) : [...groups].map(([key, ds]) => this.#group(key, ds, m))),
       ...(decided.length ? [h('details', { class: 'finished' }, h('summary', {}, `Decided (${decided.length})`), h('ul', { class: 'drafts', role: 'list' }, ...decided.map((d) => this.#decided(d))))] : []));
   }
 
@@ -86,7 +95,14 @@ export class DraftQueue extends HTMLElement {
   }
 
   #group(key: string, ds: DraftRow[], m: DraftsModel): HTMLElement {
-    return h('section', { class: 'pr', 'aria-label': key }, h('h3', {}, this.#link(ds[0] as DraftRow, key)), h('ul', { class: 'drafts', role: 'list' }, ...ds.map((d) => this.#card(d, m))));
+    // Inside a PR's own row (quiet) the row already names the PR, so the card's heading drops a level and nothing sits at the row's level.
+    return h('section', { class: 'pr', 'aria-label': key }, h(this.#quiet ? 'h4' : 'h3', {}, this.#link(ds[0] as DraftRow, key), this.#by(ds[0] as DraftRow)), h('ul', { class: 'drafts', role: 'list' }, ...ds.map((d) => this.#card(d, m))));
+  }
+
+  /** " by <author>" beside repo#number, or nothing when nobody is known. */
+  #by(d: DraftRow): Node {
+    const who = this.#authorOf(d);
+    return who ? document.createTextNode(` by ${who}`) : document.createDocumentFragment();
   }
 
   #head(d: DraftRow): HTMLElement {
@@ -99,7 +115,7 @@ export class DraftQueue extends HTMLElement {
   }
 
   #decided(d: DraftRow): HTMLElement {
-    return h('li', { class: 'draft done' }, this.#head(d),
+    return h('li', { class: 'draft done' }, h('p', { class: 'meta' }, this.#link(d, groupKey(d)), this.#by(d)), this.#head(d),
       h('p', { class: 'body' }, d.text), this.#inline(d),
       h('p', { class: 'msg' }, `${STATE_WORDS[d.state] ?? d.state}${d.rejectReason ? `: ${d.rejectReason}` : ''}`, ' ', this.#postedLink(d)));
   }

@@ -7,7 +7,7 @@ import './draft-queue.ts';
 import './scripts-view.ts';
 import { h, s, shadow } from './dom.ts';
 import { BOARD_CSS, section } from './stream-board.ts';
-import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadSeries, loadOpenPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
+import { describeSources, loadCharts, loadCost, loadEpics, loadHome, loadLinkHosts, loadLocalReview, loadSeries, loadOpenPrs, loadOthersPrs, loadProjects, loadRefreshStatus, loadState } from './api.ts';
 import { UpdateGate, askState } from './ask-state.ts';
 import type { GateInput } from './ask-state.ts';
 import { findByKey, focusKeyOf, foldStates, keepAcross, restoreFolds } from './keep-view.ts';
@@ -17,8 +17,11 @@ import type { LiveStatus } from './live.ts';
 import { TEMPO_LEAD, TEMPO_SCALE, cueParts, cueTitle, clockTime, freshness, longDate, scoped, shortDate, tempoWord } from './glance.ts';
 import { DASHBOARD, OPEN_PRS, OTHERS_PRS, SCRIPTS, formatFragment, isAllStreams, tabStream, tileId, nextTab, parseFilter, parseFragment, parseStreamFilter, tabIds } from './tabs.ts';
 import { OpenPrsStore } from './open-prs-store.ts';
+import { OthersPrsStore } from './others-prs-store.ts';
+import './others-prs.ts';
 import { DraftsStore } from './drafts-store.ts';
 import { waiting } from './drafts-model.ts';
+import type { DraftRow } from './drafts-model.ts';
 import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
@@ -258,6 +261,8 @@ export class PodiumApp extends HTMLElement {
   });
   // The draft queue's data and what is being typed live here too (see drafts-store.ts); every decision goes to the server, which alone posts.
   readonly #drafts = new DraftsStore({ load: () => loadDrafts(), send: (op, payload, comments) => createDraftActions().send(op, payload, comments) });
+  // The Others' PRs tab's list of every open teammate PR (the server reads its cache; it never calls GitHub per request).
+  readonly #others = new OthersPrsStore(loadOthersPrs);
   // The fingerprint of the needs-you rows on screen, and the store subscriptions that watch for a change in them.
   #shownSig = '';
   readonly #unfollow: (() => void)[] = [];
@@ -358,7 +363,7 @@ export class PodiumApp extends HTMLElement {
       open: () => (typeof EventSource === 'undefined' ? null : new EventSource('/api/events')),
       load: async () => {
         // A decision or a new draft changes drafts.jsonl, and a PR refresh the PR cache, not the board, so the board's own seq may not move: `needsSig` stands in for them.
-        await Promise.all([this.#drafts.load(), this.#prs.load()]);
+        await Promise.all([this.#drafts.load(), this.#prs.load(), this.#others.load()]);
         const [s, c, e, lr, p, co] = await Promise.all([loadState(), loadCharts(), loadEpics(), loadLocalReview(), projectsLoad(true), loadCost()]);
         return s.source === 'server' && c.source === 'server' ? { state: s.data, charts: c.data, epics: e, cost: co, local: lr, projects: p, dropped: s.dropped + c.dropped, needsSig: this.#needsSig(s.data) } : null;
       },
@@ -761,7 +766,7 @@ export class PodiumApp extends HTMLElement {
   #waitingDrafts(source: 'review' | 'reply'): number { return (this.#drafts.model.data?.drafts ?? []).filter((d) => d.source === source && waiting(d)).length; }
 
   /** The draft queue as an element wired to the page's store; each draw asks the server again, so the tab never shows older drafts than the file holds. */
-  #draftQueue(sources: ReadonlyArray<'review' | 'reply'>, empty: string): HTMLElementTagNameMap['draft-queue'] {
+  #draftQueue(sources: ReadonlyArray<'review' | 'reply'>, empty: string, load = true): HTMLElementTagNameMap['draft-queue'] {
     const el = h('draft-queue');
     const s = this.#drafts;
     el.sources = sources;
@@ -769,7 +774,7 @@ export class PodiumApp extends HTMLElement {
     el.actions = { startEdit: (id) => s.startEdit(id), startReject: (id) => s.startReject(id), cancel: (id) => s.cancel(id), setBuffer: (id, t) => s.setBuffer(id, t), setComment: (id, i, t) => s.setComment(id, i, t), saveEdit: (id) => { void s.saveEdit(id); }, approve: (id) => { void s.approve(id); }, reject: (id) => { void s.reject(id); } };
     el.model = s.model;
     const unsubscribe = s.subscribe(() => { if (!el.isConnected) { unsubscribe(); return; } el.model = s.model; });
-    if (this.#sources.state === 'server') void s.load();
+    if (load && this.#sources.state === 'server') void s.load();
     return el;
   }
 
@@ -780,11 +785,30 @@ export class PodiumApp extends HTMLElement {
       this.#draftQueue(['reply'], 'No replies are waiting for your approval.'));
   }
 
-  /** The Others' PRs tab: drafted review comments on teammates' PRs. Approve posts as you; Reject records why and posts nothing. */
+  /** The draft queue as an element wired to the page's store, without its own load: the caller redraws on the store's changes, so a load here would loop. */
+  #queueView(match: (d: DraftRow) => boolean, empty: string, quiet: boolean, authorOf: (d: DraftRow) => string | undefined): HTMLElementTagNameMap['draft-queue'] {
+    const el = this.#draftQueue(['review'], empty, false);
+    el.match = match;
+    el.quiet = quiet;
+    el.authorOf = authorOf;
+    return el;
+  }
+
+  /** The Others' PRs tab: every open teammate PR with its review-draft status, and the drafted review comments inline. Approve posts as you; Reject records why and posts nothing. */
   #othersPrs(): Node {
+    const el = h('others-prs');
+    const draw = (): void => {
+      el.model = this.#others.model;
+      el.drafts = { rows: this.#drafts.model.data?.drafts.filter((d) => d.source === 'review') ?? null, queue: (match, empty, quiet, authorOf) => this.#queueView(match, empty, quiet, authorOf) };
+    };
+    draw();
+    const stops: Array<() => void> = [];
+    const redraw = (): void => { if (!el.isConnected) { for (const off of stops.splice(0)) off(); return; } draw(); };
+    stops.push(this.#others.subscribe(redraw), this.#drafts.subscribe(redraw));
+    if (this.#sources.state === 'server') void this.#others.load();   // each draw asks again, so the tab never shows an older list than the cache holds
     return h('div', {}, h('h2', { class: 'tab-title' }, 'Others\' PRs'),
-      h('p', { class: 'section-hint' }, 'Review comments drafted on teammates\' PRs. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
-      this.#draftQueue(['review'], 'No review comments are waiting for your approval.'));
+      h('p', { class: 'section-hint' }, 'Every open PR by a teammate, newest activity first. Where a review comment is drafted, it sits under the PR. Nothing is posted until you press Approve; Edit changes the wording first, Reject records why and posts nothing.'),
+      el);
   }
 
   /** The Scripts tab: the catalog of scripts the server can run. Sample data has no server to run them. */

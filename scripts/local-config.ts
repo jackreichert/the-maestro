@@ -505,6 +505,13 @@ export const REVIEW_POOL_OWNERS = repoGlobs(globList('MAESTRO_REVIEW_POOL_OWNERS
 /** The self-review list every caller reads: self_review_repos, plus the review pool as `!`-prefixed entries (see lib/self-review.ts). */
 export const SELF_REVIEW_REPOS = [...repoGlobs(globList('MAESTRO_SELF_REVIEW_REPOS', 'self_review_repos')), ...REVIEW_POOL_OWNERS.map((g) => `!${g}`)];
 
+/**
+ * Hands-off repos (`hands_off_repos`, comma-separated `owner/name` globs or bare repo names): another person's PRs there are listed on the Others' PRs tab marked hands off
+ * and the teammate helper does not draft reviews for them, unless the user is a requested reviewer. `hands_off_owner` is the login whose own PRs there stay in scope. Default none.
+ */
+export const HANDS_OFF_REPOS = globList('MAESTRO_HANDS_OFF_REPOS', 'hands_off_repos').map((g) => (g.includes('/') ? g : `*/${g}`));
+export const HANDS_OFF_OWNER = pick('MAESTRO_HANDS_OFF_OWNER', 'hands_off_owner').trim();
+
 /** Teammate PR helper: minutes a ready PR by someone else may wait with no review before pr-watch reports `REVIEW-WAIT` for it (the orchestrator then drafts review comments for your approval; see playbooks/teammate-review.md). Unset or 0 turns it off, the default. */
 export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 0))(pick('MAESTRO_TEAMMATE_REVIEW_MINUTES', 'teammate_review_minutes'));
 /** The owners the helper searches: gh_org plus the plain owners in review_pool_owners. With none, it searches nothing: it is never unscoped. */

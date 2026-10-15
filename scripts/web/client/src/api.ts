@@ -1,7 +1,7 @@
-import { sanitizeCharts, sanitizeCost, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
+import { sanitizeCharts, sanitizeCost, sanitizeEpics, sanitizeHome, sanitizeLocalReview, sanitizeOpenPrs, sanitizeOthersPrs, sanitizeProjects, sanitizeRefreshStatus, sanitizeState } from './contract.ts';
 import { configureTrustedTenants } from './link-policy.ts';
 import { configureSeries } from './series.ts';
-import type { ChartsData, CostData, EpicsData, LocalReview, OpenPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
+import type { ChartsData, CostData, EpicsData, LocalReview, OpenPrsData, OthersPrsData, PodiumState, PrsRefreshStatus, ProjectsData, StreamHome } from './types.ts';
 
 export type Source = 'server' | 'fixture';
 
@@ -117,6 +117,15 @@ export async function loadLocalReview(): Promise<LocalReview | null> {
 export async function loadOpenPrs(): Promise<OpenPrsData | null> {
   try {
     return sanitizeOpenPrs(await getJson('/api/prs'))?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Every open teammate PR, or null when the server has none to give. No fixture stands in. */
+export async function loadOthersPrs(): Promise<OthersPrsData | null> {
+  try {
+    return sanitizeOthersPrs(await getJson('/api/others-prs'))?.data ?? null;
   } catch {
     return null;
   }

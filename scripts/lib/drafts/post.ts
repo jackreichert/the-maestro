@@ -47,6 +47,38 @@ export function ghCall(d: Draft, text: string): GhCall {
 
 const REFUSED = /\bHTTP 4\d\d\b/;
 const firstLine = (s: string): string => s.split('\n')[0]?.slice(0, 200) ?? '';
+const MAX_DETAIL = 280;
+
+/**
+ * Why GitHub refused, in its own words. `gh api` prints the error body as JSON on stdout and only "gh: <status text> (HTTP 422)" on stderr, so the
+ * reason (`message`, and `errors[]` as strings or { resource, field, code, message }) is read from stdout. Falls back to stderr's first line.
+ */
+export function refusalDetail(r: { stdout: string; stderr: string }): string {
+  let detail = '';
+  try {
+    const j = JSON.parse(r.stdout) as { message?: unknown; errors?: unknown };
+    const errs = Array.isArray(j.errors) ? j.errors.map((e) => (typeof e === 'string' ? e : typeof e === 'object' && e !== null ? Object.values(e as Record<string, unknown>).filter((v) => typeof v === 'string').join(' ') : '')).filter(Boolean) : [];
+    detail = [typeof j.message === 'string' ? j.message : '', ...errs].filter(Boolean).join(': ');
+  } catch { /* not JSON: stderr alone */ }
+  const head = firstLine(r.stderr);
+  return (detail ? (head ? `${head} (${detail})` : detail) : head).replace(/\s+/g, ' ').slice(0, MAX_DETAIL);
+}
+
+/** The files changed between two commits, or null when GitHub cannot say (then the review is not re-pinned). */
+function changedFiles(run: GhRun, repo: string, from: string, to: string): string[] | null {
+  let r: GhResult;
+  try { r = run(['api', `repos/${repo}/compare/${from}...${to}`, '--jq', '[.files[].filename]']); } catch { return null; }
+  if (r.status !== 0) return null;
+  try { const v: unknown = JSON.parse(r.stdout); return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null; } catch { return null; }
+}
+
+/** The PR's live head commit, or null when it cannot be read. */
+function liveHead(run: GhRun, repo: string, pr: number): string | null {
+  let r: GhResult;
+  try { r = run(['api', `repos/${repo}/pulls/${pr}`, '--jq', '.head.sha']); } catch { return null; }
+  const sha = r.stdout.trim().toLowerCase();
+  return r.status === 0 && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
 function urlOf(stdout: string): string | undefined {
   try {
     const u = (JSON.parse(stdout) as { html_url?: unknown }).html_url;
@@ -69,6 +101,19 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
     if (shownRev !== revOf(d)) return refuse('changed', 'The draft changed since you opened it. Reload and approve what you see.');
     const bad = textProblem(d.text);
     if (bad) return refuse('invalid', bad);
+    // A review is pinned to the commit it was written against. When the PR has moved, GitHub refuses inline comments on a commit that is no longer the head (HTTP 422).
+    // If the push touched none of the files the review comments on, the same comments still mean the same lines, so it is re-pinned to the head; otherwise it is refused and the draft stays pending.
+    let toPost: Draft = d;
+    if (d.target.kind === 'review') {
+      const head = liveHead(run, d.repo, d.pr);
+      if (head === null) return refuse('changed', 'Could not read the PR\'s current head from GitHub, so nothing was posted. Try again.');
+      if (!head.startsWith(d.target.commitId.toLowerCase())) {
+        const touched = changedFiles(run, d.repo, d.target.commitId, head);
+        const commented = new Set((d.review?.comments ?? []).map((c) => c.path));
+        if (touched === null || touched.some((f) => commented.has(f))) return refuse('changed', 'PR moved since this draft; re-prepare it. Nothing was posted.');
+        toPost = { ...d, target: { kind: 'review', commitId: head } };
+      }
+    }
     appendRow(file, { op: 'approve', id, ts: ts(), text: d.text });
     const nonce = randomBytes(8).toString('hex');
     appendRow(file, { op: 'posting', id, ts: ts(), nonce });
@@ -76,7 +121,7 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
     // so what we check is exactly what the fold will honour when it reads our posted/failed row.
     if (listDrafts(file).find((x) => x.id === id)?.postingNonce !== nonce) return refuse('busy', 'Another approval of this draft is already running.');
     let r: GhResult;
-    try { const call = ghCall(d, d.text); r = run(call.args, call.input); } catch { r = { status: null, stdout: '', stderr: '' }; }
+    try { const call = ghCall(toPost, d.text); r = run(call.args, call.input); } catch { r = { status: null, stdout: '', stderr: '' }; }
     if (r.status === 0) {
       const url = urlOf(r.stdout);
       appendRow(file, { op: 'posted', id, ts: ts(), ...(url ? { url } : {}) });
@@ -87,8 +132,9 @@ export function approveAndPost(file: string, id: string, shownRev: string, o: Po
       appendRow(file, { op: 'uncertain', id, ts: ts() });
       return refuse('state', 'GitHub did not confirm it. The comment may or may not have posted; check the PR.');
     }
-    appendRow(file, { op: 'post-failed', id, ts: ts(), error: firstLine(r.stderr) || 'gh failed' });
-    return refuse('state', `GitHub refused it: ${firstLine(r.stderr) || 'gh failed'}. Nothing was posted.`);
+    const why = refusalDetail(r) || 'gh failed';
+    appendRow(file, { op: 'post-failed', id, ts: ts(), error: why });
+    return refuse('state', `GitHub refused it: ${why}. Nothing was posted.`);
   });
   return out === 'busy' ? refuse('busy', 'The queue is busy. Try again.') : out;
 }

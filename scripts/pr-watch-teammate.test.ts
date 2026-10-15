@@ -114,3 +114,14 @@ test('with no minutes configured pr-watch never runs the teammate search', () =>
   prWatch.check('open-prs', { run, now: T0, config: { ghLogin: 'me', selfReviewRepos: [], teammateMinutes: 0, teammateOwners: ['acme'] } });
   assert.equal(log.some((l) => l.includes('draft:false')), false);
 });
+
+test('a hands-off repo is not reviewed unless the user is a requested reviewer or the owner wrote it; every other repo is open to review', () => {
+  const o = { ...O, guard: { globs: ['*/guarded'], login: 'owner-fake' } };
+  const guarded = { repository: { nameWithOwner: 'acme/guarded' } };
+  assert.equal(selectWaiting([node(guarded)], o).length, 0);
+  assert.equal(selectWaiting([node({ ...guarded, reviewRequests: { nodes: [{ requestedReviewer: { login: 'someone-else' } }] } })], o).length, 0);
+  assert.equal(selectWaiting([node({ ...guarded, reviewRequests: { nodes: [{ requestedReviewer: { login: 'ME' } }] } })], o).length, 1);
+  assert.equal(selectWaiting([node({ ...guarded, author: { login: 'Owner-Fake', __typename: 'User' } })], o).length, 1, 'the owner\'s own PRs there are in scope');
+  assert.equal(selectWaiting([node()], o).length, 1, 'a repo where the user was not asked is still reviewed');
+  assert.equal(selectWaiting([node(guarded)], O).length, 1, 'with nothing configured nothing is hands off');
+});
