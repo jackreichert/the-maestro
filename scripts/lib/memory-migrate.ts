@@ -1,5 +1,5 @@
 /**
- * Memory migrate: plan, and optionally carry out, turning a project-fact memory file into a one-line pointer to its library page.
+ * Memory migrate: plan, and optionally apply, replacing an approved memory note with a one-line pointer to its library page.
  * The plan never writes. A file becomes a pointer only when the user approved it by name AND its library page already exists with a
  * `verified-at` (the composer writes the page first; this never writes one).
  */
