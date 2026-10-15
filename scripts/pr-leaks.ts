@@ -17,8 +17,9 @@
  *
  * Configured checks: customer names. They are deployment-specific and must never be committed, so they come from
  * `leak_terms` (user config file or overlay config.md) locally and from the `LEAK_TERMS` secret in CI. Comma or
- * newline separated; a term matches case-insensitively as a substring with every non-alphanumeric character ignored on both
- * sides (`Acme Care` also finds `acme-care`, `acme.care` and `AcmeCare`; `widgetco` finds `Widget Co`).
+ * newline separated; a term matches case-insensitively as a whole word, with any separator (or none) between its letters
+ * (`Acme Care` also finds `acme-care`, `acme.care` and `AcmeCare`; `widgetco` finds `Widget Co`), and never inside a longer run
+ * of letters or digits (`acme` is not found in `acmeology`), except at a camelCase step (`getAcmeCareId` is found). A `~` prefix opts one term into substring matching.
  *
  * Missing terms: locally the run says so and checks built-ins only. In CI (`strict`) it fails unless
  * `LEAK_GATE_BUILTIN_ONLY=1` is set, and then it says in the log that customer names were not checked. It never
@@ -80,18 +81,38 @@ export const ALLOW: Allow[] = [
   { label: 'personal-root', path: /^(?:README\.md|reference\/(?:brief|local-config)\.md|playbooks\/event-types\/(?:notion|slack)-watch\.md|scripts\/(?:local-config|env-store-move|lib\/tag-watch)\.ts)$/, text: /~\/dev-env\/(?:\.env-store|skills\/)/g, reason: 'The default env_store_root and the default skill search roots; both are configurable and the rename is tracked separately.' },
 ];
 
-/** The compiled configured terms, or the reason the list cannot be used. A term shorter than MIN_TERM would match almost anything. */
-const squash = (t: string): string => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+/** A compiled configured term: matched as a whole word, or (a `~` prefix) as a squashed substring. */
+export interface Term { re?: RegExp; flat?: string }
 
-export function parseTerms(raw: string): { terms: string[]; error: string } {
-  const entries = raw.split(/[\n,]/).map((t) => t.trim()).filter((t) => t && !t.startsWith('#'));
-  const short = entries.filter((t) => t.replace(/[\s_-]+/g, '').length < MIN_TERM);
-  if (short.length) return { terms: [], error: `${short.length} configured term(s) are shorter than ${MIN_TERM} characters, which would match almost every line. Remove or lengthen them.` };
-  return { terms: entries.map(squash), error: '' };
+const squash = (t: string): string => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+const escapeRe = (c: string): string => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The characters between two letters of a term that may be anything but a letter or digit: `Acme Care`, `acme-care`, `acme.care` and `AcmeCare` are one term. */
+const SEP = '[^\\p{L}\\p{N}]*';
+
+/** A letter written in either case, as a class: the term regex is case-sensitive so its camelCase boundaries can tell upper from lower. */
+const anyCase = (c: string): string => (c.toLowerCase() === c.toUpperCase() ? c : `[${c.toLowerCase()}${c.toUpperCase()}]`);
+/** Where a term may start or end: next to anything but a letter or digit, or at a camelCase step (a lowercase letter or digit, then a capital), so `getAcmeCareId` is a hit but `acmecarer` is not. */
+const EDGE_BEFORE = '(?:(?<![\\p{L}\\p{N}])|(?<=[\\p{Ll}\\p{N}])(?=\\p{Lu}))';
+const EDGE_AFTER = '(?:(?![\\p{L}\\p{N}])|(?<=[\\p{Ll}\\p{N}])(?=\\p{Lu}))';
+
+/** A term as a word: it must not sit inside a longer run of letters or digits, so `acme` does not match `acmeology`, but the separators between its letters stay optional and a capital starts a new word, so `getAcmeCareId` matches `Acme Care`. */
+function wordTerm(entry: string): Term {
+  const chars = [...squash(entry)].map((c) => anyCase(escapeRe(c)));
+  return { re: new RegExp(`${EDGE_BEFORE}${chars.join(SEP)}${EDGE_AFTER}`, 'u') };
 }
 
+/** The compiled configured terms, or the reason the list cannot be used. A term shorter than MIN_TERM would match almost anything. A leading `~` opts one term into the old substring match. */
+export function parseTerms(raw: string): { terms: Term[]; error: string } {
+  const entries = raw.split(/[\n,]/).map((t) => t.trim()).filter((t) => t && !t.startsWith('#'));
+  const short = entries.filter((t) => t.replace(/^~/, '').replace(/[\s_-]+/g, '').length < MIN_TERM);
+  if (short.length) return { terms: [], error: `${short.length} configured term(s) are shorter than ${MIN_TERM} characters, which would match almost every line. Remove or lengthen them.` };
+  return { terms: entries.map((t) => (t.startsWith('~') ? { flat: squash(t) } : wordTerm(t))), error: '' };
+}
+
+const termHits = (t: Term, text: string, flat: string): boolean => (t.flat !== undefined ? flat.includes(t.flat) : !!t.re?.test(text));
+
 /** Labels hit on one line of `path`, after blanking allowlisted text. Configured terms are checked against the unblanked line. */
-export function scanLine(path: string, text: string, terms: string[], allow: Allow[] = ALLOW): Label[] {
+export function scanLine(path: string, text: string, terms: Term[], allow: Allow[] = ALLOW): Label[] {
   const found = new Set<Label>();
   for (const p of BUILTIN) {
     let line = text;
@@ -100,7 +121,7 @@ export function scanLine(path: string, text: string, terms: string[], allow: All
     for (let m = re.exec(line); m; m = re.exec(line)) if (!p.ok || p.ok(m[1] ?? '')) { found.add(p.label); break; }
   }
   const flat = squash(text);
-  if (terms.some((t) => flat.includes(t))) found.add('configured-term');
+  if (terms.some((t) => termHits(t, text, flat))) found.add('configured-term');
   return [...found];
 }
 

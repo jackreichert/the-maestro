@@ -48,10 +48,28 @@ test('personal root: a home-relative dev container directory hits', () => {
   assert.deepEqual(labels(`join(home, 'dev-${'env'}')`), []);
 });
 
-test('configured terms: case-insensitive substring, spaces, hyphens and underscores interchangeable, comments ignored', () => {
+test('configured terms: case-insensitive whole words, spaces, hyphens, underscores and none interchangeable, comments ignored', () => {
   const raw = 'Acme Care, Zed Health\n# a comment line\n\nQuux-Co';
-  for (const hit of ['Acme Care visit', 'acme-care', 'AcmeCare', 'ACME_CARE_ID', 'acme.care', 'host=acme_care.example', 'zed health', 'quux co', 'xQuuxCoy', 'Quux.Co']) assert.deepEqual(labels(hit, raw), ['configured-term'], hit);
+  for (const hit of ['Acme Care visit', 'acme-care', 'AcmeCare', 'ACME_CARE_ID', 'acme.care', 'host=acme_care.example', 'zed health', 'quux co', 'Quux.Co', '(acme care)', 'x=Acme-Care;']) assert.deepEqual(labels(hit, raw), ['configured-term'], hit);
   for (const clean of ['acme', 'a comment line', 'care for acme']) assert.deepEqual(labels(clean, raw), [], clean);
+});
+
+test('configured terms: a term inside a longer word does not match, as its own word or a camelCase step it does', () => {
+  const raw = 'Acme Care, Quux-Co';
+  for (const clean of ['acmecarer', 'xquuxcoy', 'the acme carefully', 'acme care2', 'getacmecareid', 'Acmes Care']) assert.deepEqual(labels(clean, raw), [], clean);
+  for (const hit of ['acme care', 'Acme-Care', 'acme.care', 'AcmeCare', 'ACME CARE', 'a Quux Co b', 'quux_co', 'getAcmeCareId', 'useAcmeCare()', 'AcmeCareService', 'x = acmeCare', 'fooQuuxCoBar']) assert.deepEqual(labels(hit, raw), ['configured-term'], hit);
+});
+
+test('configured terms: a ~ prefix opts one term into substring matching, and still has the minimum length', () => {
+  assert.deepEqual(labels('xQuuxCoy', '~Quux-Co'), ['configured-term']);
+  assert.deepEqual(labels('xQuuxCoy', 'Quux-Co'), []);
+  assert.deepEqual(labels('Acme Carefully', '~Acme Care'), ['configured-term']);
+  assert.match(parseTerms('~ab').error, /shorter than 3/);
+});
+
+test('configured terms: a regex character in a term is literal', () => {
+  assert.deepEqual(labels('c++x here', 'c++x'), ['configured-term']);
+  assert.deepEqual(labels('ccx here', 'c.x'), []);
 });
 
 test('configured terms: a term without separators finds the spaced form too', () => {
