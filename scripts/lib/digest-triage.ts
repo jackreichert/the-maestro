@@ -120,7 +120,10 @@ export function triageEvents<T extends DigestEvent>(events: T[], opts: { dir: st
     const r = classifyLine(e);
     if (r.verdict === 'wake') { logRow(opts.dir, { ...base, decision: 'wake', rule: r.rule, reason: r.reason }); continue; }
     // The seam is synchronous, so a slow one would stall the whole tick: past the budget a line wakes as unsure without a call.
-    const a = now() - started >= budgetMs ? { verdict: 'unsure' as const, reason: 'triage budget for this tick ran out' } : ask(triage, { watch: e.watch, type: e.type, kind, summary: e.summary });
+    const asked = now() - started >= budgetMs ? { verdict: 'unsure' as const, reason: 'triage budget for this tick ran out' } : ask(triage, { watch: e.watch, type: e.type, kind, summary: e.summary });
+    // Enforced here, not in the model's prompt: a line by a person (a login the bot test does not match) never goes quiet on a model's say-so.
+    const human = toInboxEvent({ ...e })?.fields.who === 'human';
+    const a = asked.verdict === 'noise' && human ? { verdict: 'unsure' as const, reason: 'noise is only accepted for bot lines' } : asked;
     if (a.verdict === 'noise') {
       e.actionable = false;
       e.report = '';
