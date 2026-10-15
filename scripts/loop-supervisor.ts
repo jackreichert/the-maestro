@@ -22,6 +22,8 @@
  * once for that launch (lib/loop-watchdog.ts). A later launch gets its own grace; the same child is never killed in a loop.
  * Test hooks: MAESTRO_LOOP_BIN replaces `node event-loop.ts` (called as `<bin> run --serve`), MAESTRO_SUPERVISOR_MAX_RUNS stops after N launches,
  * MAESTRO_WATCHDOG_GRACE_MS and MAESTRO_WATCHDOG_INTERVAL_MS shrink the watchdog's timing (the alert tick shares that timer), MAESTRO_ALERT_QUIET_HOURS replaces the alert quiet window (`off` disables it).
+ * MAESTRO_SUPERVISOR_EXIT_WITH_PID names a pid to follow: once it is gone the supervisor stops as if sent SIGTERM (the loop is stopped first), so a test runner that is
+ * killed outright cannot leave a supervisor behind. Unset in production, where launchd owns the lifetime.
  * Its log (<ledger root>/Projects/<project>/Journal/Supervisor/loop-supervisor.log, written by launchd) is rotated at 5 MB on each wait chunk and on each
  * watchdog check, so a serve loop that never exits still rotates. One old file is kept (lib/log-rotate.ts).
  */
@@ -197,6 +199,19 @@ function stopOnSignals(eventDir: string): void {
   };
   process.once('SIGTERM', () => stop('SIGTERM'));
   process.once('SIGINT', () => stop('SIGINT'));
+  followOwner(() => stop('SIGTERM'));
+}
+
+const OWNER_POLL_MS = 1000;
+
+/** Calls `stop` once the pid in MAESTRO_SUPERVISOR_EXIT_WITH_PID no longer exists. Does nothing when the variable is unset or not a pid. */
+function followOwner(stop: () => void): void {
+  const owner = Number(process.env.MAESTRO_SUPERVISOR_EXIT_WITH_PID);
+  if (!Number.isInteger(owner) || owner <= 0) return;
+  const timer = setInterval(() => {
+    try { process.kill(owner, 0); } catch (err) { if ((err as NodeJS.ErrnoException).code === 'ESRCH') { clearInterval(timer); stop(); } }
+  }, OWNER_POLL_MS);
+  timer.unref();
 }
 
 const JOURNAL = fileURLToPath(new URL('./journal.ts', import.meta.url));

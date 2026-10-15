@@ -39,7 +39,7 @@ after(() => { for (const p of live) killTree(p); });
 
 /** A real supervisor in its own process group, so a test that throws before it stops the supervisor can still kill the loop under it. */
 function startSupervisor(env: NodeJS.ProcessEnv, stdio?: StdioOptions): { p: ChildProcess; closed: Promise<number | null> } {
-  const p = spawn(process.execPath, [SUPERVISOR], { env, stdio, detached: true });
+  const p = spawn(process.execPath, [SUPERVISOR], { env: { ...env, MAESTRO_SUPERVISOR_EXIT_WITH_PID: String(process.pid) }, stdio, detached: true });
   live.add(p);
   const closed = new Promise<number | null>((resolve) => p.on('close', (code) => { live.delete(p); resolve(code); }));
   return { p, closed };
@@ -445,4 +445,30 @@ test('the real supervisor runs wake_launch_command with the fixed prompt for an 
     assert.deepEqual(readFileSync(marker, 'utf8').trim().split('\n'), [`--flag ${WAKE_PROMPT}`]);
     assert.doesNotMatch(readFileSync(join(events, 'wake-launch.jsonl'), 'utf8'), /SENTINEL/);
   } finally { p.kill('SIGTERM'); await closed; killTree(p); }
+});
+
+test('a supervisor whose owner is killed outright stops itself and its loop instead of living on as an orphan', async () => {
+  const dir = tempDir();
+  const marker = join(dir, 'marker');
+  // The loop is node itself, steered by a preload (a freshly written script can take a minute to start; see the watchdog test). It records its pid and stays up.
+  const preload = join(dir, 'stay-up-loop.mjs');
+  writeFileSync(preload, `import { appendFileSync } from 'node:fs';\nif (process.argv.includes('--serve')) {\n  appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n');\n  setInterval(() => {}, 1000);\n  await new Promise(() => {});\n}\n`);
+  const env = envFor(tempDir(), { MAESTRO_LOOP_BIN: process.execPath, NODE_OPTIONS: `--import ${pathToFileURL(preload).href}` });
+  // The owner stands in for a test runner that a wrapper SIGKILLs mid-test: no `finally` or `after` hook ever runs in it.
+  const owner = spawn(process.execPath, ['-e', `const { spawn } = require('node:child_process');
+    const p = spawn(process.execPath, [process.env.SUP], { env: { ...process.env, MAESTRO_SUPERVISOR_EXIT_WITH_PID: String(process.pid) }, stdio: 'ignore', detached: true });
+    console.log(p.pid); setInterval(() => {}, 1000);`], { env: { ...env, SUP: SUPERVISOR }, stdio: ['ignore', 'pipe', 'inherit'] });
+  const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  let supervisorPid = 0;
+  let loopPid = 0;
+  try {
+    supervisorPid = Number(await new Promise<string>((resolve) => owner.stdout!.once('data', (d) => resolve(String(d).trim()))));
+    assert.equal(await waitFor(() => existsSync(marker)), true, 'the loop never started');
+    loopPid = Number(readFileSync(marker, 'utf8').trim().split('\n')[0]);
+    owner.kill('SIGKILL');
+    assert.equal(await waitFor(() => !alive(supervisorPid) && !alive(loopPid)), true, 'the supervisor or its loop outlived the process that started it');
+  } finally {
+    for (const pid of [supervisorPid, loopPid]) if (pid && alive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+    owner.kill('SIGKILL');
+  }
 });
