@@ -70,7 +70,8 @@ function sources(dir: string): string[] {
 }
 
 const SINK = /(?:console\.(?:log|info)|process\.stdout\.write|writeSync(?=\(\s*(?:1|process\.stdout\.fd)\s*,))\s*\(/g;
-const STRINGIFIED_VAR = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*JSON\.stringify\(/g;   // a statement that ends right after the call, so `const a = JSON.stringify(x) !== y` is not a string
+const STRINGIFIED_VAR = /(?:\b(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=(?!=)[^;\n]*?JSON\.stringify\(/g;   // a declaration or assignment whose right side holds the call, so `out = JSON.stringify(x) + '\\n'` counts; a comparison after the call does not (see COMPARES)
+const COMPARES = /[!=]==?|[<>]=?/;   // `const a = JSON.stringify(x) !== y` is a boolean, not a string
 
 /** The text between a call's parentheses, which may span lines; strings are skipped so a paren inside one does not end the call early. */
 function callArgs(src: string, open: number): string {
@@ -90,7 +91,10 @@ function callArgs(src: string, open: number): string {
 
 /** True when a print call, on one line or several, receives JSON.stringify output directly or through a variable the same file filled from it. A wrapper helper in between is not followed. */
 function printsStringified(src: string): boolean {
-  const held = [...src.matchAll(STRINGIFIED_VAR)].filter((m) => /^[ \t]*(?:;|\r?\n|$)/.test(src.slice(m.index + m[0].length + callArgs(src, m.index + m[0].length - 1).length + 1))).map((m) => m[1]);
+  const held = [...src.matchAll(STRINGIFIED_VAR)].filter((m) => {
+    const rest = src.slice(m.index + m[0].length + callArgs(src, m.index + m[0].length - 1).length + 1);
+    return !COMPARES.test(rest.split(/;|\r?\n/)[0]);
+  }).map((m) => m[1]);
   return [...src.matchAll(SINK)].some((m) => {
     const args = callArgs(src, m.index + m[0].length - 1);
     return /JSON\.stringify\(/.test(args) || held.some((v) => new RegExp(`(?<![\\w$.])${v.replace(/\$/g, '\\$')}(?![\\w$])`).test(args));
@@ -102,6 +106,10 @@ test('the guard flags each way a file can print JSON.stringify output itself', (
     'same line': 'console.log(JSON.stringify(x));',
     'multi-line console.log': 'console.log(\n  JSON.stringify(x, null, 2),\n);',
     'stringify held in a variable, printed later': 'const out = JSON.stringify(x, null, 2);\nconst n = 1;\nconsole.log(out);',
+    'stringify plus a newline held in a variable': "const line = JSON.stringify(row) + '\\n';\nprocess.stdout.write(line);",
+    'template literal around stringify': "const t = `${JSON.stringify(x)}`;\nconsole.log(t);",
+    'wrapped in String()': "const s = String(JSON.stringify(x));\nconsole.log(s);",
+    'assigned after declaration': "let u;\nu = JSON.stringify(x);\nconsole.log(u);",
     'typed variable': 'const out: string = JSON.stringify(x);\nprocess.stdout.write(out + "\\n");',
     'dry-run line (stored values can reach it)': "console.log('[dry-run]', JSON.stringify(x));",
     'writeSync(1, ...)': "writeSync(1, JSON.stringify(x));",
