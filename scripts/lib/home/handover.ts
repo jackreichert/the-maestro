@@ -26,7 +26,7 @@ export type RunKind = (typeof RUN_KINDS)[number];
 
 export interface Missing { state: 'missing'; fix: string }
 export interface NoteRow { title: string; ref: Ref; updated?: string }
-export interface HandoverTicket { id: string; title: string; status: string; priority: number; ref: Ref }
+export interface ProjectTicketRow { id: string; title: string; status: string; priority: number; ref: Ref }
 export interface LibraryLine { title: string; kind: string; readWhen: string; verified: string; flag?: 'STALE' | 'SUPERSEDED'; ref?: Ref }
 
 export interface ProjectHandover {
@@ -35,13 +35,13 @@ export interface ProjectHandover {
   /** One entry per kind in `RUN_KINDS`, in that order; a kind with no tagged runbook is a `missing` entry, never left out. */
   run: ({ kind: RunKind; state: 'ok'; pages: NoteRow[] } | ({ kind: RunKind } & Missing))[];
   /** What stops work: blocked tickets, and the tickets with a question open for the owner. `clear` is true when there are none. */
-  blocking: { clear: boolean; tickets: (HandoverTicket & { why: string })[]; moreTickets: number };
-  work: { epics: { id: string; title: string; closed: number; total: number; ref: Ref }[]; open: HandoverTicket[]; openTotal: number; prs: Ref[]; prsMore: number };
+  blocking: { clear: boolean; tickets: (ProjectTicketRow & { why: string })[]; moreTickets: number };
+  work: { epics: { id: string; title: string; closed: number; total: number; ref: Ref }[]; open: ProjectTicketRow[]; openTotal: number; prs: Ref[]; prsMore: number };
   library: { state: 'ok'; groups: { kind: string; lines: LibraryLine[]; more: number }[] } | Missing;
   docs: { decisions: NoteRow | Missing; plans: NoteRow[]; shared: Missing };
 }
 
-export interface HandoverInput {
+export interface ProjectInput {
   project: string;
   tickets: Ticket[];
   docs: Doc[];
@@ -64,7 +64,7 @@ const GROUP_CAP = 10;
 const clip = (s: string, n = LINE_MAX): string => { const t = s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const isOpen = (t: Ticket): boolean => t.status !== 'closed';
 
-export function buildHandover(inp: HandoverInput): ProjectHandover {
+export function buildHandover(inp: ProjectInput): ProjectHandover {
   const { project, page } = inp;
   const note = (path: string): Ref | undefined => (page.vaultName ? { label: path.split('/').at(-1)?.replace(/\.md$/, '') ?? path, url: obsidianUri(page.vaultName, path.replace(/\.md$/, '')) } : undefined);
   const noteRow = (d: Doc): NoteRow => ({ title: d.title, ref: note(d.path) ?? { label: d.title }, ...(d.updated ?? d.modified ? { updated: (d.updated ?? d.modified) as string } : {}) });
@@ -115,7 +115,7 @@ function firstParagraph(text: string): string {
   return clip(para.join(' '), 600);
 }
 
-function overview(inp: HandoverInput, note: (path: string) => Ref | undefined): ProjectHandover['overview'] {
+function overview(inp: ProjectInput, note: (path: string) => Ref | undefined): ProjectHandover['overview'] {
   const path = `Projects/${inp.project}/CONTEXT.md`;
   const text = inp.readNote?.(path) ?? null;
   const summary = text ? firstParagraph(text) : '';
@@ -123,10 +123,10 @@ function overview(inp: HandoverInput, note: (path: string) => Ref | undefined): 
   return { state: 'ok', summary, now: sectionLines(text, /^## Now\s*$/i), next: sectionLines(text, /^## Next\s*$/i), ref: note(path) ?? { label: 'CONTEXT' } };
 }
 
-function blocking(inp: HandoverInput, forest: Forest): ProjectHandover['blocking'] {
+function blocking(inp: ProjectInput, forest: Forest): ProjectHandover['blocking'] {
   const facts = new Map<string, LedgerFact[]>();
   for (const f of inp.ledger) facts.set(f.ticket, [...(facts.get(f.ticket) ?? []), f]);
-  const found: (HandoverTicket & { why: string })[] = [];
+  const found: (ProjectTicketRow & { why: string })[] = [];
   for (const t of inp.tickets.filter(isOpen)) {
     const open = (t.blockedBy ?? []).filter((b) => { const x = forest.byId.get(b); return x !== undefined && isOpen(x); });
     const why = t.status === 'blocked' ? 'status is blocked' : open.length ? `waiting on ${open.slice(0, 3).join(', ')}` : (facts.get(t.id) ?? []).some((f) => f.state === 'blocked') ? 'a ledger item is blocked'
@@ -137,11 +137,11 @@ function blocking(inp: HandoverInput, forest: Forest): ProjectHandover['blocking
   return { clear: found.length === 0, tickets: found.slice(0, BLOCK_CAP), moreTickets: Math.max(0, found.length - BLOCK_CAP) };
 }
 
-function ticketRow(page: PageConfig, t: Ticket): HandoverTicket {
+function ticketRow(page: PageConfig, t: Ticket): ProjectTicketRow {
   return { id: t.id, title: clip(t.title), status: t.status, priority: t.priority, ref: page.vaultName ? { label: t.id, url: obsidianUri(page.vaultName, t.path.replace(/\.md$/, '')) } : { label: t.id } };
 }
 
-function work(inp: HandoverInput, forest: Forest): ProjectHandover['work'] {
+function work(inp: ProjectInput, forest: Forest): ProjectHandover['work'] {
   const open = inp.tickets.filter(isOpen).sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   const epics = open.filter((t) => forest.children(t.id).length > 0).slice(0, EPIC_CAP).map((t) => {
     const below = subtree(forest, t.id).filter((x) => x !== t.id).map((x) => forest.byId.get(x) as Ticket);
@@ -155,7 +155,7 @@ function work(inp: HandoverInput, forest: Forest): ProjectHandover['work'] {
 /** The lines of the generated block of an INDEX.md: `- [[target]]: kind, read-when (verified DATE FLAG)`. Anything else in the file is ignored. */
 const INDEX_LINE = /^- \[\[([^\]]+)\]\]: ([^,]*), (.*) \(verified ([^)]*?)(?: (STALE|SUPERSEDED))?\)$/;
 
-function library(inp: HandoverInput, note: (path: string) => Ref | undefined): ProjectHandover['library'] {
+function library(inp: ProjectInput, note: (path: string) => Ref | undefined): ProjectHandover['library'] {
   const path = `Projects/${inp.project}/INDEX.md`;
   const text = inp.readNote?.(path) ?? null;
   const fix = `Projects/${inp.project}/INDEX.md ${text === null ? 'is missing or unreadable' : 'lists no library pages'}. Run \`library-index.ts --repo ${inp.project}\` after the library pages exist.`;
