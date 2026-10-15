@@ -149,6 +149,10 @@ Required: the claim (one line, present tense, at most 400 characters), `--kind` 
 
 Every refusal exits 1 and writes nothing, and a refusal never prints the value that failed. The claim, evidence, location, verified-at and supersedes pass the shared scanner (`scripts/lib/secret-scan.ts`): credential shapes (private key blocks, cloud and token prefixes, JWTs, URL credentials, secret-word assignments, long mixed-case blobs) and fixed-shape PHI (SSNs, phone numbers, emails, dates of birth, MRNs). A clean scan means no known shape, not that the text is safe: write claims about systems, ids and counts only. `verify` runs the same rules over stored learned rows, so a hand edit cannot carry what the write refused. Writing the same claim, location and evidence again reports the existing row.
 
+## Shared documents
+
+When the user hands you a document (a spec, a checklist, a design link, a note) record it on the same turn with `shared <path-or-url> --project <p> --title "<what it is>" [--why "<one line>"] --model ... --used ...`, so the project's tab lists it for whoever picks the project up next. Only a pointer is stored. A path must be an existing file under the notes vault or the container root; a link must be `http(s)` or `obsidian://open`. File names that can hold secrets and any title, reason or link that looks like a secret or PHI are refused, and a refusal never prints the value. An exact repeat is reported, not written twice. `log --kind shared` is refused.
+
 ## Approvals
 
 Any time the user grants permission, log it with `--approval`, so it can be reviewed later instead of staying buried among other decisions:

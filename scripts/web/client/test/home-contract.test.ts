@@ -55,3 +55,19 @@ test('rail links that fail their rules are dropped and counted, a group without 
   assert.equal(got?.home.doneMeans.length, 1);
   assert.deepEqual(got?.home.links.map((g) => [g.group, g.items.length]), [['docs', 1]]);
 });
+
+test('shared documents are kept when well formed, dropped and counted when not, and a missing list reads as none', () => {
+  const doc = (over: Record<string, unknown> = {}) => ({ title: 'Partner API spec', kind: 'note', url: 'obsidian://open?vault=Fictional&file=spec', path: 'Projects/avonlea-api/Research/spec.pdf', by: 'user', project: 'avonlea-api', date: '2026-10-01', ...over });
+  const ok = home();
+  ok.shared = [doc(), doc({ kind: 'file', url: undefined })];
+  ok.sharedMore = 3;
+  const got = sanitizeHome(ok);
+  assert.deepEqual([got?.dropped, got?.home.shared.length, got?.home.sharedMore], [0, 2, 3]);
+  const bad = home();
+  bad.shared = [doc(), doc({ kind: 'script' }), doc({ title: 7 })];
+  const lost = sanitizeHome(bad);
+  assert.deepEqual([lost?.dropped, lost?.home.shared.length], [2, 1]);
+  const none = home();
+  delete none.shared;
+  assert.deepEqual([sanitizeHome(none)?.dropped, sanitizeHome(none)?.home.shared], [0, []]);
+});

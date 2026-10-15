@@ -16,6 +16,8 @@ import type { BriefRead } from '../home/brief.ts';
 import type { Ticket } from '../vault/tickets.ts';
 import type { StreamHome } from '../home/types.ts';
 import { readBoard } from './api.ts';
+import { openStore } from '../journal/store.ts';
+import { sharedDocs } from '../journal/shared.ts';
 import { buildState as reduceState } from './state.ts';
 import type { WebConfig } from './api.ts';
 import { isOpen, isQueued } from '../ledger-core.ts';
@@ -27,6 +29,8 @@ import type { ReachabilityReport } from '../notes/reachability.ts';
 import type { LedgerItem } from '../ledger-core.ts';
 
 const MAX_NAME = 200;
+/** A project name reaches a path (its ledger), so it is re-checked as a plain folder name here even though it came from a vault ticket or the config. */
+const FRAGMENT_SAFE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** One fact per ledger item that names a ticket, directly or through `ticket-map.json`. */
 function factsOf(items: LedgerItem[], ticketMap: Record<string, string[]>): LedgerFact[] {
@@ -54,6 +58,7 @@ function homeInputs(cfg: WebConfig, now: Date, docs: boolean) {
     streams, now, vault, homes: readHomes(cfg.statusDir, streams), ledger: factsOf(g.items, inputs.ticketMap),
     prs: inputs.prs, prData: { fetchedAt: inputs.prData.fetchedAt }, page: cfg.page,
     readDocs: (project: string) => (docs && reader ? loadDocs(reader, project) : { docs: [], notes: [] }),
+    readShared: (project: string) => (docs && FRAGMENT_SAFE.test(project) ? sharedDocs(openStore({ vault: cfg.vault, project, dryRun: false, warn: () => {} }).readLedger(), project) : []),
     readBrief: (epic: Ticket): BriefRead => (docs && reader ? readBriefNote(reader, epic.project, epic.id) : { ok: false, reason: 'missing' }),
     readNote: (path: string): string | null => { const r = docs && reader ? reader.read(path, NOTE_MAX_BYTES) : null; return r?.ok ? r.text : null; },
   };

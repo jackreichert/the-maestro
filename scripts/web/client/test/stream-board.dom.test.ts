@@ -79,3 +79,34 @@ test('a stale in-flight row gets its own Stale section, apart from In flight, an
   assert.ok(!titles(none.root).includes('Stale'));
   none.cleanup();
 });
+
+test('the tab lists the documents shared for the project: links only through the policy, who and when in words, and the count includes what the server left out', async () => {
+  const stream = st.streams[0];
+  const h1 = { ...home(), stream } as unknown as StreamHome;
+  h1.shared = [
+    { title: 'UAT checklist', kind: 'web', url: 'https://example.com/uat', by: 'user', project: 'p', date: '2026-10-05', why: 'what QA signs off against' },
+    { title: 'Local runbook', kind: 'file', path: 'repo/docs/run.md', by: 'user', project: 'p', date: '2026-10-03' },
+    { title: 'Tampered', kind: 'web', url: 'javascript:alert(1)', by: 'user', project: 'p', date: '2026-10-02' },
+  ];
+  h1.sharedMore = 2;
+  const { root, cleanup } = await mount<Board>('../src/stream-board.ts', 'stream-board', { stream, state: st, home: h1 });
+  const fold = root.querySelector('details[data-fold="rail-shared"]');
+  assert.ok(fold, 'a shared-docs fold');
+  assert.match(fold!.querySelector('summary')!.textContent ?? '', /Shared docs \(5\)/);
+  const rows = [...fold!.querySelectorAll('li')];
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0]!.querySelector('a')?.getAttribute('href'), 'https://example.com/uat');
+  assert.match(rows[0]!.textContent ?? '', /UAT checklist\s*web\s*shared by user on 2026-10-05 · what QA signs off against/);
+  assert.equal(rows[1]!.querySelector('a'), null, 'a file with no link is plain text');
+  assert.match(rows[1]!.textContent ?? '', /file\s*shared by user on 2026-10-03 · repo\/docs\/run\.md/);
+  assert.equal(rows[2]!.querySelector('a'), null, 'an unsafe url never becomes an href');
+  assert.match(fold!.textContent ?? '', /2 more not listed/);
+  cleanup();
+});
+
+test('a tab with no shared documents draws no shared-docs fold', async () => {
+  const stream = st.streams[0];
+  const { root, cleanup } = await mount<Board>('../src/stream-board.ts', 'stream-board', { stream, state: st, home: { ...home(), stream } as unknown as StreamHome });
+  assert.equal(root.querySelector('details[data-fold="rail-shared"]'), null);
+  cleanup();
+});
