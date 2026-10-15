@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { buildArgs, buildArgv, displayArgv, loadCatalog, parseCatalog } from './catalog.ts';
 import type { ArgSpec, Entry } from './catalog.ts';
 
-const CTX = { node: '/usr/bin/node', home: '/home/x', ledger: '/led', vault: '/vault', project: 'proj' };
+const CTX = { node: '/usr/bin/node', home: '/srv/fake', ledger: '/led', vault: '/vault', project: 'proj' };
 const entry = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ id: 'a-b', name: 'A', description: 'd', group: 'g', command: ['{node}', 'scripts/x.ts'], args: [], readOnly: true, tier: 'haiku', timeoutSeconds: 30, ...over });
 const problems = (e: Record<string, unknown>): string[] => parseCatalog({ scripts: [e] }).problems;
 
@@ -64,7 +64,7 @@ test('injection attempts are refused, never expanded', () => {
 test('placeholders come from the server settings only; an arg value that looks like one stays literal', () => {
   const e = parseCatalog({ scripts: [entry({ command: ['{node}', '{home}/s.mjs', '--vault', '{vault}'], args: [{ name: 'q', type: 'string', flag: '--q', pattern: '^[{}a-z]+$' }] })] }).entries[0] as Entry;
   const b = buildArgv(e, { q: '{home}' }, CTX);
-  assert.deepEqual(b, { ok: true, argv: ['/usr/bin/node', '/home/x/s.mjs', '--vault', '/vault', '--q', '{home}'] });
+  assert.deepEqual(b, { ok: true, argv: ['/usr/bin/node', '/srv/fake/s.mjs', '--vault', '/vault', '--q', '{home}'] });
 });
 
 test('the display line quotes anything beyond plain words', () => {
