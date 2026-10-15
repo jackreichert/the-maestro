@@ -9,8 +9,8 @@ Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `install`, `s
 1. `prepare --repo <owner/name> --pr <n>` prints `{ path, head, base, author }`. It refuses the user's own PR, a draft, a closed PR and a self-review repo. The worktree is detached and read-only.
 2. `firstpass --repo <owner/name> --pr <n> --path <path>` prints the PR body, what bots already said, the CI rollup and the test command of each changed package. Hand it to the reviewer as is.
 3. `install --repo <owner/name> --pr <n> --path <path>` only when the reviewer needs to run the package's tests. It runs `npm ci --ignore-scripts` (the PR's install scripts never run, and only PATH, HOME and the npm config reach it, no tokens) with browser downloads skipped, and prints `git status`: if `dirty` lists files, say so; npm can flip mode bits on tracked files. If the tests need a build, run it by hand.
-4. Dispatch one review agent with the brief below. Its report is a JSON object, nothing else.
-5. `submit < report.json` with `{ repo, pr, head, base, path, author, compliment, findings }` (`author` is the login `prepare` printed; the Podium's needs-you list names them). It applies the bar in code, anchors comments to lines in the diff and queues one review. Say what it dropped.
+4. Dispatch the review agent with the brief below and, in the same message, `mithril-smells` in diff mode with `<path>` as its working directory. The reviewer's report is a JSON object, nothing else; the smells agent's report is read, not forwarded (see "The smells pass").
+5. Merge the two into one `report.json` and `submit < report.json` with `{ repo, pr, head, base, path, author, compliment, findings }` (`author` is the login `prepare` printed; the Podium's needs-you list names them). It applies the bar in code, anchors comments to lines in the diff and queues one review. Say what it dropped.
 6. `cleanup --repo <owner/name> --path <path>`.
 
 ## The review agent's brief
@@ -22,6 +22,14 @@ Script: `node scripts/teammate-review.ts` (`prepare`, `firstpass`, `install`, `s
 - Open with one specific, genuine compliment that names the thing (for example, "the ID validation before anything goes into a URL"). Generic praise is refused.
 - Write in the user's first person, friendly and polite. Never mention an assistant, a model or a tool.
 - Report `{ "compliment": "...", "findings": [ { "category": "correctness|security|rollback|other", "kind": "...", "input": "...", "failure": "...", "path": "...", "line": N, "text": "..." } ] }`. `line` must be a line the PR changes, on the new side. `kind` is one of secret, phi-pii, auth, tenant-scope, injection, customer-reference (security) or destructive-migration, breaking-api-no-fallback (rollback).
+
+## The smells pass
+
+`mithril-smells` (Refactoring ch. 3, read-only) runs on every teammate PR that changes source files; skip it for a docs-only or config-only diff. Hand it the PR's diff and the worktree path, and tell it to report only. Then fold its output into `findings`:
+
+- Each smell becomes `{ "source": "smell", "category": "other", "path": "...", "line": N, "cost": "...", "text": "..." }`. `cost` is the concrete maintenance cost the agent named (the next edit touches N places, or the bug a reader will plausibly write); a smell without one is not forwarded. `text` is the suggestion in the user's first person, naming the smell's catalog move ("could we pull this into a helper?"), friendly, never mentioning a tool.
+- Leave out `[LINT]` lines (CI already runs the project's linter) and anything the reviewer reported on the same file within 3 lines. `submit` drops those duplicates itself, but do not rely on that.
+- Smells never block and never change an APPROVE. `submit` enforces it: a `source: "smell"` finding is always a suggestion, whatever category or kind it claims, and it has its own cap of 2 so it cannot push out the reviewer's 3.
 
 ## What the user sees
 

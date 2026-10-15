@@ -6,6 +6,8 @@
  *   2. security: a `kind` from SECURITY_KINDS (a secret, PHI or PII, an auth or tenant-scoping hole, injection, a customer reference);
  *   3. rollback: a `kind` from ROLLBACK_KINDS (a destructive migration, a breaking API with no fallback).
  * Anything else, including a claim of one of those without its evidence, is a non-blocking suggestion, and at most MAX_SUGGESTIONS are kept.
+ * A finding with `source: "smell"` (from the smells pass) is a suggestion whatever else it claims, must state its maintenance `cost`, is dropped when a
+ * reviewer finding sits in the same file within SMELL_DEDUP_LINES lines, and counts against MAX_SMELL_SUGGESTIONS, never against MAX_SUGGESTIONS.
  * Naming, style, nice-to-have tests and refactors can never be blocking: no category outside the three can reach that severity. The code cannot
  * judge whether the evidence is true; it makes sure it was stated, and the person still approves the whole review before it is posted.
  *
@@ -19,13 +21,17 @@ import { isLogin } from '../drafts/queue.ts';
 import type { NewDraft, ReviewComment } from '../drafts/queue.ts';
 
 export const MAX_SUGGESTIONS = 3;
+/** Smell suggestions have their own cap, so a smells pass can never crowd out the reviewer's findings. */
+export const MAX_SMELL_SUGGESTIONS = 2;
+/** A smell finding in the same file within this many lines of a reviewer finding is the same finding, and is dropped. */
+export const SMELL_DEDUP_LINES = 3;
 export const SECURITY_KINDS = ['secret', 'phi-pii', 'auth', 'tenant-scope', 'injection', 'customer-reference'] as const;
 export const ROLLBACK_KINDS = ['destructive-migration', 'breaking-api-no-fallback'] as const;
 const MIN_EVIDENCE = 8;
 const MIN_COMPLIMENT_WORDS = 8;
 
 /** One finding as an agent reports it. Every field is untrusted. */
-export interface Finding { category?: string; kind?: string; input?: string; failure?: string; path?: string; line?: number; text?: string }
+export interface Finding { category?: string; kind?: string; input?: string; failure?: string; path?: string; line?: number; text?: string; source?: string; cost?: string }
 
 export interface PrContext { repo: string; pr: number; head: string; /** The PR author's login, recorded on the draft for the approval list. */ author?: string }
 export interface Dropped { index: number; reason: string }
@@ -53,8 +59,12 @@ export function complimentProblem(c: string | undefined): string | null {
   return null;
 }
 
+/** True for a finding the smells pass reported: it can never block, however it is labelled. */
+export const isSmell = (f: Finding): boolean => str(f.source).toLowerCase() === 'smell';
+
 /** The severity this finding earns, and why it fell short when it claimed more. */
 export function classify(f: Finding): { severity: 'blocking' | 'suggestion'; downgraded?: string } {
+  if (isSmell(f)) return { severity: 'suggestion' };
   const category = str(f.category).toLowerCase();
   const kind = str(f.kind).toLowerCase();
   if (category === 'correctness') {
@@ -145,18 +155,30 @@ export function planReview(ctx: PrContext, compliment: string | undefined, findi
   const dropped: Dropped[] = [];
   const comments: ReviewComment[] = [];
   let suggestions = 0;
+  let smellSuggestions = 0;
   let downgraded = 0;
   let lostBlocker: string | null = null;
   const drop = (index: number, f: Finding, reason: string): void => {
     dropped.push({ index, reason });
     if (classify(f).severity === 'blocking') lostBlocker ??= `finding ${index + 1}: ${reason}`;
   };
-  findings.forEach((f, index) => {
+  const reviewerAt = (path: string): number[] => findings.filter((g) => !isSmell(g) && str(g.path) === path && Number.isSafeInteger(g.line)).map((g) => g.line as number);
+  // The reviewer's findings go first, so a smell can only fill room they left.
+  const order = findings.map((f, index) => ({ f, index })).sort((a, b) => Number(isSmell(a.f)) - Number(isSmell(b.f)) || a.index - b.index);
+  order.forEach(({ f, index }) => {
     const text = str(f.text);
     const bad = voiceProblem(text);
     if (bad) { drop(index, f, bad); return; }
     const path = str(f.path);
     if (!path || !Number.isSafeInteger(f.line) || !diff.get(path)?.has(f.line as number)) { drop(index, f, 'not anchored to a line in the diff'); return; }
+    if (isSmell(f)) {
+      if (str(f.cost).length < MIN_EVIDENCE) { drop(index, f, 'a smell needs the concrete maintenance cost it causes'); return; }
+      if (reviewerAt(path).some((l) => Math.abs(l - (f.line as number)) <= SMELL_DEDUP_LINES)) { drop(index, f, 'the reviewer already raised this spot'); return; }
+      if (smellSuggestions >= MAX_SMELL_SUGGESTIONS) { dropped.push({ index, reason: `over the ${MAX_SMELL_SUGGESTIONS}-smell limit for this PR` }); return; }
+      smellSuggestions += 1;
+      comments.push({ path, line: f.line as number, severity: 'suggestion', text: `Suggestion: ${text}` });
+      return;
+    }
     const { severity, downgraded: why } = classify(f);
     if (why) downgraded += 1;
     if (severity === 'suggestion') {
