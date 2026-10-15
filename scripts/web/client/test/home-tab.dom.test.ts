@@ -72,6 +72,51 @@ test('a stream chip narrows the asks to that stream', () => {
   assert.equal(shown, Math.min(6, st.asks.filter((a) => a.stream === stream).length));
 });
 
+const needsOf = (stream: string): import('../src/needs-items.ts').NeedsItem[] => [
+  { key: 'ready:acme/widgets#7', kind: 'ready to merge', stream, repo: 'acme/widgets', number: 7, url: 'https://github.com/acme/widgets/pull/7', title: 'Add the thing', base: 'develop', ticket: { label: 'AB-9', url: 'https://x.test/AB-9' }, summary: 'Approved by pat, checks passing, no open threads.', ageDays: 2 },
+  { key: 'review:dr-00000001', kind: 'approve review', stream: 'Elsewhere', repo: 'acme/gadgets', number: 41, url: 'https://github.com/acme/gadgets/pull/41', title: 'Review of gadgets#41', author: 'robin', verdict: 'approve', summary: 'Approves: 0 blocking, 2 suggestion(s)', ageDays: 0 },
+];
+
+test('PRs ready to merge and reviews waiting for an OK are rows in Needs you, with a kind badge in words, a link, and the count includes them', () => {
+  const st = state();
+  homeUi.order = 'oldest'; homeUi.stream = null; homeUi.allAsks = false; homeUi.allShipped = false;
+  const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf(st.asks[0]!.stream), redraw: () => {} })).el;
+  const needs = sec(el, 'Needs you');
+  assert.match(text(needs.querySelector('h2')), new RegExp(`${st.asks.length + 2}$`));
+  const rows = [...needs.querySelectorAll('ul.needs-items > li')];
+  assert.deepEqual(rows.map((r) => r.getAttribute('data-kind')), ['ready to merge', 'approve review']);
+  assert.equal(text(rows[0]!.querySelector('.chip')), 'ready to merge');
+  assert.equal(rows[0]!.querySelector('a[href="https://github.com/acme/widgets/pull/7"]')?.textContent, 'widgets#7 Add the thing');
+  assert.match(text(rows[0]), /AB-9/);
+  assert.match(text(rows[0]), /develop/);
+  assert.match(text(rows[1]), /by robin/);
+  assert.match(text(rows[1]), /proposed: approve/);
+  assert.equal(rows[1]!.querySelector('a[href^="#tab=others"]')?.textContent, 'Open the draft');
+  assert.equal(needs.querySelector('ask-card') !== null, true, 'the asks are still there');
+});
+
+test('the stream chips count and filter the new rows too', () => {
+  const st = state();
+  const stream = st.asks[0]!.stream;
+  homeUi.order = 'oldest'; homeUi.stream = 'Elsewhere'; homeUi.allAsks = false; homeUi.allShipped = false;
+  st.streams = [...st.streams, 'Elsewhere'];
+  const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf(stream), redraw: () => {} })).el;
+  const needs = sec(el, 'Needs you');
+  assert.equal(needs.querySelectorAll('ask-card').length, 0);
+  assert.deepEqual([...needs.querySelectorAll('ul.needs-items > li')].map((r) => r.getAttribute('data-kind')), ['approve review']);
+  assert.match(text(needs.querySelector('[data-ctl=chip-Elsewhere]')), /Elsewhere 1/);
+  homeUi.stream = null;
+});
+
+test('with no asks, rows for PRs and reviews replace the empty sentence', () => {
+  const st = state();
+  st.asks = [];
+  homeUi.order = 'oldest'; homeUi.stream = null; homeUi.allAsks = false; homeUi.allShipped = false;
+  const el = place(homeTab(st, charts(), { live: false, projects: { state: 'ok', data: projects() }, epics: null, needs: needsOf('x'), redraw: () => {} })).el;
+  assert.doesNotMatch(text(sec(el, 'Needs you')), /Nothing needs you right now/);
+  assert.equal(sec(el, 'Needs you').querySelectorAll('ul.needs-items > li').length, 2);
+});
+
 test('the gauges say how many asks are open and how many PRs are open, with words and not colour alone', () => {
   const el = draw(state(), charts(), { state: 'ok', data: projects() });
   assert.match(text(el.querySelector('section.gauge')), /Open asks by age/);

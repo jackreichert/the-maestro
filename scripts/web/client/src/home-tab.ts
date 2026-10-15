@@ -3,6 +3,7 @@ import { h } from './dom.ts';
 import { COST_CSS, costSection } from './cost-widget.ts';
 import { scoreTable } from './home-model.ts';
 import { HOME_SECTIONS_CSS, boardSection, deckSection, epicsSection, scoreSection } from './home-sections.ts';
+import type { NeedsItem } from './needs-items.ts';
 import type { ChartsData, CostData, EpicsData, PodiumState, ProjectsData } from './types.ts';
 
 /** The projects payload loads after the board, so Home answers at once and fills in project names and notes when they come. */
@@ -12,6 +13,8 @@ export interface HomeOptions {
   projects: ProjectsLoad;
   epics: EpicsData | null;
   cost?: CostData | null;
+  /** PRs ready to merge and reviews waiting for an OK, listed in Needs you after the asks. */
+  needs?: NeedsItem[];
   /** Called when a board control (order, stream filter, show all) changes, so the caller redraws Home. */
   redraw: () => void;
 }
@@ -29,7 +32,7 @@ export function homeTab(st: PodiumState, charts: ChartsData | null, opts: HomeOp
   return h('div', { class: 'home' },
     score ?? h('p', { class: 'home-note', role: 'status' }, 'The 14-day score is missing: the charts data did not load.'),
     opts.projects.state === 'error' ? h('p', { class: 'home-note', role: 'alert' }, `Project names and notes could not be loaded (${opts.projects.message}). The rest of Home is current; reload to try again.`) : null,
-    boardSection(st, opts.live, opts.redraw),
+    boardSection(st, opts.live, opts.redraw, opts.needs),
     deckSection(st, charts, opts.redraw),
     costSection(opts.cost ?? null),
     epicsSection(opts.epics, projects?.links ?? []));

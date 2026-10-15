@@ -14,10 +14,11 @@ export function scoped(st: Buckets, stream: string | null): Buckets {
   return { asks: pick(st.asks), blocked: pick(st.blocked), done: pick(st.done), working: pick(st.working) };
 }
 
-/** The cue line in reading order: what needs you, what is blocked, what shipped today, what is in flight. */
-export function cueParts(st: Buckets): CuePart[] {
+/** The cue line in reading order: what needs you, what is blocked, what shipped today, what is in flight. `extra` counts what else needs you (PRs ready to merge, reviews waiting for an OK). */
+export function cueParts(st: Buckets, extra = 0): CuePart[] {
+  const needs = st.asks.length + extra;
   return [
-    { key: 'asks', n: st.asks.length, label: st.asks.length === 1 ? 'needs you' : 'need you', tone: 'accent' },
+    { key: 'asks', n: needs, label: needs === 1 ? 'needs you' : 'need you', tone: 'accent' },
     { key: 'blocked', n: st.blocked.length, label: 'blocked', tone: 'critical' },
     { key: 'done', n: st.done.length, label: 'shipped today', tone: 'success' },
     { key: 'working', n: st.working.length, label: 'in flight', tone: 'neutral' },

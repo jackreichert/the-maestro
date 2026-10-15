@@ -1,6 +1,8 @@
 /** The board when a summary tile is pressed: only that tile's items, drawn from the same buckets the tile counts. */
 import { h } from './dom.ts';
 import { seriesClass } from './series.ts';
+import { needsRows } from './needs-view.ts';
+import type { NeedsItem } from './needs-items.ts';
 import { RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import type { RowContext, SectionSpec } from './stream-board.ts';
 import type { Buckets } from './glance.ts';
@@ -16,7 +18,8 @@ export const FILTER_SECTIONS: Record<CueKey, Omit<SectionSpec, 'n'>> = {
 };
 
 /** What the filtered view needs beyond the buckets: whether answers can be sent, the row context, and how to clear the filter. */
-export interface FilterOptions { live: boolean; ctx: RowContext; clear: () => void; stream?: string | null; setStream?: (stream: string | null) => void }
+/** `extra` are the PRs ready to merge and the reviews waiting for an OK; they join the asks view only, and the stream chips count and filter them with the asks. */
+export interface FilterOptions { live: boolean; ctx: RowContext; clear: () => void; extra?: NeedsItem[]; stream?: string | null; setStream?: (stream: string | null) => void }
 
 /** One stream chip: the stream (null for All) and how many asks it holds. */
 export interface StreamChip { stream: string | null; n: number }
@@ -45,17 +48,28 @@ function chipRow(chips: StreamChip[], picked: string | null, set: (stream: strin
     b.addEventListener('click', () => set(stream));
     return h('li', {}, b);
   });
-  return h('ul', { class: 'chips-row', role: 'list', 'aria-label': 'Filter asks by stream' }, ...items);
+  return h('ul', { class: 'chips-row', role: 'list', 'aria-label': 'Filter what needs you by stream' }, ...items);
+}
+
+/** The ask list and the item rows as one body, kept as siblings so the section's list styling still applies to each. Null when both are empty. */
+function asksAndItems(asks: Node | null, items: Node | null): Node | null {
+  if (!asks || !items) return asks ?? items;
+  const both = document.createDocumentFragment();
+  both.append(asks, items);
+  return both;
 }
 
 /** Every item in one bucket, uncapped, under its own heading, with a way back to the whole board. */
 export function filteredView(buckets: Buckets, key: CueKey, label: string, o: FilterOptions): Node {
   const spec = FILTER_SECTIONS[key];
-  const picked = key === 'asks' ? activeStream(buckets.asks, o.stream) : null;
+  const extra = key === 'asks' ? o.extra ?? [] : [];
+  const everything = key === 'asks' ? [...buckets.asks, ...extra] : [];
+  const picked = key === 'asks' ? activeStream(everything, o.stream) : null;
   const items = key === 'asks' && picked ? buckets.asks.filter((a) => a.stream === picked) : buckets[key];
-  const chips = key === 'asks' && o.setStream ? streamChips(buckets.asks) : [];
+  const shownExtra = picked ? extra.filter((x) => x.stream === picked) : extra;
+  const chips = key === 'asks' && o.setStream ? streamChips(everything) : [];
   const body = key === 'asks'
-    ? askCards(items as Buckets['asks'], o.live, o.ctx.showStream)?.list ?? null
+    ? asksAndItems(askCards(items as Buckets['asks'], o.live, o.ctx.showStream)?.list ?? null, needsRows(shownExtra, o.ctx.showStream))
     : itemRows(items as Parameters<typeof itemRows>[0], o.ctx);
   const clear = h('button', { type: 'button', class: 'more', id: CLEAR_FILTER_ID }, 'Show everything');
   clear.addEventListener('click', o.clear);
@@ -63,5 +77,5 @@ export function filteredView(buckets: Buckets, key: CueKey, label: string, o: Fi
   return h('div', { class: 'filtered' },
     h('p', { class: 'filter-bar' }, `Showing only ${label}.`, ' ', clear),
     chips.length && o.setStream ? chipRow(chips, picked, o.setStream) : null,
-    section({ ...spec, n: items.length, hint: key === 'asks' && items.length > 0 ? askHint(o.live) : null }, body));
+    section({ ...spec, n: items.length + shownExtra.length, hint: key === 'asks' && items.length > 0 ? askHint(o.live) : null }, body));
 }
