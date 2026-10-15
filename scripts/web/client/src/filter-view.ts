@@ -2,6 +2,7 @@
 import { h } from './dom.ts';
 import { seriesClass } from './series.ts';
 import { needsRows } from './needs-view.ts';
+import { withComments } from './blocked-rows.ts';
 import type { NeedsItem } from './needs-items.ts';
 import { RESTS, askCards, askHint, itemRows, section } from './stream-board.ts';
 import type { RowContext, SectionSpec } from './stream-board.ts';
@@ -70,6 +71,7 @@ export function filteredView(buckets: Buckets, key: CueKey, label: string, o: Fi
   const chips = key === 'asks' && o.setStream ? streamChips(everything) : [];
   const body = key === 'asks'
     ? asksAndItems(askCards(items as Buckets['asks'], o.live, o.ctx.showStream)?.list ?? null, needsRows(shownExtra, o.ctx.showStream))
+    : key === 'blocked' ? withComments(itemRows(buckets.blocked, o.ctx), buckets.blocked, o.live)
     : itemRows(items as Parameters<typeof itemRows>[0], o.ctx);
   const clear = h('button', { type: 'button', class: 'more', id: CLEAR_FILTER_ID }, 'Show everything');
   clear.addEventListener('click', o.clear);

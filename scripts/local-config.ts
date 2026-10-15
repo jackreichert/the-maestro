@@ -615,6 +615,8 @@ export const STATUS_DIR_SETTING = expandHome(pick('MAESTRO_STATUS_DIR', 'status_
 export const statusDirFor = (project: string): string => STATUS_DIR_SETTING || (VAULT_ROOT ? join(VAULT_ROOT, 'Projects', project, 'Status') : '');
 
 /** The Obsidian vault name used in links. Default: the folder name of vault_root. */
+/** Who a row written from the Podium page says wrote it (`by`), e.g. the owner's first name; `user` until set. */
+export const PODIUM_AUTHOR = pick('MAESTRO_PODIUM_AUTHOR', 'podium_author').trim().slice(0, 40) || 'user';
 export const OBSIDIAN_VAULT = pick('MAESTRO_OBSIDIAN_VAULT', 'obsidian_vault').trim() || (VAULT_ROOT ? basename(VAULT_ROOT) : '');
 
 /** A full URI for the status page (`obsidian://...` or a URL); wins over the one derived from status_dir. */

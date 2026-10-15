@@ -6,6 +6,7 @@ import { keepAcross } from './keep-view.ts';
 import { prChips } from './pr-chips.ts';
 import { ago, byPriority, clockTime, oldestFirst, todaysPriorities } from './glance.ts';
 import { gateView } from './gate.ts';
+import { withComments } from './blocked-rows.ts';
 import { HOME_CSS, epicStrip, leftBody, railBody, unknownsFold } from './home-view.ts';
 import { clearAgainstHome, clearLine, leftGroups, leftHeading } from './home-text.ts';
 import type { GateView } from './gate.ts';
@@ -250,7 +251,7 @@ export class StreamBoard extends HTMLElement {
         shown(selfPrs.length, () => section({ title: 'Maestro PRs (self-review)', n: selfPrs.length, tone: 'neutral', empty: '' }, prList(selfPrs))),
         slots.clear),
       h('div', { class: 'col' },
-        section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, itemRows(blocked, ctx)),
+        section({ title: 'Blocked', n: blocked.length, glyph: '⊘', tone: 'critical', empty: 'Nothing is blocked.', rest: RESTS.blocked }, withComments(itemRows(blocked, ctx), blocked, this.#live)),
         section({ title: 'In flight', n: working.length, tone: 'neutral', empty: 'No agent is running here.', rest: RESTS.working, quiet: true }, itemRows(working, ctx)),
         shown(queued.length, () => section({ title: 'Queued', n: queued.length, tone: 'neutral', empty: '', quiet: true }, itemRows(queued, ctx))),
         shown(done.length, () => section({ title: 'Shipped today', n: done.length, glyph: '✓', tone: 'success', empty: '', quiet: true }, itemRows(done, ctx))),

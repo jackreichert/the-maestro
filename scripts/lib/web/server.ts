@@ -1,7 +1,7 @@
 /**
  * The Podium server: GET endpoints over buildState/buildCharts and the client's static files, plus one narrow write surface.
  * `GET /api/events` is the one streaming route: Server-Sent Events from a shared watcher (events.ts), so the page updates without a reload.
- * The write surface is fourteen POST routes (the six `/api/run/*` ones run a reviewed command or list the script catalog; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts).
+ * The write surface is fifteen POST routes (the six `/api/run/*` ones run a reviewed command or list the script catalog; see run-write.ts): three reorder, add and delete today's priorities (priorities-write.ts), one answers an ask (answer-write.ts), one comments on a blocked item and optionally unblocks it (blocked-write.ts), one refreshes the PR data (prs-refresh.ts), and three decide a drafted GitHub comment: approve (the only route that posts), edit, reject (drafts-write.ts).
  * They need a per-start token the page reads from `GET /api/edit-token`, and guard.ts only lets them through from the page's own origin.
  * Every request goes through guard.refuse first; every response is written by guard.send, so the security headers
  * are on 404s and 500s too. Every GET is read-only: nothing on a GET path writes the ledger, the priorities file or the page.
@@ -27,6 +27,7 @@ import { withVerdicts } from './local-review.ts';
 import { createLocalReviewCache, spawnProducer } from './local-review-cache.ts';
 import { TOKEN_PATH, WRITE_PATHS as PRIORITY_PATHS, handleWrite } from './priorities-write.ts';
 import { ANSWER_PATH, handleAnswer } from './answer-write.ts';
+import { BLOCKED_PATH, handleBlocked } from './blocked-write.ts';
 import { DRAFT_BODY_LIMITS, DRAFT_WRITE_PATHS, buildDrafts, handleDraft } from './drafts-write.ts';
 import type { GhRun } from '../drafts/post.ts';
 import { REFRESH_PATH, REFRESH_STATE_PATH, createRefresher, handleRefresh, spawnRebuild } from './prs-refresh.ts';
@@ -82,8 +83,8 @@ const MAX_DAYS = 90;
 const EVENTS_PATH = '/api/events';
 const MAX_HEADER_BYTES = 8 * 1024;
 
-/** Every exact path that accepts POST: the three priorities edits, the answer to an ask, the PR refresh and the three draft-comment decisions. */
-const WRITE_PATHS: ReadonlySet<string> = new Set([...PRIORITY_PATHS, ANSWER_PATH, REFRESH_PATH, ...DRAFT_WRITE_PATHS, ...RUN_WRITE_PATHS]);
+/** Every exact path that accepts POST: the three priorities edits, the answer to an ask, a comment on a blocked item, the PR refresh and the three draft-comment decisions. */
+const WRITE_PATHS: ReadonlySet<string> = new Set([...PRIORITY_PATHS, ANSWER_PATH, BLOCKED_PATH, REFRESH_PATH, ...DRAFT_WRITE_PATHS, ...RUN_WRITE_PATHS]);
 
 type Handler = (url: URL, match: RegExpMatchArray) => unknown;
 interface Route { method: 'GET'; pattern: RegExp; handler: Handler }
@@ -148,7 +149,7 @@ export function createWebServer(o: WebServerOptions): WebServer {
       if (no) return sendError(res, no.status, no.headers);
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (req.method === 'POST') {   // the guard let a POST through only for a write path
-        (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : RUN_WRITE_PATHS.has(url.pathname) ? handleRun(runs, url.pathname, req, res) : DRAFT_WRITE_PATHS.has(url.pathname) ? handleDraft(writes, url.pathname, req, res) : url.pathname === REFRESH_PATH ? handleRefresh(writes, refresher, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
+        (url.pathname === ANSWER_PATH ? handleAnswer(writes, req, res) : url.pathname === BLOCKED_PATH ? handleBlocked(writes, req, res) : RUN_WRITE_PATHS.has(url.pathname) ? handleRun(runs, url.pathname, req, res) : DRAFT_WRITE_PATHS.has(url.pathname) ? handleDraft(writes, url.pathname, req, res) : url.pathname === REFRESH_PATH ? handleRefresh(writes, refresher, req, res) : handleWrite(writes, url.pathname, req, res)).catch((e: unknown) => { log(e instanceof Error ? e.message.split('\n')[0] ?? 'error' : 'error'); sendError(res, 500); });
         return;
       }
       if (url.pathname === TOKEN_PATH) return sendJson(res, 200, { token, max: writes.max }, false);

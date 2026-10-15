@@ -1,6 +1,7 @@
 /** The pieces of the Home tab, each drawn from what home-model works out: score table, needs-you board, deck, epics and notes. */
 import { h, refLink, streamTag } from './dom.ts';
 import { askCards, itemRows } from './stream-board.ts';
+import { withComments } from './blocked-rows.ts';
 import { needsRows } from './needs-view.ts';
 import { scopedItems } from './needs-items.ts';
 import type { NeedsItem } from './needs-items.ts';
@@ -262,10 +263,10 @@ export function boardSection(st: PodiumState, live: boolean, redraw: () => void,
     h('p', { class: 'needs-how' }, live ? 'Open an ask to see its context and the orchestrator\'s recommendation. Send an answer, take the recommendation, or skip a two-way door; it is saved to the ledger and leaves the board on the next update. Asks tied to the first priority of the day come first; PRs ready to merge and reviews waiting for your OK follow them.' : 'Sample data: asks open read-only. Answering needs the Podium server.'),
     byStream.length > 1 ? h('ul', { class: 'chips-row', role: 'list', 'aria-label': 'Filter what needs you by stream' }, chip(null, total), ...byStream.map((x) => chip(x.s, x.n))) : null,
     list ? list.list : shownExtra.length ? null : empty('Nothing needs you right now.', 'tacet'), more, needsRows(shownExtra, true));
-  return h('div', { class: 'board' }, h('div', { class: 'col' }, needs), h('div', { class: 'col' }, sidePanels(st)));
+  return h('div', { class: 'board' }, h('div', { class: 'col' }, needs), h('div', { class: 'col' }, sidePanels(st, live)));
 }
 
-function sidePanels(st: PodiumState): HTMLElement {
+function sidePanels(st: PodiumState, live: boolean): HTMLElement {
   const ctx: RowContext = { now: st.generatedAt, tz: st.tz, showStream: true, prs: st.prs };
   const queued = queuedByStream(st.queued, st.streams);
   const flight = h('div', {},
@@ -274,7 +275,7 @@ function sidePanels(st: PodiumState): HTMLElement {
     st.queued.length ? h('div', { class: 'qbar', 'aria-hidden': 'true' }, ...queued.map((q) => grow(seriesClass(q.stream), q.n))) : null,
     st.queued.length ? h('ul', { class: 'qlist', role: 'list', 'aria-label': 'Queued by stream' }, ...queued.map((q) => h('li', {}, h('span', { class: 'nm' }, streamTag(q.stream)), h('span', {}, String(q.n))))) : null);
   return h('div', {},
-    h('div', { class: 'side-block' }, part('blocked', secHead('Blocked', st.blocked.length), st.blocked.length ? itemRows(st.blocked, ctx) : empty('Nothing is blocked.', 'a tempo'))),
+    h('div', { class: 'side-block' }, part('blocked', secHead('Blocked', st.blocked.length), st.blocked.length ? withComments(itemRows(st.blocked, ctx), st.blocked, live) : empty('Nothing is blocked.', 'a tempo'))),
     h('div', { class: 'side-block' }, part('flight', secHead('In flight', st.working.length), flight)));
 }
 
