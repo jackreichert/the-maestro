@@ -33,3 +33,17 @@ test('only the asks view takes the rows; another bucket ignores them, and rows a
   assert.equal(alone.querySelectorAll('ul.needs-items > li').length, 1);
   assert.doesNotMatch(alone.textContent ?? '', /Nothing needs you right now/);
 });
+
+test('the needs-you view\'s stream chips count the new rows with the asks and narrowing to a stream keeps only that stream\'s rows', () => {
+  const st = state();
+  const extra = [item({ stream: 'Elsewhere' }), item({ key: 'review:dr-00000001', kind: 'approve review', stream: 'Elsewhere', title: 'Review of gadgets#41' }), item({ key: 'ready:acme/widgets#8', number: 8, stream: 'Avonlea' })];
+  const view = (stream: string | null): HTMLElement => place(filteredView(scoped(st, null), 'asks', 'what needs you', { ...opts(st, extra), stream, setStream: () => {} }) as HTMLElement).el;
+  const all = view(null);
+  const chip = (el: HTMLElement, name: string): string => (el.querySelector(`button[id="stream-chip:${name}"]`)?.textContent ?? '').replace(/\s+/g, ' ').trim();
+  const asksIn = (name: string): number => st.asks.filter((a) => a.stream === name).length;
+  assert.equal(chip(all, 'Elsewhere'), `Elsewhere ${asksIn('Elsewhere') + 2}`);
+  assert.equal(chip(all, 'Avonlea'), `Avonlea ${asksIn('Avonlea') + 1}`);
+  const only = view('Elsewhere');
+  assert.equal(only.querySelectorAll('ul.needs-items > li').length, 2);
+  assert.equal(only.querySelectorAll('ask-card').length, asksIn('Elsewhere'));
+});
