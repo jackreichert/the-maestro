@@ -1,7 +1,7 @@
 /**
  * The motion on Home: a short entrance when Home appears, and a spring for an item that has just shipped.
  * Nothing loops, only transform and opacity change, and under reduced motion nothing moves at all.
- * The entrance is a class on the Home root that exists for one draw, so a live refresh (which rebuilds Home) never replays it.
+ * The entrance is a class on the Home root for the first draw after arming and for redraws within a short settle window, so a quick follow-up render does not cut it short and a later live refresh (which rebuilds Home) does not replay it. takeEntrance and newlyShipped advance that state on purpose: each Home draw is the unit.
  */
 
 /** Cells on the score staff (one per chart day), and the rows the entrance staggers, so each stagger rule is written once here. */
@@ -14,20 +14,19 @@ const STEP_MS = 24;
 /** A redraw this soon after the entrance began (the projects load lands right after the first draw) replays it instead of cutting it short. */
 const SETTLE_MS = 700;
 
-const state: { armedAt: number | null; startedAt: number; seen: Set<string> | null; marked: Map<string, number> } = { armedAt: null, startedAt: -Infinity, seen: null, marked: new Map() };
-let armed = true;
+interface MotionState { armed: boolean; startedAt: number; seen: Set<string> | null; marked: Map<string, number> }
+const fresh = (): MotionState => ({ armed: true, startedAt: -Infinity, seen: null, marked: new Map() });
+let state = fresh();
 
 /** Play the entrance on the next Home draw: at page load (armed from the start) and when the reader comes back to Home. Shipped items are then judged afresh, so what shipped while away is not news. */
 export function armHomeEntrance(): void {
-  armed = true;
-  state.seen = null;
-  state.marked.clear();
+  state = { ...fresh(), armed: true, startedAt: state.startedAt };
 }
 
 /** True for the first draw after arming and for redraws within SETTLE_MS of it, so a quick follow-up render does not snap the entrance to its end. */
 export function takeEntrance(now = Date.now()): boolean {
-  if (armed) {
-    armed = false;
+  if (state.armed) {
+    state.armed = false;
     state.startedAt = now;
     return true;
   }
@@ -45,10 +44,7 @@ export function newlyShipped(ids: string[], now = Date.now()): Set<string> {
 
 /** Test hook: back to a fresh page load. */
 export function resetHomeMotion(): void {
-  armed = true;
-  state.startedAt = -Infinity;
-  state.seen = null;
-  state.marked.clear();
+  state = fresh();
 }
 
 const stagger = (selector: (n: number) => string, count: number): string =>

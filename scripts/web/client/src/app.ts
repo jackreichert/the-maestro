@@ -23,7 +23,7 @@ import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
 import { armHomeEntrance } from './home-motion.ts';
-import { LOCAL_WIDGET_CSS, localReviewWidget } from './local-review-widget.ts';
+import { LOCAL_WIDGET_CSS, localReviewWidget, queueSize } from './local-review-widget.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
 import { seriesClass } from './series.ts';
 import type { ProjectsLoad } from './home-tab.ts';
@@ -760,7 +760,7 @@ export class PodiumApp extends HTMLElement {
     const localList = h('local-review');
     localList.review = this.#local;   // the one copy of the queue, the same one Home's widget counts from
     return h('div', {}, el, this.#replyDrafts(),
-      section({ title: 'Waiting for local review', n: this.#local ? this.#local.units.length + this.#local.more : 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
+      section({ title: 'Waiting for local review', n: queueSize(this.#local), tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
 
   /** Drafts still waiting for a decision, for the tab's count. */

@@ -20,15 +20,19 @@ export const LOCAL_WIDGET_CSS = `
   .local-widget .all { margin: var(--space-2) 0 0; font-size: var(--text-sm); }
 `;
 
+/** Branches waiting in the whole queue (rows plus the ones the server left out), or 0 when the queue is unreadable. */
+export const queueSize = (r: LocalReview | null): number => (r?.available ? r.units.length + r.more : 0);
+
 /** The widget, or a one-line note when the queue is unavailable or empty. The count is the whole queue, not just the rows shown. */
 export function localReviewWidget(r: LocalReview | null): HTMLElement {
-  const total = r?.available ? r.units.length + r.more : 0;
+  const total = queueSize(r);
   const head = h('div', { class: 'sec-head' }, h('h2', { id: 'local-widget-h' }, 'Waiting for local review', total > 0 ? h('span', { class: 'n' }, h('span', { class: 'vh' }, ', '), String(total)) : null));
   const to = formatFragment(OPEN_PRS);
-  const note = (text: string): HTMLElement => h('p', { class: 'empty-line' }, text);
-  if (!r) return h('section', { class: 'local-widget', 'aria-labelledby': 'local-widget-h' }, head, note('The local review queue is not available from this page.'));
-  if (!r.available) return h('section', { class: 'local-widget', 'aria-labelledby': 'local-widget-h' }, head, note(r.reason ?? 'The local review queue could not be read.'));
-  if (total === 0) return h('section', { class: 'local-widget', 'aria-labelledby': 'local-widget-h' }, head, note('No local branch is waiting for review.'));
+  const wrap = (...body: (Node | null)[]): HTMLElement => h('section', { class: 'local-widget', 'aria-labelledby': 'local-widget-h' }, head, ...body);
+  const note = (text: string): HTMLElement => wrap(h('p', { class: 'empty-line' }, text));
+  if (!r) return note('The local review queue is not available from this page.');
+  if (!r.available) return note(r.reason ?? 'The local review queue could not be read.');
+  if (total === 0) return note('No local branch is waiting for review.');
   const rows = r.units.slice(0, WIDGET_CAP).map((u) => {
     const v = verdictWords(u);
     const age = ago(u.at, r.generatedAt);
@@ -37,7 +41,7 @@ export function localReviewWidget(r: LocalReview | null): HTMLElement {
       h('span', { class: `vw ${v.tone}` }, h('span', { 'aria-hidden': 'true' }, `${v.glyph} `), v.text),
       age ? h('span', { class: 'repo' }, age === 'just now' ? age : `${age} ago`) : null));
   });
-  return h('section', { class: 'local-widget', 'aria-labelledby': 'local-widget-h' }, head,
+  return wrap(
     h('ul', { role: 'list' }, ...rows),
     h('p', { class: 'all' }, h('a', { href: to }, total > rows.length ? `All ${total} on the Open PRs tab` : 'Open the list on the Open PRs tab')));
 }
