@@ -5,9 +5,14 @@
  */
 import { isSelfReview } from '../self-review.ts';
 
+/** Repos whose owner wants full control: a review is drafted there only when the user is asked to review (a requested reviewer). The repo name alone decides, whatever the owner. */
+export const HANDS_OFF_REPOS: readonly string[] = ['arya-agentic'];
+export const isHandsOff = (repo: string): boolean => HANDS_OFF_REPOS.includes((repo.split('/')[1] ?? '').toLowerCase());
+
 export interface WaitNode {
   number: number; url: string; isDraft: boolean; headRefOid: string; headRefName?: string; baseRefName?: string; createdAt?: string;
   reviewDecision?: string | null;
+  reviewRequests?: { nodes: ({ requestedReviewer?: { login?: string } | null } | null)[] };
   author?: { login?: string; __typename?: string } | null;
   repository: { nameWithOwner: string };
   reviews?: { nodes: { author?: { login?: string; __typename?: string } | null; state?: string }[] };
@@ -31,6 +36,7 @@ export function selectWaiting(nodes: readonly WaitNode[], o: WaitOptions): Waiti
     const author = n.author?.login;
     if (n.isDraft || !author || author.toLowerCase() === self || isBot(n.author)) continue;
     if (isSelfReview(n.repository.nameWithOwner, o.selfRepos)) continue;
+    if (isHandsOff(n.repository.nameWithOwner) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
     if (n.reviewDecision === 'APPROVED' || n.reviewDecision === 'CHANGES_REQUESTED') continue;
     const reviews = (n.reviews?.nodes ?? []).filter((r) => r.state !== 'PENDING');
     if (reviews.some((r) => (r.author?.login ?? '').toLowerCase() === self || !isBot(r.author))) continue;
@@ -50,7 +56,7 @@ export function teammateSearch(owners: readonly string[]): string | null {
 }
 
 export const teammateQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number url isDraft createdAt reviewDecision headRefName baseRefName headRefOid author { login __typename } repository { nameWithOwner }
+  number url isDraft createdAt reviewDecision reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } headRefName baseRefName headRefOid author { login __typename } repository { nameWithOwner }
   reviews(last: 20) { nodes { author { login __typename } state } }
   timelineItems(last: 1, itemTypes: [READY_FOR_REVIEW_EVENT]) { nodes { ... on ReadyForReviewEvent { createdAt } } }
 } } } }`;

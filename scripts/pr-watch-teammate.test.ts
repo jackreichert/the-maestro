@@ -114,3 +114,11 @@ test('with no minutes configured pr-watch never runs the teammate search', () =>
   prWatch.check('open-prs', { run, now: T0, config: { ghLogin: 'me', selfReviewRepos: [], teammateMinutes: 0, teammateOwners: ['acme'] } });
   assert.equal(log.some((l) => l.includes('draft:false')), false);
 });
+
+test('arya-agentic is hands off: no review is drafted there unless the user is a requested reviewer; every other repo is open to review', () => {
+  const agentic = { repository: { nameWithOwner: 'acme/arya-agentic' } };
+  assert.equal(selectWaiting([node(agentic)], O).length, 0);
+  assert.equal(selectWaiting([node({ ...agentic, reviewRequests: { nodes: [{ requestedReviewer: { login: 'someone-else' } }] } })], O).length, 0);
+  assert.equal(selectWaiting([node({ ...agentic, reviewRequests: { nodes: [{ requestedReviewer: { login: 'ME' } }] } })], O).length, 1);
+  assert.equal(selectWaiting([node()], O).length, 1, 'a repo where the user was not asked is still reviewed');
+});

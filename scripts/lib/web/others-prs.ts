@@ -5,6 +5,7 @@
  */
 import { readOthersCache } from '../teammate/others.ts';
 import type { OtherPr } from '../teammate/others.ts';
+import { isHandsOff } from '../teammate/wait.ts';
 import { isSelfReview } from '../self-review.ts';
 import { PR_STALE_MS } from './state.ts';
 import type { OthersPrRow, OthersPrsData } from '../../web/client/src/types.ts';
@@ -17,10 +18,11 @@ const reviewOf = (decision: string | null): OthersPrRow['review'] => (decision =
 
 function row(p: OtherPr, self: string, now: Date): OthersPrRow {
   const opened = Date.parse(p.createdAt);
+  const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self.toLowerCase());
   return {
     repo: p.repo, number: p.number, title: p.title, url: p.url, author: p.author, base: p.base, updatedAt: p.updatedAt,
     ...(Number.isFinite(opened) ? { ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
-    youAsked: self !== '' && p.requested.some((r) => r.toLowerCase() === self.toLowerCase()),
+    youAsked, ...(isHandsOff(p.repo) && !youAsked ? { handsOff: true } : {}),
     review: reviewOf(p.decision), unresolved: p.unresolved, copilotThreads: p.copilotThreads,
   };
 }
