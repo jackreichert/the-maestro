@@ -94,7 +94,7 @@ export type Recorder = (edits: Unprocessed, nowMs: number) => Unprocessed;
 /** The recorder for a status directory, or null when its ledger is not known (no ledger configured, or the directory is not the configured project's). */
 export type RecorderFor = (target: string) => Recorder | null;
 
-const RECORD_USAGE = { model: 'unrecorded', used: ['tool:status-watch'] };
+const RECORD_USAGE = { model: 'n/a', used: ['tool:status-watch'] };
 
 /**
  * Records each answer, tick (as `(ticked)`, when it came with no words and the ask has no answer yet) and discuss mark against its open ask, one idempotent row each. An ask that is no longer open takes nothing: the event still fires.

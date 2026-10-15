@@ -1521,7 +1521,7 @@ function raiseEnvAsks(asks: EnvAsk[]): void {
             recommend, door: 'two-way',
             ...template,
             searched: 'the roll worktree scan (branch-sweep) and the open asks',
-            model: 'unrecorded', used: ['skill:the-maestro', 'tool:branch-sweep'],
+            model: 'n/a', used: ['skill:the-maestro', 'tool:branch-sweep'],
         });
         if (!dryRun) render(true);
         console.log(`asked  ${ask.worktree}: move ${ask.files.join(', ')} into the env store`);
