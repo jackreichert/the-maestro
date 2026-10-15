@@ -22,7 +22,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CONFIGURED_PROJECT, GH_ORG, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
+import { CONFIGURED_PROJECT, GH_LOGIN, GH_ORG, CONTAINER_PROJECT, LEDGER_ROOT, OBSIDIAN_VAULT, PR_SEARCH, REVIEW_QUEUE_CAP, REVIEW_QUEUE_ORGS, SELF_REVIEW_REPOS, STATUS_REPO_STREAMS, STATUS_STREAMS, TICKET_NOTE_PATH, TRACKER_KEY_PATTERN, TRACKER_URL_BASE, VAULT_ROOT, WATCH_TZ, statusDirFor } from './local-config.ts';
 import { readHomes } from './lib/home/config.ts';
 import { streamProjects } from './lib/library/stream-links.ts';
 import { noteExistsIn, vaultRootFor } from './lib/status-page/links.ts';
@@ -32,6 +32,7 @@ import type { PageConfig } from './lib/status-page/render.ts';
 import { withDevelopTwins } from './lib/status-page/twin.ts';
 import type { RepoFlow } from './lib/status-page/twin.ts';
 import { toolCommand } from './lib/tool-bin.ts';
+import { refreshOthers } from './lib/teammate/others.ts';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 
@@ -107,7 +108,13 @@ export function regenerate(o: RegenerateOptions): GenerateResult {
   if (!o.ledger) throw new Error('Ledger root is not set. Set ledger_root (LEDGER_ROOT) or pass --vault <path>.');
   if (!o.statusDir) throw new Error('No status directory. Set status_dir or vault_root in the local config, or pass --status-dir <dir>.');
   const deps: GenerateDeps = { journal: (sub) => journalJson(sub, o.ledger, o.project), start: () => journalJson('start-here', o.ledger, o.project), fetchPrs, enrichPrs: (raw) => withDevelopTwins(raw, readRepoFlow), sleep, now: () => new Date() };
-  return generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig(o.project, o.statusDir) }, deps);
+  const result = generate({ statusDir: o.statusDir, dryRun: o.dryRun, snapshot: o.snapshot, cachedPrsOnly: o.cachedPrsOnly, command: 'journal.ts podium', config: pageConfig(o.project, o.statusDir) }, deps);
+  // The Others' PRs tab's list rides the same read: on the page's own GitHub cadence (never in quiet hours or a cached-only render), and its failure never fails the page.
+  if (!o.cachedPrsOnly && !o.dryRun) {
+    const others = refreshOthers(o.statusDir, { owners: REVIEW_QUEUE_ORGS, selfRepos: SELF_REVIEW_REPOS, self: GH_LOGIN }, new Date());
+    if (others.failure) console.error(`status-page: teammate PR list not refreshed (${others.failure}); the Others' PRs tab keeps the last list`);
+  }
+  return result;
 }
 
 function main(argv: string[]): number {
