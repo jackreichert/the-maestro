@@ -129,10 +129,12 @@ test('standingBlock: silent when everything is ok, only rows needing attention f
 // ── the CLI ────────────────────────────────────────────────────────────────
 
 const JOURNAL = new URL('./journal.ts', import.meta.url).pathname;
+// An empty projects directory: journal.ts lists it for session files, and the shared temp directory holds thousands of entries.
+const NO_SESSIONS = mkdtempSync(join(tmpdir(), 'maestro-no-sessions-'));
 function cli(vault: string, events: string, ...args: string[]) {
   const r = spawnSync(process.execPath, [JOURNAL, ...args, '--vault', vault, '--project', 'test-proj'], {
     encoding: 'utf8', cwd: tmpdir(),
-    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: '', MAESTRO_EVENT_DIR: events, MAESTRO_LAUNCH_AGENTS_DIR: join(events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
+    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: '', MAESTRO_EVENT_DIR: events, MAESTRO_LAUNCH_AGENTS_DIR: join(events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: NO_SESSIONS },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
@@ -435,7 +437,7 @@ test('cli: library-fresh reads the library from this machine, so a stale page fa
   writeFileSync(join(pageDir, 'orchard-sync.md'), '---\ntype: library\nkind: how-it-works\nrepo: avonlea-api\nstream: Maestro\ncomponents: [orchard-sync]\nstatus: current\nverified-at: 2026-10-08\n---\n# Orchard sync\n\nRead when: you change the sync.\n\n## Facts\n\n- The sync runs nightly (verified 2026-10-08, src/sync.ts:1).\n');
   const run = (root: string) => spawnSync(process.execPath, [JOURNAL, 'standing', 'list', '--vault', vault, '--project', 'test-proj'], {
     encoding: 'utf8', cwd: tmpdir(),
-    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: root, MAESTRO_EVENT_DIR: events, MAESTRO_LAUNCH_AGENTS_DIR: join(events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: code, MAESTRO_PROJECTS_DIR: tmpdir() },
+    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', VAULT_ROOT: root, MAESTRO_EVENT_DIR: events, MAESTRO_LAUNCH_AGENTS_DIR: join(events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: code, MAESTRO_PROJECTS_DIR: NO_SESSIONS },
   }).stdout;
   assert.match(run(vault), /FAILING library-fresh:.*1 of 1 pages stale/);
   assert.match(run(''), /FAILING library-fresh:.*vault/i);

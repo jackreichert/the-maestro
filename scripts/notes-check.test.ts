@@ -7,12 +7,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const JOURNAL = new URL('./journal.ts', import.meta.url).pathname;
+// An empty projects directory: journal.ts lists it for session files, and the shared temp directory holds thousands of entries.
+const NO_SESSIONS = mkdtempSync(join(tmpdir(), 'maestro-no-sessions-'));
 const MARK = ['--model', 'Test Model', '--used', 'skill:the-maestro'];
 function cli(world: { ledger: string; vault: string; events: string }, ...args: string[]) { return cliEnv(world, {}, ...args); }
 function cliEnv(world: { ledger: string; vault: string; events: string }, extra: Record<string, string>, ...args: string[]) {
   const r = spawnSync(process.execPath, [JOURNAL, ...args, '--vault', world.ledger, '--project', 'test-proj'], {
     encoding: 'utf8', cwd: tmpdir(),
-    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_NOTES_CHECK_SINCE: '', ...extra, VAULT_ROOT: world.vault, MAESTRO_STATUS_DIR: join(world.vault, 'Projects', 'test-proj', 'Status'), MAESTRO_EVENT_DIR: world.events, MAESTRO_LAUNCH_AGENTS_DIR: join(world.events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: tmpdir() },
+    env: { ...process.env, MAESTRO_LOCAL_CONFIG: '', MAESTRO_NOTES_CHECK_SINCE: '', ...extra, VAULT_ROOT: world.vault, MAESTRO_STATUS_DIR: join(world.vault, 'Projects', 'test-proj', 'Status'), MAESTRO_EVENT_DIR: world.events, MAESTRO_LAUNCH_AGENTS_DIR: join(world.events, 'LaunchAgents'), MAESTRO_UPDATE_CHECK: 'off', MAESTRO_CONTAINER_ROOT: '', MAESTRO_PROJECTS_DIR: NO_SESSIONS },
   });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }

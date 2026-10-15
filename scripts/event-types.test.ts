@@ -1,4 +1,5 @@
 // Run: node --test scripts/event-types.test.ts
+import './lib/hermetic-config.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
