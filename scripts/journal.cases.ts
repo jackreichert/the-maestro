@@ -2761,10 +2761,10 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     const three = gh([open(1), open(2), open(3), open(4, true)]);
     const ok = gate(three);
     assert.equal(ok.code, 0, ok.err);
-    assert.match(ok.out, /review queue: 3 of 4 \(live\)/);
+    assert.match(ok.out, /review queue: 3 of 4 waiting on reviewers \(live\)/);
     const full = gate(gh([open(1), open(2), open(3), open(4), open(5, true)]));
     assert.equal(full.code, 1);
-    assert.match(full.out, /review queue: 4 of 4 \(full\) \(live\)[\s\S]*fixes to PRs already open/);
+    assert.match(full.out, /review queue: 4 of 4 waiting on reviewers \(full\) \(live\)[\s\S]*fixes to PRs already open/);
     assert.equal(gate(three, '--cap', '3').code, 1, '--cap overrides the configured cap');
     assert.equal(gate(three, '--cap', '0').code, 2, 'a bad cap is refused as unanswerable, not as full');
     assert.equal(gate(three, '--cap', '--json').code, 2, 'a cap flag with no value is refused');
@@ -2784,6 +2784,18 @@ test('review-queue: exit 0 with room, 1 when full, --cap overrides, and a failed
     assert.match(fallback.out, new RegExp(`stored snapshot ${takenAt}; live read failed`));
 });
 
+test('review-queue: the cap counts PRs waiting on reviewers; changes-requested and conflicting PRs are reported as waiting on you', () => {
+    const nodes = [prNode(1), prNode(2), prNode(3, { reviewDecision: 'CHANGES_REQUESTED' }), prNode(4, { mergeable: 'CONFLICTING' }), prNode(5, { reviewDecision: 'APPROVED' })];
+    const run = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, 'review-queue', ...args, '--vault', vault, '--project', 'test-proj'], {
+        encoding: 'utf8', cwd: emptyCwd, env: { ...installGhStub({ pages: [nodes] }), VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj' },
+    });
+    const room = run();
+    assert.equal(room.status, 0, 'five open PRs, two waiting on reviewers: under the cap of 4');
+    assert.match(room.stdout, /review queue: 2 of 4 waiting on reviewers · 3 waiting on you \(live\)/);
+    assert.equal(run('--cap', '2').status, 1, 'two waiting on reviewers fills a cap of 2');
+    assert.deepEqual(parse<{ queue: { count: number; waitingOnYou: number } }>(run('--json').stdout).queue.count, 2);
+});
+
 test('review-queue: answers by setting the exit code, never process.exit, so piped output is not cut', () => {
     // process.exit drops what a pipe has not yet taken (a reader behind `| head` or a busy one); the fix is to let the process drain. A preload records any process.exit call.
     const spy = join(mkdtempSync(join(tmpdir(), 'exit-spy-')), 'spy.mjs');
@@ -2797,7 +2809,7 @@ test('review-queue: answers by setting the exit code, never process.exit, so pip
     };
     const room = gate([prNode(1)]);
     assert.equal(room.code, 0, room.err);
-    assert.match(room.out, /review queue: 1 of 2/);
+    assert.match(room.out, /review queue: 1 of 2 waiting on reviewers/);
     const full = gate([prNode(1), prNode(2), prNode(3)]);
     assert.equal(full.code, 1, 'a full queue still exits 1');
     assert.match(full.out, /Queue full/);
@@ -2814,7 +2826,7 @@ test('review-queue: PRs in a self_review_repos repo are not counted, and the ans
     assert.equal(off.status, 1, 'without the setting all 5 open PRs count and the queue is full');
     const on = gate({ MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }, '--cap', '4');
     assert.equal(on.status, 0, on.stderr);
-    assert.match(on.stdout, /review queue: 2 of 4 \(live\)/);
+    assert.match(on.stdout, /review queue: 2 of 4 waiting on reviewers \(live\)/);
     const json = parse<{ queue: { count: number; selfReview: number } }>(gate({ MAESTRO_SELF_REVIEW_REPOS: 'example-owner/*' }, '--json').stdout);
     assert.deepEqual([json.queue.count, json.queue.selfReview], [2, 3]);
 });
@@ -2838,9 +2850,9 @@ test('status and status --footer count only review_queue_orgs owners from a stor
     const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_REVIEW_QUEUE_ORGS: '', ...env },
     }).stdout;
-    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 4 of 4 \(full\)$/m, 'no setting, no filter');
-    assert.match(status(['--footer'], { MAESTRO_REVIEW_QUEUE_ORGS: 'example-org' }), /^\*\*Review queue:\*\* 2 of 4$/m);
-    assert.match(status([], { MAESTRO_REVIEW_QUEUE_ORGS: 'example-org' }), /\n {2}review queue: 2 of 4\n/);
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 4 of 4 waiting on reviewers \(full\)$/m, 'no setting, no filter');
+    assert.match(status(['--footer'], { MAESTRO_REVIEW_QUEUE_ORGS: 'example-org' }), /^\*\*Review queue:\*\* 2 of 4 waiting on reviewers$/m);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_ORGS: 'example-org' }), /\n {2}review queue: 2 of 4 waiting on reviewers\n/);
 });
 
 test('status and status --footer list self-review PRs on their own line, apart from the review queue', () => {
@@ -2858,8 +2870,8 @@ test('status and status --footer list self-review PRs on their own line, apart f
     }).stdout;
     assert.doesNotMatch(status([]), /self-review/, 'no setting, no section');
     const on = { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' };
-    assert.match(status([], on), /\n {2}review queue: 1 of 4\n {2}maestro PRs \(self-review\): 2 open: 1 draft, 1 awaiting your review\n/);
-    assert.match(status(['--footer'], on), /^\*\*Review queue:\*\* 1 of 4\n\*\*Maestro PRs \(self-review\):\*\* 2 open: 1 draft, 1 awaiting your review\n/m);
+    assert.match(status([], on), /\n {2}review queue: 1 of 4 waiting on reviewers\n {2}maestro PRs \(self-review\): 2 open: 1 draft, 1 awaiting your review\n/);
+    assert.match(status(['--footer'], on), /^\*\*Review queue:\*\* 1 of 4 waiting on reviewers\n\*\*Maestro PRs \(self-review\):\*\* 2 open: 1 draft, 1 awaiting your review\n/m);
 });
 
 test('status and status --footer leave self-review PRs out of the review queue count', () => {
@@ -2870,9 +2882,9 @@ test('status and status --footer leave self-review PRs out of the review queue c
     const status = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [SCRIPT, 'status', ...args, '--vault', vault, '--project', 'test-proj'], {
         encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), ...env },
     }).stdout;
-    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 4 of 4 \(full\)$/m);
-    assert.match(status(['--footer'], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /^\*\*Review queue:\*\* 2 of 4$/m);
-    assert.match(status([], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /\n {2}review queue: 2 of 4\n/);
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 4 of 4 waiting on reviewers \(full\)$/m);
+    assert.match(status(['--footer'], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /^\*\*Review queue:\*\* 2 of 4 waiting on reviewers$/m);
+    assert.match(status([], { MAESTRO_SELF_REVIEW_REPOS: 'example-owner/tool' }), /\n {2}review queue: 2 of 4 waiting on reviewers\n/);
 });
 
 test('status and status --footer survive a truncated snapshot or one with no prs array once self_review_repos is set', () => {
@@ -2901,13 +2913,13 @@ test('status and status --footer show the review queue from the stored snapshot,
         encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events'), MAESTRO_LAUNCH_AGENTS_DIR: join(vault, 'LaunchAgents'), ...env },
     }).stdout;
     snapshot(new Date().toISOString(), false, false, true);
-    assert.match(status([]), /\n {2}review queue: 2 of 4\n$/);
-    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 2 of 4\n\*\*Session:\*\*/m);
+    assert.match(status([]), /\n {2}review queue: 2 of 4 waiting on reviewers\n$/);
+    assert.match(status(['--footer']), /^\*\*Review queue:\*\* 2 of 4 waiting on reviewers\n\*\*Session:\*\*/m);
     snapshot(new Date().toISOString(), false, false, false, false);
-    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '4' }), /review queue: 4 of 4 \(full\)/);
-    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '6' }), /review queue: 4 of 6\n/);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '4' }), /review queue: 4 of 4 waiting on reviewers \(full\)/);
+    assert.match(status([], { MAESTRO_REVIEW_QUEUE_CAP: '6' }), /review queue: 4 of 6 waiting on reviewers\n/);
     snapshot('2020-01-01T00:00:00Z', false);
-    assert.match(status([]), /review queue: 1 of 4 \(snapshot \d+d old\)/);
+    assert.match(status([]), /review queue: 1 of 4 waiting on reviewers \(snapshot \d+d old\)/);
 });
 
 /** A gh stub already run once: the first run of a new executable can be slow on some machines, which would eat the footer's live-read budget. */
@@ -2926,7 +2938,7 @@ test('status --footer refreshes a stale review-queue snapshot from a live read, 
         encoding: 'utf8', cwd: emptyCwd, env: { ...process.env, ...env, VAULT_ROOT: '', MAESTRO_WINDOW: 'testwin', MAESTRO_PROJECTS_DIR: projects, MAESTRO_CONTAINER_ROOT: '', MAESTRO_UPDATE_CHECK: 'off', MAESTRO_PROJECT: 'test-proj', MAESTRO_EVENT_DIR: join(vault, 'Events') },
     }).stdout;
     const live = warmedGhStub({ pages: [[1, 2, 3, 4, 5, 6].map((n) => prNode(n, { isDraft: false }))] });
-    assert.match(footer(live), /^\*\*Review queue:\*\* 6 of 4 \(full, 2 over the cap\)$/m, 'the live count, not the 11h-old 4');
+    assert.match(footer(live), /^\*\*Review queue:\*\* 6 of 4 waiting on reviewers \(2 over\)$/m, 'the live count, not the 11h-old 4');
     rmSync(join(journalDir, 'prs-current.json'), { force: true }); // the live read above was saved; drop it so the failing read is the one under test
     const broken = warmedGhStub({ pages: [[]], failOnPage: 0 });
     assert.match(footer(broken), /^\*\*Review queue:\*\* unknown \(snapshot 11h old; live refresh failed\)$/m);
@@ -2951,8 +2963,8 @@ test('status --footer bounds a slow live read, then reuses a successful one', ()
 
     const callLog = join(vault, 'gh-calls.log');
     const quick = warmedGhStub({ pages: [[1, 2, 3].map((n) => prNode(n))], delayMs: 50, callLog });
-    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m);
-    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4$/m, 'the second footer reuses the saved read');
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4 waiting on reviewers$/m);
+    assert.match(footer(quick).out, /^\*\*Review queue:\*\* 3 of 4 waiting on reviewers$/m, 'the second footer reuses the saved read');
     assert.equal(readFileSync(callLog, 'utf8').trim().split('\n').length, 1, 'only one gh call across two footers');
 });
 

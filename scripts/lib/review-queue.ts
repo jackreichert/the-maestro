@@ -1,5 +1,5 @@
 /**
- * The review queue: open, non-draft PRs of yours waiting on a human. The cap is the most the orchestrator lets pile up
+ * The review queue: open, non-draft PRs of yours waiting on a human reviewer. The cap is the most the orchestrator lets pile up
  * before a finished branch is held as ready to push, not pushed; the work itself carries on locally (reference/dispatch.md#review-queue-cap).
  * Pure: callers hand in the PR list (a live fetch, the stored snapshot or the status page cache) and the cap (`REVIEW_QUEUE_CAP`, local-config.ts).
  * It reads no configuration, so the page renderer can import it.
@@ -7,11 +7,38 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { splitSelfReview } from './self-review.ts';
 
-/** The fields the count reads. Every PR source the scripts use carries `isDraft`; `repo` (`owner/name`) is what `self_review_repos` is matched against. */
-export interface QueuePr { isDraft: boolean; repo?: string }
+/**
+ * The fields the count reads. Every PR source the scripts use carries `isDraft`; `repo` (`owner/name`) is what `self_review_repos` is matched against.
+ * `reviewDecision`, `mergeable` and the two branch names come from the snapshot and the live read; a source or an older snapshot that omits them
+ * is read as "no decision, mergeable, not a twin", so the PR counts as waiting on reviewers (fail closed toward counting).
+ */
+export interface QueuePr { isDraft: boolean; repo?: string; reviewDecision?: string | null; mergeable?: string | null; baseRefName?: string; headRefName?: string }
 
-/** `selfReview` is how many non-draft PRs sit in a self-review repo: only their owner reviews them, so they are not in `count`. */
-export interface ReviewQueue { count: number; cap: number; full: boolean; selfReview: number }
+/**
+ * `count` is the PRs waiting on reviewers: the number the cap applies to. `waitingOnYou` is the author's own backlog (changes requested, a merge
+ * conflict, approved but unmerged), which no reviewer can move and the cap does not count. `twins` is how many staging twins were folded into their
+ * develop twin. `selfReview` is how many non-draft PRs sit in a self-review repo: only their owner reviews them, so they are in neither number.
+ */
+export interface ReviewQueue { count: number; cap: number; full: boolean; selfReview: number; waitingOnYou: number; twins: number }
+
+/** The branch a staging twin targets; its develop twin is the same head branch aimed at any other base (the same rule `prs-snapshot.ts` uses for twin flow). */
+const TWIN_BASE = 'staging';
+
+/**
+ * True when the author, not a reviewer, holds the ball: changes were requested, the PR conflicts, or it is approved and only waiting to be merged.
+ * Anything else (no decision, review required, unknown) is waiting on reviewers.
+ */
+export const waitingOnAuthor = (p: QueuePr): boolean => p.reviewDecision === 'CHANGES_REQUESTED' || p.reviewDecision === 'APPROVED' || p.mergeable === 'CONFLICTING';
+
+/** The key two PRs share when they are the same change aimed at two bases: repo and head branch, case-insensitive. */
+const twinKey = (p: QueuePr): string => `${(p.repo ?? '').toLowerCase()}|${p.headRefName ?? ''}`;
+
+/** Drops each staging twin that has an open develop twin (same repo and head branch, another base), so one change is one place in the queue. A stacked child is not a twin and stays. */
+function foldTwins<T extends QueuePr>(prs: readonly T[]): { kept: T[]; twins: number } {
+  const dev = new Set(prs.filter((p) => p.headRefName && p.baseRefName && p.baseRefName !== TWIN_BASE).map(twinKey));
+  const kept = prs.filter((p) => !(p.headRefName && p.baseRefName === TWIN_BASE && dev.has(twinKey(p))));
+  return { kept, twins: prs.length - kept.length };
+}
 
 /**
  * True when the PR's repo owner is in `owners` (`review_queue_orgs`, case-insensitive). No owners configured means no filter, and a PR with no repo
@@ -21,18 +48,23 @@ export const inQueueOwners = (repo: string | undefined, owners: readonly string[
   !owners.length || !repo || owners.some((o) => o.toLowerCase() === repo.split('/')[0]!.toLowerCase());
 
 /**
- * Open non-draft PRs against the cap. The input is already scoped to open PRs by their author (PR_SEARCH). Full means count >= cap.
+ * Open non-draft PRs against the cap. The input is already scoped to open PRs by their author (PR_SEARCH). Full means count >= cap, and `count` is
+ * only the PRs waiting on reviewers: the cap models other reviewers' attention, so the author's own backlog (`waitingOnAuthor`) is reported beside it, not in it.
+ * A staging twin whose develop twin is open counts once, as its develop twin; a PR stacked on the author's own branch counts, because reviewers still read it.
  * Only PRs whose repo owner is in `owners` (review_queue_orgs) count: a stale snapshot or another source cannot leak a personal repo's PR into the cap.
- * PRs in a `selfReview` repo (self_review_repos) are left out too: the cap models other reviewers' attention, and these have none. A PR with no repo is counted.
+ * PRs in a `selfReview` repo (self_review_repos) are left out too: these have no other reviewer. A PR with no repo is counted.
  */
 export function reviewQueue(prs: readonly QueuePr[], cap: number, selfReview: readonly string[] = [], owners: readonly string[] = []): ReviewQueue {
   const open = prs.filter((p) => !p.isDraft && inQueueOwners(p.repo, owners));
   const { org, self } = splitSelfReview(open, selfReview);
-  return { count: org.length, cap, full: org.length >= cap, selfReview: self.length };
+  const { kept, twins } = foldTwins(org);
+  const waitingOnYou = kept.filter(waitingOnAuthor).length;
+  const count = kept.length - waitingOnYou;
+  return { count, cap, full: count >= cap, selfReview: self.length, waitingOnYou, twins };
 }
 
-/** The board line: `review queue: 3 of 4`, with `(full)` once the cap is reached. */
-export const reviewQueueLine = (q: ReviewQueue): string => `review queue: ${q.count} of ${q.cap}${q.full ? ' (full)' : ''}`;
+/** The board line: `review queue: 3 of 4 waiting on reviewers`, with `(full)` once the cap is reached (see `queueCount`). */
+export const reviewQueueLine = (q: ReviewQueue): string => `review queue: ${queueCount(q)}`;
 
 /** The stored snapshot's PRs and when it was taken; null when the file is absent or not shaped like a snapshot. */
 export function readSnapshotPrs(path: string): { prs: QueuePr[]; takenAt?: string } | null {
@@ -80,7 +112,7 @@ export const queueExitCode = (r: QueueReading): number => (!r.ok ? 2 : r.queue.f
 export function queueText(r: QueueReading): string[] {
   if (!r.ok) return [r.error, 'Treat the queue as full: hold pushes of new PRs (keep working locally) until it can be read.'];
   const where = r.source === 'live' ? 'live' : `stored snapshot ${r.takenAt ?? 'of unknown age'}; live read failed: ${r.liveError}`;
-  return [`${reviewQueueLine(r.queue)} (${where})`, ...(r.queue.full ? ['Queue full: hold pushes of new PRs (keep working locally); fixes to PRs already open still go out.'] : [])];
+  return [`${reviewQueueLine(r.queue)} (${where})`, ...(r.queue.full ? ['Queue full: hold pushes of new PRs and do not mark drafts ready (keep working locally); fixes to PRs already open still go out. pr-ready.ts enforces this; --over-cap "<reason>" overrides it, logged.'] : [])];
 }
 
 /** How old a snapshot must be before the board names its age: the loop refreshes the stored PR board on its idle tick, so a few minutes is normal and ten is a sign the refresh is not running. */
@@ -95,8 +127,12 @@ export function staleSuffix(takenAt: string | undefined, now: Date): string {
   return ` (snapshot ${hours >= 48 ? `${Math.floor(hours / 24)}d` : `${hours}h`} old)`;
 }
 
-/** `3 of 4`, `4 of 4 (full)`, `7 of 4 (full, 3 over the cap)`: the one wording for the count, shared by the board, the snapshot footer and the live footer. */
-const queueCount = (q: ReviewQueue): string => `${q.count} of ${q.cap}${q.full ? ` (full${q.count > q.cap ? `, ${q.count - q.cap} over the cap` : ''})` : ''}`;
+/**
+ * `3 of 4 waiting on reviewers`, `4 of 4 waiting on reviewers (full)`, `11 of 4 waiting on reviewers (7 over) · 4 waiting on you`: the one wording for the
+ * count, shared by the push gate, the board, the snapshot footer and the live footer. The `waiting on you` part is left out when it is zero.
+ */
+export const queueCount = (q: ReviewQueue): string =>
+  `${q.count} of ${q.cap} waiting on reviewers${q.count > q.cap ? ` (${q.count - q.cap} over)` : q.full ? ' (full)' : ''}${q.waitingOnYou ? ` · ${q.waitingOnYou} waiting on you` : ''}`;
 
 /**
  * The board's review queue from the stored snapshot, no network: `review queue: 3 of 4` (plus `(full)` and a stale-snapshot note), or
