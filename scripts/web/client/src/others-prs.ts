@@ -3,6 +3,7 @@ import { ago } from './glance.ts';
 import { linkAttrs } from './link-policy.ts';
 import { waiting } from './drafts-model.ts';
 import type { DraftRow } from './drafts-model.ts';
+import { PAGE_SIZE, pagePlan } from './others-paging.ts';
 import type { OthersPrRow } from './types.ts';
 import type { OthersPrsModel } from './others-prs-store.ts';
 
@@ -19,6 +20,11 @@ const CSS = `${BASE_CSS}${UI_CSS}
   li.pr h3 .ref { margin-right: var(--space-2); font-family: var(--font-mono); font-weight: var(--weight-regular); }
   .meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: var(--space-4) 0; }
+  .count-line { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  button.more-prs { font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-primary); min-height: 32px; padding: 0 var(--space-3); border: var(--hairline-strong); border-radius: var(--radius-sm); background: var(--surface-1); cursor: pointer; }
+  @media (hover: hover) { button.more-prs:hover { background: var(--surface-2); } }
+  li.pr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   h3.orphans { margin: var(--space-6) 0 var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); }
 `;
 
@@ -42,7 +48,11 @@ export class OthersPrs extends HTMLElement {
   #drafts: OthersDrafts | null = null;
   #now = '';
   #sig = '';
+  #pages = 0;
+  #focusKey: string | null = null;
+  #focusRow: HTMLElement | null = null;
   readonly #status = h('p', { class: 'status', role: 'status' });
+  readonly #count = h('p', { class: 'count-line', role: 'status', 'aria-live': 'polite' });
 
   constructor() { super(); this.#root = shadow(this, CSS); }
 
@@ -53,7 +63,7 @@ export class OthersPrs extends HTMLElement {
   #render(): void {
     const m = this.#model;
     // Only a change in what the rows say redraws them: the draft cards inside follow the store on their own, so a keystroke-level or button-state change never rebuilds 340 rows under the person's focus.
-    const sig = `${m?.loaded ? m.data?.generatedAt ?? 'none' : 'loading'}|${(this.#drafts?.rows ?? []).filter(waiting).map((d) => d.id).sort().join(',')}|${this.#drafts ? 'q' : ''}`;
+    const sig = `${m?.loaded ? m.data?.generatedAt ?? 'none' : 'loading'}|${(this.#drafts?.rows ?? []).filter(waiting).map((d) => d.id).sort().join(',')}|${this.#drafts ? 'q' : ''}|${this.#pages}`;
     if (sig === this.#sig && this.#root.childElementCount > 0) return;
     this.#sig = sig;
     if (!m || !m.loaded) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'Loading teammates\' PRs.')); return; }
@@ -69,8 +79,32 @@ export class OthersPrs extends HTMLElement {
     const hasOrphans = [...byPr].some(([k, rows]) => !listed.has(k) && rows.some(waiting));
     this.#root.replaceChildren(
       this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
-      d.prs.length ? h('ul', { class: 'prs', role: 'list', 'aria-label': 'Open teammate PRs' }, ...d.prs.map((p) => this.#row(p, byPr.get(key(p.repo, p.number)) ?? []))) : h('p', { class: 'empty' }, 'No teammate PR is open.'),
+      ...(d.prs.length ? this.#list(d.prs, byPr) : [h('p', { class: 'empty' }, 'No teammate PR is open.')]),
       ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
+    if (this.#focusRow) { this.#focusRow.setAttribute('tabindex', '-1'); this.#focusRow.focus(); this.#focusRow = null; }
+  }
+
+  /**
+   * The rows to draw: those that need you (a waiting draft, a review asked of you) first and always, then the rest 25 at a time. The count line is one live
+   * region kept across redraws, and Load more moves focus to the first row it added, so a keyboard user lands where the new rows begin.
+   */
+  #list(prs: OthersPrRow[], byPr: Map<string, DraftRow[]>): Node[] {
+    const waitingOn = (p: OthersPrRow): boolean => p.youAsked || (byPr.get(key(p.repo, p.number)) ?? []).some(waiting);
+    const plan = pagePlan(prs, waitingOn, this.#pages);
+    const ul = h('ul', { class: 'prs', role: 'list', 'aria-label': 'Open teammate PRs' }, ...plan.shown.map((p) => this.#row(p, byPr.get(key(p.repo, p.number)) ?? [])));
+    const text = `Showing ${plan.shown.length} of ${plan.total}`;
+    if (this.#count.textContent !== text) this.#count.textContent = text;
+    const more = plan.hidden > 0 ? h('button', { type: 'button', class: 'more-prs' }, `Load more (${Math.min(PAGE_SIZE, plan.hidden)} of ${plan.hidden} left)`) : null;
+    more?.addEventListener('click', () => {
+      const at = plan.shown.length;
+      this.#pages += 1;
+      const next = pagePlan(prs, waitingOn, this.#pages).shown[at];
+      this.#focusKey = next ? key(next.repo, next.number) : null;
+      this.#render();
+    });
+    this.#focusRow = this.#focusKey ? [...ul.querySelectorAll<HTMLElement>('li.pr')].find((li) => li.getAttribute('data-pr') === this.#focusKey) ?? null : null;
+    this.#focusKey = null;
+    return [ul, h('div', { class: 'pager' }, this.#count, ...(more ? [more] : []))];
   }
 
   /** One live region kept across redraws, its text set only when it changes, so a screen reader hears a change and not every redraw. */

@@ -76,3 +76,58 @@ test('the author sits beside repo#number: display name with login when GitHub ga
   assert.equal(b?.querySelector('.queue')?.textContent, 'acme/app#2 by drafted-by-fake');
   cleanup();
 });
+
+const many = (n: number, over: (i: number) => Partial<OthersPrRow> = () => ({})): OthersPrRow[] => Array.from({ length: n }, (_, i) => pr(i + 1, over(i + 1)));
+const numbers = (root: ParentNode): number[] => [...root.querySelectorAll('li.pr')].map((l) => Number((l.getAttribute('data-pr') ?? '').split('#')[1]));
+
+test('a long list shows 25 rows with "Showing 25 of 60" in a live region and a Load more button', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(many(60)), loaded: true }, drafts: drafts([]) });
+  assert.equal(root.querySelectorAll('li.pr').length, 25);
+  const live = root.querySelector('.pager [role=status]');
+  assert.equal(live?.textContent, 'Showing 25 of 60');
+  assert.equal(live?.getAttribute('aria-live'), 'polite');
+  assert.match(root.querySelector('button.more-prs')?.textContent ?? '', /Load more/);
+  cleanup();
+});
+
+test('Load more adds 25, updates the count, and moves focus to the first newly loaded row; the last page drops the button', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(many(60)), loaded: true }, drafts: drafts([]) });
+  (root.querySelector('button.more-prs') as HTMLButtonElement).click();
+  assert.equal(root.querySelectorAll('li.pr').length, 50);
+  assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 50 of 60');
+  const focused = (root as unknown as ShadowRoot).activeElement;
+  assert.equal(focused?.getAttribute('data-pr'), 'acme/app#26');
+  assert.equal(focused?.getAttribute('tabindex'), '-1');
+  (root.querySelector('button.more-prs') as HTMLButtonElement).click();
+  assert.equal(root.querySelectorAll('li.pr').length, 60);
+  assert.equal(root.querySelector('button.more-prs'), null);
+  assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 60 of 60');
+  assert.equal((root as unknown as ShadowRoot).activeElement?.getAttribute('data-pr'), 'acme/app#51');
+  cleanup();
+});
+
+test('rows with a waiting draft and rows that ask you to review stay above the paging, never behind it', async () => {
+  const list = many(80, (n) => (n === 70 ? { youAsked: true } : {}));
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(list), loaded: true }, drafts: drafts([draft(75)]) });
+  const first = numbers(root);
+  assert.deepEqual(first.slice(0, 2), [70, 75], 'asked and drafted rows lead, in list order');
+  assert.equal(first.length, 2 + 25);
+  assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 27 of 80');
+  assert.equal(new Set(first).size, first.length, 'a pinned row is not listed twice');
+  cleanup();
+});
+
+test('a list of 25 or fewer has no Load more and says all are shown', async () => {
+  const { root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(many(25)), loaded: true }, drafts: drafts([]) });
+  assert.equal(root.querySelector('button.more-prs'), null);
+  assert.equal(root.querySelector('.pager [role=status]')?.textContent, 'Showing 25 of 25');
+  cleanup();
+});
+
+test('a redraw (a draft appearing) keeps the pages already loaded', async () => {
+  const { el, root, cleanup } = await mount<El>('../src/others-prs.ts', 'others-prs', { model: { data: data(many(60)), loaded: true }, drafts: drafts([]) });
+  (root.querySelector('button.more-prs') as HTMLButtonElement).click();
+  el.drafts = drafts([draft(3)]);
+  assert.equal(root.querySelectorAll('li.pr').length, 51, 'two pages of the rest, plus the one newly pinned row');
+  cleanup();
+});
