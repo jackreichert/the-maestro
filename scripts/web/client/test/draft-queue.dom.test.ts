@@ -128,3 +128,15 @@ test('match limits the waiting drafts shown, and quiet leaves out the Decided li
   assert.equal(none.root.querySelector('.empty'), null);
   none.cleanup();
 });
+
+test('each card names whose PR it is beside repo#number: the draft\'s author, or what authorOf supplies, and nothing invented', async () => {
+  const drafts = [row({ author: 'pat-fake' }), row({ id: 'dr-0000000b', pr: 8, prUrl: 'https://github.com/acme/widgets/pull/8' }), row({ id: 'dr-0000000c', pr: 9, prUrl: 'https://github.com/acme/widgets/pull/9', state: 'rejected', author: 'old-fake' })];
+  const { root, cleanup } = await mount<El & { authorOf: (d: DraftRow) => string | undefined }>('../src/draft-queue.ts', 'draft-queue', { model: model(drafts), actions: noop, sources: ['review'] });
+  const heads = [...root.querySelectorAll('section.pr h3')].map((h) => h.textContent);
+  assert.deepEqual(heads, ['acme/widgets#7 by pat-fake', 'acme/widgets#8']);
+  assert.match(root.querySelector('details.finished')?.textContent ?? '', /acme\/widgets#9 by old-fake/);
+  cleanup();
+  const fb = await mount<El & { authorOf: (d: DraftRow) => string | undefined }>('../src/draft-queue.ts', 'draft-queue', { model: model(drafts), actions: noop, sources: ['review'], authorOf: (d: DraftRow) => d.author ?? 'list-author' });
+  assert.equal(fb.root.querySelectorAll('section.pr h3')[1]?.textContent, 'acme/widgets#8 by list-author');
+  fb.cleanup();
+});

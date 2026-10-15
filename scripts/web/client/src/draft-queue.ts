@@ -59,6 +59,7 @@ export class DraftQueue extends HTMLElement {
   #empty = 'Nothing is waiting for your approval.';
   #match: (d: DraftRow) => boolean = () => true;
   #quiet = false;
+  #authorOf: (d: DraftRow) => string | undefined = (d) => d.author;
 
   constructor() { super(); this.#root = shadow(this, CSS); }
 
@@ -68,6 +69,8 @@ export class DraftQueue extends HTMLElement {
   /** Which waiting drafts this instance shows (default all). Decided drafts are not filtered. */
   set match(f: (d: DraftRow) => boolean) { this.#match = f; }
   /** Leave out the Decided list: for a card shown inside a PR's own row. */
+  /** Whose PR a card is on, as the person's name or login; the default is the draft's own `author`. */
+  set authorOf(f: (d: DraftRow) => string | undefined) { this.#authorOf = f; }
   set quiet(q: boolean) { this.#quiet = q; }
   set emptyText(t: string) { this.#empty = t; }
   connectedCallback(): void { this.#render(); }
@@ -93,7 +96,13 @@ export class DraftQueue extends HTMLElement {
 
   #group(key: string, ds: DraftRow[], m: DraftsModel): HTMLElement {
     // Inside a PR's own row (quiet) the row already names the PR, so the card's heading drops a level and nothing sits at the row's level.
-    return h('section', { class: 'pr', 'aria-label': key }, h(this.#quiet ? 'h4' : 'h3', {}, this.#link(ds[0] as DraftRow, key)), h('ul', { class: 'drafts', role: 'list' }, ...ds.map((d) => this.#card(d, m))));
+    return h('section', { class: 'pr', 'aria-label': key }, h(this.#quiet ? 'h4' : 'h3', {}, this.#link(ds[0] as DraftRow, key), this.#by(ds[0] as DraftRow)), h('ul', { class: 'drafts', role: 'list' }, ...ds.map((d) => this.#card(d, m))));
+  }
+
+  /** " by <author>" beside repo#number, or nothing when nobody is known. */
+  #by(d: DraftRow): Node {
+    const who = this.#authorOf(d);
+    return who ? document.createTextNode(` by ${who}`) : document.createDocumentFragment();
   }
 
   #head(d: DraftRow): HTMLElement {
@@ -106,7 +115,7 @@ export class DraftQueue extends HTMLElement {
   }
 
   #decided(d: DraftRow): HTMLElement {
-    return h('li', { class: 'draft done' }, this.#head(d),
+    return h('li', { class: 'draft done' }, h('p', { class: 'meta' }, this.#link(d, groupKey(d)), this.#by(d)), this.#head(d),
       h('p', { class: 'body' }, d.text), this.#inline(d),
       h('p', { class: 'msg' }, `${STATE_WORDS[d.state] ?? d.state}${d.rejectReason ? `: ${d.rejectReason}` : ''}`, ' ', this.#postedLink(d)));
   }

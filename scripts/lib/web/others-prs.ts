@@ -21,7 +21,7 @@ function row(p: OtherPr, self: string, handsOff: HandsOff, now: Date): OthersPrR
   const opened = Date.parse(p.createdAt);
   const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self.toLowerCase());
   return {
-    repo: p.repo, number: p.number, title: p.title, url: p.url, author: p.author, base: p.base, updatedAt: p.updatedAt,
+    repo: p.repo, number: p.number, title: p.title, url: p.url, author: p.author, ...(p.authorName ? { authorName: p.authorName } : {}), base: p.base, updatedAt: p.updatedAt,
     ...(Number.isFinite(opened) ? { ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
     youAsked, ...(isHandsOff(p.repo, p.author, handsOff) && !youAsked ? { handsOff: true } : {}),
     review: reviewOf(p.decision), unresolved: p.unresolved, copilotThreads: p.copilotThreads,

@@ -16,7 +16,7 @@ export const OTHERS_CACHE = '.now-others-prs.json';
 
 /** One open teammate PR, as stored. Logins are GitHub's own; nothing here is free text from a comment. */
 export interface OtherPr {
-  repo: string; number: number; title: string; url: string; author: string; base: string; head: string;
+  repo: string; number: number; title: string; url: string; author: string; authorName?: string; base: string; head: string;
   createdAt: string; updatedAt: string;
   /** Logins of users asked to review (teams are not listed). */
   requested: string[];
@@ -28,7 +28,7 @@ export interface OtherPr {
 export interface OthersCache { fetchedAt: Date | null; failure?: string; prs: OtherPr[] }
 export interface OthersScope { owners: readonly string[]; selfRepos: readonly string[]; self: string }
 
-interface Login { login?: string; __typename?: string }
+interface Login { login?: string; __typename?: string; name?: string | null }
 interface Node {
   number?: number; title?: string; url?: string; isDraft?: boolean; createdAt?: string; updatedAt?: string; baseRefName?: string; headRefName?: string;
   reviewDecision?: string | null; author?: Login | null; repository?: { nameWithOwner?: string };
@@ -43,7 +43,7 @@ export function othersSearch(owners: readonly string[]): string | null {
 }
 
 export const othersQuery = (search: string): string => `query($after: String) { search(query: "${search}", type: ISSUE, first: 50, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest {
-  number title url isDraft createdAt updatedAt baseRefName headRefName reviewDecision author { login __typename } repository { nameWithOwner }
+  number title url isDraft createdAt updatedAt baseRefName headRefName reviewDecision author { login __typename ... on User { name } } repository { nameWithOwner }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
   reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login __typename } } } } }
 } } } }`;
@@ -62,7 +62,7 @@ export function reduceOthers(nodes: readonly Node[], scope: OthersScope): OtherP
     if (!scope.owners.some((o) => o.toLowerCase() === repo.split('/')[0]?.toLowerCase())) continue;
     const open = (n.reviewThreads?.nodes ?? []).filter((t) => t && t.isResolved === false);
     out.push({
-      repo, number: n.number, title: n.title ?? '', url: n.url, author, base: n.baseRefName ?? '', head: n.headRefName ?? '',
+      repo, number: n.number, title: n.title ?? '', url: n.url, author, ...(n.author?.name?.trim() ? { authorName: n.author.name.trim().slice(0, 80) } : {}), base: n.baseRefName ?? '', head: n.headRefName ?? '',
       createdAt: n.createdAt ?? '', updatedAt: n.updatedAt ?? n.createdAt ?? '',
       requested: (n.reviewRequests?.nodes ?? []).map((r) => r?.requestedReviewer?.login).filter((l): l is string => !!l),
       decision: n.reviewDecision ?? null, unresolved: open.length, copilotThreads: open.filter((t) => isCopilot(t?.comments?.nodes?.[0]?.author)).length,
@@ -80,7 +80,7 @@ export function fetchOthers(scope: OthersScope, run?: Run): OtherPr[] {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isOther = (v: unknown): v is OtherPr => isObj(v)
   && ['repo', 'title', 'url', 'author', 'base', 'head', 'createdAt', 'updatedAt'].every((k) => typeof v[k] === 'string')
-  && typeof v.number === 'number' && Number.isSafeInteger(v.number) && typeof v.unresolved === 'number' && typeof v.copilotThreads === 'number'
+  && (v.authorName === undefined || typeof v.authorName === 'string') && typeof v.number === 'number' && Number.isSafeInteger(v.number) && typeof v.unresolved === 'number' && typeof v.copilotThreads === 'number'
   && (v.decision === null || typeof v.decision === 'string') && Array.isArray(v.requested) && v.requested.every((r) => typeof r === 'string');
 
 /** The cached set; null when there is no cache or it is not shaped like one (a damaged file must not crash the page). */

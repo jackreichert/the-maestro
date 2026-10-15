@@ -786,10 +786,11 @@ export class PodiumApp extends HTMLElement {
   }
 
   /** The draft queue as an element wired to the page's store, without its own load: the caller redraws on the store's changes, so a load here would loop. */
-  #queueView(match: (d: DraftRow) => boolean, empty: string, quiet: boolean): HTMLElementTagNameMap['draft-queue'] {
+  #queueView(match: (d: DraftRow) => boolean, empty: string, quiet: boolean, authorOf: (d: DraftRow) => string | undefined): HTMLElementTagNameMap['draft-queue'] {
     const el = this.#draftQueue(['review'], empty, false);
     el.match = match;
     el.quiet = quiet;
+    el.authorOf = authorOf;
     return el;
   }
 
@@ -798,7 +799,7 @@ export class PodiumApp extends HTMLElement {
     const el = h('others-prs');
     const draw = (): void => {
       el.model = this.#others.model;
-      el.drafts = { rows: this.#drafts.model.data?.drafts.filter((d) => d.source === 'review') ?? null, queue: (match, empty, quiet) => this.#queueView(match, empty, quiet) };
+      el.drafts = { rows: this.#drafts.model.data?.drafts.filter((d) => d.source === 'review') ?? null, queue: (match, empty, quiet, authorOf) => this.#queueView(match, empty, quiet, authorOf) };
     };
     draw();
     const stops: Array<() => void> = [];

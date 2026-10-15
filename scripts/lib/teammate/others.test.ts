@@ -23,6 +23,11 @@ test('the search is scoped to the owners and never runs without one', () => {
   assert.match(othersSearch(['acme', 'beta']) ?? '', /^is:pr is:open draft:false archived:false -author:@me user:acme user:beta$/);
 });
 
+test('the author\'s display name is kept when GitHub gives one, and a blank one is not', () => {
+  const named = reduceOthers([node({ author: { login: 'pat-fake', __typename: 'User', name: '  Pat Example ' } }), node({ number: 2, author: { login: 'kim-fake', __typename: 'User', name: ' ' } })] as never, SCOPE);
+  assert.deepEqual(named.map((p) => [p.author, p.authorName]), [['pat-fake', 'Pat Example'], ['kim-fake', undefined]]);
+});
+
 test('own PRs, bots, drafts, self-review repos and other owners are left out; newest activity leads', () => {
   const out = reduceOthers([
     node({ number: 1 }),

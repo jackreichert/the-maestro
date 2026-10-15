@@ -7,7 +7,7 @@ import type { OthersPrRow } from './types.ts';
 import type { OthersPrsModel } from './others-prs-store.ts';
 
 /** What the row needs from the draft queue: the waiting review drafts, and a way to draw the existing queue for some of them. */
-export interface OthersDrafts { rows: DraftRow[] | null; queue(match: (d: DraftRow) => boolean, empty: string, quiet: boolean): Node }
+export interface OthersDrafts { rows: DraftRow[] | null; queue(match: (d: DraftRow) => boolean, empty: string, quiet: boolean, authorOf: (d: DraftRow) => string | undefined): Node }
 
 const CSS = `${BASE_CSS}${UI_CSS}
   :host { display: block; }
@@ -23,6 +23,8 @@ const CSS = `${BASE_CSS}${UI_CSS}
 `;
 
 const key = (repo: string, n: number): string => `${repo}#${n}`;
+/** The author's name where GitHub gave one, else the login. */
+const who = (p: OthersPrRow): string => p.authorName ? `${p.authorName} (${p.author})` : p.author;
 const REVIEW: Record<OthersPrRow['review'], { glyph: string; word: string; tone: string }> = {
   'review-required': { glyph: '?', word: 'Review required', tone: '' },
   approved: { glyph: '+', word: 'Approved', tone: 'good' },
@@ -61,12 +63,14 @@ export class OthersPrs extends HTMLElement {
     const byPr = new Map<string, DraftRow[]>();
     for (const r of this.#drafts?.rows ?? []) byPr.set(key(r.repo, r.pr), [...(byPr.get(key(r.repo, r.pr)) ?? []), r]);
     const listed = new Set(d.prs.map((p) => key(p.repo, p.number)));
+    const names = new Map(d.prs.map((p) => [key(p.repo, p.number), who(p)] as const));
+    const authorOf = (x: DraftRow): string | undefined => x.author ?? names.get(key(x.repo, x.pr));
     const when = d.prData.fetchedAt ? `List read ${ago(d.prData.fetchedAt, d.generatedAt)} ago${d.prData.stale ? ' (older than expected)' : ''}.` : 'The list has not been read yet. It fills in when the next page refresh runs.';
     const hasOrphans = [...byPr].some(([k, rows]) => !listed.has(k) && rows.some(waiting));
     this.#root.replaceChildren(
       this.#statusLine(`${d.total} open ${d.total === 1 ? 'PR' : 'PRs'} by teammates. ${when}${d.prData.failure ? ` The last read failed (${d.prData.failure}); this is the last good list.` : ''}`, !!d.prData.failure),
       d.prs.length ? h('ul', { class: 'prs', role: 'list', 'aria-label': 'Open teammate PRs' }, ...d.prs.map((p) => this.#row(p, byPr.get(key(p.repo, p.number)) ?? []))) : h('p', { class: 'empty' }, 'No teammate PR is open.'),
-      ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false)] : []));
+      ...(this.#drafts ? [...(hasOrphans ? [h('h3', { class: 'orphans' }, 'Drafts on PRs not listed above')] : []), this.#drafts.queue((x) => !listed.has(key(x.repo, x.pr)), '', false, authorOf)] : []));
   }
 
   /** One live region kept across redraws, its text set only when it changes, so a screen reader hears a change and not every redraw. */
@@ -85,9 +89,9 @@ export class OthersPrs extends HTMLElement {
       ? h('span', { class: 'chip good' }, h('span', { 'aria-hidden': 'true' }, '> '), `Draft ready${open.length > 1 ? ` (${open.length})` : ''}`)
       : h('span', { class: 'chip' }, 'No draft yet');
     return h('li', { class: 'pr', 'data-pr': ref },
-      h('h3', {}, link ? h('a', { ...link, class: 'ref' }, ref) : h('span', { class: 'ref' }, ref), p.title),
+      h('h3', {}, link ? h('a', { ...link, class: 'ref' }, ref) : h('span', { class: 'ref' }, ref), h('span', { class: 'by' }, `by ${who(p)} `), p.title),
       h('div', { class: 'meta' },
-        h('span', {}, `Author ${p.author}`), h('span', {}, `Into ${p.base || 'unknown'}`),
+        h('span', {}, `Into ${p.base || 'unknown'}`),
         h('span', {}, `Updated ${ago(p.updatedAt, this.#now) || 'at an unknown time'}${ago(p.updatedAt, this.#now) ? ' ago' : ''}`),
         ...(p.ageDays !== undefined ? [h('span', {}, `Open ${p.ageDays} d`)] : [])),
       h('div', { class: 'chips' },
@@ -97,7 +101,7 @@ export class OthersPrs extends HTMLElement {
         h('span', { class: 'chip' }, `Threads open: ${p.unresolved}`),
         ...(p.handsOff ? [h('span', { class: 'chip warn' }, h('span', { 'aria-hidden': 'true' }, '- '), 'Hands off: the repo owner\'s call')] : []),
         draftChip),
-      ...(open.length && this.#drafts ? [this.#drafts.queue((x) => x.repo === p.repo && x.pr === p.number, '', true)] : []));
+      ...(open.length && this.#drafts ? [this.#drafts.queue((x) => x.repo === p.repo && x.pr === p.number, '', true, (x) => x.author ?? who(p))] : []));
   }
 }
 
