@@ -33,8 +33,8 @@ import { liveLoopHealth } from './lib/loop-health-live.ts';
 import { LABEL } from './lib/supervisor-state.ts';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
-/** The watches a session needs, keyed by the id used when one is missing. retro-due is here so the periodic retro review never depends on someone remembering to register it. */
-export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }, { id: 'retro-due', type: 'retro-due' }, { id: 'whats-next', type: 'whats-next' }] as const;
+/** The watches a session needs, keyed by the id used when one is missing. retro-due and repost-nudge are here so the periodic retro review and the repost nudge never depend on someone remembering to register it. */
+export const NEEDED = [{ id: 'status-watch', type: 'status-watch' }, { id: 'status-refresh', type: 'status-refresh' }, { id: 'retro-due', type: 'retro-due' }, { id: 'repost-nudge', type: 'repost-nudge' }, { id: 'whats-next', type: 'whats-next' }] as const;
 /** The refresh ticks every 10 minutes; a page this old has had at least one missed tick. */
 export const STALE_MS = 15 * 60_000;
 
