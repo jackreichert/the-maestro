@@ -120,5 +120,6 @@ test('arya-agentic is hands off: no review is drafted there unless the user is a
   assert.equal(selectWaiting([node(agentic)], O).length, 0);
   assert.equal(selectWaiting([node({ ...agentic, reviewRequests: { nodes: [{ requestedReviewer: { login: 'someone-else' } }] } })], O).length, 0);
   assert.equal(selectWaiting([node({ ...agentic, reviewRequests: { nodes: [{ requestedReviewer: { login: 'ME' } }] } })], O).length, 1);
+  assert.equal(selectWaiting([node({ ...agentic, author: { login: 'AceHand', __typename: 'User' } })], O).length, 1, 'the owner\'s own PRs there are in scope');
   assert.equal(selectWaiting([node()], O).length, 1, 'a repo where the user was not asked is still reviewed');
 });

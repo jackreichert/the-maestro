@@ -39,8 +39,8 @@ test('no cache yet reads as an empty, stale list; a failed read and an old list 
   assert.deepEqual(old.prData, { fetchedAt: '2026-10-15T11:00:00.000Z', stale: true, failure: 'rate limited' });
 });
 
-test('an arya-agentic PR is listed and marked hands off unless you were asked to review it', () => {
-  const out = buildOthersPrs(opts(cacheWith([pr(1, { repo: 'acme/arya-agentic' }), pr(2, { repo: 'acme/arya-agentic', requested: ['me-fake'] }), pr(3)])), NOW);
+test('an arya-agentic PR is listed and marked hands off unless you were asked or the owner wrote it', () => {
+  const out = buildOthersPrs(opts(cacheWith([pr(1, { repo: 'acme/arya-agentic' }), pr(2, { repo: 'acme/arya-agentic', requested: ['me-fake'] }), pr(3, { repo: 'acme/arya-agentic', author: 'acehand' })])), NOW);
   const by = new Map(out.prs.map((p) => [p.number, p]));
   assert.deepEqual([by.get(1)?.handsOff, by.get(2)?.handsOff, by.get(3)?.handsOff], [true, undefined, undefined]);
   assert.equal(out.total, 3);

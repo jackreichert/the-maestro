@@ -22,7 +22,7 @@ function row(p: OtherPr, self: string, now: Date): OthersPrRow {
   return {
     repo: p.repo, number: p.number, title: p.title, url: p.url, author: p.author, base: p.base, updatedAt: p.updatedAt,
     ...(Number.isFinite(opened) ? { ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
-    youAsked, ...(isHandsOff(p.repo) && !youAsked ? { handsOff: true } : {}),
+    youAsked, ...(isHandsOff(p.repo, p.author) && !youAsked ? { handsOff: true } : {}),
     review: reviewOf(p.decision), unresolved: p.unresolved, copilotThreads: p.copilotThreads,
   };
 }
