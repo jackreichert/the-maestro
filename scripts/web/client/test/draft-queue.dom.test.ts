@@ -117,3 +117,14 @@ test('on the Open PRs tab the queue shows only replies, one section per PR, each
   assert.match(root.textContent ?? '', /Reply/);
   cleanup();
 });
+
+test('match limits the waiting drafts shown, and quiet leaves out the Decided list and an empty line', async () => {
+  const drafts = [row(), row({ id: 'dr-0000000b', pr: 8, prUrl: 'https://github.com/acme/widgets/pull/8' }), row({ id: 'dr-0000000c', state: 'rejected', text: 'Old one.' })];
+  const { root, cleanup } = await mount<El & { match: (d: DraftRow) => boolean; quiet: boolean }>('../src/draft-queue.ts', 'draft-queue', { model: model(drafts), actions: noop, sources: ['review'], match: (d: DraftRow) => d.pr === 8, quiet: true });
+  assert.deepEqual([...root.querySelectorAll('li.draft')].map((l) => l.getAttribute('data-id')), ['dr-0000000b']);
+  assert.equal(root.querySelector('details.finished'), null);
+  cleanup();
+  const none = await mount<El & { match: (d: DraftRow) => boolean; quiet: boolean }>('../src/draft-queue.ts', 'draft-queue', { model: model(drafts), actions: noop, sources: ['review'], match: () => false, emptyText: '', quiet: true });
+  assert.equal(none.root.querySelector('.empty'), null);
+  none.cleanup();
+});

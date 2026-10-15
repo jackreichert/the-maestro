@@ -57,12 +57,18 @@ export class DraftQueue extends HTMLElement {
   #sources: ReadonlyArray<DraftRow['source']> = ['review', 'reply'];
   #actions: DraftActions | null = null;
   #empty = 'Nothing is waiting for your approval.';
+  #match: (d: DraftRow) => boolean = () => true;
+  #quiet = false;
 
   constructor() { super(); this.#root = shadow(this, CSS); }
 
   set model(m: DraftsModel | null) { this.#model = m; if (this.isConnected) this.#render(); }
   set sources(s: ReadonlyArray<DraftRow['source']>) { this.#sources = s; }
   set actions(a: DraftActions) { this.#actions = a; }
+  /** Which waiting drafts this instance shows (default all). Decided drafts are not filtered. */
+  set match(f: (d: DraftRow) => boolean) { this.#match = f; }
+  /** Leave out the Decided list: for a card shown inside a PR's own row. */
+  set quiet(q: boolean) { this.#quiet = q; }
   set emptyText(t: string) { this.#empty = t; }
   connectedCallback(): void { this.#render(); }
 
@@ -71,12 +77,12 @@ export class DraftQueue extends HTMLElement {
     if (!m || !m.loaded) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'Loading drafts.')); return; }
     if (!m.data) { this.#root.replaceChildren(h('p', { class: 'empty' }, 'The draft queue is not available from this page.')); return; }
     const mine = m.data.drafts.filter((d) => this.#sources.includes(d.source));
-    const open = mine.filter(waiting);
-    const decided = mine.filter((d) => !waiting(d));
+    const open = mine.filter((d) => waiting(d) && this.#match(d));
+    const decided = this.#quiet ? [] : mine.filter((d) => !waiting(d));
     const groups = new Map<string, DraftRow[]>();
     for (const d of open) groups.set(groupKey(d), [...(groups.get(groupKey(d)) ?? []), d]);
     this.#root.replaceChildren(
-      ...(groups.size === 0 ? [h('p', { class: 'empty' }, this.#empty)] : [...groups].map(([key, ds]) => this.#group(key, ds, m))),
+      ...(groups.size === 0 ? (this.#empty ? [h('p', { class: 'empty' }, this.#empty)] : []) : [...groups].map(([key, ds]) => this.#group(key, ds, m))),
       ...(decided.length ? [h('details', { class: 'finished' }, h('summary', {}, `Decided (${decided.length})`), h('ul', { class: 'drafts', role: 'list' }, ...decided.map((d) => this.#decided(d))))] : []));
   }
 
