@@ -40,8 +40,8 @@ test('no cache yet reads as an empty, stale list; a failed read and an old list 
 });
 
 test('a hands-off repo\'s PR is listed and marked unless you were asked or its owner wrote it', () => {
-  const o = { ...opts(cacheWith([pr(1, { repo: 'acme/guarded' }), pr(2, { repo: 'acme/guarded', requested: ['me-fake'] }), pr(3, { repo: 'acme/guarded', author: 'Owner-Fake' }), pr(4)])), handsOff: { repos: ['*/guarded'], owner: 'owner-fake' } };
+  const o = { ...opts(cacheWith([pr(1, { repo: 'acme/guarded' }), pr(2, { repo: 'acme/guarded', requested: ['me-fake'] }), pr(3, { repo: 'acme/guarded', author: 'Owner-Fake' }), pr(4)])), guard: { globs: ['*/guarded'], login: 'owner-fake' } };
   const by = new Map(buildOthersPrs(o, NOW).prs.map((p) => [p.number, p]));
   assert.deepEqual([1, 2, 3, 4].map((n) => by.get(n)?.handsOff), [true, undefined, undefined, undefined]);
-  assert.equal(buildOthersPrs({ ...o, handsOff: undefined }, NOW).prs.some((p) => p.handsOff), false, 'nothing configured, nothing marked');
+  assert.equal(buildOthersPrs({ ...o, guard: undefined }, NOW).prs.some((p) => p.handsOff), false, 'nothing configured, nothing marked');
 });

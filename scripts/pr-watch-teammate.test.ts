@@ -116,7 +116,7 @@ test('with no minutes configured pr-watch never runs the teammate search', () =>
 });
 
 test('a hands-off repo is not reviewed unless the user is a requested reviewer or the owner wrote it; every other repo is open to review', () => {
-  const o = { ...O, handsOff: { repos: ['*/guarded'], owner: 'owner-fake' } };
+  const o = { ...O, guard: { globs: ['*/guarded'], login: 'owner-fake' } };
   const guarded = { repository: { nameWithOwner: 'acme/guarded' } };
   assert.equal(selectWaiting([node(guarded)], o).length, 0);
   assert.equal(selectWaiting([node({ ...guarded, reviewRequests: { nodes: [{ requestedReviewer: { login: 'someone-else' } }] } })], o).length, 0);

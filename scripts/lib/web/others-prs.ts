@@ -4,26 +4,26 @@
  * so a changed `self_review_repos` takes effect before the next rebuild. The review-draft status is joined by the page from the draft queue, which changes on its own.
  */
 import { readOthersCache } from '../teammate/others.ts';
-import type { HandsOff } from '../teammate/wait.ts';
+import type { Guard } from '../teammate/wait.ts';
 import type { OtherPr } from '../teammate/others.ts';
-import { isHandsOff, NO_HANDS_OFF } from '../teammate/wait.ts';
+import { isGuard, NO_GUARD } from '../teammate/wait.ts';
 import { isSelfReview } from '../self-review.ts';
 import { PR_STALE_MS } from './state.ts';
 import type { OthersPrRow, OthersPrsData } from '../../web/client/src/types.ts';
 
 const DAY_MS = 86_400_000;
 
-export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; handsOff?: HandsOff }
+export interface OthersScopeOptions { statusDir: string; owners: readonly string[]; selfRepos: readonly string[]; self: string; guard?: Guard }
 
 const reviewOf = (decision: string | null): OthersPrRow['review'] => (decision === 'APPROVED' ? 'approved' : decision === 'CHANGES_REQUESTED' ? 'changes-requested' : 'review-required');
 
-function row(p: OtherPr, self: string, handsOff: HandsOff, now: Date): OthersPrRow {
+function row(p: OtherPr, self: string, guard: Guard, now: Date): OthersPrRow {
   const opened = Date.parse(p.createdAt);
   const youAsked = self !== '' && p.requested.some((r) => r.toLowerCase() === self.toLowerCase());
   return {
     repo: p.repo, number: p.number, title: p.title, url: p.url, author: p.author, ...(p.authorName ? { authorName: p.authorName } : {}), base: p.base, updatedAt: p.updatedAt,
     ...(Number.isFinite(opened) ? { ageDays: Math.max(0, Math.floor((now.getTime() - opened) / DAY_MS)) } : {}),
-    youAsked, ...(isHandsOff(p.repo, p.author, handsOff) && !youAsked ? { handsOff: true } : {}),
+    youAsked, ...(isGuard(p.repo, p.author, guard) && !youAsked ? { handsOff: true } : {}),
     review: reviewOf(p.decision), unresolved: p.unresolved, copilotThreads: p.copilotThreads,
   };
 }
@@ -40,6 +40,6 @@ export function buildOthersPrs(o: OthersScopeOptions, now: Date): OthersPrsData 
   return {
     generatedAt: now.toISOString(),
     prData: { fetchedAt: fetchedAt ? fetchedAt.toISOString() : null, stale, ...(cache?.failure ? { failure: cache.failure } : {}) },
-    total: kept.length, prs: kept.map((p) => row(p, o.self, o.handsOff ?? NO_HANDS_OFF, now)),
+    total: kept.length, prs: kept.map((p) => row(p, o.self, o.guard ?? NO_GUARD, now)),
   };
 }

@@ -377,7 +377,7 @@ function followTeammates(ctx: Ctx, self: string, prev: Snapshot | null, silent: 
   try {
     const nodes = searchAllPages<WaitNode>(teammateQuery(search), ctx.run);
     const now = ctx.now ?? Date.now();
-    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS, handsOff: { repos: HANDS_OFF_REPOS, owner: HANDS_OFF_OWNER } });
+    const waiting = selectWaiting(nodes, { self, minutes, now, selfRepos: ctx.config?.selfReviewRepos ?? SELF_REVIEW_REPOS, guard: { globs: HANDS_OFF_REPOS, login: HANDS_OFF_OWNER } });
     return advanceHelper(prev?.helper, waiting, silent, now, minutes);
   } catch (e) {
     console.error(`teammate helper search failed: ${firstLine(e instanceof Error ? e.message : e)}`);

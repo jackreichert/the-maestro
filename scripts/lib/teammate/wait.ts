@@ -6,10 +6,10 @@
 import { isSelfReview } from '../self-review.ts';
 
 /** Which repos are hands off (`hands_off_repos`, `owner/name` globs) and whose own PRs there stay in scope (`hands_off_owner`, a login). */
-export const NO_HANDS_OFF: HandsOff = { repos: [], owner: '' };
-export interface HandsOff { repos: readonly string[]; owner: string }
+export const NO_GUARD: Guard = { globs: [], login: '' };
+export interface Guard { globs: readonly string[]; login: string }
 /** Another person's PR in a hands-off repo: not reviewed unless the user is asked. The owner's own PRs there are in scope. Nothing is hands off when no repo is configured. */
-export const isHandsOff = (repo: string, author: string, h: HandsOff): boolean => h.repos.length > 0 && isSelfReview(repo, h.repos) && author.toLowerCase() !== h.owner.toLowerCase();
+export const isGuard = (repo: string, author: string, h: Guard): boolean => h.globs.length > 0 && isSelfReview(repo, h.globs) && author.toLowerCase() !== h.login.toLowerCase();
 
 export interface WaitNode {
   number: number; url: string; isDraft: boolean; headRefOid: string; headRefName?: string; baseRefName?: string; createdAt?: string;
@@ -21,7 +21,7 @@ export interface WaitNode {
   timelineItems?: { nodes: { createdAt?: string }[] };
 }
 export interface Waiting { key: string; repo: string; number: number; url: string; head: string; headRef: string; base: string; waitedMin: number }
-export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[]; handsOff?: HandsOff }
+export interface WaitOptions { self: string; minutes: number; now: number; selfRepos: readonly string[]; guard?: Guard }
 
 const isBot = (a: { login?: string; __typename?: string } | null | undefined): boolean => a?.__typename === 'Bot' || /\[bot\]$/i.test(a?.login ?? '');
 
@@ -38,7 +38,7 @@ export function selectWaiting(nodes: readonly WaitNode[], o: WaitOptions): Waiti
     const author = n.author?.login;
     if (n.isDraft || !author || author.toLowerCase() === self || isBot(n.author)) continue;
     if (isSelfReview(n.repository.nameWithOwner, o.selfRepos)) continue;
-    if (isHandsOff(n.repository.nameWithOwner, author, o.handsOff ?? NO_HANDS_OFF) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
+    if (isGuard(n.repository.nameWithOwner, author, o.guard ?? NO_GUARD) && !(n.reviewRequests?.nodes ?? []).some((r) => (r?.requestedReviewer?.login ?? '').toLowerCase() === self)) continue;
     if (n.reviewDecision === 'APPROVED' || n.reviewDecision === 'CHANGES_REQUESTED') continue;
     const reviews = (n.reviews?.nodes ?? []).filter((r) => r.state !== 'PENDING');
     if (reviews.some((r) => (r.author?.login ?? '').toLowerCase() === self || !isBot(r.author))) continue;
