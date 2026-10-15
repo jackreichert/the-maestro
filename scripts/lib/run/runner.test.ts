@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { homedir, tmpdir } from 'node:os';
-import { createRunner, scrubbedEnv } from './runner.ts';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createRunner, sandboxAvailable, scrubbedEnv } from './runner.ts';
 import type { RunView } from './runner.ts';
 
 const FAKE_TOKEN = `ghp_${'a1B2'.repeat(9)}`;
@@ -13,7 +15,7 @@ async function finished(r: ReturnType<typeof createRunner>, id: string): Promise
   throw new Error('run did not finish');
 }
 const text = (v: RunView): string => v.chunks.map((c) => c.text).join('');
-const make = (extra: Partial<Parameters<typeof createRunner>[0]> = {}) => createRunner({ home: tmpdir(), shell: '/bin/sh', ...extra });
+const make = (extra: Partial<Parameters<typeof createRunner>[0]> = {}) => createRunner({ home: tmpdir(), shell: '/bin/sh', ...extra });   // the sandbox is on wherever it exists, so every test below also runs through it
 
 test('runs a shell block in the given home directory and reports the exit code and duration', async () => {
   const done: unknown[] = [];
@@ -93,7 +95,7 @@ test('a missing program fails the run instead of throwing', async () => {
   const r = make();
   const s = r.start('k', meta, { kind: 'argv', argv: ['/no/such/program'], cwd: tmpdir() }, 2000);
   const v = await finished(r, s.ok ? s.runId : '');
-  assert.equal(v.status, 'failed');
+  assert.ok(v.status === 'failed' || v.exitCode !== 0, 'inside the sandbox the launcher reports the missing program as a non-zero exit');
 });
 
 test('killAll force-kills a child that ignores SIGTERM', async () => {
@@ -133,4 +135,18 @@ test('a child left behind in the run group is killed when the run ends', async (
   const pid = Number(text(v).trim());
   await sleep(150);
   assert.throws(() => process.kill(pid, 0), /ESRCH/);
+});
+
+test('the sandbox denies reading secret files however a glob or expansion names them, and still reads templates', { skip: !sandboxAvailable() }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sandbox-'));
+  const fake = (name: string, body: string): void => writeFileSync(join(dir, name), body);
+  fake('.env', 'FAKE_ONE=1'); fake('.env.local', 'FAKE_TWO=2'); fake('ssm-params-x.json', '{"fake":3}'); fake('.env.example', 'TEMPLATE=ok'); fake('plain.txt', 'PLAIN=ok');
+  const r = createRunner({ home: dir, shell: '/bin/sh', sandbox: true });
+  for (const cmd of ['cat *env(D) 2>&1 || true', `f=.; cat "\${f}env" 2>&1; cat ./.e* 2>&1; cat .env.local 2>&1; cat ssm-* 2>&1`, 'cat .env 2>&1']) {
+    const s = r.start(`k${cmd.length}`, meta, { kind: 'shell', command: cmd }, 5000);
+    const v = await finished(r, s.ok ? s.runId : '');
+    assert.ok(!/FAKE_ONE|FAKE_TWO|"fake"/.test(text(v)), cmd);
+  }
+  const ok = r.start('ok', meta, { kind: 'shell', command: 'cat .env.example plain.txt' }, 5000);
+  assert.equal(text(await finished(r, ok.ok ? ok.runId : '')), 'TEMPLATE=okPLAIN=ok');
 });

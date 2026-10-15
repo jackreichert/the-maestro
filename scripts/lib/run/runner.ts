@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { withhold } from '../withhold.ts';
 
 export type Spec = { kind: 'shell'; command: string } | { kind: 'argv'; argv: string[]; cwd: string };
@@ -33,6 +34,8 @@ export interface RunnerOptions {
   now?: () => number;
   /** The shell for a shell block (default /bin/zsh). Tests pass /bin/sh. */
   shell?: string;
+  /** Run inside the macOS file-read sandbox (default: when available). Tests turn it off for the commands that need nothing from it. */
+  sandbox?: boolean;
   /** Called once when a run ends, with what the ledger row needs: never the output. */
   onDone?: (r: { runId: string; key: string; source: string; target: string; sha256: string; status: Status; exitCode: number | null; durationMs: number }) => void;
   log?: (message: string) => void;
@@ -45,12 +48,28 @@ export function scrubbedEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   return Object.fromEntries(ENV_ALLOW.flatMap((k) => (source[k] === undefined ? [] : [[k, source[k]]])));
 }
 
+const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+/**
+ * The runtime floor under the text checks: on macOS the child cannot read a secret file at all, whatever glob or expansion names it
+ * (`*env(D)`, `${f}env`). Templates stay readable. Later rules win in a sandbox profile, so the allow follows the deny.
+ */
+export const SANDBOX_PROFILE = '(version 1)(allow default)(deny file-read* (regex #"/[^/]*\\.env$" #"/\\.env\\.[^/]*$" #"/ssm-[^/]*\\.json$"))(allow file-read* (regex #"\\.(example|sample|template)$"))';
+/** True where the sandbox tool exists (macOS). Elsewhere only the text checks and the scrubbed environment apply. */
+export const sandboxAvailable = (): boolean => process.platform === 'darwin' && existsSync(SANDBOX_EXEC);
+
 export type StartResult = { ok: true; runId: string } | { ok: false; code: 'busy' | 'full' | 'spawn' };
 
 export function createRunner(o: RunnerOptions) {
   const now = o.now ?? Date.now;
   const runs = new Map<string, Run>();
   const log = o.log ?? (() => {});
+
+  const sandboxed = o.sandbox ?? sandboxAvailable();
+  /** Spawns detached, no shell of ours, inside the file-read sandbox when the platform has one. */
+  const launch = (cmd: string, args: string[], at: { cwd: string; env: NodeJS.ProcessEnv }): ChildProcess =>
+    sandboxed
+      ? spawn(SANDBOX_EXEC, ['-p', SANDBOX_PROFILE, cmd, ...args], { ...at, detached: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] })
+      : spawn(cmd, args, { ...at, detached: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
 
   const active = (): Run[] => [...runs.values()].filter((r) => r.status === 'running');
 
@@ -62,8 +81,8 @@ export function createRunner(o: RunnerOptions) {
     try {
       const env = o.env ?? scrubbedEnv();
       child = spec.kind === 'shell'
-        ? spawn(o.shell ?? '/bin/zsh', ['-c', spec.command], { cwd: o.home, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
-        : spawn(spec.argv[0]!, spec.argv.slice(1), { cwd: spec.cwd, env, detached: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+        ? launch(o.shell ?? '/bin/zsh', ['-c', spec.command], { cwd: o.home, env })
+        : launch(spec.argv[0]!, spec.argv.slice(1), { cwd: spec.cwd, env });
     } catch (e) {
       log(`could not start a run: ${e instanceof Error ? e.message.split('\n')[0] : 'error'}`);
       return { ok: false, code: 'spawn' };
