@@ -2,11 +2,11 @@
  * Commenting on a blocked item from the page: the one POST route `POST /api/blocked/comment`, beside the answer route and written the same way.
  *
  * Two modes, both from the Blocked list:
- *   `comment`  records Jack's comment on the item (a non-item `comment` row: `of`, `by: Jack`, `source: podium`); the item stays blocked.
+ *   `comment`  records the comment on the item ; the item stays blocked.
  *   `unblock`  records the same comment, closes the block with a `resolved` row (the step `journal.ts resolve <id>` takes, which the gate report
  *              tells you to run), and opens a queued `wip` row for the same work, as `journal.ts queue "<text>"` would. That queued row is what
  *              the `chain-next` pickup (`queue-moving`) and the board pick up, and its text ends with the comment, so whoever starts it, and the
- *              brief written from it, carries Jack's words. The three rows are written in one append, so a crash cannot leave a closed block with
+ *              brief written from it, carries the comment. The three rows are written in one append, so a crash cannot leave a closed block with
  *              no queued work behind it.
  * guard.ts and the token check in priorities-write.ts run first; this module checks the body's shape and the item itself. Every refusal is data.
  * Idempotent: the same comment on the same item is recorded once. A repeated Unblock with the same comment answers ok with `same: true` and the
@@ -18,6 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { fold, isOpen } from '../ledger-core.ts';
 import type { LedgerItem, LedgerRow } from '../ledger-core.ts';
 import { openStore } from '../journal/store.ts';
+import { PODIUM_AUTHOR } from '../../local-config.ts';
 import { scanText } from '../secret-scan.ts';
 import { MAX_BODY_BYTES, sendError, sendJson } from './guard.ts';
 import { readBody, tokenOk, TOKEN_HEADER } from './priorities-write.ts';
@@ -27,7 +28,7 @@ export const BLOCKED_PATH = '/api/blocked/comment';
 /** The longest comment, in characters. Four bytes each still fits the guard's body limit. */
 export const MAX_COMMENT = 400;
 /** Who the rows say wrote them, and where from. */
-export const BY = 'Jack';
+export const BY = PODIUM_AUTHOR;
 export const SOURCE = 'podium';
 const ID = /^[a-z0-9]{4,6}$/;
 /** C0 and C1 controls and the bidi overrides: none belong in a one-line comment that later lands in briefs and terminal output. */

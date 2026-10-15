@@ -14,6 +14,7 @@ import { createWebServer } from './server.ts';
 import { readBoard } from './api.ts';
 import type { WebConfig } from './api.ts';
 import { BLOCKED_PATH, MAX_COMMENT, parseUnblock } from './blocked-write.ts';
+import { PODIUM_AUTHOR } from '../../local-config.ts';
 import { fold, isQueued } from '../ledger-core.ts';
 import type { LedgerRow } from '../ledger-core.ts';
 
@@ -91,11 +92,11 @@ test('Unblock records the comment, closes the block and queues the item with the
   const added = rows(r).slice(ROWS.length);
   assert.deepEqual(added.map((x) => x.kind), ['comment', 'resolved', 'wip']);
   const [note, closer, queued] = added as [LedgerRow, LedgerRow, LedgerRow];
-  assert.deepEqual([note.of, note.by, note.source, note.text], ['bl11', 'Jack', 'podium', 'Go ahead, FAKE-9 landed']);
-  assert.deepEqual([closer.closes, closer.by, closer.source, closer.unblocked], ['bl11', 'Jack', 'podium', true]);
+  assert.deepEqual([note.of, note.by, note.source, note.text], ['bl11', PODIUM_AUTHOR, 'podium', 'Go ahead, FAKE-9 landed']);
+  assert.deepEqual([closer.closes, closer.by, closer.source, closer.unblocked], ['bl11', PODIUM_AUTHOR, 'podium', true]);
   assert.equal(queued.queued, true);
   assert.equal(queued.unblocks, 'bl11');
-  assert.equal(queued.text, 'Publish v1 -- Jack: Go ahead, FAKE-9 landed');
+  assert.equal(queued.text, `Publish v1 -- ${PODIUM_AUTHOR}: Go ahead, FAKE-9 landed`);
   assert.deepEqual([queued.stream, queued.repo, queued.ticket], ['Alpha', 'widgets', 'FAKE-1']);
   assert.equal(queued.gate, undefined, 'the gate stays on the closed block');
   assert.equal(res.json.queued, queued.id);
@@ -122,7 +123,7 @@ test('Comment only records the comment and leaves the item blocked', async () =>
   assert.equal(res.status, 200);
   const added = rows(r).slice(ROWS.length);
   assert.deepEqual(added.map((x) => x.kind), ['comment']);
-  assert.deepEqual([added[0]?.of, added[0]?.by, added[0]?.source], ['bl22', 'Jack', 'podium']);
+  assert.deepEqual([added[0]?.of, added[0]?.by, added[0]?.source], ['bl22', PODIUM_AUTHOR, 'podium']);
   assert.equal(items(r).find((i) => i.id === 'bl22')?.closedBy, null);
   assert.deepEqual(readBoard(r.web, NOW).g.blocked.map((b) => b.id), ['bl11', 'bl22']);
 });
