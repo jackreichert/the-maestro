@@ -112,10 +112,26 @@ test('carryPriorities starts each project from the container list and its own pr
   assert.match(avonlea, /- avonlea only \| Rivendell/);
   assert.match(avonlea, /- ship it \| Rivendell/);
   assert.ok(!readFileSync(join(prioritiesDir(v, 'example-container'), '2026-10-12.md'), 'utf8').includes('ship it'), 'the container project gets only its own (stream-less) item');
-  // A second run, and a list a person confirmed first, are left alone.
-  writeProjectPriorities(v, 'avonlea-api', '2026-10-12', file({ today: [{ text: 'confirmed' }] }));
+  // A second run, and a list a person confirmed first (its Carried section already filled), are left alone.
+  writeProjectPriorities(v, 'avonlea-api', '2026-10-12', file({ today: [{ text: 'confirmed' }], carriedFrom: '2026-10-09', carried: [{ item: { text: 'ship it', stream: 'Rivendell' }, status: '' }] }));
   assert.deepEqual(carryPriorities({ ...base, today: '2026-10-12', container }).written, []);
   assert.match(readFileSync(join(prioritiesDir(v, 'avonlea-api'), '2026-10-12.md'), 'utf8'), /- confirmed/);
+});
+
+test('carryPriorities fills the empty Carried section of a day `priorities set` wrote ahead of the carry, and keeps its Today', () => {
+  const v = vaultWith('avonlea-api', 'example-container');
+  const base = { vault: v, today: '2026-10-12', rows: [] as LedgerRow[], registry: null, homes, repoStreams: {}, containerProject: 'example-container' };
+  // Friday's list, then `priorities set --date 2026-10-12` on Friday: the file exists with a Today and no Carried section.
+  writeProjectPriorities(v, 'avonlea-api', '2026-10-09', file({ date: '2026-10-09', today: [{ text: 'friday item', stream: 'Rivendell' }] }));
+  assert.equal(writeProjectPriorities(v, 'avonlea-api', '2026-10-09', file({ today: [{ text: 'monday plan', stream: 'Rivendell' }] })), 'written');
+  const out = carryPriorities({ ...base, container: null });
+  assert.deepEqual(out, { written: ['avonlea-api'], problems: [] });
+  const parsed = parseProjectFile(readFileSync(join(prioritiesDir(v, 'avonlea-api'), '2026-10-12.md'), 'utf8'));
+  assert.deepEqual(parsed.today, [{ text: 'monday plan', stream: 'Rivendell' }], 'the confirmed Today is untouched');
+  assert.deepEqual(parsed.carried.map((c) => c.item), [{ text: 'friday item', stream: 'Rivendell' }]);
+  assert.equal(parsed.carriedFrom, '2026-10-09');
+  assert.equal(parsed.writtenBy, 'priorities set');
+  assert.deepEqual(carryPriorities({ ...base, container: null }).written, [], 'a second run finds the section filled and leaves the file alone');
 });
 
 test('carryPriorities: a container list already dated today is today\'s list; a project with nothing to carry gets no file; a missing project folder is a problem', () => {
