@@ -510,6 +510,21 @@ export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim(
 /** The owners the helper searches: gh_org plus the plain owners in review_pool_owners. With none, it searches nothing: it is never unscoped. */
 export const TEAMMATE_REVIEW_OWNERS = [...new Set([GH_ORG, ...REVIEW_POOL_OWNERS.map((g) => g.split('/')[0] ?? '')].filter((o) => o !== '' && !o.includes('*')))];
 
+/** Repost nudge: minutes after the latest approval on one of your open PRs before the loop nudges you to repost your PRs waiting on reviewers (and the nudge also follows a teammate review draft at once). `0` turns it off. Default 60. */
+export const REPOST_NUDGE_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 60))(pick('MAESTRO_REPOST_NUDGE_MINUTES', 'repost_nudge_minutes'));
+/** Repost nudge: how many of your PRs a nudge names, 1 to 5. Default 3. */
+export const REPOST_NUDGE_COUNT = Math.min(5, positiveInt(pick('MAESTRO_REPOST_NUDGE_COUNT', 'repost_nudge_count'), 3));
+const clockTime = (raw: string, fallback: string): string => (/^([01]\d|2[0-3]):[0-5]\d$/.test(raw.trim()) ? raw.trim() : fallback);
+/** Repost nudge working hours, `HH:MM` (24 hour) in repost_nudge_tz, weekdays only. A nudge due outside them waits for the next start. Defaults 08:30 and 18:00. */
+export const REPOST_NUDGE_START = clockTime(pick('MAESTRO_REPOST_NUDGE_START', 'repost_nudge_start'), '08:30');
+export const REPOST_NUDGE_END = clockTime(pick('MAESTRO_REPOST_NUDGE_END', 'repost_nudge_end'), '18:00');
+/** Repost nudge: no nudge within this many minutes of you asking for reviews yourself (a Slack line by you with a PR link, or a review re-request by you on GitHub); it is held, not dropped. Default 60. */
+export const REPOST_NUDGE_ASKED_MINUTES = positiveInt(pick('MAESTRO_REPOST_NUDGE_ASKED_MINUTES', 'repost_nudge_asked_minutes'), 60);
+/** Repost nudge: the name your lines carry in the Slack notes (`**Sam**`), case-insensitive. Default your `gh_login`; with neither set, Slack asks are not read. */
+export const REPOST_NUDGE_AUTHOR = pick('MAESTRO_REPOST_NUDGE_AUTHOR', 'repost_nudge_author').trim() || GH_LOGIN;
+/** IANA time zone of the repost nudge's working hours. Unset or invalid means America/New_York. */
+export const REPOST_NUDGE_TZ = validZone(pick('MAESTRO_REPOST_NUDGE_TZ', 'repost_nudge_tz').trim()) || 'America/New_York';
+
 /** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. User config file only. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pickUserFile('pr_body_check_private'));
 
