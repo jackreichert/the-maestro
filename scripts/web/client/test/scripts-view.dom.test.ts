@@ -89,3 +89,20 @@ test('a catalog that cannot be loaded says so', async () => {
   assert.match(root.textContent ?? '', /Could not get permission/);
   cleanup();
 });
+
+test('editing an argument while a script runs keeps the run in view', async () => {
+  const api = { catalog: async () => ({ ok: true, value: CATALOG }), preview: async () => ({ ok: true, value: PREVIEW }), start: async () => ({ ok: true, value: 'r'.repeat(24) }), poll: async (_id: string, since: number) => ({ ok: true, value: { status: 'running', exitCode: null, durationMs: null, chunks: since === 0 ? [{ seq: 0, stream: 'out', text: 'busy\n' }] : [], next: 1, truncated: false } }), kill: async () => ({ ok: true, value: true }) } as unknown as RunApi;
+  const { root, cleanup } = await view(api);
+  (root.querySelector('article button') as HTMLButtonElement).click();
+  await wait(30);
+  (root.querySelector('run-panel')!.shadowRoot!.querySelector('button.primary') as HTMLButtonElement).click();
+  await wait(60);
+  const input = root.querySelector('input[type=text]') as HTMLInputElement;
+  input.value = 'other';
+  input.dispatchEvent(new Event('change'));
+  await wait(60);
+  const shadow = root.querySelector('run-panel')!.shadowRoot!;
+  assert.equal(shadow.querySelector('pre.out')!.textContent, 'busy\n');
+  assert.equal((shadow.querySelector('button.primary') as HTMLButtonElement).hasAttribute('disabled'), true);
+  cleanup();
+});

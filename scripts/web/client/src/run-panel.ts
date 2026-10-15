@@ -20,7 +20,8 @@ const POLL_MS = 400;
 /** What a run has shown so far, kept for the page's life: a live update rebuilds the card or the tab, and the output and the run's id must survive it. */
 interface Saved { runId: string; chunks: Chunk[]; progress: Progress | null }
 const saved = new Map<string, Saved>();
-export const runKey = (s: RunSource): string => (s.source === 'ask' ? `ask:${s.id}` : `script:${s.name}:${JSON.stringify(s.args ?? {})}`);
+/** The server allows one run per script, so the saved run is per script too: editing an argument must not hide a run that is still going. */
+export const runKey = (s: RunSource): string => (s.source === 'ask' ? `ask:${s.id}` : `script:${s.name}`);
 /** Forget every saved run (tests). */
 export const clearSavedRuns = (): void => saved.clear();
 const secs = (ms: number | null): string => `${((ms ?? 0) / 1000).toFixed(1)}s`;
