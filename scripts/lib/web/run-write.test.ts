@@ -190,14 +190,15 @@ test('one run per item at a time, and a kill ends it', async () => {
   assert.equal((await send(r, RUN_KILL_PATH, { body: { runId: first.json.runId } })).status, 409, 'nothing left to kill');
 });
 
-test('resolving the ask with the result closes it with a server-composed answer', async () => {
+test('resolving the ask with the result closes it with a server-composed answer without output', async () => {
   const r = await rig('resolve', { aa11: 'echo result-line' });
   const early = await send(r, RUN_RESOLVE_PATH, { body: { runId: '0'.repeat(24) } });
   assert.equal(early.status, 404);
   const { start } = await runToEnd(r);
   const res = await send(r, RUN_RESOLVE_PATH, { body: { runId: start.json.runId } });
   assert.equal(res.status, 200);
-  assert.match(res.json.answer, /Ran on the Podium \(done, exit 0, [\d.]+s\)\. Last output: result-line/);
+  assert.match(res.json.answer, /^Ran on the Podium \(done, exit 0, [\d.]+s\)\. The output stays on the Podium\.$/);
+  assert.ok(!JSON.stringify(ledger(r)).includes('result-line'), 'no output reaches the ledger');
   const closers = ledger(r).filter((x) => x.closes === 'aa11');
   assert.equal(closers.length, 1);
   assert.equal((await send(r, RUN_START_PATH, { body: { source: 'ask', id: 'aa11', sha256: 'a'.repeat(64) } })).status, 404, 'a closed ask no longer runs');

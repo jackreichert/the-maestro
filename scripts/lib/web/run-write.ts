@@ -100,8 +100,8 @@ function resolveAskRun(d: RunDeps, runId: string, res: ServerResponse): void {
   if (!info) return fail(res, 404, 'unknown', 'No such run.');
   if (info.source !== 'ask') return fail(res, 422, 'invalid', 'Only a run of an ask can answer it.');
   if (info.status === 'running') return fail(res, 409, 'running', 'The run is still going.');
-  const tail = info.tail.replace(/\s+/g, ' ').trim().slice(-500);
-  const text = `Ran on the Podium (${info.status}, exit ${info.exitCode ?? 'none'}, ${secs(info.durationMs)}).${tail ? ` Last output: ${tail}` : ''}`;
+  // Only what the server itself measured goes in the ledger: the output is untrusted text (it can say anything, secret-shaped or not) and stays on the page.
+  const text = `Ran on the Podium (${info.status}, exit ${info.exitCode ?? 'none'}, ${secs(info.durationMs)}). The output stays on the Podium.`;
   const out = answerAsk(d, { id: info.target, mode: 'text', answer: text });
   if (out.ok) return sendJson(res, 200, { ok: true, id: out.id, answer: out.text });
   fail(res, 409, out.code, out.message);
