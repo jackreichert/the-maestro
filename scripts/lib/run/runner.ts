@@ -39,6 +39,12 @@ export interface RunnerOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/** The only variables a child inherits. Everything else in the server's environment (tokens, database URLs) stays out of reach of a block, however it is written. */
+const ENV_ALLOW = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR'];
+export function scrubbedEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(ENV_ALLOW.flatMap((k) => (source[k] === undefined ? [] : [[k, source[k]]])));
+}
+
 export type StartResult = { ok: true; runId: string } | { ok: false; code: 'busy' | 'full' | 'spawn' };
 
 export function createRunner(o: RunnerOptions) {
@@ -54,7 +60,7 @@ export function createRunner(o: RunnerOptions) {
     const run: Run = { runId: randomBytes(12).toString('hex'), key, ...meta, status: 'running', exitCode: null, startedMs: now(), durationMs: null, chunks: [], bytes: 0, truncated: false, child: null, kill: null };
     let child: ChildProcess;
     try {
-      const env = o.env ?? process.env;
+      const env = o.env ?? scrubbedEnv();
       child = spec.kind === 'shell'
         ? spawn(o.shell ?? '/bin/zsh', ['-c', spec.command], { cwd: o.home, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
         : spawn(spec.argv[0]!, spec.argv.slice(1), { cwd: spec.cwd, env, detached: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -63,13 +69,21 @@ export function createRunner(o: RunnerOptions) {
       return { ok: false, code: 'spawn' };
     }
     run.child = child;
+    const pid = child.pid;
     runs.set(run.runId, run);
     trim();
     const parts = { out: '', err: '' };
+    const skipping = { out: false, err: false };
     const flush = (stream: 'out' | 'err', all: boolean): void => {
       let buf = parts[stream];
+      if (skipping[stream]) {   // inside an over-long line already reported: discard up to its newline
+        const nl = buf.indexOf('\n');
+        if (nl < 0) { parts[stream] = ''; return; }
+        buf = buf.slice(nl + 1); skipping[stream] = false;
+      }
       for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) { push(run, stream, buf.slice(0, nl + 1)); buf = buf.slice(nl + 1); }
-      if (all || buf.length > MAX_PARTIAL) { if (buf) push(run, stream, buf); buf = ''; }
+      if (all) { if (buf) push(run, stream, buf); buf = ''; }
+      else if (buf.length > MAX_PARTIAL) { push(run, stream, '[withheld: line too long]\n'); buf = ''; skipping[stream] = true; }   // a cut mid-line could split a secret across two scans, so the rest of the line is dropped
       parts[stream] = buf;
     };
     for (const [stream, src] of [['out', child.stdout], ['err', child.stderr]] as const) {
@@ -82,6 +96,7 @@ export function createRunner(o: RunnerOptions) {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      if (pid) { try { process.kill(-pid, 'SIGKILL'); } catch { /* the group is gone */ } }   // whatever the shell left behind in its group (a backgrounded child) goes with it
       flush('out', true); flush('err', true);
       run.durationMs = now() - run.startedMs;
       run.exitCode = code;
@@ -137,8 +152,14 @@ export function createRunner(o: RunnerOptions) {
     return r ? { key: r.key, source: r.source, target: r.target, status: r.status, exitCode: r.exitCode, durationMs: r.durationMs, tail: r.chunks.map((c) => c.text).join('') } : null;
   };
 
-  /** Stops every active run (server shutdown). */
-  const killAll = (): void => { for (const r of active()) stop(r, 'killed'); };
+  /** Stops every active run now, SIGKILL included (server shutdown). */
+  const killAll = (): void => {
+    for (const r of active()) {
+      const pid = r.child?.pid;
+      stop(r, 'killed');
+      if (pid) { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } }   // at exit there is no later tick to escalate
+    }
+  };
 
   return { start, view, kill, info, killAll, activeKeys: (): string[] => active().map((r) => r.key) };
 }
