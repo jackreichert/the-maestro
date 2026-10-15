@@ -49,6 +49,21 @@ export function sections(p: Page): Map<string, { line: number; text: string }[]>
 const factLines = (s: { line: number; text: string }[] | undefined): { line: number; text: string }[] => (s ?? []).filter((l) => l.text.trim() !== '' && !/^\s{0,3}#{1,6}(\s|$)/.test(l.text));
 const bullets = (s: { line: number; text: string }[] | undefined): { line: number; text: string }[] => (s ?? []).filter((l) => /^\s*[-*]\s+\S/.test(l.text));
 
+/** Ticket-style ids: `MAESTRO-149`, `AV-4405`, or `<project>-179` for a project folder name. Standards that look the same (SHA-256, UTF-8, RFC-2119) are not ids. */
+const STANDARDS = new Set(['SHA', 'UTF', 'ISO', 'MD', 'AES', 'RSA', 'HTTP', 'TLS', 'SSL', 'RFC', 'CVE', 'CWE', 'PEP', 'IPV', 'TCP', 'UDP', 'DES', 'ECDSA', 'EC', 'X']);
+const UPPER_ID = /\b([A-Z][A-Z0-9]{1,9})-\d+\b/g;
+const LOWER_ID = /\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-\d+\b/g;
+/** A body line with the parts that may carry an id removed: inline code, wikilinks, URLs and the closing evidence of a fact. */
+const proseOf = (line: string): string => line.replace(/`[^`]*`/g, '').replace(/\[\[[^\]]*\]\]/g, '').replace(/\bhttps?:\/\/\S+/g, '')
+  .replace(/\]\([^)]*\)/g, '').replace(/\(verified \d{4}-\d{2}-\d{2},.*$/, '');
+/** The ticket ids a line of prose uses as if the reader knew them. */
+export function bareIds(line: string, repos: ReadonlySet<string>): string[] {
+  const prose = proseOf(line);
+  const upper = [...prose.matchAll(UPPER_ID)].filter((m) => !STANDARDS.has(m[1] as string)).map((m) => m[0]);
+  const lower = [...prose.matchAll(LOWER_ID)].filter((m) => repos.has(m[1] as string)).map((m) => m[0]);
+  return [...upper, ...lower];
+}
+
 export const RULES: readonly Rule[] = [
   {
     id: 'frontmatter',
@@ -100,6 +115,19 @@ export const RULES: readonly Rule[] = [
         ...(facts.length ? [] : [found('facts', 'the "## Facts" section has no fact')]),
         ...facts.filter((f) => !FACT_END.test(f.text)).map((f) => found('facts', 'a fact (every non-blank line under Facts that is not a heading) must end "(verified YYYY-MM-DD, <evidence>)"', f.line)),
       ];
+    },
+  },
+  {
+    id: 'plain-language',
+    check: (p, c) => {
+      const inFence = (() => { let open = false; return (t: string): boolean => { if (/^\s*```/.test(t)) { open = !open; return true; } return open; }; })();
+      let history = false;
+      return p.lines.flatMap((t, i) => {
+        if (i < p.bodyStart || inFence(t)) return [];
+        if (/^##\s/.test(t)) history = /^##\s+History\s*$/i.test(t);
+        if (history) return []; // superseded values may cite the ticket that changed them
+        return bareIds(t, c.repos).map((id) => found('plain-language', `${show(id, c.scan)} is a ticket id; say what the thing is in words, and cite the id only as evidence at the end of a fact or in a link`, i + 1));
+      });
     },
   },
   {
