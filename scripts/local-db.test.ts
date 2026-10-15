@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -163,20 +163,15 @@ test('catalog and display commands, and backslashes inside quotes, are allowed',
   assert.equal(ok(['-c', '\\dt']).status, 3);
 });
 
-test('-f and stdin scripts are scanned, and fed to psql on stdin', () => {
+test('-f and -v are refused (a file or ECHO variable could print other secrets); stdin scripts are scanned', () => {
   const f = join(root, 's.sql'); writeFileSync(f, 'select 1;\n');
-  const notSql = join(root, 'creds.txt'); writeFileSync(notSql, 'x');
-  assert.match(refusedMessage(['-f', notSql]), /\.sql file only/);
-  const dot = join(root, '.hidden.sql'); writeFileSync(dot, 'select 1;');
-  assert.match(refusedMessage(['-f', dot]), /dotfiles/);
-  const link = join(root, 'link.sql'); symlinkSync(dot, link);
-  assert.match(refusedMessage(['-f', link]), /dotfiles/);
-  assert.match(ok(['-f', f]).stdout, /ARGV:.*-f -[\s\S]*STDIN:select 1;/);
-  writeFileSync(f, 'select 1;\n\\c prod\n');
-  assert.match(refusedMessage(['-f', f]), /not allowed/);
-  const r = run({ args: [] }, { envFile: envFile([`LOCAL_DB_URL=${URL_OK}`]), psqlPath: PSQL, stdin: () => '\\! id\n' });
-  assert.equal(r.status, 2);
-  assert.match(refusedMessage(['-f', join(root, 'missing.sql')]), /does not exist/);
+  for (const args of [['-f', f], ['--file', f], ['-f', '-'], ['-v', 'ECHO=all', '-c', 'select 1'], ['--set=ECHO=all'], ['--variable', 'X=1']]) {
+    assert.match(refusedMessage(args), /not allowed/, args.join(' '));
+  }
+  const good = run({ args: [] }, { envFile: envFile([`LOCAL_DB_URL=${URL_OK}`]), psqlPath: PSQL, stdin: () => 'select 1;\n' });
+  assert.match(good.stdout, /ARGV:.*-f -[\s\S]*STDIN:select 1;/);
+  const bad = run({ args: [] }, { envFile: envFile([`LOCAL_DB_URL=${URL_OK}`]), psqlPath: PSQL, stdin: () => '\\! id\n' });
+  assert.equal(bad.status, 2);
 });
 
 test('env file parsing: export, quotes and comments; nothing is sourced', () => {

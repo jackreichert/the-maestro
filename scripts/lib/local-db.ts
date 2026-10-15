@@ -13,7 +13,7 @@
  *   - stdout and stderr are scrubbed of the URL, the password and the user:password pair before anything is printed
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -143,8 +143,7 @@ export interface Deps { envFile?: string; psqlPath?: string; stdin?: () => strin
 
 /** Flags psql may be given: output shape and the SQL itself. Anything else (-h, -p, -U, -d, -P, -o, -L, -W, URIs) is refused. */
 const FLAG_ONLY = new Set(['-A', '-t', '-x', '-q', '-H', '-1', '--csv', '--no-align', '--tuples-only', '--expanded', '--quiet', '--html', '--single-transaction', '-X', '--no-psqlrc']);
-const FLAG_VALUE = new Set(['-F', '-R', '-v', '--field-separator', '--record-separator', '--set', '--variable']);
-const SQL_FLAG = new Set(['-c', '--command', '-f', '--file']);
+const FLAG_VALUE = new Set(['-F', '-R', '--field-separator', '--record-separator']);
 
 /** Validate the request and build psql's argv. Throws LocalDbRefused; never returns anything holding the URL. */
 export function plan(req: Request, deps: Deps = {}): Planned {
@@ -160,29 +159,9 @@ export function plan(req: Request, deps: Deps = {}): Planned {
     const flag = eq ? (eq[1] as string) : f;
     const take = (): string => { if (eq) return eq[2] as string; if (i + 1 >= a.length) throw new LocalDbRefused(`${flag} needs a value`); return a[++i] as string; };
     if (FLAG_ONLY.has(flag) && !eq) argv.push(flag);
-    else if (FLAG_VALUE.has(flag)) {
-      const v = take();
-      if (flag === '-v' || flag === '--set' || flag === '--variable') {
-        if (/^PROMPT|^HISTFILE|^SHELL|^EDITOR|^PSQLRC|^PAGER/i.test(v)) throw new LocalDbRefused('refused: that psql variable is not allowed');
-        texts.push(v);
-      }
-      argv.push(flag, v);
-    } else if (SQL_FLAG.has(flag)) {
-      const v = take();
-      if (flag === '-c' || flag === '--command') { texts.push(v); argv.push('-c', v); }
-      else {
-        if (input !== undefined) throw new LocalDbRefused('only one -f file or stdin script per call');
-        if (v === '-') input = (deps.stdin ?? (() => readFileSync(0, 'utf8')))();
-        else {
-          if (!/\.sql$/i.test(v)) throw new LocalDbRefused('refused: -f takes a .sql file only (or - for stdin)');
-          if (!existsSync(v)) throw new LocalDbRefused('the -f file does not exist');
-          const real = realpathSync(v);
-          if (/(^|\/)(\.[^/]*|ssm-[^/]*)$/.test(real)) throw new LocalDbRefused('refused: -f will not read dotfiles or ssm-* files');
-          input = readFileSync(v, 'utf8');
-        }
-        texts.push(input); argv.push('-f', '-');
-      }
-    } else throw new LocalDbRefused(`refused: argument ${flag.startsWith('-') ? flag : '(positional)'} is not allowed; pass -c SQL, -f FILE or output flags, and use --db to pick the database`);
+    else if (FLAG_VALUE.has(flag)) argv.push(flag, take());
+    else if (flag === '-c' || flag === '--command') { const v = take(); texts.push(v); argv.push('-c', v); }
+    else throw new LocalDbRefused(`refused: argument ${flag.startsWith('-') ? flag : '(positional)'} is not allowed; pass -c SQL (or SQL on stdin) and output flags, and use --db to pick the database`);
   }
   if (!texts.length && input === undefined) {
     input = (deps.stdin ?? (() => readFileSync(0, 'utf8')))();
