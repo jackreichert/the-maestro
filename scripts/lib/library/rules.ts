@@ -55,7 +55,7 @@ const UPPER_ID = /\b([A-Z][A-Z0-9]{1,9})-\d+\b/g;
 const LOWER_ID = /\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-\d+\b/g;
 /** A body line with the parts that may carry an id removed: inline code, wikilinks, URLs and the closing evidence of a fact. */
 const proseOf = (line: string): string => line.replace(/`[^`]*`/g, '').replace(/\[\[[^\]]*\]\]/g, '').replace(/\bhttps?:\/\/\S+/g, '')
-  .replace(/\(verified \d{4}-\d{2}-\d{2}, [^)]*\)\.?\s*$/, '');
+  .replace(/\]\([^)]*\)/g, '').replace(/\(verified \d{4}-\d{2}-\d{2},.*$/, '');
 /** The ticket ids a line of prose uses as if the reader knew them. */
 export function bareIds(line: string, repos: ReadonlySet<string>): string[] {
   const prose = proseOf(line);
@@ -121,8 +121,11 @@ export const RULES: readonly Rule[] = [
     id: 'plain-language',
     check: (p, c) => {
       const inFence = (() => { let open = false; return (t: string): boolean => { if (/^\s*```/.test(t)) { open = !open; return true; } return open; }; })();
+      let history = false;
       return p.lines.flatMap((t, i) => {
         if (i < p.bodyStart || inFence(t)) return [];
+        if (/^##\s/.test(t)) history = /^##\s+History\s*$/i.test(t);
+        if (history) return []; // superseded values may cite the ticket that changed them
         return bareIds(t, c.repos).map((id) => found('plain-language', `${show(id, c.scan)} is a ticket id; say what the thing is in words, and cite the id only as evidence at the end of a fact or in a link`, i + 1));
       });
     },

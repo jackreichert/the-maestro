@@ -249,5 +249,9 @@ test('plain-language: a bare ticket id in prose is flagged, one in evidence, cod
   assert.equal(rules('- Close it with `ticket.mjs close MAESTRO-149` (verified 2026-10-08, src/sync.ts:40).').length, 0);
   assert.equal(rules('- The sync hashes with SHA-256 over UTF-8 text, see RFC-2119 (verified 2026-10-08, src/sync.ts:40).').length, 0);
   assert.equal(rules('- The sync lives in the orchard-sync-2 job (verified 2026-10-08, src/sync.ts:40).').length, 0);
+  assert.equal(rules('- The sync retries nightly (verified 2026-10-08, src/sync.ts:4 (see MAESTRO-149)) [[Orchard sync]]').length, 0);
+  assert.equal(rules('- See [the ticket](Tickets/MAESTRO-149.md) for why (verified 2026-10-08, src/sync.ts:40).').length, 0);
+  const withHistory = `${frontmatter()}# Orchard sync\n\nRead when: you change orchard sync.\n\n## Facts\n\n- The sync runs nightly (verified 2026-10-08, src/sync.ts:40).\n\n## History\n\n- 2026-10-01: was hourly, changed in MAESTRO-149.\n`;
+  assert.equal(problems(vault({ [PAGE]: withHistory })).filter((f) => f.rule === 'plain-language').length, 0);
   assert.match(rules('- The sync follows MAESTRO-149 (verified 2026-10-08, src/sync.ts:40).')[0] as string, /"MAESTRO-149" is a ticket id/);
 });
