@@ -20,6 +20,8 @@ import { join } from 'node:path';
 export class LocalDbRefused extends Error {}
 
 export const DEFAULT_VAR = 'LOCAL_DB_URL';
+/** Preferred for read-only calls when set: a login role without superuser or server file/program roles, which is the real read-only boundary. */
+export const RO_VAR = 'LOCAL_DB_RO_URL';
 /** Ports Jack's cloud-sql-proxy listens on: 5438 is the PROD interim proxy, 5439 the staging interim proxy. */
 export const FORBIDDEN_PORTS: readonly number[] = [5438, 5439];
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
@@ -144,8 +146,12 @@ export function unsafeMeta(text: string): string | undefined {
   return undefined;
 }
 
+function hasValue(envFile: string, name: string): boolean {
+  try { return readEnvValue(envFile, name) !== ''; } catch { return false; }
+}
+
 export interface Request { args: string[]; db?: string; write?: boolean; varName?: string }
-export interface Planned { argv: string[]; input?: string; target: LocalTarget }
+export interface Planned { argv: string[]; input?: string; target: LocalTarget; varName: string }
 export interface Deps { envFile?: string; psqlPath?: string }
 
 /** Flags psql may be given: output shape and the SQL itself. Anything else (-h, -p, -U, -d, -P, -o, -L, -W, URIs) is refused. */
@@ -154,8 +160,9 @@ const FLAG_VALUE = new Set(['-F', '-R', '--field-separator', '--record-separator
 
 /** Validate the request and build psql's argv. Throws LocalDbRefused; never returns anything holding the URL. */
 export function plan(req: Request, deps: Deps = {}): Planned {
-  const name = req.varName ?? DEFAULT_VAR;
-  const target = parseLocalUrl(name, readEnvValue(deps.envFile ?? defaultEnvFile(), name), req.db);
+  const envFile = deps.envFile ?? defaultEnvFile();
+  const name = req.varName ?? (!req.write && hasValue(envFile, RO_VAR) ? RO_VAR : DEFAULT_VAR);
+  const target = parseLocalUrl(name, readEnvValue(envFile, name), req.db);
   const argv = ['-X', '-v', 'ON_ERROR_STOP=1', '-P', 'pager=off'];
   const texts: string[] = [];
   let input: string | undefined;
@@ -177,8 +184,11 @@ export function plan(req: Request, deps: Deps = {}): Planned {
     if (SERVER_FILE_ACCESS.test(t)) throw new LocalDbRefused('refused: server-side file, program and cross-database access (pg_read_file, COPY, lo_import, dblink, ...) is not allowed');
     if (!req.write && READ_ONLY_BYPASS.test(t)) throw new LocalDbRefused('refused: that statement could switch the session out of read-only; pass --write for a local write');
   }
-  return { argv, input, target };
+  return { argv, input, target, varName: name };
 }
+
+/** 't' when the connecting role is a superuser or holds a server file or program role (it could read host files or run programs). */
+const PRIVILEGE_PREFLIGHT = `select coalesce(bool_or(r.rolsuper), false) or pg_has_role(current_user, 'pg_read_server_files', 'MEMBER') or pg_has_role(current_user, 'pg_write_server_files', 'MEMBER') or pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER') from pg_roles r where pg_has_role(current_user, r.oid, 'MEMBER')`;
 
 export function findPsql(deps: Deps = {}): string {
   if (deps.psqlPath) return deps.psqlPath;
@@ -199,7 +209,11 @@ export function run(req: Request, deps: Deps = {}): RunResult {
   const secrets = secretsOf(planned.target);
   let psql: string;
   try { psql = findPsql(deps); } catch (e) { return { status: 2, stdout: '', stderr: `local-db: ${(e as Error).message}\n` }; }
+  const pre = spawnSync(psql, ['-X', '-A', '-t', '-c', PRIVILEGE_PREFLIGHT], { env: childEnv(planned.target, false), encoding: 'utf8', timeout: 30_000 });
+  const privileged = pre.status === 0 && pre.stdout.trim() === 't';
+  if (privileged && planned.varName === RO_VAR) return { status: 2, stdout: '', stderr: `local-db: refused: ${RO_VAR} connects as a role that is a superuser or has server file or program roles; use a restricted role\n` };
   const r = spawnSync(psql, planned.argv, { env: childEnv(planned.target, !!req.write), input: planned.input, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 300_000 });
   const stderr = r.error ? `local-db: could not run psql: ${(r.error as Error).message}\n` : r.stderr;
-  return { status: r.status ?? 1, stdout: scrub(r.stdout ?? '', secrets), stderr: scrub(stderr ?? '', secrets) };
+  const note = privileged ? `local-db: note: ${planned.varName} connects as a superuser or a role with server file or program roles, so read-only mode and the SQL denylist are best-effort guardrails; set ${RO_VAR} to a restricted role for a hard boundary\n` : '';
+  return { status: r.status ?? 1, stdout: scrub(r.stdout ?? '', secrets), stderr: note + scrub(stderr ?? '', secrets) };
 }

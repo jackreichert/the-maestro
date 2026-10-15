@@ -26,11 +26,12 @@ function envFile(lines: string[], name = '.env'): string {
   return f;
 }
 /** A fake psql: prints its argv, stdin and PG* env on stdout, and the URL and password on stderr (as a leaky real one might). */
-function fakePsql(): string {
-  const f = join(root, 'psql-fake');
+function fakePsql(priv = 'f'): string {
+  const f = join(root, `psql-fake-${priv}`);
   const url = ['postgresql:/', '/$PGUSER:$PGPASSWORD', '@$PGHOST:$PGPORT/$PGDATABASE'].join('');
   writeFileSync(f, [
     '#!/bin/sh',
+    `case "$*" in *rolsuper*) echo ${priv}; exit 0;; esac`,
     'echo "ARGV:$*"',
     'echo "STDIN:$(cat)"',
     'echo "PGHOST=$PGHOST PGPORT=$PGPORT PGUSER=$PGUSER PGDATABASE=$PGDATABASE PGOPTIONS=[$PGOPTIONS] PGSERVICE=[$PGSERVICE]"',
@@ -42,6 +43,7 @@ function fakePsql(): string {
   return f;
 }
 const PSQL = fakePsql();
+const PSQL_PRIV = fakePsql('t');
 const ok = (args: string[], extra: { db?: string; write?: boolean; varName?: string } = {}, vars = [`LOCAL_DB_URL=${URL_OK}`]) =>
   run({ args, ...extra }, { envFile: envFile(vars), psqlPath: PSQL });
 const withUrl = (url: string, name = 'LOCAL_DB_URL') => [`${name}=${url}`];
@@ -124,6 +126,25 @@ test('read-only mode refuses statements that would switch it off; --write allows
     assert.match(refusedMessage(['-c', sql]), /out of read-only/, sql);
   }
   assert.equal(ok(['-c', 'set role other'], { write: true }).status, 3);
+});
+
+test('a privileged role is noted, and refused outright when it is the restricted read-only variable', () => {
+  const run1 = (vars: string[], write = false) => run({ args: ['-c', 'select 1'], write }, { envFile: envFile(vars), psqlPath: PSQL_PRIV });
+  const priv = run1([`LOCAL_DB_URL=${URL_OK}`]);
+  assert.equal(priv.status, 3);
+  assert.match(priv.stderr, /best-effort guardrails/);
+  const ro = run1([`LOCAL_DB_URL=${URL_OK}`, `LOCAL_DB_RO_URL=${URL_OK}`]);
+  assert.equal(ro.status, 2);
+  assert.match(ro.stderr, /LOCAL_DB_RO_URL connects as a role/);
+  assert.equal(run1([`LOCAL_DB_URL=${URL_OK}`, `LOCAL_DB_RO_URL=${URL_OK}`], true).status, 3);
+  assert.doesNotMatch(ok(['-c', 'select 1']).stderr, /best-effort/);
+});
+
+test('read-only calls prefer LOCAL_DB_RO_URL when set; --write and --var keep their own variable', () => {
+  const vars = [`LOCAL_DB_URL=${mk('localhost:5432', { user: 'rw_user' })}`, `LOCAL_DB_RO_URL=${mk('localhost:5432', { user: 'ro_user' })}`];
+  assert.match(ok(['-c', 'select 1'], {}, vars).stdout, /PGUSER=ro_user/);
+  assert.match(ok(['-c', 'select 1'], { write: true }, vars).stdout, /PGUSER=rw_user/);
+  assert.match(ok(['-c', 'select 1'], { varName: 'LOCAL_DB_URL' }, vars).stdout, /PGUSER=rw_user/);
 });
 
 test('--db replaces the database in the URL', () => {
