@@ -22,6 +22,7 @@ import { waiting } from './drafts-model.ts';
 import { createDraftActions, loadDrafts } from './drafts-api.ts';
 import { createPoster } from './write-token.ts';
 import { HOME_TAB_CSS, homeTab } from './home-tab.ts';
+import { LOCAL_WIDGET_CSS, localReviewWidget } from './local-review-widget.ts';
 import { streamScore, todayPanel } from './home-sections.ts';
 import { seriesClass } from './series.ts';
 import type { ProjectsLoad } from './home-tab.ts';
@@ -34,7 +35,7 @@ import type { AskBusyDetail, ChartsData, CostData, EpicsData, LocalReview, Podiu
 
 interface Fresh { state: PodiumState; charts: ChartsData; epics: EpicsData | null; cost: CostData | null; local: LocalReview | null; projects: ProjectsLoad; dropped: number; needsSig: string }
 
-const CSS = `${BOARD_CSS}${HOME_TAB_CSS}
+const CSS = `${BOARD_CSS}${HOME_TAB_CSS}${LOCAL_WIDGET_CSS}
   .wrap { max-width: var(--grid-max); margin: 0 auto; padding-inline: var(--page-pad); }
 
   /* Off screen until it has focus, then the first thing on the page; fixed so no layout moves. */
@@ -754,7 +755,10 @@ export class PodiumApp extends HTMLElement {
       el.model = this.#prs.model;
     });
     if (this.#sources.state === 'server') void this.#prs.load();   // each draw asks again, so the tab never shows older data than the cache holds
-    return h('div', {}, el, this.#replyDrafts());
+    const localList = h('local-review');
+    localList.review = this.#local;   // the one copy of the queue, the same one Home's widget counts from
+    return h('div', {}, el, this.#replyDrafts(),
+      section({ title: 'Waiting for local review', n: this.#local ? this.#local.units.length + this.#local.more : 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
   }
 
   /** Drafts still waiting for a decision, for the tab's count. */
@@ -795,11 +799,9 @@ export class PodiumApp extends HTMLElement {
 
   /** The landing tab (its id stays `dashboard`, so old links keep working). Asks answer in place; everything else links on. */
   #home(st: PodiumState): Node {
-    const localList = h('local-review');
-    localList.review = this.#local;
     return h('div', { class: 'home-plus' },
       homeTab(st, this.#charts, { live: this.#sources.state === 'server', projects: this.#projects, epics: this.#epics, cost: this.#cost, needs: this.#needs(st), redraw: () => this.#redrawKeepingFocus() }),
-      section({ title: 'Waiting for local review', n: this.#local ? this.#local.units.length + this.#local.more : 0, tone: 'neutral', empty: 'No local branch is waiting for review.', quiet: true }, localList));
+      localReviewWidget(this.#local));
   }
 }
 
