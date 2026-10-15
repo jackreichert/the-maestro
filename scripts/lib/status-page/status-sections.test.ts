@@ -15,27 +15,27 @@ import type { BoardStatus, PageConfig, PageInput } from './render.ts';
 const TODAY = '2026-10-05';
 const NOW = new Date('2026-10-05T15:00:00Z');
 const CONFIG: PageConfig = {
-  streams: ['Rivendell', 'Narnia'], repoStreams: {}, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/',
+  streams: ['Example Pilot', 'Example Rollout'], repoStreams: {}, vaultName: 'Vault', trackerUrlBase: 'https://tracker.test/browse/',
   ticketNotePath: 'Projects/{prefix}/Tickets/{id}', trackerKeyPattern: '\\b[A-Z][A-Z0-9]+-\\d+\\b', tz: 'America/New_York',
 };
 const row = (id: string, kind: string, text: string, over: Partial<LedgerRow> = {}): LedgerRow =>
   ({ id, kind, ts: `${TODAY}T13:00:00Z`, date: TODAY, text, ...over }) as LedgerRow;
 const rows: LedgerRow[] = [
-  row('aa11', 'wip', 'wire the gate api FAKE-1', { stream: 'Rivendell', model: 'Model A', ts: `${TODAY}T11:00:00Z` }),
-  row('aa12', 'wip', 'second rivendell job', { stream: 'Rivendell', model: 'Model B' }),
-  row('bb21', 'wip', 'direct integration', { stream: 'Narnia', model: 'Model A', ts: `${TODAY}T14:30:00Z` }),
+  row('aa11', 'wip', 'wire the gate api FAKE-1', { stream: 'Example Pilot', model: 'Model A', ts: `${TODAY}T11:00:00Z` }),
+  row('aa12', 'wip', 'second example pilot job', { stream: 'Example Pilot', model: 'Model B' }),
+  row('bb21', 'wip', 'direct integration', { stream: 'Example Rollout', model: 'Model A', ts: `${TODAY}T14:30:00Z` }),
   row('cc31', 'wip', 'loose job'),
-  row('dd41', 'question', 'which path?', { stream: 'Narnia' }),
-  row('ee51', 'blocked', 'waiting on a vendor', { stream: 'Rivendell' }),
-  row('ff61', 'question', 'run this', { stream: 'Narnia', paste: '/tmp/fake.sh' }),
-  row('qq91', 'wip', 'later rivendell job FAKE-9', { stream: 'Rivendell', queued: true, ts: `${TODAY}T12:00:00Z` }),
-  row('qq92', 'wip', 'later narnia job', { stream: 'Narnia', queued: true, ts: `${TODAY}T14:00:00Z` }),
-  row('qq93', 'wip', 'parked after starting', { stream: 'Rivendell', ts: `${TODAY}T10:00:00Z` }),
+  row('dd41', 'question', 'which path?', { stream: 'Example Rollout' }),
+  row('ee51', 'blocked', 'waiting on a vendor', { stream: 'Example Pilot' }),
+  row('ff61', 'question', 'run this', { stream: 'Example Rollout', paste: '/tmp/fake.sh' }),
+  row('qq91', 'wip', 'later example pilot job FAKE-9', { stream: 'Example Pilot', queued: true, ts: `${TODAY}T12:00:00Z` }),
+  row('qq92', 'wip', 'later example rollout job', { stream: 'Example Rollout', queued: true, ts: `${TODAY}T14:00:00Z` }),
+  row('qq93', 'wip', 'parked after starting', { stream: 'Example Pilot', ts: `${TODAY}T10:00:00Z` }),
   row('qq94', 'queue', 'queue', { queues: 'qq93', ts: `${TODAY}T14:50:00Z` }),
-  row('qq95', 'wip', 'started from the queue', { stream: 'Narnia', queued: true, ts: `${TODAY}T09:00:00Z` }),
+  row('qq95', 'wip', 'started from the queue', { stream: 'Example Rollout', queued: true, ts: `${TODAY}T09:00:00Z` }),
   row('qq96', 'promote', 'start', { promotes: 'qq95', ts: `${TODAY}T14:00:00Z` }),
-  row('gg71', 'wip', 'shipped thing', { stream: 'Narnia' }),
-  row('hh81', 'done', 'shipped', { closes: 'gg71', stream: 'Narnia' }),
+  row('gg71', 'wip', 'shipped thing', { stream: 'Example Rollout' }),
+  row('hh81', 'done', 'shipped', { closes: 'gg71', stream: 'Example Rollout' }),
 ];
 
 /** Board groups over the in-memory rows, the way `journal.ts status` builds them. */
@@ -74,8 +74,8 @@ test('the Status table carries exactly the numbers status --footer prints, one r
     return [m[1], m[2], m[3], m[4] ?? '0', m[5], m[6] ?? '0', m[7] ?? '0'];
   });
   assert.deepEqual(rowsOnPage, fromFooter);
-  assert.deepEqual(rowsOnPage.map((r) => r[0]), ['Rivendell', 'Narnia', 'other'], 'Rivendell and Narnia stay separate streams');
-  assert.deepEqual(rowsOnPage.find((r) => r[0] === 'Narnia'), ['Narnia', '1', '2', '1', '1', '1', '0']);
+  assert.deepEqual(rowsOnPage.map((r) => r[0]), ['Example Pilot', 'Example Rollout', 'other'], 'Example Pilot and Example Rollout stay separate streams');
+  assert.deepEqual(rowsOnPage.find((r) => r[0] === 'Example Rollout'), ['Example Rollout', '1', '2', '1', '1', '1', '0']);
 });
 
 test('the Status section ends with the agents line and the session line formatted as the footer formats it', () => {
@@ -95,7 +95,7 @@ test('Working on now sits directly under the priorities, grouped by stream, with
   assert.ok(pri !== -1 && work > pri);
   assert.ok(!lines.slice(pri + 1, work).some((l) => /^## /.test(l)), 'no section between the priorities and Working on now');
   const t = section(p, '## Working on now (5)').filter((l) => l.startsWith('| ')).slice(1).map(cells);
-  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Rivendell', '`aa11`'], ['Rivendell', '`aa12`'], ['Narnia', '`bb21`'], ['Narnia', '`qq95`'], ['other', '`cc31`']]);
+  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Example Pilot', '`aa11`'], ['Example Pilot', '`aa12`'], ['Example Rollout', '`bb21`'], ['Example Rollout', '`qq95`'], ['other', '`cc31`']]);
   assert.equal(t[0]?.[3], `<span style="white-space:nowrap">[FAKE-1](https://tracker.test/browse/FAKE-1)</span>`);
   assert.equal(t[0]?.[4], 'Model A');
   assert.equal(t[0]?.[5], '4 h (since 7:00 am ET)');
@@ -111,7 +111,7 @@ test('Queued sits right after Working on now, grouped by stream, with ticket lin
   const q = section(p, '## Queued (3)');
   assert.ok(q.length > 0);
   const t = q.filter((l) => l.startsWith('| ')).slice(1).map(cells);
-  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Rivendell', '`qq91`'], ['Rivendell', '`qq93`'], ['Narnia', '`qq92`']]);
+  assert.deepEqual(t.map((r) => [r[0], r[1]]), [['Example Pilot', '`qq91`'], ['Example Pilot', '`qq93`'], ['Example Rollout', '`qq92`']]);
   assert.equal(t[0]?.[3], `<span style="white-space:nowrap">[FAKE-9](https://tracker.test/browse/FAKE-9)</span>`);
   assert.equal(t[0]?.[4], '3 h');
   assert.equal(t[1]?.[4], '10 min', 'an item parked after it started waits from the moment it was queued');
@@ -141,9 +141,9 @@ test('the new sections are not answer areas: no id, tick or answer is read from 
 
 test('an ask with emphasis markers renders as one intact bold span, so what the page shows is what status-watch reads', () => {
   const asks = [
-    row('mk01', 'question', 'Merge **now**? context after', { stream: 'Narnia' }),
-    row('mk02', 'question', '*Ship* it*? ok', { stream: 'Narnia' }),
-    row('mk03', 'question', 'Use snake_case_name and `code`? later', { stream: 'Narnia' }),
+    row('mk01', 'question', 'Merge **now**? context after', { stream: 'Example Rollout' }),
+    row('mk02', 'question', '*Ship* it*? ok', { stream: 'Example Rollout' }),
+    row('mk03', 'question', 'Use snake_case_name and `code`? later', { stream: 'Example Rollout' }),
   ];
   const saved = rows.splice(0, rows.length, ...asks);
   try {
@@ -156,7 +156,7 @@ test('an ask with emphasis markers renders as one intact bold span, so what the 
 
 test('a single long token with no space is clipped with the ellipsis and loses no extra character', () => {
   const token = 'x'.repeat(200);
-  const saved = rows.splice(0, rows.length, row('lt01', 'wip', token, { stream: 'Narnia' }));
+  const saved = rows.splice(0, rows.length, row('lt01', 'wip', token, { stream: 'Example Rollout' }));
   try {
     const line = section(page(board()), '## Working on now (1)').find((l) => l.includes('`lt01`')) as string;
     assert.ok(line.includes(`${'x'.repeat(107)}...`) && !line.includes('x'.repeat(108)), 'exactly 107 characters then the ellipsis');
@@ -166,9 +166,9 @@ test('a single long token with no space is clipped with the ellipsis and loses n
 test('an ask links its PRs as plain #N (no base or stack arrows), drops a bare repo/pull/N fragment, and keeps tickets on one line', () => {
   const pr = (number: number, base: string, head: string) => ({
     number, title: `feat: thing ${number}`, url: `https://example.test/acme-widgets/pull/${number}`, isDraft: false, baseRefName: base, headRefName: head,
-    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Narnia',
+    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Example Rollout',
   });
-  const saved = rows.splice(0, rows.length, row('pl01', 'question', 'close #31 and #32? see acme-widgets/pull/32 and FAKE-7', { stream: 'Narnia' }));
+  const saved = rows.splice(0, rows.length, row('pl01', 'question', 'close #31 and #32? see acme-widgets/pull/32 and FAKE-7', { stream: 'Example Rollout' }));
   try {
     const input: PageInput = { now: NOW, status: board(), triage: { items: [] }, prs: [pr(31, 'develop', 'a'), pr(32, 'a', 'b')], prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config: CONFIG, command: 'x' };
     const line = section(renderPage(input).page, '## Needs attention now (1)').find((l) => l.startsWith('- [ ]')) as string;
@@ -181,8 +181,8 @@ test('an ask links its PRs as plain #N (no base or stack arrows), drops a bare r
 });
 
 test('fragment stripping keeps the punctuation after the PR number, links a single-digit PR, and says when a PR is not open', () => {
-  const pr = { number: 7, title: 'feat: seven', url: 'https://example.test/acme-widgets/pull/7', isDraft: false, baseRefName: 'develop', headRefName: 'a', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Narnia' };
-  const saved = rows.splice(0, rows.length, row('fp01', 'question', 'merge acme-widgets/pull/7? rest of it (see x/pull/99) and #123', { stream: 'Narnia' }));
+  const pr = { number: 7, title: 'feat: seven', url: 'https://example.test/acme-widgets/pull/7', isDraft: false, baseRefName: 'develop', headRefName: 'a', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Example Rollout' };
+  const saved = rows.splice(0, rows.length, row('fp01', 'question', 'merge acme-widgets/pull/7? rest of it (see x/pull/99) and #123', { stream: 'Example Rollout' }));
   try {
     const input: PageInput = { now: NOW, status: board(), triage: { items: [] }, prs: [pr], prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config: CONFIG, command: 'x' };
     const line = section(renderPage(input).page, '## Needs attention now (1)').find((l) => l.startsWith('- [ ]')) as string;
@@ -193,7 +193,7 @@ test('fragment stripping keeps the punctuation after the PR number, links a sing
 });
 
 test('fragment stripping is for asks only: in-flight and blocked lists keep a repo/pull/N path', () => {
-  const saved = rows.splice(0, rows.length, row('if01', 'wip', 'look at acme-widgets/pull/44 now', { stream: 'Narnia' }), row('bl01', 'blocked', 'stuck on acme-widgets/pull/44', { stream: 'Narnia' }));
+  const saved = rows.splice(0, rows.length, row('if01', 'wip', 'look at acme-widgets/pull/44 now', { stream: 'Example Rollout' }), row('bl01', 'blocked', 'stuck on acme-widgets/pull/44', { stream: 'Example Rollout' }));
   try {
     const p = page(board());
     assert.ok(section(p, '## Working on now (1)').some((l) => l.includes('acme-widgets/pull/44')));
@@ -202,7 +202,7 @@ test('fragment stripping is for asks only: in-flight and blocked lists keep a re
 });
 
 test('table cells escape the characters Markdown reads as markup, not just the pipe', () => {
-  const saved = rows.splice(0, rows.length, row('ce01', 'wip', 'fix *bold* snake_case `code` <b> [x] a|b ~~s~~', { stream: 'Narnia', model: 'Model A' }));
+  const saved = rows.splice(0, rows.length, row('ce01', 'wip', 'fix *bold* snake_case `code` <b> [x] a|b ~~s~~', { stream: 'Example Rollout', model: 'Model A' }));
   try {
     const line = section(page(board()), '## Working on now (1)').find((l) => l.includes('`ce01`')) as string;
     assert.ok(line.includes('fix \\*bold\\* snake\\_case \\`code\\` \\<b\\> \\[x\\] a\\|b \\~\\~s\\~\\~'), line);
@@ -212,7 +212,7 @@ test('table cells escape the characters Markdown reads as markup, not just the p
 test('the Open PRs section shows the review queue against the cap, and says what a full queue means', () => {
   const pr = (number: number, isDraft: boolean) => ({
     number, title: `feat: thing ${number}`, url: `https://example.test/acme-widgets/pull/${number}`, isDraft, baseRefName: 'develop', headRefName: `b${number}`,
-    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Narnia',
+    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo: 'acme-widgets', short: 'acme-widgets', owner: 'acme', unresolved: 0, ci: 'SUCCESS', stream: 'Example Rollout',
   });
   const render = (prs: ReturnType<typeof pr>[], config: PageConfig): string => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page;
   const withCap = { ...CONFIG, reviewQueueCap: 2 };
@@ -224,7 +224,7 @@ test('the Open PRs section shows the review queue against the cap, and says what
 test('the Open PRs section lists self-review PRs under their own heading, outside the org counts and the queue', () => {
   const pr = (number: number, repo: string, over: Record<string, unknown> = {}) => ({
     number, title: `feat: thing ${number}`, url: `https://example.test/${repo}/pull/${number}`, isDraft: false, baseRefName: 'develop', headRefName: `b${number}`,
-    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo, short: repo.split('/')[1] as string, owner: repo.split('/')[0] as string, unresolved: 0, ci: 'SUCCESS', stream: 'Narnia', ...over,
+    mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', reviewDecision: null, repo, short: repo.split('/')[1] as string, owner: repo.split('/')[0] as string, unresolved: 0, ci: 'SUCCESS', stream: 'Example Rollout', ...over,
   });
   const prs = [pr(1, 'acme/widgets'), pr(2, 'me/tool', { unresolved: 2, ci: 'PENDING' }), pr(3, 'me/tool', { isDraft: true, ci: 'PENDING' }), pr(4, 'me/tool', { reviewDecision: null }), pr(5, 'me/tool', { ci: 'PENDING' })];
   const render = (config: PageConfig): string[] => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs, prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page.split('\n');
@@ -246,12 +246,12 @@ test('the Open PRs section lists self-review PRs under their own heading, outsid
 });
 
 test('the Library section links each stream to its library INDEX, says "no library yet" for one without, and is absent when the page cannot say', () => {
-  const notes = new Set(['Projects/rivendell-api/INDEX.md']);
-  const withLibrary: PageConfig = { ...CONFIG, noteExists: (p) => notes.has(p), streamProjects: (s) => (s === 'Rivendell' ? ['rivendell-api'] : s === 'Narnia' ? ['wardrobe'] : []) };
+  const notes = new Set(['Projects/example-pilot-api/INDEX.md']);
+  const withLibrary: PageConfig = { ...CONFIG, noteExists: (p) => notes.has(p), streamProjects: (s) => (s === 'Example Pilot' ? ['example-pilot-api'] : s === 'Example Rollout' ? ['wardrobe'] : []) };
   const render = (config: PageConfig): string => renderPage({ now: NOW, status: board(), triage: { items: [] }, prs: [], prData: { fetchedAt: NOW }, ticketMap: {}, priorities: { state: 'ok', date: TODAY, items: [{ text: 'Ship it' }] }, config, command: 'x' }).page;
   const lib = section(render(withLibrary), '## Library');
-  assert.ok(lib.includes('- **Rivendell**: [rivendell-api library](obsidian://open?vault=Vault&file=Projects%2Frivendell-api%2FINDEX)'), lib.join('\n'));
-  assert.ok(lib.includes('- **Narnia**: _no library yet_'), 'a project whose INDEX is missing is not linked');
+  assert.ok(lib.includes('- **Example Pilot**: [example-pilot-api library](obsidian://open?vault=Vault&file=Projects%2Fexample-pilot-api%2FINDEX)'), lib.join('\n'));
+  assert.ok(lib.includes('- **Example Rollout**: _no library yet_'), 'a project whose INDEX is missing is not linked');
   assert.ok(!lib.some((l) => l.includes('other')));
   assert.doesNotMatch(render(CONFIG), /## Library/, 'no stream-to-project map: no section');
   assert.doesNotMatch(render({ ...withLibrary, vaultName: '' }), /## Library/, 'no vault name: no link can be built');
