@@ -346,7 +346,6 @@ Everything lives in `scripts/` and runs as `node scripts/<name>.ts` (Node strips
 | [branch-sweep.ts](#branch-sweepts) | List and delete merged branches and stale worktrees |
 | [commitments-sweep.ts](#commitments-sweepts) | Roll-time check that spoken commitments made it onto the board |
 | [memory-sort.ts / memory-migrate.ts](#memory-sortts-and-memory-migratets) | Sort memory files into project facts and working rules; move approved facts to the library as pointers |
-
 | [rule-hygiene.ts](#rule-hygienets) | Read-only list of memory rules with no `enforced-by` value and repeated, unenforced rules |
 | [library-check.ts](#library-checkts) | Check library pages against the template, the controlled vocabulary and the secret scan |
 | [library-index.ts](#library-indexts) | Generate the page list in each project's INDEX.md |
