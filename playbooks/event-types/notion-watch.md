@@ -16,7 +16,7 @@ Defaults: checks every 15 minutes (`--interval S` to change; never below the net
 
 | Digest line starts with | Actionable | What it means | What to do |
 |---|---|---|---|
-| `NOTION-CHANGED tag= note= diff= summary=` | yes | The page changed and its vault note was already re-written. `diff` is a unified diff of the note, `summary` is lines added and removed. | Read the file at `diff=` and nothing else. Tell the user in a few sentences what changed and why it might matter, quoting the tag. |
+| `NOTION-CHANGED tag= note= diff= summary=` | yes | The page changed and its vault note was already re-written. `diff` is a unified diff of the note, `summary` is lines added and removed. | Read the diff file and nothing else. `events wait` shows only `tag` and `stamp` (the digest line is gone once claimed), so rebuild the path: the registry is this watch's target in `event-loop.ts list`; read `tags.<tag>.note_path` from it; the file is `<note_path minus .md>.diff-<stamp>.md`. Never fall back to the newest file: with more than one unacked event it is the wrong one. Tell the user in a few sentences what changed and why it might matter, quoting the tag. |
 | `NOTION-UNSHARED tag= reason=` | yes | The page now answers 404 or 403 (unshared or deleted) or is archived. The note on disk is the last good copy. | Tell the user the tag and reason. They decide whether to re-share or drop the tag. Do not retry. |
 | `NOTION-CHECK-FAILING tag= <message>` | no | Three checks in a row failed (network, or a pull error). It is not repeated. | Mention it only if it is still there at the end of the day. Do not debug. |
 

@@ -16,8 +16,8 @@ Defaults: checks every 5 minutes (`--interval S` to change; never below the netw
 
 | Digest line starts with | Actionable | What it means | What to do |
 |---|---|---|---|
-| `SLACK-NEW tag= note= new= file=` | yes | New messages arrived and the note was already appended. `file` holds only the new lines, `new` is how many. | Read the file at `file=` and nothing else. Tell the user in a few sentences what is new and why it might matter, quoting the tag. |
-| `SLACK-UNSHARED tag= reason=` | yes | The token can no longer read the conversation (`channel_not_found`, `not_in_channel` or `is_archived`). The note is the last good copy. | Tell the user the tag and reason. They decide whether to re-invite or drop the tag. Do not retry. |
+| `SLACK-NEW tag= note= new= file=` | yes | New messages arrived and the note was already appended. `file` holds only the new lines, `new` is how many. | Read the new-messages file and nothing else. `events wait` shows only `tag`, `count`, `stamp` (the digest line is gone once claimed), so rebuild the path: the registry is this watch's target in `event-loop.ts list`; read `tags.<tag>.note_path` from it; the file is `<note_path minus .md>.new-<stamp>.md`. Never fall back to the newest file: with more than one unacked event it is the wrong one. Tell the user in a few sentences what is new and why it might matter, quoting the tag. |
+| `SLACK-UNSHARED tag= reason=` | yes | The token can no longer read the conversation (`channel_not_found`, `not_in_channel`, `is_archived` or `missing_scope`). The note is the last good copy. | Tell the user the tag and reason. They decide whether to re-invite or drop the tag. Do not retry. |
 | `SLACK-CHECK-FAILING tag= <message>` | no | Three checks in a row failed. It is not repeated. | Mention it only if it is still there at the end of the day. Do not debug. |
 
 A rate limit (429) produces no line: the watcher waits out Retry-After and tries again by itself.
