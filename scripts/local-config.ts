@@ -11,6 +11,8 @@
  *
  * `node scripts/local-config.ts` prints the resolved values and the files they came from.
  */
+import { checkWindow, logProblem, parseClock, parseDays, parseInt10, parseRepos, parseSwitch, parseTriggers, parseZone } from './lib/repost-nudge-config.ts';
+import type { Parsed } from './lib/repost-nudge-config.ts';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -510,20 +512,50 @@ export const TEAMMATE_REVIEW_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim(
 /** The owners the helper searches: gh_org plus the plain owners in review_pool_owners. With none, it searches nothing: it is never unscoped. */
 export const TEAMMATE_REVIEW_OWNERS = [...new Set([GH_ORG, ...REVIEW_POOL_OWNERS.map((g) => g.split('/')[0] ?? '')].filter((o) => o !== '' && !o.includes('*')))];
 
-/** Repost nudge: minutes after the latest approval on one of your open PRs before the loop nudges you to repost your PRs waiting on reviewers (and the nudge also follows a teammate review draft at once). `0` turns it off. Default 60. */
-export const REPOST_NUDGE_MINUTES = ((raw: string) => (/^\d+$/.test(raw.trim()) ? Number(raw) : 60))(pick('MAESTRO_REPOST_NUDGE_MINUTES', 'repost_nudge_minutes'));
-/** Repost nudge: how many of your PRs a nudge names, 1 to 5. Default 3. */
-export const REPOST_NUDGE_COUNT = Math.min(5, positiveInt(pick('MAESTRO_REPOST_NUDGE_COUNT', 'repost_nudge_count'), 3));
-const clockTime = (raw: string, fallback: string): string => (/^([01]\d|2[0-3]):[0-5]\d$/.test(raw.trim()) ? raw.trim() : fallback);
-/** Repost nudge working hours, `HH:MM` (24 hour) in repost_nudge_tz, weekdays only. A nudge due outside them waits for the next start. Defaults 08:30 and 18:00. */
-export const REPOST_NUDGE_START = clockTime(pick('MAESTRO_REPOST_NUDGE_START', 'repost_nudge_start'), '08:30');
-export const REPOST_NUDGE_END = clockTime(pick('MAESTRO_REPOST_NUDGE_END', 'repost_nudge_end'), '18:00');
-/** Repost nudge: no nudge within this many minutes of you asking for reviews yourself (a Slack line by you with a PR link, or a review re-request by you on GitHub); it is held, not dropped. Default 60. */
-export const REPOST_NUDGE_ASKED_MINUTES = positiveInt(pick('MAESTRO_REPOST_NUDGE_ASKED_MINUTES', 'repost_nudge_asked_minutes'), 60);
-/** Repost nudge: the name your lines carry in the Slack notes (`**Sam**`), case-insensitive. Default your `gh_login`; with neither set, Slack asks are not read. */
+/**
+ * Repost nudge (event-types/repost-nudge.ts). Every key is parsed by lib/repost-nudge-config.ts: a bad value falls back to its default and
+ * says so once on stderr. Each is also an environment variable, MAESTRO_ plus the key in capitals (MAESTRO_REPOST_NUDGE_DAYS).
+ */
+const nudge = <T>(key: string, parse: (raw: string) => Parsed<T>): T => {
+  const raw = pick(`MAESTRO_${key.toUpperCase()}`, key);
+  const parsed = parse(raw);
+  logProblem(key, raw, parsed);
+  return parsed.value;
+};
+/** Master switch. Off: the watch is not registered at session start and a registered one never fires. Default on. */
+export const REPOST_NUDGE_ENABLED = nudge('repost_nudge_enabled', (r) => parseSwitch(r, true));
+/** Which triggers start a nudge: `approval`, `teammate-review`, comma-separated. Default both. */
+export const REPOST_NUDGE_TRIGGERS = nudge('repost_nudge_triggers', parseTriggers);
+/** Minutes after the latest approval on one of your open PRs before a nudge is due. `0` turns the nudge off. Default 60. */
+export const REPOST_NUDGE_MINUTES = nudge('repost_nudge_minutes', (r) => parseInt10(r, 60, 0));
+/** How many of your PRs a nudge names, 1 to 5. Default 3. */
+export const REPOST_NUDGE_COUNT = nudge('repost_nudge_count', (r) => parseInt10(r, 3, 1, 5));
+/** Repos (`owner`, `owner/name`, `owner/*`) whose approvals start the clock and whose PRs a nudge names. Empty (default): the review pool, as review_queue_cap counts it. */
+export const REPOST_NUDGE_REPOS = nudge('repost_nudge_repos', parseRepos);
+/** Working days, `mon-fri` by default; names, ranges and `daily` (parseDays). */
+export const REPOST_NUDGE_DAYS = nudge('repost_nudge_days', (r) => parseDays(r));
+/** Minimum minutes between two nudges. Default 60. */
+export const REPOST_NUDGE_GAP_MINUTES = nudge('repost_nudge_gap_minutes', (r) => parseInt10(r, 60, 0));
+/** Seconds between checks (one GitHub search each); at least 120, the network floor. Default 300. */
+export const REPOST_NUDGE_CHECK_SECONDS = nudge('repost_nudge_check_seconds', (r) => parseInt10(r, 300, 120));
+/** Hold a due nudge that has no eligible PR (for up to a day) instead of dropping it. Default off. */
+export const REPOST_NUDGE_HOLD_EMPTY = nudge('repost_nudge_hold_empty', (r) => parseSwitch(r, false));
+/** No nudge within this many minutes of you asking for reviews yourself (a Slack line by you with a PR link, or a review re-request of a person by you); it is held, not dropped. Default 60. */
+export const REPOST_NUDGE_ASKED_MINUTES = nudge('repost_nudge_asked_minutes', (r) => parseInt10(r, 60, 0));
+/** The name your lines carry in the Slack notes (`**Sam**`), case-insensitive. Default your `gh_login`; with neither set, Slack asks are not read. */
 export const REPOST_NUDGE_AUTHOR = pick('MAESTRO_REPOST_NUDGE_AUTHOR', 'repost_nudge_author').trim() || GH_LOGIN;
-/** IANA time zone of the repost nudge's working hours. Unset or invalid means America/New_York. */
-export const REPOST_NUDGE_TZ = validZone(pick('MAESTRO_REPOST_NUDGE_TZ', 'repost_nudge_tz').trim()) || 'America/New_York';
+/** IANA time zone of the working hours. Default America/New_York. */
+export const REPOST_NUDGE_TZ = nudge('repost_nudge_tz', (r) => parseZone(r, 'America/New_York', (n) => validZone(n) !== undefined));
+const nudgeWindow = ((): { start: string; end: string } => {
+  const start = nudge('repost_nudge_start', (r) => parseClock(r, '08:30'));
+  const end = nudge('repost_nudge_end', (r) => parseClock(r, '18:00'));
+  const w = checkWindow(start, end, { start: '08:30', end: '18:00' });
+  logProblem('repost_nudge_window', `${start}-${end}`, w);
+  return w.value;
+})();
+/** Working hours, `HH:MM` (24 hour) in repost_nudge_tz, on repost_nudge_days. A nudge due outside them is held until the start. Defaults 08:30 and 18:00; the end must be after the start. */
+export const REPOST_NUDGE_START = nudgeWindow.start;
+export const REPOST_NUDGE_END = nudgeWindow.end;
 
 /** PR body: refuse private references (wiki-links, obsidian:// links, the words ledger, vault, orchestrator) and any `pr_body_private_patterns`, in the title and body. Default on. User config file only. */
 export const PR_BODY_CHECK_PRIVATE = switchOn(pickUserFile('pr_body_check_private'));
