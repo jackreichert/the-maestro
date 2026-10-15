@@ -13,6 +13,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { printJson } from './lib/json-out.ts';
 import { readEnforcedBy, repeatViolations } from './lib/rule-hygiene.ts';
 import type { RuleStatus } from './lib/rule-hygiene.ts';
 
@@ -49,7 +50,7 @@ function main(argv: string[]): number {
     const promote = repeats.filter((r) => byName.get(r.rule)?.enforcedBy === null || byName.get(r.rule)?.enforcedBy === 'none');
     const untagged = rules.filter((r) => r.problem);
     if (opts.json) {
-        console.log(JSON.stringify({ total: rules.length, untagged: untagged.map((r) => ({ rule: r.name, problem: r.problem })), repeats, promote: promote.map((r) => r.rule) }, null, 2));
+        printJson({ total: rules.length, untagged: untagged.map((r) => ({ rule: r.name, problem: r.problem })), repeats, promote: promote.map((r) => r.rule) });
     } else {
         console.log(`${rules.length} rules, ${rules.length - untagged.length} tagged enforced-by, ${untagged.length} not.`);
         for (const r of untagged) console.log(`  ${r.problem === 'invalid' ? 'INVALID' : 'MISSING'}  ${r.name}`);
